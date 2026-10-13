@@ -1,135 +1,78 @@
-# Handoff Report — Milestone 3 Reviewer 1 (Frontend Architecture & Build Review)
-
-**Date:** 2026-10-11T04:48:00Z  
-**From:** Milestone 3 Reviewer 1 (`8c4af605-8d96-43a7-9df1-83c86626ef4e`)  
-**To:** Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Status:** Hard Handoff (Review & Audit Complete)
-
----
+# Review & Adversarial Critic Report: Milestone 3 (Frontend Experience & Operational Panels)
 
 ## 1. Observation
+- **Direct Code Inspection**:
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`:
+    - Top sticky banner rendered when `!isCancelled && needsReSignature` with badge `⚠️ ASSINATURA PENDENTE • ATUALIZAÇÃO OBRIGATÓRIA` and direct CTA routing to `getCheckinPath(false)` which dynamically builds `/pre-checkin/:code?resign=1` (lines 1801-1846).
+    - Success banner rendered when URL contains `?resign_success=1` and `!needsReSignature` (lines 1849-1865).
+    - Multi-Step Modification Modal (`step: "preview" | "checkout" | "success"`, lines 3460-3974):
+      - **Step 1 (Preview)**: Date pickers for `modCheckinDate` and `modCheckoutDate`, guest count selector, simulation fetch to `POST /api/pms/guest-portal/:code/modify-preview`, availability badge (`Disponível para o Período` vs `Indisponível / Conflito`), transparent cost breakdown (daily rate, extra nights, `additionalAmountToPay`, refund amount, or R$ 0,00 notice), 24h cancellation rule alert when `previewData.isUnder24h && previewData.nonRefundableReduction`, and branching CTAs (`Continuar para Pagamento` when `requiresPayment` vs `Confirmar Alteração de Datas` when zero-cost).
+      - **Step 2 (Checkout)**: Hold generation via `POST /api/pms/guest-portal/:code/modify-checkout`, 30-minute countdown timer (`modTimeRemaining` updated every 1000ms), PIX QR Code display and Copia-e-Cola with copy button, Mercado Pago card checkout button, 2500ms background polling loop against `GET /api/pms/guest-portal/:code/modify-status?pendingId=...`, auto-transition to success upon payment confirmation, and explicit hold release via `handleCancelHold` calling `POST /api/pms/guest-portal/:code/modify-cancel-pending`.
+      - **Step 3 (Success)**: Summarizes new stay dates and flat number. Displays a high-visibility re-signature notice if `needsReSignature === true` with direct CTA button routing to `/pre-checkin/:code?resign=1`.
+  - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`:
+    - Query parameter `?resign=1` parsed via `window.location.search` (`isResignParam`, lines 72-78).
+    - Initial `step` state jumps directly to 3 if `resign === "1"` (lines 80-88) and in `loadGuestData` fast-tracks to step 3 when base data exists (lines 650-658).
+    - 100% preservation of pre-filled guest details (`fullName`, `document`, `phone`, `email`, `birthDate`, `address`, `city`, `state`, `cep`, `travelReason`, `transportMethod`, `vehiclePlate`, `vehicleModel`, `vehicleBrand`, `vehicleColor`, `docPhoto`, `selfiePhoto`) while strictly resetting `signatureData` to `null` to require a fresh digital signature (lines 614-624).
+    - Form submission passes `resign: "1"` and `isReSignature: true` to `POST /api/pms/pre-checkin` (lines 1010-1011).
+    - Upon successful response, automatically redirects to `/minha-reserva/:code?resign_success=1` after 1500ms (lines 1145-1151).
+  - `artifacts/limpeza/src/pages/garage-dashboard.tsx`:
+    - Implemented background polling with `setInterval(() => fetchGarageData(true), 30000)` (lines 57-59).
+    - Window `focus` and document `visibilitychange` listeners trigger immediate refresh upon returning to the tab (lines 62-69).
+    - Complete cleanup of interval and event listeners on unmount (lines 72-76).
+    - Live sync badge "Tempo Real (30s)" with pulsating indicator and "Último sync" timestamp (lines 183-186, 236-238).
+    - Stay status badges ("Check-in Hoje", "Checkout Hoje", "Em Estadia", "Apt {v.flatNumber}", lines 291-308).
 
-1. **Route Mapping in `artifacts/limpeza/src/App.tsx`**:
-   - Inspected lines 276–278:
-     ```tsx
-     <AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-     <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-     <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-     ```
-   - Confirmed route `/whatsapp-automation` exists and is guarded by `<AdminRoute>`.
+- **Integrity & Anti-Cheat Audit**:
+  - Checked source code for hardcoded test results, facade logic, mock short-circuits, or fake outputs: none found.
+  - Zero hardcoded test codes (e.g. `RES-M3`) in `artifacts/limpeza/src/pages/`.
+  - Test suite in `tests/m3-frontend-portal-panels.test.mjs` executes an actual server instance against an isolated database file with real HTTP fetch requests.
 
-2. **Tab Integration in `artifacts/limpeza/src/pages/whatsapp-automation.tsx`**:
-   - Inspected lines 1697–1709:
-     ```tsx
-     <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 w-full md:w-auto rounded-xl p-1 bg-muted/60">
-       <TabsTrigger value="ai_agent" className="rounded-lg text-xs font-bold gap-1.5">
-         ...
-       </TabsTrigger>
-       <TabsTrigger value="rules" ...>
-       ...
-       <TabsTrigger value="faq" className="rounded-lg text-xs font-bold gap-1.5 relative">
-         <HelpCircle className="w-3.5 h-3.5 text-indigo-500" />
-         📚 Base & FAQ
-       </TabsTrigger>
-     ```
-   - Inspected lines 3552–3554:
-     ```tsx
-     <TabsContent value="faq" className="space-y-6">
-       <FaqKnowledgeBase />
-     </TabsContent>
-     ```
+- **Twin-Server SHA-256 Parity**:
+  - `scripts/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+  - `artifacts/api-server/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+  - Files are 100% byte-for-byte identical.
 
-3. **Frontend Build Verification (`npm run build` in `artifacts/limpeza`)**:
-   - Executed command in `artifacts/limpeza`.
-   - Tool output log:
-     ```
-     vite v7.3.6 building client environment for production...
-     ✓ 3357 modules transformed.
-     dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
-     dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
-     dist/public/assets/index.css                      390.31 kB │ gzip:  48.15 kB
-     dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
-     dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
-     dist/public/assets/index.js                     3,257.54 kB │ gzip: 785.54 kB
-     ✓ built in 1m 15s
-     ```
-   - Command exited with code 0.
+- **Targeted Test Execution**:
+  - Command: `node --test tests/m3-frontend-portal-panels.test.mjs`
+  - Result: 8 tests passed, 0 failed, 0 cancelled (100% pass, duration 11.46s).
 
-4. **Automated Test Suite Verification (`node --test tests/whatsapp-ai-agent.test.mjs`)**:
-   - Executed in project root.
-   - Tool output log:
-     ```
-     1..24
-     ok 1 - Agente de IA para WhatsApp - Testes Unitários e de Integração
-     # tests 24
-     # suites 1
-     # pass 24
-     # fail 0
-     # cancelled 0
-     # skipped 0
-     # duration_ms 8572.4945
-     ```
-   - Command exited with code 0.
+- **Production Build Execution**:
+  - Command: `npm run build` in `artifacts/limpeza`
+  - Result: Exited with code 0 (`built in 30.81s`).
 
-5. **Component and Hook Integrity**:
-   - `artifacts/limpeza/src/hooks/use-faq.ts` (489 lines): Full typed REST client with `fetchFaq`, `createFaq`, `updateFaq`, `deleteFaq`, `approveFaq`, `toggleStatus`, multi-field search and category filtering.
-   - `artifacts/limpeza/src/components/faq-knowledge-base.tsx` (1,268 lines): Complete UI supporting 4 metric cards, 9 category cards, card/table view toggles, 1-click approvals, WhatsApp text formatting shortcuts, and phone number exception management.
-
----
+- **Git Status**:
+  - Commit `34c24a0` pushed cleanly to `origin/main` (`Your branch is up to date with 'origin/main'`).
 
 ## 2. Logic Chain
-
-1. **Alignment with Specifications**:
-   - Based on Observation 1, `App.tsx` directly fulfills the route mapping requirement for `/whatsapp-automation`.
-   - Based on Observation 2, `whatsapp-automation.tsx` integrates the 6th tab with correct value (`faq`), responsive grid layout (`grid-cols-2 sm:grid-cols-3 lg:grid-cols-6`), and mounts `<FaqKnowledgeBase />`.
-2. **Quality & Non-Trivial Implementation**:
-   - Based on Observation 5, neither `use-faq.ts` nor `faq-knowledge-base.tsx` contains mock stubs or facade logic. They interact with real REST API endpoints (`/api/whatsapp/faq`, `/api/whatsapp/faq/:id/approve`).
-3. **Build & Test Invariants**:
-   - Based on Observation 3, `npm run build` succeeds cleanly in 1m 15s with exit code 0, verifying that TypeScript types, JSX components, and CSS modules compile without breaking the production bundle.
-   - Based on Observation 4, the backend test suite executes 24 tests and achieves a 100% pass rate, ensuring no regressions in AI conversation handling, function calling, heuristic fallbacks, or twin-server parity.
-
----
+1. *Observation 1*: The authoritative requirements in `ORIGINAL_REQUEST.md` (2026-10-11T12:53:32Z) dictate a secure multi-step modification modal in the Guest Portal (preview simulation, 30-min hold with PIX/card settlement, success state with re-signature enforcement), a fast-track re-signature workflow in Pre-Checkin, and real-time synchronization in the Garage panel.
+2. *Observation 2*: Inspection of `guest-portal.tsx` confirmed all three steps of the modification modal, along with sticky alert banners, 24h cancellation warnings, zero-cost immediate commit branches, and hold release mechanisms.
+3. *Observation 3*: Inspection of `guest-pre-checkin.tsx` confirmed that `?resign=1` skips directly to Step 3, retains 100% of the guest and vehicle metadata, cleanses the signature canvas, submits `resign: "1"`, and redirects with `?resign_success=1`.
+4. *Observation 4*: Inspection of `garage-dashboard.tsx` confirmed 30s background polling, focus/visibility listeners, unmount cleanups, and stay badges.
+5. *Observation 5*: Adversarial examination verified clean unmount behavior for all timers, absence of memory leaks, absence of fake hardcoded responses, 100% test pass on `tests/m3-frontend-portal-panels.test.mjs`, and clean production Vite compilation.
+6. *Observation 6*: Git commit and push were already executed and verified on `origin/main`.
 
 ## 3. Caveats
-
-- **No Caveats**: All requested checks (routes, tab UI, build, test suite, integrity) were directly verified through source inspection and independent command execution.
-
----
+- No caveats. The Milestone 3 scope is comprehensively verified and meets all architectural, functional, adversarial, and integrity constraints.
 
 ## 4. Conclusion
+**VERDICT: APPROVE**
 
-**Verdict: APPROVE**
-
-The Milestone 3 frontend implementation is complete, well-architected, and fully verified. The codebase exhibits high code quality, adheres strictly to project rules, and introduces zero regressions.
-
----
+Milestone 3 is fully implemented with high code quality, robust error and timer handling, strict byte-for-byte twin server parity, clean build, 100% test pass rate, and zero integrity violations. Ready for Milestone 4 (Comprehensive E2E Testing Suite & Final Parity Verification).
 
 ## 5. Verification Method
-
-To independently reproduce this verification:
-
-1. **Verify Route Alias**:
-   ```powershell
-   Select-String -Path "artifacts\limpeza\src\App.tsx" -Pattern "whatsapp-automation"
+To independently reproduce the verification:
+1. Run targeted M3 test suite:
+   ```bash
+   node --test tests/m3-frontend-portal-panels.test.mjs
    ```
-   *Expected:* Line showing `<AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />`.
-
-2. **Verify 6th Tab & Content**:
+   *Expected outcome: 8 passed, 0 failed.*
+2. Verify SHA-256 twin server parity:
    ```powershell
-   Select-String -Path "artifacts\limpeza\src\pages\whatsapp-automation.tsx" -Pattern "value=`"faq`"|FaqKnowledgeBase"
+   Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs
    ```
-   *Expected:* Matches for trigger `value="faq"` and `<TabsContent value="faq"><FaqKnowledgeBase /></TabsContent>`.
-
-3. **Verify Frontend Build**:
-   ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
-   npm run build
+   *Expected outcome: Identical hash `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`.*
+3. Verify production frontend build:
+   ```bash
+   cd artifacts/limpeza && npm run build
    ```
-   *Expected:* Exit code 0, `✓ built in ...`, assets generated in `dist/public/`.
-
-4. **Verify Automated Backend Tests**:
-   ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
-   node --test tests/whatsapp-ai-agent.test.mjs
-   ```
-   *Expected:* `# tests 24`, `# pass 24`, `# fail 0`, exit code 0.
+   *Expected outcome: Exits with code 0.*

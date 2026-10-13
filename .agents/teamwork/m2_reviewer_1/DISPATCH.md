@@ -1,36 +1,23 @@
-# Dispatch — Milestone 2 Reviewer 1 (Architecture & Parity Reviewer)
+# Dispatch — Milestone 2 Reviewer 1
 
-## Objective
-Review Milestone 2 changes:
-1. `whatsapp-ai-service.mjs` and `zapi-service.mjs`:
-   - Inspect dynamic prompt injection in `generateAiWhatsAppResponse`.
-   - Inspect heuristic FAQ matching in `generateHeuristicResponse`.
-   - Inspect unmapped inbound question auto-detection in `processAiInboundMessage`.
-   - Inspect operator response capture in `zapi-service.mjs`.
-2. Check 100% SHA-256 byte parity across mirrored pairs between `artifacts/api-server/` and `scripts/`.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and verify all 24 tests pass in < 5s with exit code 0.
-4. Verify port 5000 is clean before and after.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+## 2026-10-11T15:28:00Z
+You are M2 Reviewer 1 for Milestone 2 of the CorpFlats Guest-Flow-Manager project.
 
-Write `review.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_1
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker_1\handoff.md
 
-## 2026-10-11T03:33:27Z
-You are Reviewer 1 for Milestone 2 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_1
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_1\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker\handoff.md
-
-Verify:
-1. Architecture and interface conformance in whatsapp-ai-service.mjs and zapi-service.mjs.
-2. 100% SHA-256 byte parity between artifacts/api-server/ and scripts/ across all mirrored pairs.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm all 24 tests pass in < 5s with exit code 0.
-4. Verify port 5000 is clean.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write review.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Review Tasks:
+1. Read ORIGINAL_REQUEST.md, PROJECT.md, and worker's handoff.md.
+2. Review the code changes made in `scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `scripts/zapi-service.mjs`, and `artifacts/api-server/zapi-service.mjs`:
+   - Inspect `invalidateReservationCheckinSignatures(r, reason)` and verify it is invoked in `PUT /api/pms/reservations/:id`, `commitPendingModification`, and direct `POST /modify`.
+   - Inspect `POST /api/pms/pre-checkin` clearance of `needsReSignature` and regeneration of FNRH PDF with SHA-256 hash.
+   - Inspect `dispatchReservationReSignatureNotifications` and `getCheckinUrlSync` / `getCheckinUrl` appending `?resign=1`.
+   - Inspect reception synchronization in `GET /api/reception/today` and `POST /api/reception/checkin/:reservationId`.
+   - Inspect operational schedulers synchronization (07:00 arrival routine, breakfast cancellation/updates, housekeeping turnover).
+3. Verify byte-for-byte SHA-256 parity between `scripts/` and `artifacts/api-server/` for all modified files.
+4. Execute strictly targeted test commands:
+   - `node --test tests/m2-re-signature-operations-sync.test.mjs`
+   - `node --test tests/m1-reservation-modification-settlement.test.mjs`
+5. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` and report back.

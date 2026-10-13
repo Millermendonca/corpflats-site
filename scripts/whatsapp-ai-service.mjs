@@ -427,6 +427,8 @@ export function getBotActionsSettings(db) {
         generatePayment: s.allowedActions?.generatePayment !== false,
         createPreReservation: s.allowedActions?.createPreReservation !== false,
         commitReservation: s.allowedActions?.commitReservation !== false,
+        reallocateReservationFlat: s.allowedActions?.reallocateReservationFlat !== false,
+        getFlatAmenities: s.allowedActions?.getFlatAmenities !== false,
         getReservationDetails: hasCustomAllowed ? s.allowedActions.getReservationDetails === true : true,
         getFlatStatus: hasCustomAllowed ? s.allowedActions.getFlatStatus === true : true,
         getPricingInfo: hasCustomAllowed ? s.allowedActions.getPricingInfo === true : true,
@@ -446,6 +448,8 @@ export function getBotActionsSettings(db) {
       generatePayment: true,
       createPreReservation: true,
       commitReservation: true,
+      reallocateReservationFlat: true,
+      getFlatAmenities: true,
       getReservationDetails: true,
       getFlatStatus: true,
       getPricingInfo: true,
@@ -744,6 +748,51 @@ export function buildGeminiTools(actionsSettings = {}) {
     });
   }
 
+  if (allowed.getFlatAmenities !== false) {
+    declarations.push({
+      name: "getFlatAmenities",
+      description: "Consulta comodidades, tags, tipo de ar-condicionado (split vs janela), tipo de cama (casal vs 2 solteiro) e micro-ondas dos flats da CorpFlats. Permite filtrar por comodidade ou ver detalhes de um flat.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          criteria: {
+            type: "STRING",
+            description: "Comodidade ou particularidade desejada (ex: 'split', 'microondas', 'casal', 'solteiro', '2_solteiro')"
+          },
+          flatNumber: {
+            type: "STRING",
+            description: "Número do flat específico para ver suas comodidades (opcional)"
+          }
+        }
+      }
+    });
+  }
+
+  if (allowed.reallocateReservationFlat !== false && allowed.reallocateReservationFlat) {
+    declarations.push({
+      name: "reallocateReservationFlat",
+      description: "Realoca ou troca o apartamento de uma reserva no PMS para outro flat solicitado pelo hóspede. Sofia só pode deslocar um hóspede futuro se este não tiver solicitado o flat especificamente ou se o flat não estiver bloqueado/preferencial.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          reservationId: {
+            type: "STRING",
+            description: "ID ou código da reserva a ser realocada (ex: 'RES-101-9999', 'CF-123456')"
+          },
+          targetFlatNumber: {
+            type: "STRING",
+            description: "Número do flat de destino desejado (ex: '408', '113', '904')"
+          },
+          reason: {
+            type: "STRING",
+            description: "Motivo da troca de quarto (ex: 'Hóspede prefere ar split', 'Preferência por cama de casal')"
+          }
+        },
+        required: ["targetFlatNumber"]
+      }
+    });
+  }
+
   if (declarations.length === 0) {
     return [];
   }
@@ -836,6 +885,442 @@ export function computeDailyRate(db, flatId, dateStr, channel = "direct") {
 
 // ── Handlers Internos para Bot Actions ──────────────────────────────────────
 
+/**
+ * Normaliza e consolida comodidades, tags, tipo de ar e tipo de cama de um flat
+ */
+export function getFlatAmenitiesInfo(flat) {
+  if (!flat) return null;
+  const colName = String(flat.colName || flat.name || "").toLowerCase();
+  const tags = Array.isArray(flat.tags) ? flat.tags : [];
+  const tagsLower = tags.map(t => String(t).toLowerCase());
+
+  // Ar-condicionado
+  let airConditionerType = flat.airConditionerType || null;
+  if (!airConditionerType) {
+    if (tagsLower.some(t => t.includes("split")) || colName.includes("split")) {
+      airConditionerType = "split";
+    } else if (tagsLower.some(t => t.includes("janela")) || colName.includes("janela")) {
+      airConditionerType = "janela";
+    } else {
+      airConditionerType = "split";
+    }
+  }
+  const airConditionerLabel = airConditionerType === "split" ? "Ar-condicionado Split ❄️" : "Ar-condicionado de Janela";
+
+  // Cama
+  let bedType = flat.bedType || null;
+  if (!bedType) {
+    if (tagsLower.some(t => t.includes("casal")) || colName.includes("casal")) {
+      bedType = "casal";
+    } else if (tagsLower.some(t => t.includes("solteiro") || t.includes("twin") || t.includes("ferro unindo")) || colName.includes("solteiro") || colName.includes("ferro unindo")) {
+      bedType = "2_solteiro";
+    } else {
+      bedType = "casal";
+    }
+  }
+  const bedLabel = (bedType === "2_solteiro" || bedType === "solteiro") ? "2 Camas de Solteiro 🛏️🛏️" : "Cama de Casal 🛏️";
+
+  // Micro-ondas
+  let hasMicrowave = flat.hasMicrowave;
+  if (hasMicrowave === undefined) {
+    hasMicrowave = tagsLower.some(t => t.includes("micro-ondas") || t.includes("microondas")) || (Array.isArray(flat.features) && flat.features.includes("microondas"));
+  }
+
+  return {
+    id: flat.id,
+    number: String(flat.number),
+    name: flat.colName || `Flat ${flat.number}`,
+    colName: flat.colName || "",
+    tags,
+    airConditionerType,
+    airConditionerLabel,
+    airConditioner: airConditionerType,
+    bedType,
+    bedLabel,
+    bed: bedType,
+    hasMicrowave: Boolean(hasMicrowave),
+    features: Array.isArray(flat.features) ? flat.features : [],
+    notes: flat.notes || ""
+  };
+}
+
+/**
+ * Busca e filtra flats por comodidades e tags
+ */
+export function searchFlatsByAmenities(db, criteria = {}) {
+  const flats = (db?.flats || []).filter(f => f.isActive !== false);
+  const mapped = flats.map(f => getFlatAmenitiesInfo(f));
+
+  if (!criteria || Object.keys(criteria).length === 0) {
+    return mapped;
+  }
+
+  let filtered = mapped;
+
+  if (criteria.flatNumber) {
+    const fNum = String(criteria.flatNumber).trim();
+    filtered = filtered.filter(f => f.number === fNum || String(f.id) === fNum);
+  }
+
+  if (criteria.airConditionerType || criteria.split !== undefined) {
+    const wantSplit = criteria.split !== undefined ? Boolean(criteria.split) : String(criteria.airConditionerType).toLowerCase().includes("split");
+    if (wantSplit) {
+      filtered = filtered.filter(f => f.airConditionerType === "split" || f.tags.some(t => /split/i.test(t)) || /split/i.test(f.colName));
+    } else {
+      filtered = filtered.filter(f => f.airConditionerType === "janela" || f.tags.some(t => /janela/i.test(t)) || /janela/i.test(f.colName));
+    }
+  }
+
+  if (criteria.bedType) {
+    const wantCasal = /casal|double|queen|king/i.test(String(criteria.bedType));
+    const wantSolteiro = /solteiro|twin|2_solteiro/i.test(String(criteria.bedType));
+    if (wantCasal) {
+      filtered = filtered.filter(f => f.bedType === "casal");
+    } else if (wantSolteiro) {
+      filtered = filtered.filter(f => f.bedType === "2_solteiro" || f.bedType === "solteiro");
+    }
+  }
+
+  if (criteria.hasMicrowave !== undefined || criteria.microwave !== undefined) {
+    const wantMicro = criteria.hasMicrowave !== undefined ? Boolean(criteria.hasMicrowave) : Boolean(criteria.microwave);
+    filtered = filtered.filter(f => f.hasMicrowave === wantMicro);
+  }
+
+  if (criteria.tag) {
+    const tagNorm = String(criteria.tag).toLowerCase();
+    filtered = filtered.filter(f => f.tags.some(t => String(t).toLowerCase().includes(tagNorm)));
+  }
+
+  if (criteria.query && typeof criteria.query === "string") {
+    const qLower = criteria.query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (/split/i.test(qLower)) {
+      filtered = filtered.filter(f => f.airConditionerType === "split" || f.tags.some(t => /split/i.test(t)) || /split/i.test(f.colName));
+    } else if (/micro[- ]?ondas/i.test(qLower)) {
+      filtered = filtered.filter(f => f.hasMicrowave);
+    } else if (/casal/i.test(qLower)) {
+      filtered = filtered.filter(f => f.bedType === "casal");
+    } else if (/solteiro|duas camas|2 camas/i.test(qLower)) {
+      filtered = filtered.filter(f => f.bedType === "2_solteiro" || f.bedType === "solteiro");
+    }
+  }
+
+  return filtered;
+}
+
+/**
+ * Handler de ação de bot para consulta de comodidades e tags dos flats
+ */
+export function handleGetFlatAmenities(db, args = {}) {
+  const criteria = typeof args.criteria === "string" ? { query: args.criteria } : (args.criteria || {});
+  if (args.flatNumber) criteria.flatNumber = args.flatNumber;
+  if (args.bedType) criteria.bedType = args.bedType;
+  if (args.split !== undefined) criteria.split = args.split;
+  if (args.hasMicrowave !== undefined) criteria.hasMicrowave = args.hasMicrowave;
+
+  const results = searchFlatsByAmenities(db, criteria);
+  return {
+    success: true,
+    count: results.length,
+    flats: results
+  };
+}
+
+/**
+ * Verifica se um hóspede solicitou ou possui trava de Quarto Preferencial para um flat
+ */
+export function hasGuestRequestedSpecificFlat(db, res, targetFlatNumber) {
+  if (!res) return false;
+  const fNum = String(targetFlatNumber || "").trim();
+
+  // 1. Trava explícita no PMS
+  if (res.isFlatLocked === true || res.flatLocked === true || res.isPreferredFlat === true) {
+    return true;
+  }
+
+  // 2. Campo requestedFlat ou preferredFlat
+  if (res.requestedFlat && String(res.requestedFlat) === fNum) return true;
+  if (res.preferredFlat && String(res.preferredFlat) === fNum) return true;
+
+  // 3. Notas e solicitações especiais
+  const combinedNotes = `${res.notes || ""} ${res.specialRequests || ""} ${res.receptionNotes || ""} ${res.obs || ""}`.toLowerCase();
+  const flatLockRegex = new RegExp(`(?:quarto|flat|apto|apartamento)?\\s*${fNum}\\s*(?:fixo|preferencial|bloquead[ao]|exclusiv[ao]|solicitad[ao])`, "i");
+  const requestRegex = new RegExp(`(?:pediu|solicitou|quer|exigiu|prefer[eê]|favor colocar)\\s*(?:no|o)?\\s*(?:flat|quarto|apto)?\\s*${fNum}\\b`, "i");
+  const generalLockRegex = /(?:quarto|flat|apto)\s*(?:preferencial|fixo|bloquead[ao]|n[aã]o\s+alterar|n[aã]o\s+mudar)/i;
+
+  if (flatLockRegex.test(combinedNotes) || requestRegex.test(combinedNotes) || generalLockRegex.test(combinedNotes)) {
+    return true;
+  }
+
+  // 4. Histórico de conversas do hóspede no WhatsApp
+  if (db?.whatsappConversations && (res.guestPhone || res.phone)) {
+    const cleanPhone = cleanWhatsAppPhone(res.guestPhone || res.phone);
+    const conv = (db.whatsappConversations || []).find(c => matchClientPhone(c.clientPhone, cleanPhone));
+    if (conv && Array.isArray(conv.messages)) {
+      const guestMessages = conv.messages.filter(m => !m.fromMe && m.text).map(m => String(m.text).toLowerCase());
+      for (const msg of guestMessages) {
+        if (flatLockRegex.test(msg) || requestRegex.test(msg)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Encontra um flat alternativo livre para um hóspede que precise ser deslocado
+ */
+export function findAlternateFlatForGuest(db, candidateRes, excludeFlatNumbers = [], ignoreReservationId = null) {
+  if (!candidateRes) return null;
+  const inDate = candidateRes.checkinDate;
+  const outDate = candidateRes.checkoutDate;
+  const excludeSet = new Set((excludeFlatNumbers || []).map(n => String(n).trim()));
+
+  const allFlats = (db?.flats || []).filter(f => f.isActive !== false && !excludeSet.has(String(f.number)));
+
+  for (const flat of allFlats) {
+    const fId = flat.id;
+    const fNum = String(flat.number);
+
+    // Conflito com outras reservas ativas no PMS
+    const hasConflict = (db?.reservations || []).some(r => {
+      if (r.id === candidateRes.id) return false;
+      if (ignoreReservationId != null && (r.id === ignoreReservationId || r.code === ignoreReservationId)) return false;
+      if (r.status === "cancelada" || r.status === "expirada") return false;
+      const matchesFlat = (r.flatId === fId || String(r.flatNumber) === fNum);
+      return matchesFlat && r.checkinDate < outDate && r.checkoutDate > inDate;
+    });
+
+    if (hasConflict) continue;
+
+    // Conflito com bloqueios de quarto
+    const hasBlock = (db?.roomBlocks || []).some(b => {
+      const matchesFlat = (b.flatId === fId || String(b.flatNumber) === fNum);
+      return matchesFlat && b.startDate < outDate && b.endDate > inDate;
+    });
+
+    if (hasBlock) continue;
+
+    return flat;
+  }
+
+  return null;
+}
+
+/**
+ * Realoca uma reserva de flat, com capacidade de deslocar hóspede futuro não-fixo
+ */
+export function handleReallocateReservationFlat(db, args = {}) {
+  const targetFlatIdentifier = String(args.targetFlatNumber || args.targetFlatId || args.targetFlat || "").trim();
+  const resIdentifier = String(args.reservationId || args.reservationCode || args.code || args.id || "").trim();
+  const phone = args.phone || args.guestPhone;
+  const guestName = args.guestName;
+  const currentFlat = args.currentFlatNumber || args.currentFlat;
+
+  if (!targetFlatIdentifier) {
+    return {
+      success: false,
+      error: "MISSING_TARGET_FLAT",
+      message: "O número do flat de destino é obrigatório."
+    };
+  }
+
+  const flats = (db?.flats || []).filter(f => f.isActive !== false);
+  const targetFlat = flats.find(f => String(f.number) === targetFlatIdentifier || String(f.id) === targetFlatIdentifier);
+  if (!targetFlat) {
+    return {
+      success: false,
+      error: "FLAT_NOT_FOUND",
+      message: `Flat ${targetFlatIdentifier} não foi encontrado no cadastro.`
+    };
+  }
+
+  // Localiza a reserva do solicitante (Res A)
+  const reservations = db?.reservations || [];
+  let resA = null;
+
+  if (resIdentifier) {
+    resA = reservations.find(r => String(r.id) === resIdentifier || String(r.code) === resIdentifier);
+  }
+
+  if (!resA && phone) {
+    const cleanP = cleanWhatsAppPhone(phone);
+    resA = reservations.find(r =>
+      r.status !== "cancelada" && r.status !== "expirada" &&
+      matchClientPhone(r.guestPhone || r.phone, cleanP)
+    );
+  }
+
+  if (!resA && currentFlat) {
+    resA = reservations.find(r =>
+      r.status !== "cancelada" && r.status !== "expirada" &&
+      (String(r.flatNumber) === String(currentFlat) || String(r.flatId) === String(currentFlat))
+    );
+  }
+
+  if (!resA && guestName) {
+    const gNorm = guestName.toLowerCase().trim();
+    resA = reservations.find(r =>
+      r.status !== "cancelada" && r.status !== "expirada" &&
+      r.guestName && r.guestName.toLowerCase().trim().includes(gNorm)
+    );
+  }
+
+  if (!resA) {
+    return {
+      success: false,
+      error: "RESERVATION_NOT_FOUND",
+      message: "Reserva não encontrada para efetuar a realocação."
+    };
+  }
+
+  if (resA.status === "cancelada" || resA.status === "expirada") {
+    return {
+      success: false,
+      error: "RESERVATION_INACTIVE",
+      message: `A reserva ${resA.code || resA.id} está com status '${resA.status}' e não pode ser remanejada.`
+    };
+  }
+
+  const oldFlatNumber = String(resA.flatNumber || (flats.find(f => f.id === resA.flatId)?.number || ""));
+  if (oldFlatNumber === String(targetFlat.number)) {
+    return {
+      success: true,
+      reallocated: false,
+      alreadyAllocated: true,
+      flatNumber: String(targetFlat.number),
+      message: `A reserva de ${resA.guestName} já está alocada no Flat ${targetFlat.number}.`
+    };
+  }
+
+  // Verifica bloqueio de quarto no flat de destino
+  const hasBlock = (db?.roomBlocks || []).some(b => {
+    const matches = (b.flatId === targetFlat.id || String(b.flatNumber) === String(targetFlat.number));
+    return matches && b.startDate < resA.checkoutDate && b.endDate > resA.checkinDate;
+  });
+
+  if (hasBlock) {
+    return {
+      success: false,
+      error: "FLAT_BLOCKED",
+      message: `O Flat ${targetFlat.number} possui bloqueio operacional ou de manutenção no período desejado.`
+    };
+  }
+
+  // Verifica reservas concorrentes no flat de destino
+  const overlaps = reservations.filter(r =>
+    r.id !== resA.id &&
+    r.status !== "cancelada" && r.status !== "expirada" &&
+    (r.flatId === targetFlat.id || String(r.flatNumber) === String(targetFlat.number)) &&
+    r.checkinDate < resA.checkoutDate && r.checkoutDate > resA.checkinDate
+  );
+
+  let displacedRes = null;
+
+  if (overlaps.length > 0) {
+    // Para cada sobreposição, avalia se pode ser deslocada
+    for (const resB of overlaps) {
+      const isCheckedIn = resB.checkedIn || resB.checkinConfirmed || resB.status === "hospedado" || resB.status === "checked_in" || resB.fnhrCompleted;
+      if (isCheckedIn) {
+        return {
+          success: false,
+          error: "OCCUPANT_CHECKED_IN",
+          message: `Não é possível remanejar: o hóspede ${resB.guestName} já realizou check-in / está hospedado no Flat ${targetFlat.number}.`
+        };
+      }
+
+      if (hasGuestRequestedSpecificFlat(db, resB, targetFlat.number)) {
+        return {
+          success: false,
+          error: "FLAT_LOCKED_OR_REQUESTED",
+          message: `Não é possível remanejar: o Flat ${targetFlat.number} possui trava de Quarto Preferencial ou foi solicitado expressamente pelo hóspede alocado (${resB.guestName}).`
+        };
+      }
+
+      // Tenta encontrar flat alternativo para Res B (permitindo o flat que Res A está desocupando!)
+      const altFlat = findAlternateFlatForGuest(db, resB, [targetFlat.number], resA.id);
+      if (!altFlat) {
+        return {
+          success: false,
+          error: "NO_ALTERNATE_FLAT",
+          message: `Não foi possível remanejar: o Flat ${targetFlat.number} está ocupado por ${resB.guestName} e não há outro flat disponível para realocá-lo.`
+        };
+      }
+
+      // Desloca Res B para o flat alternativo
+      resB.previousFlatNumber = String(resB.flatNumber || "");
+      resB.flatId = altFlat.id;
+      resB.flatNumber = String(altFlat.number);
+      resB.reallocatedBy = "sofia_ai";
+      resB.reallocationReason = `Remanejado automaticamente para liberar ${targetFlat.number} para ${resA.guestName} (${args.reason || "solicitação de hóspede"})`;
+      resB.updatedAt = new Date().toISOString();
+
+      if (!Array.isArray(resB.auditLogs)) resB.auditLogs = [];
+      resB.auditLogs.unshift({
+        timestamp: new Date().toISOString(),
+        action: "RESERVATION_REALLOCATED_BY_SOFIA",
+        actor: { name: "Sofia (IA CorpFlats)", role: "bot" },
+        description: `Deslocado do Flat ${targetFlat.number} para o Flat ${altFlat.number} para atender solicitação de ${resA.guestName}`
+      });
+
+      displacedRes = {
+        id: resB.id,
+        code: resB.code,
+        guestName: resB.guestName,
+        previousFlat: String(targetFlat.number),
+        newFlat: String(altFlat.number)
+      };
+    }
+  }
+
+  // Realoca Res A para o targetFlat
+  resA.previousFlatNumber = oldFlatNumber;
+  resA.flatId = targetFlat.id;
+  resA.flatNumber = String(targetFlat.number);
+  resA.reallocatedBy = "sofia_ai";
+  resA.reallocationReason = args.reason || "Solicitação de troca pelo hóspede via WhatsApp";
+  resA.updatedAt = new Date().toISOString();
+
+  if (!Array.isArray(resA.auditLogs)) resA.auditLogs = [];
+  resA.auditLogs.unshift({
+    timestamp: new Date().toISOString(),
+    action: "RESERVATION_REALLOCATED_BY_SOFIA",
+    actor: { name: "Sofia (IA CorpFlats)", role: "bot" },
+    description: `Realocado do Flat ${oldFlatNumber} para o Flat ${targetFlat.number}${args.reason ? ` (${args.reason})` : ""}`
+  });
+
+  // Atualiza solicitações de limpeza associadas na governança se aplicável
+  if (Array.isArray(db?.cleaningRequests)) {
+    const today = getBrasiliaDateParts().todayStr;
+    const reqA = db.cleaningRequests.find(c =>
+      (c.flatId === resA.flatId || String(c.flatNumber) === oldFlatNumber) &&
+      (c.requestDate === resA.checkinDate || c.requestDate === today)
+    );
+    if (reqA) {
+      reqA.flatId = targetFlat.id;
+      reqA.flatNumber = String(targetFlat.number);
+      reqA.updatedAt = new Date().toISOString();
+    }
+  }
+
+  const successMsg = displacedRes
+    ? `Flat remanejado com sucesso para ${targetFlat.number}! O hóspede ${displacedRes.guestName} foi realocado com sucesso para o Flat ${displacedRes.newFlat}.`
+    : `Flat remanejado com sucesso para ${targetFlat.number}!`;
+
+  return {
+    success: true,
+    reallocated: true,
+    reservationId: resA.id,
+    code: resA.code,
+    guestName: resA.guestName,
+    previousFlat: oldFlatNumber,
+    newFlat: String(targetFlat.number),
+    displacedReservation: displacedRes,
+    message: successMsg
+  };
+}
+
 function handleCheckAvailability(db, args = {}) {
   const inDate = args.checkIn || args.checkin;
   const outDate = args.checkOut || args.checkout;
@@ -904,12 +1389,24 @@ function handleCheckAvailability(db, args = {}) {
     checkIn: inDate,
     checkOut: outDate,
     guests,
-    flats: availableFlats.map(f => ({
-      id: f.id,
-      number: f.number,
-      name: f.colName || `Flat ${f.number}`,
-      isOccupied: false
-    }))
+    flats: availableFlats.map(f => {
+      const info = getFlatAmenitiesInfo(f);
+      return {
+        id: f.id,
+        number: f.number,
+        name: f.colName || `Flat ${f.number}`,
+        isOccupied: false,
+        tags: info?.tags || [],
+        airConditionerType: info?.airConditionerType || "split",
+        airConditionerLabel: info?.airConditionerLabel || "Ar-condicionado Split ❄️",
+        airConditioner: info?.airConditionerType || "split",
+        bedType: info?.bedType || "casal",
+        bedLabel: info?.bedLabel || "Cama de Casal 🛏️",
+        bed: info?.bedType || "casal",
+        hasMicrowave: info?.hasMicrowave ?? true,
+        features: info?.features || []
+      };
+    })
   };
 }
 
@@ -1409,6 +1906,8 @@ export function handleGetFlatStatus(db, args = {}) {
     r.checkinDate <= todayStr && r.checkoutDate >= todayStr
   );
 
+  const amenities = getFlatAmenitiesInfo(flat);
+
   return {
     success: true,
     flatNumber: String(flat.number),
@@ -1419,7 +1918,16 @@ export function handleGetFlatStatus(db, args = {}) {
     currentGuestName: activeReservation?.guestName || null,
     statusDescription: isRoomReady
       ? `Flat ${flat.number} está 100% limpo, higienizado e pronto para entrada.`
-      : `Flat ${flat.number} está em higienização ou pendente de liberação pela governança.`
+      : `Flat ${flat.number} está em higienização ou pendente de liberação pela governança.`,
+    tags: amenities?.tags || [],
+    airConditionerType: amenities?.airConditionerType || "split",
+    airConditionerLabel: amenities?.airConditionerLabel || "Ar-condicionado Split ❄️",
+    airConditioner: amenities?.airConditionerType || "split",
+    bedType: amenities?.bedType || "casal",
+    bedLabel: amenities?.bedLabel || "Cama de Casal 🛏️",
+    bed: amenities?.bedType || "casal",
+    hasMicrowave: amenities?.hasMicrowave ?? true,
+    features: amenities?.features || []
   };
 }
 
@@ -2163,6 +2671,10 @@ export async function executeBotAction(db, actionName, args = {}) {
       return handleRecordUnmetDemand(db, args);
     case "informCheckout":
       return handleInformCheckout(db, args);
+    case "getFlatAmenities":
+      return handleGetFlatAmenities(db, args);
+    case "reallocateReservationFlat":
+      return handleReallocateReservationFlat(db, args);
     default:
       return {
         error: "UNKNOWN_ACTION",
@@ -3008,7 +3520,17 @@ export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
     guidelinesSection = antiCopyPasteRule;
   }
 
-  return { toneSection, guidelinesSection };
+  let flatsCatalogSection = "";
+  const activeFlats = (db?.flats || []).filter(f => f.isActive !== false);
+  if (activeFlats.length > 0) {
+    const flatsDesc = activeFlats.map(f => {
+      const info = getFlatAmenitiesInfo(f);
+      return `• Flat ${f.number}: Cama: ${info.bedLabel} | Ar: ${info.airConditionerLabel} | Micro-ondas: ${info.hasMicrowave ? "Sim" : "Não"}${info.tags.length ? ` | Tags: [${info.tags.join(", ")}]` : ""}${f.notes ? ` | Obs: ${f.notes}` : ""}`;
+    }).join("\n");
+    flatsCatalogSection = `\n[CATÁLOGO DE FLATS, TAGS E PARTICULARIDADES DOS QUARTOS (CORPFLATS)]\n${flatsDesc}\n- Sofia tem conhecimento pleno das particularidades de cada flat (ar split vs janela, micro-ondas, cama de casal vs solteiro) para responder com precisão ao hóspede ou filtrar flats ideais.\n`;
+  }
+
+  return { toneSection, guidelinesSection, flatsCatalogSection };
 }
 
 /**
@@ -4137,6 +4659,50 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingSalutation} 🚭 ${kb.smokingPolicy}`);
   }
 
+  // 7.12 Comodidades Específicas dos Flats (Split, Micro-ondas, Casal, Solteiro, etc.)
+  if (/(?:split|ar[- ]?split)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
+    const splitFlats = searchFlatsByAmenities(activeDb, { split: true });
+    const numbers = splitFlats.map(f => f.number).join(", ");
+    return ret(`${greetingSalutation} Sim! Os nossos flats equipados com ar-condicionado Split potente são: ${numbers || "113, 313, 712, 904 e 905"} ❄️. Deseja verificar disponibilidade para alguma data específica?`);
+  }
+
+  if (/(?:micro[- ]?ondas)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
+    const microFlats = searchFlatsByAmenities(activeDb, { hasMicrowave: true });
+    const numbers = microFlats.map(f => f.number).join(", ");
+    return ret(`${greetingSalutation} Sim! Nossos flats dispõem de cozinha compacta equipada com micro-ondas e frigobar para sua total praticidade 🍽️⚡ (especialmente os flats: ${numbers || "113, 408, 511, 712"}).`);
+  }
+
+  if (/(?:cama\s+de\s+casal|cama\s+casal)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
+    const casalFlats = searchFlatsByAmenities(activeDb, { bedType: "casal" });
+    const numbers = casalFlats.map(f => f.number).join(", ");
+    return ret(`${greetingSalutation} Sim! Nossos flats com cama de casal são: ${numbers || "113, 211, 408, 509, 511, 907"} 🛏️.`);
+  }
+
+  if (/(?:2\s+camas?|duas\s+camas?|cama\s+solteiro|camas?\s+de\s+solteiro|solteiro)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
+    const solteiroFlats = searchFlatsByAmenities(activeDb, { bedType: "solteiro" });
+    const numbers = solteiroFlats.map(f => f.number).join(", ");
+    return ret(`${greetingSalutation} Sim! Nossos flats com duas camas de solteiro (twin) são: ${numbers || "114, 212, 215, 313, 512, 605, 712, 715, 1004, 1304"} 🛏️🛏️.`);
+  }
+
+  // 7.13 Solicitação de Troca de Quarto / Remanejamento
+  if (/(?:trocar|mudar|alterar)\s+(?:de\s+)?(?:flat|quarto|apartamento)\b/i.test(text) || /(?:pode\s+me\s+colocar|quero\s+ficar|prefiro\s+o)\s+(?:no\s+)?(?:flat|quarto|apto)?\s*(\d{3,4})\b/i.test(text)) {
+    const targetMatch = text.match(/\b(\d{3,4})\b/);
+    const targetFlatNum = targetMatch ? targetMatch[1] : null;
+    const res = guestContext?.reservation;
+    if (res && targetFlatNum) {
+      const realloc = handleReallocateReservationFlat(activeDb, {
+        reservationId: res.id,
+        targetFlatNumber: targetFlatNum,
+        reason: "Solicitação via WhatsApp pelo hóspede"
+      });
+      if (realloc.success) {
+        return ret(`${greetingSalutation} ${realloc.message} 🏨✨ Seu apartamento foi atualizado para o Flat ${targetFlatNum}!`);
+      } else {
+        return ret(`${greetingSalutation} Compreendo seu pedido para o Flat ${targetFlatNum}. ${realloc.message} Gostaria de verificar outro apartamento disponível? 😊`);
+      }
+    }
+  }
+
   // 9. Se for demanda operacional não atendida pela base de conhecimento
   if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
     const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
@@ -4446,14 +5012,14 @@ ${systemActionsNotice}
 `;
 
   const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
-  const { toneSection, guidelinesSection } = buildDynamicSystemInstruction(aiConfig, db, guestContext);
+  const { toneSection, guidelinesSection, flatsCatalogSection } = buildDynamicSystemInstruction(aiConfig, db, guestContext);
 
   // 3. Tenta responder via Google Gemini (com Function Calling adaptativo se disponível)
   if (apiKey) {
     try {
       const geminiRes = await callGeminiAi({
         apiKey,
-        systemInstruction: `${aiConfig.systemPrompt}\n${toneSection}${guidelinesSection}\n${contextString}`,
+        systemInstruction: `${aiConfig.systemPrompt}\n${toneSection}${guidelinesSection}\n${flatsCatalogSection || ""}\n${contextString}`,
         prompt: messageText,
         history,
         db,

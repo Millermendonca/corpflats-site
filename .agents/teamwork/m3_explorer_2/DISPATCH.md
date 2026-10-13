@@ -1,27 +1,23 @@
-# Dispatch — Milestone 3 Explorer 2 (FAQ UI & Hook Spec)
+## 2026-10-11T15:45:41Z
+You are M3 Explorer 2 for Milestone 3 of the CorpFlats Guest-Flow-Manager project.
 
-## Objective
-Design the complete UI implementation for Feature 8-11:
-1. Examine the backend REST API contract from Milestone 1 (`GET /api/whatsapp/faq`, `POST /api/whatsapp/faq`, `PUT /api/whatsapp/faq/:id`, `DELETE /api/whatsapp/faq/:id`, `POST /api/whatsapp/faq/:id/approve`).
-2. Design the hook `use-faq.ts` (or component state) to handle:
-   - loading, error, items list.
-   - search, category filter (all 9 categories), status filter ("Todas", "Ativas", "Perguntas Pendentes", "Sugestões de IA para Aprovar").
-   - create, update, delete, approve operations.
-3. Design the FAQ tab UI (`FaqKnowledgeBase`):
-   - Category cards summary and filter pills.
-   - Table or card list of FAQs with badges for status (`ativo` green, `pendente` yellow, `aguardando_aprovacao` purple/blue) and scope (`all` gray, `exclude` orange, `include_only` blue).
-   - 1-click approval button for items with `status === "aguardando_aprovacao"`.
-   - Create/Edit Modal Dialog:
-     - Question, Answer textarea, Category select (9 categories), Keywords input, Variations input.
-     - Exception Rule config: Scope radio/select (`all`, `exclude`, `include_only`) and Phone numbers input.
-4. Provide the exact implementation code ready for the worker.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_explorer_2
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
 
-Write `analysis.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
+Scope: Milestone 3 — Guest Portal UI Flow, Modals & Operational Panels.
+Focus: Re-Signature Banner in `guest-portal.tsx` & Fast-Track Re-signing flow in `guest-pre-checkin.tsx`.
 
-
-## 2026-10-11T04:20:17Z
-[Message] sender=27c61f6a-5652-421c-bbda-1b5d6be7db98 priority=MESSAGE_PRIORITY_HIGH
-Design the complete UI implementation for the new FAQ tab in whatsapp-automation.tsx (or subcomponent), use-faq hook, category cards/table view, 4 status filters, create/edit modal with exception configuration (all, exclude, include_only with phones), and 1-click approval button.
-Provide ready-to-use TypeScript/React code.
-Write analysis.md and handoff.md in your working directory.
-When done, notify me via send_message with a summary and handoff path.
+Tasks:
+1. Read ORIGINAL_REQUEST.md and PROJECT.md.
+2. Inspect `artifacts/limpeza/src/pages/guest-portal.tsx`:
+   - Design the prominent re-signature alert banner at the top of the Guest Portal and inside the Reservation Card whenever `reservation.needsReSignature === true`.
+   - Banner must include clear explanation: "Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."
+   - Button: "Assinar Termo Atualizado" linking directly to `/pre-checkin/${reservation.code}?resign=1`.
+3. Inspect `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`:
+   - Check lines where `resign=1` and `needsReSignature` are handled (e.g. lines 605-640, 2067-2080).
+   - Ensure the re-signing experience preserves all previously filled guest fields (name, CPF, phone, address, photo ID) so the guest does not have to re-fill anything.
+   - Ensure the signature canvas is cleared and ready for the fresh signature.
+   - Verify that upon submitting, the endpoint `POST /api/pms/pre-checkin` is called with the new signature and `resign=1`, redirecting back to the Guest Portal with success confirmation.
+4. Provide exact drop-in code blueprints for `guest-portal.tsx` and `guest-pre-checkin.tsx`.
+5. Write analysis to `analysis.md` and standard `handoff.md`. Send completion message when done.

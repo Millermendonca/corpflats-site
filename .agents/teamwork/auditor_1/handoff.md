@@ -1,193 +1,234 @@
-# Forensic Audit Report — Developer AI Coaching & Smart Training
+# Forensic Audit Report: Smart Flat Hub
 
-**Work Product**: Developer AI Coaching & WhatsApp Smart Training (`scripts/zapi-service.mjs`, `scripts/whatsapp-ai-service.mjs`, `artifacts/api-server/*`, `artifacts/limpeza/src/pages/whatsapp-chat.tsx`, `artifacts/limpeza/src/pages/whatsapp-automation.tsx`, `tests/developer-ai-coaching.test.mjs`)  
+**Work Product**: Smart Flat Hub (R1-R5) — Backend (`scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`), Frontend Sandbox (`artifacts/limpeza/src/pages/smart-flat-preview.tsx`, `artifacts/limpeza/src/components/smart-flat/`, `artifacts/limpeza/src/App.tsx`), Privacy Guard (`artifacts/limpeza/src/pages/guest-portal.tsx`), Test Suite (`tests/smart-flat-hub.test.mjs`), and Hardware Architecture (`docs/SMART_FLAT_HARDWARE_GUIDE.md`)  
+**Auditor**: Forensic Auditor (`auditor_1`)  
+**Parent / Caller**: Orchestrator (Conversation ID: `26335f75-5ae5-4381-97dc-4cdaaa103cfd`)  
 **Profile**: General Project  
 **Integrity Mode**: Development (per `ORIGINAL_REQUEST.md`)  
 **Verdict**: **CLEAN**
 
 ---
 
-## 1. Observation
+## 1. Observações Empíricas (Observation)
 
-### 1.1 Static Code Inspection — Implementation Authenticity
-1. **`isDeveloperPhone`** (`scripts/zapi-service.mjs:1183-1199` and `artifacts/api-server/zapi-service.mjs:1183-1199`):
-   ```javascript
-   export function isDeveloperPhone(rawPhone, db = null) {
-     if (!rawPhone) return false;
-     const digits = String(rawPhone).replace(/\D/g, "");
-     if (!digits) return false;
-     if (DEVELOPER_PHONES.includes(digits)) return true;
-     const clean = cleanWhatsAppPhone(digits);
-     if (clean === "5522998505276" || clean === "22998505276") return true;
-     if ((digits.endsWith("998505276") || digits.endsWith("98505276")) && (clean.startsWith("5522") || digits.startsWith("22"))) {
-       return true;
-     }
-     const configuredDev = db?.whatsappAiSettings?.developerPhone;
-     if (configuredDev) {
-       const cleanConfig = cleanWhatsAppPhone(configuredDev);
-       if (clean === cleanConfig || digits === String(configuredDev).replace(/\D/g, "")) return true;
-     }
-     return false;
-   }
-   ```
-   *Observation*: The function does not use a simplistic static check; it sanitizes digits (`\D`), inspects prefixes/suffixes (`998505276`, `98505276`, DDD `22`), supports formatted numbers, JID formats, and checks dynamic database configuration (`db?.whatsappAiSettings?.developerPhone`).
+### 1.1. Inspeção de Código-Fonte e Autenticidade Lógica (Fase 1: Zero Cheating / Sem Facades)
+- **Localização**: `scripts/demo-server.mjs:33550-34065` e `artifacts/api-server/demo-server.mjs:33550-34065`.
+- **Cálculo da Janela de Antecedência de 30min (R2)**:
+  ```javascript
+  const etaMinutes = parseTimeToMinutes(eta);
+  if (etaMinutes !== null) {
+    const allowedFromMinutes = (etaMinutes - 30 + 1440) % 1440;
+    scheduleAllowedFrom = minutesToTimeStr(allowedFromMinutes);
+  }
+  if (isEntered) {
+    canSchedule = true;
+    scheduleBlockReason = null;
+  } else if (!eta || etaMinutes === null) {
+    canSchedule = false;
+    scheduleAllowedFrom = null;
+    scheduleBlockReason = "Informe seu horário previsto de chegada para liberar a programação dos aparelhos.";
+  } else {
+    const allowedFromMinutes = (etaMinutes - 30 + 1440) % 1440;
+    if (currentMinutes < allowedFromMinutes) {
+      canSchedule = false;
+      scheduleBlockReason = `A programação só é permitida com até 30 minutos de antecedência da sua chegada (a partir das ${scheduleAllowedFrom} para chegada às ${eta}).`;
+    } else {
+      canSchedule = true;
+    }
+  }
+  ```
+  Não há valores mockados nem respostas pré-fabricadas. A fórmula computa o delta em minutos dinamicamente.
+- **Validação de Temperatura do Ar-Condicionado (18°C a 26°C)**:
+  Em `POST /api/smart-flat/:target/devices`:
+  ```javascript
+  if (ac && ac.targetTemperature !== undefined) {
+    const temp = Number(ac.targetTemperature);
+    if (isNaN(temp) || temp < 18 || temp > 26) {
+      return res.status(400).json({
+        ok: false,
+        error: "Temperatura inválida. O ar-condicionado só aceita temperaturas entre 18°C e 26°C."
+      });
+    }
+    smartFlat.devices.ac.targetTemperature = Math.round(temp);
+  }
+  ```
+  Temperaturas fora da faixa 18–26°C são ativamente rejeitadas com status HTTP 400.
+- **Ciclo de Vida Fail-Safe de Presença (R3)**:
+  Em `evaluateSmartFlatState`:
+  ```javascript
+  const shutoffMinutes = etaMinutes + 30;
+  if (currentMinutes >= etaMinutes && currentMinutes < shutoffMinutes) {
+    smartFlat.failSafe.warningActive = true;
+    smartFlat.failSafe.warningMessage = "Você já chegou? Não esqueça de informar sua entrada aqui.";
+    if (!smartFlat.failSafe.warningSentAt) {
+      smartFlat.failSafe.warningSentAt = new Date().toISOString();
+    }
+  } else if (currentMinutes >= shutoffMinutes) {
+    smartFlat.devices.coffeeMaker.power = false;
+    smartFlat.devices.ac.power = false;
+    smartFlat.failSafe.warningActive = false;
+    smartFlat.failSafe.warningMessage = null;
+    smartFlat.failSafe.shutoffTriggered = true;
+    smartFlat.failSafe.shutoffTriggeredAt = new Date().toISOString();
+    smartFlat.failSafe.shutoffReason = "Equipamento desligado automaticamente por questão de segurança e economia de energia.";
+  }
+  ```
+- **Loop Periódico em Background**:
+  `setInterval` a cada 60s inspeciona todos os flats em `db.smartFlats` e aciona o fail-safe ou ativação da playlist automaticamente.
 
-2. **`classifyDeveloperMessage`** (`scripts/whatsapp-ai-service.mjs:1436-1531`):
-   *Observation*: Implements genuine NLP heuristics with regex patterns for:
-   - `tone_calibration`: checks conciseness keywords (`mais curto`, `mais conciso`, `seja breve`), emoji directives (`sem emojis`, `menos emojis`, `bastante emojis`), and formality (`mais executiva`, `tom formal`, `mais descontraído`).
-   - `factual_coaching`: checks teaching markers (`Sofia, para o flat...`, `horário mudou para...`, `não diga que...`, `anote aí...`), extracts target flat numbers (`flatMatch = text.match(/\b(?:flat|apto|apartamento|quarto)\s*(\d{2,4})\b/i)`), and classifies categories (`cafe`, `checkin`, `checkout`, `wifi`, `garagem`, `pet`, `flat_<number>`).
-   - `guest_simulation`: defaults to concierge hospitality simulation when queries pertain to availability, amenities, or standard guest questions without coaching keywords.
+### 1.2. Isolamento Rigoroso de Privacidade (R1: Zero Vazamento para Hóspedes em Produção)
+- **`artifacts/limpeza/src/pages/guest-portal.tsx`**:
+  - `git diff artifacts/limpeza/src/pages/guest-portal.tsx`: 0 linhas adicionadas, 0 modificadas, 0 removidas (arquivo 100% intocado).
+  - Busca de termos domóticos (`smart-flat`, `smartFlat`, `cafeteira`, `ar-condicionado`) no arquivo: **0 ocorrências**.
+- **`artifacts/limpeza/src/App.tsx:170-189`**:
+  - Rota de preview isolada:
+    ```tsx
+    function GuestPortalWrapper(props: any) {
+      if (typeof window !== 'undefined') {
+        const sp = new URLSearchParams(window.location.search);
+        if (sp.get('preview') === 'smart_flat') {
+          return <SmartFlatPreview />;
+        }
+      }
+      return <GuestPortal {...props} />;
+    }
+    ```
+  - As rotas `/preview/smart-flat/:code`, `/preview/smart-flat`, `/admin/smart-flat-preview/:code` e `/admin/smart-flat-preview` são dedicadas e acessíveis apenas sob requisição explícita de preview.
 
-3. **`applyToneCalibration`** (`scripts/whatsapp-ai-service.mjs:1553-1588`):
-   *Observation*: Genuinely mutates `db.whatsappAiSettings.toneSettings` (conciseness, emojiUsage, formality, customRules) and synchronizes with `db.zapiConfig.aiAgent`, updating the persistent `systemPrompt` via `updateSystemPromptTone` while preserving existing hotel policies.
+### 1.3. Mandato de Paridade Twin-Server (SHA-256)
+- **Comando executado**:
+  ```bash
+  node -e "const crypto = require('crypto'), fs = require('fs');
+  const pairs = [
+    ['scripts/demo-server.mjs', 'artifacts/api-server/demo-server.mjs'],
+    ['scripts/zapi-service.mjs', 'artifacts/api-server/zapi-service.mjs'],
+    ['scripts/whatsapp-ai-service.mjs', 'artifacts/api-server/whatsapp-ai-service.mjs'],
+    ['scripts/server-monitor-service.mjs', 'artifacts/api-server/server-monitor-service.mjs']
+  ];
+  for (const [p1, p2] of pairs) {
+    const h1 = crypto.createHash('sha256').update(fs.readFileSync(p1)).digest('hex');
+    const h2 = crypto.createHash('sha256').update(fs.readFileSync(p2)).digest('hex');
+    console.log(p1, '===', p2, ':', h1 === h2);
+  }"
+  ```
+- **Resultado verbatim**:
+  - `scripts/demo-server.mjs` hash: `394fed4c9412bf29672dfd81ab153ffee564dd40f8cbf5cc1611c23592fee5b3`
+  - `artifacts/api-server/demo-server.mjs` hash: `394fed4c9412bf29672dfd81ab153ffee564dd40f8cbf5cc1611c23592fee5b3`
+  - `scripts/demo-server.mjs === artifacts/api-server/demo-server.mjs : true`
+  - `scripts/zapi-service.mjs === artifacts/api-server/zapi-service.mjs : true`
+  - `scripts/whatsapp-ai-service.mjs === artifacts/api-server/whatsapp-ai-service.mjs : true`
+  - `scripts/server-monitor-service.mjs === artifacts/api-server/server-monitor-service.mjs : true`
+- **Conformidade de Paridade**: **100% IDÊNTICO**.
 
-4. **`buildDynamicSystemInstruction`** (`scripts/whatsapp-ai-service.mjs:1691-1728`):
-   *Observation*: Assembles dynamic Gemini prompt blocks for active tone settings (`[DIRETRIZES DE ESTILO & CALIBRAÇÃO DE TOM EM VIGOR]`) and active developer guidelines (`[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]`), dynamically injecting them into LLM generation and heuristic responses (`applyToneFormatting`).
+### 1.4. Execução Estritamente Pontual de Testes (AGENTS.md Compliance)
+- **Comando executado**: `node --test tests/smart-flat-hub.test.mjs`
+- **Resultado verbatim**:
+  ```
+  TAP version 13
+  # Subtest: Smart Flat Hub: Utilitários de Tempo (parseTimeToMinutes & minutesToTimeStr)
+  ok 1 - Smart Flat Hub: Utilitários de Tempo (parseTimeToMinutes & minutesToTimeStr)
+  # Subtest: Smart Flat Hub: Estado Padrão Inicial (createDefaultSmartFlatState)
+  ok 2 - Smart Flat Hub: Estado Padrão Inicial (createDefaultSmartFlatState)
+  # Subtest: Smart Flat Hub: Janela de Antecedência de 30min (R2)
+  ok 3 - Smart Flat Hub: Janela de Antecedência de 30min (R2)
+  # Subtest: Smart Flat Hub: Ciclo Fail-Safe de Presença (R3)
+  ok 4 - Smart Flat Hub: Ciclo Fail-Safe de Presença (R3)
+  # Subtest: Smart Flat Hub: Ativação Automática da Trilha Sonora no Dia do Check-in (R4)
+  ok 5 - Smart Flat Hub: Ativação Automática da Trilha Sonora no Dia do Check-in (R4)
+  # Subtest: Smart Flat Hub: Endpoints HTTP via API REST
+  ok 6 - Smart Flat Hub: Endpoints HTTP via API REST
+  1..6
+  # tests 6
+  # pass 6
+  # fail 0
+  # cancelled 0
+  # skipped 0
+  # duration_ms 2469.6884
+  ```
+- Nenhum teste global ou varredura em lote (`tests/*.test.mjs`) foi executado.
 
-5. **`POST /api/whatsapp/chat/:phone/correct-message`** (`scripts/zapi-service.mjs:7009-7082`):
-   *Observation*: Handles 1-click rectification from web chat operators:
-   - Persists learned guideline via `saveDeveloperGuideline(db, ...)`.
-   - Sends rectification WhatsApp message via `sendZapiMessage(db.zapiConfig, { phone: cleanPhone, message: messageToSend, bypassTestMode: true })`.
-   - Appends message to conversation history with status `sent` or `failed`.
-   - Executes `saveDatabase()` to persist state to disk.
+### 1.5. Build de Produção do Frontend
+- **Comando executado**: `npm --prefix artifacts/limpeza run build` (task-72)
+- **Resultado verbatim**:
+  ```
+  > @workspace/limpeza@0.0.0 build
+  > vite build --config vite.config.ts
 
-6. **Web Chat Frontend UI** (`artifacts/limpeza/src/pages/whatsapp-chat.tsx:1466-1478` and `2219-2280`):
-   *Observation*: The button `"✏️ Corrigir / Ensinar Sofia"` is displayed on all Sofia messages (`isFromMe && !msg.triggerEvent && msg.senderName?.toLowerCase().includes('sofia')`), opening a full Dialog that captures guidelines, provides editable rectification text, allows toggling whether to send to the guest, and posts to `/api/whatsapp/chat/${activePhone}/correct-message`.
+  ✓ 3369 modules transformed.
+  rendering chunks...
+  computing gzip size...
+  dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+  dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+  dist/public/assets/index.css                      407.47 kB │ gzip:  49.85 kB
+  dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+  dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+  dist/public/assets/index.js                     3,436.18 kB │ gzip: 825.46 kB
+  ✓ built in 32.80s
+  ```
+- **Código de Saída**: **0** (compilação limpa, zero erros de TypeScript ou Rollup).
 
-7. **Automation Settings Frontend UI** (`artifacts/limpeza/src/pages/whatsapp-automation.tsx:2400-2470`):
-   *Observation*: Contains the card `"Diretrizes & Calibrações Aprendidas"`, displaying active guidelines, allowing manual addition, edition, status toggling, deletion, and showing provenance badges (`📱 WhatsApp Dev`, `🖥️ Chat Web`, `⚙️ Manual`).
-
-### 1.2 Twin-Server SHA-256 Parity
-Tool Command:
-```javascript
-node -e "const fs = require('fs'); const crypto = require('crypto'); function h(p) { return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); } const pairs = [['scripts/zapi-service.mjs', 'artifacts/api-server/zapi-service.mjs'], ['scripts/whatsapp-ai-service.mjs', 'artifacts/api-server/whatsapp-ai-service.mjs'], ['scripts/demo-server.mjs', 'artifacts/api-server/demo-server.mjs'], ['scripts/server-monitor-service.mjs', 'artifacts/api-server/server-monitor-service.mjs']]; pairs.forEach(([a, b]) => { const ha = h(a); const hb = h(b); console.log(a, '==', b, ':', ha === hb, ha); });"
-```
-Verbatim Results:
-```text
-scripts/zapi-service.mjs == artifacts/api-server/zapi-service.mjs : true 9bdff7c22d083e1b47c38e9f424c7610751a421625378af2428145bab3f1ab06
-scripts/whatsapp-ai-service.mjs == artifacts/api-server/whatsapp-ai-service.mjs : true 36d0f998ffa73cf00a74dea016cc3845a5892c0c5f03d40bedc5ae59cbcb8425
-scripts/demo-server.mjs == artifacts/api-server/demo-server.mjs : true
-scripts/server-monitor-service.mjs == artifacts/api-server/server-monitor-service.mjs : true
-```
-*Observation*: 100% SHA-256 byte parity verified across all twin-server file pairs.
-
-### 1.3 Behavioral Verification (Single-Point Test Only)
-Tool Command:
-```bash
-node --test tests/developer-ai-coaching.test.mjs
-```
-Verbatim Output:
-```text
-TAP version 13
-# [WhatsApp AI] Imunidade do Desenvolvedor ativada para 5522998505276: restaurando aiPaused = false.
-# [WhatsApp AI Developer Mode] Simulação de Hóspede por 5522998505276: gerando resposta como Sofia Concierge.
-# [Auto-Aprendizado FAQ] Nova dúvida não mapeada registrada como pendente: "Qual horário de check-in?" (5522998505276)
-# Subtest: R1: Reconhecimento de Telefone do Desenvolvedor (isDeveloperPhone)
-ok 1 - R1: Reconhecimento de Telefone do Desenvolvedor (isDeveloperPhone)
-# Subtest: R1: Imunidade a aiPaused em appendMessageToConversation e linkOperatorResponse
-ok 2 - R1: Imunidade a aiPaused em appendMessageToConversation e linkOperatorResponse
-# Subtest: R1: Imunidade e Auto-Unpause de Desenvolvedor em processAiInboundMessage
-ok 3 - R1: Imunidade e Auto-Unpause de Desenvolvedor em processAiInboundMessage
-# Subtest: R2: Classificação Tri-Modal de Mensagens do Desenvolvedor
-ok 4 - R2: Classificação Tri-Modal de Mensagens do Desenvolvedor
-# Subtest: R2: Execução de Calibração de Tom via WhatsApp (Anti-Papagaio)
-ok 5 - R2: Execução de Calibração de Tom via WhatsApp (Anti-Papagaio)
-# Subtest: R3: Execução de Treinamento Factual via WhatsApp
-ok 6 - R3: Execução de Treinamento Factual via WhatsApp
-# Subtest: R3 & R4: Endpoint POST /api/whatsapp/chat/:phone/correct-message e CRUD de Diretrizes
-ok 7 - R3 & R4: Endpoint POST /api/whatsapp/chat/:phone/correct-message e CRUD de Diretrizes
-# Subtest: R4: Reflexo Dinâmico das Calibrações e Diretrizes no Atendimento ao Hóspede
-ok 8 - R4: Reflexo Dinâmico das Calibrações e Diretrizes no Atendimento ao Hóspede
-1..8
-# tests 8
-# suites 0
-# pass 8
-# fail 0
-# cancelled 0
-# skipped 0
-# todo 0
-# duration_ms 5136.5521
-```
-*Observation*: 8 tests executed, 8 passed, 0 failed. Strictly pontual test execution in accordance with `AGENTS.md`.
-
-### 1.4 Production Frontend Build
-Tool Command:
-```bash
-npm --prefix artifacts/limpeza run build
-```
-Verbatim Output:
-```text
-vite v7.3.6 building client environment for production...
-✓ 3369 modules transformed.
-rendering chunks...
-computing gzip size...
-dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
-dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
-dist/public/assets/index.css                      407.47 kB │ gzip:  49.85 kB
-dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
-dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
-dist/public/assets/index.js                     3,436.18 kB │ gzip: 825.46 kB
-✓ built in 30.33s
-Exit code: 0
-```
-*Observation*: Production build succeeded with code 0 and legitimate distribution artifacts.
+### 1.6. Status de Git e Envio Remoto
+- **Commits pertinentes**:
+  - `9139667`: `feat(smart-flat): implement backend engine, fail-safe lifecycle, twin-server parity and iot hardware guide`
+  - `757d57c`: `feat(whatsapp): implementar modo desenvolvedor e treinamento inteligente com paridade twin e retificacao no chat` (inclui componentes frontend smart-flat e build)
+- **`git status -uno`**: `Your branch is up to date with 'origin/main'`.
 
 ---
 
-## 2. Logic Chain
+## 2. Cadeia Lógica Forense (Logic Chain)
 
-1. **Absence of Facades / Hardcoded Cheat Results**:
-   - Observations 1.1.1 through 1.1.5 demonstrate that core methods (`isDeveloperPhone`, `classifyDeveloperMessage`, `applyToneCalibration`, `buildDynamicSystemInstruction`, `correct-message`) implement parameterized algorithms with regex normalization, token parsing, state mutation, and persistence.
-   - The test in `tests/developer-ai-coaching.test.mjs` exercises arbitrary permutations (formatted numbers, missing digits, guest queries, coaching statements, HTTP endpoints, CRUD mutations) and verifies actual mutation of database objects and generation of outbound messages. No mocked constant shortcuts were identified.
-
-2. **Compliance with Anti-Papagaio and Non-Literal Execution**:
-   - Observation 1.1.2 and 1.1.3 confirm that when the developer sends style directives (e.g., *"responda de forma mais curta por favor"*), Sofia does not parrot the command or treat it as a literal guest query. Instead, it classifies it as `tone_calibration`, updates `toneSettings`, adjusts `systemPrompt`, and responds with a 3-part confirmation: polite acknowledgement, guideline summary, and immediate practical sample in the new tone (Observation 1.3, test 5).
-
-3. **Parity and Deployment Consistency**:
-   - Observation 1.2 proves 100% SHA-256 byte parity between `scripts/` and `artifacts/api-server/` for all affected backend files (`zapi-service.mjs`, `whatsapp-ai-service.mjs`), satisfying Requirement R4 and the Twin-Server Parity Mandate.
-
-4. **Build and Layout Integrity**:
-   - Observation 1.4 confirms that the frontend build in `artifacts/limpeza` completed with 0 errors, updating `dist/public/` with authentic JavaScript and CSS bundles reflecting the newly integrated rectification dialog and guidelines card.
+1. **A partir da Observação 1.1**:
+   A lógica de `evaluateSmartFlatState` e dos endpoints `/api/smart-flat/*` realiza manipulações matemáticas autênticas: calcula horários de corte `etaMinutes + 30`, janelas de liberação `(etaMinutes - 30 + 1440) % 1440`, e bloqueia/rejeita comandos fora do escopo permitido (ex: ar-condicionado a 15°C retorna HTTP 400). Não há constantes pré-fixadas para enganar asserções de teste.
+2. **A partir da Observação 1.2**:
+   O arquivo de produção `guest-portal.tsx` permaneceu inalterado e não contém referências a recursos do Smart Flat Hub. O acesso é exclusivamente possível através de `/preview/smart-flat` ou do parâmetro de busca explícito `?preview=smart_flat`, comprovando blindagem de privacidade e cumprimento total de R1.
+3. **A partir da Observação 1.3**:
+   A comparação criptográfica por SHA-256 entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` retornou equivalência perfeita (`true`). O mesmo ocorre para os outros pares gêmeos do sistema, assegurando paridade de 100%.
+4. **A partir da Observação 1.4**:
+   O teste automatizado pontual `tests/smart-flat-hub.test.mjs` executa requisições de rede reais via servidor HTTP em porta efêmera e asserções unitárias sobre funções matemáticas de tempo, obtendo 100% de aprovação (6/6). Nenhuma regra de restrição de testes do `AGENTS.md` foi violada.
+5. **A partir das Observações 1.5 e 1.6**:
+   O frontend compila sem erros com Vite (`npm run build` código 0), os artefatos de `dist/` estão presentes e o repositório local está sincronizado com `origin/main`.
 
 ---
 
-## 3. Caveats
+## 3. Ressalvas e Limitações (Caveats)
 
-- **No Caveats**. Physical SMS/WhatsApp transmission to external telecom carriers is handled via the mock/bypass mechanisms in local testing as intended by the project test infrastructure; live runtime execution in production depends on Z-API instance status and network connectivity.
-
----
-
-## 4. Conclusion
-
-The work product satisfies all forensic integrity criteria under Development Mode:
-- Zero hardcoded test results or facade methods.
-- Legitimate, parameterized NLP classification and state management.
-- 100% SHA-256 byte parity across twin-server directories.
-- 100% pass rate on the strictly pontual test suite (`tests/developer-ai-coaching.test.mjs`).
-- Clean, error-free production frontend build.
-
-**Final Verdict**: **CLEAN**
+- **Dispositivos Físicos**: Os aparelhos inteligentes (tomadas 16A, smart IR blasters com sensor TH, caixas Echo Pop) ainda serão adquiridos fisicamente pela administração conforme o guia de compras em `docs/SMART_FLAT_HARDWARE_GUIDE.md`. A implementação atual atua como um Gêmeo Digital (Digital Twin) de alta fidelidade e emula com precisão os estados e comportamentos dos dispositivos.
+- **Autoplay em Navegadores**: Conforme políticas de segurança dos navegadores modernos (Chrome/Safari), a reprodução automática de áudio depende de uma primeira interação do usuário (clique/toque) na página. O player visual em `WelcomeMusicPlayer.tsx` sinaliza o estado imediatamente e inicializa a síntese sonora suave no primeiro toque.
 
 ---
 
-## 5. Verification Method
+## 4. Conclusão e Veredito (Conclusion)
 
-To independently verify this audit:
+A auditoria forense independente conclui que o trabalho entregue no **Smart Flat Hub (R1-R5)** é autêntico, seguro, completamente isolado de hóspedes reais e em conformidade estrita com todas as diretrizes do `ORIGINAL_REQUEST.md`, `PROJECT.md` e `AGENTS.md`.
 
-1. **Verify Twin-Server SHA-256 Parity**:
-   ```powershell
-   node -e "const fs = require('fs'); const crypto = require('crypto'); function h(p) { return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); }; console.log('zapi-service match:', h('scripts/zapi-service.mjs') === h('artifacts/api-server/zapi-service.mjs')); console.log('whatsapp-ai match:', h('scripts/whatsapp-ai-service.mjs') === h('artifacts/api-server/whatsapp-ai-service.mjs'));"
-   ```
-   *Expected*: Both return `true`.
+**Veredito Forense**: **CLEAN** (Aprovado sem qualquer violação de integridade).
 
-2. **Execute Pontual Automated Test**:
+---
+
+## 5. Método de Verificação Independente (Verification Method)
+
+Qualquer agente ou operador pode verificar independentemente estas conclusões executando:
+
+1. **Teste Pontual Dedicado**:
    ```bash
-   node --test tests/developer-ai-coaching.test.mjs
+   node --test tests/smart-flat-hub.test.mjs
    ```
-   *Expected*: 8 subtests pass, 0 fail (exit code 0).
+   *Critério de Sucesso*: 6/6 testes aprovados, código de saída 0.
 
-3. **Execute Frontend Production Build**:
+2. **Paridade SHA-256 dos Servidores Twin**:
+   ```bash
+   node -e "const c=require('crypto'),f=require('fs'); console.log(c.createHash('sha256').update(f.readFileSync('scripts/demo-server.mjs')).digest('hex') === c.createHash('sha256').update(f.readFileSync('artifacts/api-server/demo-server.mjs')).digest('hex'))"
+   ```
+   *Critério de Sucesso*: Imprime `true`.
+
+3. **Verificação de Ausência de Modificações no Portal de Produção**:
+   ```bash
+   git diff artifacts/limpeza/src/pages/guest-portal.tsx
+   ```
+   *Critério de Sucesso*: Saída vazia (zero diff).
+
+4. **Build do Frontend**:
    ```bash
    npm --prefix artifacts/limpeza run build
    ```
-   *Expected*: Clean Vite build, code 0.
+   *Critério de Sucesso*: Código de saída 0 em ~30s.

@@ -1,63 +1,60 @@
-# BRIEFING — 2026-10-11T03:47:00Z
+# BRIEFING — 2026-10-11T15:35:00Z
 
 ## Mission
-Adversarial review and quality verification for Milestone 2 (Sofia Motor Integration, Dynamic FAQ Injection, Client Exceptions, Auto-Learning, Operator Response Capture).
+Conduct rigorous independent quality and adversarial review for Milestone 2 (Re-signature, operations sync, FNRH invalidation & twin server parity) of CorpFlats Guest-Flow-Manager.
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_2
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Milestone 2
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Milestone: Milestone 2 (M2)
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Actively check for integrity violations (hardcoded test results, facade implementations, shortcuts, fake tests)
-- Twin-Server Parity Mandate: exact byte-by-byte SHA-256 match between `artifacts/api-server/` and `scripts/`
-- AGENTS.md rule: build verification when applicable, git push immediately on commits
+- Check for integrity violations (hardcoded test results, facade logic, bypassed checks, fabricated verification)
+- Do NOT run global or batch tests; execute only strictly targeted test commands specified in dispatch
+- Byte-for-byte SHA-256 parity between twin servers must be verified
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T03:47:00Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: not yet
 
 ## Review Scope
-- **Files to review**:
-  - `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`
-  - `tests/whatsapp-ai-agent.test.mjs`
-  - `data/database.json` (initial FAQs and schema)
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, `m2_worker/handoff.md`
-- **Review criteria**: correctness, completeness, edge case handling, adversarial stress-testing, integrity, twin-server parity
-
-## Key Decisions Made
-- Executed full test verification: `whatsapp-ai-agent.test.mjs` (24/24 pass in 4.78s), SHA-256 parity 100% OK.
-- Executed adversarial suites and discovered Major Bug: `faq-loucas` captures general query *"Como funciona o café da manhã?"* due to broad category token match (`"cafe"` and `"manha"`), causing `tests/challenger-m2-c1-injection-heuristic.test.mjs` to fail.
-- Discovered Resilience Bug: `process.exit` re-introduced in `tests/whatsapp-ai-agent.test.mjs:1227`, breaking `tests/challenger-m2-resilience-stress.test.mjs`.
-- Issued definitive verdict: **REQUEST_CHANGES**.
-
-## Artifact Index
-- `.agents/teamwork/m2_reviewer_2/DISPATCH.md` — Incoming task specifications
-- `.agents/teamwork/m2_reviewer_2/BRIEFING.md` — Agent state and memory
-- `.agents/teamwork/m2_reviewer_2/progress.md` — Liveness heartbeat and progress
-- `.agents/teamwork/m2_reviewer_2/review.md` — In-depth review findings (verdict: REQUEST_CHANGES)
-- `.agents/teamwork/m2_reviewer_2/handoff.md` — Final 5-component handoff report
+- **Files to review**: `scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `scripts/zapi-service.mjs`, `artifacts/api-server/zapi-service.mjs`, `scripts/fnrh-pdf-service.mjs`, `artifacts/api-server/fnrh-pdf-service.mjs`, `scripts/mail-service.mjs`, `artifacts/api-server/mail-service.mjs`, `tests/m2-re-signature-operations-sync.test.mjs`, `tests/m1-reservation-modification-settlement.test.mjs`, `handoff.md` of `m2_worker_1`
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
+- **Review criteria**: Correctness, security & edge cases, integrity, twin server parity, targeted test execution
 
 ## Review Checklist
 - **Items reviewed**:
-  - Worker handoff report: inspected
-  - Test suite `tests/whatsapp-ai-agent.test.mjs`: verified (24 pass, 4.78s)
-  - Code implementation in `whatsapp-ai-service.mjs` and `zapi-service.mjs`: verified
-  - Twin-server parity: verified (100% SHA256 match)
-  - Adversarial regression suites: verified (failures identified)
-- **Verdict**: REQUEST_CHANGES
-- **Unverified claims**: None. All core claims empirically verified.
+  - `invalidateReservationCheckinSignatures` in `demo-server.mjs` (lines 13762, 13930, 15909, 17114)
+  - Admin update override resistance in `PUT /api/pms/reservations/:id` (lines 13979-14001)
+  - Stale FNRH PDF & UUID purge in `invalidateReservationCheckinSignatures` and `handleFnrhServe`
+  - Physical check-in blocking on reception tablet (`GET /api/reception/today` and `POST /api/reception/checkin/:id`)
+  - Dynamic `?resign=1` URL appendage in `getCheckinUrlSync` and `getCheckinUrl` in both `zapi-service.mjs` and `demo-server.mjs`
+  - Re-signature forensic PDF generation and SHA-256 hash delivery via `sendEmailAsync` in `POST /api/pms/pre-checkin`
+  - Schedulers sync: `morningEmailSentDate` reset, breakfast orders cancel/transfer, turnover cleaning shift
+  - Twin-server parity across all pairs
+  - Execution of targeted test suites `tests/m2-re-signature-operations-sync.test.mjs` and `tests/m1-reservation-modification-settlement.test.mjs`
+- **Verdict**: APPROVE
+- **Unverified claims**: None remaining. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Heuristic collision between specific FAQ and generic questions -> CONFIRMED FAILURE (Finding 1)
-  - Zero `process.exit` policy in tests -> CONFIRMED FAILURE (Finding 2)
-  - False positive on greeting "Tudo bem?" -> CONFIRMED FAILURE (Finding 3)
-  - Categorization priority masking pets -> CONFIRMED FAILURE (Finding 4)
-  - Accent sensitivity in deduplication -> CONFIRMED FAILURE (Finding 5)
-- **Vulnerabilities found**: 2 Major regressions, 3 Minor edge case bugs
+  - Re-signature invalidation bypass via stale `req.body.guests`: Defended (explicitly re-enforced after field assignment)
+  - Access to stale pre-modification agreements: Defended (UUIDs/URLs cleared from reservations and guest objects)
+  - Reception tablet unauthorized check-in while `needsReSignature === true`: Defended (blocked with HTTP 400 and `canAuthorizeEntry: false`)
+  - WhatsApp dynamic link generation without `?resign=1`: Defended (`getCheckinUrlSync` enforces `?resign=1` and bypasses Gov.br)
+  - Integrity violation / hardcoded mock detection: Clean (no hardcoded test IDs or facade logic)
+- **Vulnerabilities found**: None. All core invariant guards are strict.
+- **Untested angles**: Full frontend UI visual interaction on tablet/mobile (reserved for Milestone 3).
+
+## Key Decisions Made
+- Independent verification confirmed 100% compliance with security criteria and parity mandates. Issuing APPROVE verdict.
+
+## Artifact Index
+- DISPATCH.md — incoming dispatch instructions
+- BRIEFING.md — persistent working memory
+- progress.md — liveness heartbeat
+- handoff.md — final review report and verdict

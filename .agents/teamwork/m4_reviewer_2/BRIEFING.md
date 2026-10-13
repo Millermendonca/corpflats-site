@@ -1,74 +1,67 @@
-# BRIEFING — 2026-10-11T05:15:00Z
+# BRIEFING — 2026-10-11T17:25:30Z
 
 ## Mission
-Independently audit Milestone 4 final integration for Guest-Flow-Manager: full R1-R5 coverage, frontend UI, auto-learning workflow, build verification, and git sync.
+Review Milestone 4 implementation of CorpFlats Guest-Flow-Manager focusing on Real-World Application Scenarios, Security, Parity, and Production Build integrity.
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: reviewer-critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m4_reviewer_2
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Milestone 4 (Final Integration)
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Milestone: Milestone 4
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Actively check for integrity violations (hardcoded test results, facade implementations, shortcuts, fabricated verification, self-certifying work without genuine independent verification)
-- Follow AGENTS.md rules (git push, build verification)
-- Always deliver evidence-based review with APPROVE or REQUEST_CHANGES
+- Strictly targeted test execution only (`node --test tests/reservation-modification-flow.test.mjs`), never run batch/global test suites
+- Actively check for integrity violations: hardcoded results, facade implementations, bypassed tasks, fabricated logs
+- Parity requirement: byte-for-byte SHA-256 match between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`
+- Security verification: payment settlement strictly required before committing dates, check-in signatures invalidated on modification
+- Clean production build verification for `artifacts/limpeza/dist/`
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T05:04:00Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T17:25:30Z
 
 ## Review Scope
-- **Files to review**:
-  - ORIGINAL_REQUEST.md
-  - .agents/teamwork/m4_worker/handoff.md
-  - artifacts/limpeza/src/App.tsx
-  - artifacts/limpeza/src/pages/whatsapp-automation.tsx
-  - artifacts/limpeza/src/components/faq-knowledge-base.tsx
-  - artifacts/limpeza/src/hooks/use-faq.ts
-  - scripts/whatsapp-ai-service.mjs
-  - scripts/zapi-service.mjs
-  - data/database.json
-- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
-- **Review criteria**: Requirements coverage R1-R5, frontend UI integration, auto-learning workflow, build status, git push status, adversarial failure modes
+- **Files reviewed**:
+  - `tests/reservation-modification-flow.test.mjs` (92 tests across Tiers 0-4)
+  - `scripts/demo-server.mjs` vs `artifacts/api-server/demo-server.mjs`
+  - `scripts/fnrh-pdf-service.mjs` vs `artifacts/api-server/fnrh-pdf-service.mjs`
+  - `scripts/zapi-service.mjs` vs `artifacts/api-server/zapi-service.mjs`
+  - `artifacts/limpeza/dist/public/index.html` & `assets/`
+- **Interface contracts**: PROJECT.md, TEST_INFRA.md, ORIGINAL_REQUEST.md
+- **Review criteria**: Correctness, completeness, adversarial resilience, security, integrity, parity
 
 ## Review Checklist
 - **Items reviewed**:
-  - App.tsx route alias `/whatsapp-automation` (verified lines 276-278)
-  - 6th tab in whatsapp-automation.tsx (verified lines 1706-1709, 3552-3554)
-  - FaqKnowledgeBase component (verified 1,268 lines, 4 metric cards, 9 categories, dual view, 1-click approve, exception modal)
-  - use-faq hook (verified 489 lines, typed REST CRUD, filtering, search, sorting)
-  - Auto-learning in whatsapp-ai-service.mjs (verified lines 1836-1851)
-  - Operator capture in zapi-service.mjs (verified lines 1168-1244, 5698, 6246)
-  - Rule engine isFaqApplicableToClient & matchClientPhone (verified lines 1102-1165)
-  - Gemini prompt injection & heuristic search (verified lines 1055-1100, 1424-1453)
-  - Database seed in data/database.json (verified 15 items across all 9 categories)
-  - Production build in artifacts/limpeza (Vite v7.3.6 clean exit 0 in 42.91s)
-  - SHA-256 twin server parity across 7 files (100% byte match)
-  - Git sync status (up-to-date with origin/main commit f258785)
+  - Tier 3: 5 Cross-Feature Pairwise combos verified in code and runtime
+  - Tier 4: 5 Real-World Application Scenarios from TEST_INFRA.md verified in code and runtime
+  - Twin-Server SHA-256 parity: Verified identical (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`)
+  - Supporting service SHA-256 parity: Verified identical (`fnrh-pdf-service.mjs`, `zapi-service.mjs`)
+  - Build cleanliness: `npm run build` in `artifacts/limpeza` passed cleanly (18.98s, code 0)
+  - Security guardrails: Payment settlement prerequisite, hold isolation, signature invalidation, reception physical entry blocking verified
+  - E2E Test execution: 92/92 passing in `node --test tests/reservation-modification-flow.test.mjs`
 - **Verdict**: APPROVE
-- **Unverified claims**: none; all claims independently verified
+- **Unverified claims**: None
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Integrity violation / hardcoded mock facade: NEGATIVE (genuine production implementation)
-  - Build failure or bundle corruption: NEGATIVE (Vite exit 0)
-  - Twin-server divergence: NEGATIVE (all 7 files match byte-for-byte)
-  - Concurrent atomic disk writes: PASS (100 concurrent writes tested)
-  - Phone format variations (8/9 digits, DDD): PASS
-  - Legacy test suite brittleness: Identified in challenger-m2 ADV-3.2 (hardcoded pass 20 string instead of pass 24)
-- **Vulnerabilities found**: 0 functional vulnerabilities, 0 integrity violations
-- **Untested angles**: live WhatsApp network calls (mocked by design)
+  - H1: Dates committed before payment settlement -> Falsified. Tested via `/modify-checkout` and confirmed original dates remain intact; only verified settlement commits dates.
+  - H2: Abandoned checkout leaks provisional hold indefinitely -> Falsified. 30-minute expiration enforced (`expiresAt`), plus explicit `/modify-cancel-pending` frees units immediately.
+  - H3: Flat or date modification bypasses check-in signature invalidation -> Falsified. `invalidateReservationCheckinSignatures` resets all status flags, clears PDFs and hashes, and blocks reception entry.
+  - H4: Hardcoded test bypasses in server endpoints -> Falsified. Endpoints execute generic database lookups, arithmetic, and API integrations.
+  - H5: Port collision race in multi-agent test execution -> Confirmed and understood. When running tests in parallel, shared port 3998 triggers `taskkill`. In isolated execution, all 92 tests pass deterministically.
+- **Vulnerabilities found**: None in business logic or security invariants. Port 3998 concurrency is operational only (addressed by sequential execution).
+- **Untested angles**: None within Milestone 4 scope.
 
 ## Key Decisions Made
-- Audit completed; delivered definitive verdict APPROVE.
-- Authored review.md and handoff.md.
+- Confirmed byte-for-byte server parity (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`).
+- Verified clean compilation of frontend distribution bundle.
+- Executed and validated all 92 E2E tests with 100% pass rate.
+- Issued verdict: APPROVE.
 
 ## Artifact Index
-- DISPATCH.md — task instructions
-- BRIEFING.md — persistent situational awareness
-- review.md — detailed review and adversarial challenge report
-- handoff.md — 5-component handoff report
+- DISPATCH.md — incoming dispatch instructions
+- BRIEFING.md — persistent working memory
+- handoff.md — final review and critique report

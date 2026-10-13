@@ -1,83 +1,37 @@
-# Relatório Final de Handoff — Sentinel
+# Handoff Report — Project Sentinel (Smart Flat Hub)
 
-**Projeto**: Sistema Autônomo de Testes Sintéticos E2E (CorpFlats / Guest-Flow-Manager)  
-**Data**: 2026-10-11T07:25:00Z  
-**Autor**: Sentinel (`87f47a2d-0348-4f3f-bed1-92315490afd0`)  
-**Parent Agent**: `parent` (`d884b9f0-6ee0-404b-8280-69426ab2af2c`)  
-**Status**: Concluído com Sucesso  
-**Veredito da Auditoria de Vitória**: **VICTORY CONFIRMED**
+## Observation
+O projeto Smart Flat Hub foi solicitado com cinco requisitos primários (R1 a R5):
+1. Interface Web do Hóspede em modo sandbox / preview oculto com zero exposição a hóspedes reais no portal de produção (`guest-portal.tsx`).
+2. Programação inteligente de cafeteira e climatização (18°C a 26°C) bloqueada para horários anteriores a 30 minutos antes do ETA.
+3. Ciclo fail-safe de presença com alerta preventivo e desligamento automático compulsório após 30 minutos do ETA sem confirmação de entrada.
+4. Trilha sonora de boas-vindas com disparo automático no dia do check-in a partir do horário oficial (14:00) e controles de áudio.
+5. Guia completo de arquitetura de hardware IoT e especificações para aquisição de equipamentos para os 19 flats do Soho Residence Service.
 
----
+A equipe executou o projeto sob o Orquestrador `orchestrator_8`, dividindo a execução entre especialistas de UI Frontend, Engenharia de Backend/IoT e um Gate rigoroso de revisão e auditoria.
 
-## 1. Observation
+## Logic Chain
+1. **Roteamento**: A tarefa foi avaliada como um projeto multidisciplinar de engenharia de software e hardware, sendo roteada para a trilha Geral (`teamwork_preview_orchestrator`).
+2. **Execução & Monitoramento**: Crons de acompanhamento periódico (8min) e heartbeat (10min) mantiveram a supervisão contínua dos arquivos e da saúde da equipe.
+3. **Isolamento Absoluto (R1)**: A interface foi desenvolvida sob as rotas isoladas `/preview/smart-flat`, `/preview/smart-flat/:code` e query parameter `?preview=smart_flat`. O arquivo de produção `guest-portal.tsx` permaneceu intocado, garantindo que nenhum hóspede real visualize os novos componentes.
+4. **Travas Operacionais & Fail-Safe (R2 & R3)**: Implementadas em `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`, garantindo validação matemática de antecedência e desligamento de segurança.
+5. **Automação de Áudio (R4)**: Player integrado com síntese autônoma via Web Audio API, dispensando dependências de CDNs externas.
+6. **Hardware Guide (R5)**: Documento normativo formalizado em `docs/SMART_FLAT_HARDWARE_GUIDE.md` cobrindo padrão NBR 14136, tomadas 16A com proteção térmica, smart IR blasters, Echo Pop/Dot e BOM orçado.
+7. **Auditoria Forense Independente**: Após o aviso de vitória do orquestrador, o `victory_auditor_8` foi acionado em modo bloqueante, atestando 100% de conformidade, zero stubs, paridade de hash SHA-256 idêntica entre os servidores twin, build do frontend com código 0 e 6/6 testes pontuais aprovados.
 
-O usuário solicitou a criação de um sistema de testes sintéticos E2E (End-to-End) completo e autônomo atuando 100% como usuário real em navegadores web e canais externos, cobrindo 100% das 45 telas mapeadas, todas as personas e permutações de estado em sandbox isolado sem tráfego externo e sem tocar no banco de produção.
+## Caveats
+- O recurso Smart Flat Hub permanece estritamente em modo preview / laboratório. Para testes operacionais pela equipe, utilize as rotas `/preview/smart-flat` ou adicione `?preview=smart_flat` na URL.
+- Nenhum hardware físico foi comissionado ainda; as integrações no backend simulam o estado digital twin e fornecem a base pronta para os webhooks da Tuya Cloud / Home Assistant quando os aparelhos forem instalados.
 
-### Resultados Homologados e Auditados:
-- **R1: Sandbox Local Isolado & Interceptadores (`e2e/sandbox/`)**:
-  - Servidor Express dedicado na porta 5055 operando em `data/database.test.json` com `DATABASE_URL=""`.
-  - Mock Z-API (porta 5056), Mock SMTP nativo RFC 2822 (porta 5025), simulador PIX e time-travel clock (14h, 18h, 22h).
-  - Imutabilidade do banco de produção `data/database.json`: **0 bytes de drift** (SHA-256 `a6380158...` invariante).
-  - Paridade criptográfica de 100% (SHA-256) em todos os 7 arquivos gêmeos entre `artifacts/api-server/` e `scripts/`.
-- **R2: Varredura Universal de 45 Telas & Sanidade (`e2e/suites/01-crawler-45-screens.spec.mjs`)**:
-  - 100% das 45 telas funcionais testadas em Desktop (1920px), Tablet (768px) e Mobile (375px) com 5 personas.
-  - 138/138 testes aprovados (100% pass rate) com zero telas brancas, zero erros não tratados de console e zero 4xx/5xx indevidos.
-- **R3: Jornadas Humanas Anti-Frustração (`e2e/suites/02-human-journeys.spec.mjs`)**:
-  - 21/21 testes aprovados cobrindo as 7 jornadas: Zero Amnésia, Vínculo Multicanal no `/minha-conta`, Persistência de Veículo, Fechadura 14h, PIX em tempo real, Canvas Touch em Mobile e Isolamento Hóspede 1 / Hóspede 2.
-- **R4: Matriz Combinatória de Estados Pairwise (`e2e/suites/03-pairwise-matrix.spec.mjs`)**:
-  - 12/12 testes aprovados: combinações de reserva, 19 flats x 7 estados de governança, ciclo completo de OS e corte de café às 22h.
-- **R5: Gemini Chaos Explorer & Relatório HTML (`e2e/suites/04-chaos-explorer.spec.mjs` & `e2e/reporters/html-reporter.mjs`)**:
-  - 12/12 testes de caos e usabilidade aprovados: double clicks rápidos de 50ms, fuzzing XSS/SQLi/emojis, histórico e botão Voltar, auditoria heurística com 1.232 nós inspecionados (score 77/100, 0 bloqueios).
-  - Relatório consolidado em `e2e/reports/index.html` (100% standalone, sem CDN).
-- **Quality Gate Clearance**: Unanimemente aprovado (Reviewers 1 e 2, Challengers 1 e 2, Auditor Forense).
-- **Independent Victory Audit**: Auditado de forma independente pelo `teamwork_preview_victory_auditor` (`victory_auditor_4`) com veredicto **VICTORY CONFIRMED**.
-- **Governança Git & Build**: Todos os commits integrados e enviados via `git push origin main`, árvore limpa e compilação do frontend íntegra em `artifacts/limpeza/dist/public`.
+## Conclusion
+Todos os requisitos e critérios de aceitação foram plenamente satisfeitos, auditados de forma independente e validados com `VICTORY CONFIRMED`. O repositório está limpo, compilado, testado e sincronizado com o remoto.
 
----
-
-## 2. Logic Chain
-
-1. **Roteamento Sentinel**: Roteado para a esteira Geral (`teamwork_preview_orchestrator`) no diretório `.agents/teamwork/orchestrator_3`.
-2. **Ciclo de Desenvolvimento com Especialistas**: O Orchestrator decompôs o trabalho em 6 marcos (M1 a M6) com times paralelos de workers, reviewers e challengers.
-3. **Monitoramento e Liveness**: Crons de progresso (Cron 1) e liveness (Cron 2) acompanharam toda a esteira sem travamentos.
-4. **Quality Gate Squad**: Validação preliminar executada por 5 especialistas independentes com veredito unânime PASS.
-5. **Auditoria Pós-Vitória Independente**: Veredito **VICTORY CONFIRMED** emitido após verificação forense sem viés e com execução real dos testes em ambiente Playwright/Chrome.
-6. **Desmobilização Mandatória**: Crons e subagentes encerrados conforme protocolo de conclusão.
-
----
-
-## 3. Caveats
-
-- As portas do sandbox (5055, 5056 e 5025) são temporárias de teste e foram completamente liberadas no teardown.
-- Nenhuma dependência externa de produção foi violada ou sofreu tráfego real de rede.
-
----
-
-## 4. Conclusion
-
-O ecossistema E2E de testes sintéticos da CorpFlats está homologado, versionado, auditado e 100% pronto para uso contínuo em CI/CD e execução local.
-
-**Veredito**: **VICTORY CONFIRMED**
-
----
-
-## 5. Verification Method
-
-Para reproduzir a bateria completa ou inspecionar o relatório gerado:
-
-```bash
-# 1. Conferir status git
-git status
-
-# 2. Executar verificação da infraestrutura do sandbox
-node e2e/sandbox/verify-sandbox.mjs
-
-# 3. Executar suíte de testes de sanidade e regressão
-node --test tests/challenger-m1-sandbox-egress.test.mjs
-
-# 4. Executar bateria Playwright completa ou seletiva
-node e2e/runner.mjs
-
-# 5. Visualizar o relatório HTML consolidado
-# Abrir no navegador: e2e/reports/index.html
-```
+## Verification Method
+- **Teste Automatizado Pontual Dedicado**:
+  `node --test tests/smart-flat-hub.test.mjs` (6 subtestes, 100% aprovados).
+- **Paridade de Hash SHA-256 (Twin Servers)**:
+  `powershell -Command "(Get-FileHash scripts/demo-server.mjs).Hash -eq (Get-FileHash artifacts/api-server/demo-server.mjs).Hash"` (Retorno: True).
+- **Compilação do Frontend**:
+  `npm --prefix artifacts/limpeza run build` (Exit code 0).
+- **Inspeção de Privacidade**:
+  `git diff origin/main -- artifacts/limpeza/src/pages/guest-portal.tsx` (Vazio / 0 alterações).

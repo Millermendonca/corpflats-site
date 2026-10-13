@@ -1,15 +1,20 @@
-# Progress — m4_challenger_1
+# Progress — M4 Challenger 1
 
-- **Last visited**: 2026-10-11T05:12:00Z
-- **Current status**: Verification completed. Verdict: APPROVE.
-- **Tasks**:
-  - [x] Initialized workspace and BRIEFING.md
-  - [x] Read ORIGINAL_REQUEST.md, PROJECT.md, and m4_worker handoff.md
-  - [x] Run full test suite `node --test tests/whatsapp-ai-agent.test.mjs` and measure execution time (24/24 pass, 1.52s, exit code 0)
-  - [x] Run 5 adversarial challenger test suites (62/62 pass, 10.12s, exit code 0)
-  - [x] Run production build `npm run build` in `artifacts/limpeza` and verify `dist/public` output (built in 48.92s, exit code 0, 6 valid assets)
-  - [x] Compute SHA-256 hashes across all 7 mirrored service files (100% byte match across all 7)
-  - [x] Verify port 5000 is clean (0 active listeners)
-  - [x] Adversarial boundary tests & edge case stress testing (phone normalization, regex injection, large payload resilience)
-  - [x] Write challenge.md and handoff.md
-  - [ ] Notify orchestrator via send_message
+Last visited: 2026-10-11T17:22:00Z
+
+## Status
+Empirical challenge complete. Explicit verdict APPROVE rendered in handoff.md. Ready to notify parent orchestrator.
+
+## Checklist
+- [x] Create DISPATCH.md, BRIEFING.md, and progress.md
+- [x] Read ORIGINAL_REQUEST.md, PROJECT.md, TEST_INFRA.md, and worker handoff.md
+- [x] Inspect `tests/reservation-modification-flow.test.mjs` and related settlement/server files
+- [x] Run targeted test: `node --test tests/reservation-modification-flow.test.mjs` (92/92 tests passed)
+- [x] Stress-test and challenge settlement invariants empirically (`tests/m4-challenger-settlement-invariants.test.mjs`, 8/8 tests passed)
+  - [x] Test isolation cleanly resets ports and database files without interference
+  - [x] Stress test concurrent polling requests and in-flight mutex locking
+  - [x] Expired holds cannot be settled
+  - [x] Provisional holds block conflicting bookings & release upon cancellation
+- [x] Update BRIEFING.md with findings
+- [x] Write 5-component handoff.md with explicit verdict (APPROVE)
+- [x] Send completion message to parent orchestrator

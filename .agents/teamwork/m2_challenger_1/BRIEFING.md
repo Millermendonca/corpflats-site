@@ -1,54 +1,57 @@
-# BRIEFING — 2026-10-11T03:45:00Z
+# BRIEFING — 2026-10-11T15:40:00Z
 
 ## Mission
-Empirically stress-test Sofia prompt injection, client exception scopes, and heuristic FAQ priority matching for Milestone 2.
+Adversarially challenge and verify Milestone 2 (Re-Signature Lifecycle & Pre-Checkin clearance, twin server SHA-256 parity).
 
 ## 🔒 My Identity
-- Archetype: empirical challenger
+- Archetype: challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_1
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
 - Milestone: Milestone 2
-- Instance: 1 of 2
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Write only to your folder (.agents/teamwork/m2_challenger_1)
-- Must empirically write and execute test harnesses/scripts to challenge claims
-- Parity mandate: Twin-Server Parity Mandate between artifacts/api-server and scripts
+- Strictly empirical: write and execute tests/harnesses, verify SHA-256 parity, run node --test tests/m2-re-signature-operations-sync.test.mjs
+- No global test runs (follow AGENTS.md: only target specific test)
+- Verify twin server parity (byte-for-byte SHA-256 between server.js and pms/server.js if applicable)
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T03:45:00Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T15:40:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/api-server/whatsapp-ai-service.mjs`, `scripts/whatsapp-ai-service.mjs`, `artifacts/api-server/zapi-service.mjs`, `scripts/zapi-service.mjs`, `tests/whatsapp-ai-agent.test.mjs`
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, `m2_worker/handoff.md`
-- **Review criteria**: Prompt injection safety and correctness with scopes, heuristic priority matching before generic regexes, inactive/pending FAQ exclusion, test suite performance (< 5s) and exit code 0.
-
-## Key Decisions Made
-- Executed `tests/whatsapp-ai-agent.test.mjs`: passed in 4.84s (< 5.0s) with exit code 0.
-- Executed SHA-256 twin file parity check: 100% byte-for-byte match.
-- Designed and executed adversarial test suite `tests/challenger-m2-c1-injection-heuristic.test.mjs`.
-- Discovered critical heuristic scoring bug in `whatsapp-ai-service.mjs:1098` causing exponential score compounding (`score += Math.max(score, ...)`) and stop-word collision, shadowing official target FAQs with wrong answers.
-- Issued definitive verdict: `REQUEST_CHANGES`.
-
-## Artifact Index
-- DISPATCH.md — Task instructions
-- challenge.md — Adversarial challenge report
-- handoff.md — 5-component handoff report
-- progress.md — Execution heartbeat and progress tracker
-- tests/challenger-m2-c1-injection-heuristic.test.mjs — Adversarial test harness reproducing and validating findings
+- **Files to review**: `scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `scripts/zapi-service.mjs`, `tests/m2-re-signature-operations-sync.test.mjs`
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
+- **Review criteria**: Re-signature lifecycle across Admin PUT, Portal checkout settlement, Portal modify; pre-checkin clearance; FNRH PDF regeneration & hashing; getCheckinUrlSync ?resign=1 behavior; already signed idempotency.
 
 ## Attack Surface
-- **Hypotheses tested**: 
-  - (1) Gemini prompt injection with client scopes (`all`, `exclude`, `include_only`) and status filtration: PASSED (zero leaks, scopes respected).
-  - (2) Heuristic priority matching for FAQ keywords before generic regexes: FAILED on multi-FAQ disambiguation due to exponential variation score compounding ($O(2^V)$) and stop-word collision.
-  - (3) Immunity of pending/awaiting items: PASSED (never matched or injected).
-  - (4) Phone normalization across various formats: PASSED.
+- **Hypotheses tested**:
+  1. Admin PUT with stale guest array payload does not clobber signature invalidation (CONFIRMED ROBUST - PASS).
+  2. Portal Checkout settlement hold commits new dates, invalidates signatures, purges stale documents/hashes (CONFIRMED ROBUST - PASS).
+  3. Direct Portal modify with zero-cost shift invalidates signatures and purges stale documents/hashes (CONFIRMED ROBUST - PASS).
+  4. `getCheckinUrlSync` dynamically appends `?resign=1` across titular and co-guests, bypassing SERPRO link when `needsReSignature === true` (CONFIRMED ROBUST - PASS).
+  5. Multi-guest pre-checkin clears invalidation only when titular or all guests have re-signed, generating fresh FNRH PDF with non-stale SHA-256 (CONFIRMED ROBUST - PASS).
+  6. Idempotency: calling pre-checkin on already signed reservation preserves integrity and permissions (CONFIRMED ROBUST - PASS).
+  7. Twin-server byte-for-byte SHA-256 parity across all 6 pairs (CONFIRMED IDENTICAL - PASS).
 - **Vulnerabilities found**:
-  - `whatsapp-ai-service.mjs:1096-1098`: `score += Math.max(score, 40 + (common.length * 10))` exponentially inflates scores and unmasked stop words ("qual", "para", "com", "como") cause cross-topic hijacking (e.g. `faq-recolhimento-loucas` shadowed by `faq-cafe-quarto`, `faq-rule-include-vip-convenio` shadowed by `faq-regras-pets`).
-- **Untested angles**: Frontend visual layout of Knowledge Base tab in `artifacts/limpeza` (delegated to Challenger 2 / UI reviewers).
+  - `artifacts/api-server/giss-soap.mjs` is not mirrored in `scripts/giss-soap.mjs`, causing standalone ESM imports of `scripts/demo-server.mjs` to throw `ERR_MODULE_NOT_FOUND` (minor packaging parity caveat).
+  - Standalone invocations of `scripts/zapi-service.mjs` fall back to `fnrh-serpro-service.mjs`'s `getCheckinUrlSync` which lacks `?resign=1` handling if `demo-server.mjs` has not set `globalThis.getCheckinUrlSync`.
+- **Untested angles**: None within Milestone 2 scope.
 
 ## Loaded Skills
 - None
+
+## Key Decisions Made
+- Executed `tests/m2-re-signature-operations-sync.test.mjs` (7/7 PASS).
+- Created and executed targeted adversarial test suite `tests/challenger-m2-adversarial-re-signature.test.mjs` (7/7 PASS).
+- Confirmed SHA-256 parity between twin servers.
+- Issued verdict: APPROVE.
+
+## Artifact Index
+- DISPATCH.md — Received instructions
+- BRIEFING.md — Persistent context & identity
+- progress.md — Liveness heartbeat
+- tests/challenger-m2-adversarial-re-signature.test.mjs — Adversarial stress test harness
+- handoff.md — Final challenger evaluation report

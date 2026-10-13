@@ -1,152 +1,106 @@
-# Handoff Report: Investigação Técnica de FAQ & Base de Conhecimento Dinâmica da Sofia
+# Handoff Report — Explorer Survey 1 (Frontend & UI Sandbox)
 
-**Subagent**: Explorer Survey 1  
-**Data**: 2026-10-11  
-**Destinatário**: Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Status**: Concluído (Hard Handoff)
+**Milestone:** Smart Flat Hub — Frontend Architecture, UI Sandbox & Privacy Isolation  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1`  
+**Date:** 2026-10-11T23:46:00Z  
 
 ---
 
 ## 1. Observation
 
-### O1. Inicialização e Registro de Rotas no Backend
-- Em `artifacts/api-server/demo-server.mjs:5382` (e `scripts/demo-server.mjs:5382`):
-  ```javascript
-  initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
-  ```
-- Em `artifacts/api-server/zapi-service.mjs:4201`:
-  `initWhatsAppEngine` recebe `app`, `dbOrGetter`, `saveDatabase`, `createNotification` e registra as rotas `/api/whatsapp/*`.
-- Atualmente, as rotas existentes para IA são:
-  - `GET /api/whatsapp/ai-config` (linha 6215)
-  - `POST /api/whatsapp/ai-config` (linha 6231)
-  - `POST /api/whatsapp/ai-simulate` (linha 6262)
-  - `POST /api/whatsapp/chat/:phone/ai-toggle` (linha 6293)
-  - `POST /api/whatsapp/chat/:phone/ai-suggest` (linha 6325)
-- Não existem rotas de FAQ (`/api/whatsapp/faq*` ou `/api/faq*`) registradas no momento.
+Durante a investigação técnica dos diretórios `artifacts/limpeza/` e `scripts/`, foram diretamente observados os seguintes fatos:
 
-### O2. Webhook Inbound da Z-API e Disparo da IA
-- Em `artifacts/api-server/zapi-service.mjs:5447`:
-  Rota `POST /api/whatsapp/webhook/received` processa mensagens recebidas da Z-API.
-- Linha 5464: extrai metadados via `extractIncomingMessageInfo(req.body)`.
-- Linha 5473: `cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget)`.
-- Linha 5477: grava mensagem no chat via `appendMessageToConversation`.
-- Linhas 5637-5649:
-  ```javascript
-  if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
-    processAiInboundMessage({
-      db,
-      incomingInfo,
-      cleanTarget,
-      saveDatabase,
-      createNotification,
-      sendZapiMessage,
-      appendMessageFn: appendMessageToConversation
-    }).catch(aiErr => {
-      console.warn("[WhatsApp AI Processing Error]:", aiErr.message);
-    });
-  }
-  ```
+1. **Roteamento e Servidor SPA (`artifacts/limpeza/src/App.tsx` e `scripts/demo-server.mjs`):**
+   - `artifacts/limpeza/src/App.tsx:6`: Importa `Route`, `Switch`, `useLocation`, `Router as WouterRouter` de `wouter`.
+   - `artifacts/limpeza/src/App.tsx:411-413`: O app inicializa com `<WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter>`.
+   - `artifacts/limpeza/src/App.tsx:173-198`: Define rotas públicas de hóspedes (`/minha-reserva/:code`, `/portal-hospede/:code`, `/guest-portal/:code` mapeadas para `GuestPortal`).
+   - `scripts/demo-server.mjs:31989` e `artifacts/api-server/demo-server.mjs:31989`:
+     ```javascript
+     const distPath = path.resolve(__dirname, "../limpeza/dist/public");
+     function serveSpaWithMetadata(distFolder, req, res) { ... }
+     ```
+     Todas as rotas públicas que não coincidem com `/api/*` resolvem para `index.html`.
 
-### O3. Manipulação de Mensagens do Operador Humano (`fromMe: true`)
-- No Webhook Z-API (`zapi-service.mjs:5477-5506`): mensagens com `incomingInfo.fromMe === true` são salvas no chat (`conv.messages`), mas atualmente não executam busca de perguntas pendentes nem alteram status de FAQ.
-- No Live Chat (`zapi-service.mjs:5960-6045`): rota `POST /api/whatsapp/chats/:phone/messages` pausa a IA na conversa nas linhas 6023-6027:
-  ```javascript
-  if (updatedConv) {
-    updatedConv.aiPaused = true;
-    updatedConv.aiPausedAt = nowIso;
-    updatedConv.aiPausedReason = "operator_manual_reply";
-  }
-  ```
-  mas também não possui integração prévia com perguntas pendentes do FAQ.
-- A Z-API possui o recurso `notifySentByMe: true` explicitamente ativado em `syncZapiWebhooks` (`zapi-service.mjs:3330-3342`), o que garante que respostas enviadas pelo Miller diretamente no smartphone cheguem ao webhook com `fromMe: true`.
+2. **Fluxo e Estados do Portal do Hóspede (`artifacts/limpeza/src/pages/guest-portal.tsx`):**
+   - Linhas 46-59: Captura de parâmetros `:code` e query strings (`window.location.search`).
+   - Linhas 214-243: Bloco de Previsão de Chegada no Dia do Check-in (`selectedArrivalTime`, `customArrivalTime`, `handleSaveEstimatedArrival` disparando `POST /api/pms/guest-portal/${encodeURIComponent(code)}/estimated-arrival`).
+   - Linhas 626-631: Verificação de entrada confirmada:
+     ```typescript
+     const hasEnteredFlat = Boolean(
+       reservation?.guestSelfCheckin ||
+       reservation?.actualCheckinAt ||
+       reservation?.status === "in_house" ||
+       (reservation?.status === "checkin" && reservation?.guestSelfCheckin)
+     )
+     ```
+   - Linhas 1654-1671: Botão de autodeclaração de entrada `POST /api/pms/guest-portal/${encodeURIComponent(code)}/self-checkin` com texto `"🚪 Já Cheguei"`.
 
-### O4. Motor da Sofia (`whatsapp-ai-service.mjs`)
-- Em `artifacts/api-server/whatsapp-ai-service.mjs`:
-  - Linhas 64-80: `DEFAULT_AI_CONFIG.knowledgeBase` armazena chaves estáticas (`address`, `checkinTime`, `checkoutTime`, `wifiNetwork`, `wifiPassword`, `breakfastInfo`, `garageInfo`, `petPolicy`, etc.).
-  - Linhas 446-474: `contextString` monta essas propriedades fixas para o system instruction do Gemini.
-  - Linhas 286-362: `generateHeuristicResponse` realiza buscas regex hardcoded em `text` para Wi-Fi, café, garagem, endereço, checkout, quarto pronto, lead e saudação, caindo na mensagem padrão de atendimento.
-  - Linhas 513-679: `processAiInboundMessage` avalia transbordo (`detectHandoverIntent`) e gera a resposta, sem consultar nenhuma coleção dinâmica de FAQs.
+3. **Backend Twin Parity para ETA e Autodeclaração (`scripts/demo-server.mjs`):**
+   - Linha 15986: `POST /api/pms/guest-portal/:code/estimated-arrival` persiste `r.estimatedArrivalTime`.
+   - Linha 16070: `app.all(["/api/pms/guest-portal/:code/self-checkin", ...])` marca `r.guestSelfCheckin = true`, `r.guestSelfCheckinAt = now.toISOString()`, `r.status = "checkin"` e gera notificação para a portaria.
 
-### O5. Persistência de Dados e Banco (`data/database.json`)
-- Em `artifacts/api-server/demo-server.mjs:587`:
-  `const DB_FILE = process.env.DATA_FILE || process.env.DATABASE_FILE || path.join(DATA_DIR, "database.json");`
-- Linhas 3452-3465: `loadDatabase()` faz `Object.assign(db, loaded)`.
-- Linha 5026: `saveDatabase()` escreve atomicamente no arquivo local via `fs.writeFileSync(DB_FILE, stateJson, "utf-8")` e replica no PostgreSQL (`system_store`).
-- `data/database.json` atualmente não possui a chave `faqItems`.
+4. **Design System & Primitivas Radix Disponíveis:**
+   - `artifacts/limpeza/package.json`: Possui `@radix-ui/react-slider`, `@radix-ui/react-switch`, `@radix-ui/react-tabs`, `@radix-ui/react-progress`, `@radix-ui/react-dialog`, `lucide-react`, `tailwindcss` (v4 com `@theme inline`).
+   - Componentes prontos em `artifacts/limpeza/src/components/ui/`: `slider.tsx`, `switch.tsx`, `tabs.tsx`, `progress.tsx`, `badge.tsx`, `card.tsx`, `button.tsx`, `input.tsx`.
 
-### O6. Normalização de Telefones
-- Em `artifacts/api-server/zapi-service.mjs:1069`:
-  ```javascript
-  export function cleanWhatsAppPhone(rawPhone) {
-    if (!rawPhone) return "";
-    let digits = String(rawPhone).replace(/\D/g, "");
-    if (!digits) return "";
-    while (digits.startsWith("0")) { digits = digits.substring(1); }
-    if (digits.length === 10 || digits.length === 11) {
-      digits = "55" + digits;
-    }
-    return digits;
-  }
-  ```
-- Comparação de correspondência resiliente adotada no sistema (`zapi-service.mjs:3951`, `whatsapp-ai-service.mjs:180`):
-  `cleanPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(cleanPhone.slice(-8))` ou comparação dos últimos 8 dígitos.
-
-### O7. Paridade de Código e Build
-- Teste de testes unitários: `node --test tests/whatsapp-ai-agent.test.mjs` passou com 100% de sucesso em 1.88s.
-- Teste de build frontend: `npm run build` na pasta `artifacts/limpeza` executou com sucesso (código 0 em 45.47s), gerando `artifacts/limpeza/dist/`.
-- Verificação de hashes: 6 de 7 arquivos gêmeos em `artifacts/api-server` e `scripts` possuem SHA-256 idêntico. Divergência prévia identificada em `whatsapp-ai-service.mjs` (`DEFAULT_TEST_ALLOWED_PHONES`).
+5. **Build de Frontend (`npm run build`):**
+   - Comando executado: `npm --prefix artifacts/limpeza run build` (task-106).
+   - Saída: `✓ 3360 modules transformed. ✓ built in 49.56s`. Código de retorno: `0`.
+   - Arquivos gerados em `artifacts/limpeza/dist/public/` (`index.html`, `assets/index.js`, `assets/index.css`).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Da observação O1 e O5 para a Modelagem de `db.faqItems`**:
-   Como não existem FAQs dinâmicos persistidos no banco ou endpoints registrados, a inicialização padrão de `db.faqItems` deve ser inserida em `loadDatabase()` e exposta via endpoints RESTful em `initWhatsAppEngine` (`GET/POST/PUT/DELETE /api/whatsapp/faq` e `POST /api/whatsapp/faq/:id/approve`).
-2. **Da observação O2 e O4 para a Auto-Detecção de Perguntas Inéditas (R2)**:
-   Em `processAiInboundMessage`, quando uma mensagem inbound de cliente não encontrar correspondência com alta confiança no FAQ e resultar em transbordo ou contingência padrão sem resposta satisfatória, o sistema deve registrar a pergunta em `db.faqItems` com status `"pendente"`, contendo o telefone do cliente, nome, data/hora e categoria inferida.
-3. **Da observação O3 para a Captura da Resposta Humana (R3)**:
-   Como a Z-API já tem `notifySentByMe: true` configurado e o Live Chat passa pelo endpoint interno, qualquer mensagem enviada com `fromMe === true` para um cliente que possua uma pergunta pendente aberta nas últimas 24h deve vincular o texto do operador a `suggestedAnswer` e promover o status para `"aguardando_aprovacao"`, disparando notificação e pausando a IA na conversa.
-4. **Da observação O6 para o Motor de Regras de Exceção (R4)**:
-   A função `isFaqApplicableToClient(faqItem, clientPhone)` utilizando a normalização de dígitos e o sufixo de 8 dígitos resolve com precisão matemática os escopos `"all"`, `"exclude"` (ignora resposta se o cliente estiver na lista) e `"include_only"` (só responde se o cliente estiver na lista).
-5. **Da observação O4 para a Integração com o Motor da Sofia (R5)**:
-   Filtrando `db.faqItems` com `isFaqApplicableToClient`, o prompt do Gemini recebe dinamicamente as FAQs oficiais aprovadas e a contingência heurística local pesquisa nas palavras-chave cadastradas antes do transbordo.
-6. **Da observação O7 para a Entrega e Paridade**:
-   As alterações no backend devem ser aplicadas em paridade estrita entre `artifacts/api-server/` e `scripts/`, com testes unitários em `tests/whatsapp-ai-agent.test.mjs` e compilação do frontend em `artifacts/limpeza`.
+1. **A partir da Observação 1 (Roteamento & Express SPA):**
+   - O Wouter processa rotas no cliente e o Express serve `dist/public/index.html` para qualquer caminho que não seja API.
+   - Logo, adicionar uma rota como `/preview/smart-flat` em `App.tsx` funciona imediatamente, sem exigir alterações em rotas de arquivos no Express.
+
+2. **A partir das Observações 2 e 3 (ETA e Self-Check-in no Portal e no Backend):**
+   - O sistema já possui endpoints operacionais para registrar previsão de chegada (`estimated-arrival`) e entrada no quarto (`self-checkin`).
+   - Logo, o Smart Flat Hub não precisa reinventar a infraestrutura de dados de chegada: ele deve consumir diretamente o ETA para calcular a janela de 30 minutos antes da chegada (`now < ETA - 30min` -> bloqueado) e a presença do hóspede (`hasEnteredFlat`) para governar os avisos preventivos e o desligamento fail-safe (`now > ETA + 30min` sem check-in -> desligamento automático).
+
+3. **A partir da Observação 1 e Requisito R1 (Privacidade Rigorosa & Sandbox Oculto):**
+   - Os clientes em produção acessam o portal através de `/minha-reserva/:code`.
+   - Se o Smart Flat Hub for condicionado estritamente a `new URLSearchParams(window.location.search).get("preview") === "smart_flat"`, nenhum card ou botão existirá no DOM para clientes reais.
+   - Ao mesmo tempo, fornecendo a rota dedicada `/preview/smart-flat` (com uma barra de controle de sandbox / relógio virtual), desenvolvedores e a gestão podem simular todas as regras temporais sem esperar horas reais.
+
+4. **A partir das Observações 4 e 5 (Design System e Build):**
+   - Com `Slider` (temperatura de 18°C a 26°C e volume), `Switch` (cafeteira e ar-condicionado), `Tabs` (modos do ar) e `Progress` (régua temporal de fail-safe), a interface atende integralmente ao design system e responsividade mobile-first.
+   - O build do frontend compila de forma limpa, garantindo estabilidade e deploy imediato.
 
 ---
 
 ## 3. Caveats
 
-1. **Janela de Atendimento para Captura de Resposta**: Assumiu-se uma janela de 24 horas para associar a resposta do operador (`fromMe: true`) à pergunta pendente do cliente. Se o operador responder após 48 horas, a pergunta continuará `"pendente"` no painel e o operador poderá aprová-la/editá-la manualmente.
-2. **Anti-Duplicação de Perguntas Pendentes**: Se o mesmo cliente enviar a mesma dúvida repetidas vezes antes de ser respondido, o sistema deve atualizar o timestamp da pergunta pendente existente em vez de gerar múltiplos registros duplicados.
-3. **Persistência PostgreSQL vs Arquivo Local**: Em ambiente de desenvolvimento local, a persistência atua primariamente via `data/database.json`. Em ambiente de produção (Render), o PostgreSQL sincroniza via `system_store`. A estrutura proposta é 100% compatível com ambos os mecanismos.
+1. **Hardware IoT Físico:** Esta análise concentrou-se exclusivamente no frontend, UI e modo de simulação/sandbox. A integração com protocolos de hardware reais (Tuya Local API, Zigbee, Tuya Cloud OpenAPI ou MQTT) é tratada em guia separado e não foi conectada diretamente no frontend (que opera em modo de simulação/mock no preview).
+2. **Autoplay de Áudio nos Navegadores:** Políticas modernas de navegadores (Chrome/Safari) bloqueiam reprodução automática de áudio sem interação prévia do usuário. No widget da Trilha Sonora de Boas-Vindas, o estado visual deve indicar "Reproduzindo" e a primeira interação do usuário (clique ou toque) inicializa o áudio.
+3. **Escopo Estrito de Testes (AGENTS.md):** Nenhum teste global ou varredura de pasta `tests/` foi executado, conforme diretriz mandatória do projeto.
 
 ---
 
 ## 4. Conclusion
 
-A arquitetura do backend está totalmente mapeada e preparada para receber a Gestão de FAQ & Base de Conhecimento Dinâmica com Auto-Aprendizado:
-- **Endpoints CRUD**: Implementáveis diretamente em `zapi-service.mjs:initWhatsAppEngine`.
-- **Auto-Detecção (R2)**: Acionável dentro de `whatsapp-ai-service.mjs:processAiInboundMessage`.
-- **Captura Humana (R3)**: Acionável no webhook de entrada (`zapi-service.mjs:5477`) e no Live Chat (`zapi-service.mjs:6004`).
-- **Motor de Exceção & Sofia (R4 & R5)**: Implementável com `isFaqApplicableToClient` e injeção dinâmica em `generateAiWhatsAppResponse` e `generateHeuristicResponse`.
-- **Frontend (R1)**: Nova aba `knowledge_base` em `whatsapp-automation.tsx` com categorias, filtros e aprovação 1-clique.
+A arquitetura do **Smart Flat Hub Frontend** está minuciosamente delineada e aprovada para execução:
+
+1. **Isolamento Total:** Rota `/preview/smart-flat` e `/preview/smart-flat/:code` no `App.tsx`, além de gating `?preview=smart_flat` em `guest-portal.tsx`. Zero vazamento para produção.
+2. **Interface e Componentes:** Componentização em `artifacts/limpeza/src/components/smart-flat/` utilizando `Slider` (18-26°C), `Switch` (cafeteira com alertas térmicos), `Tabs` (modos do ar), `Progress` (fail-safe) e Widget de Trilha Sonora com controles de play/pause e volume.
+3. **Barra de Simulação Sandbox:** Relógio virtual integrado para testar adiantamento de tempo, bloqueio de 30min, alerta de "Você já chegou?" e desligamento automático.
+4. **Build Verificado:** `npm --prefix artifacts/limpeza run build` aprovado com código 0 e tempo de 49.56s.
 
 ---
 
 ## 5. Verification Method
 
-1. **Testes Unitários e de Integração**:
-   Executar o comando de testes do Node.js:
-   ```bash
-   node --test tests/whatsapp-ai-agent.test.mjs
-   ```
-   Critério de invalidação: Qualquer falha nos testes de transbordo, heurística ou novas asserções de FAQ e regras de exceção.
-2. **Build do Frontend**:
-   Executar na pasta `artifacts/limpeza`:
-   ```bash
-   npm run build
-   ```
-   Critério de invalidação: Falhas no TypeScript (`tsc`) ou no Vite gerando erro de build.
-3. **Auditoria de Paridade**:
-   Verificar que `Get-FileHash artifacts/api-server/*.mjs` e `scripts/*.mjs` para os arquivos modificados resultem no mesmo hash SHA-256.
+Para verificar de forma independente as constatações deste relatório:
+
+1. **Inspecione a configuração de rotas:**
+   - Visualizar `artifacts/limpeza/src/App.tsx:173-198`.
+2. **Inspecione os endpoints de ETA e Self-Check-in:**
+   - Visualizar `scripts/demo-server.mjs:15986` (`estimated-arrival`) e `scripts/demo-server.mjs:16070` (`self-checkin`).
+3. **Inspecione o manuseio de self-checkin no frontend:**
+   - Visualizar `artifacts/limpeza/src/pages/guest-portal.tsx:626-631` e `1654-1671`.
+4. **Verifique o build do frontend:**
+   - Executar no terminal:
+     `npm --prefix artifacts/limpeza run build`
+   - O comando deve finalizar com código de saída 0 e gerar `artifacts/limpeza/dist/public/index.html`.

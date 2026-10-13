@@ -271,12 +271,25 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       toast({
         title: "Identificação salva com sucesso!",
         description: "Agora você pode iniciar os atendimentos nos apartamentos.",
       });
       setIsEditingWorker(false);
+      queryClient.setQueryData(["public-service-order", token], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          worker: data?.worker || {
+            mainWorker: {
+              name: mainWorkerName.trim(),
+              cpf: cleanCpfDigits(mainWorkerCpf),
+            },
+            collaborators,
+          },
+        };
+      });
       queryClient.invalidateQueries({ queryKey: ["public-service-order", token] });
     },
     onError: (err: any) => {
@@ -290,10 +303,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
   // Mutation: Start Flat
   const startMutation = useMutation({
-    mutationFn: async (flatId: number | string) => {
+    mutationFn: async (args: number | string | { flatId: number | string; workerName?: string; workerCpf?: string }) => {
+      const flatId = typeof args === "object" ? args.flatId : args;
+      const body = typeof args === "object" ? { workerName: args.workerName, workerCpf: args.workerCpf } : {};
       const res = await fetch(`/api/service/public/${token}/flats/${flatId}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -301,7 +317,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
       }
       return res.json();
     },
-    onSuccess: (_, flatId) => {
+    onSuccess: (_, variables) => {
       toast({
         title: "▶️ Apartamento iniciado!",
         description: `O serviço no flat foi iniciado e a governança/recepção foi notificada.`,
@@ -883,6 +899,12 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   🔴 Ocupado por Hóspede{flat.currentGuest ? `: ${flat.currentGuest}` : ""}
                 </Badge>
               );
+            } else if (flat.hasCheckinToday) {
+              occupancyBadge = (
+                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 text-[11px] font-semibold">
+                  🔵 Check-in Hoje{flat.currentGuest ? `: ${flat.currentGuest}` : ""}
+                </Badge>
+              );
             } else if (flat.isDirty) {
               occupancyBadge = (
                 <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 text-[11px] font-semibold">
@@ -1194,7 +1216,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   await registerMutation.mutateAsync();
                   setGuardDialogOpen(false);
                   if (pendingStartFlat) {
-                    startMutation.mutate(pendingStartFlat.flatId);
+                    startMutation.mutate({ flatId: pendingStartFlat.flatId, workerName: mainWorkerName.trim(), workerCpf: cleanCpf });
                     setPendingStartFlat(null);
                   }
                 } catch (err: any) {

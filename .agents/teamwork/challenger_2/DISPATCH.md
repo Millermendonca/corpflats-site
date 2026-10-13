@@ -34,3 +34,13 @@ Message the orchestrator when finished.
 
 ## 2026-10-12T00:06:11Z
 Por favor, realize a sua tarefa de Challenger 2 para o Milestone 3 da missão atual do orchestrator_7: testar adversariamente o endpoint POST /api/whatsapp/chat/:phone/correct-message, o CRUD de diretrizes (/api/whatsapp/developer-guidelines), a persistência de regras e a reflexão em tempo real no atendimento a hóspedes. Execute exclusivamente o teste pontual node --test tests/developer-ai-coaching.test.mjs e emita seu veredito em handoff.md.
+
+## 2026-10-12T00:10:29Z
+From: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+Content: **Context**: Smart Flat Hub Privacy & Parity Verification (Challenger 2)
+**Content**: Please ensure your mission is for Smart Flat Hub:
+1. Verify Privacy Isolation: confirm zero leak or components in artifacts/limpeza/src/pages/guest-portal.tsx, and preview is isolated under /preview/smart-flat or ?preview=smart_flat.
+2. Verify SHA-256 twin parity between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs.
+3. Run strictly node --test tests/smart-flat-hub.test.mjs.
+Ignore any prior messages about whatsapp-chat or developer-ai-coaching.
+**Action**: Execute these checks and write your explicit verdict (APPROVE / REQUEST_CHANGES) to handoff.md.

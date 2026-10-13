@@ -1,123 +1,92 @@
-# Handoff Report — Milestone 3 Explorer 2 (Dynamic FAQ & Knowledge Base UI)
+# Handoff Report — Milestone 3 Explorer 2: Re-Signature Banner & Fast-Track Flow
 
-**Date:** 2026-10-11T04:29:00Z  
-**From:** Milestone 3 Explorer 2 (`27c61f6a-5652-421c-bbda-1b5d6be7db98` subagent)  
-**To:** Milestone 3 Worker / Orchestrator  
-**Status:** Hard Handoff (Investigation & UI Design Completed)  
+**Agent**: `m3_explorer_2` (Roles: explorer, code blueprint designer, evidence synthesis)  
+**Date**: 2026-10-11T15:58:00Z  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_explorer_2`  
+**Recipient**: Parent Orchestrator (`494db1f9-cfb2-46e9-8b9f-419a8aa9586c`)  
+**Status**: Hard Handoff (Investigation & Blueprints Completed)
 
 ---
 
 ## 1. Observation
 
-1. **Backend REST API Endpoints (`artifacts/api-server/zapi-service.mjs:6610-6765`):**
-   - Line 6610: `app.get("/api/whatsapp/faq", (req, res) => ...)`: returns `{ success: true, count: number, items: FaqItem[] }` with query filters `category`, `status`, `scope`, `search`.
-   - Line 6639: `app.post("/api/whatsapp/faq", (req, res) => ...)`: accepts `{ question, answer, category, keywords, variations, scope, clientPhones, status, ... }`, parses list inputs (arrays or comma/line strings), returns 201 `{ success: true, item: newItem }`.
-   - Line 6688: `app.put("/api/whatsapp/faq/:id", (req, res) => ...)`: updates fields, persists to `data/database.json`, returns `{ success: true, item: updatedItem }`.
-   - Line 6723: `app.delete("/api/whatsapp/faq/:id", (req, res) => ...)`: deletes item, persists, returns `{ success: true, id }`.
-   - Line 6737: `app.post("/api/whatsapp/faq/:id/approve", (req, res) => ...)`: accepts `{ answer?, category?, question? }`. If `answer` is omitted, promotes `item.suggestedAnswer || item.answer`, sets `status: "ativo"`, `approvedAt: ISOString`, persists, returns `{ success: true, item }`.
+1. **`guest-portal.tsx` Ausência de Banner de Re-assinatura e Projeção**:
+   - `artifacts/limpeza/src/pages/guest-portal.tsx:460-475` define `isPreCheckinDone` e `getCheckinPath`, mas não avalia `reservation.needsReSignature`.
+   - `artifacts/limpeza/src/pages/guest-portal.tsx:1560-1635` possui banners para cancelamento e entrada confirmada no topo de `<main>`, mas não possui o banner de re-assinatura obrigatória quando datas ou flat mudam.
+   - `artifacts/limpeza/src/pages/guest-portal.tsx:1775-1856` renderiza o card de "Check-in (Entrada)" que exibia "Dados Enviados" ou "Já Cheguei" mesmo se a assinatura estivesse invalidada.
+   - O ícone `PenTool` não está importado na linha 10-18 de `guest-portal.tsx`.
 
-2. **Database Taxonomy & Seed (`artifacts/api-server/demo-server.mjs:1593-1628`):**
-   - Official categories: `reservas`, `checkin_acesso`, `wifi_tecnologia`, `cafe_manha`, `garagem`, `estrutura_flat`, `regras_visitas_pets`, `lazer_condominio`, `checkout`.
-   - Items seeded in `data/database.json` under `db.faqItems`.
+2. **`guest-pre-checkin.tsx` Tratamento de Re-assinatura & Erro de Import**:
+   - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx:11-15` importa ícones de `lucide-react`, mas `AlertTriangle` **não** está na lista de imports, embora seja utilizado na linha 2070 (`<AlertTriangle className="w-3.5 h-3.5 text-amber-700" />`). Sem a correção, o build TypeScript (`npm run build`) pode falhar.
+   - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx:605-640` limpa `signatureUrl` (`setSignatureData(null)`) e preserva `selfiePhoto`, `docPhoto`, `fullName`, `document`, `phone`, `email` e `address`.
+   - O parâmetro `resign=1` da URL não era verificado para posicionar o usuário diretamente no Passo 3 (Assinatura) em modo fast-track.
+   - Em `handleSubmit` (`guest-pre-checkin.tsx:975-1030`), o payload `POST /api/pms/pre-checkin` não incluía explicitamente a flag `resign: "1"`, e após submissão não redirecionava de volta ao portal com indicação de sucesso.
 
-3. **Current Routes in `artifacts/limpeza/src/App.tsx:276-277`:**
-   ```tsx
-   <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-   <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-   ```
-   *Verbatim absence:* Route `/whatsapp-automation` is not registered yet in `App.tsx` (Feature 8 requirement).
-
-4. **Current Tabs in `artifacts/limpeza/src/pages/whatsapp-automation.tsx:1696-1725`:**
-   - TabsList has 5 triggers: `ai_agent`, `rules`, `quick_messages`, `queue`, `history`.
-   - Line 806-810: URL search parameter `?tab=` is already supported (`if (tabParam) setActiveTab(tabParam)`).
-   - The file is 4,621 lines long; creating a modular component `src/components/faq-knowledge-base.tsx` is required to avoid bloat and ensure clean maintainability.
-
-5. **Build Baseline Verification (`artifacts/limpeza`):**
-   - Ran `npm run build`.
-   - Output: `✓ built in 1m 15s`, generated `dist/public/index.html` and assets. Exit code: 0.
+3. **Backend `GET /api/pms/guest-portal/:code` em `demo-server.mjs`**:
+   - `artifacts/api-server/demo-server.mjs:15090-15142` e `scripts/demo-server.mjs:15090-15142` constroem o objeto `reservation` devolvido ao portal.
+   - O campo `r.needsReSignature` é persistido no banco e suportado nas rotas `/modify-status`, `/modify-checkout` e `/modify`, mas não estava explicitamente projetado na rota `GET /api/pms/guest-portal/:code`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Route Alignment (Feature 8):**
-   - `ORIGINAL_REQUEST.md §R1` specifically demands accessing the new tab via `/whatsapp-automation`.
-   - Observation 3 confirms `App.tsx` has `/whatsapp` and `/automacao-whatsapp`, but lacks `/whatsapp-automation`.
-   - Adding `<AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />` satisfies Feature 8 without altering existing bookmarks.
-
-2. **Hook Separation (`use-faq.ts` - Feature 9):**
-   - Encapsulating API interactions into a typed hook `useFaq` ensures that data fetching, error handling, caching, filtering, and mutations (`createFaq`, `updateFaq`, `deleteFaq`, `approveFaq`, `toggleStatus`) are decoupled from rendering.
-   - Memoized `categoryStats` and `statusCounts` prevent re-computation on every keystroke in search.
-
-3. **Knowledge Base UI Layout (`FaqKnowledgeBase` - Feature 10):**
-   - Organizes content into 9 interactive category cards (Reservas, Check-in, Wi-Fi, Café, Garagem, Estrutura, Regras/Pets, Lazer, Check-out).
-   - Provides 4 quick status filter buttons ("Todas", "Ativas", "Perguntas Pendentes", "Sugestões de IA para Aprovar").
-   - Implements dual views: Tabela Detalhada (Table view) and Cards Visuais (Card view).
-
-4. **1-Click Approval Workflow (§R3):**
-   - For items with `status === "aguardando_aprovacao"` (captured from operator responses), a high-visibility button `✓ Aprovar em 1 Clique` immediately issues `POST /api/whatsapp/faq/:id/approve`.
-   - The status is updated to `"ativo"`, and the Sofia AI motor immediately includes it in prompt context and local heuristics.
-
-5. **Client Exception Rule Engine (§R4):**
-   - Modal allows selecting between `all` (standard), `exclude` (negative exception), and `include_only` (positive exception).
-   - When `exclude` or `include_only` is chosen, an interactive phone tag manager normalizes Brazilian phone numbers (55 + DDD + 8/9 digits) and enables single or bulk entry.
+1. **Garantia de Entrega dos Dados do Servidor ao Frontend**:
+   - Para que o Portal do Hóspede identifique `reservation.needsReSignature === true` no primeiro carregamento de tela e em chamadas a `fetchPortalData()`, `demo-server.mjs:15136-15142` precisa projetar `needsReSignature: Boolean(r.needsReSignature)` e `reSignatureReason`.
+2. **Alertas Claros & Prevenção de Bloqueio na Portaria**:
+   - Exibir o banner de alerta destacado no topo do Guest Portal com o texto exato exigido: *"Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."* e o botão *"Assinar Termo Atualizado"* assegura que o hóspede entenda a exigência regulatória antes de chegar ao flat.
+   - No card da reserva (Check-in/Entrada), substituir o status de sucesso anterior por "⚠️ Re-assinatura Obrigatória" impede que o hóspede tente confirmar entrada sem o documento atualizado.
+3. **Experiência Fast-Track no Pré-Check-in**:
+   - Ao clicar no link `/pre-checkin/${reservation.code}?resign=1`:
+     - O sistema detecta `isResignParam` ou `needsReSignature`.
+     - Todos os dados cadastrais (nome, CPF, telefone, endereço, fotos de documento e selfie) permanecem preenchidos e válidos.
+     - O quadro de assinatura é iniciado limpo (`signatureData = null`).
+     - O fluxo posiciona o hóspede diretamente no Passo 3 (Assinatura), sem exigir que ele avance manualmente pelos Passos 1 e 2.
+     - A submissão dispara `POST /api/pms/pre-checkin` com `resign: "1"`, limpando a pendência e redirecionando para `/minha-reserva/:code?resign_success=1`.
+4. **Integridade de Build**:
+   - A adição de `AlertTriangle` em `guest-pre-checkin.tsx` e `PenTool` em `guest-portal.tsx` garante que a compilação de produção (`npm run build`) execute com zero erros de tipagem.
 
 ---
 
 ## 3. Caveats
 
-1. **Node Version Warning:**
-   - Vite 7 displays a minor warning on Node 20.10.0 (`Vite requires Node.js version 20.19+ or 22.12+`), but the build completes successfully with exit code 0.
-2. **Post-Implementation Build Requirement:**
-   - Per `AGENTS.md`, any changes to `artifacts/limpeza/src` require executing `npm run build` in `artifacts/limpeza` to update `artifacts/limpeza/dist/`, followed by `git push`.
-3. **No Code Written to Source Directory During Investigation:**
-   - In accordance with the Explorer archetype rules, no changes have been committed directly to `artifacts/limpeza/src` by this agent. All source code is provided ready-to-copy in `analysis.md`.
+- **Autenticação OTP 2FA**:
+  No Passo 3 do Pré-Check-in, o sistema dispara código OTP via WhatsApp (se configurado). O fluxo fast-track de re-assinatura respeita essa camada de segurança para validação da posse do titular, exigindo o código de 6 dígitos.
+- **Reservas com Múltiplos Hóspedes**:
+  Para reservas com mais de 1 hóspede, `currentGuest.needsReSignature` é avaliado individualmente, permitindo que cada ocupante re-assine seu respectivo termo com seu índice (`?guest=2&resign=1`).
+- **Nenhum arquivo de código em `.agents/teamwork`**:
+  Conforme a regra do projeto, arquivos de código fonte e blueprints foram documentados exclusivamente em `analysis.md` e `handoff.md`.
 
 ---
 
 ## 4. Conclusion
 
-The UI and hook design for the Dynamic FAQ & Knowledge Base is complete, fully specified, and accompanied by production-ready TypeScript/React code.
-
-### Required Actions for the Worker:
-1. **Create `artifacts/limpeza/src/hooks/use-faq.ts`** using code from `analysis.md §6.1`.
-2. **Create `artifacts/limpeza/src/components/faq-knowledge-base.tsx`** using code from `analysis.md §6.2`.
-3. **Update `artifacts/limpeza/src/pages/whatsapp-automation.tsx`** per `analysis.md §6.3`:
-   - Import `FaqKnowledgeBase`.
-   - Add `<TabsTrigger value="faq">` in `TabsList`.
-   - Add `<TabsContent value="faq"><FaqKnowledgeBase /></TabsContent>`.
-4. **Update `artifacts/limpeza/src/App.tsx`** per `analysis.md §6.4`:
-   - Add `<AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />`.
-5. **Run `npm run build` in `artifacts/limpeza`** to generate `artifacts/limpeza/dist/`.
+A solução foi detalhadamente investigada e mapeada em drop-in blueprints completos em `analysis.md`:
+- `guest-portal.tsx`: Banners no topo e dentro do Card da Reserva estilizados, com texto regulatório e links diretos para `/pre-checkin/:code?resign=1`.
+- `guest-pre-checkin.tsx`: Fluxo fast-track no Passo 3, preservação de dados e fotos, canvas limpo, submissão com `resign: "1"` e retorno automático ao portal com sucesso.
+- `demo-server.mjs`: Projeção de `needsReSignature` no endpoint do portal em estrita paridade byte-a-byte entre `artifacts/api-server/` e `scripts/`.
+- Todos os imports ausentes (`AlertTriangle`, `PenTool`) foram identificados e solucionados para assegurar build limpo.
 
 ---
 
 ## 5. Verification Method
 
-To verify the implementation once applied by the Worker:
+Para o agente implementador (`m3_worker`) e auditores verificarem de forma independente:
 
-1. **Verify Frontend Compilation:**
+1. **Inspeção dos Blueprints Detalhados**:
+   - Ler `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_explorer_2\analysis.md`.
+2. **Build de Frontend**:
    ```powershell
    cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
    npm run build
    ```
-   *Expected result:* Exit code 0, no TypeScript compilation errors, updated bundle emitted in `dist/public/`.
-
-2. **Verify Route Registration:**
+   *Resultado esperado*: Build sem erros de TypeScript ou Vite, gerando bundle em `dist/`.
+3. **Teste Pontual do Módulo**:
    ```powershell
-   Select-String -Path "artifacts\limpeza\src\App.tsx" -Pattern "whatsapp-automation"
+   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
+   node --test tests/m1-reservation-modification.test.mjs
    ```
-   *Expected result:* 1 match showing `<AdminRoute path="/whatsapp-automation" ... />`.
-
-3. **Verify Component & Hook Presence:**
+   *Resultado esperado*: Suíte pontual passa com 100% de sucesso.
+4. **Verificação de Paridade SHA-256 (Twin Server)**:
    ```powershell
-   Test-Path "artifacts\limpeza\src\hooks\use-faq.ts"
-   Test-Path "artifacts\limpeza\src\components\faq-knowledge-base.tsx"
+   node -e "const fs=require('fs'), crypto=require('crypto'); ['demo-server.mjs'].forEach(f => { const a = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/'+f)).digest('hex'); const b = crypto.createHash('sha256').update(fs.readFileSync('scripts/'+f)).digest('hex'); if (a!==b) throw new Error('Desalinhamento em '+f); console.log('100% PARITY OK:', f); });"
    ```
-   *Expected result:* `True` for both.
-
-4. **Verify Tab Mounting:**
-   ```powershell
-   Select-String -Path "artifacts\limpeza\src\pages\whatsapp-automation.tsx" -Pattern "FaqKnowledgeBase"
-   ```
-   *Expected result:* Import statement and JSX usage inside `<TabsContent value="faq">`.

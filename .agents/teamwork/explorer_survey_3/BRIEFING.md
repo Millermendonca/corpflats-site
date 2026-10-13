@@ -1,49 +1,49 @@
-# BRIEFING — 2026-10-11T01:33:00Z
+# BRIEFING — 2026-10-11T23:53:00Z
 
 ## Mission
-Investigar infraestrutura de testes em `tests/` (especialmente `tests/whatsapp-ai-agent.test.mjs` e outros), scripts e runners de teste (Node test runner, mocha, etc.), organização de mocks, stubs e fixtures de WhatsApp webhook e serviço de IA, estado do Git (branch, commits, remote) e regras do `AGENTS.md`, e mapeamento dos requisitos de teste para R2-R5 e critérios de aceitação do FAQ dinâmico & auto-aprendizado.
+Investigar arquitetura de hardware IoT, especificações de áudio de boas-vindas (Welcome Playlist), regras de ativação no dia do check-in, ciclo de vida fail-safe de segurança domótica e elaboração do Guia de Aquisição de Hardware IoT para o Smart Flat Hub (CorpFlats).
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: frontend investigator, survey analyzer, testing infra & test cases investigator
+- Roles: frontend investigator, survey analyzer, testing infra & test cases investigator, iot hardware architect, hospitality audio & automation investigator
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
 - Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: Survey Phase - FAQ & Testing Infra
+- Milestone: Smart Flat Hub - Survey Phase (R4 & R5) Complete
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement code changes in the source code
 - Always follow the communication and handoff protocols
 - Deliver structured analysis in `analysis.md` and handoff in `handoff.md`
+- Restrição crítica de privacidade: NADA do Smart Flat Hub visível para clientes reais em produção (modo preview / sandbox exclusivo)
+- Proibido rodar testes globais ou em lote (AGENTS.md)
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T01:33:00Z
+- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+- Updated: 2026-10-11T23:53:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `tests/` (43 arquivos analisados; `tests/whatsapp-ai-agent.test.mjs`, `tests/bot-actions-api.test.mjs`, `tests/companion-and-email-mirror.test.mjs`, `tests/m2-messaging-checkin-url.test.mjs`, `tests/governance-integrity.test.mjs`)
-  - `package.json` raiz e subpastas (sem script `"test"` no raiz; uso nativo de `node --test`)
-  - `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs`
-  - `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`
-  - `artifacts/limpeza/package.json` e execução do build Vite
-  - Git status, log e remotes
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\DISPATCH.md`
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` (DEFAULT_FLATS, settings, checkinTime: "14:00", endereço em Campos dos Goytacazes)
+  - `artifacts/limpeza/src/lib/sound.ts` & `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
+  - Rede e dimensionamento elétrico Enel Rio 127V/220V e padrão NBR 14136.
 - **Key findings**:
-  - Test runner padrão é o `node:test` nativo do Node.js (`node --test tests/<arquivo>.test.mjs`).
-  - Descoberto desalinhamento SHA-256 ativo entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`, que quebra `m2-messaging-checkin-url.test.mjs` e vinha sendo mascarado por `process.exit(0)` em `whatsapp-ai-agent.test.mjs`.
-  - Mocks de WhatsApp e IA usam `mockDb`, stubs de `sendZapiMessage`, `createNotification` e `geminiApiKey: ""` para forçar contingência heurística local offline e rápida (<1s).
-  - Git na branch `main`, sincronizada com GitHub `origin/main`.
-  - Regras de `AGENTS.md` validadas: `git push` obrigatório, build de `artifacts/limpeza` com inclusão de `dist/public`, e sincronização de espelho duplo obrigatória.
-  - Mapeados 10 novos casos de teste para os requisitos R2-R5 em `analysis.md`.
-- **Unexplored areas**: Nenhuma no escopo deste subagente explorer.
+  - R4: Welcome Playlist com 4 faixas ambientais, HTML5 Audio, volume inicial 35%, timeout 60min, trigger automático às 14:00 no dia de check-in, integração Alexa via webhook/virtual device.
+  - R2 & R3: Ciclo fail-safe estruturado (trava de até 30min antes do ETA para ligar, alerta aos 15min pós-ETA, corte automático forçado aos 30min pós-ETA sem confirmação de entrada, mitigando riscos térmicos com cafeteiras a seco e desperdício de climatização).
+  - R5: Especificação completa de hardware para 19 flats (Tomadas Tuya 16A NBR 14136 antichama com medição de watts, IR Blaster 38kHz com sensor digital TH, Amazon Echo Pop / Dot 5ª Geração, Interruptores touch 4x2 com/sem neutro). Orçamento estimado: R$ 9.971 a R$ 12.821 para a frota completa.
+  - Localização formal do Guia de Hardware: `docs/SMART_FLAT_HARDWARE_GUIDE.md`.
+- **Unexplored areas**: Nenhuma no escopo do Explorer Survey 3.
 
 ## Key Decisions Made
-- Relatório técnico detalhado produzido em `analysis.md`.
-- Relatório de handoff 5 componentes produzido em `handoff.md`.
-- Notificação de conclusão enviada ao orchestrator com o resumo das conclusões e apontamento do desalinhamento SHA-256.
+- Análise aprofundada consolidada em `analysis.md`.
+- Relatório de handoff formal de 5 seções registrado em `handoff.md`.
+- Conclusão comunicada via `send_message` ao orquestrador.
 
 ## Artifact Index
-- analysis.md — Relatório técnico aprofundado da infraestrutura de testes, mocks e git
-- handoff.md — Relatório de handoff estruturado com os 5 componentes
-- DISPATCH.md — Registro histórico das instruções recebidas
-- progress.md — Registro de liveness e passos concluídos
+- `DISPATCH.md` — Despacho e registro de mensagens recebidas
+- `BRIEFING.md` — Identidade persistente e resumo executivo
+- `progress.md` — Heartbeat de liveness e status das tarefas
+- `analysis.md` — Análise técnica completa dos requisitos R4 e R5
+- `handoff.md` — Relatório formal de handoff (5 componentes)

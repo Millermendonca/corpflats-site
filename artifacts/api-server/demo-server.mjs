@@ -129,6 +129,12 @@ import {
   triggerManualGc,
   setAuditLogger
 } from "./server-monitor-service.mjs";
+import {
+  getFlatAmenitiesInfo,
+  searchFlatsByAmenities,
+  handleGetFlatAmenities,
+  handleReallocateReservationFlat
+} from "./whatsapp-ai-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -11118,6 +11124,21 @@ app.post("/api/service/public/:token/register", (req, res) => {
   res.json({ success: true, worker });
 });
 
+function getOrRegisterServiceWorker(token, orderId, body) {
+  let worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === orderId) && w.mainWorker?.name && w.mainWorker?.cpf);
+  if (!worker) {
+    const b = body?.mainWorker || (body?.workerName && body?.workerCpf ? { name: body.workerName, cpf: body.workerCpf } : null);
+    const n = String(b?.name || "").trim(), c = String(b?.cpf || "").replace(/\D/g, "");
+    if (n && c.length === 11) {
+      if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+      worker = { id: `sw_${Date.now()}`, serviceOrderId: orderId, token, mainWorker: { name: n, cpf: c }, collaborators: [], registeredAt: new Date().toISOString() };
+      db.serviceWorkers.push(worker);
+      saveDatabase("register_service_worker_on_start");
+    }
+  }
+  return worker;
+}
+
 // POST /api/service/public/:token/flats/:flatId/start — Inicia serviço no apartamento
 app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   const { token, flatId } = req.params;
@@ -11129,18 +11150,9 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   }
 
   // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
-  let worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
+  const worker = getOrRegisterServiceWorker(token, order.id, req.body);
   if (!worker) {
-    const b = req.body?.mainWorker || (req.body?.workerName && req.body?.workerCpf ? { name: req.body.workerName, cpf: req.body.workerCpf } : null);
-    const n = String(b?.name || "").trim(), c = String(b?.cpf || "").replace(/\D/g, "");
-    if (n && c.length === 11) {
-      if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-      worker = { id: `sw_${Date.now()}`, serviceOrderId: order.id, token: order.token, mainWorker: { name: n, cpf: c }, collaborators: [], registeredAt: new Date().toISOString() };
-      db.serviceWorkers.push(worker);
-      saveDatabase("register_service_worker_on_start");
-    } else {
-      return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
-    }
+    return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
   }
 
   const fId = Number(flatId);
@@ -13739,6 +13751,9 @@ app.post("/api/pms/reservations", async (req, res) => {
     isCamposResident: Boolean(req.body.isCamposResident || guest.isCamposResident),
     riskAttentionAlert: Boolean(req.body.riskAttentionAlert || req.body.isCamposResident || guest.riskAttentionAlert || guest.isCamposResident),
     riskAttentionReason: req.body.riskAttentionReason || (req.body.isCamposResident || guest.isCamposResident ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : (guest.riskAttentionReason || "")),
+    isFlatLocked: Boolean(req.body.isFlatLocked || req.body.flatLocked),
+    flatLocked: Boolean(req.body.isFlatLocked || req.body.flatLocked),
+    flatLockReason: req.body.flatLockReason ? String(req.body.flatLockReason).trim() : (req.body.isFlatLocked || req.body.flatLocked ? "Quarto preferencial bloqueado" : ""),
     breakfastToken: `bfk_${resId}_${crypto.randomBytes(4).toString("hex")}`,
     createdBy: {
       userId: authUser?.id || null,
@@ -14810,10 +14825,42 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
     "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
-    "companyId", "companyName", "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason"
+    "companyId", "companyName", "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
+    "isFlatLocked", "flatLocked", "flatLockReason"
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+
+  if (req.body.isFlatLocked !== undefined || req.body.flatLocked !== undefined) {
+    const isLockedVal = Boolean(req.body.isFlatLocked ?? req.body.flatLocked);
+    r.isFlatLocked = isLockedVal;
+    r.flatLocked = isLockedVal;
+  }
+  if (req.body.flatLockReason !== undefined) {
+    r.flatLockReason = String(req.body.flatLockReason || "").trim();
+  }
+
+  // Se o administrador alterou o flat de uma reserva com trava de Quarto Preferencial, registra em auditoria
+  const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
+  if (wasFlatLocked && req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId)) {
+    console.log(`[PMS Edição] Administrador alterou o flat da reserva ${r.code || r.id} com trava de Quarto Preferencial (de Flat ${oldFlatId} para Flat ${req.body.flatId}).`);
+    try {
+      logAuditEvent({
+        level: "warning",
+        category: "pms",
+        action: "RESERVATION_LOCKED_FLAT_CHANGED_BY_ADMIN",
+        actor: { username: req.user?.username || "admin", role: "admin" },
+        details: {
+          reservationId: r.id,
+          code: r.code,
+          guestName: r.guestName,
+          oldFlatId,
+          newFlatId: req.body.flatId,
+          flatLockReason: r.flatLockReason || "Quarto preferencial bloqueado"
+        }
+      });
+    } catch (_) {}
   }
 
   // Upsert do Solicitante Terceiro no CRM ao atualizar reserva
@@ -23454,6 +23501,8 @@ export function getBotActionsSettings() {
         generatePayment: true,
         createPreReservation: true,
         commitReservation: true,
+        reallocateReservationFlat: true,
+        getFlatAmenities: true,
         getReservationDetails: true,
         getFlatStatus: true,
         getPricingInfo: true,
@@ -23471,6 +23520,8 @@ export function getBotActionsSettings() {
       generatePayment: true,
       createPreReservation: true,
       commitReservation: true,
+      reallocateReservationFlat: true,
+      getFlatAmenities: true,
       getReservationDetails: true,
       getFlatStatus: true,
       getPricingInfo: true,
@@ -23633,12 +23684,24 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
       checkIn: inDate,
       checkOut: outDate,
       guests,
-      flats: availableFlats.map(f => ({
-        id: f.id,
-        number: f.number,
-        name: f.colName || `Flat ${f.number}`,
-        isOccupied: false
-      }))
+      flats: availableFlats.map(f => {
+        const info = getFlatAmenitiesInfo(f);
+        return {
+          id: f.id,
+          number: f.number,
+          name: f.colName || `Flat ${f.number}`,
+          isOccupied: false,
+          tags: info?.tags || [],
+          airConditionerType: info?.airConditionerType || "split",
+          airConditionerLabel: info?.airConditionerLabel || "Ar-condicionado Split ❄️",
+          airConditioner: info?.airConditionerType || "split",
+          bedType: info?.bedType || "casal",
+          bedLabel: info?.bedLabel || "Cama de Casal 🛏️",
+          bed: info?.bedType || "casal",
+          hasMicrowave: info?.hasMicrowave ?? true,
+          features: info?.features || []
+        };
+      })
     });
   } catch (err) {
     res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
@@ -24121,6 +24184,53 @@ app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commi
       pmsConfirmed: true,
       message: "Reserva efetivada com sucesso no PMS, UH bloqueada permanentemente e recepção notificada."
     });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.get("/api/bot-actions/flats-amenities", (req, res) => {
+  try {
+    const result = handleGetFlatAmenities(db, {
+      criteria: req.query.criteria,
+      flatNumber: req.query.flatNumber,
+      bedType: req.query.bedType,
+      split: req.query.split !== undefined ? req.query.split === "true" || req.query.split === true : undefined,
+      hasMicrowave: req.query.hasMicrowave !== undefined ? req.query.hasMicrowave === "true" || req.query.hasMicrowave === true : undefined
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-actions/reallocate-flat", verifyBotActionPermission("reallocateReservationFlat"), (req, res) => {
+  try {
+    const result = handleReallocateReservationFlat(db, req.body || {});
+    if (!result.success) {
+      const statusCode = result.error === "FLAT_NOT_FOUND" || result.error === "RESERVATION_NOT_FOUND" ? 404 :
+                         result.error === "MISSING_TARGET_FLAT" ? 400 : 422;
+      return res.status(statusCode).json(result);
+    }
+
+    saveDatabase("bot_reallocate_reservation_flat");
+
+    logAuditEvent({
+      level: "info",
+      category: "pms",
+      action: "RESERVATION_REALLOCATED_BY_SOFIA_API",
+      actor: { name: "Sofia (Bot Actions API)", role: "bot" },
+      details: {
+        reservationId: result.reservationId,
+        code: result.code,
+        guestName: result.guestName,
+        previousFlat: result.previousFlat,
+        newFlat: result.newFlat,
+        displacedReservation: result.displacedReservation
+      }
+    });
+
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
   }

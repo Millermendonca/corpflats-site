@@ -1,60 +1,66 @@
-# BRIEFING — 2026-10-11T04:49:30Z
+# BRIEFING — 2026-10-11T16:46:00Z
 
 ## Mission
-Review and adversarial stress-test Milestone 3 UI components (use-faq.ts, faq-knowledge-base.tsx) and Client Exception Engine.
+Perform independent quality and adversarial review for Milestone 3 backend projection, demo-server parity, security against re-signing bypass, and build integrity in Guest-Flow-Manager.
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: reviewer_and_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Milestone 3
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Milestone: M3
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Reviewer & Adversarial Critic: check integrity violations, hardcoded test results, dummy facades, shortcuts
-- Verify use-faq.ts hook, faq-knowledge-base.tsx component, exception engine, build & tests
+- Strictly adhere to targeted testing policy (no global/batch tests)
+- Actively check for integrity violations (hardcoded test outputs, dummy implementations, shortcuts, bypasses)
+- Byte-for-byte SHA-256 parity verification between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T04:43:09Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T16:46:00Z
 
 ## Review Scope
-- **Files reviewed**:
-  - `artifacts/limpeza/src/hooks/use-faq.ts` (489 lines)
-  - `artifacts/limpeza/src/components/faq-knowledge-base.tsx` (1,268 lines)
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx` (lines 1697–1709, 3552–3554)
-  - `artifacts/limpeza/src/App.tsx` (line 276)
-- **Interface contracts**: `ORIGINAL_REQUEST.md` (§R1, §R4)
-- **Review criteria**: Correctness, logical completeness, quality, adversarial risk, exception rules, build & test integrity
+- **Files to review**:
+  - `scripts/demo-server.mjs`
+  - `artifacts/api-server/demo-server.mjs`
+  - `artifacts/limpeza/dist/public/index.html` (and build assets)
+  - `tests/m3-frontend-portal-panels.test.mjs`
+  - `tests/m2-re-signature-operations-sync.test.mjs`
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`
+  - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`
+  - `artifacts/limpeza/src/pages/garage-dashboard.tsx`
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
+- **Review criteria**: correctness, backend projection, SHA-256 parity, security/bypass prevention, build integrity, adversarial robustness
 
 ## Review Checklist
 - **Items reviewed**:
-  - `use-faq.ts` typed hook & full REST integration
-  - `faq-knowledge-base.tsx` (4 metric cards, 9 categories, 4 filters, dual view, 1-click approve, exception phone chips)
-  - Route `/whatsapp-automation` in `App.tsx` & 6th tab in `whatsapp-automation.tsx`
-  - Frontend build `npm run build` in `artifacts/limpeza`
-  - Test suite `node --test tests/whatsapp-ai-agent.test.mjs`
-  - Adversarial harnesses (`challenger-m1-r3-rule-engine`, `m1-r2-adversarial-harness`, `challenger-m1-rest-atomic-stress`)
-- **Verdict**: **APPROVE**
-- **Unverified claims**: None
+  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` projection of `needsReSignature`, `reSignatureReason`, `reSignatureUrl`
+  - SHA-256 twin parity check (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F` on both)
+  - `artifacts/limpeza/dist/public` build artifacts presence, timestamps, and sizes
+  - `POST /api/pms/pre-checkin` re-signature handling and bypass protection
+  - Execution of `node --test tests/m3-frontend-portal-panels.test.mjs` (8/8 pass)
+  - Execution of `node --test tests/m2-re-signature-operations-sync.test.mjs` (7/7 pass)
+- **Verdict**: APPROVE
+- **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Phone formatting & E.164 normalization variations -> Passed
-  - Empty phone lists under `exclude` and `include_only` -> Passed (safe degradation)
-  - Rapid double-clicks on 1-click approve -> Passed (disabled in flight)
-  - Unmapped / fallback categories -> Passed
-- **Vulnerabilities found**: None
-- **Untested angles**: None
+  - Empty or bypassed re-signature submission: Handled; reception physically blocks entry (`POST /api/reception/checkin/:id` returns 400).
+  - Multi-guest partial re-signing: `r.needsReSignature` remains `true` until all guests have completed re-signing (`!hasPendingGuestsReSign`).
+  - Stale signature reuse: Signature URLs and canvases are cleared upon invalidation (`invalidateReservationCheckinSignatures`).
+  - Parity divergence between `scripts/` and `artifacts/api-server/`: SHA-256 hashes are 100% byte-for-byte identical.
+  - Production build presence: Verified all dist files exist and match latest build.
+- **Vulnerabilities found**: None.
+- **Untested angles**: None within Milestone 3 scope.
 
 ## Key Decisions Made
-- Confirmed full compliance with Milestone 3 requirements and delivered verdict **APPROVE**.
+- Confirmed strict compliance with all milestone requirements.
+- Issued APPROVE verdict.
 
 ## Artifact Index
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2\DISPATCH.md` — Task instructions
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2\BRIEFING.md` — Situational awareness
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2\progress.md` — Liveness heartbeat tracker
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2\review.md` — Detailed review & critic report
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2\handoff.md` — 5-component handoff report
+- DISPATCH.md — incoming dispatch instructions
+- BRIEFING.md — persistent situational awareness
+- progress.md — liveness heartbeat
+- handoff.md — final review report and verdict

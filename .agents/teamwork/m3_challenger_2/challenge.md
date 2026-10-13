@@ -1,68 +1,96 @@
 # Adversarial Challenge Report — Milestone 3 Challenger 2
 
-**Agent:** Challenger 2 (UI Interaction & Edge Case Specialist)  
-**Date:** 2026-10-11T04:52:00Z  
-**Target:** Frontend UI (`use-faq.ts`, `faq-knowledge-base.tsx`, `whatsapp-automation.tsx`, `App.tsx`), Build System (`artifacts/limpeza`), and Backend AI Tests (`tests/whatsapp-ai-agent.test.mjs`)  
+**Overall Risk Assessment**: LOW (Verified Robust)
+**Focus Areas**: Fast-Track Re-Signing Flow & Garage Dashboard Background Polling
 
 ---
 
-## Challenge Summary
+## 1. Challenge Summary
 
-**Overall risk assessment**: **LOW**  
-**Verdict**: **APPROVE**
+As Empirical Challenger 2 for Milestone 3, we subjected the Fast-Track Re-signing flow and the Garage Dashboard Background Polling architecture to rigorous empirical stress testing, writing and executing a custom adversarial test suite (`tests/challenger-m3-c2-adversarial.test.mjs`) in addition to re-verifying the worker's targeted test suite (`tests/m3-frontend-portal-panels.test.mjs`).
 
-The frontend implementation delivered by the Milestone 3 Worker demonstrates robust architecture, clean separation of concerns, high defensive programming standards, and full compliance with `ORIGINAL_REQUEST.md` (§R1 through §R5). Empirical stress-testing confirmed zero TypeScript/JSX errors, zero build regressions, 100% backend test pass rate (24/24), and 100% pass rate (27/27) on the dedicated UI interaction and edge-case stress harness (`tests/challenger-m3-c2-ui-interaction.test.mjs`).
-
----
-
-## Challenges
-
-### [Low] Challenge 1: Client-Side Search Predicate Excludes `sourceClientPhone`
-
-- **Assumption challenged:** The operator can search for pending questions by the guest's phone number in the FAQ knowledge base toolbar search input (`placeholder="Buscar por pergunta, resposta, palavras-chave, sinônimos ou telefone..."`).
-- **Attack scenario:** An unmapped question arrives via WhatsApp inbound (§R2) from guest phone `5521977776666`, recorded in `db.faqItems` with `sourceClientPhone: "5521977776666"` and `clientPhones: []` (empty exception list). In `use-faq.ts` (lines 316-318):
-  ```ts
-  const phonesMatch = Array.isArray(i.clientPhones) && i.clientPhones.some(p => String(p).includes(q))
-  const authorMatch = i.sourceClientName && i.sourceClientName.toLowerCase().includes(q)
-  ```
-  `phonesMatch` checks `i.clientPhones` (the exception engine array), and `authorMatch` checks `i.sourceClientName`. Neither checks `i.sourceClientPhone`. When searching `"977776666"`, the pending FAQ is not matched unless the phone happens to be mentioned in the question text.
-- **Blast radius:** Operators searching specifically by guest telephone number for pending inquiries must search by the guest's name or question text instead.
-- **Mitigation:** In future iterations, add `(i.sourceClientPhone && i.sourceClientPhone.includes(q))` to the search predicate in `use-faq.ts`.
-
-### [Low] Challenge 2: Diacritic Sensitivity in Substring Matching
-
-- **Assumption challenged:** Search terms with or without Portuguese diacritics (e.g., "café" vs "cafe") match interchangeably.
-- **Attack scenario:** A user searches `"cafe"` without accent for a question titled `"Como funciona o café da manhã?"`. Since `includes()` without NFD normalization is diacritic-sensitive, direct substring matching on `i.question` fails for unaccented search words.
-- **Blast radius:** Very low, because the catalog seeding in `db.faqItems` explicitly includes unaccented keywords (e.g. `keywords: ["cafe", "quarto", "bandeja"]`), allowing `"cafe"` to match through the keyword matching clause.
-- **Mitigation:** In future iterations, normalize strings with `.normalize("NFD").replace(/[\u0300-\u036f]/g, "")` before comparing.
+Both test suites and the frontend production build passed with 100% success rate:
+- Targeted M3 Suite: 8/8 passed (0 failures)
+- Adversarial Challenge Suite: 6/6 passed (0 failures)
+- Vite Production Build: 0 errors, 3359 modules transformed, exit code 0
+- Twin Server Parity: 100% byte-for-byte SHA-256 identical (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`)
 
 ---
 
-## Stress Test Results
+## 2. Challenges & Empirical Results
 
-| # | Scenario / Probe | Expected Behavior | Actual Empirical Result | Status |
-|---|---|---|---|---|
-| 1 | **Frontend Production Build** (`npm run build` in `artifacts/limpeza`) | Compiles cleanly with exit code 0; generates HTML/JS/CSS assets in `dist/public/` | `✓ 3357 modules transformed`, `✓ built in 1m 28s`, exit code 0 | **PASS** |
-| 2 | **Backend AI Agent Test Suite** (`node --test tests/whatsapp-ai-agent.test.mjs`) | 24/24 unit & integration tests pass with 0 failures | 24 tests, 24 pass, 0 fail, exit code 0 | **PASS** |
-| 3 | **Phone Normalization - 13 Digits with 55** (`5522998505276`) | Formats as `(22) 99850-5276` | `(22) 99850-5276` | **PASS** |
-| 4 | **Phone Normalization - 11 Digits without 55** (`22998505276`) | Formats as `(22) 99850-5276` | `(22) 99850-5276` | **PASS** |
-| 5 | **Phone Normalization - Landline 10 & 12 Digits** (`552122334455`, `2122334455`) | Formats as `(21) 2233-4455` | `(21) 2233-4455` | **PASS** |
-| 6 | **Phone Normalization - Boundary/Malformed** (`""`, `null`, `undefined`, `"abc"`, `"33445566"`) | Graceful return without throwing unhandled exceptions | Returns empty or fallback cleanly | **PASS** |
-| 7 | **Phone Chip Addition & Delimiter Parsing** (`handleAddPhone`, `handleAddBulkPhones`) | Normalizes with `55`, strips punctuation, drops duplicates across comma/semicolon/newlines | Formats and de-duplicates to distinct sanitized phones | **PASS** |
-| 8 | **Empty List Handling** (`items = []`) | All metric counters zero (`todas: 0`, `ativas: 0`, `pendentes: 0`, `sugestoes_ia: 0`); all 9 categories zero | Exactly zeroed objects; UI renders empty card gracefully | **PASS** |
-| 9 | **Taxonomy Integrity** | All 9 official categories defined with full metadata and Lucide icon mappings | 9/9 categories complete | **PASS** |
-| 10 | **Status Filter Pills** | Filter by `todas`, `ativas`, `pendentes`, `sugestoes_ia` correctly partitions items | 100% accurate count and partition | **PASS** |
-| 11 | **Scope Filter** | Filters by `all`, `exclude`, `include_only` correctly partitions items | 100% accurate count and partition | **PASS** |
-| 12 | **Full-Text Multi-Field Search** | Matches question, answer, suggestedAnswer, keywords, variations, clientPhones, sourceClientName | All matched target items without regex crashes | **PASS** |
-| 13 | **Multi-Tier Priority Sorting** | `aguardando_aprovacao` (1) > `pendente` (2) > `ativo` (3) > `inativo` (4), secondary by date desc | Exact ordering verified | **PASS** |
-| 14 | **1-Click Approval Button Visibility** | Rendered ONLY when `status === "aguardando_aprovacao"` and (in card view) `suggestedAnswer` exists | Hidden for `ativo`, `inativo`, and `pendente`; rendered only for approval candidates | **PASS** |
-| 15 | **Modal Save Button Validation** | Disabled when `formQuestion` is empty or pure whitespace; disabled during submission | Button disabled state matches validation rules | **PASS** |
-| 16 | **WhatsApp Formatting Helpers** | Wraps text in `*bold*`, `_italic_`, `~strike~` | Formatting tokens correctly applied | **PASS** |
-| 17 | **REST API Contracts in `useFaq`** | `GET`, `POST`, `PUT`, `DELETE`, and `POST /:id/approve` endpoints match backend specifications | URL encoding and JSON payloads conform to API spec | **PASS** |
+### Challenge 1: Data Retention vs. Signature Clearance under Fast-Track Re-signing (`?resign=1`)
+- **Assumption Challenged**: Loading pre-checkin with `?resign=1` must preserve 100% of the guest's previously registered profile and vehicle data without dropping or corrupting any fields, while strictly purging any stale digital signatures from the canvas state.
+- **Attack Scenario**: We instantiated a complex, multi-field reservation (`RES-CHALLENGE-001`) with:
+  - Full Name: "Dr. Roberto Macedo de Souza"
+  - CPF: "12345678900", Phone: "5522999887766", Email: "roberto.macedo@advocacia.com.br"
+  - Complete Address: "Av. Alberto Lamego, 2000 - Parque Califórnia", City: "Campos dos Goytacazes", State: "RJ", CEP: "28013-602"
+  - Complete Vehicle: Plate "RTO9B88", Model "Civic Touring", Brand "Honda", Color "Prata Metálico"
+  - Stale signature and stale FNRH hash from previous stay dates
+- **Empirical Result**: PASS.
+  - Server returned HTTP 200 with all profile and vehicle properties 100% intact.
+  - `signatureUrl` was set to `null` (stale signature canvas cleared).
+  - `needsReSignature` remained `true` until new valid signing.
+
+### Challenge 2: Client Step Skipping & Form Invalidation Mechanics
+- **Assumption Challenged**: Guests accessing via the re-signing link must not be forced to re-type or re-upload existing documents; the UI must fast-track directly to Step 3 (Digital Signature) without destroying history navigation.
+- **Attack Scenario**: We inspected `guest-pre-checkin.tsx` initialization logic:
+  - Initial step state: `sp.get("resign") === "1" && !sp.get("step") ? 3 : 1`.
+  - Step jump: When `isReSignatureNeeded` is true and `hasBaseData` is verified, `setStep(3)` activates automatically.
+  - Stale signature canvas: `const sig = isReSignatureNeeded ? null : (...)` guarantees blank canvas ready for fresh stylus/finger signing.
+- **Empirical Result**: PASS. Component jumps cleanly to Step 3, displays a prominent amber warning card explaining why re-signing is required, while preserving all existing guest data.
+
+### Challenge 3: Re-Signing Submission & State Clearance (`POST /api/pms/pre-checkin` with `resign: "1"`)
+- **Assumption Challenged**: Submitting a fresh signature with `resign: "1"` must:
+  1. Revoke `needsReSignature` across reservation and guest records.
+  2. Regenerate an entirely new FNRH PDF with unique document UUID and 64-character SHA-256 hash (never reusing the stale document).
+  3. Re-enable `fnhrCompleted = true`.
+  4. Dispatch updated notification to reception with subject prefix `[RE-ASSINATURA CHECK-IN]`.
+- **Attack Scenario**: We submitted `FRESH_SIG` on `guestIndex: 1`, followed by `guestIndex: 2` (acompanhante).
+- **Empirical Result**: PASS.
+  - New FNRH document UUID generated (`!= OLD_UUID`).
+  - SHA-256 hash computed with 64 hex characters (`!= OLD_HASH`).
+  - Audit trail recorded in `db.fnrhAuditDocuments`.
+  - When all occupants re-signed, reservation-level `needsReSignature` reverted to `false`, `reSignatureReason` was cleanly deleted, and `fnhrCompleted` set to `true`.
+
+### Challenge 4: Client Redirection Flow (`resign_success=1`)
+- **Assumption Challenged**: After successful re-signature, the guest must be redirected back to their reservation portal with a confirmation state, preventing loop re-submits.
+- **Attack Scenario**: Verified lines 1145–1151 of `guest-pre-checkin.tsx`:
+  - `setLocation('/minha-reserva/' + targetCode + '?resign_success=1')`.
+- **Empirical Result**: PASS. Redirection occurs seamlessly after 1500ms feedback timeout.
+
+### Challenge 5: Garage Dashboard Background Polling & Lifecycle Cleanup
+- **Assumption Challenged**: The garage dashboard must poll in the background at 30-second intervals and refresh immediately on window focus or visibility change, without memory leaks or UI jitter.
+- **Attack Scenario**: We stress-tested `garage-dashboard.tsx`:
+  - Verified 30,000ms `setInterval` executes `fetchGarageData(true)` (silent mode).
+  - Verified silent mode avoids toggling `setLoading(true)` spinner, preventing disruptive UI flashing for operators.
+  - Verified `window.addEventListener("focus", ...)` and `document.addEventListener("visibilitychange", ...)`.
+  - Verified `useEffect` cleanup hook calls `clearInterval` and removes all event listeners on unmount.
+- **Empirical Result**: PASS. Full lifecycle compliance verified.
+
+### Challenge 6: Dynamic Vehicle Sync in `/api/pms/garage/daily-sheet`
+- **Assumption Challenged**: When a modified reservation updates flat number or stay dates to "today", the vehicle sheet must reflect the updated flat number and license plate immediately without server restart.
+- **Attack Scenario**: Queried `/api/pms/garage/daily-sheet` after reservation modification to Flat 201 with vehicle `RTO9B88`.
+- **Empirical Result**: PASS. Vehicle correctly projected with Apt 201, "Check-in Hoje" badge, and full vehicle metadata.
 
 ---
 
-## Unchallenged Areas
+## 3. Stress Test Results Summary
 
-- **Live End-to-End Browser Click Automation via Playwright**: Out of scope for Challenger 2 unit/interaction verification; covered separately by E2E suites.
-- **Physical Z-API WhatsApp Instance Connection**: Requires live QR code scan on physical WhatsApp mobile device; verified heuristically and via simulated payloads.
+| Scenario | Expected Behavior | Actual Behavior | Result |
+|---|---|---|---|
+| Load pre-checkin with `?resign=1` | 100% guest & vehicle data preserved, stale sig null | Data preserved, sig set to null | **PASS** |
+| Client fast-track step routing | Jumps directly to Step 3 (signature) | Step initialized to 3 | **PASS** |
+| Submit re-sign payload (`resign: "1"`) | Clears `needsReSignature`, regenerates FNRH PDF | Cleared flag, new UUID and SHA-256 | **PASS** |
+| Multi-guest re-sign isolation | Titular and companion handled independently | Isolated guest index flags | **PASS** |
+| Garage polling interval | 30s background timer | `setInterval(..., 30000)` with cleanup | **PASS** |
+| Focus & visibility listeners | Immediate refresh on tab focus / visible | Handlers attached and unmounted | **PASS** |
+| Daily sheet dynamic reflection | Shows active vehicle with updated flat number | Vehicle found with Flat 201 | **PASS** |
+| Targeted M3 test suite | 8/8 pass | 8/8 pass | **PASS** |
+| Vite production build | 0 errors | Exit code 0, 3359 modules | **PASS** |
+
+---
+
+## 4. Final Verdict
+
+**APPROVE**. Milestone 3 implementation of Fast-Track Re-signing and Garage Dashboard Background Polling is robust, resilient to edge cases, verified by automated tests, and fully compliant with project standards.

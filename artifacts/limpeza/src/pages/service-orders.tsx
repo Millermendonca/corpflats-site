@@ -1368,6 +1368,10 @@ export default function ServiceOrders() {
                                   <span className="text-[10px] text-rose-600 font-semibold truncate w-full" title={flat.currentGuest ? `Hóspede: ${flat.currentGuest}` : "Ocupado"}>
                                     🔴 Ocupado {flat.currentGuest ? `(${flat.currentGuest.split(' ')[0]})` : ""}
                                   </span>
+                                ) : flat.hasCheckinToday ? (
+                                  <span className="text-[10px] text-blue-600 font-semibold truncate w-full" title={flat.currentGuest ? `Check-in Hoje: ${flat.currentGuest}` : "Check-in Hoje"}>
+                                    🔵 Check-in Hoje {flat.currentGuest ? `(${flat.currentGuest.split(' ')[0]})` : ""}
+                                  </span>
                                 ) : flat.isDirty ? (
                                   <span className="text-[10px] text-amber-700 font-medium truncate w-full">
                                     🧹 Sujo / Checkout

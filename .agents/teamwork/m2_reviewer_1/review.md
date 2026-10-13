@@ -1,119 +1,147 @@
-# Milestone 2 Review & Adversarial Challenge Report
+# Milestone 2 Quality & Adversarial Review Report
 
-**Reviewer**: Reviewer 1 (`m2_reviewer_1`)  
-**Roles**: reviewer, critic  
-**Target Commit**: `53d1b7d5fdd29629e1f9c547bc945044f67bfc40`  
-**Date**: 2026-10-11T03:43:00Z  
-**Verdict**: **`APPROVE`**  
-**Overall Risk Assessment**: **LOW**
+**Reviewer**: M2 Reviewer 1 (Roles: Reviewer, Critic)  
+**Target Milestone**: Milestone 2 — Re-Signature Lifecycle, Forensic Document Delivery & Operations Synchronization  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_1`  
+**Date**: 2026-10-11T15:35:00Z  
 
 ---
 
-## 1. Executive Summary
+## 1. Executive Summary & Verdict
 
-Milestone 2 implements the dynamic Knowledge Base & FAQ Auto-Learning Engine for the WhatsApp AI Agent (Sofia / CorpFlats):
-1. **Dynamic Prompt Injection & Exception Rules** (`whatsapp-ai-service.mjs:1400-1463`): Active FAQs filtered strictly by client applicability (`all`, `exclude`, `include_only`) and injected into the Gemini context under `## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):`.
-2. **Prioritized Heuristic Contingency** (`whatsapp-ai-service.mjs:1045-1144`): Dynamic FAQ evaluation executed prior to static regexes, using tokenized scoring, diacritic normalization, variation matching, and keyword weights.
-3. **Unmapped Inbound Question Auto-Detection** (`whatsapp-ai-service.mjs:1803-1819`): Inbound guest questions triggering handover or heuristic fallback automatically register as `"pendente"` with category inference, keyword extraction, and operator notification.
-4. **Operator Response Capture & AI Pausing** (`zapi-service.mjs:1168-1244`, `5687-5715`, `6244-6263`): Human replies (`fromMe: true` via webhook or Live Chat REST endpoints) match pending guest questions within a 24-hour window, populate `suggestedAnswer`, transition status to `"aguardando_aprovacao"`, and pause the AI (`conv.aiPaused = true`, `aiPausedReason = "operator_manual_reply"`).
-5. **Twin-Server Parity**: 100% SHA-256 byte parity confirmed across all mirrored `.mjs` server pairs between `artifacts/api-server/` and `scripts/`.
-6. **Test Suite**: All 24 tests in `tests/whatsapp-ai-agent.test.mjs` pass in **4.83s** (< 5.0s requirement) with exit code 0.
-7. **Infrastructure Cleanliness**: Port 5000 is verified clean with zero listeners before and after execution.
+**Verdict**: **APPROVE**  
+**Integrity Status**: **CLEAN (0 Integrity Violations)**  
+**Byte Parity**: **100% SHA-256 Byte-for-Byte Match Across All Mirrored Pairs**  
+**Targeted Test Execution**:
+- `tests/m2-re-signature-operations-sync.test.mjs`: **7 passed, 0 failed, 0 skipped** (4.46s)
+- `tests/m1-reservation-modification-settlement.test.mjs`: **15 passed, 0 failed, 0 skipped** (5.53s)
 
 ---
 
 ## 2. Integrity & Anti-Cheating Verification
 
-| Check | Result | Evidence |
-|---|---|---|
-| Hardcoded Test Results | **PASS** | No hardcoded test responses or artificial test branching found in `whatsapp-ai-service.mjs` or `zapi-service.mjs`. |
-| Facade / Dummy Logic | **PASS** | Scoring algorithm, phone matching regex, 24h window calculation, and database persistence are authentic and complete. |
-| Task Delegation / Shortcuts | **PASS** | Logic implemented natively in project code. |
-| Fabricated Logs / Outputs | **PASS** | Verified independently by running tests, port inspection, and hash verification in real-time. |
-| Self-Certifying Verification | **PASS** | Independent review verified all 24 tests directly via Node.js test runner and measured wall-clock execution time. |
+| Check Category | Inspection Details | Result |
+|---|---|:---:|
+| **Hardcoded Test Assertions** | Scanned `demo-server.mjs`, `zapi-service.mjs`, and `fnrh-pdf-service.mjs` for test fixture IDs (`8001`, `8002`, `RES-M2-001`, `RES-M2-002`, mock hashes). None exist in production code. | **PASS** |
+| **Facade / Dummy Logic** | Inspected `invalidateReservationCheckinSignatures`, `POST /api/pms/pre-checkin`, `POST /api/reception/checkin/:reservationId`, and morning routine scheduler. Implementation performs real data mutation, cryptographic hashing, and atomic state transitions. | **PASS** |
+| **Shortcuts & Delegations** | Verified that document delivery, SHA-256 computation, WhatsApp trigger queues, and operational synchronizers execute full canonical workflows without bypassing required steps. | **PASS** |
+| **Fabricated Verification** | Independently executed test commands and independently calculated SHA-256 hashes via Node.js runtime. Outputs directly verified. | **PASS** |
 
 ---
 
-## 3. Architecture & Interface Conformance Review
+## 3. Detailed Architectural Inspection
 
-### 3.1 Dynamic Prompt Injection (`generateAiWhatsAppResponse`)
-- **Location**: `artifacts/api-server/whatsapp-ai-service.mjs:1400-1463` and mirror `scripts/whatsapp-ai-service.mjs`.
-- **Status Filtering**: Queries `db.faqItems` (and falls back to `db.knowledgeBaseFaq`). Strictly filters `faq.status === "ativo"`. Items in `"pendente"` or `"aguardando_aprovacao"` are NEVER leaked into the Gemini prompt.
-- **Rule Engine**: Evaluates `isFaqApplicableToClient(faq, phone)` supporting `all`, `exclude`, and `include_only` with DDI/DDD normalization via `matchClientPhone`.
-- **Format**: Injected with markdown headers, category tags, question variations, and official answers.
+### 3.1. Invalidation of Check-in Signatures upon Stay/Flat Alteration
+- **Location**: `scripts/demo-server.mjs` lines 13762–13806 & `artifacts/api-server/demo-server.mjs` lines 13762–13806.
+- **Function**: `invalidateReservationCheckinSignatures(r, reason)`
+- **Behavior**:
+  - Resets `r.fnhrCompleted = false`, `r.preCheckinCompleted = false`, `r.signatureUrl = null`, `r.checkedInAt = null`, `r.needsReSignature = true`, `r.reSignatureReason = reason`.
+  - Purges all cryptographic and file links: `fnrhPdfUrl`, `fnrhDownloadUrl`, `fnrhDocumentUuid`, `fnrhSha256Hash`, `fnrhVerifyUrl`, `fnrhSignedAt`, `fnrhAuditTrail`, `fnrhFileName`, `fnrhFilePath`, `r2Url`, `fnrhR2Url`.
+  - Reverts active check-in status back to `confirmada`.
+  - Iterates over all guests in `r.guests` to clear `hasCompletedCheckin`, `checkinCompletedAt`, `signatureUrl`, and set `needsReSignature = true`.
+- **Call Sites**:
+  1. `PUT /api/pms/reservations/:id` (lines 13930 & 13981): Triggered when `checkinDate`, `checkoutDate`, `flatId`, or `flatNumber` change. Additionally guards against stale `req.body.guests` arrays resurrecting completed check-in flags.
+  2. `commitPendingModification` (line 15909): Triggered during post-payment modification commit.
+  3. `POST /api/pms/guest-portal/:code/modify` (line 17114): Triggered on direct zero-cost guest portal modifications.
 
-### 3.2 Heuristic Fallback Engine (`generateHeuristicResponse`)
-- **Location**: `artifacts/api-server/whatsapp-ai-service.mjs:1045-1144`.
-- **Precedence**: Evaluated at step 0 of heuristic fallback. Avoids shadowing of specific FAQs by generic regexes (e.g., breakfast dishes vs general breakfast).
-- **Matching Mechanics**:
-  - Main question exact/partial match: +80 pts.
-  - Significant token overlap: +30 pts per word.
-  - Question variation match: +100 pts.
-  - Multi-word keyword match: +50 pts; single keyword: +15 to +25 pts.
-  - Threshold: >= 25 pts.
+### 3.2. Pre-Checkin Clearance & Forensic FNRH PDF Generation
+- **Location**: `scripts/demo-server.mjs` lines 20918–21619.
+- **Endpoint**: `POST /api/pms/pre-checkin`
+- **Behavior**:
+  - Detects re-signature requests via `wasReSignature = Boolean(r.needsReSignature || req.body.resign === "1" || req.body.isReSignature === true || req.query?.resign === "1")`.
+  - Invokes `generateFnrhPdf(...)` which builds the PDF with legal metadata and returns `documentUuid`, `sha256Hash`, `canonicalHash`, and `auditTrail`.
+  - Records cryptographic event in `db.fnrhAuditDocuments` and internal audit log.
+  - Clears `targetGuest.needsReSignature = false` and `targetGuest.hasCompletedCheckin = true`.
+  - Evaluates all guests: `if (!r.guests.some(g => g.needsReSignature)) { r.needsReSignature = false; delete r.reSignatureReason; r.fnhrCompleted = true; }`.
+  - Dispatches immediate email to reception (`shouldNotifyReception = Boolean(wasReSignature || isCheckinTodayOrPast)`) with subject `[RE-ASSINATURA CHECK-IN] Termo Atualizado - Flat ${r.flatNumber} - ${validName}` and PDF attachment.
 
-### 3.3 Auto-Learning Inbound Webhook (`processAiInboundMessage`)
-- **Location**: `artifacts/api-server/whatsapp-ai-service.mjs:1803-1819`.
-- **Detection**: Evaluates `isPotentialGuestQuestion`, `!isQuestionMappedInFaq`, and `needsHandoverOrFallback`.
-- **Persistence**: Employs `autoCreatePendingFaq` to create records in `db.faqItems` with `status: "pendente"`, `source: "auto_aprendizado"`, inferred category, extracted keywords, and triggers operator notification.
+### 3.3. Check-in URL Resolution & Multi-Channel Notifications
+- **Location**: `scripts/demo-server.mjs` lines 5806–5946, 13813–13896 & `scripts/zapi-service.mjs` lines 62–74.
+- **Functions**: `getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance)`, `getCheckinUrlSync(...)`, `dispatchReservationReSignatureNotifications(...)`.
+- **Behavior**:
+  - Checks `isResign = Boolean(reservation?.needsReSignature)`.
+  - Appends `?resign=1` (or `&resign=1` if `guestIndex > 1`).
+  - Bypasses external Gov.br/SERPRO OAuth redirect when `isResign` is true, ensuring the guest lands directly in CorpFlats digital pre-checkin to sign the amended agreement.
+  - Asynchronously dispatches WhatsApp via Z-API and fallback mirror email with direct re-signature link.
 
-### 3.4 Operator Response Capture & AI Pausing (`zapi-service.mjs`)
-- **Location**: `artifacts/api-server/zapi-service.mjs:1168-1244`.
-- **Dual Hook**:
-  - Z-API Webhook: Triggered on `incomingInfo.fromMe === true` in `POST /api/whatsapp/webhook/received`.
-  - Live Chat API: Triggered on manual messages sent via `handleChatSend` (`/api/whatsapp/chat/send`, `/api/whatsapp/chats/:phone/messages`).
-- **Matching & Expiration**: 24-hour window enforced; candidates sorted by most recent timestamp; telephone matched with normalization.
-- **State Transition**: Sets `status: "aguardando_aprovacao"`, `suggestedAnswer`, `answeredBy: "operador"`.
-- **Conversation Safety**: Automatically sets `conv.aiPaused = true` and `conv.aiPausedReason = "operator_manual_reply"`.
+### 3.4. Reception Dashboard & Physical Check-in Blocking
+- **Location**: `scripts/demo-server.mjs` lines 19066–19192, 19401–19407.
+- **Endpoints**: `GET /api/reception/today` & `POST /api/reception/checkin/:reservationId`.
+- **Behavior**:
+  - `GET /api/reception/today`: When `r.needsReSignature` is true, marks `allCheckinDone = false`, `canAuthorizeEntry = false`, `entryBadgeType = "error"`, and `entryMessage = "Check-in Pendente (Re-assinatura de Termo Obrigatória)"`.
+  - `POST /api/reception/checkin/:reservationId`: Strictly rejects entry with HTTP 400 `{ error: "Não é possível liberar a entrada...", needsReSignature: true }` unless `adminOverride: true` or `forceOverrideReSignature: true` is provided.
 
----
-
-## 4. SHA-256 Parity & Test Execution Matrix
-
-### 4.1 SHA-256 Byte Parity Matrix
-| File | artifacts/api-server/ Hash | scripts/ Hash | Parity Status |
-|---|---|---|---|
-| `whatsapp-ai-service.mjs` | `77a220e752b1e23dadd530c4b6fbcbc2b72f77fcbc6c652be01fea85fcd299fb` | `77a220e752b1e23dadd530c4b6fbcbc2b72f77fcbc6c652be01fea85fcd299fb` | **100% IDENTICAL** |
-| `zapi-service.mjs` | `ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb` | `ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb` | **100% IDENTICAL** |
-| `demo-server.mjs` | `2e817d224c94f5cffb9af19a28f02d6b75bcd528ce542ca7cde8f085e0bbf8e9` | `2e817d224c94f5cffb9af19a28f02d6b75bcd528ce542ca7cde8f085e0bbf8e9` | **100% IDENTICAL** |
-| `fnrh-pdf-service.mjs` | `845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b` | `845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b` | **100% IDENTICAL** |
-| `fnrh-serpro-service.mjs` | `daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a` | `daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a` | **100% IDENTICAL** |
-| `mail-service.mjs` | `3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c` | `3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c` | **100% IDENTICAL** |
-| `storage-service.mjs` | `c3b6dbe78a5464d89e220e32c79e6cf56eefcbc3d33b6ec5cb35a8c5fb48fb10` | `c3b6dbe78a5464d89e220e32c79e6cf56eefcbc3d33b6ec5cb35a8c5fb48fb10` | **100% IDENTICAL** |
-
-### 4.2 Test Execution Metrics
-- **Command**: `node --test tests/whatsapp-ai-agent.test.mjs`
-- **Output**: TAP 13, 24 tests executed, 24 passed, 0 failed.
-- **Execution Time**: **4.836s** (Requirement: < 5.0s).
-- **Exit Code**: **0**.
-- **Port 5000 Cleanliness**: Confirmed before and after testing (`netstat` and `Get-NetTCPConnection` returned 0 connections).
+### 3.5. Operational Schedulers Synchronization
+- **Location**: `scripts/demo-server.mjs` lines 14241–14511, 15999–16047, 17121–17196, 32690–32769.
+- **Behavior**:
+  - **Morning 07:00 Routine**: Deletes `r.morningEmailSentDate`, `r.morningEmailSentAt`, `r.receptionNotifiedAt`, and `garageNotifiedAt` whenever `checkinDate` changes. Schedulers only fire if `r.morningEmailSentDate !== todayStr`, ensuring timely notification on the new arrival date.
+  - **Breakfast Orders**: Orders outside the new stay window are cancelled with computed reason. Orders within the new window that were cancelled are reactivated. Room/flat number is automatically updated if accommodation changes.
+  - **Housekeeping Turnover**: Cleaning requests matching the old checkout date are rescheduled to the new checkout date and updated with the new flat number.
 
 ---
 
-## 5. Adversarial Critic Findings & Stress Test Observations
+## 4. Adversarial Challenge & Stress-Testing
 
-### [Minor] Finding 1: Heuristic Token Collision on Broad Category Queries
-- **Location**: `whatsapp-ai-service.mjs:1074-1078`
-- **Description**: Significant tokens in common award 30 points each. When a user asks a broad question (e.g. "Como funciona o café da manhã?"), if an existing specific FAQ contains those broad tokens (e.g. `faq-loucas`: "O que fazer com as louças e a bandeja após o café da manhã?"), the token overlap yields 60 points (2 tokens * 30 pts), crossing the 25-point threshold and returning the specific FAQ instead of allowing generic category handling.
-- **Severity**: Minor / Non-blocking.
-- **Mitigation Recommendation**: In future tuning, require minimum query coverage ratio (e.g., matching tokens must represent >= 50% of the target question length) or discount broad category tokens when no specific noun/verb is matched.
-
-### [Minor] Finding 2: Greeting with Question Mark ("Tudo bem?") Question Filter
-- **Location**: `whatsapp-ai-service.mjs:1520-1522`
-- **Description**: `isPotentialGuestQuestion("Tudo bem?")` returns true because the check for `?` precedes pattern matching, and "tudo bem" is not in the greeting regex. If handover occurs, this may create a pending FAQ for a conversational pleasantry.
-- **Severity**: Minor / Non-blocking.
-- **Mitigation Recommendation**: Add `tudo bem` and `como vai` to the greeting regex in `isPotentialGuestQuestion`.
-
-### [Minor] Finding 3: Accent Normalization in `findExistingPendingFaq`
-- **Location**: `whatsapp-ai-service.mjs:1620-1626`
-- **Description**: Deduplication compares `lower.includes(qLower)` on lowercase text without stripping diacritics. As a result, variations like "Vocês têm ferro?" and "Vocês tem ferro?" might not deduplicate against each other.
-- **Severity**: Minor / Non-blocking.
-- **Mitigation Recommendation**: Apply `.normalize("NFD").replace(/[\u0300-\u036f]/g, "")` before containment checks in `findExistingPendingFaq`.
+| Challenge Scenario | Stress-Test Hypothesis | System Behavior Observed | Risk Assessment |
+|---|---|---|:---:|
+| **Partial Re-Signature (Multi-guest)** | In a 2-guest reservation, Guest 1 re-signs but Guest 2 has not re-signed yet. Does the system prematurely mark the reservation as cleared? | Verified: `r.guests.some(g => g.needsReSignature)` evaluates to `true`, leaving `r.needsReSignature = true` and `r.fnhrCompleted = false`. Reception continues to block entry. | **LOW / ROBUST** |
+| **Stale Body Resurrecting Old Check-in** | In `PUT /api/pms/reservations/:id`, client sends `req.body.guests` containing old `hasCompletedCheckin: true` while modifying dates. | Verified: Lines 13980–14001 re-enforce `g.needsReSignature = true` and `g.hasCompletedCheckin = false` on all guests, preventing stale payload resurrection. | **LOW / ROBUST** |
+| **Check-in Date Moved to Today** | Future reservation is rescheduled to today. Does it miss the 07:00 routine? | Verified: Pre-checkin evaluates `isReservationForTodayOrPast(r)` as `true`, immediately delivering the updated FNRH to reception. | **LOW / ROBUST** |
+| **Non-blocking Gateway Failures** | SMTP or Z-API gateway throws an exception or experiences timeout during notification dispatch. | Verified: `dispatchReservationReSignatureNotifications` wraps execution inside non-blocking `setImmediate` with graceful `try/catch` and audit logging. HTTP request completes successfully without 500 error. | **LOW / ROBUST** |
 
 ---
 
-## 6. Final Verdict
+## 5. Byte-for-Byte Parity Verification
 
-**VERDICT: `APPROVE`**
+```text
+demo-server.mjs:
+  scripts/demo-server.mjs:              8b6a5d9e37a2f89650e4613558dbaf1c51f795193d75d04e216bb41b3bbee128
+  artifacts/api-server/demo-server.mjs: 8b6a5d9e37a2f89650e4613558dbaf1c51f795193d75d04e216bb41b3bbee128
+  MATCH: true
 
-All requirements of Milestone 2 (Features 5, 6, and 7) are fully met with high architectural fidelity, zero integrity violations, complete twin-server SHA-256 parity, clean port hygiene, and a 100% passing test suite running under 5 seconds.
+zapi-service.mjs:
+  scripts/zapi-service.mjs:              3e7a17cb5216f476fa316178c916a5beac71e491e8ff4397b1fd5d9e7fc64846
+  artifacts/api-server/zapi-service.mjs: 3e7a17cb5216f476fa316178c916a5beac71e491e8ff4397b1fd5d9e7fc64846
+  MATCH: true
+
+fnrh-pdf-service.mjs:
+  scripts/fnrh-pdf-service.mjs:              845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b
+  artifacts/api-server/fnrh-pdf-service.mjs: 845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b
+  MATCH: true
+```
+
+---
+
+## 6. Targeted Test Suites Results
+
+### Test Suite 1: `node --test tests/m2-re-signature-operations-sync.test.mjs`
+```text
+# tests 7
+# suites 1
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4466.4547
+```
+
+### Test Suite 2: `node --test tests/m1-reservation-modification-settlement.test.mjs`
+```text
+# tests 15
+# suites 1
+# pass 15
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5535.5883
+```
+
+---
+
+## 7. Review Conclusion
+
+The implementation for Milestone 2 meets all functional, security, forensic, and architectural requirements defined in `ORIGINAL_REQUEST.md` and `PROJECT.md`. Zero regressions were introduced to Milestone 1 functionality. Full twin-server byte parity is strictly preserved.
+
+Verdict: **APPROVE**

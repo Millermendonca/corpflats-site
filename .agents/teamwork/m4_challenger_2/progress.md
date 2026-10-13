@@ -1,18 +1,23 @@
-# Progress — Milestone 4 Challenger 2
+# Progress — M4 Challenger 2
 
-**Last visited**: 2026-10-11T05:08:45Z
-**Status**: COMPLETE (APPROVE)
+Last visited: 2026-10-11T17:18:00Z
 
-## Steps
-- [x] Step 1: Record dispatch in `DISPATCH.md`
-- [x] Step 2: Establish identity and constraints in `BRIEFING.md`
-- [x] Step 3: Initialize `progress.md`
-- [x] Step 4: Run Individual Adversarial Challenger Suite 1 (`challenger-m1-r3-rule-engine.test.mjs`) — 6/6 passed (0 failures)
-- [x] Step 5: Run Individual Adversarial Challenger Suite 2 (`challenger2-m1-r3-lifecycle-persistence.test.mjs`) — 4/4 passed (0 failures)
-- [x] Step 6: Run Individual Adversarial Challenger Suite 3 (`challenger-m2-r2-heuristic-verification.test.mjs`) — 15/15 passed (0 failures)
-- [x] Step 7: Run Individual Adversarial Challenger Suite 4 (`m2-challenger-2-stress.test.mjs`) — 10/10 passed (0 failures)
-- [x] Step 8: Run Individual Adversarial Challenger Suite 5 (`challenger-m3-c2-ui-interaction.test.mjs`) — 27/27 passed (0 failures)
-- [x] Step 9: Run Joint Suite Execution (`whatsapp-ai-agent.test.mjs` + 5 challenger suites) — 86/86 passed, 0 failures, exit code 0
-- [x] Step 10: Run Twin-Server Parity verification (7/7 SHA-256 MATCH) and Build check
-- [x] Step 11: Document findings in `challenge.md` and `handoff.md`
-- [x] Step 12: Send notification to orchestrator with definitive verdict: APPROVE
+- [x] Initialized DISPATCH.md and BRIEFING.md
+- [x] Read ORIGINAL_REQUEST.md, PROJECT.md, TEST_INFRA.md, and m4_worker_1 handoff.md
+- [x] Examine implementation and test code for Tier 4 Scenarios 1-5
+- [x] Run strictly targeted test command: `node --test tests/reservation-modification-flow.test.mjs`
+  - First run (task-44): port-binding collision caused early connection refusal on port 3998.
+  - Pattern isolation (`--test-name-pattern="Tier 4"`): 5/5 passed deterministically in 10.3s.
+  - Clean second run (task-120): 92/92 passed, 22 suites, 0 failures in 21.5s.
+- [x] Empirically challenge Tier 4 Scenarios 1 to 5:
+  - Scenario 1: Extension with additional payment via PIX -> dates committed, re-signature triggered, forensic PDF re-signed with SHA-256 and delivered to reception email (VERIFIED).
+  - Scenario 2: Extension attempted with calendar conflict on same flat -> simulation returns 409 Conflict, blocks checkout (VERIFIED).
+  - Scenario 3: Modification canceled during PIX payment hold -> original dates intact, hold cleared, flat available for other guests (VERIFIED).
+  - Scenario 4: Shortening stay within 24h refund policy or no-cost change -> immediate commit, re-signature triggered, housekeeping synced (VERIFIED).
+  - Scenario 5: Flat change -> old flat freed, new flat assigned, reception blocks entry until re-signed, check-in liberated (VERIFIED).
+- [x] Verify Twin-Server SHA-256 parity:
+  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F` (IDENTICAL)
+  - `fnrh-pdf-service.mjs`: `845254A8419EA08343A4BAFF7BCFD2D61D22C4376643D8103DAC2A131582771B` (IDENTICAL)
+  - `zapi-service.mjs`: `3E7A17CB5216F476FA316178C916A5BEAC71E491E8FF4397B1FD5D9E7FC64846` (IDENTICAL)
+- [x] Write handoff.md with explicit verdict APPROVE
+- [ ] Send message to orchestrator

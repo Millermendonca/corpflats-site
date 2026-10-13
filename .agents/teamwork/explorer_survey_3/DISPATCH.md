@@ -1,27 +1,35 @@
-# Task Assignment: Explorer Survey 3 (Testing Infra, Test Cases & Git State)
+# Task Assignment: Explorer Survey 3 (IoT Hardware Architecture & Welcome Audio Specs)
 
-Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
-Investigate the existing test suites (specifically `tests/whatsapp-ai-agent.test.mjs` and other tests in `tests/`), test execution frameworks and scripts, how mocks and databases are handled during testing, and current git repository status (branches, remote, AGENTS.md rules).
-Document your findings in `analysis.md` and write a structured `handoff.md` in this directory.
+## Mission
+Investigate specifications and technical designs for R4 and R5:
+1. Welcome Playlist (R4):
+   - Mechanism for audio playlist simulation and playback in web UI (ambient hospitality tracks, HTML5 Audio, controls for play, pause, next/previous, volume).
+   - Rules for check-in day trigger: official check-in time (e.g. 14:00) automatic activation for rooms with check-in today.
+   - Alexa/Echo Dot integration concept and how it bridges to the web preview.
+2. IoT Hardware Architecture & Acquisition Guide (R5):
+   - Research and specify exact hardware requirements for CorpFlats:
+     * Smart Plugs: Tuya/Smart Life Wi-Fi 16A with thermal overload protection and energy monitoring (specifically sized for 1000W-1500W coffee machines, 10A vs 16A standard NBR 14136 pins).
+     * Smart IR Blasters: Tuya/Broadlink Wi-Fi IR transmitters for split AC control (carrier frequency 38kHz, positioning, line-of-sight, temperature sensor integration).
+     * Smart Speakers: Amazon Echo Pop / Echo Dot (Alexa) integration, multi-room, Spotify/Amazon Music hospitality routines.
+     * Smart Switches: Wi-Fi touch wall switches (with neutral or capacitor, 1/2/3 gangs) for lighting control.
+   - Security, networking (2.4GHz dedicated IoT VLAN, local Tuya vs cloud), and operational failure modes.
+3. Determine where the IoT Hardware Guide documentation should be located (e.g. `docs/SMART_FLAT_HARDWARE_GUIDE.md` or similar).
 
-## 2026-10-11T01:22:58Z
-You are an Explorer subagent for the Guest-Flow-Manager project.
+Read:
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically ## Follow-up — 2026-10-11T23:35:41Z)
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+
+Output: Write your detailed report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\handoff.md`.
+
+
+## 2026-10-11T23:38:45Z
+[Message] timestamp=2026-10-11T23:38:45Z sender=26335f75-5ae5-4381-97dc-4cdaaa103cfd priority=MESSAGE_PRIORITY_HIGH content=You are Explorer Survey 3 (IoT Hardware Architecture & Welcome Audio Specs) for Smart Flat Hub.
 Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
-The project root is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read the Original User Request file before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Also read your task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\DISPATCH.md
-
-You are a READ-ONLY explorer. DO NOT modify any application source code.
-Investigate:
-1. Existing test files in `tests/`, specifically `tests/whatsapp-ai-agent.test.mjs` and any others.
-2. How tests are run (Node test runner, mocha, jest, npm scripts). Run/inspect without altering code.
-3. How mocks, stubs, and test fixtures are organized for WhatsApp webhook and AI service.
-4. Git status: current branch, commit log, remote status (`git status`, `git remote -v`), and verify guidelines in `AGENTS.md`.
-5. Testing requirements for R2-R5 and acceptance criteria in ORIGINAL_REQUEST.md.
-
-Write your thorough technical analysis to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\analysis.md` and your final structured handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\handoff.md`.
-When done, notify me via send_message with a summary and the path to your handoff.md.
+Read your instructions in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\DISPATCH.md
+Read the user request in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+Also read AGENTS.md in the project root.
+DO NOT modify or write any source code. You are read-only.
+Investigate welcome playlist audio implementation, check-in day trigger rules, fail-safe safety lifecycle, and hardware specifications (Tuya 16A smart plugs, IR blasters, Echo Pop/Dot Alexa, touch switches) for the acquisition guide.
+Write your full findings and handoff report to: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\handoff.md
+Update progress.md in your directory as you work.
+When finished, send a brief completion message back to the orchestrator.

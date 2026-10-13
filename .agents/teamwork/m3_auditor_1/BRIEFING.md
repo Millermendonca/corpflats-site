@@ -1,62 +1,66 @@
-# BRIEFING — 2026-10-11T04:50:00Z
+# BRIEFING — 2026-10-11T16:35:00Z
 
 ## Mission
-Forensic integrity audit of Milestone 3 (Frontend UI & Build Delivery) for Guest-Flow-Manager.
+Forensic audit of Milestone 3 deliverables (Guest Portal, Pre-Checkin, Garage Dashboard, Demo-server endpoints, Parity, Build, and Tests).
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
-- Roles: critic, specialist, auditor
+- Roles: [critic, specialist, auditor]
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_auditor_1
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Target: Milestone 3 (Frontend UI & Build Delivery)
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Target: Milestone 3
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
 - Trust NOTHING — verify everything independently
-- Integrity Mode: development (per ORIGINAL_REQUEST.md line 8)
-- Ground-truth user constraints from ORIGINAL_REQUEST.md always take precedence
+- Adhere strictly to AGENTS.md rules: do not run global/broad test suites; execute only the strictly targeted test file (`tests/m3-frontend-portal-panels.test.mjs`)
+- Ground truth from ORIGINAL_REQUEST.md takes precedence over dispatch contradictions
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T04:50:00Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T16:35:00Z
 
 ## Audit Scope
-- **Work product**: Milestone 3 frontend UI files (`artifacts/limpeza/src/App.tsx`, `artifacts/limpeza/src/hooks/use-faq.ts`, `artifacts/limpeza/src/components/faq-knowledge-base.tsx`, `artifacts/limpeza/src/pages/whatsapp-automation.tsx`), build outputs (`artifacts/limpeza/dist/`), automated tests (`tests/whatsapp-ai-agent.test.mjs`), and git status.
-- **Profile loaded**: General Project (Development Mode per ORIGINAL_REQUEST.md)
+- **Work product**: Milestone 3 frontend and mock server changes:
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`
+  - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`
+  - `artifacts/limpeza/src/pages/garage-dashboard.tsx`
+  - `scripts/demo-server.mjs`
+  - `artifacts/api-server/demo-server.mjs`
+  - `tests/m3-frontend-portal-panels.test.mjs`
+  - `artifacts/limpeza/dist/` build artifacts
+- **Profile loaded**: General Project (Forensic Audit & Integrity Verification)
 - **Audit type**: forensic integrity check
 
 ## Audit Progress
 - **Phase**: reporting
 - **Checks completed**:
-  1. Source Code Analysis: No hardcoded output, facade, or dummy implementations. Real fetch calls, state management, and event handlers in `use-faq.ts` and `faq-knowledge-base.tsx`.
-  2. Genuine implementation verification: API calls, state management, form handlers, 1-click approve, exception rules verified.
-  3. Build Verification: `npm run build` in `artifacts/limpeza` compiled 3,357 modules into `dist/public` in 39.42s (exit code 0).
-  4. Test Verification: `node --test tests/whatsapp-ai-agent.test.mjs` executed independently with 24/24 tests passed (exit code 0).
-  5. Twin-Server SHA256 Parity: Byte-for-byte SHA256 match between `artifacts/api-server/` and `scripts/`.
-  6. Git check: `main` branch synced with `origin/main` at commit `63be666`.
-- **Checks remaining**: None
-- **Findings so far**: CLEAN — definitive verdict reached.
-
-## Key Decisions Made
-- Confirmed development integrity mode applies per ground truth `ORIGINAL_REQUEST.md`.
-- Conducted full empirical execution of build and test suite independently.
-- Generated `audit.md` and `handoff.md` with detailed evidence.
-
-## Artifact Index
-- `DISPATCH.md` — Incoming dispatch instructions
-- `BRIEFING.md` — Persistent state and working memory
-- `progress.md` — Heartbeat liveness log
-- `audit.md` — Detailed forensic audit report
-- `handoff.md` — 5-component hard handoff report to orchestrator
+  - Read ORIGINAL_REQUEST.md (2026-10-11T12:53:32Z) & PROJECT.md
+  - Read m3_worker_1/handoff.md
+  - Phase 1 Source Analysis: verified no hardcoded test outputs, genuine logic across all components
+  - Parity check: verified byte-for-byte SHA-256 parity (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`) and `fc /b` match
+  - Build check: independently executed `npm run build` in `artifacts/limpeza`, compiled with exit code 0
+  - Behavioral verification: independently executed `node --test tests/m3-frontend-portal-panels.test.mjs`, all 8 tests passed
+  - Adversarial review & stress testing: verified edge cases, hold timers, and cleanup routines
+- **Findings so far**: CLEAN — No integrity violations found.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: Frontend uses mock data or doesn't actually call the backend endpoints. (DISPROVED: `use-faq.ts` contains real REST fetch calls).
-  - H2: `npm run build` is bypassed or doesn't build real artifacts. (DISPROVED: Vite v7.3.6 compiled 3,357 modules in 39.42s, generating 3.2MB JS and 390kB CSS).
-  - H3: Tests pass due to mock bypasses or hardcoded assertions. (DISPROVED: 24 tests assert real dynamic state mutations, fallbacks, and regex matches).
-  - H4: Uncommitted changes or unsynced git status. (DISPROVED: `git branch -vv` confirms `main` is up to date with `origin/main`).
+  - Hypothesis: Server files in `scripts/` and `artifacts/api-server/` diverge. Result: REJECTED (identical SHA-256 hash `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`).
+  - Hypothesis: M3 tests use fake mock assertions without running server requests. Result: REJECTED (spawned real server on port 3997 with isolated db, validated live endpoints, persistence in json file, and file contents).
+  - Hypothesis: Vite build in `artifacts/limpeza` fails or was faked. Result: REJECTED (clean build executed in 31.95s, code 0).
+  - Hypothesis: Frontend components use dummy stub methods. Result: REJECTED (rich multi-step modals, countdowns, polling, resign fast-track step jumping, and lifecycle unmount cleanup).
 - **Vulnerabilities found**: None.
-- **Untested angles**: None within Milestone 3 scope.
+- **Untested angles**: Cross-browser rendering (node-only test environment, but TypeScript and bundle cleanly transpiled).
 
 ## Loaded Skills
-- None (standard auditing methodology applied)
+- None explicitly loaded.
+
+## Key Decisions Made
+- Certified verdict as CLEAN.
+
+## Artifact Index
+- `.agents/teamwork/m3_auditor_1/DISPATCH.md` — Incoming dispatch message
+- `.agents/teamwork/m3_auditor_1/BRIEFING.md` — Agent briefing & situational awareness
+- `.agents/teamwork/m3_auditor_1/progress.md` — Liveness & progress tracker
+- `.agents/teamwork/m3_auditor_1/handoff.md` — Forensic Audit Report & Verdict

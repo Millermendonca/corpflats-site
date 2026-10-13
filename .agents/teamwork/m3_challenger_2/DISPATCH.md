@@ -1,35 +1,17 @@
-# Dispatch — Milestone 3 Challenger 2 (UI Interaction & Edge Case Challenger)
+## 2026-10-11T16:29:32Z
+You are M3 Challenger 2 for Milestone 3 of the CorpFlats Guest-Flow-Manager project.
 
-## Objective
-Empirically stress-test UI data interaction and boundary states:
-1. Examine `use-faq.ts` and `faq-knowledge-base.tsx`:
-   - Empty FAQ lists, loading states, error states.
-   - 9 categories filtering and status filtering with zero items vs multiple items.
-   - Phone normalization edge cases (e.g. invalid phone strings, 8-digit, 9-digit, DDI 55).
-   - WhatsApp formatting preview rendering.
-   - 1-click approve button disabled states and payload validation.
-2. Run `npm run build` in `artifacts/limpeza` to confirm zero JSX/TS errors.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm 24/24 pass.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_challenger_2
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_worker_1\handoff.md
 
-Write `challenge.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
-
-## 2026-10-11T04:43:09Z
-You are Challenger 2 for Milestone 3 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_challenger_2
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_challenger_2\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_worker\handoff.md
-
-Empirically test:
-1. UI interaction logic and state handlers in use-faq.ts and faq-knowledge-base.tsx (empty lists, filter combinations, phone normalization edge cases, 1-click approval button states).
-2. Run `npm run build` in artifacts/limpeza to confirm clean build.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm 24/24 pass.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write challenge.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Challenger Tasks:
+1. Read ORIGINAL_REQUEST.md and PROJECT.md.
+2. Empirically challenge the Fast-Track Re-signing flow and Garage Dashboard Polling:
+   - Verify that loading pre-checkin with `?resign=1` preserves 100% of existing guest registration data (name, document, phone, email, vehicle) while clearing stale signature.
+   - Verify that submitting a new signature with `resign: "1"` clears `needsReSignature`, regenerates FNRH PDF, and redirects cleanly.
+   - Verify garage dashboard background polling: check 30s interval execution, `focus` and `visibilitychange` listeners, and cleanup on unmount.
+3. Write and run adversarial tests or execute targeted suite:
+   - `node --test tests/m3-frontend-portal-panels.test.mjs`
+4. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` with empirical test evidence. Send completion message when done.

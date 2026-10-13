@@ -1,118 +1,124 @@
-# Handoff Report — Reviewer 2 (Milestone 3 UI & Exceptions Engine)
+# Milestone 3 Review & Adversarial Critic Report: Backend Projection, Twin-Server Parity, Security & Build Integrity
 
-**Date:** 2026-10-11T04:49:00Z  
-**From:** Reviewer 2 (`1dcfce8d-2969-487b-b925-49666b972871`)  
-**To:** Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Status:** Hard Handoff (Final Clearance)  
-**Verdict:** **APPROVE**  
+**Reviewer**: M3 Reviewer 2 (Roles: Reviewer, Adversarial Critic)  
+**Verdict**: **APPROVE**  
+**Date**: 2026-10-11T16:48:00Z  
 
 ---
 
 ## 1. Observation
 
-1. **`artifacts/limpeza/src/hooks/use-faq.ts` (489 lines)**:
-   - Lines 4–18 define strict TypeScript taxonomy unions:
-     ```ts
-     export type FaqCategory = "reservas" | "checkin_acesso" | "wifi_tecnologia" | "cafe_manha" | "garagem" | "estrutura_flat" | "regras_visitas_pets" | "lazer_condominio" | "checkout"
-     export type FaqStatus = "ativo" | "inativo" | "pendente" | "aguardando_aprovacao"
-     export type FaqScope = "all" | "exclude" | "include_only"
-     export type FaqStatusFilter = "todas" | "ativas" | "pendentes" | "sugestoes_ia"
-     ```
-   - Lines 214–454 implement genuine asynchronous REST calls with `useToast()` feedback:
-     - `fetchFaq()` -> `GET /api/whatsapp/faq`
-     - `createFaq()` -> `POST /api/whatsapp/faq`
-     - `updateFaq()` -> `PUT /api/whatsapp/faq/:id`
-     - `deleteFaq()` -> `DELETE /api/whatsapp/faq/:id`
-     - `approveFaq()` -> `POST /api/whatsapp/faq/:id/approve`
-     - `toggleStatus()` -> `updateFaq(item.id, { status: nextStatus })`
-   - Lines 247–282 compute memoized `statusCounts` (todas, ativas, pendentes, sugestoes_ia) and `categoryStats` across all 9 categories.
-   - Lines 285–338 filter and order items, prioritizing `aguardando_aprovacao` and `pendente` at the top of the list.
+### 1.1 Backend Field Projection
+- File: `scripts/demo-server.mjs` (lines 15139–15141) and `artifacts/api-server/demo-server.mjs` (lines 15139–15141)
+- Route: `GET /api/pms/guest-portal/:code`
+- Code inspected:
+  ```javascript
+  15139:       needsReSignature: Boolean(r.needsReSignature),
+  15140:       reSignatureReason: r.reSignatureReason || null,
+  15141:       reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null,
+  ```
+- Result: Directly projects `needsReSignature`, `reSignatureReason`, and `reSignatureUrl` as mandated by PROJECT.md Feature 9 and ORIGINAL_REQUEST.md R3.
 
-2. **`artifacts/limpeza/src/components/faq-knowledge-base.tsx` (1,268 lines)**:
-   - Lines 368–424 render 4 top metric cards: Total de FAQs, Ativas na IA, Dúvidas Pendentes, and Aprovar em 1 Clique.
-   - Lines 426–497 render 9 interactive category cards with counts and pending/approval badges.
-   - Lines 504–546 render 4 status filter buttons ("Todas", "Ativas", "Perguntas Pendentes", "Sugestões de IA").
-   - Lines 549–568, 638–793, 796–906 implement dual view modes (Cards View and Table View) with 1-click approval buttons (`✓ Aprovar Resposta em 1 Clique`).
-   - Lines 908–1240 implement Create/Edit modal with WhatsApp formatting insertion buttons (`*`, `_`, `~`), category/status pickers, and exception engine (§R4).
-   - Lines 1062–1202 implement the Client Exception Rule Engine with 3 scope cards (`all`, `exclude`, `include_only`) and an interactive phone number manager supporting both single entry and bulk paste with normalization.
+### 1.2 Byte-for-Byte SHA-256 Parity
+- Tool Command: `Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs`
+- Verbatim Output:
+  ```
+  Algorithm : SHA256
+  Hash      : 694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F
+  Path      : scripts/demo-server.mjs
 
-3. **Routing and Tab Mounting**:
-   - `artifacts/limpeza/src/App.tsx:276`: `<AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />`.
-   - `artifacts/limpeza/src/pages/whatsapp-automation.tsx:1697-1709`: Tab trigger `<TabsTrigger value="faq" ...>📚 Base & FAQ</TabsTrigger>` in 6-column grid.
-   - `artifacts/limpeza/src/pages/whatsapp-automation.tsx:3552-3554`: Tab content `<TabsContent value="faq"><FaqKnowledgeBase /></TabsContent>`.
+  Algorithm : SHA256
+  Hash      : 694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F
+  Path      : artifacts/api-server/demo-server.mjs
+  ```
+- Result: 100% byte-for-byte SHA-256 parity confirmed with zero discrepancy.
 
-4. **Independent Build Verification**:
-   - Executed `npm run build` in `artifacts/limpeza`:
-     ```
-     ✓ 3357 modules transformed.
-     rendering chunks...
-     dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
-     dist/public/assets/index.css                      390.31 kB │ gzip:  48.15 kB
-     dist/public/assets/index.js                     3,257.54 kB │ gzip: 785.54 kB
-     ✓ built in 1m 7s
-     ```
-   - Exit code: 0.
+### 1.3 Build Integrity Verification
+- Path: `artifacts/limpeza/dist/public/`
+- Direct File Inspection:
+  - `index.html`: 2,648 bytes (last write: 11/10/2026 13:38:16)
+  - `assets/index.js`: 3,325,845 bytes (last write: 11/10/2026 13:38:16)
+  - `assets/index.css`: 398,530 bytes (last write: 11/10/2026 13:38:16)
+  - `assets/pdf-z6sF223D.js`: 379,017 bytes
+  - `assets/pdf.worker.min-rsCePomN.mjs`: 1,417,586 bytes
+  - `assets/pdf.worker.min-DDwCJoSP.js`: 68 bytes
+- Result: Clean production build bundle exists and reflects the latest compilation.
 
-5. **Independent Automated Test Verification**:
-   - Executed `node --test tests/whatsapp-ai-agent.test.mjs`:
-     ```
-     # tests 24
-     # suites 1
-     # pass 24
-     # fail 0
-     # duration_ms 3333.4993
-     ```
-   - Executed `node --test tests/challenger-m1-r3-rule-engine.test.mjs`: 6/6 passed.
-   - Executed `node --test tests/m1-r2-adversarial-harness.mjs`: 12/12 passed.
-   - Executed `node --test tests/challenger-m1-rest-atomic-stress.test.mjs`: 14/14 passed.
+### 1.4 Security & Re-Signing Bypass Analysis
+- Invalidation: `invalidateReservationCheckinSignatures(r, reason)` in `scripts/demo-server.mjs`:
+  - Sets `r.needsReSignature = true`, sets `r.reSignatureReason`, clears `r.signatureUrl = null`, clears `r.checkedInAt = null`, clears `r.fnhrCompleted = false`, clears `r.preCheckinCompleted = false`.
+  - Clears stale FNRH PDF references (`fnrhPdfUrl`, `fnrhDocumentUuid`, etc.).
+  - Marks each guest in `r.guests` with `g.needsReSignature = true` and `g.hasCompletedCheckin = false`.
+- Physical Reception Gate: `POST /api/reception/checkin/:reservationId` (lines 19404–19410):
+  - If `r.needsReSignature === true`, check-in is hard-blocked with HTTP 400 (`error: "Não é possível liberar a entrada: Re-assinatura de termo obrigatória..."`).
+- Clearing Logic in `POST /api/pms/pre-checkin` (lines 20921–21528):
+  - Detects `wasReSignature = Boolean(r.needsReSignature || req.body.resign === "1" || req.body.isReSignature === true || req.query?.resign === "1")`.
+  - Validates WhatsApp OTP (2FA) if active or submitted; returns 400 on failure.
+  - Validates 2-hour signature session token if provided; returns 400 if expired or revoked.
+  - Clears `targetGuest.needsReSignature = false`.
+  - Only clears `r.needsReSignature = false` when all guests in the reservation have re-signed (`!hasPendingGuestsReSign`).
+  - Calls `generateFnrhPdf` to compile updated forensic document with SHA-256 hash.
+  - Records forensic entry in `db.fnrhAuditDocuments`.
+  - Dispatches reception notification email with updated FNRH PDF attachment (`re_signature_checkin`).
+
+### 1.5 Targeted Test Suite Execution
+- **Command 1**: `node --test tests/m3-frontend-portal-panels.test.mjs`
+  - Output: `# tests 8 # suites 1 # pass 8 # fail 0 # cancelled 0`
+  - Duration: 17.43s
+- **Command 2**: `node --test tests/m2-re-signature-operations-sync.test.mjs`
+  - Output: `# tests 7 # suites 1 # pass 7 # fail 0 # cancelled 0`
+  - Duration: 3.15s
+- Result: 15/15 tests passing across both targeted suites with zero regressions.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Compliance with User Requirements (§R1 & §R4)**:
-   - Observation 1 and Observation 2 prove that all frontend requirements from `ORIGINAL_REQUEST.md` (9 categories, 4 metric cards, 4 status filters, dual cards/table view, 1-click approve, WhatsApp formatting, and exception rule scopes `all`/`exclude`/`include_only` with phone tags) are fully implemented.
-2. **Absence of Integrity Violations**:
-   - Code inspections confirmed no hardcoded test answers, dummy stubs, or fake mocks. The hook invokes actual REST endpoints, which are mirrored identically across `scripts/` and `artifacts/api-server/`.
-3. **Execution Robustness & Zero Regressions**:
-   - Build compilation (Observation 4) and automated test suites (Observation 5) passed with 100% success rate on the live environment without modifying source code.
+1. *From Observation 1.1*: The projection in `demo-server.mjs` supplies `needsReSignature`, `reSignatureReason`, and `reSignatureUrl` on `GET /api/pms/guest-portal/:code`. This satisfies R3 / Feature 9 interface contract.
+2. *From Observation 1.2*: Identical SHA-256 hashes (`694A0DAD...`) prove that the Twin-Server Parity Mandate between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` is strictly maintained.
+3. *From Observation 1.3*: The presence and modification timestamps of `artifacts/limpeza/dist/public/` match the worker's Vite build execution, conforming to the project's production build rule.
+4. *From Observation 1.4*: Invalidation logic forcibly clears prior signatures and flags all guests with `needsReSignature = true`. The reception endpoint rejects physical arrival check-in with HTTP 400 until re-signing is completed. In `POST /api/pms/pre-checkin`, the flag is cleared only after generating a cryptographic forensic PDF and verifying any active 2FA. In multi-guest bookings, `r.needsReSignature` remains active until all guests have re-signed. Therefore, no bypass exists.
+5. *From Observation 1.5*: Both targeted milestone test suites passed 100% without failure or timeout.
+6. *From Integrity Analysis*: No hardcoded fixtures, dummy facade implementations, shortcuts, or fabricated outputs were detected. The implementations are genuine, robust, and complete.
 
 ---
 
 ## 3. Caveats
 
-- **No Caveats**: All UI components, REST hooks, exception rules, build assets, and automated test suites were independently tested and verified.
+- In multi-guest reservations where only the primary guest re-signs, the reservation-level flag `r.needsReSignature` intentionally remains `true` until secondary guests complete their re-signatures. This is legally correct and ensures non-repudiation across all occupants.
+- No other caveats.
 
 ---
 
 ## 4. Conclusion
 
-- **Verdict**: **APPROVE**.
-- Milestone 3 is complete, stable, high quality, and ready for release.
+The Milestone 3 implementation satisfies all requirements:
+1. Backend Projection: Verified on `GET /api/pms/guest-portal/:code`.
+2. Twin Server Parity: 100% byte-for-byte SHA-256 parity verified.
+3. Security & Anti-Bypass: Mandatory re-signature invalidation, reception check-in blocking, and authentic PDF/2FA clearing verified.
+4. Build Cleanliness: `artifacts/limpeza/dist/` verified.
+5. Targeted Test Suites: 100% pass rate on `tests/m3-frontend-portal-panels.test.mjs` and `tests/m2-re-signature-operations-sync.test.mjs`.
+
+**Explicit Verdict**: **APPROVE**
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce the verification:
-
-1. **Verify Frontend Build**:
+To independently verify these findings:
+1. Check Twin-Server SHA-256 parity:
    ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
-   npm run build
+   Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs
    ```
-   *Expected:* Exit code 0, bundle emitted in `dist/public/`.
-
-2. **Verify AI Agent & Knowledge Base Test Suite**:
+2. Run targeted Milestone 3 test suite:
+   ```bash
+   node --test tests/m3-frontend-portal-panels.test.mjs
+   ```
+3. Run targeted Milestone 2 test suite:
+   ```bash
+   node --test tests/m2-re-signature-operations-sync.test.mjs
+   ```
+4. Verify build artifacts:
    ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
-   node --test tests/whatsapp-ai-agent.test.mjs
+   Get-ChildItem -Path artifacts/limpeza/dist/public
    ```
-   *Expected:* `# tests 24`, `# pass 24`, `# fail 0`, exit code 0.
-
-3. **Verify Exception Engine Adversarial Harness**:
-   ```powershell
-   node --test tests/challenger-m1-r3-rule-engine.test.mjs
-   node --test tests/m1-r2-adversarial-harness.mjs
-   ```
-   *Expected:* All subtests pass, exit code 0.

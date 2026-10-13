@@ -1,32 +1,20 @@
-# Dispatch — Milestone 2 Challenger 1 (AI Injection & Heuristic Challenger)
+## 2026-10-11T15:27:29Z
 
-## Objective
-Empirically stress-test Sofia prompt injection and heuristic matching:
-1. Test prompt injection with multiple client phones: allowed client vs excluded client vs include_only client.
-2. Test heuristic matching priority: ensure specific FAQ keywords (e.g. "louças do café", "visitas", "pets", "early check-in") match FAQ answers and are not swallowed by generic regexes.
-3. Test with inactive or pending FAQs: ensure they NEVER match or appear in prompt.
-4. Run `node --test tests/whatsapp-ai-agent.test.mjs` and check duration and exit code.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+You are M2 Challenger 1 for Milestone 2 of the CorpFlats Guest-Flow-Manager project.
 
-Write `challenge.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_1
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker_1\handoff.md
 
-
-## 2026-10-11T03:33:31Z
-You are Challenger 1 for Milestone 2 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_1
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_1\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker\handoff.md
-
-Empirically test:
-1. Prompt injection with client scopes (all, exclude, include_only) and confirm pending/awaiting items are never injected.
-2. Heuristic priority matching for FAQ keywords before generic regexes.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and check execution time and exit code.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write challenge.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Challenger Tasks:
+1. Read ORIGINAL_REQUEST.md and PROJECT.md.
+2. Adversarially stress-test the Re-Signature Lifecycle & Pre-Checkin clearance:
+   - Test date/flat alterations via Admin PUT, Portal checkout settlement commit, and Direct Portal modify.
+   - Verify that in all 3 pathways, `r.needsReSignature === true`, `r.fnhrCompleted === false`, `r.signatureUrl === null`, and old FNRH links/hashes are deleted.
+   - Verify that `getCheckinUrlSync` dynamically appends `?resign=1` when `needsReSignature === true`.
+   - Verify that submitting a new signature via `POST /api/pms/pre-checkin` clears `needsReSignature` back to `false`, sets `fnhrCompleted = true`, and generates a brand new FNRH PDF with fresh SHA-256 hash.
+   - Verify that calling `POST /api/pms/pre-checkin` when already signed does not corrupt state.
+3. Verify byte-for-byte SHA-256 parity between twin servers.
+4. Execute `node --test tests/m2-re-signature-operations-sync.test.mjs`.
+5. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` with empirical test evidence. Send completion message when done.

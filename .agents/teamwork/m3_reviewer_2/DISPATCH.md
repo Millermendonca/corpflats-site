@@ -1,38 +1,20 @@
-# Dispatch — Milestone 3 Reviewer 2 (UI Component & Exceptions Engine Reviewer)
+## 2026-10-11T16:29:32Z
+You are M3 Reviewer 2 for Milestone 3 of the CorpFlats Guest-Flow-Manager project.
 
-## Objective
-Review Milestone 3 UI components and exception engine:
-1. `artifacts/limpeza/src/hooks/use-faq.ts`: verify typing, REST CRUD integration, 1-click approve, category stats, status counts, and error/toast handling.
-2. `artifacts/limpeza/src/components/faq-knowledge-base.tsx`:
-   - Verify 4 metric cards at top.
-   - Verify 9 category cards and counts.
-   - Verify 4 status filters ("Todas", "Ativas", "Perguntas Pendentes", "Sugestões de IA para Aprovar").
-   - Verify dual view (Table and Cards).
-   - Verify 1-click approval button for items in `aguardando_aprovacao`.
-   - Verify Create/Edit modal with exception rules (`all`, `exclude`, `include_only`) and phone number chip management with normalization.
-3. Run `npm run build` in `artifacts/limpeza` to confirm clean build.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_worker_1\handoff.md
 
-Write `review.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
-
-
-## 2026-10-11T04:43:09Z
-
-You are Reviewer 2 for Milestone 3 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_reviewer_2\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_worker\handoff.md
-
-Verify:
-1. use-faq.ts hook: full REST integration, 1-click approve, category stats, status counts, toast feedback.
-2. faq-knowledge-base.tsx component: 4 metric cards, 9 category cards, 4 status filters, dual table/card view, 1-click approval button for aguardando_aprovacao, create/edit modal with exception configuration (all, exclude, include_only with phone tags).
-3. Run `npm run build` in artifacts/limpeza and confirm exit code 0.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write review.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Review Tasks:
+1. Read ORIGINAL_REQUEST.md, PROJECT.md, and Worker's handoff.md.
+2. Review Backend Projection, Parity, Security & Build:
+   - Inspect `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`:
+     - Verify `GET /api/pms/guest-portal/:code` projection of `needsReSignature`, `reSignatureReason`, and `reSignatureUrl`.
+   - Verify byte-for-byte SHA-256 parity between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
+   - Verify build integrity: check that `artifacts/limpeza/dist/public/index.html` and assets exist and reflect the clean build.
+   - Security verification: verify that no re-signing bypass exists and that `resign: "1"` in `POST /api/pms/pre-checkin` legitimately clears `needsReSignature` upon valid signature submission.
+3. Run strictly targeted test commands:
+   - `node --test tests/m3-frontend-portal-panels.test.mjs`
+   - `node --test tests/m2-re-signature-operations-sync.test.mjs`
+4. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` and report back via send_message.

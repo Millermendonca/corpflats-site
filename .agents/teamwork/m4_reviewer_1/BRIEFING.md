@@ -1,69 +1,65 @@
-# BRIEFING — 2026-10-11T05:20:00Z
+# BRIEFING — 2026-10-11T17:15:00Z
 
 ## Mission
-Independently review architectural conformance, interface contracts, schema validation, twin-server SHA-256 byte parity, and test execution for Milestone 4 (Final Integration) of Guest-Flow-Manager, delivering an objective review and adversarial challenge with a definitive verdict.
+Conduct thorough review and adversarial critique of Milestone 4 test suite (`tests/reservation-modification-flow.test.mjs` and `TEST_READY.md`) for Guest-Flow-Manager.
 
 ## 🔒 My Identity
-- Archetype: reviewer_and_adversarial_critic
+- Archetype: reviewer & critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m4_reviewer_1
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Milestone 4 (Final Integration)
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Milestone: Milestone 4 (Unified E2E Suite & Boundary Testing)
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Actively check for integrity violations (hardcoded test results, facade implementations, shortcuts, fabricated verification, self-certification)
-- All communications to parent orchestrator must be sent via send_message
-- Deliver definitive verdict: APPROVE or REQUEST_CHANGES
-- Write review.md and handoff.md in working directory
+- Respect strict testing rule: NEVER run global test suites or bulk scans. Run ONLY strictly targeted test: `node --test tests/reservation-modification-flow.test.mjs`
+- Write only to my working directory (`.agents/teamwork/m4_reviewer_1/`)
+- Actively check for integrity violations: hardcoded results, facades, shortcuts, fake assertions
+- Explicit verdict: APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T05:20:00Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T17:15:00Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/api-server/zapi-service.mjs` and `scripts/zapi-service.mjs`
-  - `artifacts/api-server/whatsapp-ai-service.mjs` and `scripts/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
-  - All 7 mirrored service files between `artifacts/api-server/` and `scripts/`
-  - Frontend components (`artifacts/limpeza/src/pages/whatsapp-automation.tsx`, `artifacts/limpeza/src/components/faq-knowledge-base.tsx`, `artifacts/limpeza/src/hooks/use-faq.ts`)
-  - Test suites (`tests/whatsapp-ai-agent.test.mjs`, adversarial challenger test suites)
-- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md`
-- **Review criteria**: Architecture conformance, schema validation, twin-server SHA-256 byte parity, test execution (<5s, exit 0), port 5000 clean, integrity validation.
-
-## Key Decisions Made
-- Confirmed 100% byte-for-byte SHA-256 parity across all 7 mirrored service files.
-- Confirmed `node --test tests/whatsapp-ai-agent.test.mjs` passes 24/24 tests in 4.37s (< 5s) with exit code 0.
-- Confirmed Port 5000 is completely clean (0 orphaned processes, binds freely).
-- Verified full architectural and interface contract conformance across backend REST endpoints, schema validation, atomic disk persistence, and frontend UI.
-- Confirmed absence of integrity violations: zero hardcoded cheats, zero facade stubs, genuine production logic.
-- Issued definitive verdict: APPROVE.
-
-## Artifact Index
-- `.agents/teamwork/m4_reviewer_1/DISPATCH.md` — Dispatch instructions
-- `.agents/teamwork/m4_reviewer_1/BRIEFING.md` — Situational awareness and state
-- `.agents/teamwork/m4_reviewer_1/review.md` — Comprehensive review & adversarial challenge report
-- `.agents/teamwork/m4_reviewer_1/handoff.md` — 5-component handoff report
+  - `tests/reservation-modification-flow.test.mjs`
+  - `TEST_READY.md`
+  - `.agents/teamwork/m4_worker_1/handoff.md`
+- **Interface contracts**:
+  - `ORIGINAL_REQUEST.md` (section from 2026-10-11T12:53:32Z)
+  - `PROJECT.md`
+  - `TEST_INFRA.md`
+- **Review criteria**:
+  - Completeness: Tier 1 (50 tests covering F1-F10), Tier 2 (30 tests covering 6 boundary/corner areas). Total 92 tests including Tier 0, Tier 3, and Tier 4.
+  - Integrity: No hardcoding, no mock facades masking backend, genuine HTTP requests, real assertions.
+  - Conformance with test infra and project architecture.
 
 ## Review Checklist
 - **Items reviewed**:
-  - [x] ORIGINAL_REQUEST.md and DISPATCH.md
-  - [x] Twin-server SHA-256 byte parity across all 7 mirrored service files (100% MATCH)
-  - [x] Test execution of primary test suite (`tests/whatsapp-ai-agent.test.mjs`: 24/24 pass in 4.37s)
-  - [x] Port 5000 status (0 processes listening, clean bind)
-  - [x] Architectural contracts: REST endpoints (`/api/whatsapp/faq`, `/api/whatsapp/faq/:id/approve`), FaqItem schema, `atomicWriteFileSync`
-  - [x] Integrity check: scan for hardcoded test checks or facade patterns (CLEAN)
-  - [x] Frontend build in `artifacts/limpeza` (`npm run build`: exit code 0)
+  - `tests/reservation-modification-flow.test.mjs` (92 tests, 2376 lines)
+  - `TEST_READY.md` (readiness matrix & certification)
+  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` (backend logic & byte-for-byte SHA-256 parity)
+  - `artifacts/limpeza` (frontend Vite build: exit code 0)
 - **Verdict**: APPROVE
-- **Unverified claims**: None. All core claims verified empirically.
+- **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Twin-server files could differ in subtle ways -> Proven false: 100% SHA-256 match.
-  - REST endpoints could accept malformed data or corrupt JSON -> Handled cleanly with validation, defaults, and atomic write.
-  - Race conditions in `atomicWriteFileSync` -> Survived 100 concurrent rapid writes without corruption.
-  - Test suite open handles or port 5000 leaks -> Clean exit with unref timers and server teardown hooks.
-- **Vulnerabilities found**: None that block release. Noted low-risk caveat on international phone number collisions with matching last 8 digits.
-- **Untested angles**: Extreme volume multi-node distributed database synchronization (production uses PostgreSQL `system_store`).
+  - H1: Are test assertions using dummy values or facade bypasses? → Refuted. Real HTTP requests and DB inspections are made against isolated server on port 3998.
+  - H2: Are 50 tests present for Tier 1 and 30 tests for Tier 2? → Confirmed. Exactly 5 tests per feature across 10 features (50) and 5 tests per boundary across 6 areas (30).
+  - H3: Does the server code maintain byte-for-byte parity? → Confirmed. Identical SHA-256 hash `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`.
+  - H4: Does frontend build cleanly without errors? → Confirmed. `npm run build` exits with code 0.
+- **Vulnerabilities found**: 0 integrity violations, 0 blocking defects.
+- **Untested angles**: None within M4 scope.
+
+## Key Decisions Made
+- Confirmed test suite runs autonomously and cleanly with 92 passing tests.
+- Confirmed no integrity violations. Issued verdict APPROVE.
+
+## Artifact Index
+- `DISPATCH.md` — Inbound instructions from orchestrator
+- `BRIEFING.md` — Situational awareness and persistent memory
+- `progress.md` — Heartbeat and step tracking
+- `handoff.md` — Review report, adversarial findings, and final verdict

@@ -1,4 +1,4 @@
-# BRIEFING — 2026-10-12T00:06:00Z
+# BRIEFING — 2026-10-12T00:10:00Z
 
 ## Mission
 Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub Backend implementation (`scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`), fail-safe lifecycle, 30min antecedence window, twin-server SHA-256 parity, and IoT hardware guide (`docs/SMART_FLAT_HARDWARE_GUIDE.md`). Run strictly the pontual test `tests/smart-flat-hub.test.mjs`. Issue definitive verdict (APPROVE / REQUEST_CHANGES).
@@ -30,7 +30,7 @@ Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub B
 
 ## Current Parent
 - Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-- Updated: 2026-10-12T00:05:12Z
+- Updated: 2026-10-12T00:10:00Z
 
 ## Review Scope
 - **Files to review**:
@@ -42,24 +42,35 @@ Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub B
 - **Review criteria**: Correctness, Completeness, Quality, Adversarial Robustness, Integrity Violations Check, Twin-Server SHA-256 Parity
 
 ## Key Decisions Made
-- Initiated independent review of Smart Flat Hub Backend implementation and IoT Hardware Guide.
-- Will inspect all endpoints under `/api/smart-flat/*` in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
-- Will run SHA-256 hash comparison between twin servers.
-- Will execute strictly `node --test tests/smart-flat-hub.test.mjs` and check for any hardcoding or cheating.
-- Will review `docs/SMART_FLAT_HARDWARE_GUIDE.md` against requirements (19 flats, 16A plugs, IR blasters, Echo, touch switches, VLAN, power outage recovery, budget).
+- Concluded exhaustive independent audit of Smart Flat Hub Backend and IoT Hardware Guide.
+- Verified 100% cryptographic SHA-256 parity between twin servers (`394FED4C9412BF29672DFD81AB153FFEE564DD40F8CBF5CC1611C23592FEE5B3`).
+- Ran pontual test suite `node --test tests/smart-flat-hub.test.mjs` with 6/6 tests passing (100%).
+- Verified clean production frontend build (`built in 38.32s`, exit code 0).
+- Confirmed zero exposure of Smart Flat Hub features to production guests in `guest-portal.tsx`.
+- Formulated adversarial findings regarding midnight rollover and sandbox `/simulate` endpoint.
+- Issued definitive verdict: APPROVE.
 
 ## Artifact Index
 - `.agents/teamwork/reviewer_2/DISPATCH.md` — Inbound instructions and dispatch log
 - `.agents/teamwork/reviewer_2/BRIEFING.md` — Working memory and situational awareness
 - `.agents/teamwork/reviewer_2/progress.md` — Heartbeat and activity log
-- `.agents/teamwork/reviewer_2/handoff.md` — 5-component handoff report
+- `.agents/teamwork/reviewer_2/handoff.md` — 5-component handoff report (APPROVE)
 
 ## Review Checklist
-- **Items reviewed**: Pending code inspection & verification
-- **Verdict**: PENDING
-- **Unverified claims**: Worker Backend IoT 1's claims regarding endpoints, fail-safe rules, SHA-256 parity, and hardware guide
+- **Items reviewed**:
+  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` (/api/smart-flat/* endpoints, timeContext, failSafe)
+  - `docs/SMART_FLAT_HARDWARE_GUIDE.md` (19 flats, 16A plugs, IR blasters, Echo Pop, VLAN 30, BOM)
+  - `tests/smart-flat-hub.test.mjs` (6 unit & HTTP integration tests)
+  - Twin-Server SHA-256 Parity (Verified True)
+  - Production build in `artifacts/limpeza` (Exit code 0)
+- **Verdict**: APPROVE
+- **Unverified claims**: 0 remaining unverified claims
 
 ## Attack Surface
-- **Hypotheses tested**: [TBD during code inspection]
-- **Vulnerabilities found**: [TBD]
-- **Untested angles**: [TBD]
+- **Hypotheses tested**:
+  - Tested invalid time inputs (e.g. `25:00`, `null`, `""`, strings) -> returns null / 400.
+  - Tested invalid temperatures (e.g. 15°C, 27°C) -> rejected with 400.
+  - Tested antecedence window boundaries (13:00 vs 13:29 vs 13:30) -> blocked until 13:30 for 14:00 ETA.
+  - Tested fail-safe warning window [ETA, ETA + 30min[ and auto shutoff at ETA + 30min -> exactly matches specifications.
+  - Tested entrance confirmation disarming fail-safe -> verified disarmed.
+  - Tested midnight rollover -> identified as future advisory improvement.

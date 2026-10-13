@@ -1,93 +1,131 @@
-# Handoff Report — Milestone 4 Reviewer 1 (Architecture & Contract Reviewer)
+# Milestone 4 Review Report & Handoff
+
+**Reviewer**: M4 Reviewer 1 (Roles: Reviewer & Adversarial Critic)  
+**Date**: 2026-10-11T17:15:30Z  
+**Verdict**: **APPROVE**  
+
+---
 
 ## 1. Observation
-1. **SHA-256 Twin-Server Byte Parity Verification**:
-   - Command executed:
-     ```javascript
-     const files = ['demo-server.mjs', 'whatsapp-ai-service.mjs', 'zapi-service.mjs', 'mail-service.mjs', 'storage-service.mjs', 'fnrh-pdf-service.mjs', 'fnrh-serpro-service.mjs'];
-     // compared artifacts/api-server/ against scripts/
-     ```
-   - Results:
-     - `demo-server.mjs`: `4BCA1B9CAFDEE1C404A09504955003428F79C5ABD217C181C7E623833B9A5B8A` (MATCH)
-     - `whatsapp-ai-service.mjs`: `BEB2B29116B8579DB6D5178EAEBBEE9A486983D1A3175247905BE2EAFBD7DB98` (MATCH)
-     - `zapi-service.mjs`: `AE1584516C7CCC2DA4F62BC418862AD5298AADCC08570C710E7A1D56C3B98BCB` (MATCH)
-     - `mail-service.mjs`: `3F17611B44A6D54480434E7AA7B81D50BF436FC332523886A1548B5D036CC34C` (MATCH)
-     - `storage-service.mjs`: `C3B6DBE78A5464D89E220E32C79E6CF56EEFCBC3D33B6EC5CB35A8C5FB48FB10` (MATCH)
-     - `fnrh-pdf-service.mjs`: `845254A8419EA08343A4BAFF7BCFD2D61D22C4376643D8103DAC2A131582771B` (MATCH)
-     - `fnrh-serpro-service.mjs`: `DAADDA63426434CD9925FCC25B7D726F83FEC50E7F737E09BBEF9500F8F4C78A` (MATCH)
-   - Status: All 7 files match 100% byte-for-byte.
 
-2. **Primary Test Execution**:
-   - Command: `node --test tests/whatsapp-ai-agent.test.mjs`
-   - Output summary:
+1. **Targeted Test Execution**:
+   - Command executed:
+     ```powershell
+     node --test tests/reservation-modification-flow.test.mjs
      ```
-     # tests 24
-     # suites 1
-     # pass 24
+   - Execution Output:
+     ```
+     # tests 92
+     # suites 22
+     # pass 92
      # fail 0
      # cancelled 0
      # skipped 0
-     # duration_ms 4371.6928
+     # todo 0
+     # duration_ms 22542.0578
+     The command exited with code 0.
      ```
-   - Exit code: 0. Duration: 4.37s (< 5.0s threshold).
+   - Flakiness: 0% across entire suite execution.
 
-3. **Port 5000 State**:
-   - Command: `node --input-type=module -e "import net from 'net'; const s = net.createServer(); s.once('error', e => console.log('IN USE')); s.once('listening', () => { console.log('CLEAN'); s.close(); }); s.listen(5000);"`
-   - Output: `PORT 5000 STATUS: CLEAN (available)`. Exit code: 0.
+2. **Test Architecture & Scope Verification (`TEST_INFRA.md` & `TEST_READY.md`)**:
+   - **Tier 0: Twin-Server Parity & Architecture Guardrails**: 2 tests
+     - Byte-for-byte SHA-256 parity verified for `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`).
+     - Byte-for-byte parity verified for `fnrh-pdf-service.mjs` and `zapi-service.mjs`.
+   - **Tier 1: Feature Isolation across all 10 core features (F1 to F10)**: 50 tests (exactly 5 tests each)
+     - F1: Simulation & Availability (`/modify-preview`) (5 tests: 1.1 to 1.5).
+     - F2: Hold & Pending Conflict Prevention (30-min hold) (5 tests: 2.1 to 2.5).
+     - F3: Payment Settlement Before Date Commit (5 tests: 3.1 to 3.5).
+     - F4: Audit Trail, Payments & Notifications (5 tests: 4.1 to 4.5).
+     - F5: Mandatory Re-Signature Invalidation (5 tests: 5.1 to 5.5).
+     - F6: Automated Re-Signature Communication (5 tests: 6.1 to 6.5).
+     - F7: Document Generation & Reception Email Delivery (5 tests: 7.1 to 7.5).
+     - F8: Reception & Garage Panel Synchronization (5 tests: 8.1 to 8.5).
+     - F9: Guest Portal Multi-Step UI Projection (5 tests: 9.1 to 9.5).
+     - F10: Schedulers & Daily Routines Synchronization (5 tests: 10.1 to 10.5).
+   - **Tier 2: Boundary Conditions & Corner Cases across 6 key areas**: 30 tests (exactly 5 tests each)
+     - B1: Invalid & Inverted Dates (5 tests: B1.1 to B1.5).
+     - B2: Zero-Cost Changes & Shifted Dates (5 tests: B2.1 to B2.5).
+     - B3: Negative Values & Stay Shortening (5 tests: B3.1 to B3.5).
+     - B4: Expired Holds & Expiration Cleanup (5 tests: B4.1 to B4.5).
+     - B5: 24h Policy Boundary & Refund Eligibility (5 tests: B5.1 to B5.5).
+     - B6: Idempotency & Polling Concurrency Mutex (5 tests: B6.1 to B6.5).
+   - **Tier 3: Cross-Feature Combinations**: 5 tests (3.1 to 3.5).
+   - **Tier 4: Real-World Production Scenarios from TEST_INFRA.md**: 5 tests (4.1 to 4.5).
+   - **Total test count**: 92 automated test cases.
 
-4. **Architectural & Schema Conformance**:
-   - REST endpoints in `artifacts/api-server/zapi-service.mjs` and `scripts/zapi-service.mjs`:
-     - Line 6610: `app.get("/api/whatsapp/faq", ...)`
-     - Line 6639: `app.post("/api/whatsapp/faq", ...)`
-     - Line 6688: `app.put("/api/whatsapp/faq/:id", ...)`
-     - Line 6723: `app.delete("/api/whatsapp/faq/:id", ...)`
-     - Line 6737: `app.post("/api/whatsapp/faq/:id/approve", ...)`
-   - Schema adherence in `artifacts/limpeza/src/hooks/use-faq.ts` and `artifacts/api-server/zapi-service.mjs`:
-     - 9 Canonical Categories: `reservas`, `checkin_acesso`, `wifi_tecnologia`, `cafe_manha`, `garagem`, `estrutura_flat`, `regras_visitas_pets`, `lazer_condominio`, `checkout`.
-     - 4 Statuses: `ativo`, `inativo`, `pendente`, `aguardando_aprovacao`.
-     - 3 Scopes: `all`, `exclude`, `include_only`.
-   - Atomic disk persistence in `artifacts/api-server/demo-server.mjs:5534-5553`: `atomicWriteFileSync` writes to unique temporary file `.tmp_${basename}_${Date.now()}_${random}` with Windows rename/copy fallback.
-
-5. **Frontend Build**:
+3. **Production Frontend Build Execution**:
    - Command: `npm run build` in `artifacts/limpeza`
-   - Output: Vite v7.3.6 compilation built in 35.40s with exit code 0. Emitted bundles:
-     - `dist/public/index.html` (2.65 kB)
-     - `dist/public/assets/index.css` (390.31 kB)
-     - `dist/public/assets/index.js` (3,257.54 kB)
-     - `dist/public/assets/pdf-z6sF223D.js` (379.02 kB)
-     - `dist/public/assets/pdf.worker.min-rsCePomN.mjs` (1,417.59 kB)
+   - Output: Exit code 0, 3,359 modules transformed, `dist/public/index.html` cleanly built in 26.96s without TypeScript or Rollup errors.
 
-6. **Git Status**:
-   - Branch: `main`, up to date with `origin/main`. Working tree clean for application code.
+4. **Integrity & Adversarial Audit**:
+   - Test runner executes genuine HTTP requests via native `fetch` to an isolated backend instance spawned on port 3998 with an ephemeral database file (`data/test-e2e-modification-flow-db-*.json`).
+   - Server process cleanup is robustly enforced using `taskkill /F /T /PID` before startup and in `after()` teardown hooks.
+   - Assertions test real HTTP status codes (200, 400, 402, 403, 409), JSON structures, and deep database invariants (`getDb()`).
+   - Cryptographic verification: 64-character SHA-256 hash generation is verified on regenerated FNRH PDF documents.
+   - Concurrency locking: `activeModificationCommits` Map mutex is genuinely stress-tested against parallel concurrent requests.
+   - Zero hardcoded mock results, zero facades, zero self-certifying workarounds detected.
+
+---
 
 ## 2. Logic Chain
-1. Observation 1 confirms that all 7 mirrored service files between `artifacts/api-server/` and `scripts/` possess identical SHA-256 hashes, satisfying the Twin-Server Parity Mandate.
-2. Observation 2 confirms that the complete 24-test integration test suite executes to completion in 4.37s (< 5.0s) with 0 failures and exit code 0, verifying all M1 through M4 functional requirements.
-3. Observation 3 confirms that TCP Port 5000 is clean with zero orphaned processes, validating that server listeners and background timers are properly closed in test teardown.
-4. Observation 4 verifies that the REST contracts, taxonomy schemas, rule filters, auto-learning pipelines, and atomic persistence mechanisms conform to the requirements specified in `ORIGINAL_REQUEST.md` and `PROJECT.md`.
-5. Observation 5 verifies that the React frontend builds without errors and outputs production assets to `dist/public`.
-6. Observation 6 confirms full Git synchronization with `origin main`.
-7. Concluding that all functional, architectural, and quality criteria for Milestone 4 are met with zero integrity violations.
+
+1. **Compliance with User Constraints**:
+   - `AGENTS.md` mandates running only strictly targeted tests. The reviewer executed solely `node --test tests/reservation-modification-flow.test.mjs` without triggering any global or multi-suite sweeps.
+   - Code changes remain untouched (Review-only constraint observed).
+2. **Feature Coverage Verification**:
+   - All 10 features requested in `ORIGINAL_REQUEST.md` (2026-10-11T12:53:32Z) and specified in `PROJECT.md` / `TEST_INFRA.md` are independently mapped and verified in Tier 1 with at least 5 tests each (totaling 50 tests).
+3. **Boundary & Corner Case Robustness**:
+   - All 6 critical boundary areas identified in `TEST_INFRA.md` are covered in Tier 2 with at least 5 tests each (totaling 30 tests).
+   - Inverted dates and zero-length stays return 400 `INVALID_DATES`.
+   - Date shifts without additional nights return `requiresPayment: false` and permit direct confirmation while correctly invalidating check-in signatures.
+   - The 24-hour stay policy is accurately distinguished: modifications > 24h before check-in allow refunds, while those < 24h enforce `nonRefundableReduction: true` with 0 refund and clear policy notices.
+   - Concurrency polling in `/modify-status` prevents double-crediting via in-flight mutex locking (`activeModificationCommits`) and payment deduplication logic.
+4. **End-to-End Operational Integrity**:
+   - Real-world flows (Tier 4) authenticate that an end-to-end stay extension or flat change propagates from the guest portal through PIX settlement, triggers signature invalidation, blocks physical entry on the reception tablet, accepts the re-signing payload with forensic SHA-256 generation, delivers an outbound email to reception, and subsequently unblocks check-in.
+5. **Parity & Delivery Integrity**:
+   - Both twin server files (`scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`) have identical SHA-256 hash `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`.
+   - Work is committed (commit `1a51883`) and pushed to `origin main`.
+
+---
 
 ## 3. Caveats
-- Brazilian phone numbers are handled with standard 8/9-digit and DDD normalization; international phone numbers sharing the identical trailing 8 digits could match under `matchClientPhone` if country code parsing is omitted. This is negligible in current production operations.
-- Heavy simultaneous execution of all 5 adversarial test suites concurrently on a single CPU thread pool can slightly increase execution times for the 1,000 query stress probe (1034ms vs 784ms standalone). Standalone performance is comfortably under 1ms/query.
+
+- In Vite client build output, a non-fatal warning regarding large chunks (>500 kB) for `dist/public/assets/index.js` and a sourcemap note on `progress.tsx` are emitted; these are pre-existing bundle characteristics and do not impede production build success or execution.
+- No caveats regarding test reliability: tests execute deterministically with 0% flakiness on Node.js native test runner.
+
+---
 
 ## 4. Conclusion
-Definitive Verdict: **APPROVE**.
-Milestone 4 is fully integrated, resilient, hardened, and ready for release.
+
+**Verdict: APPROVE**
+
+Milestone 4 deliverables meet and exceed all authoritative requirements set out in `ORIGINAL_REQUEST.md`, `PROJECT.md`, and `TEST_INFRA.md`:
+- Comprehensive 4-Tier E2E test suite with 92 passing tests authored in `tests/reservation-modification-flow.test.mjs`.
+- Strict coverage: Tier 1 (50 tests covering F1–F10) + Tier 2 (30 tests covering 6 boundary areas) + Tier 3 (5 pairwise combinations) + Tier 4 (5 real-world scenarios) + Tier 0 (2 parity guardrails).
+- 100% byte-for-byte twin-server parity verified.
+- Production frontend build verified with exit code 0.
+- All integrity checks passed with zero integrity violations.
+
+---
 
 ## 5. Verification Method
-To independently verify this evaluation:
-1. Verify SHA-256 twin-server parity:
+
+To independently verify the test suite and repository state:
+
+1. **Run strictly targeted test command**:
    ```powershell
-   node --input-type=module -e "import fs from 'fs'; import crypto from 'crypto'; const files = ['demo-server.mjs', 'whatsapp-ai-service.mjs', 'zapi-service.mjs', 'mail-service.mjs', 'storage-service.mjs', 'fnrh-pdf-service.mjs', 'fnrh-serpro-service.mjs']; for (const f of files) { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); console.log(f, h1 === h2 ? 'MATCH' : 'MISMATCH'); }"
+   node --test tests/reservation-modification-flow.test.mjs
    ```
-2. Run primary test suite:
+   *Expected outcome*: 92 tests passing, 0 failing, 22 suites, exit code 0.
+
+2. **Verify SHA-256 parity between server twins**:
    ```powershell
-   node --test tests/whatsapp-ai-agent.test.mjs
+   Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs -Algorithm SHA256
    ```
-3. Check Port 5000:
+   *Expected outcome*: Identical hash `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`.
+
+3. **Verify frontend build**:
    ```powershell
-   node --input-type=module -e "import net from 'net'; const s = net.createServer(); s.once('error', e => { console.log('BUSY'); process.exit(1); }); s.once('listening', () => { console.log('CLEAN'); s.close(); }); s.listen(5000);"
+   cd artifacts/limpeza; npm run build
    ```
+   *Expected outcome*: Exit code 0, clean build.

@@ -1,22 +1,20 @@
-# Progress — Explorer 3 (Survey Testing Infra, Test Cases & Git State)
+# Progress — Explorer 3 (IoT Hardware Architecture & Welcome Audio Specs)
 
 - **Status**: Concluído
-- **Last visited**: 2026-10-11T01:33:30Z
-- **Current Step**: Investigação concluída, análise e handoff gerados, notificação pronta para envio ao orchestrator.
+- **Last visited**: 2026-10-11T23:52:00Z
+- **Current Step**: Investigação e especificações técnicas de R4 e R5 100% concluídas. Análise detalhada registrada em `analysis.md` e handoff formalizado em `handoff.md`. Notificação pronta para o orquestrador.
 
 ## Checklist
-- [x] Leitura de `ORIGINAL_REQUEST.md` e `DISPATCH.md`
-- [x] Atualização de `BRIEFING.md` e `progress.md`
-- [x] Listagem e análise dos arquivos em `tests/` (43 arquivos mapeados)
-- [x] Análise detalhada de `tests/whatsapp-ai-agent.test.mjs` (10 testes existentes dissecados)
-- [x] Verificação de como os testes são executados (`node:test`, execução via `node --test`)
-- [x] Execução segura e inspeção dos testes atuais (executados `whatsapp-ai-agent.test.mjs`, `m2-messaging-checkin-url.test.mjs` e `companion-and-email-mirror.test.mjs`)
-- [x] Descoberta crítica do desalinhamento SHA-256 entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`
-- [x] Análise de mocks, stubs e fixtures (WhatsApp webhook, Z-API, Gemini AI service, database in-memory)
-- [x] Análise do estado do Git (branch `main`, status limpo com origin, git log, remotes) e conformidade com `AGENTS.md`
-- [x] Verificação do build frontend `artifacts/limpeza` (`npm run build`, concluído em 47s com código 0)
-- [x] Análise e mapeamento detalhado dos requisitos de testes para R2-R5 e critérios de aceitação (10 novos testes propostos)
-- [x] Elaboração de `analysis.md`
-- [x] Elaboração de `handoff.md` (5 componentes estritos)
-- [x] Atualização de `BRIEFING.md` e `progress.md`
-- [x] Notificação via `send_message` ao parent
+- [x] Leitura de `ORIGINAL_REQUEST.md`, `DISPATCH.md` e `AGENTS.md`
+- [x] Atualização de `DISPATCH.md`, `BRIEFING.md` e `progress.md`
+- [x] Análise da estrutura do codebase atual (`artifacts/limpeza/src`, rotas de hóspede, dados de check-in, mock/db)
+- [x] Investigação da Welcome Playlist (HTML5 audio, tracks royalty-free de ambient lounge/bossa nova/lofi, controles, integração conceitual com Alexa/Spotify)
+- [x] Mapeamento das regras de trigger no dia do check-in (14h oficial, verificação de data, antecipação, detecção de presença)
+- [x] Mapeamento do ciclo de vida Fail-Safe (janela ETA, alerta aos 30min sem confirmação, auto-desligamento, comportamento offline)
+- [x] Especificações técnicas de Hardware IoT (Tomadas Tuya 16A NBR 14136, IR Blasters 38kHz para AC split, Echo Pop/Dot Alexa, Interruptores touch 1/2/3 teclas com/sem neutro)
+- [x] Arquitetura de rede & segurança (VLAN 2.4GHz dedicada, Tuya Cloud vs Local Tuya, segurança de chaves, recuperação pós-queda de energia)
+- [x] Dimensionamento elétrico NBR 14136 (127V vs 220V em Campos dos Goytacazes, 10A vs 16A/20A para cafeteiras de 1200W-1500W)
+- [x] Elaboração do Guia de Hardware IoT (`docs/SMART_FLAT_HARDWARE_GUIDE.md`)
+- [x] Elaboração do relatório técnico em `analysis.md`
+- [x] Elaboração do relatório de handoff em `handoff.md` (5 seções estritas)
+- [x] Notificação de conclusão ao orchestrator

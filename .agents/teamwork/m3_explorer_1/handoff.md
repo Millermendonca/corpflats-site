@@ -1,71 +1,65 @@
-# Handoff Report — Milestone 3 Explorer 1 (Frontend Architecture)
+# Handoff Report: Milestone 3 — Multi-Step Reservation Modification Modal Blueprint
+
+**Sender**: M3 Explorer 1 (`f4e1de33-cfe1-4b4f-8547-e548d6c6d19b`)  
+**Recipient**: Parent Orchestrator (`494db1f9-cfb2-46e9-8b9f-419a8aa9586c`)  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_explorer_1`  
+**Target Codebase File**: `artifacts/limpeza/src/pages/guest-portal.tsx`  
+**Reference Specification**: `analysis.md` in the working directory  
+
+---
 
 ## 1. Observation
-1. **Frontend Routing (`artifacts/limpeza/src/App.tsx`)**:
-   - `App.tsx` importa `WhatsappAutomation` na linha 45: `import WhatsappAutomation from '@/pages/whatsapp-automation';`.
-   - Nas linhas 276-277, estão registradas apenas as rotas `/whatsapp` e `/automacao-whatsapp`:
-     ```tsx
-     <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-     <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-     ```
-   - A rota `/whatsapp-automation` solicitada em `ORIGINAL_REQUEST.md:13` e `PROJECT.md:25` **não existe** atualmente, caindo na linha 341 (`<Route component={NotFound} />`).
-2. **Abas em `artifacts/limpeza/src/pages/whatsapp-automation.tsx`**:
-   - Linha 375: `const [activeTab, setActiveTab] = useState<string>("rules")`.
-   - Linhas 1695-1726: `TabsList` com `className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto rounded-xl p-1 bg-muted/60"`.
-   - 5 abas ativas existentes:
-     - `TabsTrigger value="ai_agent"` (linhas 1697-1700, conteúdo linhas 1730-2487).
-     - `TabsTrigger value="rules"` (linhas 1701-1704, conteúdo linhas 2492-3580).
-     - `TabsTrigger value="quick_messages"` (linhas 1705-1711, conteúdo linhas 3585-3850).
-     - `TabsTrigger value="queue"` (linhas 1712-1720, conteúdo linhas 3855-3997).
-     - `TabsTrigger value="history"` (linhas 1721-1724, conteúdo linhas 4002-4050).
-   - O arquivo possui 4.621 linhas no total.
-3. **Backend API Endpoints já existentes (`artifacts/api-server/zapi-service.mjs`)**:
-   - Linha 6610: `GET /api/whatsapp/faq` (suporta query params `category`, `status`, `scope`, `search`).
-   - Linha 6639: `POST /api/whatsapp/faq`.
-   - Linha 6688: `PUT /api/whatsapp/faq/:id`.
-   - Linha 6723: `DELETE /api/whatsapp/faq/:id`.
-   - Linha 6737: `POST /api/whatsapp/faq/:id/approve` (promove status para `"ativo"`, define `approvedAt`).
-4. **Padrão de Hook e Modais**:
-   - `artifacts/limpeza/src/hooks/use-quick-messages.ts` implementa gerenciamento de estado via API REST + cache com toasts (`useToast`).
-   - `artifacts/limpeza/src/components/ui/` contém biblioteca completa Radix/shadcn UI (`dialog.tsx`, `badge.tsx`, `table.tsx`, `tabs.tsx`, `switch.tsx`, `select.tsx`).
-5. **Build Baseline (`artifacts/limpeza`)**:
-   - `artifacts/limpeza/package.json` define `"build": "vite build --config vite.config.ts"`.
-   - Execução de `npm run build` na pasta `artifacts/limpeza` concluída com sucesso em 1m30s gerando artefatos em `artifacts/limpeza/dist/public` (`index.html`, `assets/index.js`, `assets/index.css`).
+
+1. **Milestone 1 Endpoints**:
+   - `scripts/demo-server.mjs` (lines 16109-16304): `POST /api/pms/guest-portal/:code/modify-preview` implemented as a read-only calendar availability checker returning `{ available, conflictMessage, dailyRate, duration, extraNights, additionalAmountToPay, refundAmount, requiresPayment, requiresReSignature, isUnder24h, nonRefundableReduction, policyNotice }`. Returns 409 Conflict if destination flat is double-booked.
+   - `scripts/demo-server.mjs` (lines 16306-16549): `POST /api/pms/guest-portal/:code/modify-checkout` generates a 30-minute provisional hold in `r.pendingModification`, generates PIX dynamic/static payload (`pixQrCodeUrl`, `pixCopiaECola`, `pixTxId`) and Mercado Pago Checkout preference (`mpCheckoutUrl`), keeping original dates intact until payment.
+   - `scripts/demo-server.mjs` (lines 16551-16815): `GET /api/pms/guest-portal/:code/modify-status?pendingId=...` verifies settlement with Banco Inter and Mercado Pago, triggers atomic commit with mutex locking (`activeModificationCommits`), updates dates, sets `needsReSignature = true`, and returns `{ success, paid, status, committed, newCheckinDate, newCheckoutDate, flatNumber, needsReSignature, reSignatureUrl }`.
+   - `scripts/demo-server.mjs` (lines 16817-16895): `POST /api/pms/guest-portal/:code/modify-cancel-pending` removes `r.pendingModification`, logs audit trail, and preserves original dates.
+   - `scripts/demo-server.mjs` (lines 16898-17249): `POST /api/pms/guest-portal/:code/modify` blocks with `402 PAYMENT_REQUIRED` if `additionalAmountToPay > 0`, but commits immediately if cost is zero, setting `needsReSignature = true`.
+
+2. **Existing Implementation in `artifacts/limpeza/src/pages/guest-portal.tsx`**:
+   - Lines 105-114: Basic state declarations `modCheckinDate`, `modCheckoutDate`, `modGuestCount`, `modReason`, `modifying`, `modifyError`, `modifySuccess`.
+   - Lines 324-358: Handler `handleConfirmModify` performs a direct unsimulated call to `POST /modify`, which triggers `402 PAYMENT_REQUIRED` whenever extra nights are selected.
+   - Lines 1914-1923: "Modificar Reserva" button opens `modifyModalOpen`.
+   - Lines 3117-3323: Single-step dialog markup lacking simulation, conflict badge, hold timer, PIX QR Code/Copia e Cola, payment status polling, and re-signing CTA.
+   - Main page does not yet display an alert banner when `reservation.needsReSignature === true`.
+
+---
 
 ## 2. Logic Chain
-1. A partir de **Observation 1**, a rota `/whatsapp-automation` é uma exigência expressa do usuário final e do contrato arquitetural. Sua ausência provoca erro 404 (NotFound). Logo, adicionar `<AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />` em `App.tsx` é estritamente necessário.
-2. A partir de **Observation 2**, `whatsapp-automation.tsx` gerencia 5 abas sob um único componente `Tabs`. Inserir uma 6ª aba diretamente no arquivo de 4.621 linhas aumentaria o risco de regressões e a sobrecarga de manutenção. Portanto, a arquitetura ideal consiste em criar um subcomponente isolado `src/components/faq-knowledge-base.tsx` e renderizá-lo dentro do `<TabsContent value="faq_knowledge">`.
-3. A partir de **Observation 3 e 4**, as rotas de backend `/api/whatsapp/faq` já foram entregues com sucesso e testadas no Milestone 1. Criar o hook `src/hooks/use-faq.ts` encapsulando as chamadas à API, estados de filtro (`category`, `status`, `search`) e ações de aprovação em 1 clique proverá uma interface limpa, desacoplada e reativa para o componente visual.
-4. A partir de **Observation 2 e 5**, ajustar a responsividade do `TabsList` para `grid-cols-2 sm:grid-cols-3 lg:grid-cols-6` garantirá perfeita legibilidade sem quebras visuais em mobile ou desktop. O build atual (`npm run build`) compila sem erros, provando que o ambiente está saudável para receber as novas adições.
+
+1. **From Observation 1**: The backend requires a 2-stage interaction for extensions (Simulation `/modify-preview` followed by Hold & Checkout `/modify-checkout`), rejecting direct modification with 402 `PAYMENT_REQUIRED`.
+2. **From Observation 2**: The frontend currently skips simulation and hold creation, causing guest modification requests with additional nights to fail immediately upon submission.
+3. **Connecting Step 1 (Preview)**: By integrating `POST /modify-preview` on date changes, the frontend immediately flags calendar collisions (409 Conflict) and presents a transparent cost breakdown (`dailyRate`, `extraNights`, `additionalAmountToPay`, `refundAmount`, 24h rule).
+4. **Connecting Step 2 (Checkout)**: By calling `POST /modify-checkout` when `requiresPayment` is true, a 30-minute hold is established. Presenting PIX (QR Code image + Copia e Cola button) alongside Mercado Pago card link, paired with automated background polling on `/modify-status` (cadence: 2.5s) and a visible 30-min countdown timer, guarantees automatic commit upon payment. Providing `handleCancelHold` allows the guest to abort cleanly.
+5. **Connecting Step 3 (Success & Re-signature)**: Once `/modify-status` reports `committed: true` or zero-cost `/modify` succeeds, transitioning to Step 3 with a dedicated CTA linking to `/pre-checkin/:code?resign=1` fulfills Requirement R3.
+6. **Main Page Guardrail**: Adding a persistent top banner on `guest-portal.tsx` when `reservation.needsReSignature === true` ensures the guest is reminded to re-sign even after closing the modal.
+
+---
 
 ## 3. Caveats
-1. **Isolamento de Alteração**: A investigação foi puramente em modo leitura. Nenhum código de produção foi modificado pelo Explorer 1.
-2. **Node.js Warning no Build**: Durante o build via Vite 7.3.6, foi emitido o aviso `"You are using Node.js 20.10.0. Vite requires Node.js version 20.19+ or 22.12+"`. O build executou e gerou todos os chunks com sucesso, mas implementadores devem manter Node 20+ estável.
+
+- **External Channels (OTAs)**: The backend rejects modifications for reservations from external OTAs (Booking, Airbnb) with 403 `EXTERNAL_CHANNEL`. The UI already guards the button with `directChannels.includes(channel)`.
+- **Payment Gateway Credentials in Test Mode**: In test environments where Banco Inter mTLS is mocked, `/modify-status` supports simulated settlement via query parameter `simulatePayment=true`.
+- **Pre-checkin Route Param**: Re-signing link targets `/pre-checkin/:code?resign=1`, which is handled by Milestone 2 in `guest-pre-checkin.tsx`.
+
+---
 
 ## 4. Conclusion
-A arquitetura frontend para a entrega do Milestone 3 está perfeitamente delimitada e com dependências prontas:
-1. **Adição de Rota**: 1 linha em `App.tsx` mapeando `/whatsapp-automation`.
-2. **Criação do Hook**: `src/hooks/use-faq.ts` gerenciando o ciclo de vida dos FAQs e chamadas à API existente.
-3. **Criação do Componente Dedicado**: `src/components/faq-knowledge-base.tsx` implementando os 4 cards de métricas, as 9 categorias em cards/tabela, os 4 filtros de status, a aprovação em 1 clique e o modal completo de criação/edição com motor de regras (`all`, `exclude`, `include_only`).
-4. **Integração na Aba**: Adicionar `TabsTrigger value="faq_knowledge"` e `TabsContent value="faq_knowledge"` em `whatsapp-automation.tsx`.
-5. **Build & Commit**: Rodar `npm run build` em `artifacts/limpeza` e efetuar `git push` conforme mandato de `AGENTS.md`.
+
+A complete, production-grade drop-in blueprint for `artifacts/limpeza/src/pages/guest-portal.tsx` has been designed and documented in `analysis.md`. It covers:
+1. Multi-step state management (`preview` → `checkout` → `success`).
+2. Automatic simulation and cost calculation via `/modify-preview`.
+3. 30-minute hold management with countdown timer, PIX QR Code & Copia e Cola, Card redirect, and active polling on `/modify-status`.
+4. Graceful hold release via `/modify-cancel-pending`.
+5. Prominent re-signature CTAs and top page banner for `needsReSignature = true`.
+
+---
 
 ## 5. Verification Method
-1. **Verificação de Rota**:
-   - Inspecionar `artifacts/limpeza/src/App.tsx` para confirmar presença de `<AdminRoute path="/whatsapp-automation" ... />`.
-2. **Verificação de Componentes e Abas**:
-   - Confirmar existência de `artifacts/limpeza/src/hooks/use-faq.ts` e `artifacts/limpeza/src/components/faq-knowledge-base.tsx`.
-   - Inspecionar `artifacts/limpeza/src/pages/whatsapp-automation.tsx` para confirmar importação e presença da aba `faq_knowledge`.
-3. **Verificação de Build**:
-   - Executar no terminal:
-     ```powershell
-     cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
-     npm run build
-     ```
-   - Invalidação: Qualquer erro TypeScript (`tsc`) ou falha de build Vite invalidará a entrega.
-4. **Verificação de Regressão de Testes**:
-   - Executar no terminal a partir da raiz do projeto:
-     ```powershell
-     node tests/whatsapp-ai-agent.test.mjs
-     ```
-   - Todos os testes de FAQ e AI Agent devem continuar com 100% de aprovação.
+
+To verify the proposed blueprint:
+1. **Source Inspection**: Review `analysis.md` sections 4.1 through 4.5 for complete code blocks matching React/TypeScript types, Lucide icons, and Tailwind styling.
+2. **Backend Compatibility**: Verify that the endpoints in `scripts/demo-server.mjs` lines 16109-16895 accept and respond with the exact schemas specified.
+3. **Automated M1 Test Coverage**: Inspect `tests/m1-reservation-modification-settlement.test.mjs` (Tier 1 through Tier 5) which validates all simulation, hold, polling, cancellation, and re-signing invariants expected by this UI.
+4. **Invalidation Conditions**: If Milestone 1 endpoint schemas are altered, or if re-signing query parameter differs from `?resign=1`, update the corresponding handler calls in the blueprint.

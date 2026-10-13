@@ -1,111 +1,135 @@
-# Handoff Report — Milestone 3 Forensic Auditor
+# Forensic Audit Report: Milestone 3 (CorpFlats Guest-Flow-Manager)
 
-**Date:** 2026-10-11T04:50:00Z  
-**From:** Milestone 3 Forensic Auditor (`304875ce-3426-48fc-a666-9096beb2daf3`)  
-**To:** Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Status:** Hard Handoff (Final Verdict Delivery)  
-**Verdict:** **CLEAN**
+**Work Product**: Milestone 3 Frontend Experience, Re-Signing Fast-Track & Garage Dashboard Polling  
+**Profile**: General Project (Development Mode)  
+**Auditor**: M3 Forensic Auditor (`m3_auditor_1`)  
+**Verdict**: **CLEAN**
 
 ---
 
 ## 1. Observation
 
-1. **Frontend Route Configuration (`artifacts/limpeza/src/App.tsx:276`)**:
-   ```tsx
-   <AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-   ```
-   Route `/whatsapp-automation` is mounted and registered with `AdminRoute`.
+### 1.1 Twin-Server Parity Check (Byte-for-Byte & SHA-256)
+- **Command**: `powershell -Command "Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs"`
+- **Result**:
+  - `scripts/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+  - `artifacts/api-server/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+- **Binary Comparison**: `cmd /c "fc /b scripts\demo-server.mjs artifacts\api-server\demo-server.mjs"`
+- **Result**: `FC: nenhuma diferenca encontrada` (100% byte-for-byte identical).
 
-2. **React Hook Implementation (`artifacts/limpeza/src/hooks/use-faq.ts`)**:
-   - Lines 4-35: Full TypeScript types (`FaqItem`, `FaqCategory`, `FaqStatus`, `FaqScope`).
-   - Lines 81-181: Complete 9-category taxonomy (`FAQ_CATEGORIES`).
-   - Lines 218, 343, 371, 400, 425: Real REST API fetch calls (`/api/whatsapp/faq`, `/api/whatsapp/faq/:id`, `/api/whatsapp/faq/:id/approve`).
-   - Lines 247-282: Memoized metrics (`statusCounts`, `categoryStats`).
-   - Lines 285-338: Real search and filter pipeline across questions, answers, suggested answers, keywords, variations, client phones, and author.
+### 1.2 Independent Frontend Compilation Build
+- **Command**: `npm run build` executed in `artifacts/limpeza`
+- **Output**:
+  ```
+  > @workspace/limpeza@0.0.0 build
+  > vite build --config vite.config.ts
 
-3. **Knowledge Base UI Component (`artifacts/limpeza/src/components/faq-knowledge-base.tsx`)**:
-   - Lines 368-424: 4 metric cards (Total de FAQs, Ativas na IA, Dúvidas Pendentes, Aprovar em 1 Clique).
-   - Lines 444-496: 9 interactive category cards with counts and status badges.
-   - Lines 505-546: 4 status filter buttons ("Todas", "Ativas", "Perguntas Pendentes", "Sugestões de IA").
-   - Lines 638-793 & 795-905: Dual views (Cards view with 1-click approve button and detailed Table view).
-   - Lines 909-1240: Complete Create/Edit modal with WhatsApp formatting shortcuts, category and status selectors, keywords, variations, and Client Exception Rule Engine (§R4) supporting scope (`all`, `exclude`, `include_only`) and phone number chips with bulk input.
+  vite v7.3.6 building client environment for production...
+  ✓ 3359 modules transformed.
+  rendering chunks...
+  computing gzip size...
+  dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+  dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+  dist/public/assets/index.css                      398.53 kB │ gzip:  49.17 kB
+  dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+  dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+  dist/public/assets/index.js                     3,325.85 kB │ gzip: 800.85 kB
+  ✓ built in 31.95s
+  ```
+- **Exit Code**: `0` (Success).
 
-4. **Tab Integration (`artifacts/limpeza/src/pages/whatsapp-automation.tsx`)**:
-   - Line 58: `import { FaqKnowledgeBase } from "@/components/faq-knowledge-base"`
-   - Line 1697: `<TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 ...">`
-   - Line 1706: `<TabsTrigger value="faq" ...>📚 Base & FAQ</TabsTrigger>`
-   - Line 3552-3554: `<TabsContent value="faq" className="space-y-6"><FaqKnowledgeBase /></TabsContent>`
+### 1.3 Independent Execution of Targeted Test Suite
+- **Command**: `node --test tests/m3-frontend-portal-panels.test.mjs`
+- **Output**:
+  ```
+  TAP version 13
+  # Subtest: Milestone 3: Guest Portal Flow, Re-Signing Fast-Track & Garage Polling Suite
+      # Subtest: 1. Backend deve projetar needsReSignature, reSignatureReason e reSignatureUrl no Guest Portal
+      ok 1 - 1. Backend deve projetar needsReSignature, reSignatureReason e reSignatureUrl no Guest Portal
+      # Subtest: 2. /modify-preview deve calcular demonstrativo financeiro e acusar conflito de calendário
+      ok 2 - 2. /modify-preview deve calcular demonstrativo financeiro e acusar conflito de calendário
+      # Subtest: 3. /modify-checkout deve gerar hold de 30 minutos com PIX sem mutar datas no banco
+      ok 3 - 3. /modify-checkout deve gerar hold de 30 minutos com PIX sem mutar datas no banco
+      # Subtest: 4. /modify-cancel-pending deve liberar hold e restaurar disponibilidade
+      ok 4 - 4. /modify-cancel-pending deve liberar hold e restaurar disponibilidade
+      # Subtest: 5. Modificação com Custo Zero (/modify) deve atualizar datas e invalidar assinatura anterior
+      ok 5 - 5. Modificação com Custo Zero (/modify) deve atualizar datas e invalidar assinatura anterior
+      # Subtest: 6. Fast-Track de Re-assinatura (POST /api/pms/pre-checkin com resign='1') deve autenticar nova assinatura e limpar pendência
+      ok 6 - 6. Fast-Track de Re-assinatura (POST /api/pms/pre-checkin com resign='1') deve autenticar nova assinatura e limpar pendência
+      # Subtest: 7. /api/pms/garage/daily-sheet deve sincronizar estadias ativas e veículos cadastrados
+      ok 7 - 7. /api/pms/garage/daily-sheet deve sincronizar estadias ativas e veículos cadastrados
+      # Subtest: 8. Verificação de Integridade Estática dos Componentes Frontend (M3)
+      ok 8 - 8. Verificação de Integridade Estática dos Componentes Frontend (M3)
+      1..8
+  ok 1 - Milestone 3: Guest Portal Flow, Re-Signing Fast-Track & Garage Polling Suite
+  1..1
+  # tests 8
+  # suites 1
+  # pass 8
+  # fail 0
+  # cancelled 0
+  # duration_ms 19119.7813
+  ```
+- **Exit Code**: `0` (8 passing tests, 0 failures).
 
-5. **Independent Build Execution (`artifacts/limpeza`)**:
-   - Command: `npm run build`
-   - Exit Code: 0
-   - Output: `✓ 3357 modules transformed.`, `✓ built in 39.42s`.
-   - Artifacts generated in `dist/public`: `index.html` (2.65 kB), `index.js` (3,257.54 kB), `index.css` (390.31 kB).
-
-6. **Independent Test Execution (`tests/whatsapp-ai-agent.test.mjs`)**:
-   - Command: `node --test tests/whatsapp-ai-agent.test.mjs`
-   - Exit Code: 0
-   - Results: `# tests 24`, `# suites 1`, `# pass 24`, `# fail 0`, `# duration_ms 2449.1731`. All 24 tests passed without errors or skips.
-
-7. **Twin-Server SHA256 Parity**:
-   - `artifacts/api-server/whatsapp-ai-service.mjs` == `scripts/whatsapp-ai-service.mjs` (`BEB2B29116B8579DB6D5178EAEBBEE9A486983D1A3175247905BE2EAFBD7DB98`)
-   - `artifacts/api-server/zapi-service.mjs` == `scripts/zapi-service.mjs` (`AE1584516C7CCC2DA4F62BC418862AD5298AADCC08570C710E7A1D56C3B98BCB`)
-   - `artifacts/api-server/demo-server.mjs` == `scripts/demo-server.mjs` (`4BCA1B9CAFDEE1C404A09504955003428F79C5ABD217C181C7E623833B9A5B8A`)
-
-8. **Git Synchronization**:
-   - `git branch -vv`: `* main 63be666 [origin/main] docs: registrar handoff completo de Milestone 3 Worker`
-   - Tracked files clean; remote `origin/main` completely synced at commit `63be666`.
+### 1.4 Source Code Integrity Analysis
+- **`artifacts/limpeza/src/pages/guest-portal.tsx`**:
+  - Implements complete 3-step state machine: `step: "preview" | "checkout" | "success"`.
+  - Handles simulation (`POST /modify-preview`), provisional hold (`POST /modify-checkout`), countdown timer, background status polling every 2.5s (`GET /modify-status`), and hold cancellation (`POST /modify-cancel-pending`).
+  - Displays top sticky banner when `reservation.needsReSignature === true` linking directly to `/pre-checkin/${r.code}?resign=1`.
+  - No dummy stubs or hardcoded responses detected.
+- **`artifacts/limpeza/src/pages/guest-pre-checkin.tsx`**:
+  - Detects `sp.get("resign") === "1"`, skips steps 1 and 2 directly to step 3 (signature).
+  - Preserves prior registration data (`name`, `document`, `phone`, `email`, vehicle details) while clearing outdated signature canvas.
+  - Submits `resign: "1"` flag in JSON payload to `POST /api/pms/pre-checkin`.
+  - Redirects to `/minha-reserva/:code?resign_success=1` upon completion.
+- **`artifacts/limpeza/src/pages/garage-dashboard.tsx`**:
+  - Implements `fetchGarageData(silent)` polling on a 30-second interval (`setInterval`).
+  - Includes `focus` and `visibilitychange` listeners to refresh immediately when user focuses back on the tab.
+  - Properly unregisters intervals and event listeners on unmount.
+- **`tests/m3-frontend-portal-panels.test.mjs`**:
+  - Tests spawn live child process on port 3997 with isolated temporary database.
+  - Assertions test real HTTP status codes (200, 409), JSON payload structures, in-flight holds, date invariance prior to payment, and database mutations.
 
 ---
 
 ## 2. Logic Chain
-
-1. **Integrity Mode Ground Truth**:
-   - Per `ORIGINAL_REQUEST.md` (line 8), the integrity mode is `development`.
-   - Prohibited under development mode: hardcoded test results, facade implementations returning dummy stubs without computation, fabricated verification outputs.
-2. **Evaluation of Prohibited Patterns**:
-   - Observation 2 & 3 demonstrate that `use-faq.ts` and `faq-knowledge-base.tsx` contain genuine business logic, active API communication, React state transitions, and responsive UI components rather than dummy stubs or facade mocks.
-   - Observation 5 confirms that the production build was genuinely compiled using Vite into `dist/public` without mock script interception.
-   - Observation 6 confirms that `node --test` executed 24 distinct tests against real service methods, testing state mutation, phone matching, Gemini timeout handling, and exception scope rules.
-   - Observation 7 confirms twin-server parity mandate was adhered to byte-for-byte.
-   - Observation 8 confirms version control compliance with immediate push to `origin/main`.
-3. **Conclusion Deduction**:
-   - Since all 6 forensic checks passed empirically and zero prohibited patterns were detected, the work product is authentic and clean.
+1. *Observation 1.1* confirms that server logic in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` is 100% byte-for-byte identical (`FC: nenhuma diferenca encontrada`), satisfying the project's strict Twin-Server Parity Mandate.
+2. *Observation 1.2* proves that the React/Vite frontend in `artifacts/limpeza` builds cleanly into `dist/` without compilation, typing, or bundling errors.
+3. *Observation 1.3* confirms that the targeted Milestone 3 test suite passes 8/8 tests against a spawned server instance running on an isolated database without mock bypasses.
+4. *Observation 1.4* verifies that the implementation of the multi-step modal in `guest-portal.tsx`, fast-track re-signing in `guest-pre-checkin.tsx`, and background polling in `garage-dashboard.tsx` contains genuine application logic and state management.
+5. In accordance with the project integrity policy (Development Mode as specified in `ORIGINAL_REQUEST.md`), there are no hardcoded test outputs, no facade implementations, and no fabricated verification outputs.
 
 ---
 
 ## 3. Caveats
-
-- **No Caveats**: All components, routes, build artifacts, test suites, twin-server hashes, and git states were verified directly via local tool execution with zero assumptions.
+- No caveats. All milestone requirements, parity invariants, build criteria, and test assertions are satisfied.
 
 ---
 
 ## 4. Conclusion
+**Verdict**: **CLEAN**
 
-Milestone 3 passes all forensic integrity checks. The delivery is authentic, robust, functional, and fully verified.  
-**Definitive Verdict**: **CLEAN**. Work product accepted.
+The work product for Milestone 3 satisfies all functional, architectural, and integrity standards. No integrity violations were identified.
 
 ---
 
 ## 5. Verification Method
 
-To independently re-verify this assessment, execute the following commands in the project root:
+To independently reproduce the forensic verification:
 
-1. **Re-run Automated Tests**:
+1. **Parity Verification**:
    ```powershell
-   node --test tests/whatsapp-ai-agent.test.mjs
+   Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs
+   fc /b scripts\demo-server.mjs artifacts\api-server\demo-server.mjs
    ```
-   *Expected:* Exit code 0, 24/24 passed.
 
-2. **Re-run Frontend Build**:
-   ```powershell
-   cd artifacts/limpeza
-   npm run build
+2. **Frontend Build**:
+   ```bash
+   cd artifacts/limpeza && npm run build
    ```
-   *Expected:* Exit code 0, bundled assets in `artifacts/limpeza/dist/public`.
 
-3. **Check Remote Git Sync**:
-   ```powershell
-   git branch -vv
+3. **Targeted Test Execution**:
+   ```bash
+   node --test tests/m3-frontend-portal-panels.test.mjs
    ```
-   *Expected:* `* main [origin/main]`.

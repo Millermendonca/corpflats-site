@@ -1,112 +1,127 @@
-# Handoff Report — Milestone 3 Challenger 2
-
-**Date:** 2026-10-11T04:54:00Z  
-**From:** Milestone 3 Challenger 2 (`962b7e41-233d-4f96-9de8-bbe385ae7253`)  
-**To:** Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Status:** Hard Handoff (Final Clearance)  
-**Definitive Verdict:** **APPROVE**  
-
----
+# Milestone 3 Challenger 2 Handoff Report: Fast-Track Re-Signing & Garage Dashboard Polling
 
 ## 1. Observation
 
-1. **Frontend Production Build Verification (`artifacts/limpeza`)**:
-   - Executed `npm run build` in `artifacts/limpeza`.
-   - Tool result:
-     ```text
-     vite v7.3.6 building client environment for production...
-     ✓ 3357 modules transformed.
-     dist/public/index.html 2.65 kB │ gzip: 0.81 kB
-     dist/public/assets/index.js 3,257.54 kB │ gzip: 785.54 kB
-     ✓ built in 1m 28s
-     ```
-   - Exit code: `0`. Zero TypeScript, JSX, or bundling errors.
+- **Adversarial Test Suite (`tests/challenger-m3-c2-adversarial.test.mjs`)**:
+  - Executed via `node --test tests/challenger-m3-c2-adversarial.test.mjs`
+  - Output:
+    ```
+    TAP version 13
+    # Subtest: Milestone 3 Challenger 2: Adversarial Fast-Track Re-Signing & Garage Polling
+        # Subtest: CHALLENGE 1: GET /api/pms/pre-checkin/:code com ?resign=1 preserva 100% dos dados cadastrais e veículo, e limpa assinatura antiga
+        ok 1 - CHALLENGE 1: GET /api/pms/pre-checkin/:code com ?resign=1 preserva 100% dos dados cadastrais e veículo, e limpa assinatura antiga
+        # Subtest: CHALLENGE 2: Simulação de carregamento do formulário frontend com ?resign=1 salta para Passo 3 e zera canvas
+        ok 2 - CHALLENGE 2: Simulação de carregamento do formulário frontend com ?resign=1 salta para Passo 3 e zera canvas
+        # Subtest: CHALLENGE 3: POST /api/pms/pre-checkin com resign='1' autentica nova assinatura, limpa needsReSignature e regenera FNRH
+        ok 3 - CHALLENGE 3: POST /api/pms/pre-checkin com resign='1' autentica nova assinatura, limpa needsReSignature e regenera FNRH
+        # Subtest: CHALLENGE 4: Verificação do fluxo de redirecionamento do Fast-Track (?resign_success=1)
+        ok 4 - CHALLENGE 4: Verificação do fluxo de redirecionamento do Fast-Track (?resign_success=1)
+        # Subtest: CHALLENGE 5: Garage Dashboard Polling de 30s, escutas de visibilidade/foco e limpeza no unmount
+        ok 5 - CHALLENGE 5: Garage Dashboard Polling de 30s, escutas de visibilidade/foco e limpeza no unmount
+        # Subtest: CHALLENGE 6: Sincronização dinâmica da relação diária da garagem (/api/pms/garage/daily-sheet)
+        ok 6 - CHALLENGE 6: Sincronização dinâmica da relação diária da garagem (/api/pms/garage/daily-sheet)
+    ok 1 - Milestone 3 Challenger 2: Adversarial Fast-Track Re-Signing & Garage Polling
+    # tests 6 # suites 1 # pass 6 # fail 0 # cancelled 0 # skipped 0 # duration_ms 5549.2705
+    ```
+  - Exit code: 0 (100% pass rate).
 
-2. **Automated Backend AI Agent Tests (`tests/whatsapp-ai-agent.test.mjs`)**:
-   - Executed `node --test tests/whatsapp-ai-agent.test.mjs`.
-   - Result:
-     ```text
-     # tests 24
-     # suites 1
-     # pass 24
-     # fail 0
-     # duration_ms 16007.4981
-     ```
-   - Exit code: `0`. 100% passing across all 24 subtests.
+- **Targeted M3 Test Suite (`tests/m3-frontend-portal-panels.test.mjs`)**:
+  - Executed via `node --test tests/m3-frontend-portal-panels.test.mjs`
+  - Output:
+    ```
+    TAP version 13
+    # Subtest: Milestone 3: Guest Portal Flow, Re-Signing Fast-Track & Garage Polling Suite
+        ok 1 - 1. Backend deve projetar needsReSignature, reSignatureReason e reSignatureUrl no Guest Portal
+        ok 2 - 2. /modify-preview deve calcular demonstrativo financeiro e acusar conflito de calendário
+        ok 3 - 3. /modify-checkout deve gerar hold de 30 minutos com PIX sem mutar datas no banco
+        ok 4 - 4. /modify-cancel-pending deve liberar hold e restaurar disponibilidade
+        ok 5 - 5. Modificação com Custo Zero (/modify) deve atualizar datas e invalidar assinatura anterior
+        ok 6 - 6. Fast-Track de Re-assinatura (POST /api/pms/pre-checkin com resign='1') deve autenticar nova assinatura e limpar pendência
+        ok 7 - 7. /api/pms/garage/daily-sheet deve sincronizar estadias ativas e veículos cadastrados
+        ok 8 - 8. Verificação de Integridade Estática dos Componentes Frontend (M3)
+    ok 1 - Milestone 3: Guest Portal Flow, Re-Signing Fast-Track & Garage Polling Suite
+    # tests 8 # suites 1 # pass 8 # fail 0 # cancelled 0 # skipped 0 # duration_ms 17926.5884
+    ```
+  - Exit code: 0 (100% pass rate).
 
-3. **Empirical UI Interaction & Boundary Stress Harness (`tests/challenger-m3-c2-ui-interaction.test.mjs`)**:
-   - Created and executed a dedicated empirical stress test suite containing 27 unit and boundary probes across 6 test suites:
-     - `Suite 1`: Phone Normalization & Chip Management (8 tests: 13-digit DDI 55, 11-digit mobile, 12-digit landline with DDI, 10-digit landline, pre-punctuated inputs, malformed/boundary strings, single phone addition & deduplication, bulk delimiter parsing). All 8 passed.
-     - `Suite 2`: Official 9-Category Taxonomy Validation (2 tests: 9 categories present per §R1, metadata completeness). Both passed.
-     - `Suite 3`: Metric Counters & Aggregation Pipeline (3 tests: empty list handling, mixed status tallies, corrupt status resilience). All 3 passed.
-     - `Suite 4`: Filter Combinations, Full-Text Search, & Sorting Pipeline (8 tests: empty dataset, status pills, category dropdown, client scope, multi-field search, compound filters, multi-tier priority sort, null/undefined resilience). All 8 passed.
-     - `Suite 5`: 1-Click Approval States, Form Validation, & WhatsApp Formatting (4 tests: 1-click button conditional rendering, modal save disabled validation on whitespace/empty, form keywords/variations parser, formatting token application). All 4 passed.
-     - `Suite 6`: REST Client Contract Invariants in `useFaq` (2 tests: URI encoding on approve endpoint, status toggle state machine). Both passed.
-   - Result: `27 tests`, `27 passed`, `0 failed`, exit code `0`.
+- **Twin-Server SHA-256 Parity**:
+  - Executed `Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs`:
+    - `scripts/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+    - `artifacts/api-server/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+  - Strict 100% byte-for-byte parity verified.
 
-4. **Git Repository Status**:
-   - Worker commit `e8d14ed` (`feat(faq-ui): integrar 6a aba Base de Conhecimento & FAQ Dinamico em whatsapp-automation e compilar bundle de producao`) was committed and pushed to `origin main` along with build artifacts in `artifacts/limpeza/dist/`.
+- **Vite Production Build**:
+  - Executed `npm run build` in `artifacts/limpeza`:
+    ```
+    vite v7.3.6 building client environment for production...
+    ✓ 3359 modules transformed.
+    dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+    dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+    dist/public/assets/index.css                      398.53 kB │ gzip:  49.17 kB
+    dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+    dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+    dist/public/assets/index.js                     3,325.85 kB │ gzip: 800.85 kB
+    ✓ built in 27.28s
+    ```
+  - Exit code: 0.
 
----
+- **Fast-Track Source Inspection (`artifacts/limpeza/src/pages/guest-pre-checkin.tsx`)**:
+  - Lines 72–78: `isResignParam` memoized checking `sp.get("resign") === "1"`.
+  - Lines 80–88: Initial `step` state set directly to `3` when `resign === "1"` and no `step` param present.
+  - Lines 614–624: `isReSignatureNeeded` clears `sig` to `null` while preserving all guest profile, address, and vehicle fields.
+  - Lines 1000–1011: Pre-checkin submission passes `resign: isReSignatureNeeded ? "1" : undefined`.
+  - Lines 1145–1151: On submission success, triggers redirect to `/minha-reserva/:code?resign_success=1`.
+  - Lines 2104–2129: Prominent amber alert banner informs the guest about the updated reservation stay dates and required signature.
+
+- **Garage Dashboard Polling Inspection (`artifacts/limpeza/src/pages/garage-dashboard.tsx`)**:
+  - Lines 35–49: `fetchGarageData` wrapped in `useCallback` with `silent` flag preventing unnecessary `setLoading(true)` spinner flickers during background cycles.
+  - Lines 56–60: `setInterval(() => fetchGarageData(true), 30000)` executes silent background sync every 30s.
+  - Lines 62–69: `window.addEventListener("focus", ...)` and `document.addEventListener("visibilitychange", ...)` trigger immediate sync when operator switches back to tab.
+  - Lines 71–76: `useEffect` return cleanup performs `clearInterval` and removes both event listeners, preventing memory leaks and orphaned intervals.
 
 ## 2. Logic Chain
 
-1. **Alignment with User Specifications (§R1 - §R5)**:
-   - §R1 is fulfilled: Dedicated 6th tab `📚 Base & FAQ` in `/whatsapp-automation` with 4 metric cards, 9 category cards, 4 status pills, Card vs Table views, Create/Edit modal with WhatsApp formatting shortcuts, and 1-click approve button.
-   - §R2 & §R3 are supported: Inbound unmapped doubts with `status: "pendente"` and operator suggested answers with `status: "aguardando_aprovacao"` render prominently with dedicated badges and 1-click promotion to `status: "ativo"`.
-   - §R4 is supported: Client exception engine supports `all`, `exclude`, and `include_only`, with a dedicated interactive phone chip manager accepting individual and bulk entries.
-   - §R5 is supported: Sofia's backend AI service connects with `db.faqItems`, dynamic Gemini prompt injection, and heuristic fallback.
-2. **Robustness & Edge-Case Safety**:
-   - Testing confirmed that empty lists do not cause null pointer exceptions or broken UI counters.
-   - Telephone normalization (`formatDisplayPhone`) handles empty strings, nulls, non-numeric strings, and un-prefixed Brazilian numbers gracefully.
-   - Search predicate handles undefined/null attributes and regex characters without throwing errors.
-   - Modal save button remains strictly disabled when the question field is blank or whitespace-only.
-3. **Build & Test Invariants**:
-   - `npm run build` completed with exit code 0, verifying complete type safety and bundle generation.
-   - `node --test tests/whatsapp-ai-agent.test.mjs` completed 24/24 with exit code 0.
-
----
+1. *Premise*: R3 and R4 require that modified reservations requiring re-signature allow guests to sign without re-entering all registration data, and require operations (garage) to stay continuously synchronized.
+2. *Verification Step 1*: In `GET /api/pms/pre-checkin/:code?resign=1`, verified that all pre-existing guest data (name, document, phone, email, vehicle plate/model/color) are delivered to the frontend, but `signatureUrl` is cleared to `null`.
+3. *Verification Step 2*: In `guest-pre-checkin.tsx`, verified that `?resign=1` skips Steps 1 and 2, jumping straight to Step 3 (Signature Canvas), rendering an amber explanation card without requiring re-uploading documents or re-typing address.
+4. *Verification Step 3*: In `POST /api/pms/pre-checkin`, submitting with `resign: "1"` cleared `needsReSignature = false`, restored `fnhrCompleted = true`, generated a new forensic PDF with fresh document UUID and 64-char SHA-256 hash, and queued an updated email to reception with subject prefix `[RE-ASSINATURA CHECK-IN]`.
+5. *Verification Step 4*: In `garage-dashboard.tsx`, background polling at 30s intervals with focus/visibilitychange re-fetch and unmount cleanup ensures real-time vehicle authorization without page reload or visual jarring.
+6. *Verification Step 5*: Adversarial suite (`6/6 passed`), targeted suite (`8/8 passed`), and clean build (`0 errors`) confirm system stability and absence of regressions.
 
 ## 3. Caveats
 
-1. **Client-Side Search on `sourceClientPhone`**: `use-faq.ts` filters against `i.clientPhones` (the exception list) and `i.sourceClientName`, but does not inspect `i.sourceClientPhone`. An operator searching by the guest's phone number for an inbound pending doubt will not match unless the phone is in the question text or author name. This is a low-impact observation and does not block approval.
-2. **Accented Character Search**: Substring search uses standard `String.prototype.includes()` without NFD diacritic stripping. However, catalog seed keywords contain unaccented variants, mitigating this in common operational scenarios.
-
----
+- Physical Z-API WhatsApp delivery was executed in Sandbox/Test mode (`NODE_ENV: "test"`), as live phone transmissions are simulated in automated test harnesses.
+- Banco Inter mTLS dynamic PIX generation falls back gracefully to static EMV PIX when live bank mTLS certificates are absent in local test environments, verified by design.
 
 ## 4. Conclusion
 
-**Verdict: APPROVE**
-
-Milestone 3 (Frontend UI & Build Delivery) satisfies all acceptance criteria in `ORIGINAL_REQUEST.md` and `DISPATCH.md`:
-- Clean build in `artifacts/limpeza` (exit code 0).
-- 24/24 automated AI backend tests passing.
-- 27/27 empirical UI interaction and edge-case tests passing.
-- Implementation is verified, robust, and safe for production deployment.
-
----
+**VERDICT: APPROVE**.
+All Milestone 3 requirements for Fast-Track Re-signing flow and Garage Dashboard Background Polling are empirically validated, robust, and completely functional. No blocking defects or regressions were detected.
 
 ## 5. Verification Method
 
 To independently reproduce the empirical verification:
 
-1. **Verify Frontend Build**:
-   ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
-   npm run build
+1. **Run Adversarial Challenger Test Suite**:
+   ```bash
+   node --test tests/challenger-m3-c2-adversarial.test.mjs
    ```
-   *Expected:* Exit code `0`, `✓ built in XXs`, assets emitted in `dist/public/`.
+   *Expected result*: 6 passed, 0 failed.
 
-2. **Verify AI Agent Backend Test Suite**:
-   ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
-   node --test tests/whatsapp-ai-agent.test.mjs
+2. **Run Targeted M3 Test Suite**:
+   ```bash
+   node --test tests/m3-frontend-portal-panels.test.mjs
    ```
-   *Expected:* `# tests 24`, `# pass 24`, `# fail 0`, exit code `0`.
+   *Expected result*: 8 passed, 0 failed.
 
-3. **Verify Challenger 2 UI Interaction & Edge Case Harness**:
+3. **Verify Twin-Server SHA-256 Parity**:
    ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
-   node --test tests/challenger-m3-c2-ui-interaction.test.mjs
+   Get-FileHash -Algorithm SHA256 scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs
    ```
-   *Expected:* `# tests 27`, `# pass 27`, `# fail 0`, exit code `0`.
+   *Expected result*: Identical SHA-256 hashes (`694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`).
+
+4. **Verify Frontend Production Build**:
+   ```bash
+   cd artifacts/limpeza && npm run build
+   ```
+   *Expected result*: Exits with code 0.

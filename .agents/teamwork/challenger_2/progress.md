@@ -1,14 +1,12 @@
-# Progress - Challenger 2: API & Rectification Adversarial Testing
+# Progress - Challenger 2: Adversarial Privacy & Twin Parity Verification
 
-Last visited: 2026-10-12T00:07:30Z
+Last visited: 2026-10-12T00:12:15Z
 
 ## Verification Plan & Execution Status
-1. [x] Step 1: Codebase Inspection — Inspected `tests/developer-ai-coaching.test.mjs`, `scripts/zapi-service.mjs`, `scripts/whatsapp-ai-service.mjs`, `artifacts/limpeza/src/pages/whatsapp-chat.tsx`, and `artifacts/limpeza/src/pages/whatsapp-automation.tsx`.
-2. [x] Step 2: Empirical Unit & Point Test Execution — Executed `node --test tests/developer-ai-coaching.test.mjs`. Result: 8/8 tests passed, 0 failures.
-3. [x] Step 3: Adversarial Stress Testing of Rectification & Guidelines Endpoints:
-   - [x] Rectification Endpoint Contract (`POST /api/whatsapp/chat/:phone/correct-message`): tested 400 on empty/whitespace, `learnGuideline: false`, `sendToGuest: false`, phone sanitization, error resilience on dispatch failure.
-   - [x] Guidelines CRUD (`/api/whatsapp/developer-guidelines`): tested GET filters (`active`, `category`, `search`), POST validation (400 on empty text, 201 on success), PATCH (404 on invalid ID, 200 on update/toggle), DELETE (404 on invalid ID, 200 on removal).
-   - [x] Dynamic Reflection: verified immediate reflection in system prompt instructions and heuristic responses upon creation, and immediate eviction upon deactivation/deletion.
-4. [x] Step 4: Twin-Server Parity Verification — Validated SHA-256 equivalence across `scripts/` and `artifacts/api-server/` (`zapi-service.mjs`, `whatsapp-ai-service.mjs`, `demo-server.mjs`). All matched 100%.
-5. [x] Step 5: Frontend Production Build — Executed `npm run build` in `artifacts/limpeza` (Vite build passed with code 0 in 45.86s).
-6. [x] Step 6: Final Verdict & Handoff — Authored `handoff.md` with formal verdict **APPROVE** and notified parent agent.
+1. [x] Step 1: Inspection of `guest-portal.tsx` — VERIFIED. 0 leaks, 0 Smart Flat components or imports, 0 exposed buttons, links, or routes. Real guests have 0 exposure.
+2. [x] Step 2: Route Guard Inspection — VERIFIED. `App.tsx` guards `/preview/smart-flat/:code`, `/preview/smart-flat`, `/admin/smart-flat-preview/:code`, `/admin/smart-flat-preview` and `?preview=smart_flat` via `GuestPortalWrapper`.
+3. [x] Step 3: Twin-Server SHA-256 Parity Verification — VERIFIED. `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` match 100% with hash `394fed4c9412bf29672dfd81ab153ffee564dd40f8cbf5cc1611c23592fee5b3`.
+4. [x] Step 4: Empirical Point Test Execution — VERIFIED. Executed strictly `node --test tests/smart-flat-hub.test.mjs` (6/6 tests passing, 0 failures, 100% success). No batch/global tests run.
+5. [x] Step 5: Adversarial Stress Testing — VERIFIED. Edge-case time parsing (rejection of malformed formats, acceptance of HH:mm / HHhMM), fail-safe state machine invariants (warning at ETA, auto shutoff at ETA+30m, entrance confirmation disarm), welcome playlist timing.
+6. [x] Step 6: Frontend Build Verification — VERIFIED. Clean build (`npm --prefix artifacts/limpeza run build`, exit code 0, 21.47s).
+7. [x] Step 7: Final Report & Verdict — VERIFIED. Authored `handoff.md` with explicit verdict APPROVE.

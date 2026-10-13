@@ -1,37 +1,19 @@
-# Dispatch — Milestone 2 Challenger 2 (Auto-Learning & Operator Capture Challenger)
+## 2026-10-11T15:27:29Z
+You are M2 Challenger 2 for Milestone 2 of the CorpFlats Guest-Flow-Manager project.
 
-## Objective
-Empirically stress-test auto-learning and operator response capture:
-1. Inbound unmapped question auto-detection:
-   - Send questions about unmapped topics (e.g. "Tem ferro de passar?", "Tem tomada para carro elétrico?"). Verify a new item with `status: "pendente"` is created.
-   - Send greetings ("Oi", "Bom dia", "Tudo bem?"). Verify NO pending FAQ is created.
-   - Send duplicate unmapped questions for the same client. Verify no duplicate spam.
-2. Operator response capture:
-   - Simulate operator sending response via `fromMe: true` and via `POST /api/whatsapp/chats/:phone/messages`.
-   - Verify `suggestedAnswer` is linked, `status` becomes `"aguardando_aprovacao"`, and conversation AI is paused.
-   - Test expired questions (> 24h old): verify they are not linked.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm clean exit with code 0 in < 5s.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_2
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker_1\handoff.md
 
-Write `challenge.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
-
-
-## 2026-10-11T03:33:32Z
-You are Challenger 2 for Milestone 2 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_2
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_challenger_2\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker\handoff.md
-
-Empirically test:
-1. Inbound unmapped question auto-detection (unmapped questions create pending FAQ, greetings/confirmations do not, duplicate questions handled).
-2. Operator response capture (`fromMe: true` and chat API), 24h window matching, suggestedAnswer, and AI pause.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm pass in < 5s with exit code 0.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write challenge.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Challenger Tasks:
+1. Read ORIGINAL_REQUEST.md and PROJECT.md.
+2. Adversarially challenge the Reception Tablet integration and Operational Schedulers synchronization:
+   - Check `GET /api/reception/today` when `r.needsReSignature === true`: ensure `canAuthorizeEntry === false`, `allCheckinDone === false`, and `entryBadgeType === "error"`.
+   - Attempt `POST /api/reception/checkin/:reservationId` while `r.needsReSignature === true`: ensure it strictly rejects entry with HTTP 400.
+   - Re-sign via `POST /api/pms/pre-checkin`: verify that `GET /api/reception/today` now permits entry (`canAuthorizeEntry === true`), and `POST /api/reception/checkin/:reservationId` succeeds.
+   - Verify that altering `checkinDate` clears `morningEmailSentDate` so the 07:00 morning arrival routine fires on the new arrival date.
+   - Verify that changing dates/flat synchronizes or cancels breakfast orders outside the new window, and updates housekeeping turnover tasks to the new checkout date.
+3. Verify byte-for-byte SHA-256 parity between twin servers.
+4. Execute `node --test tests/m2-re-signature-operations-sync.test.mjs`.
+5. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` with empirical test evidence. Send completion message when done.

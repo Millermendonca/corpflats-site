@@ -1,34 +1,18 @@
-# Dispatch — Milestone 3 Challenger 1 (Frontend Build & Route Challenger)
+## 2026-10-11T16:29:32Z
+You are M3 Challenger 1 for Milestone 3 of the CorpFlats Guest-Flow-Manager project.
 
-## Objective
-Empirically stress-test the frontend build and routing:
-1. Run `npm run build` in `artifacts/limpeza` and verify:
-   - Clean compilation (exit code 0).
-   - Verify `artifacts/limpeza/dist/public/index.html` exists and is non-empty.
-   - Verify bundle size and absence of TypeScript compiler errors.
-2. Verify route `/whatsapp-automation` in `artifacts/limpeza/src/App.tsx`.
-3. Verify tab switching and components rendering in `whatsapp-automation.tsx`.
-4. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm 24/24 pass with exit code 0.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_challenger_1
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_worker_1\handoff.md
 
-Write `challenge.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
-
-## 2026-10-11T04:43:09Z
-You are Challenger 1 for Milestone 3 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_challenger_1
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_challenger_1\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m3_worker\handoff.md
-
-Empirically test:
-1. Run `npm run build` in artifacts/limpeza and verify exit code 0 and non-empty dist/public assets.
-2. Verify route /whatsapp-automation in App.tsx.
-3. Run `node --test tests/whatsapp-ai-agent.test.mjs` and confirm 24/24 pass with exit code 0.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write challenge.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Challenger Tasks:
+1. Read ORIGINAL_REQUEST.md and PROJECT.md.
+2. Empirically challenge the Modal, Checkout, Provisional Hold & Polling logic:
+   - Verify Step 1 preview with valid and conflicting dates.
+   - Verify Step 2 provisional hold creation, 30-min expiration calculation, PIX Copia e Cola / QR code payload generation.
+   - Verify polling loop transition when payment is confirmed (`/modify-status?pendingId=...`).
+   - Verify hold cancellation via `/modify-cancel-pending` restores original stay dates immediately without side-effects.
+3. Write and run adversarial tests or execute targeted suite:
+   - `node --test tests/m3-frontend-portal-panels.test.mjs`
+4. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` with empirical test evidence. Send completion message when done.

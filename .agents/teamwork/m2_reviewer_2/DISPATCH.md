@@ -1,33 +1,21 @@
-# Dispatch — Milestone 2 Reviewer 2 (AI Motor & Auto-Learning Reviewer)
+## 2026-10-11T15:27:29Z
+You are M2 Reviewer 2 for Milestone 2 of the CorpFlats Guest-Flow-Manager project.
 
-## Objective
-Review Milestone 2 business logic and edge cases:
-1. Sofia prompt injection: verify client exceptions (`all`, `exclude`, `include_only`) are respected, and pending/awaiting items are never injected.
-2. Inbound auto-learning: verify only genuine unmapped questions create `status: "pendente"` entries, avoiding duplicate creation or false positives on greetings/confirmations.
-3. Operator response capture: verify 24h window, `suggestedAnswer` linkage, `status: "aguardando_aprovacao"`, and AI pause in the conversation.
-4. Run `node --test tests/whatsapp-ai-agent.test.mjs` and verify all 24 tests pass in < 5s.
-Deliver a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_2
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker_1\handoff.md
 
-Write `review.md` and `handoff.md` in your working directory. Notify orchestrator via `send_message`.
-
-
-## 2026-10-11T03:33:31Z
-You are Reviewer 2 for Milestone 2 for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_2
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Read task instructions in:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_reviewer_2\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_worker\handoff.md
-
-Verify:
-1. Sofia prompt injection logic, client exception filtering, and exclusion of pending/awaiting items.
-2. Inbound unmapped question auto-detection and false-positive prevention.
-3. Operator response capture (`fromMe: true` and chat API), 24h window, `suggestedAnswer`, and AI pause.
-4. Run `node --test tests/whatsapp-ai-agent.test.mjs` and verify all 24 tests pass in < 5s.
-Deliver definitive verdict: APPROVE or REQUEST_CHANGES.
-Write review.md and handoff.md in your working directory. Notify orchestrator via send_message.
+Review Tasks:
+1. Read ORIGINAL_REQUEST.md, PROJECT.md, and worker's handoff.md.
+2. Review security and edge cases:
+   - Check that re-signature invalidation cannot be bypassed when modifying via admin API or portal.
+   - Check that stale FNRH PDF links and UUIDs are genuinely purged so guests cannot access stale pre-modification agreements.
+   - Check that physical entry cannot be authorized on the reception tablet while `needsReSignature === true`.
+   - Check that dynamic `{{link_checkin_digital}}` WhatsApp tag and email dispatch always include `?resign=1` when re-signature is required.
+   - Check that `sendEmailAsync` delivers the newly signed FNRH PDF with SHA-256 hash to the reception upon re-signing.
+3. Verify byte-for-byte SHA-256 parity between twin servers.
+4. Execute strictly targeted test commands:
+   - `node --test tests/m2-re-signature-operations-sync.test.mjs`
+   - `node --test tests/m1-reservation-modification-settlement.test.mjs`
+5. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` and report back.

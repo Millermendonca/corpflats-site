@@ -1,340 +1,264 @@
-# Relatório de Análise Técnica: Infraestrutura de Testes, Casos de Teste e Estado Git
-**Subagente**: Explorer Survey 3  
-**Data**: 2026-10-11T01:31:00Z  
-**Repositório**: `Guest-Flow-Manager` (`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`)  
-**Contexto**: Sistema Dinâmico de Gestão de FAQ & Base de Conhecimento para o Agente de IA do WhatsApp (Sofia / CorpFlats) com Auto-Aprendizado e Regras de Segmentação por Cliente
+# Análise Técnica Profunda: Arquitetura de Hardware IoT, Ciclo Fail-Safe & Especificações de Áudio (Smart Flat Hub)
+
+**Data**: 2026-10-11T23:48:00Z  
+**Autor**: Explorer Survey 3 (IoT Hardware Architecture & Welcome Audio Specs)  
+**Projeto**: Guest-Flow-Manager (CorpFlats — Edifício Soho Residence Service, Campos dos Goytacazes - RJ)  
+**Escopo**: Requisitos R4 (Welcome Playlist & Regras de Ativação) e R5 (Guia de Arquitetura de Hardware IoT & Especificações de Aquisição).
 
 ---
 
-## 1. Sumário Executivo
+## 1. Contexto Operacional & Elétrico da Propriedade (CorpFlats)
 
-Esta investigação técnica aprofundada examinou a infraestrutura de testes, os padrões de mocks e fixtures, o estado do repositório Git e os requisitos de teste para os requisitos R2 a R5 descritos em `ORIGINAL_REQUEST.md`.
-
-### Principais Constatações:
-1. **Framework e Execução de Testes**: O projeto utiliza nativamente o test runner padrão do Node.js (`node:test` e `node:assert/strict`). Não existe script `"test"` no `package.json` raiz (`npm test` falha com `Missing script: "test"`). Os testes são executados diretamente via comando:
-   ```bash
-   node --test tests/whatsapp-ai-agent.test.mjs
-   ```
-2. **Suíte Principal Atual (`tests/whatsapp-ai-agent.test.mjs`)**: Contém 10 testes unitários e de integração cobrindo inicialização de configurações, detecção de transbordo, contexto de hóspede, respostas heurísticas, fluxo de webhook (`processAiInboundMessage`), modo de teste Z-API, rotas Express simuladas e integridade de espelhamento SHA-256.
-3. **Descoberta Crítica — Desalinhamento SHA-256 Atual**: Identificamos que `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs` estão atualmente com SHA-256 divergentes (linhas 12 e 535 diferem na importação/uso de `DEFAULT_TEST_ALLOWED_PHONES`). Isso faz falhar o teste `tests/m2-messaging-checkin-url.test.mjs`. Em `tests/whatsapp-ai-agent.test.mjs`, essa falha vinha sendo mascarada por um `process.exit(0)` inserido no hook `after()`.
-4. **Organização de Mocks & Fixtures**: A suíte de IA utiliza mock de banco in-memory (`mockDb`), stubs de envio Z-API (`sendZapiMessage`), stubs de notificação (`createNotification`) e simulação de chave Gemini vazia (`geminiApiKey: ""`), o que força deterministicamente a contingência heurística local sem tráfego de rede externo nem custos de API.
-5. **Estado Git & Regras `AGENTS.md`**: O branch atual é `main` sincronizado com `origin/main` (`https://github.com/Millermendonca/corpflats-site.git`). A regra mandatória do projeto exige `git push` imediato após qualquer commit e build de verificação (`npm run build`) em `artifacts/limpeza` com inclusão dos artefatos em `dist/public`. O build foi testado e compilou com sucesso em 47.09s.
-6. **Mapeamento de Testes para R2-R5**: Foram detalhados 10 novos casos de teste necessários para validar a integridade de banco de FAQs (`db.faqItems`), detecção de dúvidas inéditas com status `"pendente"` (R2), captura de resposta humana com status `"aguardando_aprovacao"` (R3), aprovação em 1 clique para status `"ativo"`, motor de exceções `exclude`/`include_only` (R4), e busca dinâmica heurística e injeção no prompt Gemini (R5).
+A propriedade CorpFlats opera atualmente 19 flats ativos no **Edifício Soho Residence Service** (Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140):
+- **Flats Ativos**: 113, 114, 116, 211, 212, 215, 313, 408, 509, 511, 512, 605, 712, 715, 904, 905, 907, 1004, 1304 (`DEFAULT_FLATS` em `demo-server.mjs:31-51`).
+- **Padrão Elétrico Local (Concessionária Enel Rio)**:
+  - Tensão monofásica residencial nas tomadas: **127V nominal** (fase-neutro).
+  - Tensão bifásica para Ar-Condicionado Split: **220V nominal** (fase-fase), alimentado por disjuntores bipolares dedicados no quadro de distribuição do flat.
+  - Padrão de plugues e tomadas: **NBR 14136** (3 pinos: Fase, Neutro, Terra).
+    - Tomadas padrão 10A: Pinos de 4,0 mm de diâmetro (potência máx em 127V: 1.270 W).
+    - Tomadas padrão 20A: Pinos de 4,8 mm de diâmetro (potência máx em 127V: 2.540 W).
 
 ---
 
-## 2. Inventário e Padrões da Infraestrutura de Testes
+## 2. Requisito R4: Especificação da Trilha Sonora de Boas-Vindas (Welcome Playlist)
 
-### 2.1 Visão Geral do Diretório `tests/`
-O diretório `tests/` contém **43 arquivos de teste** (todos com extensão `.mjs`). Uma análise abrangente revelou a coexistência de três arquétipos de teste no projeto:
+### 2.1. Arquitetura do Player Web (Sandbox / Preview no Frontend)
 
-| Arquétipo | Exemplos | Mecânica de Execução | Tempo Médio |
-|---|---|---|---|
-| **In-Memory Service Tests** | `tests/whatsapp-ai-agent.test.mjs`, `tests/companion-and-email-mirror.test.mjs` | Importa módulos ESM diretamente, injeta `mockDb` e stubs de funções, executa lógica pura em memória. | 0.8s – 2s |
-| **Isolated HTTP Server Tests** | `tests/bot-actions-api.test.mjs`, `tests/challenger-m1-adversarial.test.mjs`, `tests/tariff-engine.test.mjs` | Cria banco temporário (`data/test-*-db-${Date.now()}.json`), spawna `node artifacts/api-server/demo-server.mjs` em porta dedicada (ex: 3996, 4001), dispara `fetch` HTTP reais e encerra o processo via `taskkill /F /T /PID` no `after()`. | 3s – 12s |
-| **Full E2E Synthetic Tests** | `e2e/runner.mjs`, `e2e/playwright.config.mjs` | Boot de sandbox isolado na porta 5055 com mocks de Z-API (5056), SMTP (5025) e SERPRO, executando Playwright em Chrome headless. | 30s – 60s |
+O portal do hóspede em modo sandbox (`/preview/smart-flat` ou com parâmetro de laboratório) deve fornecer uma simulação interativa completa da reprodução de áudio, com tecnologia nativa HTML5 Audio API e design mobile-first:
 
-### 2.2 Scripts de Execução (`package.json`)
-No `package.json` raiz (`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\package.json`), a seção de scripts contém:
-```json
-"scripts": {
-  "build": "npm --prefix artifacts/limpeza run build",
-  "postinstall": "npm --prefix artifacts/limpeza run build",
-  "start": "node server.mjs"
-}
-```
-Não existe `npm test`. O comando `npm test` resulta em:
-```
-npm ERR! Missing script: "test"
-```
-Portanto, a convenção padrão e oficial para rodar testes individuais ou em lote no projeto é:
-```powershell
-node --test tests/whatsapp-ai-agent.test.mjs
-node --test tests/bot-actions-api.test.mjs
-node --test tests/m2-messaging-checkin-url.test.mjs
-```
+1. **Curadoria Sonora de Hospitalidade (Hospitality Ambient Tracks)**:
+   - Gênero: *Ambient Lounge, Bossa Nova Contemporânea, Soft Acoustic Breeze e Lo-Fi Sunset*.
+   - Sonoridade suave e acolhedora, sem picos abruptos de decibéis (masterização entre -16 LUFS e -18 LUFS).
+   - Faixas sugeridas para o catálogo padrão:
+     - **Faixa 1**: *"CorpFlats Welcome Lounge"* (Bossa Nova / Chillout Suave — 3m 45s)
+     - **Faixa 2**: *"Sunset at Soho"* (Lo-Fi Warm Piano & Beats — 4m 10s)
+     - **Faixa 3**: *"Brisa de Verão"* (Acoustic Guitar & Soft Pads — 3m 20s)
+     - **Faixa 4**: *"Executive Calm"* (Modern Ambient Lounge — 4m 30s)
+   - Formatos recomendados: MP3 a 192 kbps (compatibilidade universal em iOS Safari, Android Chrome e Desktop) ou links de streaming CDN royalty-free.
 
----
+2. **Componentes da Interface do Player**:
+   - **Indicador de Status Físico**: Badge informando *"Reproduzindo no Flat (Echo Pop)"* ou *"Simulação de Áudio do Flat"*.
+   - **Controles Interativos**:
+     - Botão Play / Pause com alternância de ícones Lucide (`Play` / `Pause`).
+     - Botões Anterior / Próxima Faixa (`SkipBack` / `SkipForward`).
+     - Controle deslizante de Volume (Slider Radix UI de 0 a 100%, valor padrão inicial: **35%** para recepção não intrusiva).
+     - Barra de progresso da faixa com tempo decorrido e duração total.
+     - Equalizador visual animado (3 a 4 barras com animação CSS `animate-pulse` quando ativo).
 
-## 3. Análise Detalhada de `tests/whatsapp-ai-agent.test.mjs`
+3. **Política de Autoplay de Navegadores (Browser Autoplay Restrictions)**:
+   - Navegadores modernos (Google Chrome, Apple Safari, Edge) bloqueiam a execução automática de áudio com som sem interação prévia do usuário (`NotAllowedError: play() failed because the user didn't interact with the document first`).
+   - **Estratégia de Engenharia**:
+     - No sandbox, o estado lógico da música inicia como `isPlaying: true` (indicando que a automação no flat físico foi acionada com sucesso).
+     - Se o navegador bloquear o elemento `<audio>`, a interface exibe um botão suave: *"🎧 Ouvir som ambiente do flat"* ou ativa em modo mudo com prompt para desmutar, garantindo que não haja erros no console.
 
-### 3.1 Estrutura e Cobertura Atual
-O arquivo possui 333 linhas e estrutura-se com `describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", ...)` contendo 10 testes:
+4. **Ciclo de Duração & Timeout**:
+   - **Modo Loop**: A playlist avança ciclicamente entre as faixas (`onEnded` -> próxima faixa).
+   - **Janela de Desligamento Automático (60 Minutos)**: Caso o hóspede não interaja, a música para automaticamente após 60 minutos (1 hora) da ativação para evitar poluição sonora no condomínio caso a entrada atrase.
 
-1. **Configurações padrão (`getWhatsAppAiConfig`)** (linhas 76-85):
-   Verifica campos `enabled: true`, `mode: "autonomous"`, `agentName: "Sofia"`, palavras-chave de transbordo e base estática de Wi-Fi.
-2. **Detecção de transbordo (`detectHandoverIntent`)** (linhas 87-102):
-   Verifica frases que solicitam humano ("falar com um atendente humano", "me passa para a recepção", "reclamar da limpeza") vs dúvidas comuns ("qual a senha do wifi", "quarto pronto").
-3. **Contexto de hóspede com check-in hoje (`buildGuestContext`)** (linhas 104-111):
-   Verifica identificação correta da reserva, flat 101, status `checkin_hoje` e `isRoomReady: true`.
-4. **Contexto de Lead sem reserva (`buildGuestContext`)** (linhas 113-117):
-   Valida comportamento para contatos não cadastrados (`stayStatus: "sem_reserva_ativa"`).
-5. **Respostas heurísticas essenciais (`generateHeuristicResponse`)** (linhas 119-144):
-   Testa geração determinística de respostas para Wi-Fi, status do flat, check-out, café da manhã e localização.
-6. **Transbordo humano via `processAiInboundMessage`** (linhas 146-192):
-   Simula recebimento de mensagem com solicitação de humano; verifica que a conversa é pausada (`conv.aiPaused = true`, `aiPausedReason = "guest_requested_human"`), notificação `whatsapp_handover` é gerada e mensagem de aviso é enviada via Z-API.
-7. **Conversa com IA pausada não é respondida** (linhas 194-214):
-   Verifica que mensagens enviadas para conversa com `conv.aiPaused = true` retornam `{ skipped: true, reason: "conversation_ai_paused" }`.
-8. **Modo de teste restringe destinatários** (linhas 216-236):
-   Valida bloqueio quando `zapiConfig.testModeOnly = true` e o número não está em `testAllowedPhones`.
-9. **Endpoints HTTP registrados e executados** (linhas 238-309):
-   Instancia `initWhatsAppEngine` com um `mockApp` Express simulado; testa:
-   - `GET /api/whatsapp/ai-config`
-   - `POST /api/whatsapp/ai-config`
-   - `POST /api/whatsapp/chat/:phone/ai-toggle`
-   - `POST /api/whatsapp/chat/:phone/ai-suggest`
-   - `POST /api/whatsapp/ai-simulate`
-10. **Integridade dos Arquivos Duplos Espelhados (SHA-256)** (linhas 311-326):
-    Compara o hash SHA-256 dos 3 pares de arquivos de backend:
-    - `artifacts/api-server/whatsapp-ai-service.mjs` vs `scripts/whatsapp-ai-service.mjs`
-    - `artifacts/api-server/zapi-service.mjs` vs `scripts/zapi-service.mjs`
-    - `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
+### 2.2. Regras de Ativação no Dia do Check-in (Check-in Day Trigger Rules)
 
-### 3.2 Vulnerabilidade Identificada: `process.exit(0)` Mascarando Falhas
-No final do arquivo (linhas 328-330):
-```javascript
-  after(() => {
-    process.exit(0);
-  });
-```
-**Impacto Observado**:
-Ao rodar `node --test tests/whatsapp-ai-agent.test.mjs`, o hook `after()` dispara `process.exit(0)` de forma abrupta. Isso encerra o processo Node antes que as falhas de assertions assíncronas do Teste 10 sejam reportadas no relatório do test runner.
-Ao rodarmos isoladamente a verificação de SHA-256:
-```javascript
-assert.equal(getHash("artifacts/api-server/whatsapp-ai-service.mjs"), getHash("scripts/whatsapp-ai-service.mjs"));
-```
-O Node gerou uma exceção real:
-```
-AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-+ '6683557d7c735deb3b23494ea41307bacfebb33df8252771274d4b24506653c8'
-- '1dd69090f7ff3ac2e0f513432eb53909dcbd9fd5a4b32853458b5d16b3ee2991'
-```
-E no teste `tests/m2-messaging-checkin-url.test.mjs` (que não possui `process.exit(0)`), o teste falha com:
-```
-not ok 3 - 100% byte-for-byte identical: artifacts/api-server/whatsapp-ai-service.mjs <==> scripts/whatsapp-ai-service.mjs
-```
-**Recomendação Crítica**:
-1. Para o time de implementação: sincronizar imediatamente `scripts/whatsapp-ai-service.mjs` com o conteúdo de `artifacts/api-server/whatsapp-ai-service.mjs`.
-2. Em `tests/whatsapp-ai-agent.test.mjs`, a necessidade do `process.exit(0)` decorria do fato de `initWhatsAppEngine` iniciar um `setInterval` em segundo plano que mantinha o loop de eventos ativo. Deve-se garantir que o `setInterval` não mantenha o processo aberto (ou que possa ser desativado/unref'd em testes), evitando que o `process.exit(0)` mascare quebras reais.
+1. **Condição de Disparo (Trigger Invariants)**:
+   - A ativação automática ocorre **exclusivamente no dia do check-in** da reserva (`checkInDate === today_in_sao_paulo`).
+   - Horário de disparo oficial: **14:00** (valor padrão configurado em `db.settings.checkinTime` em `demo-server.mjs:691`).
+   - Se a reserva possuir aprovação de **Early Check-in** (ex.: `earlyCheckinApproved: true` com horário às `11:00`), o gatilho é antecipado para o horário aprovado.
+   - **Não depende de ação prévia do hóspede**: A música de boas-vindas é uma cortesia ativa de hospitalidade (ativa mesmo se o hóspede não acessou o portal ou não programou aparelhos).
+
+2. **Cron / Watcher no Backend (`demo-server.mjs`)**:
+   - Um tick periódico a cada 60 segundos inspeciona as reservas:
+     ```javascript
+     function checkDailyWelcomeMusicSchedule() {
+       const now = new Date();
+       const todayStr = formatLocalDate(now); // "YYYY-MM-DD"
+       const currentHourMinute = formatLocalTime(now); // "14:00"
+       
+       for (const res of db.reservations) {
+         if (res.status === 'cancelled') continue;
+         if (res.checkInDate === todayStr && !res.welcomeMusicTriggered) {
+           const targetTime = res.approvedEarlyCheckinTime || db.settings.checkinTime || "14:00";
+           if (currentHourMinute >= targetTime) {
+             res.welcomeMusicTriggered = true;
+             res.welcomeMusicState = {
+               status: 'playing',
+               startedAt: now.toISOString(),
+               volume: 35,
+               track: 'CorpFlats Welcome Lounge',
+               source: 'official_checkin_schedule'
+             };
+             // Dispara rotina IoT (Alexa / Webhook)
+             triggerPhysicalWelcomeAudio(res.flatNumber);
+           }
+         }
+       }
+     }
+     ```
+
+### 2.3. Integração com Amazon Alexa (Echo Pop / Dot) & Ponte Web
+
+Para transição do sandbox para os flats reais:
+- **Dispositivo Físico no Flat**: Amazon Echo Pop ou Echo Dot 5ª Geração cadastrado na conta CorpFlats e atribuído ao flat correspondente (ex: *"Echo Pop - Flat 509"*).
+- **Mecanismo de Disparo**:
+  - **Método 1 (Rotina Alexa via Dispositivo Virtual / Webhook)**:
+    - O servidor CorpFlats aciona um sensor de contato virtual ou switch virtual (via integração Sinric Pro, Home Assistant ou Tuya Virtual Device).
+    - A Alexa possui uma rotina cadastrada:
+      * *Gatilho*: "Quando o Sensor Virtual Flat 509 for Aberto".
+      * *Ação 1*: Definir volume para 3 (30%).
+      * *Ação 2*: Tocar playlist "CorpFlats Lounge" no Spotify no dispositivo "Echo Pop Flat 509".
+      * *Ação 3*: Parar reprodução após 60 minutos.
+  - **Método 2 (Spotify Web API / Connect)**:
+    - A conta Spotify da CorpFlats comanda a reprodução diretamente no `device_id` do Echo Pop via chamada REST `PUT https://api.spotify.com/v1/me/player/play`.
 
 ---
 
-## 4. Organização de Mocks, Stubs e Fixtures
+## 3. Requisito R2 & R3: Ciclo de Vida Fail-Safe e Segurança Domótica
 
-### 4.1 Mock do Banco de Dados (`mockDb`)
-O fixture `mockDb` criado no `beforeEach` de `tests/whatsapp-ai-agent.test.mjs` segue o layout canônico:
-```javascript
-mockDb = {
-  zapiConfig: {
-    instanceId: "TEST_INSTANCE",
-    token: "TEST_TOKEN",
-    enabled: true,
-    testModeOnly: true,
-    testAllowedPhones: "22998505276, 22988486446"
-  },
-  settings: {
-    geminiApiKey: "" // Mantém vazia para garantir contingência heurística determinística
-  },
-  flats: [
-    { id: 1, number: "101", status: "clean" },
-    { id: 2, number: "202", status: "dirty" }
-  ],
-  cleaningRequests: [ ... ],
-  reservations: [
-    {
-      id: 501,
-      code: "RES-101-9999",
-      guestName: "Carlos Drumond",
-      guestPhone: "5522998505276",
-      flatId: 1,
-      flatNumber: "101",
-      checkinDate: new Date().toISOString().slice(0, 10),
-      checkoutDate: "2026-10-05",
-      status: "confirmada"
-    }
-  ],
-  whatsappConversations: [
-    {
-      id: "5522998505276",
-      phone: "5522998505276",
-      name: "Carlos Drumond",
-      aiPaused: false,
-      messages: []
-    }
-  ],
-  notifications: []
-};
-```
+### 3.1. Janela de Antecedência Rigorosa (Até 30min antes do ETA)
 
-### 4.2 Stubs de Webhook e Serviços Externos
-Ao testar `processAiInboundMessage`:
-```javascript
-let sentMessage = null;
-const sendZapiMock = async (cfg, opts) => {
-  sentMessage = opts;
-  return { success: true };
-};
+1. **Validação Temporal**:
+   - O hóspede informa o seu **ETA** (Horário Estimado de Chegada), ex: `16:00`.
+   - O sistema calcula:
+     $$\text{Janela Permitida} = [\text{ETA} - 30\text{ min}, \text{ETA} + 30\text{ min}]$$
+   - Exemplo: Para ETA às `16:00`, a ativação antecipada só é liberada a partir de `15:30`.
+   - **Bloqueio no Frontend e Backend**: Se a solicitação ocorrer antes de `15:30` (ex: às 12:00), o sistema bloqueia o acionamento imediato e oferece agendamento programado para as `15:30`, exibindo a mensagem:
+     *"Por economia de energia e segurança, a climatização e cafeteira só podem ser ativadas com até 30 minutos de antecedência da sua chegada (a partir de 15:30)."*
 
-let createdNotif = null;
-const createNotifMock = (n) => {
-  createdNotif = n;
-  mockDb.notifications.push(n);
-};
+### 3.2. Confirmação de Presença e Canais de Detecção
 
-let appendedMsg = null;
-const appendMsgMock = (db, msg) => {
-  appendedMsg = msg;
-  const c = db.whatsappConversations.find(conv => conv.phone === msg.phone);
-  if (c) c.messages.push(msg);
-};
-```
-Essa abordagem permite verificar com precisão cirúrgica:
-- O texto exato da mensagem disparada (`sentMessage.message`)
-- Os metadados de notificação (`createdNotif.type === "whatsapp_handover"`)
-- A persistência no histórico de mensagens da conversa (`appendedMsg`)
-- O isolamento completo sem encostar em `data/database.json` de produção (`saveDatabase: () => {}`).
+A flag `entranceConfirmed` pode ser validada por 3 vias independentes:
+1. **Confirmação Manual do Hóspede**: Botão *"Já cheguei no flat!"* no Smart Flat Hub.
+2. **Confirmação pela Portaria / Recepção**: Registro de entrada no sistema (`reception-tablet.tsx` / `/portaria`).
+3. **Sensor IoT de Fechadura / Abertura de Porta**: Sensor de abertura magnético Tuya na porta de entrada do flat.
 
-### 4.3 Mock de Rotas Express
-No Teste 9, um `mockApp` captura todas as rotas registradas por `initWhatsAppEngine`:
-```javascript
-const routes = {};
-const mockApp = {
-  get: (path, handler) => { routes[`GET ${path}`] = handler; },
-  post: (path, handler) => { routes[`POST ${path}`] = handler; },
-  put: (path, handler) => { routes[`PUT ${path}`] = handler; },
-  delete: (path, handler) => { routes[`DELETE ${path}`] = handler; }
-};
-```
-Isso permite testar handlers de endpoints diretamente passando objetos `req` e `res` simulados sem necessitar de bind de porta TCP.
+### 3.3. Ciclo de Desligamento Automático por Segurança (Fail-Safe Timeline)
+
+Se os aparelhos foram ligados mas a presença **NÃO** foi confirmada (`entranceConfirmed === false`):
+
+| Ponto Temporal | Offset em relação ao ETA | Ação do Sistema | Feedback ao Usuário |
+| :--- | :--- | :--- | :--- |
+| **$T_0$** | $\text{ETA} - 30\text{ min}$ | Aparelhos ligam (AC na temperatura escolhida; Tomada da cafeteira energizada). | Status verde: *"Ambiente climatizando para sua chegada."* |
+| **$T_1$** | $\text{ETA}$ | Horário previsto atingido. Início da contagem de tolerância. | Contador regressivo visível na interface. |
+| **$T_2$** | $\text{ETA} + 15\text{ min}$ | **Aviso Preventivo de Presença**: Alerta visual na tela e notificação automática WhatsApp/Sofia. | *"⚠️ Você já chegou? Não esqueça de confirmar sua entrada no flat para manter os aparelhos ligados."* |
+| **$T_3$** | $\text{ETA} + 30\text{ min}$ | **Desligamento Automático Forçado (Corte de Segurança)**: Tomada inteligente corta energia da cafeteira; Disparador IR envia comando POWER_OFF para o AC; Música é pausada. | Alerta em vermelho: *"Equipamento desligado automaticamente por questão de segurança e economia de energia."* |
+
+### 3.4. Justificativa Crítica de Segurança Térmica (Riscos Reais)
+
+- **Cafeteiras Elétricas e de Cápsula (1.200W a 1.500W)**:
+  - Possuem blocos térmicos (thermoblock) ou caldeiras de aquecimento rápido.
+  - Se mantidas energizadas sem uso ou caso a água se esgote, há desgaste severo de termostatos bimetálicos, risco de queima por funcionamento a seco, degradação plástica e risco de princípio de incêndio. O corte em 30 minutos elimina esse risco residual.
+- **Ar-Condicionado Split**:
+  - Evita consumo desnecessário de ~1,5 kWh a 2,5 kWh por hora em flat vazio com cortinas eventualmente abertas, protegendo a sustentabilidade financeira da operação.
+
+### 3.5. Tratamento de Falhas e Modos Offline (Network Resilience)
+
+1. **Temporizador de Hardware (Inching / Hardware Countdown)**:
+   - Tomadas inteligentes Tuya suportam contagem regressiva gravada na memória flash do próprio firmware do chip.
+   - **Regra**: Ao enviar o comando de LIGAR para a cafeteira, o backend envia simultaneamente o parâmetro `countdown: 1800` (1800 segundos = 30 min). Mesmo que o roteador Wi-Fi caia ou a internet sofra pane, a tomada desliga fisicamente o relé interno de forma autônoma!
+2. **Comportamento Pós-Queda de Energia (Power-On State)**:
+   - Em caso de oscilação ou blecaute no prédio, o relé da tomada inteligente deve estar rigorosamente programado com `Power-On State: OFF`. Nunca deve retornar como `ON` ou `Remember Last State`.
+3. **Natureza Simplex do Infravermelho (IR)**:
+   - Controles IR não recebem confirmação de estado (unidirecional). Por isso, o uso de transmissores IR com **sensor de temperatura embutido** permite verificar se o ambiente de fato aqueceu ou esfriou, atuando como sensor indireto de conformidade.
 
 ---
 
-## 5. Estado Atual do Git e Diretrizes de Governança
+## 4. Requisito R5: Arquitetura de Hardware IoT & Guia de Aquisição
 
-### 5.1 Status do Repositório
-- **Branch Ativa**: `main`
-- **Status Remoto**: `Your branch is up to date with 'origin/main'.`
-- **Remotes**:
-  - `origin`: `https://github.com/Millermendonca/corpflats-site.git` (fetch e push)
-  - `gitsafe-backup`: `git://gitsafe:5418/backup.git`
-- **Último Commit**: `ab9386d5f676059c6ab0af2c659cec7f93b76359` (`feat(m1): implement Bot Actions API, master switch and Tariff Engine with SEBRAE pricing`)
-- **Arquivos Não Rastreados / Modificados**:
-  - Modificações em arquivos de auditoria e contexto de subagentes anteriores em `.agents/teamwork/`.
-  - Alguns arquivos com alterações locais em `artifacts/` provenientes de tarefas prévias.
+### 4.1. Dimensionamento e Especificação dos Componentes
 
-### 5.2 Regras Mandatórias de `AGENTS.md`
-1. **Sempre Fazer `git push` por Padrão**:
-   Qualquer `git commit` deve ser imediatamente seguido de `git push` para o repositório remoto (`origin main`). Nunca deixar commits pendentes localmente.
-2. **Build de Verificação e Inclusão de `dist/`**:
-   Ao alterar arquivos em `artifacts/limpeza/src`, executar `npm run build` na pasta `artifacts/limpeza` e incluir os arquivos gerados em `artifacts/limpeza/dist/` (especificamente `dist/public`) no commit.
-3. **Regra de Espelhamento de Código (Dual Mirroring)**:
-   Os arquivos de backend existem em duas cópias obrigatórias que devem ser **100% idênticas byte a byte (SHA-256)**:
-   - `artifacts/api-server/whatsapp-ai-service.mjs` $\leftrightarrow$ `scripts/whatsapp-ai-service.mjs`
-   - `artifacts/api-server/zapi-service.mjs` $\leftrightarrow$ `scripts/zapi-service.mjs`
-   - `artifacts/api-server/demo-server.mjs` $\leftrightarrow$ `scripts/demo-server.mjs`
-   - `artifacts/api-server/mail-service.mjs` $\leftrightarrow$ `scripts/mail-service.mjs`
+#### Componente 1: Tomada Inteligente Wi-Fi 16A (Smart Plug para Cafeteiras)
+- **Desafio Elétrico NBR 14136**:
+  - Tensão: 127V em Campos dos Goytacazes.
+  - Cafeteiras Nespresso / Três Corações / Oster: 1.200W a 1.500W.
+  - Corrente máxima de operação: $I = 1500\text{ W} / 127\text{ V} \approx 11,81\text{ A}$.
+  - Tomadas convencionais de 10A suportam no máximo 1.270W. Operar uma cafeteira em tomada de 10A provoca sobrecarga contínua, degradação dos contatos do relé e risco de queima.
+  - **Especificação Obrigatória**: Modelo **16A nominal (com suporte a pico de 20A)**, padrão NBR 14136 (3 pinos com aterramento).
+- **Recursos Chave**:
+  - Proteção térmica contra sobrecarga (desligamento automático se temperatura interna > 75°C ou corrente > 16.5A).
+  - Medição de consumo em tempo real (Voltagem, Amperagem, Potência Ativa em Watts e Histórico em kWh).
+  - Carcaça em termoplástico antichama (Policarbonato UL94-V0).
+  - Chipset Tuya / Smart Life (compatível com Tuya Cloud e Local Tuya).
+- **Modelos Recomendados para Compra**:
+  - *Ekaza Smart Plug Wi-Fi 16A com Medição de Energia (Anatel)* — ~R$ 55,00 a R$ 65,00
+  - *NovaDigital Tomada Inteligente Wi-Fi 16A NBR (Anatel)* — ~R$ 50,00 a R$ 60,00
+  - *Positivo Casa Inteligente Smart Plug 16A* — ~R$ 69,00 a R$ 79,00
 
----
+#### Componente 2: Controle Universal Infravermelho Inteligente (Smart IR Blaster para Ar Split)
+- **Aplicação**: Controle dos Splits das marcas Springer Midea, Elgin, Consul, LG e Gree presentes nos flats.
+- **Frequência de Portadora**: 38 kHz (padrão de 99,5% dos splits do mercado).
+- **Emissores IR**: Cobertura 360° com arranjo de 6 ou mais LEDs emissores e alcance de 8 a 10 metros com visada direta (Line-of-Sight).
+- **Diferencial Obrigatório**: **Sensor de Temperatura e Umidade Embutido** (ex: modelos Tuya S06 Pro / S08 / S09 com sensor TH). Permite monitorar a temperatura real do flat antes e após o disparo do comando IR.
+- **Modelos Recomendados para Compra**:
+  - *Tuya Smart IR Remote com Sensor de Temperatura e Umidade (S08 / S06-TH)* — ~R$ 65,00 a R$ 85,00
+  - *Broadlink RM4 Mini com Cabo Sensor de Temperatura HTS2* — ~R$ 110,00 a R$ 130,00
+  - *Ekaza Smart Controle Universal Infravermelho* — ~R$ 60,00 a R$ 75,00
 
-## 6. Mapeamento de Requisitos de Teste para R2-R5 e Critérios de Aceitação
+#### Componente 3: Caixas de Som Inteligentes (Smart Speakers para Recepção & Welcome)
+- **Aplicação**: Reprodução da trilha ambiente de boas-vindas às 14h, concierge por voz ("Alexa, qual a senha do Wi-Fi?"), despertador e avisos de check-out.
+- **Opção A (Melhor Custo-Benefício)**: **Amazon Echo Pop**
+  - Driver direcional frontal de 1,95". Compacto, excelente clareza sonora para flats de 18 a 30m².
+  - Possui botão físico para desativar microfones com anel de luz indicadora em vermelho (privacidade garantida para hóspedes).
+  - Faixa de preço: ~R$ 220,00 a R$ 260,00.
+- **Opção B (Padrão Sofisticado)**: **Amazon Echo Dot 5ª Geração com Relógio**
+  - Driver de 1,73" com graves reforçados, display LED frontal que serve de relógio de cabeceira com temperatura externa.
+  - Faixa de preço: ~R$ 380,00 a R$ 430,00.
+- **Configuração de Privacidade de Hospitalidade**:
+  - Desativar compras por voz (`Voice Purchasing: Desativado`).
+  - Desativar histórico de áudio com retenção pública e chamadas Drop-In entre flats.
 
-Para atender completamente a `ORIGINAL_REQUEST.md`, a suíte de testes deve ser expandida para cobrir rigorosamente as novas funcionalidades.
-
-### 6.1 R2: Detecção Automática de Perguntas Não Mapeadas no Webhook Inbound
-- **Cenário de Teste**:
-  Hóspede envia mensagem inbound (`incomingInfo.fromMe === false`) com dúvida não coberta no FAQ ativo e não reconhecida pelas intenções heurísticas de alta confiança (ex: *"Vocês têm ferro de passar roupa no flat?"* ou *"Tem academia no condomínio?"*).
-- **Comportamento Esperado**:
-  1. A função `processAiInboundMessage` detecta que a pergunta não tem resposta mapeada de alta confiança.
-  2. Cria automaticamente um novo item em `db.faqItems`:
-     - `id`: identificador único (ex: `faq_${Date.now()}_...`)
-     - `question`: texto exato da dúvida do cliente
-     - `status`: `"pendente"`
-     - `category`: categoria padrão ou inferida (ex: `"Dúvidas Gerais"`)
-     - `clientPhone`: telefone limpo do cliente (`cleanTarget`)
-     - `clientName`: nome do remetente (`incomingInfo.senderName` ou nome da reserva)
-     - `createdAt`: ISO timestamp
-     - `scope`: `"all"`
-     - `clientPhones`: `[]`
-  3. Gera notificação de alta prioridade para o operador.
-  4. Encaminha para transbordo ou resposta contingencial educada informando que a recepção dará retorno.
-- **Contra-teste (Idempotência / Não-Poluição)**:
-  - Se o cliente perguntar algo já mapeado (ex: *"Qual a senha do wifi?"*), o FAQ responde normalmente e **NÃO** cria entrada em `db.faqItems`.
-  - Saudações genéricas (ex: *"Olá, bom dia"*) **NÃO** geram itens pendentes no FAQ.
-
-### 6.2 R3: Captura Automática da Resposta Humana (Sugestão para Aprovação)
-- **Cenário de Teste A (Operador respondendo via WhatsApp Móvel)**:
-  Webhook Z-API recebe mensagem com `incomingInfo.fromMe === true` para o telefone do cliente.
-  Se houver item em `db.faqItems` com `status === "pendente"` e `clientPhone === cleanTarget`:
-  - O sistema vincula `suggestedAnswer = incomingInfo.text`.
-  - Atualiza o status do FAQ para `"aguardando_aprovacao"`.
-  - Registra `answeredAt` e `answeredBy = "operador_whatsapp"`.
-- **Cenário de Teste B (Operador respondendo via Live Chat do Sistema)**:
-  Endpoint `POST /api/whatsapp/chat/send` disparado pelo painel para o telefone do cliente.
-  Se houver item com `status === "pendente"`, o texto enviado vincula-se como `suggestedAnswer` e o status passa para `"aguardando_aprovacao"`.
-- **Cenário de Teste C (Aprovação em 1 Clique)**:
-  Endpoint `POST /api/whatsapp/faq/:id/approve` chamado:
-  - Altera status para `"ativo"`.
-  - Promove `suggestedAnswer` para `answer`.
-  - Próxima mensagem de qualquer cliente sobre aquele tema já é respondida pela Sofia com a resposta aprovada.
-
-### 6.3 R4: Motor de Regras de Exceção e Segmentação por Cliente
-- **Estrutura dos Campos**:
-  - `scope`: `"all"` | `"exclude"` | `"include_only"`
-  - `clientPhones`: array de strings de telefone normalizadas.
-- **Cenário de Teste A (`exclude`)**:
-  FAQ sobre "Early Check-in Gratuito" configurado com `scope: "exclude"` e `clientPhones: ["5522998505276"]`.
-  - Quando `5522998505276` perguntar sobre early check-in, a regra restrita é ignorada pela IA.
-  - Quando outro telefone (ex: `5521999998888`) perguntar, a resposta normal é retornada.
-- **Cenário de Teste B (`include_only`)**:
-  FAQ de boas-vindas VIP configurado com `scope: "include_only"` e `clientPhones: ["5522998505276"]`.
-  - Quando `5522998505276` perguntar, recebe a resposta personalizada VIP.
-  - Quando outro telefone perguntar, a resposta VIP é ignorada e a Sofia usa a regra padrão ou genérica.
-- **Cenário de Teste C (Normalização de Telefones)**:
-  Validação de que `(22) 99850-5276`, `5522998505276`, `22998505276` e `+55 22 99850-5276` casam com o mesmo cliente através da função `cleanWhatsAppPhone`.
-
-### 6.4 R5: Integração em Tempo Real com o Motor da Sofia (`whatsapp-ai-service.mjs`)
-- **Cenário de Teste A (Contingência Heurística Dinâmica)**:
-  Cadastrar um novo FAQ em `db.faqItems` com pergunta *"Vocês aceitam Pix no check-out?"*, palavras-chave `["pix", "pagar pix", "pagamento pix"]` e status `"ativo"`.
-  Chamar `generateHeuristicResponse` com `text: "Consigo pagar com pix na saída?"`.
-  Verificar que a resposta heurística retorna o conteúdo oficial cadastrado em `db.faqItems`.
-- **Cenário de Teste B (Injeção Dinâmica no Prompt Gemini)**:
-  Verificar a montagem do bloco `[BASE DE CONHECIMENTO OFICIAL CORPFLATS]` dentro de `generateAiWhatsAppResponse`:
-  Os itens de FAQ com status `"ativo"` e com escopo compatível com o cliente devem ser serializados no prompt do Gemini, permitindo que a IA generativa utilize o conhecimento mais recente cadastrado no banco.
-- **Cenário de Teste C (Dinamicidade sem Restart)**:
-  Modificar um FAQ em `db.faqItems` e imediatamente disparar uma pergunta: a resposta refletirá o novo conteúdo sem necessidade de reiniciar o servidor.
+#### Componente 4: Interruptores Touch de Parede Wi-Fi (Smart Wall Switches)
+- **Aplicação**: Controle de iluminação da sala, bancada e quarto.
+- **Padrão Físico**: Caixa de embutir 4x2 polegadas (padrão predial brasileiro).
+- **Especificação Elétrica**: Modelo **Híbrido (Compatível Com e Sem Neutro)**.
+  - Se a caixa 4x2 do flat não tiver o fio neutro passado, instala-se o capacitor incluso na primeira lâmpada LED do circuito.
+  - Tensão: 100-240V bivolt. Carga máx: 500W por canal em LED.
+- **Acabamento**: Painel frontal em vidro temperado com botões touch capacitivos e iluminação LED de status suave (com opção no app de desligar os LEDs à noite para conforto do hóspede).
+- **Modelos Recomendados para Compra**:
+  - *NovaDigital Touch Switch Wi-Fi 4x2 (1, 2 ou 3 teclas, com/sem neutro)* — ~R$ 60,00 a R$ 75,00
+  - *Sonoff TX Series T0 / T2US 4x2 Wi-Fi Touch* — ~R$ 75,00 a R$ 95,00
 
 ---
 
-## 7. Matriz de Casos de Teste Recomendados para Adição
+### 4.2. Topologia de Rede & Segurança da Infraestrutura
 
-Recomenda-se adicionar os seguintes testes em `tests/whatsapp-ai-agent.test.mjs` (ou em arquivo dedicado `tests/whatsapp-faq-engine.test.mjs` devidamente referenciado):
-
-| # | Identificador do Teste | Alvo / Requisito | Asserções Principais |
-|---|---|---|---|
-| 11 | `11. FAQ Inicial e Estrutura de Coleção` | AC / Persistência | `db.faqItems` inicializado com perguntas obrigatórias (Wi-Fi, café no quarto, louças, frigobar, visitas, pets, check-in 14h, early check-in, check-out 12h). |
-| 12 | `12. Endpoints CRUD do FAQ` | R1 / Endpoints | `GET`, `POST`, `PUT`, `DELETE` em `/api/whatsapp/faq` funcionam e persistem instantaneamente. |
-| 13 | `13. R2: Detecção Automática de Pergunta Inédita` | R2 / Webhook Inbound | Pergunta inédita gera item com `status: "pendente"`, telefone e nome do cliente em `db.faqItems`. |
-| 14 | `14. R2: Dúvida Existente Não Gera Duplicata Pendente` | R2 / Resiliência | Pergunta sobre Wi-Fi responde via base oficial e não insere item pendente. |
-| 15 | `15. R3: Captura de Resposta do Operador via Webhook` | R3 / Auto-Aprendizado | Mensagem com `fromMe: true` vincula `suggestedAnswer` e muda status para `"aguardando_aprovacao"`. |
-| 16 | `16. R3: Captura de Resposta via Live Chat` | R3 / Auto-Aprendizado | Envio via `/api/whatsapp/chat/send` vincula à pergunta pendente do contato. |
-| 17 | `17. R3: Aprovação em 1 Clique Promove para Ativo` | R3 / Aprovação | `POST /api/whatsapp/faq/:id/approve` altera status para `"ativo"`, permitindo uso imediato pela Sofia. |
-| 18 | `18. R4: Exceção de Cliente (scope: exclude)` | R4 / Segmentação | Cliente excluído tem resposta ignorada e Sofia transborda ou usa resposta alternativa. |
-| 19 | `19. R4: Exceção Positiva (scope: include_only)` | R4 / Segmentação | Apenas cliente explicitamente listado recebe a resposta específica. |
-| 20 | `20. R5: Busca Heurística com FAQs Dinâmicos` | R5 / Heurística Local | Pergunta com palavras-chave de FAQ dinâmico ativo é respondida com precisão mesmo sem chave Gemini. |
-| 21 | `21. R5: Contexto Gemini Recebe FAQs Ativos` | R5 / Prompt Gemini | Prompt inclui os itens dinâmicos relevantes na Base de Conhecimento. |
-| 22 | `22. Paridade Rigorosa dos Arquivos Espelho (SHA-256)` | Governança / AGENTS.md | `artifacts/api-server/whatsapp-ai-service.mjs` $\equiv$ `scripts/whatsapp-ai-service.mjs` (com a correção do desalinhamento atual). |
+1. **VLAN e SSID Dedicado para IoT (2.4 GHz)**:
+   - Dispositivos Tuya operam estritamente na faixa de **2.4 GHz (802.11 b/g/n)**.
+   - Criar uma rede dedicada e isolada:
+     - SSID: `CorpFlats-IoT` (canal 1, 6 ou 11 fixo; largura de banda 20 MHz).
+     - Criptografia: WPA2-PSK (AES).
+     - Isolamento de Clientes (AP Isolation): Habilitado para impedir que um dispositivo comprometido ataque outro.
+     - Bloqueio de Acesso de Hóspedes: Hóspedes conectam apenas na rede `CorpFlats-Hospedes`. A rede IoT fica inacessível para scans de rede locais.
+2. **Estratégia de Integração: Tuya Cloud API vs Local Tuya**:
+   - **Tuya Cloud (OpenAPI)**: Usada para orquestração remota, painel de controle e automações via servidores da nuvem Tuya.
+   - **Local Tuya (Protocolo Local 6668)**: Para flats onde houver micro-servidor local ou gateway, permite latência inferior a 50ms e funcionamento dos comandos básicos mesmo em caso de corte no link de internet da operadora.
 
 ---
 
-## 8. Verificação do Build Frontend (`artifacts/limpeza`)
+### 4.3. Orçamento e Lista de Materiais (Bill of Materials — BOM)
 
-Executamos o build do frontend para validar os requisitos de entrega contínua:
-- **Comando**: `npm run build` dentro de `artifacts/limpeza`
-- **Duração**: 47.09s
-- **Código de Saída**: 0 (Sucesso)
-- **Artefatos Gerados**:
-  - `dist/public/index.html` (2.65 kB)
-  - `dist/public/assets/index.css` (380.67 kB)
-  - `dist/public/assets/index.js` (3,172.70 kB)
-  - `dist/public/assets/pdf.worker.min-*.mjs` (1,417.59 kB)
-- **Conformidade**: O processo de build está totalmente operacional e pronto para receber a nova aba de FAQ em `whatsapp-automation.tsx`.
+Para equipar a frota de **19 flats** do CorpFlats no Edifício Soho:
+
+| Item | Qtd por Flat | Qtd Total (19 flats) | Preço Unit. Estimado (R$) | Subtotal Frota (R$) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Tomada Inteligente Wi-Fi 16A NBR (Ekaza/NovaDigital)** | 1 | 19 | R$ 58,00 | R$ 1.102,00 |
+| **Smart IR Blaster 38kHz c/ Sensor TH (Tuya S08)** | 1 | 19 | R$ 75,00 | R$ 1.425,00 |
+| **Amazon Echo Pop (Caixa Inteligente)** | 1 | 19 | R$ 240,00 | R$ 4.560,00 |
+| **Interruptor Touch Wi-Fi 4x2 2 Teclas (NovaDigital)** | 2 | 38 | R$ 68,00 | R$ 2.584,00 |
+| **Plugs/Adaptadores e Acessórios de Fixação** | - | Lote | R$ 300,00 | R$ 300,00 |
+| **TOTAL GERAL DO PROJETO** | - | - | **R$ 525,00 / flat** | **R$ 9.971,00** |
+
+*Nota*: Se a opção for pelo **Echo Dot 5ª Geração com Relógio** (+R$ 150,00/flat), o orçamento total fica em **R$ 12.821,00** (~R$ 675,00 por flat).
+
+---
+
+## 5. Localização e Estrutura do Guia de Hardware
+
+Recomendamos formalmente que o guia técnico completo seja versionado no repositório em:
+`docs/SMART_FLAT_HARDWARE_GUIDE.md`
+
+### Estrutura Detalhada do Documento:
+1. **Sumário Executivo e Diretrizes de Hospitalidade CorpFlats**
+2. **Especificações Técnicas por Categoria de Dispositivo** (Tomadas 16A, IR Blasters, Echo Pop/Dot, Interruptores 4x2)
+3. **Dimensionamento Elétrico e Adequação NBR 14136 (127V vs 220V em Campos dos Goytacazes)**
+4. **Infraestrutura de Rede, VLANs e Segurança Cibernética**
+5. **Ciclo de Vida Fail-Safe e Segurança contra Riscos Térmicos**
+6. **Guia Passo a Passo de Instalação e Comissionamento por Flat**
+7. **Relação de Compras (BOM), Fornecedores e Links Recomendados**
+8. **Checklist Operacional de Manutenção e Auditoria Periódica**

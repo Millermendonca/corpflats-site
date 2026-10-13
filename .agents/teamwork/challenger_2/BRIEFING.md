@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-12T00:07:00Z
+# BRIEFING — 2026-10-12T00:12:00Z
 
 ## Mission
-Adversarially challenge the Developer AI Coaching & Rectification feature: test the rectification endpoint POST /api/whatsapp/chat/:phone/correct-message contract, guidelines CRUD endpoints (GET, POST, PATCH, DELETE at /api/whatsapp/developer-guidelines), dynamic reflection of saved guidelines on subsequent guest inquiries, and execute node --test tests/developer-ai-coaching.test.mjs to issue verdict APPROVE or REQUEST_CHANGES.
+Adversarially challenge privacy isolation (confirm zero leak or components in guest-portal.tsx), verify preview route guards (/preview/smart-flat or ?preview=smart_flat), empirically verify SHA-256 twin parity between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs, execute strictly the dedicated pontual test node --test tests/smart-flat-hub.test.mjs, and issue explicit verdict APPROVE or REQUEST_CHANGES.
 
 ## 🔒 My Identity
 - Archetype: Empirical Challenger
@@ -12,6 +12,7 @@ Adversarially challenge the Developer AI Coaching & Rectification feature: test 
 - Instance: 2 of 2
 - Milestone 2026-10-11: Empirical Adversarial Verification of E2E Suites & Scenarios
 - Milestone 2026-10-12: API & Rectification Adversarial Testing (Developer AI Coaching & Rectification)
+- Milestone 2026-10-12 (Smart Flat Hub): Adversarial Privacy Isolation & Twin-Server Parity Verification
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -24,51 +25,52 @@ Adversarially challenge the Developer AI Coaching & Rectification feature: test 
 - STRICT AGENTS.MD: NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs)
 - Apenas teste estritamente pontual: execute EXCLUSIVAMENTE node --test tests/developer-ai-coaching.test.mjs
 - Twin-server parity mandate: parity between scripts/ and artifacts/api-server/ must hold
+- Smart Flat Hub: zero leakage or components in guest-portal.tsx (real production guests have 0 exposure)
+- Smart Flat Hub: preview route strictly guarded under /preview/smart-flat or ?preview=smart_flat
+- Twin-server SHA-256 parity verification between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs
+- Strictly run dedicated test: node --test tests/smart-flat-hub.test.mjs
+- NUNCA rodar testes globais ou em lote
 
 ## Current Parent
-- Conversation ID: d9d088c2-767a-4f5a-9d52-d234243c2f9b
-- Updated: 2026-10-12T00:06:11Z
+- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+- Updated: 2026-10-12T00:10:29Z
 
 ## Review Scope
 - **Files to review**:
-  - `tests/developer-ai-coaching.test.mjs`
-  - `scripts/zapi-service.mjs` & `artifacts/api-server/zapi-service.mjs`
-  - `scripts/whatsapp-ai-service.mjs` & `artifacts/api-server/whatsapp-ai-service.mjs`
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/smart-flat-preview.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/*`
   - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs`
-  - `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
+  - `tests/smart-flat-hub.test.mjs`
 - **Review criteria**:
-  - Rectification endpoint contract and boundary conditions
-  - Guidelines CRUD contract and filter/edge cases
-  - Dynamic reflection and immediate system instruction / response update
-  - Strict point unit test passing 100%
-  - Production build passing 100%
-  - Twin server hash parity 100%
+  - Privacy isolation: 0 leaks in `guest-portal.tsx`, no buttons, links, or imported smart flat components.
+  - Route guarding: `/preview/smart-flat` and `?preview=smart_flat` accessibility and sandbox isolation.
+  - SHA-256 Twin Parity: `scripts/demo-server.mjs` == `artifacts/api-server/demo-server.mjs`.
+  - Point test execution: `node --test tests/smart-flat-hub.test.mjs`.
 
 ## Key Decisions Made
-- Empirically executed `node --test tests/developer-ai-coaching.test.mjs` (8/8 tests passed, 0 failures).
-- Empirically executed adversarial contract test on `POST /api/whatsapp/chat/:phone/correct-message` (empty body, whitespace, learnGuideline: false, sendToGuest: false, phone sanitization, error resilience).
-- Empirically executed adversarial test on `/api/whatsapp/developer-guidelines` CRUD (missing text, valid POST, category filtering, search filtering, 404 on invalid IDs for PATCH and DELETE, toggle active).
-- Empirically verified dynamic reflection (immediate inclusion in system prompt and heuristic responses, immediate exclusion upon deactivation/deletion).
-- Verified twin-server parity: SHA-256 identical across `scripts/` and `artifacts/api-server/`.
-- Executed `npm run build` in `artifacts/limpeza` (code 0, 45.86s).
-- Formulated definitive **APPROVE** verdict.
+- Confirmed zero leakage in `guest-portal.tsx` across 4,315 lines of code.
+- Confirmed strict route isolation in `App.tsx`: `GuestPortalWrapper` only activates `SmartFlatPreview` when `?preview=smart_flat` is explicitly present.
+- Confirmed 100% SHA-256 twin parity between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` (`394fed4c9412bf29672dfd81ab153ffee564dd40f8cbf5cc1611c23592fee5b3`).
+- Confirmed passing of 6/6 tests in dedicated point suite `node --test tests/smart-flat-hub.test.mjs`.
+- Confirmed clean frontend build (`npm --prefix artifacts/limpeza run build`, exit code 0).
+- Issued formal verdict: APPROVE.
 
 ## Artifact Index
 - DISPATCH.md — Incoming dispatch instructions
 - BRIEFING.md — Situational awareness and persistent memory
 - progress.md — Real-time progress and heartbeat
-- handoff.md — Final 5-component handoff report with formal verdict APPROVE
+- handoff.md — Final 5-component handoff report with verdict APPROVE
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: `POST /api/whatsapp/chat/:phone/correct-message` breaks on empty/whitespace inputs or non-numeric phone formatting. (REFUTED: Validates empty/whitespace returning 400; normalizes phone with regex).
-  - H2: `learnGuideline: false` or `sendToGuest: false` fail to isolate side effects. (REFUTED: Flags strictly respect conditional execution).
-  - H3: Guidelines CRUD fails on missing IDs or invalid parameters. (REFUTED: Returns clean 400 for missing text, 404 for non-existent IDs on PATCH/DELETE).
-  - H4: Deactivating/deleting a guideline leaves stale cache in prompts or heuristic responses. (REFUTED: Filtering is dynamic on every prompt construction and heuristic query).
-  - H5: Developer phone can get paused by operator replies. (REFUTED: Developer immunity bypasses pause and unpauses automatically).
-- **Vulnerabilities found**: None. System is resilient and fully compliant.
-- **Untested angles**: Extreme volume concurrency (>10,000 req/s) on SQLite/JSON mock file database (handled by single-threaded Node event loop with synchronous save serialization).
+  1. H1: Does `guest-portal.tsx` contain any imported Smart Flat components, DOM elements, or endpoints? (Result: Rejected - 0 leaks found).
+  2. H2: Can a production guest on `/minha-reserva/:code` see Smart Flat controls? (Result: Rejected - `sp.get('preview') !== 'smart_flat'` prevents access).
+  3. H3: Are `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` identical? (Result: Confirmed - SHA-256 matches 100%).
+  4. H4: Does `node --test tests/smart-flat-hub.test.mjs` pass cleanly without regression? (Result: Confirmed - 6/6 tests pass).
+- **Vulnerabilities found**: None in Smart Flat Hub. Historical note: `scripts/giss-soap.mjs` absent while `artifacts/api-server/giss-soap.mjs` exists.
+- **Untested angles**: Hardware-level physical IoT integrations (Tuya / IR blaster / Alexa Echo) as physical devices are yet to be acquired as per R5.
 
 ## Loaded Skills
 - None

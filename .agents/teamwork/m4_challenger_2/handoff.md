@@ -1,79 +1,142 @@
-# Handoff Report — Milestone 4 Challenger 2 (Adversarial Hardening)
+# Milestone 4 Challenger 2 Handoff Report: Empirical Challenge of Real-World Production Scenarios (Tier 4)
 
 ## 1. Observation
-1. **Adversarial Test Suite 1**:
-   - Command: `node --test tests/challenger-m1-r3-rule-engine.test.mjs`
-   - Result: 6 tests pass, 0 fail, exit code 0, duration 936ms.
-   - Verified: Sub-8-digit edge cases, non-object primitives, Brazilian phone matching, scopes all/exclude/include_only, status checks.
 
-2. **Adversarial Test Suite 2**:
-   - Command: `node --test tests/challenger2-m1-r3-lifecycle-persistence.test.mjs`
-   - Result: 4 tests pass, 0 fail, exit code 0, duration 6.79s.
-   - Verified: Port 5000 clean exit in < 4s, 100 rapid concurrent atomic disk writes without corruption or `.tmp` file leaks, concurrent REST operations persisting to disk, and production `data/database.json` baseline integrity with 15 official FAQs.
+### Targeted E2E Test Suite Execution
+- **Command Executed**:
+  ```powershell
+  node --test tests/reservation-modification-flow.test.mjs
+  ```
+- **Verbatim Test Output** (`tests/reservation-modification-flow.test.mjs`):
+  ```tap
+  # tests 92
+  # suites 22
+  # pass 92
+  # fail 0
+  # cancelled 0
+  # skipped 0
+  # todo 0
+  # duration_ms 21574.3186
+  ```
+  *Exit code*: 0. All 92 subtests across 22 suites passed with 0 failures, 0 cancellations, and 0 skips.
 
-3. **Adversarial Test Suite 3**:
-   - Command: `node --test tests/challenger-m2-r2-heuristic-verification.test.mjs`
-   - Result: 15 tests pass across both `artifacts/api-server` and `scripts`, 0 fail, exit code 0, duration 2.96s.
-   - Verified: Resolution of critical queries, additive scoring, stop words filtering, client exception rules, status isolation, distinctive keywords boost, and stress performance probe (1,000 queries in ~400ms, ~0.4ms/query).
+### Tier 4 Real-World Production Scenarios Isolated Execution
+- **Command Executed**:
+  ```powershell
+  node --test --test-name-pattern="Tier 4" tests/reservation-modification-flow.test.mjs
+  ```
+- **Verbatim Tier 4 Subtests Output**:
+  ```tap
+  # Subtest: Tier 4: Real-World Application Scenarios
+      # Subtest: 4.1. Cenário 1: Prorrogação com pagamento adicional via PIX, commit das datas, gatilho de re-assinatura, PDF forense re-assinado e entregue à recepção
+      ok 1 - 4.1. Cenário 1: Prorrogação com pagamento adicional via PIX, commit das datas, gatilho de re-assinatura, PDF forense re-assinado e entregue à recepção
+        ---
+        duration_ms: 1783.7737
+        ...
+      # Subtest: 4.2. Cenário 2: Tentativa de prorrogação com conflito de calendário no mesmo flat: simulação acusa erro de conflito e bloqueia checkout
+      ok 2 - 4.2. Cenário 2: Tentativa de prorrogação com conflito de calendário no mesmo flat: simulação acusa erro de conflito e bloqueia checkout
+        ---
+        duration_ms: 7.1049
+        ...
+      # Subtest: 4.3. Cenário 3: Modificação abandonada / cancelada durante o hold de pagamento PIX: datas originais permanecem intactas, hold expira e flat permanece disponível
+      ok 3 - 4.3. Cenário 3: Modificação abandonada / cancelada durante o hold de pagamento PIX: datas originais permanecem intactas, hold expira e flat permanece disponível
+        ---
+        duration_ms: 523.8779
+        ...
+      # Subtest: 4.4. Cenário 4: Redução de estadia dentro da política de 24h ou alteração sem custo: commit imediato, re-assinatura acionada, painéis sincronizados
+      ok 4 - 4.4. Cenário 4: Redução de estadia dentro da política de 24h ou alteração sem custo: commit imediato, re-assinatura acionada, painéis sincronizados
+        ---
+        duration_ms: 44.6458
+        ...
+      # Subtest: 4.5. Cenário 5: Troca de flat: flat antigo liberado, novo flat atribuído, assinatura invalidada, recepção bloqueia entrada física até re-assinatura
+      ok 5 - 4.5. Cenário 5: Troca de flat: flat antigo liberado, novo flat atribuído, assinatura invalidada, recepção bloqueia entrada física até re-assinatura
+        ---
+        duration_ms: 1387.3939
+        ...
+      1..5
+  ok 5 - Tier 4: Real-World Application Scenarios
+    ---
+    duration_ms: 3747.9782
+    type: 'suite'
+    ...
+  ```
 
-4. **Adversarial Test Suite 4**:
-   - Command: `node --test tests/m2-challenger-2-stress.test.mjs`
-   - Result: 10 tests pass, 0 fail, exit code 0, duration 1.91s.
-   - Verified: Inbound unmapped question auto-learning (`status: "pendente"`), greeting discard, pet rules categorization, accent-insensitive deduplication ("têm" vs "tem"), operator answer capture via helper, HTTP chat POST endpoint, Z-API webhook `fromMe: true`, 24h expiration window, SHA-256 parity.
+### Twin-Server SHA-256 Parity Verification
+- **Command**:
+  ```powershell
+  Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs -Algorithm SHA256
+  ```
+  - `scripts/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+  - `artifacts/api-server/demo-server.mjs`: `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`
+  - Result: Verbatim byte-for-byte SHA-256 parity.
+- **Helper Services Parity**:
+  - `fnrh-pdf-service.mjs`: `845254A8419EA08343A4BAFF7BCFD2D61D22C4376643D8103DAC2A131582771B` (Both identical)
+  - `zapi-service.mjs`: `3E7A17CB5216F476FA316178C916A5BEAC71E491E8FF4397B1FD5D9E7FC64846` (Both identical)
 
-5. **Adversarial Test Suite 5**:
-   - Command: `node --test tests/challenger-m3-c2-ui-interaction.test.mjs`
-   - Result: 27 tests pass across 6 sub-suites, 0 fail, exit code 0, duration 654ms.
-   - Verified: Phone normalization engine & chip addition, official 9-category taxonomy, metrics counters aggregation, filtering/search/sorting pipeline, 1-click approval button states & form validation, WhatsApp formatting tokens (*bold*, _italic_, ~strikethrough~), REST client contract invariants in `useFaq`.
-
-6. **Primary & Joint Test Suite Execution**:
-   - Command: `node --test tests/whatsapp-ai-agent.test.mjs tests/challenger-m1-r3-rule-engine.test.mjs tests/challenger2-m1-r3-lifecycle-persistence.test.mjs tests/challenger-m2-r2-heuristic-verification.test.mjs tests/m2-challenger-2-stress.test.mjs tests/challenger-m3-c2-ui-interaction.test.mjs`
-   - Result: 86 tests passed across 10 sub-suites, 0 failed, 0 skipped, exit code 0.
-   - Concurrency observation: Under high parallel load, test microbenchmarks requiring < 1000ms for 1,000 iterations might experience CPU scheduler jitter (e.g. 1090ms), which passes cleanly serialized (`--test-concurrency=1`) and in standalone executions (< 500ms).
-
-7. **Twin-Server SHA-256 Byte Parity across 7 Mirrored Files**:
-   - `demo-server.mjs`: `4bca1b9cafdee1c404a09504955003428f79c5abd217c181c7e623833b9a5b8a` -> MATCH
-   - `whatsapp-ai-service.mjs`: `beb2b29116b8579db6d5178eaebbee9a486983d1a3175247905be2eafbd7db98` -> MATCH
-   - `zapi-service.mjs`: `ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb` -> MATCH
-   - `mail-service.mjs`: `3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c` -> MATCH
-   - `storage-service.mjs`: `c3b6dbe78a5464d89e220e32c79e6cf56eefcbc3d33b6ec5cb35a8c5fb48fb10` -> MATCH
-   - `fnrh-pdf-service.mjs`: `845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b` -> MATCH
-   - `fnrh-serpro-service.mjs`: `daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a` -> MATCH
-
-8. **Git Synchronization**:
-   - `git status`: Branch `main` up to date with `origin/main`. Production build assets tracked and up-to-date.
+---
 
 ## 2. Logic Chain
-1. Step 1: The original requirements (R1–R5) were implemented across Milestones M1, M2, and M3, with stress test suites authored by adversarial challengers to expose boundary bugs in phone matching, atomic concurrency, heuristic precision, auto-learning ingestion, and UI filters.
-2. Step 2: Milestone 4 requires definitive empirical validation that all 5 adversarial challenger suites and the primary test suite run with zero failures and exit code 0.
-3. Step 3: Executing the suites individually proved that each component (rule engine, atomic persistence, heuristic engine, auto-learning, and UI interaction logic) passes with 100% success rate.
-4. Step 4: Executing the full joint suite proved that there are no regressions, state corruptions, or test collisions when running all 86 tests together.
-5. Step 5: Verification of SHA-256 hashes proved that 100% parity is maintained across all 7 mirrored service files between `artifacts/api-server/` and `scripts/`.
-6. Step 6: Git tracking confirmed that production build artifacts are synchronized with `origin/main`.
-7. Step 7: Therefore, all acceptance criteria are met, and the integration is ready for sign-off with definitive verdict `APPROVE`.
+
+1. **Scenario 1 (4.1) Verification**:
+   - Simulation `/modify-preview` correctly calculates additional 2 nights at R$ 160/night = R$ 320 (`additionalAmountToPay: 320`).
+   - Checkout `/modify-checkout` establishes 30-minute hold (`pendingId` beginning with `mod_`).
+   - Payment simulation `/modify-status?simulatePayment=true` commits new check-out date `2026-11-09`, updates total amount to R$ 640, invalidates check-in (`needsReSignature: true`, `fnhrCompleted: false`).
+   - Form re-signing `/api/pms/pre-checkin` with `resign: "1"` generates valid FNRH PDF with 64-character SHA-256 hash (`sign.fnrhDocument.sha256Hash`), clears `needsReSignature: false`, records reception delivery in `db.reservationCommunications`, and updates turnover cleaning request (`cleaningRequests` id: 9104) to `2026-11-09`.
+2. **Scenario 2 (4.2) Verification**:
+   - Mariana Costa (RES-RW-SCEN2) attempts to extend Flat 114 to `2026-11-09`.
+   - Fabio Assunção (RES-RW-SCEN2-BLOCK) already occupies Flat 114 from `2026-11-08` to `2026-11-10`.
+   - Simulation `/modify-preview` immediately catches the overlap and returns HTTP 409 Conflict (`available: false`, `error: "CONFLICT"`).
+   - Checkout `/modify-checkout` also returns HTTP 409 Conflict, completely blocking hold generation and payment checkout.
+3. **Scenario 3 (4.3) Verification**:
+   - Renato Aragão (RES-RW-SCEN3) initiates checkout to extend stay from `2026-11-07` to `2026-11-10` on Flat 116.
+   - Hold is established. The guest closes/abandons the modal, issuing `/modify-cancel-pending`.
+   - Database invariants confirmed: `checkinDate` (`2026-11-05`), `checkoutDate` (`2026-11-07`), `totalAmount` (`320`), and `pendingModification` is deleted.
+   - Third-party simulation on Flat 116 for `2026-11-07` to `2026-11-10` confirms availability is fully restored (`available: true`, HTTP 200).
+4. **Scenario 4 (4.4) Verification**:
+   - Juliana Paes (RES-RW-SCEN4) on Flat 201 shortens stay from `2026-11-15..19` (4 nights) to `2026-11-15..17` (2 nights) with more than 24 hours advance notice.
+   - Simulation `/modify-preview` returns `requiresPayment: false`, `refundAmount: 360`.
+   - Direct commit `/modify` executes immediately without payment hold, sets `needsReSignature: true`, and updates housekeeping cleaning request (id: 9103) from `2026-11-19` to `2026-11-17`.
+5. **Scenario 5 (4.5) Verification**:
+   - Fernando Rocha (RES-RW-SCEN5) checked in on Flat 113. Flat changed to 116 via `PUT /api/pms/reservations/18006`.
+   - Check-in signature is revoked (`needsReSignature: true`, `fnhrCompleted: false`).
+   - Reception arrival endpoint `/api/reception/today` flags `canAuthorizeEntry: false`, `needsReSignature: true`, `flatNumber: "116"`.
+   - Physical reception check-in attempt `/api/reception/checkin/18006` is blocked with HTTP 400 Bad Request.
+   - Guest re-signs on portal with `resign: "1"`. Reception arrival endpoint reflects `canAuthorizeEntry: true`. Physical reception check-in succeeds with HTTP 200 OK.
+
+---
 
 ## 3. Caveats
-- Production deployment on Render utilizes PostgreSQL (`system_store`); local tests validate the JSON persistence layer and in-memory mock instances.
-- Google Gemini API calls during test suites are mocked with simulated network timeouts and responses to prevent live quota exhaustion.
+
+- **Test Infrastructure Concurrency Guard**: During test suite execution, if the test process is aborted abruptly or restarted in rapid succession without allowing OS socket recycling, TCP port 3998 may briefly retain `TIME_WAIT` status. The suite's `before()` block includes an explicit `netstat` and `taskkill /F /T /PID` pre-flight sweep that reliably clears orphaned processes on port 3998 before spawning the isolated server instance.
+
+---
 
 ## 4. Conclusion
-Definitive Verdict: **APPROVE**.
-All 5 adversarial challenger suites and the primary integration suite pass with 100% success rate (86/86 passed, 0 failures, exit code 0). Twin-server parity is 100% verified. The system is hardened and production-ready.
+
+**Verdict: APPROVE**
+
+Milestone 4 Tier 4 Real-World Application Scenarios (Scenarios 1 through 5) and the entire 92-test E2E suite (`tests/reservation-modification-flow.test.mjs`) have been empirically challenged and verified. All financial calculations, calendar conflict preventions, provisional holds, signature revocations, cryptographic PDF hashes (SHA-256), email dispatches to reception, and reception physical entry gates function strictly according to the authoritative specifications. Twin-server SHA-256 parity is 100% compliant.
+
+---
 
 ## 5. Verification Method
-1. Run standalone adversarial challenger suites:
+
+To independently reproduce the empirical findings:
+
+1. **Execute full unified 4-tier test suite**:
    ```powershell
-   node --test tests/challenger-m1-r3-rule-engine.test.mjs
-   node --test tests/challenger2-m1-r3-lifecycle-persistence.test.mjs
-   node --test tests/challenger-m2-r2-heuristic-verification.test.mjs
-   node --test tests/m2-challenger-2-stress.test.mjs
-   node --test tests/challenger-m3-c2-ui-interaction.test.mjs
+   node --test tests/reservation-modification-flow.test.mjs
    ```
-2. Run joint execution of all suites:
+   *Expected outcome*: 92 tests passing, 0 failing, exit code 0.
+
+2. **Execute isolated Tier 4 production scenarios**:
    ```powershell
-   node --test tests/whatsapp-ai-agent.test.mjs tests/challenger-m1-r3-rule-engine.test.mjs tests/challenger2-m1-r3-lifecycle-persistence.test.mjs tests/challenger-m2-r2-heuristic-verification.test.mjs tests/m2-challenger-2-stress.test.mjs tests/challenger-m3-c2-ui-interaction.test.mjs
+   node --test --test-name-pattern="Tier 4" tests/reservation-modification-flow.test.mjs
    ```
-3. Run twin-server parity verification:
+   *Expected outcome*: 5 subtests passing, 0 failing, exit code 0.
+
+3. **Verify Twin-Server SHA-256 parity**:
    ```powershell
-   node -e "const crypto = require('crypto'), fs = require('fs'); const files = ['demo-server.mjs', 'whatsapp-ai-service.mjs', 'zapi-service.mjs', 'mail-service.mjs', 'storage-service.mjs', 'fnrh-pdf-service.mjs', 'fnrh-serpro-service.mjs']; for (const f of files) { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); console.log(f, h1 === h2 ? 'MATCH' : 'MISMATCH'); }"
+   Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs -Algorithm SHA256
    ```
+   *Expected outcome*: Verbatim identical SHA-256 hash `694A0DAD272580616EBFEAA2234DD2718D1E3B1CE5D032A88E39C27438DC730F`.
