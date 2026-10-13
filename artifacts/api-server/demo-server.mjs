@@ -85,7 +85,13 @@ import {
   renderTemplateButtons,
   DEFAULT_WHATSAPP_TEMPLATES
 } from "./zapi-service.mjs";
-import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
+import {
+  initMaidAutomationEngine,
+  getMaidPeriodFinances,
+  syncMaidCredits as syncMaidCreditsCanonical,
+  matchesPeriod as matchesPeriodCanonical,
+  generatePaymentId as generatePaymentIdCanonical
+} from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import {
   getSmtpConfig,
@@ -10083,6 +10089,18 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     );
   }
 
+  // ── Sincronização Reativa do Extrato da Camareira ───────────────────────────
+  if (status === "clean" && item.assignedUserId) {
+    syncMaidCredits(item.assignedUserId);
+  } else if (status && status !== "clean") {
+    if (Array.isArray(db.maidStatementEntries)) {
+      db.maidStatementEntries = db.maidStatementEntries.filter(
+        e => !(e.cleaningRequestId === item.id && e.entryDate >= "2026-09-01")
+      );
+      saveDatabase();
+    }
+  }
+
   res.json({
     ...item,
     flatNumber: flat ? flat.number : String(item.flatId),
@@ -10261,6 +10279,11 @@ app.delete("/api/cleaning/admin/record/:id", (req, res) => {
 
   const removed = db.cleaningRequests[targetIndex];
   db.cleaningRequests.splice(targetIndex, 1);
+  if (Array.isArray(db.maidStatementEntries)) {
+    db.maidStatementEntries = db.maidStatementEntries.filter(
+      e => !(e.cleaningRequestId === id && e.entryDate >= "2026-09-01")
+    );
+  }
   saveDatabase();
 
   logAuditEvent({
@@ -10295,6 +10318,11 @@ app.delete("/api/cleaning/requests/:id", (req, res) => {
 
   const removed = db.cleaningRequests[targetIndex];
   db.cleaningRequests.splice(targetIndex, 1);
+  if (Array.isArray(db.maidStatementEntries)) {
+    db.maidStatementEntries = db.maidStatementEntries.filter(
+      e => !(e.cleaningRequestId === id && e.entryDate >= "2026-09-01")
+    );
+  }
   saveDatabase();
 
   res.json({ success: true, message: `Solicitação do Flat ${removed.flatNumber} excluída com sucesso.` });
@@ -10330,7 +10358,19 @@ app.patch("/api/cleaning/admin/record/:id", (req, res) => {
   if (adminNote !== undefined) item.adminNote = adminNote;
   if (observation !== undefined) item.pendingObservation = observation;
   item.updatedAt = new Date().toISOString();
+
+  if (status && status !== "clean") {
+    if (Array.isArray(db.maidStatementEntries)) {
+      db.maidStatementEntries = db.maidStatementEntries.filter(
+        e => !(e.cleaningRequestId === id && e.entryDate >= "2026-09-01")
+      );
+    }
+  }
   saveDatabase();
+
+  if (item.assignedUserId && item.status === "clean") {
+    syncMaidCredits(item.assignedUserId);
+  }
 
   logAuditEvent({
     level: "info",
@@ -11417,18 +11457,9 @@ app.get("/api/analytics/report", (req, res) => {
   let grandTotalNetToPay = 0;
   let grandTotalPayments = 0;
 
-  // Helper para conciliação precisa de pagamentos e vales por período
+  // Helper para conciliação precisa de pagamentos e vales por período via motor canônico
   function matchesPeriod(entry, payment, startD, endD) {
-    if (payment && payment.referencePeriod) {
-      const [refStart, refEnd] = payment.referencePeriod.split("_");
-      if (refStart === startD && refEnd === endD) return true;
-      if (startD <= refStart && endD >= refEnd) return true;
-      if (refEnd < startD || refStart > endD) return false;
-    }
-    const d = entry.entryDate || (entry.createdAt ? entry.createdAt.substring(0, 10) : "");
-    if (startD === "2026-09-01" && endD === "2026-09-15" && d === "2026-09-16") return true;
-    if (!d || d < startD || d > endD) return false;
-    return true;
+    return matchesPeriodCanonical(entry, payment, startD, endD);
   }
 
   // Camareiras / Usuários
@@ -33148,7 +33179,7 @@ app.delete("/api/shopping-list/:id", async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 
 function generatePaymentId() {
-  return `pay_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  return generatePaymentIdCanonical();
 }
 
 function ensureMaidPaymentsDb() {
@@ -33170,57 +33201,9 @@ function getMaidBalance(userId) {
 
 function syncMaidCredits(userId) {
   ensureMaidPaymentsDb();
-
-  const user = (db.users || []).find(u => u.id === userId);
-  if (!user) return;
-
-  const defaultRate = Number(db.cleaningRates?.defaultRatePerRoom || 22.50);
-  const userRate = db.cleaningRates?.userRates?.[userId] !== undefined
-    ? Number(db.cleaningRates.userRates[userId])
-    : defaultRate;
-
-  const cleanings = (db.cleaningRequests || []).filter(r => {
-    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
-    return r.assignedUserId === userId;
-  });
-
-  const existingCreditRefs = new Set(
-    db.maidStatementEntries
-      .filter(e => e.userId === userId && e.entryType === "credit" && e.cleaningRequestId)
-      .map(e => e.cleaningRequestId)
-  );
-
-  let newEntries = [];
-  for (const cleaning of cleanings) {
-    if (existingCreditRefs.has(cleaning.id)) continue;
-
-    const flat = (db.flats || []).find(f => f.id === cleaning.flatId);
-    const flatNum = flat ? flat.number : String(cleaning.flatId);
-    const entryDate = cleaning.completedAt
-      ? cleaning.completedAt.substring(0, 10)
-      : cleaning.requestDate;
-
-    const alreadyCreditedForFlatAndDate = (db.maidStatementEntries || []).some(
-      e => e.userId === userId && e.entryType === "credit" && e.entryDate === entryDate && e.description === `Diária — Flat ${flatNum}`
-    );
-    if (alreadyCreditedForFlatAndDate) continue;
-
-    newEntries.push({
-      id: generatePaymentId(),
-      userId,
-      cleaningRequestId: cleaning.id,
-      paymentId: null,
-      entryType: "credit",
-      amount: userRate,
-      description: `Diária — Flat ${flatNum}`,
-      entryDate,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  if (newEntries.length > 0) {
-    newEntries.sort((a, b) => a.entryDate.localeCompare(b.entryDate));
-    db.maidStatementEntries.push(...newEntries);
+  const beforeLen = (db.maidStatementEntries || []).length;
+  syncMaidCreditsCanonical(db, userId);
+  if ((db.maidStatementEntries || []).length !== beforeLen) {
     saveDatabase();
   }
 }
@@ -33231,7 +33214,7 @@ function buildStatement(userId) {
 
   const entries = db.maidStatementEntries
     .filter(e => e.userId === userId)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
 
   let balance = 0;
   return entries.map(e => {
@@ -33254,6 +33237,8 @@ function buildStatement(userId) {
         interTxId: payment.interTxId || null,
         interStatus: payment.interStatus || null,
         interSimulated: payment.interSimulated || false,
+        reversedAt: payment.reversedAt || null,
+        referencePeriod: payment.referencePeriod || null,
         createdAt: payment.createdAt,
         paidAt: payment.paidAt || null,
       } : null,
@@ -33353,6 +33338,7 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
   }
 
   ensureMaidPaymentsDb();
+  syncMaidCredits(targetId);
 
   const paymentId = generatePaymentId();
   const idempotencyKey = paymentId;
@@ -33412,24 +33398,61 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
     entryType: "debit",
     amount: numAmount,
     description: payment.description,
-    entryDate: new Date().toISOString().substring(0, 10),
-    createdAt: new Date().toISOString(),
+    entryDate: getExecutionDateStr(payment.createdAt),
+    createdAt: payment.createdAt,
   };
 
   db.maidStatementEntries.push(statementEntry);
   saveDatabase();
 
+  let refStart = null;
+  let refEnd = null;
+  if (referencePeriod && referencePeriod.includes("_")) {
+    [refStart, refEnd] = referencePeriod.split("_");
+  }
+  const finances = getMaidPeriodFinances(db, targetId, refStart, refEnd);
+  const currentBalance = getMaidBalance(targetId);
+
   if (sendWhatsApp && (user.whatsapp || user.phone)) {
     const cleanPh = cleanWhatsAppPhone(user.whatsapp || user.phone);
-    const balance = getMaidBalance(targetId);
     const isAdvance = type === "advance";
     const emoji = isAdvance ? "🎫" : "✅";
-    const typeLabel = isAdvance ? "Vale (adiantamento)" : "Pagamento PIX";
+    const typeLabel = isAdvance ? "Vale (Adiantamento)" : "Pagamento PIX";
     const valorFormatado = numAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-    const saldoFormatado = balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const saldoFormatado = currentBalance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
     const dataHoje = new Date().toLocaleDateString("pt-BR");
+    const periodLabelText = refStart && refEnd
+      ? `${refStart.substring(8, 10)}/${refStart.substring(5, 7)} a ${refEnd.substring(8, 10)}/${refEnd.substring(5, 7)}`
+      : "Quinzena Atual";
 
-    const msg = `${emoji} *${typeLabel} Realizado! • CorpFlats* 💰\n\nOlá, *${user.name || user.username}*! Informamos que seu ${isAdvance ? "vale" : "pagamento"} foi processado:\n\n💵 *Valor:* ${valorFormatado}\n📅 *Data:* ${dataHoje}\n📌 *Tipo:* ${typeLabel}\n${payment.description ? `📋 *Descrição:* ${payment.description}\n` : ""}${!isAdvance && payment.interTxId ? `🔖 *TxID:* ${payment.interTxId}\n` : ""}${!isAdvance && interResult?.simulated ? "⚠️ _Pagamento simulado (configure PIX para produção)_\n" : ""}\n💼 *Saldo Atual:* ${saldoFormatado}\n\n_Acesse seu app para ver o extrato completo._ 📊`;
+    let msg = "";
+    if (isAdvance) {
+      msg = `${emoji} *Vale (Adiantamento) Concedido • CorpFlats* 💰\n\n` +
+        `Olá, *${user.name || user.username}*! Confirmamos o lançamento do seu vale:\n\n` +
+        `💵 *Valor do Vale:* ${valorFormatado}\n` +
+        `📅 *Data:* ${dataHoje}\n` +
+        (payment.description ? `📋 *Descrição:* ${payment.description}\n` : "") +
+        `\n📊 *Demonstrativo da Quinzena (${periodLabelText}):*\n` +
+        `• Produção Bruta Acumulada: ${finances.grossAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (${finances.cleaningsCount} quartos)\n` +
+        `• Total de Vales na Quinzena: − ${finances.advancesAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}\n` +
+        `💰 *Saldo Líquido Restante:* *${finances.netPendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}*\n\n` +
+        `💼 *Saldo Geral em Conta:* ${saldoFormatado}\n\n` +
+        `_O valor já foi lançado no seu extrato e será abatido no fechamento oficial._ 📊`;
+    } else {
+      msg = `${emoji} *Pagamento PIX Realizado • CorpFlats* 💰\n\n` +
+        `Olá, *${user.name || user.username}*! Informamos que seu acerto foi processado:\n\n` +
+        `💵 *Valor Pago:* ${valorFormatado}\n` +
+        `📅 *Data:* ${dataHoje}\n` +
+        (payment.description ? `📋 *Descrição:* ${payment.description}\n` : "") +
+        (payment.interTxId ? `🔖 *TxID:* ${payment.interTxId}\n` : "") +
+        (interResult?.simulated ? "⚠️ _Pagamento simulado (configure PIX para produção)_\n" : "") +
+        `\n📊 *Demonstrativo da Quinzena (${periodLabelText}):*\n` +
+        `• Produção Bruta: ${finances.grossAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}\n` +
+        `• Vales Descontados: − ${finances.advancesAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}\n` +
+        `💰 *Valor Quitado:* *${valorFormatado}*\n\n` +
+        `💼 *Saldo Geral em Conta:* ${saldoFormatado}\n\n` +
+        `_Acesse seu app para ver o extrato completo._ 📊`;
+    }
 
     try {
       const sendResult = await sendZapiMessage(db.zapiConfig, {
@@ -33453,6 +33476,7 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
       type: payment.type,
       amount: payment.amount,
       description: payment.description,
+      referencePeriod: payment.referencePeriod,
       interTxId: payment.interTxId,
       interStatus: payment.interStatus,
       interSimulated: payment.interSimulated,
@@ -33460,12 +33484,119 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
       whatsappSent: payment.whatsappSent,
       paidAt: payment.paidAt,
     },
-    balance: Math.round(getMaidBalance(targetId) * 100) / 100,
+    finances,
+    balance: Math.round(currentBalance * 100) / 100,
     message: type === "advance"
       ? `Vale de R$ ${numAmount.toFixed(2)} registrado para ${user.name || user.username}.`
       : `Pagamento de R$ ${numAmount.toFixed(2)} processado para ${user.name || user.username}.`,
   });
 });
+
+// Endpoint de Estorno de Pagamento / Vale
+async function handlePaymentReversal(req, res) {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem estornar pagamentos ou vales." });
+  }
+
+  const paymentId = req.params.paymentId;
+  ensureMaidPaymentsDb();
+
+  const paymentIndex = (db.maidPayments || []).findIndex(p => p.id === paymentId);
+  if (paymentIndex === -1) {
+    return res.status(404).json({ error: "Lançamento de pagamento ou vale não encontrado." });
+  }
+
+  const payment = db.maidPayments[paymentIndex];
+  if (payment.reversedAt) {
+    return res.status(400).json({ error: "Este lançamento já foi estornado anteriormente." });
+  }
+
+  const targetUserId = payment.userId;
+  const user = (db.users || []).find(u => u.id === targetUserId);
+
+  const nowIso = new Date().toISOString();
+  payment.reversedAt = nowIso;
+  payment.reversedBy = authUser.id;
+  payment.interStatus = "ESTORNADO";
+
+  // Remove a respectiva contrapartida em maidStatementEntries para restaurar o saldo da camareira
+  db.maidStatementEntries = (db.maidStatementEntries || []).filter(e => e.paymentId !== paymentId);
+
+  saveDatabase();
+
+  syncMaidCredits(targetUserId);
+  const newBalance = getMaidBalance(targetUserId);
+  let refStart = null;
+  let refEnd = null;
+  if (payment.referencePeriod && payment.referencePeriod.includes("_")) {
+    [refStart, refEnd] = payment.referencePeriod.split("_");
+  }
+  const finances = getMaidPeriodFinances(db, targetUserId, refStart, refEnd);
+
+  const notifyWhatsApp = req.body?.notifyWhatsApp !== false && req.query?.notifyWhatsApp !== "false";
+  let waDispatched = false;
+
+  if (notifyWhatsApp && user && (user.whatsapp || user.phone)) {
+    const cleanPh = cleanWhatsAppPhone(user.whatsapp || user.phone);
+    const isAdvance = payment.type === "advance";
+    const valorFmt = Number(payment.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const saldoFmt = newBalance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const brutoFmt = finances.grossAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const valesFmt = finances.advancesAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const liqFmt = finances.netPendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+    const msg = `↩️ *Estorno de ${isAdvance ? "Vale (Adiantamento)" : "Pagamento"} • CorpFlats* ℹ️\n\n` +
+      `Olá, *${user.name || user.username}*!\n` +
+      `Informamos que o ${isAdvance ? "vale" : "pagamento"} no valor de *${valorFmt}* (${payment.description || (isAdvance ? "Vale" : "Pagamento")}) foi *estornado* pela administração.\n\n` +
+      `📊 *Seu demonstrativo corrigido da quinzena:*\n` +
+      `• Produção Bruta: ${brutoFmt} (${finances.cleaningsCount} quartos)\n` +
+      `• Vales Concedidos: − ${valesFmt}\n` +
+      `💰 *Saldo Líquido a Receber:* *${liqFmt}*\n\n` +
+      `💼 *Saldo Geral em Conta:* ${saldoFmt}\n\n` +
+      `_Caso tenha dúvidas, consulte a administração._ 🌟`;
+
+    try {
+      const waRes = await sendZapiMessage(db.zapiConfig, {
+        phone: cleanPh,
+        message: msg,
+        recipientRole: "camareira",
+        bypassTestMode: true
+      });
+      waDispatched = waRes.success || false;
+    } catch (err) {
+      console.warn("[Maid Pay Reversal] Erro ao enviar WhatsApp:", err.message);
+    }
+  }
+
+  logAuditEvent({
+    level: "warn",
+    category: "finance",
+    action: "MAID_PAYMENT_REVERSED",
+    actor: { name: authUser.name || authUser.username, role: authUser.role },
+    details: {
+      paymentId,
+      targetUserId,
+      amount: payment.amount,
+      type: payment.type,
+      reversedAt: nowIso,
+      whatsappNotified: waDispatched
+    },
+    source: "maid_financial_dashboard"
+  });
+
+  res.json({
+    success: true,
+    message: `${payment.type === "advance" ? "Vale" : "Pagamento"} de R$ ${Number(payment.amount).toFixed(2)} estornado com sucesso.`,
+    paymentId,
+    balance: Math.round(newBalance * 100) / 100,
+    finances,
+    whatsappSent: waDispatched
+  });
+}
+
+app.delete("/api/maids/payments/:paymentId", handlePaymentReversal);
+app.post("/api/maids/payments/:paymentId/reversal", handlePaymentReversal);
 
 app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
   const authUser = getAuthUser(req);

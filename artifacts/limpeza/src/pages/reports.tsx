@@ -22,7 +22,7 @@ import {
   DollarSign, Users, Check, Sliders, ChevronLeft, ChevronRight,
   Receipt, MessageSquare, Plus, Trash2, AlertTriangle, Info,
   Banknote, Gift, Wallet, Send, ArrowUpRight, ArrowDownLeft, RefreshCw,
-  Copy, Share2, ShieldCheck, ListFilter, Clock, Sparkles, User, CheckCircle2
+  Copy, Share2, ShieldCheck, ListFilter, Clock, Sparkles, User, CheckCircle2, RotateCcw
 } from "lucide-react"
 
 // ── Helpers de Formatação ───────────────────────────────────────────────────
@@ -86,7 +86,10 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
   const name = cleaner.name || cleaner.username
   const count = cleaner.count || 0
   const rate = Number(cleaner.ratePerRoom || 35).toFixed(2)
-  const total = formatBRL(cleaner.totalToPay || 0)
+  const gross = Number(cleaner.totalToPay || 0)
+  const advances = Number(cleaner.advancesInPeriod || 0)
+  const netProduced = cleaner.netProduced !== undefined ? Number(cleaner.netProduced) : Math.max(0, gross - advances)
+  const payments = Number(cleaner.paymentsInPeriod || 0)
   const startFmt = formatDate(startDate)
   const endFmt = formatDate(endDate)
   const now = new Date()
@@ -119,7 +122,7 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
       `
     }).join("")
 
-  const isPaid = Boolean(cleaner.isPaid || (Number(cleaner.paymentsInPeriod || 0) >= (Number(cleaner.totalToPay || 0) - Number(cleaner.advancesInPeriod || 0)) && Number(cleaner.totalToPay || 0) > 0))
+  const isPaid = Boolean(cleaner.isPaid || (payments >= netProduced && netProduced > 0))
   const paidDateStr = formatDate(cleaner.paidAt || "2026-09-16")
 
   const html = `<!DOCTYPE html>
@@ -246,18 +249,21 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
     </div>
   </div>
 
-  <div class="total-banner" style="background: ${isPaid ? '#ecfdf5' : '#f0fdf4'}; border: 2px solid ${isPaid ? '#059669' : '#10b981'};">
+  <div class="total-banner" style="background: ${isPaid ? '#ecfdf5' : '#f0fdf4'}; border: 2px solid ${isPaid ? '#059669' : '#10b981'}; display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-radius: 10px; margin-bottom: 16px;">
     <div>
-      <div style="font-size: 8.5pt; font-weight: 700; color: #065f46; text-transform: uppercase;">
-        ${isPaid ? "Valor Total Quitado Integralmente" : "Valor Total Líquido a Receber"}
+      <div style="font-size: 8.5pt; font-weight: 700; color: #065f46; text-transform: uppercase; letter-spacing: 0.5px;">
+        ${isPaid ? "✓ Demonstrativo Quitado Integralmente" : "Demonstrativo Líquido a Receber"}
       </div>
-      <div class="total-val">R$ ${total}</div>
-      <div style="font-size: 8.5pt; color: #047857; margin-top: 2px;">
-        Cálculo: <strong>${count} quartos</strong> × <strong>R$ ${rate}</strong> por quarto limpo
+      <div class="total-val" style="font-size: 20pt; font-weight: 900; color: #065f46; font-family: monospace; margin: 2px 0;">
+        R$ ${formatBRL(netProduced)}
+      </div>
+      <div style="font-size: 8.5pt; color: #047857; line-height: 1.5;">
+        <span>Produção Bruta: <strong>R$ ${formatBRL(gross)}</strong> (${count} quartos × R$ ${rate})</span>
+        ${advances > 0 ? `<br><span style="color: #b45309;">Vales no Período: <strong>− R$ ${formatBRL(advances)}</strong></span>` : ""}
       </div>
     </div>
     <div style="text-align: right;">
-      <span style="background: ${isPaid ? '#059669' : '#10b981'}; color: white; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 8.5pt;">
+      <span style="background: ${isPaid ? '#059669' : '#10b981'}; color: white; padding: 5px 12px; border-radius: 20px; font-weight: 800; font-size: 8.5pt;">
         ${isPaid ? `✓ Quitado em ${paidDateStr}` : "Aprovado para Pagamento"}
       </span>
       <div style="font-size: 8.5pt; color: #64748b; margin-top: 6px; font-family: monospace;">
@@ -285,9 +291,23 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
     </tbody>
     <tfoot>
       <tr style="background: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
-        <td colspan="4" style="text-align: right; text-transform: uppercase; padding: 8px 10px;">Total (${count} diárias):</td>
+        <td colspan="4" style="text-align: right; text-transform: uppercase; padding: 8px 10px;">Subtotal Bruto (${count} diárias):</td>
         <td style="text-align: center; padding: 8px 10px;">~${cleaner.avgDurationMinutes || 35} min méd.</td>
-        <td style="text-align: right; color: #059669; font-size: 11pt; font-family: monospace; padding: 8px 10px;">R$ ${total}</td>
+        <td style="text-align: right; color: #334155; font-size: 10pt; font-family: monospace; padding: 8px 10px;">R$ ${formatBRL(gross)}</td>
+      </tr>
+      ${advances > 0 ? `
+      <tr style="background: #fefce8; font-weight: bold;">
+        <td colspan="5" style="text-align: right; text-transform: uppercase; padding: 6px 10px; color: #b45309;">(−) Vales / Adiantamentos no Período:</td>
+        <td style="text-align: right; color: #b45309; font-size: 10pt; font-family: monospace; padding: 6px 10px;">− R$ ${formatBRL(advances)}</td>
+      </tr>
+      ` : ""}
+      <tr style="background: #ecfdf5; font-weight: 900; border-top: 1.5px solid #10b981;">
+        <td colspan="5" style="text-align: right; text-transform: uppercase; padding: 8px 10px; color: #065f46; font-size: 9.5pt;">
+          (=) Saldo Líquido ${isPaid ? "Quitado" : "a Receber"}:
+        </td>
+        <td style="text-align: right; color: #059669; font-size: 11pt; font-family: monospace; padding: 8px 10px;">
+          R$ ${formatBRL(netProduced)}
+        </td>
       </tr>
     </tfoot>
   </table>
@@ -681,6 +701,12 @@ export default function Reports() {
   const [payDescription, setPayDescription] = useState("")
   const [payingLoading, setPayingLoading] = useState(false)
 
+  // ── Módulo de Estorno de Pagamento / Vale ──
+  const [reversalModalOpen, setReversalModalOpen] = useState(false)
+  const [paymentToReverse, setPaymentToReverse] = useState<{ id: string; type: string; amount: number; description?: string } | null>(null)
+  const [reversalNotifyWa, setReversalNotifyWa] = useState(true)
+  const [reversingLoading, setReversingLoading] = useState(false)
+
   // ── Módulo de Extrato & Ledger Detalhado ──
   const [selectedStatementCleanerId, setSelectedStatementCleanerId] = useState<string>("")
   const [statementData, setStatementData] = useState<MaidStatementData | null>(null)
@@ -826,6 +852,7 @@ export default function Reports() {
           type: payType,
           description: payDescription.trim() || undefined,
           sendWhatsApp: true,
+          referencePeriod: `${startDate}_${endDate}`,
         }),
       })
       const data = await res.json()
@@ -848,6 +875,51 @@ export default function Reports() {
       toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
     } finally {
       setPayingLoading(false)
+    }
+  }
+
+  // ── Módulo de Estorno de Pagamento / Vale ──
+  const handleOpenReversal = (payment: { id: string; type: string; amount: number; description?: string }) => {
+    setPaymentToReverse(payment)
+    setReversalNotifyWa(true)
+    setReversalModalOpen(true)
+  }
+
+  const handleConfirmReversal = async () => {
+    if (!paymentToReverse) return
+    try {
+      setReversingLoading(true)
+      const res = await fetch(`/api/maids/payments/${paymentToReverse.id}?notifyWhatsApp=${reversalNotifyWa}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notifyWhatsApp: reversalNotifyWa }),
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: "✓ Estorno Realizado!",
+          description: data.message || "O lançamento foi estornado com sucesso e o saldo recomposto.",
+        })
+        setReversalModalOpen(false)
+        setPaymentToReverse(null)
+        fetchReport()
+        if (isAdmin && selectedStatementCleanerId) {
+          fetchStatement(selectedStatementCleanerId)
+        } else {
+          fetchStatement()
+        }
+        setSelectedEntry(null)
+      } else {
+        toast({
+          title: "Falha no estorno",
+          description: data.error || "Não foi possível estornar o lançamento.",
+          variant: "destructive",
+        })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
+    } finally {
+      setReversingLoading(false)
     }
   }
 
@@ -1806,18 +1878,41 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                                 </td>
 
                                 <td className="p-3.5 text-center">
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    className="h-7 text-xs font-bold gap-1 rounded-lg text-primary"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setSelectedEntry(entry)
-                                    }}
-                                  >
-                                    <Share2 className="w-3 h-3" />
-                                    <span>Ver</span>
-                                  </Button>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm" 
+                                      className="h-7 text-xs font-bold gap-1 rounded-lg text-primary"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setSelectedEntry(entry)
+                                      }}
+                                    >
+                                      <Share2 className="w-3 h-3" />
+                                      <span>Ver</span>
+                                    </Button>
+                                    {isAdmin && !isCredit && (entry.payment?.id || entry.paymentId) && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        title="Estornar lançamento"
+                                        className="h-7 px-2 text-xs font-bold gap-1 rounded-lg text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          const pId = entry.payment?.id || entry.paymentId!
+                                          handleOpenReversal({
+                                            id: pId,
+                                            type: entry.payment?.type || (isAdvance ? "advance" : "payment"),
+                                            amount: entry.amount,
+                                            description: entry.description
+                                          })
+                                        }}
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                        <span className="hidden sm:inline">Estornar</span>
+                                      </Button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             )
@@ -2450,9 +2545,15 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </div>
 
             {activeCleanerReceipt && (() => {
-              const isSettled = Boolean(activeCleanerReceipt.isPaid || (activeCleanerReceipt.pendingToPay === 0 && Number(activeCleanerReceipt.paymentsInPeriod || 0) > 0))
+              const gross = Number(activeCleanerReceipt.totalToPay || 0)
+              const advances = Number(activeCleanerReceipt.advancesInPeriod || 0)
+              const netProduced = activeCleanerReceipt.netProduced !== undefined ? Number(activeCleanerReceipt.netProduced) : Math.max(0, gross - advances)
+              const payments = Number(activeCleanerReceipt.paymentsInPeriod || 0)
+              const isSettled = Boolean(activeCleanerReceipt.isPaid || (activeCleanerReceipt.pendingToPay === 0 && payments > 0))
               const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || '2026-09-16')
-              const valorQuitado = formatBRL(activeCleanerReceipt.paymentsInPeriod || activeCleanerReceipt.netProduced || activeCleanerReceipt.totalToPay)
+              const valorQuitado = formatBRL(payments || netProduced || gross)
+              const rateFmt = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
+              const netDisplay = formatBRL(activeCleanerReceipt.netToPay ?? netProduced)
 
               return (
               <div className="p-5 sm:p-8 space-y-5 bg-card text-foreground text-xs">
@@ -2492,9 +2593,11 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       <div className="text-3xl font-black text-emerald-950 dark:text-emerald-100 mt-0.5">
                         R$ {valorQuitado}
                       </div>
-                      <span className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80">
-                        Cálculo: {activeCleanerReceipt.count} quartos × R$ {Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)} por quarto limpo • Saldo pendente: R$ 0,00
-                      </span>
+                      <div className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80 mt-1 space-y-0.5">
+                        <div>Produção Bruta: <strong>R$ {formatBRL(gross)}</strong> ({activeCleanerReceipt.count} quartos × R$ {rateFmt})</div>
+                        {advances > 0 && <div className="text-amber-700 dark:text-amber-400">Vales descontados: <strong>− R$ {formatBRL(advances)}</strong></div>}
+                        <div>Saldo pendente quitado: <strong>R$ 0,00</strong></div>
+                      </div>
                     </div>
                     <div className="flex flex-col sm:items-end gap-1">
                       <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black px-3.5 py-1 rounded-full gap-1 shadow-xs">
@@ -2507,15 +2610,16 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                     </div>
                   </div>
                 ) : (
-                  <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 flex items-center justify-between">
+                  <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div>
                       <span className="text-xs font-bold text-amber-800 dark:text-amber-300 uppercase block">Valor Total Líquido a Receber</span>
                       <div className="text-3xl font-black text-amber-950 dark:text-amber-100 mt-0.5">
-                        R$ {formatBRL(activeCleanerReceipt.netToPay ?? activeCleanerReceipt.totalToPay)}
+                        R$ {netDisplay}
                       </div>
-                      <span className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
-                        Cálculo: {activeCleanerReceipt.count} quartos × R$ {Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)} por quarto limpo
-                      </span>
+                      <div className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-1 space-y-0.5">
+                        <div>Produção Bruta: <strong>R$ {formatBRL(gross)}</strong> ({activeCleanerReceipt.count} quartos × R$ {rateFmt})</div>
+                        {advances > 0 && <div className="text-amber-700 dark:text-amber-400">Vales a descontar: <strong>− R$ {formatBRL(advances)}</strong></div>}
+                      </div>
                     </div>
                     <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold px-3 py-1 rounded-full">
                       Pendente
@@ -2554,6 +2658,23 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                         )
                       })}
                     </tbody>
+                    <tfoot className="bg-muted/30 font-bold border-t border-border">
+                      <tr>
+                        <td colSpan={4} className="p-2.5 text-right uppercase text-[10px] text-muted-foreground">Subtotal Bruto ({activeCleanerReceipt.count} diárias):</td>
+                        <td className="p-2.5 text-center font-mono">~{activeCleanerReceipt.avgDurationMinutes || 35} min</td>
+                        <td className="p-2.5 text-right font-black">R$ {formatBRL(gross)}</td>
+                      </tr>
+                      {advances > 0 && (
+                        <tr className="text-amber-700 dark:text-amber-400 bg-amber-500/5">
+                          <td colSpan={5} className="p-2 text-right uppercase text-[10px]">(−) Vales / Adiantamentos no Período:</td>
+                          <td className="p-2 text-right font-black">− R$ {formatBRL(advances)}</td>
+                        </tr>
+                      )}
+                      <tr className="bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 font-black border-t border-emerald-500/30">
+                        <td colSpan={5} className="p-2.5 text-right uppercase text-[11px]">(=) Líquido {isSettled ? "Quitado" : "a Receber"}:</td>
+                        <td className="p-2.5 text-right text-sm">R$ {formatBRL(isSettled ? (payments || netProduced) : (activeCleanerReceipt.netToPay ?? netProduced))}</td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -2794,7 +2915,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                     )}
                   </div>
 
-                  <DialogFooter className="gap-2 pt-2">
+                  <DialogFooter className="gap-2 pt-2 flex flex-col sm:flex-row">
                     <Button
                       type="button"
                       variant="outline"
@@ -2805,6 +2926,26 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       {copiedReceipt ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                       <span>{copiedReceipt ? "Copiado!" : "Copiar Texto p/ WhatsApp"}</span>
                     </Button>
+                    {isAdmin && selectedEntry.entryType !== "credit" && (selectedEntry.payment?.id || selectedEntry.paymentId) && (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          const pId = selectedEntry.payment?.id || selectedEntry.paymentId!
+                          handleOpenReversal({
+                            id: pId,
+                            type: selectedEntry.payment?.type || "payment",
+                            amount: selectedEntry.amount,
+                            description: selectedEntry.description,
+                          })
+                        }}
+                        className="rounded-xl text-xs font-bold gap-1.5"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Estornar</span>
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="ghost"
@@ -2818,6 +2959,81 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                 </div>
               </>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL 7: CONFIRMAÇÃO DE ESTORNO DE PAGAMENTO / VALE
+           ══════════════════════════════════════════════════════════════════ */}
+        <Dialog open={reversalModalOpen} onOpenChange={setReversalModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl p-5 sm:p-6 shadow-2xl">
+            <DialogHeader>
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/15 text-rose-600 flex items-center justify-center mb-2 mx-auto sm:mx-0">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <DialogTitle className="text-base font-black text-foreground">
+                Confirmar Estorno de {paymentToReverse?.type === "advance" ? "Vale" : "Pagamento"}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                O débito de <strong>R$ {formatBRL(paymentToReverse?.amount)}</strong> será cancelado, restaurando imediatamente o saldo em conta corrente da camareira.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 pt-2 text-xs">
+              <div className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Tipo de Lançamento:</span>
+                  <strong className="text-foreground">{paymentToReverse?.type === "advance" ? "Vale (Adiantamento)" : "Pagamento PIX"}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Valor a Estornar:</span>
+                  <strong className="text-rose-600 font-mono text-sm">R$ {formatBRL(paymentToReverse?.amount)}</strong>
+                </div>
+                {paymentToReverse?.description && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Descrição:</span>
+                    <span className="text-foreground font-medium">{paymentToReverse.description}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200">
+                <input
+                  type="checkbox"
+                  id="reversal-notify-wa"
+                  checked={reversalNotifyWa}
+                  onChange={(e) => setReversalNotifyWa(e.target.checked)}
+                  className="w-4 h-4 rounded border-amber-400 text-primary focus:ring-primary"
+                />
+                <label htmlFor="reversal-notify-wa" className="cursor-pointer text-xs font-semibold">
+                  Notificar camareira no WhatsApp sobre o estorno e saldo corrigido
+                </label>
+              </div>
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setReversalModalOpen(false)}
+                  disabled={reversingLoading}
+                  className="rounded-xl text-xs font-bold"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleConfirmReversal}
+                  disabled={reversingLoading}
+                  className="rounded-xl text-xs font-bold gap-1.5 shadow-sm"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{reversingLoading ? "Estornando..." : "Confirmar Estorno"}</span>
+                </Button>
+              </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
 

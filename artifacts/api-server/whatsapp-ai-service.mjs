@@ -1876,8 +1876,10 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:late\s*check-?out|sair\s*mais\s*tarde|sa[ií]da\s*tardia|estender\s*(?:a\s*)?(?:estadia|sa[ií]da|di[aá]ria)|desocupar\s*mais\s*tarde|sair\s*(?:as|às)\s*(?:1[3-9]|20)\b)/i.test(lower) &&
-      !(/\b(?:consigo|posso|pode|como|d[aá]\s+para|d[aá]\s+pra|tem\s+como|[eé]\s+poss[ií]vel)\s+.*?(?:estender|prorrogar)\b/i.test(lower) || /\b(?:estender|prorrogar)\b.*?\b(?:pelo|no|via|por)\s+whatsapp\b/i.test(lower))) {
+  const isLateCheckoutDemand = /\b(?:late\s*check-?out|sair\s*mais\s*tarde|sa[ií]da\s*tardia|desocupar\s*mais\s*tarde|sair\s*(?:as|às)\s*(?:1[3-9]|20))\b/i.test(lower) ||
+    (/\bestender\s*(?:a\s*)?(?:estadia|sa[ií]da|di[aá]ria|reserva)\b/i.test(lower) && !/\b(?:pelo|no|via|por)\s+whatsapp\b/i.test(lower));
+
+  if (isLateCheckoutDemand) {
     return {
       category: "late_checkout",
       demandTitle: UNMET_DEMAND_CATEGORIES.late_checkout.title,
@@ -2184,6 +2186,13 @@ const PORTUGUESE_STOP_WORDS = new Set([
   "esta", "está", "estao", "estão", "estou",
   "favor", "por favor", "gostaria", "queria", "saber",
   "verificar", "perguntar", "dizer", "falar", "responder"
+]);
+
+const GENERIC_COMMON_WORDS = new Set([
+  "horario", "horarios", "quarto", "quartos", "flat", "flats", "apartamento", "apto",
+  "hotel", "reserva", "reservas", "dia", "dias", "hoje", "valor", "valores", "preco",
+  "precos", "informacao", "informacoes", "duvida", "duvidas", "posso", "pode", "saber",
+  "fazer", "tem", "temos", "qual", "quais", "como", "onde", "quando"
 ]);
 
 // ── Motor de Treinamento Inteligente, Calibração de Tom e Modo Desenvolvedor ──
@@ -3766,6 +3775,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const gTokens = gNorm.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
 
       const commonTokens = qTokens.filter(t => gTokens.includes(t));
+      const nonGenericCommon = commonTokens.filter(t => !GENERIC_COMMON_WORDS.has(t));
 
       let origQMatch = false;
       if (g.question) {
@@ -3777,9 +3787,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         }
       }
 
-      const isSingleKeywordMatch = commonTokens.length === 1 && (qTokens.length <= 2 || commonTokens[0].length >= 4);
+      const isSpecificMatch = nonGenericCommon.length >= 2 || origQMatch || (nonGenericCommon.length === 1 && (qTokens.length <= 2 || nonGenericCommon[0].length >= 4));
 
-      if (commonTokens.length >= 2 || origQMatch || isSingleKeywordMatch) {
+      if (isSpecificMatch) {
         return ret(`${greetingSalutation} ${g.text}`);
       }
     }

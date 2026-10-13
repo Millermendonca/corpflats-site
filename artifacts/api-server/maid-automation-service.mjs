@@ -30,23 +30,25 @@ _Se você ainda estiver realizando a limpeza, desconsidere este aviso._ Muito ob
   {
     id: "trigger_daily_summary",
     name: "Resumo Diário de Produtividade (18:00)",
-    description: "Envia diariamente às 18:00 um balanço das atividades: quartos limpos, tempo médio e total acumulado na quinzena.",
+    description: "Envia diariamente às 18:00 um balanço das atividades: quartos limpos, tempo médio e demonstrativo financeiro da quinzena.",
     enabled: true,
     timing: "daily_time",
     scheduledTime: "18:00",
     lastExecutedDate: null,
     template: `📊 *Resumo do seu Dia de Trabalho • CorpFlats* 🧹
 
-Boa tarde, *{{nome_camareira}}*!
+Olá, *{{nome_camareira}}*!
 Aqui está o balanço das suas atividades de hoje (*{{data_hoje}}*):
 
 ✅ *Quartos limpos hoje:* {{qtd_quartos_hoje}}
 🚪 *Quartos:* {{lista_quartos_hoje}}
 ⏱️ *Tempo médio por quarto:* {{tempo_medio_hoje}} min
 
-📈 *Acumulado da Quinzena ({{periodo_quinzena}}):*
+📈 *Demonstrativo da Quinzena ({{periodo_quinzena}}):*
 • Total de quartos concluídos: *{{total_quartos_quinzena}}*
-• Total a receber acumulado: *{{total_valor_quinzena}}*
+• Produção bruta acumulada: *{{bruto_quinzena}}*
+• Vales concedidos: *− {{vales_quinzena}}*
+💰 *Saldo líquido a receber:* *{{saldo_liquido_quinzena}}*
 
 Muito obrigado por sua dedicação e excelência diária! Tenha um ótimo descanso! 🌟`
   },
@@ -65,13 +67,15 @@ Olá, *{{nome_camareira}}*! Segue o seu demonstrativo consolidado de governança
 📅 *Período:* {{periodo_quinzena}}
 🧹 *Total de Quartos Higienizados:* {{total_quartos_quinzena}}
 💵 *Valor por Quarto:* {{valor_por_quarto}}
-💰 *TOTAL A RECEBER:* *{{total_valor_quinzena}}*
+📈 *Produção Bruta:* {{bruto_quinzena}}
+🎫 *Vales Concedidos:* − {{vales_quinzena}}
+💰 *LÍQUIDO EFETIVO A RECEBER:* *{{saldo_liquido_quinzena}}*
 🔑 *Chave PIX Cadastrada:* {{chave_pix}}
 
 📋 *Detalhamento por Dia:*
 {{detalhamento_dias}}
 
-Por favor, confira os quartos acima. Caso haja qualquer divergência, avise a administração. Parabéns e obrigado pelo excelente trabalho nesta quinzena! 👏✨`
+Por favor, confira os quartos acima. Caso haja qualquer divergência, avise a administração. O pagamento líquido será processado via PIX. Parabéns e obrigado pelo excelente trabalho nesta quinzena! 👏✨`
   }
 ];
 
@@ -114,6 +118,214 @@ export function formatCurrency(amount) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+export function generatePaymentId() {
+  return `pay_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+}
+
+export function getExecutionDateStr(isoString) {
+  if (!isoString) return getBrasiliaNow().date;
+  const str = String(isoString).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+  try {
+    const offset = Number(global.__simulatedTimeOffsetMs || 0);
+    const d = new Date(new Date(str).getTime() + offset);
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(d);
+  } catch {
+    return str.substring(0, 10);
+  }
+}
+
+export function matchesPeriod(entry, payment, startD, endD) {
+  if (payment && payment.referencePeriod) {
+    const [refStart, refEnd] = payment.referencePeriod.split("_");
+    if (refStart === startD && refEnd === endD) return true;
+    if (startD <= refStart && endD >= refEnd) return true;
+    if (refEnd < startD || refStart > endD) return false;
+  }
+  const d = entry.entryDate || (entry.createdAt ? getExecutionDateStr(entry.createdAt) : "");
+  if (!d) return false;
+
+  // Se o pagamento for no dia seguinte ao fechamento oficial (ex: dia 16 após dia 15, ou dia 01 após fim de mês)
+  const [ey, em, ed] = endD.split("-").map(Number);
+  const nextDay = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().substring(0, 10);
+  if (d === nextDay && (payment ? payment.type === "payment" : entry.description?.toLowerCase().includes("pagamento"))) {
+    return true;
+  }
+
+  if (d < startD || d > endD) return false;
+  return true;
+}
+
+// ── Sincronização Canônica de Diárias Concluídas no Extrato ──────────────────
+
+export function syncMaidCredits(db, userId) {
+  if (!db) return;
+  if (!db.maidPayments) db.maidPayments = [];
+  if (!db.maidStatementEntries) db.maidStatementEntries = [];
+
+  const user = (db.users || []).find(u => u.id === userId);
+  if (!user) return;
+
+  const defaultRate = Number(db.cleaningRates?.defaultRatePerRoom || 22.50);
+  const userRate = db.cleaningRates?.userRates?.[userId] !== undefined
+    ? Number(db.cleaningRates.userRates[userId])
+    : defaultRate;
+
+  const cleanings = (db.cleaningRequests || []).filter(r => {
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
+    return r.assignedUserId === userId;
+  });
+
+  const existingCreditRefs = new Set(
+    db.maidStatementEntries
+      .filter(e => e.userId === userId && e.entryType === "credit" && e.cleaningRequestId)
+      .map(e => e.cleaningRequestId)
+  );
+
+  let newEntries = [];
+  for (const cleaning of cleanings) {
+    if (existingCreditRefs.has(cleaning.id)) continue;
+
+    const flat = (db.flats || []).find(f => f.id === cleaning.flatId);
+    const flatNum = flat ? flat.number : (cleaning.flatNumber || String(cleaning.flatId));
+    const entryDate = cleaning.completedAt
+      ? getExecutionDateStr(cleaning.completedAt)
+      : (cleaning.effectiveDate || cleaning.requestDate);
+
+    // Se existe uma entrada legada sem cleaningRequestId para o mesmo flat e data da camareira, vincula
+    const legacyEntry = db.maidStatementEntries.find(
+      e => !e.cleaningRequestId && e.userId === userId && e.entryType === "credit" && e.entryDate === entryDate && e.description === `Diária — Flat ${flatNum}`
+    );
+    if (legacyEntry) {
+      legacyEntry.cleaningRequestId = cleaning.id;
+      existingCreditRefs.add(cleaning.id);
+      continue;
+    }
+
+    newEntries.push({
+      id: generatePaymentId(),
+      userId,
+      cleaningRequestId: cleaning.id,
+      paymentId: null,
+      entryType: "credit",
+      amount: userRate,
+      description: `Diária — Flat ${flatNum}`,
+      entryDate,
+      createdAt: new Date().toISOString(),
+    });
+    existingCreditRefs.add(cleaning.id);
+  }
+
+  if (newEntries.length > 0) {
+    newEntries.sort((a, b) => (a.entryDate || "").localeCompare(b.entryDate || ""));
+    db.maidStatementEntries.push(...newEntries);
+  }
+}
+
+// ── Motor Financeiro Canônico de Quinzena ────────────────────────────────────
+
+export function getMaidPeriodFinances(db, userId, startDate = null, endDate = null) {
+  syncMaidCredits(db, userId);
+
+  const bNow = getBrasiliaNow();
+  let startD = startDate;
+  let endD = endDate;
+
+  if (!startD || !endD) {
+    const todayStr = bNow.date;
+    const [year, month, day] = todayStr.split("-").map(Number);
+    const isFirstHalf = day <= 15;
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+    startD = isFirstHalf 
+      ? `${year}-${String(month).padStart(2, "0")}-01` 
+      : `${year}-${String(month).padStart(2, "0")}-16`;
+    endD = isFirstHalf 
+      ? `${year}-${String(month).padStart(2, "0")}-15` 
+      : `${year}-${String(month).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
+  }
+
+  // 1. Limpezas válidas no período
+  const defaultRate = Number(db?.cleaningRates?.defaultRatePerRoom || 22.50);
+  const userRate = db?.cleaningRates?.userRates?.[userId] !== undefined
+    ? Number(db.cleaningRates.userRates[userId])
+    : defaultRate;
+
+  const cleanings = (db?.cleaningRequests || []).filter(r => {
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
+    if (r.assignedUserId !== userId) return false;
+    const effectiveDate = r.completedAt ? getExecutionDateStr(r.completedAt) : (r.effectiveDate || r.requestDate);
+    return effectiveDate >= startD && effectiveDate <= endD;
+  });
+
+  const cleaningsCount = cleanings.length;
+  const grossAmount = Number((cleaningsCount * userRate).toFixed(2));
+
+  // 2. Saldo devedor de quinzenas anteriores (transporte de conta-corrente negativa)
+  const priorEntries = (db?.maidStatementEntries || []).filter(e => {
+    if (e.userId !== userId) return false;
+    const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (payment && payment.referencePeriod) {
+      const [refStart] = payment.referencePeriod.split("_");
+      if (refStart >= startD) return false;
+      return true;
+    }
+    const d = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
+    return d < startD;
+  });
+
+  let priorBalance = 0;
+  for (const e of priorEntries) {
+    if (e.entryType === "credit") {
+      priorBalance += Number(e.amount || 0);
+    } else {
+      priorBalance -= Number(e.amount || 0);
+    }
+  }
+  priorBalance = Number(priorBalance.toFixed(2));
+  const previousDebitBalance = priorBalance < 0 ? Math.abs(priorBalance) : 0;
+
+  // 3. Vales e Adiantamentos concedidos no período
+  const userVales = (db?.maidStatementEntries || []).filter(e => {
+    if (e.userId !== userId || e.entryType !== "debit") return false;
+    const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (!matchesPeriod(e, payment, startD, endD)) return false;
+    return payment ? payment.type === "advance" : (e.description?.toLowerCase().includes("vale") || e.description?.toLowerCase().includes("adiantamento"));
+  });
+  const advancesAmount = Number(userVales.reduce((acc, v) => acc + Number(v.amount || 0), 0).toFixed(2));
+
+  // 4. Pagamentos de quitação no período
+  const userPayments = (db?.maidStatementEntries || []).filter(e => {
+    if (e.userId !== userId || e.entryType !== "debit") return false;
+    const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (payment && payment.type === "advance") return false;
+    if (!matchesPeriod(e, payment, startD, endD)) return false;
+    return payment ? payment.type === "payment" : true;
+  });
+  const paymentsAmount = Number(userPayments.reduce((acc, p) => acc + Number(p.amount || 0), 0).toFixed(2));
+
+  // 5. Saldo Líquido Restante / Pendente
+  const rawPending = grossAmount - previousDebitBalance - advancesAmount - paymentsAmount;
+  const netPendingAmount = Number(rawPending.toFixed(2));
+
+  // 6. Saldo Vitalício Contábil
+  const allUserEntries = (db?.maidStatementEntries || []).filter(e => e.userId === userId);
+  const lifetimeBalance = Number(
+    allUserEntries.reduce((sum, e) => e.entryType === "credit" ? sum + Number(e.amount || 0) : sum - Number(e.amount || 0), 0).toFixed(2)
+  );
+
+  return {
+    cleaningsCount,
+    grossAmount,
+    previousDebitBalance,
+    advancesAmount,
+    paymentsAmount,
+    netPendingAmount,
+    lifetimeBalance
+  };
+}
+
 // ── Estatísticas da Camareira ────────────────────────────────────────────────
 
 export function getMaidStats(db, maidUserId, targetDateStr = null) {
@@ -136,9 +348,9 @@ export function getMaidStats(db, maidUserId, targetDateStr = null) {
 
   // Limpezas de Hoje da Camareira
   const todayCleanings = (db.cleaningRequests || []).filter(r => {
-    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     if (r.assignedUserId !== maidUserId) return false;
-    const effectiveDate = r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate;
+    const effectiveDate = r.completedAt ? getExecutionDateStr(r.completedAt) : (r.effectiveDate || r.requestDate);
     return effectiveDate === todayStr;
   });
 
@@ -164,11 +376,14 @@ export function getMaidStats(db, maidUserId, targetDateStr = null) {
   });
   const todayAvgDuration = todayValidDurations > 0 ? Math.round(todayTotalMinutes / todayValidDurations) : 35;
 
-  // Limpezas da Quinzena
+  // Finanças canônicas da Quinzena
+  const finances = getMaidPeriodFinances(db, maidUserId, quinzenaStart, quinzenaEnd);
+
+  // Limpezas da Quinzena (para o agrupamento de dias)
   const quinzenaCleanings = (db.cleaningRequests || []).filter(r => {
-    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     if (r.assignedUserId !== maidUserId) return false;
-    const effectiveDate = r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate;
+    const effectiveDate = r.completedAt ? getExecutionDateStr(r.completedAt) : (r.effectiveDate || r.requestDate);
     return effectiveDate >= quinzenaStart && effectiveDate <= quinzenaEnd;
   });
 
@@ -178,12 +393,10 @@ export function getMaidStats(db, maidUserId, targetDateStr = null) {
     ? Number(db.cleaningRates.userRates[maidUserId])
     : defaultRate;
 
-  const quinzenaTotalValue = quinzenaCleanings.length * userRate;
-
   // Agrupamento por dia para o detalhamento do fechamento
   const cleaningsByDayMap = {};
   quinzenaCleanings.forEach(c => {
-    const d = c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate;
+    const d = c.completedAt ? getExecutionDateStr(c.completedAt) : (c.effectiveDate || c.requestDate);
     const flat = (db.flats || []).find(f => f.id === c.flatId);
     const fNum = flat ? flat.number : (c.flatNumber || String(c.flatId));
     if (!cleaningsByDayMap[d]) cleaningsByDayMap[d] = [];
@@ -212,9 +425,16 @@ export function getMaidStats(db, maidUserId, targetDateStr = null) {
     periodLabel,
     isFirstHalf,
     isClosingDay: day === 15 || day === lastDayOfMonth,
-    quinzenaCount: quinzenaCleanings.length,
+    quinzenaCount: finances.cleaningsCount,
     ratePerRoom: userRate,
-    quinzenaTotalValue,
+    quinzenaTotalValue: finances.grossAmount,
+    grossAmount: finances.grossAmount,
+    previousDebitBalance: finances.previousDebitBalance,
+    advancesAmount: finances.advancesAmount,
+    paymentsAmount: finances.paymentsAmount,
+    netPendingAmount: finances.netPendingAmount,
+    lifetimeBalance: finances.lifetimeBalance,
+    finances,
     dayBreakdown
   };
 }
@@ -230,6 +450,11 @@ export function resolveMaidTemplateTags(templateText, maidUser, stats = {}, extr
   const elapsedMins = extra.elapsedMinutes || extra.durationMinutes || 40;
   const pixKey = maidUser.pixKey?.trim() || "Não informada";
 
+  const gross = stats.grossAmount ?? (stats.finances?.grossAmount ?? stats.quinzenaTotalValue ?? 0);
+  const advances = stats.advancesAmount ?? (stats.finances?.advancesAmount ?? 0);
+  const netPending = stats.netPendingAmount ?? (stats.finances?.netPendingAmount ?? stats.quinzenaTotalValue ?? 0);
+  const prevDebit = stats.previousDebitBalance ?? (stats.finances?.previousDebitBalance ?? 0);
+
   let out = templateText
     .replace(/\{\{nome_camareira\}\}/g, name)
     .replace(/\{\{primeiro_nome\}\}/g, firstName)
@@ -243,6 +468,10 @@ export function resolveMaidTemplateTags(templateText, maidUser, stats = {}, extr
     .replace(/\{\{total_quartos_quinzena\}\}/g, String(stats.quinzenaCount ?? 0))
     .replace(/\{\{valor_por_quarto\}\}/g, formatCurrency(stats.ratePerRoom ?? 22.50))
     .replace(/\{\{total_valor_quinzena\}\}/g, formatCurrency(stats.quinzenaTotalValue ?? 0))
+    .replace(/\{\{bruto_quinzena\}\}/g, formatCurrency(gross))
+    .replace(/\{\{vales_quinzena\}\}/g, formatCurrency(advances))
+    .replace(/\{\{saldo_liquido_quinzena\}\}/g, formatCurrency(netPending))
+    .replace(/\{\{saldo_anterior\}\}/g, formatCurrency(prevDebit))
     .replace(/\{\{chave_pix\}\}/g, pixKey)
     .replace(/\{\{detalhamento_dias\}\}/g, stats.dayBreakdown || "• Sem diárias no período.")
     .replace(/\{\{nome_hotel\}\}/g, "CorpFlats");
@@ -270,8 +499,12 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
       } else {
         // Garante que todos os 3 triggers existam caso novos tenham sido criados
         for (const defTrig of DEFAULT_MAID_TRIGGERS) {
-          if (!db.maidAutomationConfig.triggers.some(t => t.id === defTrig.id)) {
+          const existing = db.maidAutomationConfig.triggers.find(t => t.id === defTrig.id);
+          if (!existing) {
             db.maidAutomationConfig.triggers.push(JSON.parse(JSON.stringify(defTrig)));
+            saveDatabase();
+          } else if (existing.template && !existing.template.includes("saldo_liquido_quinzena")) {
+            existing.template = defTrig.template;
             saveDatabase();
           }
         }
@@ -625,9 +858,16 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
       const [tDailyHour, tDailyMin] = targetDailyTime.split(":").map(Number);
       const isPastOrAtDailyTime = (bNow.hour > tDailyHour) || (bNow.hour === tDailyHour && bNow.minute >= tDailyMin);
 
+      // Suprime o resumo diário se for dia de fechamento oficial e o fechamento quinzenal estiver habilitado/executado hoje
+      const shouldSuppressDaily = isClosingDay && (closingTrigger?.enabled || closingTrigger?.lastExecutedDate === bNow.date);
+
       if (dailyTrigger && dailyTrigger.enabled && isPastOrAtDailyTime && dailyTrigger.lastExecutedDate !== bNow.date) {
         dailyTrigger.lastExecutedDate = bNow.date;
-        console.log(`[Auto-Limpeza WhatsApp] Executando RESUMO DIÁRIO para camareiras (${bNow.date} às ${bNow.timeStr})...`);
+        if (shouldSuppressDaily) {
+          console.log(`[Auto-Limpeza WhatsApp] Suprimindo disparo de trigger_daily_summary (${bNow.date}) pois hoje é dia de fechamento quinzenal oficial.`);
+          saveDatabase();
+        } else {
+          console.log(`[Auto-Limpeza WhatsApp] Executando RESUMO DIÁRIO para camareiras (${bNow.date} às ${bNow.timeStr})...`);
 
         const maids = (db.users || []).filter(u => 
           (u.role === "camareira" || u.role === "cleaner") && 
@@ -668,6 +908,7 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
 
         if (config.history.length > 100) config.history = config.history.slice(0, 100);
         saveDatabase();
+        }
       }
 
     } catch (err) {
