@@ -1,50 +1,72 @@
-## 2026-10-11T02:01:56Z
-Você é o Worker de Implementação do Milestone M2 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O relatório de exploração técnica de IA é:
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\analysis.md
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\handoff.md
+## 2026-10-13T22:48:50Z
+You are the Milestone 2 Implementation Worker for the Guest-Flow-Manager WebBookingPro Integration.
+Your dedicated working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2`
 
-MANDATORY INTEGRITY WARNING:
 DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-Arquivos de sua propriedade exclusiva:
-- `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs` (manter paridade 100% byte-a-byte idêntica)
-- `tests/whatsapp-ai-agent.test.mjs`
+Read these authoritative documents before starting:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\spec_miner_sebrae\handoff.md` and `analysis.md`
+5. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_codebase\handoff.md` and `analysis.md`
 
-Missão de Implementação do Milestone M2:
-1. R4: IA com Function Calling Adaptativo & Fallback Gracioso:
-   - Em `whatsapp-ai-service.mjs`:
-     a. Ler `db.botActionsSettings` para obter `apiActionsEnabled` e `allowedActions`.
-     b. Função `buildGeminiTools(actionsSettings)`:
-        - Se `!actionsSettings.apiActionsEnabled`: retorna array vazio `tools: []`. O prompt do sistema instrui a responder dúvidas institucionais, localização, comodidades e políticas, e orienta que não possui acesso a operações do sistema no momento, transferindo solicitações de reserva, cotação e pagamento cordialmente para a equipe humana da recepção.
-        - Se `actionsSettings.apiActionsEnabled === true`: constrói declarações de função apenas para as ações marcadas como ativas em `allowedActions` (`checkAvailability`, `calculateQuote`, `generatePayment`, `createPreReservation`, `commitReservation`), com parâmetros e descrições estruturados.
-     c. Loop Multi-Turn de Execução de Ferramentas:
-        - Se a resposta do Gemini contiver `functionCall`:
-          - Extrair nome da função e argumentos.
-          - Executar o controlador interno correspondente (`executeBotAction` ou chamando as rotas/funções de `demo-server.mjs`).
-          - Se a ação estiver desativada ou falhar: retornar objeto com `error: "ACTION_DISABLED"` e `requiresHandover: true`.
-          - Anexar as partes ao histórico (`model` functionCall e `function` functionResponse) e chamar o Turno 2 do Gemini para gerar uma resposta acolhedora e conversacional em português para o WhatsApp.
-     d. Proteção Anti-Crash e Fallback:
-        - `AbortSignal.timeout(8000)`, `try/catch` global que preserva o fallback heurístico local (`generateHeuristicResponse`) sem gerar erro 500 nem travar o servidor.
-2. Reconciliação e Paridade:
-   - Sincronize e corrija a divergência identificada pelo Explorer 2 no import de `DEFAULT_TEST_ALLOWED_PHONES` entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`.
-   - Certifique-se de que `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs` possuem hash SHA-256 rigorosamente idêntico.
-3. Testes Automatizados:
-   - Em `tests/whatsapp-ai-agent.test.mjs`:
-     - Remova o `process.exit(0)` em `after()` que mascarava testes assíncronos.
-     - Adicione testes validando:
-       1. Com chave mestra desativada: Gemini é chamado com `tools: []` e mensagem orienta transbordo humano.
-       2. Com chave mestra ativada: apenas ferramentas autorizadas são enviadas em `tools`.
-       3. Fluxo multi-turn de function call simulado respondendo com os dados formatados.
-       4. Transbordo cordial quando uma ação específica está desativada.
-       5. Paridade SHA-256 byte-a-byte idêntica dos arquivos gêmeos.
-   - Execute `node --test tests/whatsapp-ai-agent.test.mjs` e garanta 100% de aprovação (zero falhas).
-   - Também revalide `node --test tests/tariff-engine.test.mjs` e `node --test tests/bot-actions-api.test.mjs` para garantir zero regressão.
-4. Git commit e push para `origin main` conforme regras do projeto.
+Your Scope (Milestone 2: Canonical Availability & SEBRAE Pricing Engine with Locks):
+1. Canonical Availability Engine:
+   - Implement `artifacts/api-server/wbp/availability.mjs` and mirror byte-for-byte in `scripts/wbp/availability.mjs`.
+   - Implement `calculateCanonicalAvailability(startDate, endDate, options)` resolving the 4 divergent calculations in the legacy codebase across the 19 flats.
+   - Accurately account for: active reservations, roomBlocks, active non-expired holds/pre-reservations, and maintenance OS that block flats.
+   - Provide non-blocking conflict warnings for reservation creation/movement routes in `demo-server.mjs`.
+2. SEBRAE Pricing Engine:
+   - Implement `artifacts/api-server/wbp/pricing.mjs` and mirror byte-for-byte in `scripts/wbp/pricing.mjs`.
+   - Implement exact SEBRAE math:
+     - Fixed cost per sold unit = 38,906.61 / (19 * 31 * 0.65) = R$ 101.62.
+     - Variable costs: cleaning R$ 23.25 + linen R$ 15.51 + energy/water R$ 9.00 = R$ 47.76 (R$/day commission removed!).
+     - Total UH cost = R$ 149.38.
+     - Tarifa Mínima = 149.38 / (1 - 0.15 comissão - 0.25 margem - 0.06 imposto Simples/ISS) = R$ 276.63 (± R$ 0.05).
+     - Analytical decomposition: Custo R$ 149.38 + Comissão R$ 41.49 + Margem R$ 69.16 + Imposto R$ 16.60 = R$ 276.63, closing 100% with zero residue.
+     - Historical occupancy-based seasonality with manual override.
+3. Pricing Safety Locks:
+   - Floor lock: reject/block sending any rate below `max(tarifaMinima, pisoManual)`.
+   - Variation lock (30% default): changes >30% compared to the last sent rate are automatically retained and require explicit confirmation.
+   - Staged publication: configuration, cost, and rate changes remain in draft/staged state until previewed and published.
+4. Breakfast Surcharge:
+   - "Sem café" = base rate.
+   - "Com café" = "Sem café" + surcharge per guest per night (e.g. R$ 25/guest), correctly populated in `rate`, `rdef_single`, and `adult_3`.
+5. Twin Files Parity & Integration:
+   - Mount new availability and pricing functions/endpoints in `artifacts/api-server/demo-server.mjs` and mirror byte-for-byte in `scripts/demo-server.mjs`.
+   - Ensure 100% SHA-256 byte-by-byte parity across all twin file pairs.
+6. Targeted Tests:
+   - Create `tests/wbp-integration/m2-availability-pricing.test.mjs` and run exclusively via `node --test tests/wbp-integration/m2-availability-pricing.test.mjs` with `DATABASE_URL` unset.
+   - Verify: availability across all 4 conflict scenarios, exact SEBRAE math (149.38 -> 276.63 closing 100%), breakfast surcharge mapping, and the 3 safety locks. (NEVER run global sweeps!).
+7. Git & Commit:
+   - Verify `git branch --show-current` is `feature/wbp-integration`.
+   - Commit and `git push` to `origin feature/wbp-integration`.
 
-Ao concluir e validar com 100% de sucesso, escreva seu relatório de handoff em:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`
-E envie mensagem com o resumo para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+## 2026-10-13T22:50:35Z
+**Context**: ALERTA MANDATÓRIO DE RISCO OPERACIONAL PARA O MARCO 2.
+**Content**:
+O usuário determinou diretrizes obrigatórias de NÃO-REGRESSÃO para o Marco 2:
+1. O motor de tarifas legado (`calculateDailyRate`, `getTariffSettings`, `calculateSebraeSustainableRate`, `db.tariffSettings`/`tariffOverrides`) é usado pelo motor de direct-booking do site, cotações do bot (`/api/bot-actions/quote`), tela de Tarifas e criação manual de reservas.
+2. A nova precificação SEBRAE (custos corrigidos, 6% de imposto, sazonalidade por ocupação etc.) NÃO PODE alterar os preços calculados pelo site, bot e reservas manuais enquanto a nova tarifa não for ativada explicitamente pelo administrador (via pré-visualização + "Publicar" ou flag própria). Os valores e modos existentes de `db.tariffSettings` devem ser preservados intactos, sem migração destrutiva.
+3. O cálculo canônico de disponibilidade alimenta o ARI e as telas internas. Nas telas atuais de recepção/site/bot, ele só pode ACRESCENTAR avisos claros de conflito, sem bloquear e sem alterar os resultados dos endpoints existentes de disponibilidade para o site/bot.
+4. INCLUIR TESTE PONTUAL DE REGRESSÃO OBRIGATÓRIO em `tests/wbp-integration/m2-availability-pricing.test.mjs`: provar que com a integração desligada e sem publicação, `calculateDailyRate` e `/api/bot-actions/quote` retornam os mesmos valores exatos de antes para as datas, flats e canais existentes.
+**Action**: Implemente M2 cumprindo rigorosamente essas travas de compatibilidade e não-regressão.
+
+## 2026-10-13T23:10:38Z
+**Context**: REVISÃO BLOQUEANTE DO USUÁRIO/ORQUESTRADOR-PAI SOBRE tests/wbp-integration/m2-availability-pricing.test.mjs.
+**Content**:
+ATENÇÃO: Instrução mandatória e bloqueante para o Marco 2 antes de qualquer gate:
+1. **ISOLAMENTO DO TESTE (Crítico)**:
+   - Imports ESM estáticos são içados (hoisted); qualquer manipulação de `process.env` feita no corpo do arquivo de teste ocorre DEPOIS de `demo-server.mjs` ter sido carregado e avaliado.
+   - O teste DEVE garantir `delete process.env.DATABASE_URL`, `process.env.DATA_FILE = cópia em os.tmpdir()` e `process.env.NODE_ENV = 'test'` rigorosamente ANTES de qualquer import do servidor (use `await import(...)` dinâmico ou spawne servidor isolado em porta dedicada como em `tests/tariff-engine.test.mjs`).
+   - O teste deve incluir asserção explícita provando que o banco em uso é a cópia temporária e que o `data/database.json` real não teve mtime nem hash alterados.
+2. **NÃO-REGRESSÃO COM VALORES-OURO REAIS**:
+   - Não use proporções aproximadas.
+   - Extraia a versão legada de `demo-server.mjs` de `0501d02` (`git show 0501d02:artifacts/api-server/demo-server.mjs` em arquivo temporário sobre a mesma cópia do banco) e compare o resultado exato de `calculateDailyRate` entre a versão legada e a branch ativa (com integração desligada/não publicada) para múltiplos flats, dias úteis, finais de semana, alta/baixa temporada, canais `direct`, `booking`, `airbnb` e com/sem overrides P1-P4.
+3. **COTAÇÃO BOT E SITE**:
+   - Compare os resultados reais da rota `/api/bot-actions/quote` e do endpoint de direct-booking entre legado e branch com integração desligada.
+4. **REGRAS AGENTS.md**:
+   - Execute EXCLUSIVAMENTE esse arquivo de teste pontual.
+**Action**: Ajuste imediatamente o teste e a implementação conforme essas 4 regras. Ao concluir, reporte as linhas alteradas e o resultado da execução.

@@ -141,6 +141,20 @@ import {
 import { createWbpCallbackRouter } from "./wbp/callbacks.mjs";
 import { getIntegrationMode, isWbpEnabled, setIntegrationMode, WBP_MODES } from "./wbp/config.mjs";
 import { defaultStorage as wbpStorage } from "./wbp/storage.mjs";
+import {
+  calculateCanonicalAvailability,
+  checkReservationConflicts,
+  getCanonicalFlats,
+  CORPFLATS_19_FLATS
+} from "./wbp/availability.mjs";
+import {
+  calculateSebraeRate,
+  calculateHistoricalSeasonality,
+  applyPricingLocks,
+  calculateRatePlanPrices,
+  WbpPricingManager,
+  DEFAULT_SEBRAE_CONFIG
+} from "./wbp/pricing.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -297,31 +311,6 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 app.use(serverMonitorMiddleware);
-
-// ── WebBookingPro (WBP) Channel Manager Callbacks & Mode Endpoints ───────────
-if (pgPool) {
-  wbpStorage.pgPool = pgPool;
-}
-app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage }));
-
-app.get("/api/wbp/mode", (req, res) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.json({
-    mode: getIntegrationMode(db),
-    enabled: isWbpEnabled(db)
-  });
-});
-
-app.post("/api/wbp/mode", (req, res) => {
-  const { mode } = req.body || {};
-  try {
-    const updated = setIntegrationMode(mode, db);
-    saveDatabase();
-    res.json({ success: true, mode: updated });
-  } catch (err) {
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
 
 app.use("/api/storage/files", express.static(UPLOADS_DIR));
 app.use("/storage/files", express.static(UPLOADS_DIR));
@@ -756,6 +745,191 @@ let db = {
   },
   siteConfig: null
 };
+
+// ── WebBookingPro (WBP) Channel Manager Callbacks, Mode, Availability & Pricing ───────────
+if (pgPool) {
+  wbpStorage.pgPool = pgPool;
+}
+app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage }));
+
+app.get("/api/wbp/mode", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.json({
+    mode: getIntegrationMode(db),
+    enabled: isWbpEnabled(db)
+  });
+});
+
+app.post("/api/wbp/mode", (req, res) => {
+  const { mode } = req.body || {};
+  try {
+    const updated = setIntegrationMode(mode, db);
+    saveDatabase();
+    res.json({ success: true, mode: updated });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/wbp/availability", (req, res) => {
+  try {
+    const { startDate, endDate, ceiling, excludeReservationId } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: "startDate e endDate são obrigatórios (formato YYYY-MM-DD)." });
+    }
+    const availabilityMap = calculateCanonicalAvailability(startDate, endDate, {
+      db,
+      ceiling: ceiling ? Number(ceiling) : null,
+      excludeReservationId
+    });
+    res.json({
+      success: true,
+      startDate,
+      endDate,
+      totalFlats: availabilityMap.totalFlats,
+      minAvailable: availabilityMap.minAvailable,
+      daily: availabilityMap.daily,
+      availability: Object.fromEntries(availabilityMap.entries())
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/conflicts/check", (req, res) => {
+  try {
+    const { flatId, flatNumber, checkinDate, checkoutDate, excludeReservationId, excludePendingHoldReservationId } = req.body || {};
+    if (!checkinDate || !checkoutDate) {
+      return res.status(400).json({ error: "checkinDate e checkoutDate são obrigatórios." });
+    }
+    const conflictResult = checkReservationConflicts({
+      flatId,
+      flatNumber,
+      checkinDate,
+      checkoutDate,
+      excludeReservationId,
+      excludePendingHoldReservationId,
+      db
+    });
+    res.json({
+      success: true,
+      ...conflictResult
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/wbp/pricing/settings", (req, res) => {
+  try {
+    const state = WbpPricingManager.getPricingState(db);
+    const sebrae = calculateSebraeRate(state.settings);
+    res.json({
+      success: true,
+      settings: state.settings,
+      status: state.status,
+      lastPublishedAt: state.lastPublishedAt,
+      sebraeRate: sebrae
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/pricing/settings", (req, res) => {
+  try {
+    const newSettings = req.body || {};
+    const updated = WbpPricingManager.updateSettings(newSettings, db);
+    saveDatabase("wbp_pricing_settings_update");
+    res.json({
+      success: true,
+      settings: updated,
+      status: "staged"
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/pricing/calculate", (req, res) => {
+  try {
+    const params = req.body || {};
+    const calculated = calculateSebraeRate(params);
+    res.json({
+      success: true,
+      calculated
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/wbp/pricing/preview", (req, res) => {
+  try {
+    const startDate = req.query.startDate || getTodayStr();
+    let endDate = req.query.endDate;
+    if (!endDate) {
+      const nextMonth = new Date(startDate + "T12:00:00Z");
+      nextMonth.setUTCDate(nextMonth.getUTCDate() + 60);
+      endDate = nextMonth.toISOString().substring(0, 10);
+    }
+    const availabilityMap = calculateCanonicalAvailability(startDate, endDate, { db });
+    const preview = WbpPricingManager.generatePreview(startDate, endDate, db, availabilityMap);
+    res.json({
+      success: true,
+      startDate,
+      endDate,
+      ...preview
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/pricing/confirm-variation", (req, res) => {
+  try {
+    const { date, planId } = req.body || {};
+    if (!date || !planId) {
+      return res.status(400).json({ error: "date e planId são obrigatórios." });
+    }
+    WbpPricingManager.confirmVariation(date, planId, db);
+    saveDatabase("wbp_confirm_variation");
+    res.json({ success: true, date, planId, confirmed: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/pricing/discard-variation", (req, res) => {
+  try {
+    const { date, planId, discardAll } = req.body || {};
+    if (discardAll) {
+      WbpPricingManager.discardAll(db);
+    } else if (date && planId) {
+      WbpPricingManager.discardVariation(date, planId, db);
+    } else {
+      return res.status(400).json({ error: "date e planId ou discardAll são obrigatórios." });
+    }
+    saveDatabase("wbp_discard_variation");
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/pricing/publish", (req, res) => {
+  try {
+    const { startDate, endDate, user = "admin" } = req.body || {};
+    const result = WbpPricingManager.publish(db, startDate, endDate, user);
+    saveDatabase("wbp_pricing_published");
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const DEFAULT_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
 • Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
@@ -14319,6 +14493,22 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
+  // ── WBP Canonical Conflict Warning (Non-blocking) ───────────────────────────
+  try {
+    const conflictResult = checkReservationConflicts({
+      flatId: newReservation.flatId,
+      flatNumber: newReservation.flatNumber,
+      checkinDate: newReservation.checkinDate,
+      checkoutDate: newReservation.checkoutDate,
+      excludeReservationId: newReservation.id,
+      db
+    });
+    if (conflictResult.hasConflict) {
+      newReservation.conflictWarning = conflictResult.summaryMessage;
+      newReservation.conflictDetails = conflictResult.conflicts;
+    }
+  } catch (_) {}
+
   res.status(201).json(newReservation);
 });
 
@@ -15993,6 +16183,22 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       console.warn("[PMS] Erro ao sincronizar limpeza no checkin na edição:", cleanSyncErr.message);
     }
   }
+
+  // ── WBP Canonical Conflict Warning (Non-blocking) ───────────────────────────
+  try {
+    const conflictResult = checkReservationConflicts({
+      flatId: r.flatId,
+      flatNumber: r.flatNumber,
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      excludeReservationId: r.id,
+      db
+    });
+    if (conflictResult.hasConflict) {
+      r.conflictWarning = conflictResult.summaryMessage;
+      r.conflictDetails = conflictResult.conflicts;
+    }
+  } catch (_) {}
 
   res.json(r);
 });
@@ -35295,4 +35501,17 @@ httpServer.on("error", (err) => {
   console.error("[HTTP Server Error]", err?.message || err);
 });
 
-export { app, httpServer };
+export {
+  app,
+  httpServer,
+  calculateCanonicalAvailability,
+  checkReservationConflicts,
+  getCanonicalFlats,
+  CORPFLATS_19_FLATS,
+  calculateSebraeRate,
+  calculateHistoricalSeasonality,
+  applyPricingLocks,
+  calculateRatePlanPrices,
+  WbpPricingManager,
+  DEFAULT_SEBRAE_CONFIG
+};
