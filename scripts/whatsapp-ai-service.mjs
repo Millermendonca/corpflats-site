@@ -566,6 +566,7 @@ export async function querySystemData(db, {
           airConditionerType: f.airConditionerType || (f.tags?.some(t => /split/i.test(t)) ? "split" : "janela"),
           bedType: f.bedType || (f.tags?.some(t => /casal/i.test(t)) ? "casal" : "solteiro"),
           hasMicrowave: Boolean(f.hasMicrowave || f.tags?.some(t => /micro/i.test(t))),
+          amenities: Array.isArray(f.amenities) ? f.amenities : (Array.isArray(f.features) ? f.features : []),
           tags: Array.isArray(f.tags) ? f.tags : [],
           cleaningStatus: latestClean?.status || (f.isOccupied ? "occupied" : "clean"),
           maintenanceStatus: activeSO.length > 0 ? "em_manutencao" : "normal",
@@ -676,6 +677,7 @@ export async function querySystemData(db, {
 
     case "cleaning": {
       const cleaningReqs = Array.isArray(db?.cleaningRequests) ? db.cleaningRequests : [];
+      const surveys = Array.isArray(db?.surveys) ? db.surveys : [];
       let list = cleaningReqs;
 
       if (query) {
@@ -706,11 +708,25 @@ export async function querySystemData(db, {
         };
       });
 
+      const sanitizedSurveys = surveys
+        .filter(s => requesterRole === "admin" || s.active !== false)
+        .map(s => {
+          if (requesterRole === "admin") return { ...s };
+          return {
+            id: s.id,
+            title: s.title,
+            active: s.active,
+            targetFlatIds: s.targetFlatIds || []
+          };
+        });
+
       return {
         success: true,
         module: "cleaning",
         count: sanitized.length,
-        cleaningRequests: sanitized
+        cleaningRequests: sanitized,
+        surveysCount: sanitizedSurveys.length,
+        vistorias: sanitizedSurveys
       };
     }
 
@@ -5394,6 +5410,19 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingSalutation} 🛠️ Lamentamos pelo inconveniente! Já registrei o chamado de manutenção para a nossa equipe técnica e recepção cuidarem do conserto com prioridade. Se puder nos dar mais detalhes do problema e o número do seu flat, agilizaremos o atendimento imediatamente! 🛎️✨`);
   }
 
+  // 3.3 Regras Gerais do Condomínio, Silêncio, Visitas e Convivência
+  if (/(?:regras?|normas?|condom[ií]nio|regulamento|sil[eê]ncio|barulho|visitas?|receber\s+visita|visitante)/i.test(text)) {
+    if (/(?:sil[eê]ncio|barulho|m[uú]sica\s+alta|som\s+alto)/i.test(text)) {
+      return ret(`${greetingSalutation} 🤫 O condomínio Soho Residence preza pelo descanso de todos os hóspedes:\n\n• *Horário de Silêncio:* Das 22:00h às 08:00h.\n• Pedimos manter TV, som e conversas em volume suave nos flats e corredores durante todo o dia, especialmente após as 22h.\n\nContamos com a sua colaboração para uma estadia tranquila! ✨`);
+    }
+
+    if (/(?:visitas?|receber\s+visita|visitante|amigo|familiar)/i.test(text)) {
+      return ret(`${greetingSalutation} 👥 Para a segurança de todos os moradores e hóspedes do condomínio Soho:\n\n• Todas as visitas devem ser informadas com antecedência à recepção/portaria com documento com foto (RG/CPF).\n• A permanência de visitantes para pernoite é restrita à capacidade máxima do flat e sujeita a taxa adicional.\n• As áreas de lazer da cobertura (piscina e academia) são de uso *exclusivo dos hóspedes cadastrados* na reserva (não permitida entrada de visitantes externos).\n\nQualquer dúvida, nossa recepção está à disposição! 🛎️`);
+    }
+
+    return ret(`${greetingSalutation} 📋 Conheça as principais regras e normas de convivência do condomínio Soho Residence:\n\n• *Check-in/Check-out:* Entrada a partir das 14h e saída até as 12h.\n• *Silêncio:* Das 22h às 08h em todos os apartamentos e áreas comuns.\n• *Lazer:* Piscina aquecida e academia na cobertura funcionam diariamente das 06:00 às 22:00 exclusivamente para hóspedes.\n• *Garagem:* 1 vaga rotativa coberta e gratuita por flat (necessário cadastrar placa no Pré-Check-in Digital).\n• *Fumo:* Proibido fumar no interior dos apartamentos (área 100% não fumante).\n• *Pets:* Permitido cães de pequeno porte (até 10kg) mediante prévia autorização e taxa.\n\nEstamos sempre à disposição para tornar sua estadia maravilhosa! 🏨✨`);
+  }
+
   // 4. Localização / Endereço / Onde fica
   if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar|mapa/i.test(text)) {
     return ret(`${greetingSalutation} 📍 Estamos localizados no *${kb.address}*.\n\nLocalização privilegiada no Centro de Campos dos Goytacazes! Se precisar de instruções de rota ou localização no Google Maps, nos avise. 🏨`);
@@ -5527,7 +5556,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 /**
  * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
  */
-export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest" }) {
+export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "" }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
   const candidateModels = [
@@ -5597,7 +5626,14 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
 
       let actionResult;
       try {
-        actionResult = await executeBotAction(db, fnName, { ...fnArgs, requesterRole: fnArgs.requesterRole || requesterRole });
+        // Papel autorizado pelo sistema possui precedência estrita para blindagem contra elevação de privilégio LGPD
+        const authorizedRole = requesterRole || "guest";
+        const effectivePhone = requesterPhone || fnArgs.requesterPhone || "";
+        actionResult = await executeBotAction(db, fnName, {
+          ...fnArgs,
+          requesterRole: authorizedRole,
+          requesterPhone: effectivePhone
+        });
       } catch (actErr) {
         actionResult = {
           error: "ACTION_FAILED",
@@ -5829,7 +5865,9 @@ ${systemActionsNotice}
         prompt: messageText,
         history,
         db,
-        tools
+        tools,
+        requesterRole: "guest",
+        requesterPhone: phone
       });
 
       if (geminiRes.ok && geminiRes.text) {

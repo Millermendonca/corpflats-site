@@ -54,6 +54,7 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
         airConditionerType: "split",
         bedType: "casal",
         hasMicrowave: true,
+        features: ["Wi-Fi 5G", "Smart TV", "Frigobar"],
         isOccupied: true,
         isActive: true
       },
@@ -248,6 +249,9 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
     ],
     users: [
       { id: 1, username: "admin", role: "admin" }
+    ],
+    surveys: [
+      { id: "surv_1", title: "Vistoria de Saída - Itens do Quarto", active: true, targetFlatIds: [1, 2] }
     ]
   });
 
@@ -292,6 +296,9 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
       assert.equal(res.module, "flats");
       assert.ok(res.flats.length >= 2);
       assert.ok(res.flats.every(f => f.airConditionerType === "split"));
+      const flat113 = res.flats.find(f => f.number === "113");
+      assert.ok(Array.isArray(flat113.amenities));
+      assert.ok(flat113.amenities.includes("Wi-Fi 5G"));
     });
 
     it("Módulo reservations: admin recebe dados completos desmascarados", async () => {
@@ -351,6 +358,9 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
       assert.equal(res.cleaningRequests[0].assignedTo, "Grazi");
       assert.equal(res.cleaningRequests[0].assignedUserId, undefined);
       assert.equal(res.cleaningRequests[0].adminNote, undefined);
+      assert.ok(Array.isArray(res.vistorias));
+      assert.equal(res.surveysCount, 1);
+      assert.equal(res.vistorias[0].title, "Vistoria de Saída - Itens do Quarto");
     });
 
     it("Módulo maintenance: admin vê token e CPF de prestador; hóspede não vê", async () => {
@@ -486,6 +496,15 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
       assert.equal(res.success, true);
       assert.equal(res.module, "flats");
     });
+
+    it("bloqueia estritamente acesso a finance quando requesterRole for guest no executeBotAction", async () => {
+      const mockDb = createMockDb();
+      const res = await executeBotAction(mockDb, "querySystemData", {
+        module: "finance",
+        requesterRole: "guest"
+      });
+      assert.equal(res.error, "ACCESS_DENIED");
+    });
   });
 
   // ── 4. Contingência Heurística da Sofia para Operações ──────────────────────
@@ -535,6 +554,37 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
       );
       assert.match(reply, /chamado de manutenção aberto/i);
       assert.match(reply, /Manutenção do Ar-Condicionado/i);
+    });
+
+    it("responde sobre regras gerais do condomínio Soho Residence", () => {
+      const reply = generateHeuristicResponse(
+        "quais as regras gerais do condomínio?",
+        {},
+        undefined,
+        mockDb
+      );
+      assert.match(reply, /regras e normas de convivência|Soho Residence/i);
+      assert.match(reply, /Check-in\/Check-out/i);
+    });
+
+    it("responde sobre horário de silêncio e normas sonoras", () => {
+      const reply = generateHeuristicResponse(
+        "quais as regras de silêncio?",
+        {},
+        undefined,
+        mockDb
+      );
+      assert.match(reply, /22:00h às 08:00h|horário de silêncio/i);
+    });
+
+    it("responde sobre política e autorização de visitas", () => {
+      const reply = generateHeuristicResponse(
+        "posso receber visitas no apartamento?",
+        {},
+        undefined,
+        mockDb
+      );
+      assert.match(reply, /visitas|documento com foto|exclusivo dos hóspedes/i);
     });
   });
 
@@ -643,6 +693,24 @@ describe("Universal System Data Query & Admin Copilot Suite", () => {
       const data = await res.json();
       assert.equal(data.success, true);
       assert.match(data.reply, /Financeiro|Diária Média|Faturamento/i);
+    });
+
+    it("processa pergunta sobre regras, FAQs e amenidades pelo copiloto", async () => {
+      const res = await fetch(`${BASE_URL}/api/admin/copilot/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-admin": "1"
+        },
+        body: JSON.stringify({
+          message: "Quais as regras gerais do condomínio e políticas de Wi-Fi e piscina?"
+        })
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.success, true);
+      assert.match(data.reply, /Regras Gerais|Políticas|Wi-Fi|Piscina/i);
     });
   });
 });

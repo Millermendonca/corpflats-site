@@ -7939,7 +7939,7 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
                        (checkoutTodayRes && !isCheckedOut) ? (checkoutTodayRes.guestName || checkoutTodayRes.title) :
                        isCheckedIn ? (checkinTodayRes.guestName || checkinTodayRes.title) :
                        checkinTodayRes ? (checkinTodayRes.guestName || checkinTodayRes.title) : null;
-  const expectedArrival = checkinTodayRes ? (checkinTodayRes.estimatedArrivalTime || checkinTodayRes.arrivalTime || "14:00") : null;
+  const expectedArrival = checkinTodayRes ? (checkinTodayRes.estimatedArrivalTime || checkinTodayRes.arrivalTime || checkinTodayRes.eta || checkinTodayRes.checkinTime || "14:00") : null;
 
   // 2. Status de Higienização em Tempo Real (Apenas data consultada ou checkout recente)
   const dailyRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []);
@@ -8166,8 +8166,11 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
     if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
       for (const rec of order.notificationRecipients) {
         let shouldNotify = hasEvent(rec.events, action);
-        if (action === "entry_request" && vehicle?.needsGarage && (rec.role === "garage" || /garagem/i.test(rec.name))) {
-          shouldNotify = true;
+        // Se for notificação de liberação de entrada e o destinatário for da garagem, apenas envia se o prestador informou uso de garagem
+        if (action === "entry_request" && (rec.role === "garage" || /garagem/i.test(rec.name))) {
+          if (!vehicle?.needsGarage && !rec.events?.includes("all")) {
+            shouldNotify = false;
+          }
         }
         if (shouldNotify) {
           const cp = cleanWhatsAppPhone ? cleanWhatsAppPhone(rec.phone) : String(rec.phone || "").replace(/\D/g, "");
@@ -8185,6 +8188,28 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       }
       const receptionEmail = db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
       if (receptionEmail) targetEmails.add(receptionEmail);
+    }
+
+    // 1b. Notificar o prestador de serviço diretamente se o serviço estiver atrasado / previsão expirada (Requirement 4)
+    if (action === "overdue_alert") {
+      const workerPhone = worker?.mainWorker?.phone || flat.workerPhone || order.workerPhone;
+      const cleanWp = workerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(workerPhone) : String(workerPhone).replace(/\D/g, "")) : null;
+      if (cleanWp && typeof sendZapiMessage === "function") {
+        const estFinishStr = flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--";
+        const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "http://localhost:3000";
+        const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
+        const workerPromptMsg = [
+          `⚠️ *Aviso de Previsão de Serviço* — Flat *${flat.flatNumber}*`,
+          `Olá, ${workerName}! O serviço *${order.title}* no Flat ${flat.flatNumber} estava previsto para finalizar às *${estFinishStr}* e consta em andamento.`,
+          `Caso precise de mais tempo, por favor acesse o link abaixo para atualizar a nova previsão de término:`,
+          `🔗 ${portalUrl}`
+        ].join("\n");
+        sendZapiMessage(db.zapiConfig, {
+          phone: cleanWp,
+          message: workerPromptMsg,
+          bypassTestMode: true
+        }).catch(err => console.warn(`[ServiceOrder] WhatsApp overdue prompt to worker ${cleanWp} failed:`, err.message));
+      }
     }
 
     if (typeof sendZapiMessage === "function") {
@@ -10919,11 +10944,13 @@ app.post("/api/service-orders", (req, res) => {
     estimatedDurationHours: estimatedDurationHours ? Number(estimatedDurationHours) : null,
     instructionFormat: instructionFormat === "list" ? "list" : "text",
     notificationRecipients: Array.isArray(notificationRecipients) ? notificationRecipients : [],
-    flats: formattedFlats
+    flats: formattedFlats,
+    workerPhone: req.body.workerPhone || req.body.mainWorker?.phone || null
   };
 
   const preWorkerName = String(req.body.workerName || req.body.mainWorker?.name || "").trim();
   const preWorkerCpf = String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "");
+  const preWorkerPhone = String(req.body.workerPhone || req.body.mainWorker?.phone || "").replace(/\D/g, "");
   if (preWorkerName && preWorkerCpf.length === 11) {
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     db.serviceWorkers.push({
@@ -10932,7 +10959,8 @@ app.post("/api/service-orders", (req, res) => {
       token: newOrder.token,
       mainWorker: {
         name: preWorkerName,
-        cpf: preWorkerCpf
+        cpf: preWorkerCpf,
+        phone: preWorkerPhone
       },
       collaborators: [],
       registeredAt: new Date().toISOString()
@@ -10966,7 +10994,8 @@ app.get("/api/service-orders/:id", (req, res) => {
   res.json({
     ...order,
     workerName: worker?.mainWorker?.name || null,
-    workerCpf: worker?.mainWorker?.cpf || null
+    workerCpf: worker?.mainWorker?.cpf || null,
+    workerPhone: worker?.mainWorker?.phone || order.workerPhone || null
   });
 });
 
@@ -10996,6 +11025,7 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (body.estimatedDurationHours !== undefined) order.estimatedDurationHours = body.estimatedDurationHours ? Number(body.estimatedDurationHours) : null;
   if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
   if (body.notificationRecipients !== undefined) order.notificationRecipients = Array.isArray(body.notificationRecipients) ? body.notificationRecipients : [];
+  if (body.workerPhone !== undefined) order.workerPhone = String(body.workerPhone || "").replace(/\D/g, "");
 
   if (Array.isArray(body.flats)) {
     for (const f of body.flats) {
@@ -11025,21 +11055,22 @@ app.patch("/api/service-orders/:id", (req, res) => {
     }
   }
 
-  if (body.mainWorker || body.workerName) {
+  if (body.mainWorker || body.workerName || body.workerPhone) {
     const wName = String(body.workerName || body.mainWorker?.name || "").trim();
     const wCpf = String(body.workerCpf || body.mainWorker?.cpf || "").replace(/\D/g, "");
+    const wPhone = String(body.workerPhone || body.mainWorker?.phone || "").replace(/\D/g, "");
     if (wName && wCpf.length === 11) {
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
       let worker = db.serviceWorkers.find(w => w.token === order.token || w.serviceOrderId === order.id);
       if (worker) {
-        worker.mainWorker = { name: wName, cpf: wCpf };
+        worker.mainWorker = { name: wName, cpf: wCpf, phone: wPhone || worker.mainWorker?.phone || "" };
         worker.registeredAt = new Date().toISOString();
       } else {
         db.serviceWorkers.push({
           id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           serviceOrderId: order.id,
           token: order.token,
-          mainWorker: { name: wName, cpf: wCpf },
+          mainWorker: { name: wName, cpf: wCpf, phone: wPhone },
           collaborators: [],
           registeredAt: new Date().toISOString()
         });
@@ -11153,6 +11184,9 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.photos = [];
   flat.needsCleaning = null;
   flat.wasCleanWhenStarted = null;
+  flat.entryRequested = false;
+  flat.entryRequestedAt = null;
+  flat.delayNotified = false;
 
   saveDatabase("reset_service_flat");
 
@@ -11232,6 +11266,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
     return res.status(400).json({ error: "CPF do prestador principal deve conter 11 dígitos." });
   }
 
+  const cleanPhone = mainWorker.phone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(mainWorker.phone) : String(mainWorker.phone).replace(/\D/g, "")) : "";
+
   if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
   let worker = db.serviceWorkers.find(w => w.token === token || w.serviceOrderId === order.id);
   const now = new Date().toISOString();
@@ -11254,7 +11290,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
   if (worker) {
     worker.mainWorker = {
       name: String(mainWorker.name).trim(),
-      cpf: String(mainWorker.cpf).trim()
+      cpf: String(mainWorker.cpf).trim(),
+      phone: cleanPhone || worker.mainWorker?.phone || ""
     };
     worker.collaborators = formattedCollaborators;
     worker.vehicle = formattedVehicle;
@@ -11266,7 +11303,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
       token: order.token,
       mainWorker: {
         name: String(mainWorker.name).trim(),
-        cpf: String(mainWorker.cpf).trim()
+        cpf: String(mainWorker.cpf).trim(),
+        phone: cleanPhone
       },
       collaborators: formattedCollaborators,
       vehicle: formattedVehicle,
@@ -11282,8 +11320,9 @@ app.post("/api/service/public/:token/register", (req, res) => {
 function getOrRegisterServiceWorker(token, orderId, body) {
   let worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === orderId) && w.mainWorker?.name && w.mainWorker?.cpf);
   if (!worker) {
-    const b = body?.mainWorker || (body?.workerName && body?.workerCpf ? { name: body.workerName, cpf: body.workerCpf } : null);
+    const b = body?.mainWorker || (body?.workerName && body?.workerCpf ? { name: body.workerName, cpf: body.workerCpf, phone: body.workerPhone } : null);
     const n = String(b?.name || "").trim(), c = String(b?.cpf || "").replace(/\D/g, "");
+    const p = b?.phone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(b.phone) : String(b.phone).replace(/\D/g, "")) : "";
     if (n && c.length === 11) {
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
       const veh = body?.vehicle ? {
@@ -11291,7 +11330,7 @@ function getOrRegisterServiceWorker(token, orderId, body) {
         plate: String(body.vehicle.plate || "").trim().toUpperCase(),
         modelColor: String(body.vehicle.modelColor || "").trim()
       } : { needsGarage: false, plate: "", modelColor: "" };
-      worker = { id: `sw_${Date.now()}`, serviceOrderId: orderId, token, mainWorker: { name: n, cpf: c }, collaborators: [], vehicle: veh, registeredAt: new Date().toISOString() };
+      worker = { id: `sw_${Date.now()}`, serviceOrderId: orderId, token, mainWorker: { name: n, cpf: c, phone: p }, collaborators: [], vehicle: veh, registeredAt: new Date().toISOString() };
       db.serviceWorkers.push(worker);
       saveDatabase("register_service_worker_on_start");
     }
@@ -11428,11 +11467,13 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
 
   if (req.body?.estimatedFinishAt) {
     const customEst = new Date(req.body.estimatedFinishAt);
-    if (!isNaN(customEst.getTime())) {
-      flat.estimatedFinishAt = customEst.toISOString();
-    } else {
-      flat.estimatedFinishAt = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
+    if (isNaN(customEst.getTime())) {
+      return res.status(400).json({ error: "Data e hora de previsão de término inválida." });
     }
+    if (customEst.getTime() <= now.getTime()) {
+      return res.status(400).json({ error: "A previsão de término deve ser posterior ao horário de início." });
+    }
+    flat.estimatedFinishAt = customEst.toISOString();
   } else if (order.estimatedDurationHours && Number(order.estimatedDurationHours) > 0) {
     flat.estimatedFinishAt = new Date(now.getTime() + Number(order.estimatedDurationHours) * 3600 * 1000).toISOString();
   } else {
@@ -11563,6 +11604,11 @@ app.post("/api/service/public/:token/flats/:flatId/update-estimate", async (req,
   const newEstDate = new Date(estimatedFinishAt);
   if (isNaN(newEstDate.getTime())) {
     return res.status(400).json({ error: "Data e hora prevista de término inválida." });
+  }
+
+  const now = new Date();
+  if (newEstDate.getTime() <= now.getTime()) {
+    return res.status(400).json({ error: "A nova previsão de término deve ser posterior ao horário atual." });
   }
 
   flat.estimatedFinishAt = newEstDate.toISOString();
@@ -30392,7 +30438,11 @@ export async function generateAdminCopilotLocalResponse(db, message = "", contex
 
     let reply = `### 🧹 Governança & Status de Limpeza\n\n`;
     reply += `• **Flats Limpos & Prontos:** ${clean.length}\n`;
-    reply += `• **Aguardando / Em Limpeza:** ${pending.length}\n\n`;
+    reply += `• **Aguardando / Em Limpeza:** ${pending.length}\n`;
+    if (Array.isArray(res.vistorias) && res.vistorias.length > 0) {
+      reply += `• **Vistorias Cadastradas:** ${res.vistorias.length}\n`;
+    }
+    reply += `\n`;
 
     if (pending.length > 0) {
       reply += `**Pendências de Limpeza:**\n`;
@@ -30530,7 +30580,31 @@ export async function generateAdminCopilotLocalResponse(db, message = "", contex
     return { text: reply, data: res };
   }
 
-  // 10. Resumo Executivo Geral (Fallback inteligente)
+  // 10. Regras Gerais, Políticas e FAQs do Condomínio (Módulo FAQ)
+  if (/faq|regras?|normas?|pol[ií]tica|wifi|wi-fi|senha|internet|piscina|academia|pet|fumo|cigarro|condom[ií]nio/i.test(text)) {
+    const res = await querySystemData(db, { module: "faq", query: text, requesterRole: "admin" });
+    const kb = res.knowledgeBaseSummary || {};
+    const faqs = res.faqs || [];
+
+    let reply = `### 📋 Regras Gerais, Políticas & FAQs do Condomínio\n\n`;
+    reply += `• **Endereço:** ${kb.address || "Campos dos Goytacazes/RJ"}\n`;
+    reply += `• **Horários Padrão:** Check-in a partir das ${kb.checkinTime || "14:00"} | Check-out até às ${kb.checkoutTime || "12:00"}\n`;
+    reply += `• **Wi-Fi Geral:** Senha padrão \`${kb.wifiPassword || "1234567890123"}\`\n`;
+    reply += `• **Área de Lazer:** ${kb.leisureInfo || "Piscina aquecida e academia na cobertura (06h às 22h)"}\n`;
+    reply += `• **Pets:** ${kb.petPolicy || "Permitido pequeno porte até 10kg com taxa"}\n`;
+    reply += `• **Fumo:** ${kb.smokingPolicy || "100% não fumante nos flats"}\n\n`;
+
+    if (faqs.length > 0) {
+      reply += `**Perguntas Frequentes Relevantes:**\n`;
+      faqs.slice(0, 3).forEach(f => {
+        reply += `• **${f.question}**\n  ${f.answer}\n\n`;
+      });
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 11. Resumo Executivo Geral (Fallback inteligente)
   const flatsRes = await querySystemData(db, { module: "flats", requesterRole: "admin" });
   const resRes = await querySystemData(db, { module: "reservations", requesterRole: "admin" });
   const maintRes = await querySystemData(db, { module: "maintenance", requesterRole: "admin" });
@@ -35166,6 +35240,13 @@ setInterval(() => {
     if (changed) {
       saveDatabase();
     }
+  } catch (_) {}
+}, 60000);
+
+// 6.7 Rotina Periódica - Verificação de Atrasos em Ordens de Serviço (Requirement 4)
+setInterval(() => {
+  try {
+    checkOverdueServiceFlats();
   } catch (_) {}
 }, 60000);
 

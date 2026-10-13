@@ -54,6 +54,7 @@ export interface Collaborator {
 export interface WorkerIdentification {
   name: string;
   cpf: string;
+  phone?: string;
 }
 
 export interface WorkerVehicle {
@@ -174,6 +175,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   const [isEditingWorker, setIsEditingWorker] = useState(false);
   const [mainWorkerName, setMainWorkerName] = useState("");
   const [mainWorkerCpf, setMainWorkerCpf] = useState("");
+  const [mainWorkerPhone, setMainWorkerPhone] = useState("");
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [needsGarage, setNeedsGarage] = useState(false);
   const [vehiclePlate, setVehiclePlate] = useState("");
@@ -181,7 +183,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
   // Guard Dialog State
   const [guardDialogOpen, setGuardDialogOpen] = useState(false);
-  const [pendingStartFlat, setPendingStartFlat] = useState<ServiceFlat | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ type: "request_entry" | "start"; flat: ServiceFlat } | null>(null);
 
   // Start Modal State (Required estimated finish)
   const [startModalOpen, setStartModalOpen] = useState(false);
@@ -232,6 +234,9 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     if (serverWorker?.mainWorker?.name && !isEditingWorker) {
       setMainWorkerName(serverWorker.mainWorker.name);
       setMainWorkerCpf(formatCpf(serverWorker.mainWorker.cpf || ""));
+      if (serverWorker.mainWorker.phone) {
+        setMainWorkerPhone(serverWorker.mainWorker.phone);
+      }
       if (Array.isArray(serverWorker.collaborators)) {
         setCollaborators(
           serverWorker.collaborators.map((c) => ({
@@ -290,6 +295,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         throw new Error("Por favor, informe a placa do veículo para liberação do acesso à garagem.");
       }
 
+      const cleanPhone = mainWorkerPhone.replace(/\D/g, "");
+
       const res = await fetch(`/api/service/public/${token}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -297,6 +304,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
           mainWorker: {
             name: mainWorkerName.trim(),
             cpf: cleanCpf,
+            phone: cleanPhone,
           },
           collaborators: validCollaborators,
           vehicle: {
@@ -327,6 +335,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             mainWorker: {
               name: mainWorkerName.trim(),
               cpf: cleanCpfDigits(mainWorkerCpf),
+              phone: mainWorkerPhone.replace(/\D/g, ""),
             },
             collaborators,
             vehicle: {
@@ -521,6 +530,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   // Start Click Handler with Identification Guard
   const handleStartFlatClick = (flat: ServiceFlat) => {
     if (!hasSavedWorker) {
+      setPendingAction({ type: "start", flat });
       setGuardDialogOpen(true);
       return;
     }
@@ -534,6 +544,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   // Request Entry Handler
   const handleRequestEntry = (flat: ServiceFlat) => {
     if (!hasSavedWorker) {
+      setPendingAction({ type: "request_entry", flat });
       setGuardDialogOpen(true);
       return;
     }
@@ -551,7 +562,24 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
       });
       return;
     }
-    const isoDate = new Date(estimatedFinishInput).toISOString();
+    const selectedDate = new Date(estimatedFinishInput);
+    if (isNaN(selectedDate.getTime())) {
+      toast({
+        title: "Data inválida",
+        description: "Por favor, informe uma data e hora válida.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (selectedDate.getTime() <= Date.now()) {
+      toast({
+        title: "Horário inválido",
+        description: "A previsão de término deve ser posterior ao horário atual.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const isoDate = selectedDate.toISOString();
     startMutation.mutate({
       flatId: startingFlat.flatId,
       estimatedFinishAt: isoDate,
@@ -588,7 +616,24 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
       });
       return;
     }
-    const isoDate = new Date(newEstimateInput).toISOString();
+    const selectedDate = new Date(newEstimateInput);
+    if (isNaN(selectedDate.getTime())) {
+      toast({
+        title: "Data inválida",
+        description: "Por favor, informe uma data e hora válida.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (selectedDate.getTime() <= Date.now()) {
+      toast({
+        title: "Horário inválido",
+        description: "A nova previsão deve ser posterior ao horário atual.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const isoDate = selectedDate.toISOString();
     updateEstimateMutation.mutate({
       flatId: estimatingFlat.flatId,
       estimatedFinishAt: isoDate,
@@ -863,6 +908,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       <div className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
                         CPF: {formatCpf(serverWorker?.mainWorker?.cpf || "")}
                       </div>
+                      {serverWorker?.mainWorker?.phone && (
+                        <div className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                          WhatsApp: {serverWorker.mainWorker.phone}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -872,6 +922,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     onClick={() => {
                       setMainWorkerName(serverWorker?.mainWorker?.name || "");
                       setMainWorkerCpf(formatCpf(serverWorker?.mainWorker?.cpf || ""));
+                      setMainWorkerPhone(serverWorker?.mainWorker?.phone || "");
                       setCollaborators(
                         serverWorker?.collaborators?.map((c) => ({
                           name: c.name,
@@ -966,6 +1017,15 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       value={mainWorkerCpf}
                       onChange={(e) => setMainWorkerCpf(formatCpf(e.target.value))}
                       maxLength={14}
+                      className="mt-1 text-sm bg-transparent"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">WhatsApp / Celular (para avisos do serviço)</Label>
+                    <Input
+                      placeholder="Ex: 22999999999"
+                      value={mainWorkerPhone}
+                      onChange={(e) => setMainWorkerPhone(e.target.value)}
                       className="mt-1 text-sm bg-transparent"
                     />
                   </div>
@@ -1128,16 +1188,23 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 🟢 Vago / Limpo
               </Badge>
             );
-            if (flat.isOccupied) {
+            if (flat.hasCheckinToday) {
+              occupancyBadge = (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 text-[11px] font-semibold">
+                    🔵 Entrada Prevista: {flat.expectedArrival || "14:00"}
+                  </Badge>
+                  {flat.isOccupied && (
+                    <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-medium">
+                      🔴 Desocupação hoje
+                    </Badge>
+                  )}
+                </div>
+              );
+            } else if (flat.isOccupied) {
               occupancyBadge = (
                 <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 text-[11px] font-semibold">
                   🔴 Ocupado por Hóspede
-                </Badge>
-              );
-            } else if (flat.hasCheckinToday) {
-              occupancyBadge = (
-                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 text-[11px] font-semibold">
-                  🔵 Entrada Prevista: {flat.expectedArrival || "14:00"}
                 </Badge>
               );
             } else if (flat.isDirty) {
@@ -1370,31 +1437,18 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   {flat.status === "pending" && (
                     <div className="w-full space-y-2">
                       {!flat.entryRequested ? (
-                        <>
-                          <Button
-                            onClick={() => handleRequestEntry(flat)}
-                            disabled={!canStart || requestEntryMutation.isPending}
-                            className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 shadow-xs flex items-center justify-center gap-1.5"
-                          >
-                            {requestEntryMutation.isPending && requestEntryMutation.variables === flat.flatId ? (
-                              <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-                            ) : (
-                              <KeyRound className="w-4 h-4 mr-1.5" />
-                            )}
-                            🔑 Solicitar Entrada
-                          </Button>
-                          <div className="text-center">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleStartFlatClick(flat)}
-                              disabled={!canStart || startMutation.isPending}
-                              className="text-[11px] text-muted-foreground hover:text-primary h-6"
-                            >
-                              Já liberado na portaria? ▶️ Iniciar Apartamento
-                            </Button>
-                          </div>
-                        </>
+                        <Button
+                          onClick={() => handleRequestEntry(flat)}
+                          disabled={!canStart || requestEntryMutation.isPending}
+                          className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 shadow-xs flex items-center justify-center gap-1.5"
+                        >
+                          {requestEntryMutation.isPending && requestEntryMutation.variables === flat.flatId ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                          ) : (
+                            <KeyRound className="w-4 h-4 mr-1.5" />
+                          )}
+                          🔑 1. Solicitar Entrada
+                        </Button>
                       ) : (
                         <>
                           <div className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-800">
@@ -1417,7 +1471,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                             ) : (
                               <Play className="w-4 h-4 mr-1.5 fill-current" />
                             )}
-                            ▶️ Iniciar Apartamento
+                            ▶️ 2. Iniciar Serviço
                           </Button>
                         </>
                       )}
@@ -1437,7 +1491,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-md flex items-center justify-center gap-1.5"
                       >
                         <CheckCircle2 className="w-4 h-4" />
-                        🏁 Finalizar Serviço
+                        🏁 3. Finalizar Serviço
                       </Button>
                       <Button
                         variant="outline"

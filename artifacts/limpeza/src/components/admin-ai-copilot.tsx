@@ -212,6 +212,8 @@ export function AdminAiCopilot() {
   // Somente renderiza para administradores e recepção em rotas internas do PMS
   const isAuthorizedRole = user && (user.role === 'admin' || user.role === 'recepcao');
   const isPublicRoute =
+    location === '/login' ||
+    location.startsWith('/login') ||
     location.startsWith('/reservar') ||
     location.startsWith('/booking') ||
     location.startsWith('/pre-checkin') ||
