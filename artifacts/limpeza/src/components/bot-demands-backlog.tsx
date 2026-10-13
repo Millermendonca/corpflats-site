@@ -35,7 +35,8 @@ import {
   FileText,
   ArrowLeftRight,
   Coffee,
-  PauseCircle
+  PauseCircle,
+  LogOut
 } from "lucide-react"
 
 import {
@@ -137,6 +138,8 @@ export function BotDemandsBacklog({ onNavigateToAiAgent }: BotDemandsBacklogProp
         return <Sparkles className="w-4 h-4 text-lime-600 dark:text-lime-400" />
       case "late_checkout":
         return <Hourglass className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+      case "checkout_comunicacao":
+        return <LogOut className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
       case "garagem_veiculo":
         return <Car className="w-4 h-4 text-slate-600 dark:text-slate-400" />
       case "emissao_nota_fiscal":
@@ -156,6 +159,8 @@ export function BotDemandsBacklog({ onNavigateToAiAgent }: BotDemandsBacklogProp
     switch (status) {
       case "aberta":
         return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200">Aberta</Badge>
+      case "pendente":
+        return <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200">Pendente</Badge>
       case "em_analise":
         return <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200">Em Análise</Badge>
       case "planejada":
@@ -613,6 +618,7 @@ export function BotDemandsBacklog({ onNavigateToAiAgent }: BotDemandsBacklogProp
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="aberta">Aberta</SelectItem>
+                          <SelectItem value="pendente">Pendente</SelectItem>
                           <SelectItem value="em_analise">Em Análise</SelectItem>
                           <SelectItem value="planejada">Planejada</SelectItem>
                           <SelectItem value="implementada">Implementada</SelectItem>

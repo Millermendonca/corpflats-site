@@ -15,6 +15,9 @@ import {
   classifyUnmetDemand,
   detectAndRecordUnmetDemand,
   findExistingUnmetDemand,
+  formatCheckoutCommunicationResponse,
+  validateAndRefineResponse,
+  analyzeGuestIntentSemantic,
   UNMET_DEMAND_CATEGORIES
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
 
@@ -194,6 +197,98 @@ describe("Bot Unmet Demands & Automation Opportunities Suite", () => {
       assert.ok(d2.clientPhones.includes("5521999990002"));
       assert.strictEqual(d2.variations.length, 2);
     });
+
+    it("should classify checkout communication demands accurately and reject informational time queries", () => {
+      const phrases = [
+        "gostaria de informar meu Check-out",
+        "estou fazendo checkout",
+        "já saí do flat",
+        "estou entregando a chave na recepção",
+        "acabei de desocupar o apartamento",
+        "estamos saindo do flat agora",
+        "aviso de check-out",
+        "chaves entregues na portaria"
+      ];
+
+      for (const phrase of phrases) {
+        const res = classifyUnmetDemand(phrase);
+        assert.strictEqual(res.category, "checkout_comunicacao", `Failed for phrase: "${phrase}"`);
+        assert.strictEqual(res.reason, "capability_missing");
+        assert.strictEqual(res.demandTitle, UNMET_DEMAND_CATEGORIES.checkout_comunicacao.title);
+      }
+
+      // Disabled actionTarget test
+      const actionRes = classifyUnmetDemand("", "informCheckout");
+      assert.strictEqual(actionRes.category, "checkout_comunicacao");
+      assert.strictEqual(actionRes.reason, "action_disabled");
+
+      // FAQ / informational queries should NOT trigger checkout_comunicacao
+      const negativeCases = [
+        "qual o horário de check-out?",
+        "que horas tenho que sair do quarto?",
+        "qual a hora do check-out?",
+        "qual o valor da diária para check-out tardio?",
+        "qual a política de check-out?"
+      ];
+
+      for (const neg of negativeCases) {
+        const res = classifyUnmetDemand(neg);
+        assert.notStrictEqual(res.category, "checkout_comunicacao", `False positive for: "${neg}"`);
+      }
+    });
+
+    it("should record checkout communication with status 'pendente' and accurate title", () => {
+      const mockDb = { unmetDemands: [] };
+      const d = detectAndRecordUnmetDemand({
+        db: mockDb,
+        text: "estou saindo do flat e entregando a chave",
+        senderPhone: "5521998877665",
+        senderName: "Marcos Paulo"
+      });
+
+      assert.ok(d);
+      assert.strictEqual(d.status, "pendente");
+      assert.strictEqual(d.category, "checkout_comunicacao");
+      assert.strictEqual(d.demandTitle, "Comunicação / Notificação de Check-out pelo Hóspede via WhatsApp");
+      assert.strictEqual(mockDb.unmetDemands.length, 1);
+    });
+
+    it("should format cordial checkout communication response with flat and gratitude", () => {
+      const responseWithFlat = formatCheckoutCommunicationResponse(" Carlos", { flatNumber: "204" });
+      assert.ok(responseWithFlat.includes("Olá Carlos!"));
+      assert.ok(responseWithFlat.includes("Flat 204"));
+      assert.ok(responseWithFlat.includes("Muito obrigado por nos avisar!"));
+      assert.ok(responseWithFlat.includes("governança e recepção"));
+      assert.ok(responseWithFlat.includes("CorpFlats"));
+
+      const responseNoFlat = formatCheckoutCommunicationResponse("", null);
+      assert.ok(responseNoFlat.includes("Olá!"));
+      assert.ok(!responseNoFlat.includes("Flat null"));
+    });
+
+    it("should record unmet demand for developer simulation phone 5522998505276 without suppression", () => {
+      const mockDb = {
+        unmetDemands: [],
+        settings: { developerPhone: "5522998505276" }
+      };
+
+      const result = validateAndRefineResponse({
+        queryText: "gostaria de informar meu Check-out",
+        candidateText: "Sou a Sofia, concierge virtual da CorpFlats...",
+        guestContext: {
+          phone: "5522998505276",
+          guestName: "Desenvolvedor Simulado",
+          flatNumber: "101"
+        },
+        db: mockDb
+      });
+
+      assert.ok(result.replyText.includes("Muito obrigado por nos avisar!"));
+      assert.ok(result.replyText.includes("Flat 101"));
+      assert.strictEqual(mockDb.unmetDemands.length, 1);
+      assert.strictEqual(mockDb.unmetDemands[0].category, "checkout_comunicacao");
+      assert.strictEqual(mockDb.unmetDemands[0].status, "pendente");
+    });
   });
 
   describe("REST API Endpoints: /api/bot-demands/*", () => {
@@ -354,6 +449,67 @@ describe("Bot Unmet Demands & Automation Opportunities Suite", () => {
       const listRes = await fetch(`${BASE_URL}/api/bot-demands`);
       const listData = await listRes.json();
       assert.strictEqual(listData.demands.length, 1);
+    });
+
+    it("REST API: should support checkout_comunicacao workflow with pendente status and action-link", async () => {
+      // 1. Register checkout communication demand
+      const createRes = await fetch(`${BASE_URL}/api/bot-demands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: "gostaria de informar meu Check-out e entrega da chave",
+          senderPhone: "5522998505276",
+          senderName: "Hóspede Saindo",
+          guestContext: { flatNumber: "302", stayStatus: "checkout_hoje" }
+        })
+      });
+
+      assert.strictEqual(createRes.status, 200);
+      const createData = await createRes.json();
+      assert.strictEqual(createData.success, true);
+      assert.ok(createData.demand);
+      assert.strictEqual(createData.demand.category, "checkout_comunicacao");
+      assert.strictEqual(createData.demand.status, "pendente");
+      assert.strictEqual(createData.demand.guestContext.flatNumber, "302");
+
+      const checkoutDemandId = createData.demand.id;
+
+      // 2. Query filter with status=pendente
+      const pendenteRes = await fetch(`${BASE_URL}/api/bot-demands?status=pendente`);
+      const pendenteData = await pendenteRes.json();
+      assert.ok(pendenteData.demands.some(d => d.id === checkoutDemandId));
+
+      // 3. Query filter with status=aberta (should also include pendente)
+      const abertaRes = await fetch(`${BASE_URL}/api/bot-demands?status=aberta`);
+      const abertaData = await abertaRes.json();
+      assert.ok(abertaData.demands.some(d => d.id === checkoutDemandId));
+
+      // 4. Verify stats count includes this pending demand in openDemands
+      const statsRes = await fetch(`${BASE_URL}/api/bot-demands/stats`);
+      const statsData = await statsRes.json();
+      assert.ok(statsData.stats.openDemands >= 1);
+      assert.ok(statsData.stats.byCategory.checkout_comunicacao);
+
+      // 5. Trigger action-link to activate informCheckout action
+      const linkRes = await fetch(`${BASE_URL}/api/bot-demands/${checkoutDemandId}/action-link`, {
+        method: "POST"
+      });
+      assert.strictEqual(linkRes.status, 200);
+      const linkData = await linkRes.json();
+      assert.strictEqual(linkData.success, true);
+      assert.strictEqual(linkData.activatedAction, "informCheckout");
+      assert.strictEqual(linkData.demand.status, "implementada");
+
+      // Verify action is enabled in settings
+      const actionsRes = await fetch(`${BASE_URL}/api/bot-actions/settings`);
+      const actionsData = await actionsRes.json();
+      assert.strictEqual(actionsData.settings.allowedActions.informCheckout, true);
+
+      // 6. Clean up created demand
+      const delRes = await fetch(`${BASE_URL}/api/bot-demands/${checkoutDemandId}`, {
+        method: "DELETE"
+      });
+      assert.strictEqual(delRes.status, 200);
     });
   });
 });

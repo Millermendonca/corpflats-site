@@ -35,6 +35,8 @@ import {
   handleGetPricingInfo,
   handleRecordUnmetDemand,
   analyzeGuestQuery,
+  analyzeGuestIntentSemantic,
+  formatCheckoutCommunicationResponse,
   validateAndRefineResponse,
   generateFaqResponseSuggestions,
   generateIntelligentFaqDraft
@@ -57,6 +59,8 @@ export {
   handleGetPricingInfo,
   handleRecordUnmetDemand,
   analyzeGuestQuery,
+  analyzeGuestIntentSemantic,
+  formatCheckoutCommunicationResponse,
   validateAndRefineResponse,
   generateFaqResponseSuggestions,
   generateIntelligentFaqDraft

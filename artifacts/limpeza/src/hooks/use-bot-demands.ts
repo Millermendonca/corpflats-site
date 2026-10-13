@@ -13,6 +13,7 @@ export type UnmetDemandCategory =
   | "chamado_manutencao"
   | "limpeza_avulsa"
   | "late_checkout"
+  | "checkout_comunicacao"
   | "garagem_veiculo"
   | "emissao_nota_fiscal"
   | "troca_flat"
@@ -20,7 +21,7 @@ export type UnmetDemandCategory =
   | "operacoes_sistema_pausadas"
   | "outros"
 
-export type DemandStatus = "aberta" | "em_analise" | "planejada" | "implementada" | "descartada"
+export type DemandStatus = "aberta" | "pendente" | "em_analise" | "planejada" | "implementada" | "descartada"
 export type DemandReason = "action_disabled" | "capability_missing" | "requires_operator"
 export type DemandPriority = "alta" | "media" | "baixa"
 
@@ -176,6 +177,15 @@ export const CATEGORY_META_MAP: Record<UnmetDemandCategory, CategoryMeta> = {
     colorClass: "text-violet-600",
     isAction: false
   },
+  checkout_comunicacao: {
+    label: "Comunicação de Check-out via WhatsApp",
+    shortLabel: "Aviso Check-out",
+    iconName: "LogOut",
+    badgeClass: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200",
+    colorClass: "text-emerald-600",
+    isAction: true,
+    actionKey: "informCheckout"
+  },
   garagem_veiculo: {
     label: "Garagem e Placa de Veículo",
     shortLabel: "Garagem / Veículo",
@@ -306,7 +316,11 @@ export function useBotDemands(options?: { autoFetch?: boolean }) {
     }
 
     if (statusFilter !== "all") {
-      result = result.filter(d => (d.status || "aberta") === statusFilter)
+      if (statusFilter === "aberta" || statusFilter === "pendente") {
+        result = result.filter(d => (d.status || "aberta") === "aberta" || d.status === "pendente" || (d.status as string) === "nova")
+      } else {
+        result = result.filter(d => (d.status || "aberta") === statusFilter)
+      }
     }
 
     if (reasonFilter !== "all") {

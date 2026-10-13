@@ -1482,6 +1482,11 @@ export function handleRecordUnmetDemand(db, args = {}) {
 // ── Mapeamento Contínuo de Demandas Sem Acesso & Oportunidades de Automação ──
 
 export const UNMET_DEMAND_CATEGORIES = {
+  checkout_comunicacao: {
+    category: "checkout_comunicacao",
+    title: "Comunicação / Notificação de Check-out pelo Hóspede via WhatsApp",
+    defaultSuggested: "Integrar aviso de saída do hóspede via WhatsApp com atualização automática do status do flat nos cards de limpeza e disparo de eventos de pós-checkout."
+  },
   efetivacao_reserva: {
     category: "efetivacao_reserva",
     title: "Efetivação de Reserva no PMS",
@@ -1587,6 +1592,7 @@ export const UNMET_DEMAND_CATEGORIES = {
 export function classifyUnmetDemand(text = "", actionTarget = null, explicitReason = null) {
   const cleanText = String(text || "").trim();
   const lower = cleanText.toLowerCase();
+  const norm = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   // 1. Se veio por target de ação do sistema (chave desativada)
   if (actionTarget) {
@@ -1635,6 +1641,15 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
         suggestedFeature: UNMET_DEMAND_CATEGORIES.pre_reserva.defaultSuggested
       };
     }
+    if (actionTarget === "checkout_comunicacao" || actionTarget === "informCheckout" || actionTarget === "notifyCheckout") {
+      return {
+        category: "checkout_comunicacao",
+        demandTitle: UNMET_DEMAND_CATEGORIES.checkout_comunicacao.title,
+        reason: "action_disabled",
+        actionTarget,
+        suggestedFeature: UNMET_DEMAND_CATEGORIES.checkout_comunicacao.defaultSuggested
+      };
+    }
   }
 
   // 2. Se a razão explícita for chave mestra desativada
@@ -1680,7 +1695,7 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:ar\s*(?:condicionado|split)?\s*(?:n[aã]o\s*gela|parou|quebrou|n[aã]o\s*liga)|chuveiro\s*(?:n[aã]o\s*esquenta|queimou|frio)|vazamento|pia\s*entupida|vaso\s*entupido|l[aâ]mpada\s*queimada|fechadura|porta\s*(?:n[aã]o\s*abre|emperrou)|tv\s*(?:n[aã]o\s*liga|sem\s*sinal)|manuten[cç][aã]o)\b/i.test(lower)) {
+  if (/\b(?:ar\s*(?:condicionado|split)?\s*(?:n[aã]o\s*gela|parou|quebrou|n[aã]o\s*liga)|chuveiro\s*(?:n[aã]o\s*esquenta|queimou|frio)|vazamento|pia\s*entupida|vaso\s*(?:entupido|vazando)|l[aâ]mpada\s*queimada|fechadura|porta\s*(?:n[aã]o\s*abre|emperrou)|tv\s*(?:n[aã]o\s*liga|sem\s*sinal)|controle\s*(?:remoto\s*)?(?:n[aã]o\s*funciona|quebrou|sem\s*pilha)|manuten[cç][aã]o|reparo|conserto|abrir\s*(?:um\s*)?chamado)\b/i.test(lower)) {
     return {
       category: "chamado_manutencao",
       demandTitle: UNMET_DEMAND_CATEGORIES.chamado_manutencao.title,
@@ -1690,7 +1705,7 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:limpeza\s*(?:extra|avulsa|hoje|agora)|pedir\s*(?:limpeza|faxina)|faxina|camareira\s*(?:no\s*quarto|pode\s*limpar)|limpar\s*(?:o\s*)?(?:meu\s*)?quarto\s*(?:hoje|agora))\b/i.test(lower)) {
+  if (/\b(?:limpeza\s*(?:extra|avulsa|hoje|agora|imediata)|pedir\s*(?:limpeza|faxina)|solicitar\s*(?:uma\s*)?(?:limpeza|faxina)|preciso\s*de\s*(?:limpeza|faxina)|faxina|camareira\s*(?:no\s*quarto|pode\s*limpar)|limpar\s*(?:o\s*)?(?:meu\s*)?(?:quarto|flat|apartamento)\s*(?:hoje|agora|urgente|por\s*favor)?)\b/i.test(lower)) {
     return {
       category: "limpeza_avulsa",
       demandTitle: UNMET_DEMAND_CATEGORIES.limpeza_avulsa.title,
@@ -1707,6 +1722,34 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
       reason: "capability_missing",
       actionTarget: null,
       suggestedFeature: UNMET_DEMAND_CATEGORIES.late_checkout.defaultSuggested
+    };
+  }
+
+  // 3.10 Comunicação / Notificação de Check-out e Desocupação pelo Hóspede via WhatsApp
+  const isCheckoutCommunication = (
+    // 1. Verbos/expressões de intenção comunicativa + checkout/saída/desocupação
+    /\b(?:informar|avisar|comunicar|notificar|passar|dar|confirmar|registro|registrar)\s+(?:o|a|meu|minha|nosso|nossa)?\s*(?:check[- ]?out|saida|desocupacao|liberacao)\b/i.test(norm) ||
+    /\b(?:gostaria|quero|preciso|queria|favor|desejo)\s+(?:de\s+)?(?:informar|avisar|comunicar|fazer|dar)\s+(?:o|a|meu|minha|nosso|nossa)?\s*(?:check[- ]?out|saida)\b/i.test(norm) ||
+    // 2. Ação de saída/desocupação em andamento ou recém concluída
+    /\b(?:estou|to|estamos)\s+(?:fazendo|realizando)\s+(?:o|meu|nosso)?\s*check[- ]?out\b/i.test(norm) ||
+    /\b(?:estou|to|estamos)\s+(?:saindo|desocupando|liberando)\s+(?:do|da|o|a)?\s*(?:flat|quarto|apartamento|agora)\b/i.test(norm) ||
+    /\b(?:estou|to|estamos)\s+(?:entregando|deixando|devolvendo)\s+(?:as?|os?)?\s*chave[s]?\b/i.test(norm) ||
+    /\b(?:acabei|acabamos)\s+de\s+(?:sair|desocupar|liberar|entregar|fazer\s+(?:o\s+)?check[- ]?out)\b/i.test(norm) ||
+    /\b(?:ja\s+)?(?:sai|saimos|deixei|deixamos|entreguei|entregamos|desocupe?i|desocupamos|liberei|liberamos)\s+(?:o|a|as|os|do|da)?\s*(?:flat|quarto|apartamento|chave|chaves|portaria|recepcao)\b/i.test(norm) ||
+    /\b(?:ja\s+)?(?:fiz|fizemos|conclui|concluimos|realizei|realizamos)\s+(?:o|meu|nosso)?\s*check[- ]?out\b/i.test(norm) ||
+    /\b(?:flat|quarto|apartamento)\s+(?:desocupado|liberado)\b/i.test(norm) ||
+    /\b(?:aviso|comunicacao|notificacao)\s+de\s+(?:check[- ]?out|saida)\b/i.test(norm) ||
+    /\b(?:saida|check[- ]?out)\s+(?:realizad[ao]|conclu[ií]d[ao]|feit[ao]|informad[ao])\b/i.test(norm) ||
+    /\b(?:chave|chaves)\s+(?:entregue[s]?|deixada[s]?)\s+(?:na|para\s+a)\s+(?:portaria|recepcao)\b/i.test(norm)
+  ) && !/\b(?:horario|que\s+horas|qual\s+a\s+hora|ate\s+que\s+horas|preco|valor|custo|taxa|politica)\b/i.test(norm);
+
+  if (isCheckoutCommunication) {
+    return {
+      category: "checkout_comunicacao",
+      demandTitle: UNMET_DEMAND_CATEGORIES.checkout_comunicacao.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.checkout_comunicacao.defaultSuggested
     };
   }
 
@@ -1874,7 +1917,7 @@ export function detectAndRecordUnmetDemand({
     clientPhones: cleanPhone ? [cleanPhone] : [],
     senderName: senderName || "Hóspede",
     guestContext: guestContext || null,
-    status: "nova",
+    status: "pendente",
     occurrencesCount: 1,
     firstDetectedAt: now,
     lastDetectedAt: now,
@@ -2741,6 +2784,13 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
   };
 }
 
+export const analyzeGuestIntentSemantic = analyzeGuestQuery;
+
+export function formatCheckoutCommunicationResponse(name = "", guestContext = null) {
+  const flatStr = guestContext?.flatNumber ? ` do *Flat ${guestContext.flatNumber}*` : "";
+  return `Olá${name}! Muito obrigado por nos avisar! ✨\n\nRegistrei a sua comunicação de check-out${flatStr} em nosso sistema. A nossa equipe de governança e recepção já foi notificada da desocupação da unidade para os procedimentos de liberação e conferência.\n\nAgradecemos imensamente pela sua estadia com a CorpFlats e esperamos ter a alegria de te receber novamente em breve! Tenha uma excelente viagem de retorno! 🏨🗝️`;
+}
+
 /**
  * Auto-Crítica Semântica e Validador Pré-Envio:
  * Avalia criticamente a resposta candidata antes de enviar para garantir
@@ -2821,12 +2871,16 @@ export function validateAndRefineResponse({
       });
     }
 
-    const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
-      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
-    const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender/i.test(replyText);
+    if (cat === "checkout_comunicacao") {
+      replyText = ret(formatCheckoutCommunicationResponse(name, guestContext));
+    } else {
+      const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
+        (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
+      const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender/i.test(replyText);
 
-    if (isGenericFallback || !alreadyAcknowledged) {
-      replyText = ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+      if (isGenericFallback || !alreadyAcknowledged) {
+        replyText = ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+      }
     }
   }
 
@@ -2849,7 +2903,7 @@ export function validateAndRefineResponse({
         createNotification
       });
 
-      const isDevCaller = isDeveloperPhone(guestContext?.phone, db) ||
+      const isDevCaller = isDeveloperPhone(guestContext?.phone, db) &&
         (classifyDeveloperMessage(queryText, db).type !== "guest_simulation");
 
       if (!isDevCaller) {
@@ -3015,7 +3069,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
 
     // 0.5 Check-out / Saída / Extensão
-    if (/check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out/i.test(text)) {
+    if (classifyUnmetDemand(text).category !== "checkout_comunicacao" && /check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out/i.test(text)) {
       const checkoutGuideline = activeGuidelines.find(g => g.category === "checkout" || (g.text || "").toLowerCase().includes("check-out") || (g.text || "").toLowerCase().includes("checkout"));
       if (checkoutGuideline) {
         const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
@@ -3271,6 +3325,16 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${rate1},00 / diária* (1 pessoa) ou *R$ ${rate2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nDispomos de flats com cozinha completa, ar Split, Wi-Fi veloz e garagem no melhor ponto de Campos/RJ.\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
   }
 
+  // 0.9 Se for demanda operacional não atendida pela base de conhecimento (ações, chamados, toalhas, checkout, etc.)
+  const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
+  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
+    if (queryAnalysis.primaryTopic === "checkout_comunicacao") {
+      return ret(formatCheckoutCommunicationResponse(name, guestContext));
+    }
+    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
+    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+  }
+
   // 1. Wi-Fi / Internet
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
     const flatNum = guestContext?.flatNumber || "";
@@ -3354,12 +3418,6 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`Olá${name}! 🚭 ${kb.smokingPolicy}`);
   }
 
-  // 9. Se for demanda operacional não atendida pela base de conhecimento
-  const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
-  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
-    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
-    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
-  }
 
   // 10. Se for dúvida não mapeada
   if (queryAnalysis.type === "UNKNOWN_INQUIRY") {

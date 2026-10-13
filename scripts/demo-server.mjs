@@ -23896,7 +23896,11 @@ app.get("/api/bot-demands", (req, res) => {
     const { status, category, reason, search, sort } = req.query;
 
     if (status && status !== "all") {
-      list = list.filter(d => (d.status || "aberta") === status);
+      if (status === "aberta" || status === "pendente") {
+        list = list.filter(d => (d.status || "aberta") === "aberta" || d.status === "pendente" || d.status === "nova");
+      } else {
+        list = list.filter(d => (d.status || "aberta") === status);
+      }
     }
     if (category && category !== "all") {
       list = list.filter(d => d.category === category);
@@ -23956,7 +23960,7 @@ app.get("/api/bot-demands/stats", (req, res) => {
 
     list.forEach(d => {
       const st = d.status || "aberta";
-      if (st === "aberta" || st === "nova") openDemands++;
+      if (st === "aberta" || st === "nova" || st === "pendente") openDemands++;
       else if (st === "em_analise") inAnalysisDemands++;
       else if (st === "planejada") plannedDemands++;
       else if (st === "implementada") implementedDemands++;
@@ -24063,7 +24067,7 @@ app.patch("/api/bot-demands/:id", (req, res) => {
 
     const { status, priority, adminNotes, suggestedFeature, category } = req.body || {};
 
-    if (status && ["aberta", "nova", "em_analise", "planejada", "implementada", "descartada"].includes(status)) {
+    if (status && ["aberta", "pendente", "nova", "em_analise", "planejada", "implementada", "descartada"].includes(status)) {
       demand.status = status === "nova" ? "aberta" : status;
       demand.statusUpdatedAt = new Date().toISOString();
     }
@@ -24128,7 +24132,8 @@ app.post("/api/bot-demands/:id/action-link", (req, res) => {
         cotacao_diarias: "calculateQuote",
         consulta_disponibilidade: "checkAvailability",
         geracao_pix: "generatePayment",
-        pre_reserva: "createPreReservation"
+        pre_reserva: "createPreReservation",
+        checkout_comunicacao: "informCheckout"
       };
       targetAction = catToAction[demand.category];
     }
