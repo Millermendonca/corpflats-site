@@ -894,12 +894,12 @@ export function getFlatAmenitiesInfo(flat) {
   const tags = Array.isArray(flat.tags) ? flat.tags : [];
   const tagsLower = tags.map(t => String(t).toLowerCase());
 
-  // Ar-condicionado
+  // Ar-condicionado: split vs janela/parede
   let airConditionerType = flat.airConditionerType || null;
   if (!airConditionerType) {
     if (tagsLower.some(t => t.includes("split")) || colName.includes("split")) {
       airConditionerType = "split";
-    } else if (tagsLower.some(t => t.includes("janela")) || colName.includes("janela")) {
+    } else if (tagsLower.some(t => t.includes("janela") || t.includes("parede")) || colName.includes("janela") || colName.includes("parede")) {
       airConditionerType = "janela";
     } else {
       airConditionerType = "split";
@@ -907,10 +907,10 @@ export function getFlatAmenitiesInfo(flat) {
   }
   const airConditionerLabel = airConditionerType === "split" ? "Ar-condicionado Split ❄️" : "Ar-condicionado de Janela";
 
-  // Cama
+  // Cama: casal (cama inteira) vs 2 solteiro (twin)
   let bedType = flat.bedType || null;
   if (!bedType) {
-    if (tagsLower.some(t => t.includes("casal")) || colName.includes("casal")) {
+    if (tagsLower.some(t => t.includes("casal") || t.includes("inteira") || t.includes("cama inteira") || t.includes("queen") || t.includes("king")) || colName.includes("casal") || colName.includes("inteira")) {
       bedType = "casal";
     } else if (tagsLower.some(t => t.includes("solteiro") || t.includes("twin") || t.includes("ferro unindo")) || colName.includes("solteiro") || colName.includes("ferro unindo")) {
       bedType = "2_solteiro";
@@ -918,7 +918,7 @@ export function getFlatAmenitiesInfo(flat) {
       bedType = "casal";
     }
   }
-  const bedLabel = (bedType === "2_solteiro" || bedType === "solteiro") ? "2 Camas de Solteiro 🛏️🛏️" : "Cama de Casal 🛏️";
+  const bedLabel = (bedType === "2_solteiro" || bedType === "solteiro") ? "2 Camas de Solteiro 🛏️🛏️" : "Cama Inteira / Casal 🛏️";
 
   // Micro-ondas
   let hasMicrowave = flat.hasMicrowave;
@@ -948,7 +948,7 @@ export function getFlatAmenitiesInfo(flat) {
  * Busca e filtra flats por comodidades e tags
  */
 export function searchFlatsByAmenities(db, criteria = {}) {
-  const flats = (db?.flats || []).filter(f => f.isActive !== false);
+  const flats = (db?.flats || []).filter(f => f.isActive !== false && f.status !== "manutencao_bloqueada");
   const mapped = flats.map(f => getFlatAmenitiesInfo(f));
 
   if (!criteria || Object.keys(criteria).length === 0) {
@@ -967,12 +967,12 @@ export function searchFlatsByAmenities(db, criteria = {}) {
     if (wantSplit) {
       filtered = filtered.filter(f => f.airConditionerType === "split" || f.tags.some(t => /split/i.test(t)) || /split/i.test(f.colName));
     } else {
-      filtered = filtered.filter(f => f.airConditionerType === "janela" || f.tags.some(t => /janela/i.test(t)) || /janela/i.test(f.colName));
+      filtered = filtered.filter(f => f.airConditionerType === "janela" || f.tags.some(t => /janela|parede/i.test(t)) || /janela|parede/i.test(f.colName));
     }
   }
 
   if (criteria.bedType) {
-    const wantCasal = /casal|double|queen|king/i.test(String(criteria.bedType));
+    const wantCasal = /casal|double|queen|king|inteira|cama_inteira|cama\s+inteira/i.test(String(criteria.bedType));
     const wantSolteiro = /solteiro|twin|2_solteiro/i.test(String(criteria.bedType));
     if (wantCasal) {
       filtered = filtered.filter(f => f.bedType === "casal");
@@ -997,7 +997,7 @@ export function searchFlatsByAmenities(db, criteria = {}) {
       filtered = filtered.filter(f => f.airConditionerType === "split" || f.tags.some(t => /split/i.test(t)) || /split/i.test(f.colName));
     } else if (/micro[- ]?ondas/i.test(qLower)) {
       filtered = filtered.filter(f => f.hasMicrowave);
-    } else if (/casal/i.test(qLower)) {
+    } else if (/casal|inteira|cama\s+inteira/i.test(qLower)) {
       filtered = filtered.filter(f => f.bedType === "casal");
     } else if (/solteiro|duas camas|2 camas/i.test(qLower)) {
       filtered = filtered.filter(f => f.bedType === "2_solteiro" || f.bedType === "solteiro");
@@ -1028,40 +1028,97 @@ export function handleGetFlatAmenities(db, args = {}) {
 /**
  * Verifica se um hóspede solicitou ou possui trava de Quarto Preferencial para um flat
  */
-export function hasGuestRequestedSpecificFlat(db, res, targetFlatNumber) {
+export function hasGuestRequestedSpecificFlat(db, res, targetFlatNumber = null) {
   if (!res) return false;
-  const fNum = String(targetFlatNumber || "").trim();
+  const fNum = String(targetFlatNumber || res.flatNumber || (db?.flats || []).find(f => f.id === res.flatId)?.number || "").trim();
 
-  // 1. Trava explícita no PMS
+  // 1. Trava explícita no PMS (Quarto Preferencial / Não Trocar)
   if (res.isFlatLocked === true || res.flatLocked === true || res.isPreferredFlat === true) {
     return true;
   }
 
   // 2. Campo requestedFlat ou preferredFlat
-  if (res.requestedFlat && String(res.requestedFlat) === fNum) return true;
-  if (res.preferredFlat && String(res.preferredFlat) === fNum) return true;
+  if (res.requestedFlat && (!fNum || String(res.requestedFlat) === fNum)) return true;
+  if (res.preferredFlat && (!fNum || String(res.preferredFlat) === fNum)) return true;
 
-  // 3. Notas e solicitações especiais
+  if (!fNum) return false;
+
+  // Regex robustas para detecção de preferência em português
+  const flatLockRegex = new RegExp(`(?:quarto|flat|apto|apartamento|uh)?\\s*${fNum}\\s*(?:fixo|preferencial|bloquead[ao]|exclusiv[ao]|solicitad[ao]|garantid[ao])`, "i");
+  const specificLockRegex = new RegExp(`(?:manter\\s+no\\s+${fNum}|n[aã]o\\s+(?:trocar|mudar|alterar)\\s+(?:o\\s+)?(?:flat|quarto|apto)?\\s*${fNum})`, "i");
+  const generalLockRegex = /(?:quarto|flat|apto|apartamento|uh)\s*(?:preferencial|fixo|bloquead[ao]|n[aã]o\s+alterar|n[aã]o\s+mudar|exclusiv[ao])/i;
+  const verbOrPref = `(?:pediu|solicitou|solicito|quer(?:ia)?|quis|gostaria|gostariamos|exigiu|exige|prefer[eê]|prefiro|preferia|preferimos|prefer[eê]ncia|escolh(?:i|eu|emos|a)|faz\\s+quest[aã]o|favor\\s+colocar|pode\\s+ser|tem\\s+como|se\\s+poss[ií]vel|se\\s+der|de\\s+prefer[eê]ncia|me\\s+coloca|me\\s+bota|colocar\\s+no|botar\\s+no|ficar\\s+no)`;
+  const roomPattern = `(?:\\b(?:no|o|pro|pra|para|do|da)?\\s*(?:flat|quarto|apto|apartamento|uh)?\\s*${fNum}\\b)`;
+  const requestRegex = new RegExp(`${verbOrPref}.*?${roomPattern}`, "i");
+  const reverseRegex = new RegExp(`${roomPattern}.*?(?:a\\s+pedido|solicitad[ao]|preferencial|fixo|escolhid[ao])`, "i");
+
+  // 3. Notas e solicitações especiais da reserva
   const combinedNotes = `${res.notes || ""} ${res.specialRequests || ""} ${res.receptionNotes || ""} ${res.obs || ""}`.toLowerCase();
-  const flatLockRegex = new RegExp(`(?:quarto|flat|apto|apartamento)?\\s*${fNum}\\s*(?:fixo|preferencial|bloquead[ao]|exclusiv[ao]|solicitad[ao])`, "i");
-  const requestRegex = new RegExp(`(?:pediu|solicitou|quer(?:ia)?|gostaria|exigiu|prefer[eê]|prefer[eê]ncia|favor colocar).*?\\b(?:no|o|para|pra)?\\s*(?:flat|quarto|apto)?\\s*${fNum}\\b`, "i");
-  const directRoomRegex = new RegExp(`(?:no|o|pro|pra|para|ficar no)\\s*(?:flat|quarto|apto)?\\s*${fNum}\\b`, "i");
-  const generalLockRegex = /(?:quarto|flat|apto)\s*(?:preferencial|fixo|bloquead[ao]|n[aã]o\s+alterar|n[aã]o\s+mudar)/i;
-
-  if (flatLockRegex.test(combinedNotes) || requestRegex.test(combinedNotes) || generalLockRegex.test(combinedNotes)) {
+  if (flatLockRegex.test(combinedNotes) || specificLockRegex.test(combinedNotes) || generalLockRegex.test(combinedNotes) || requestRegex.test(combinedNotes) || reverseRegex.test(combinedNotes)) {
     return true;
   }
 
-  // 4. Histórico de conversas do hóspede no WhatsApp
-  if (db?.whatsappConversations && (res.guestPhone || res.phone)) {
-    const cleanPhone = cleanWhatsAppPhone(res.guestPhone || res.phone);
-    const conv = (db.whatsappConversations || []).find(c => matchClientPhone(c.clientPhone, cleanPhone));
-    if (conv && Array.isArray(conv.messages)) {
-      const guestMessages = conv.messages.filter(m => !m.fromMe && m.text).map(m => String(m.text).toLowerCase());
-      for (const msg of guestMessages) {
-        if (flatLockRegex.test(msg) || requestRegex.test(msg) || (directRoomRegex.test(msg) && /(?:quero|gostaria|posso|tem como|pode ser|prefiro|pedi|solicitei)/i.test(msg))) {
-          return true;
+  // 4. Histórico de conversas do hóspede no WhatsApp e histórico de mensagens
+  const phoneCandidates = new Set();
+  const addPhoneDigits = (raw) => {
+    if (!raw) return;
+    const digits = String(raw).replace(/\D/g, "");
+    if (!digits) return;
+    phoneCandidates.add(digits);
+    if (digits.startsWith("55") && digits.length >= 12) {
+      phoneCandidates.add(digits.substring(2));
+    } else if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
+      phoneCandidates.add("55" + digits);
+    }
+  };
+
+  addPhoneDigits(res.guestPhone);
+  addPhoneDigits(res.phone);
+  addPhoneDigits(res.guests?.[0]?.phone);
+
+  if (res.guestId && Array.isArray(db?.guests)) {
+    const g = db.guests.find(x => x.id === res.guestId);
+    if (g?.phone) addPhoneDigits(g.phone);
+  }
+
+  const candidateDigitsList = Array.from(phoneCandidates);
+  const phoneMatches = (targetPhone) => {
+    if (!targetPhone) return false;
+    const tDigits = String(targetPhone).replace(/\D/g, "");
+    if (!tDigits) return false;
+    return candidateDigitsList.some(cand =>
+      cand === tDigits ||
+      cand.endsWith(tDigits) ||
+      tDigits.endsWith(cand) ||
+      (cand.length >= 8 && tDigits.length >= 8 && cand.slice(-8) === tDigits.slice(-8))
+    );
+  };
+
+  // 4.1 Mensagens nas conversas do WhatsApp (db.whatsappConversations)
+  if (Array.isArray(db?.whatsappConversations) && candidateDigitsList.length > 0) {
+    const matchingConvs = db.whatsappConversations.filter(c => phoneMatches(c.clientPhone));
+    for (const conv of matchingConvs) {
+      if (Array.isArray(conv.messages)) {
+        const guestMessages = conv.messages.filter(m => !m.fromMe && m.text).map(m => String(m.text).toLowerCase());
+        for (const msg of guestMessages) {
+          if (flatLockRegex.test(msg) || generalLockRegex.test(msg) || requestRegex.test(msg) || reverseRegex.test(msg)) {
+            return true;
+          }
         }
+      }
+    }
+  }
+
+  // 4.2 Histórico consolidado de WhatsApp (db.whatsappHistory)
+  if (Array.isArray(db?.whatsappHistory)) {
+    const matchingHistory = db.whatsappHistory.filter(h =>
+      (h.reservationCode && (h.reservationCode === res.code || String(h.reservationId) === String(res.id))) ||
+      phoneMatches(h.guestPhone)
+    );
+    for (const h of matchingHistory) {
+      const msg = String(h.message || h.text || "").toLowerCase();
+      if (flatLockRegex.test(msg) || generalLockRegex.test(msg) || requestRegex.test(msg) || reverseRegex.test(msg)) {
+        return true;
       }
     }
   }
@@ -1078,9 +1135,39 @@ export function findAlternateFlatForGuest(db, candidateRes, excludeFlatNumbers =
   const outDate = candidateRes.checkoutDate;
   const excludeSet = new Set((excludeFlatNumbers || []).map(n => String(n).trim()));
 
-  const allFlats = (db?.flats || []).filter(f => f.isActive !== false && !excludeSet.has(String(f.number)));
+  const allFlats = (db?.flats || []).filter(f =>
+    f.isActive !== false &&
+    f.status !== "manutencao_bloqueada" &&
+    !excludeSet.has(String(f.number))
+  );
 
-  for (const flat of allFlats) {
+  // Ordenação inteligente de flats:
+  // 1. Prioriza camas idênticas (ex: se o hóspede precisa de 2 solteiro ou cama de casal)
+  // 2. Prioriza andar alto se solicitado
+  const wantTwin = Boolean(candidateRes.twinBeds);
+  const wantHighFloor = Boolean(candidateRes.prefersHighFloor);
+
+  const sortedFlats = [...allFlats].sort((a, b) => {
+    const infoA = getFlatAmenitiesInfo(a);
+    const infoB = getFlatAmenitiesInfo(b);
+
+    if (wantTwin) {
+      const aIsTwin = (infoA.bedType === "2_solteiro" || infoA.bedType === "solteiro");
+      const bIsTwin = (infoB.bedType === "2_solteiro" || infoB.bedType === "solteiro");
+      if (aIsTwin && !bIsTwin) return -1;
+      if (!aIsTwin && bIsTwin) return 1;
+    }
+
+    if (wantHighFloor) {
+      const floorA = Number(String(a.number).length === 4 ? String(a.number).slice(0, 2) : String(a.number).slice(0, 1)) || 0;
+      const floorB = Number(String(b.number).length === 4 ? String(b.number).slice(0, 2) : String(b.number).slice(0, 1)) || 0;
+      if (floorA !== floorB) return floorB - floorA;
+    }
+
+    return 0;
+  });
+
+  for (const flat of sortedFlats) {
     const fId = flat.id;
     const fNum = String(flat.number);
 
@@ -1111,6 +1198,8 @@ export function findAlternateFlatForGuest(db, candidateRes, excludeFlatNumbers =
 
 /**
  * Realoca uma reserva de flat, com capacidade de deslocar hóspede futuro não-fixo
+ * Implementa validação estrita em duas fases (atômica): se qualquer sobreposição não puder ser deslocada,
+ * nenhuma alteração é aplicada ao banco de dados.
  */
 export function handleReallocateReservationFlat(db, args = {}) {
   const targetFlatIdentifier = String(args.targetFlatNumber || args.targetFlatId || args.targetFlat || "").trim();
@@ -1184,6 +1273,25 @@ export function handleReallocateReservationFlat(db, args = {}) {
     };
   }
 
+  // 1. GUARDA: Hóspede solicitante já realizou check-in
+  const isRequesterCheckedIn = resA.checkedIn || resA.checkinConfirmed || resA.status === "hospedado" || resA.status === "checked_in" || resA.fnhrCompleted;
+  if (isRequesterCheckedIn) {
+    return {
+      success: false,
+      error: "REQUESTER_ALREADY_CHECKED_IN",
+      message: `Não é possível remanejar autonomamente: o hóspede ${resA.guestName} já realizou check-in / está hospedado no Flat ${resA.flatNumber}. Solicite atendimento à recepção.`
+    };
+  }
+
+  // 2. GUARDA: Hóspede solicitante possui trava de Quarto Preferencial / Não Trocar
+  if (resA.isFlatLocked === true || resA.flatLocked === true || resA.isPreferredFlat === true) {
+    return {
+      success: false,
+      error: "RESERVATION_FLAT_LOCKED",
+      message: `Não é possível alterar o quarto desta reserva: o flat atual (${resA.flatNumber}) foi bloqueado/fixado como Quarto Preferencial no PMS${resA.flatLockReason ? ` (${resA.flatLockReason})` : ""}. A Sofia AI está proibida de alterar este quarto; apenas um administrador pode fazer essa alteração.`
+    };
+  }
+
   const oldFlatNumber = String(resA.flatNumber || (flats.find(f => f.id === resA.flatId)?.number || ""));
   if (oldFlatNumber === String(targetFlat.number)) {
     return {
@@ -1217,13 +1325,14 @@ export function handleReallocateReservationFlat(db, args = {}) {
     r.checkinDate < resA.checkoutDate && r.checkoutDate > resA.checkinDate
   );
 
-  let displacedRes = null;
+  // FASE 1: Planejamento e validação atômica de todas as sobreposições
+  const plannedDisplacements = [];
+  const assignedAltFlatNumbers = new Set([String(targetFlat.number)]);
 
   if (overlaps.length > 0) {
-    // Para cada sobreposição, avalia se pode ser deslocada
     for (const resB of overlaps) {
-      const isCheckedIn = resB.checkedIn || resB.checkinConfirmed || resB.status === "hospedado" || resB.status === "checked_in" || resB.fnhrCompleted;
-      if (isCheckedIn) {
+      const isOccupantCheckedIn = resB.checkedIn || resB.checkinConfirmed || resB.status === "hospedado" || resB.status === "checked_in" || resB.fnhrCompleted;
+      if (isOccupantCheckedIn) {
         return {
           success: false,
           error: "OCCUPANT_CHECKED_IN",
@@ -1240,7 +1349,7 @@ export function handleReallocateReservationFlat(db, args = {}) {
       }
 
       // Tenta encontrar flat alternativo para Res B (permitindo o flat que Res A está desocupando!)
-      const altFlat = findAlternateFlatForGuest(db, resB, [targetFlat.number], resA.id);
+      const altFlat = findAlternateFlatForGuest(db, resB, Array.from(assignedAltFlatNumbers), resA.id);
       if (!altFlat) {
         return {
           success: false,
@@ -1249,30 +1358,44 @@ export function handleReallocateReservationFlat(db, args = {}) {
         };
       }
 
-      // Desloca Res B para o flat alternativo
-      resB.previousFlatNumber = String(resB.flatNumber || "");
-      resB.flatId = altFlat.id;
-      resB.flatNumber = String(altFlat.number);
-      resB.reallocatedBy = "sofia_ai";
-      resB.reallocationReason = `Remanejado automaticamente para liberar ${targetFlat.number} para ${resA.guestName} (${args.reason || "solicitação de hóspede"})`;
-      resB.updatedAt = new Date().toISOString();
-
-      if (!Array.isArray(resB.auditLogs)) resB.auditLogs = [];
-      resB.auditLogs.unshift({
-        timestamp: new Date().toISOString(),
-        action: "RESERVATION_REALLOCATED_BY_SOFIA",
-        actor: { name: "Sofia (IA CorpFlats)", role: "bot" },
-        description: `Deslocado do Flat ${targetFlat.number} para o Flat ${altFlat.number} para atender solicitação de ${resA.guestName}`
+      assignedAltFlatNumbers.add(String(altFlat.number));
+      plannedDisplacements.push({
+        reservation: resB,
+        altFlat
       });
-
-      displacedRes = {
-        id: resB.id,
-        code: resB.code,
-        guestName: resB.guestName,
-        previousFlat: String(targetFlat.number),
-        newFlat: String(altFlat.number)
-      };
     }
+  }
+
+  // FASE 2: Aplicação atômica das alterações (todas as garantias foram cumpridas)
+  let lastDisplacedInfo = null;
+  const nowIso = new Date().toISOString();
+
+  for (const plan of plannedDisplacements) {
+    const { reservation: resB, altFlat } = plan;
+    const prevNum = String(resB.flatNumber || "");
+
+    resB.previousFlatNumber = prevNum;
+    resB.flatId = altFlat.id;
+    resB.flatNumber = String(altFlat.number);
+    resB.reallocatedBy = "sofia_ai";
+    resB.reallocationReason = `Remanejado automaticamente para liberar Flat ${targetFlat.number} para ${resA.guestName} (${args.reason || "solicitação de hóspede"})`;
+    resB.updatedAt = nowIso;
+
+    if (!Array.isArray(resB.auditLogs)) resB.auditLogs = [];
+    resB.auditLogs.unshift({
+      timestamp: nowIso,
+      action: "RESERVATION_REALLOCATED_BY_SOFIA",
+      actor: { name: "Sofia (IA CorpFlats)", role: "bot" },
+      description: `Deslocado do Flat ${targetFlat.number} para o Flat ${altFlat.number} para atender solicitação de ${resA.guestName}`
+    });
+
+    lastDisplacedInfo = {
+      id: resB.id,
+      code: resB.code,
+      guestName: resB.guestName,
+      previousFlat: String(targetFlat.number),
+      newFlat: String(altFlat.number)
+    };
   }
 
   // Realoca Res A para o targetFlat
@@ -1281,11 +1404,11 @@ export function handleReallocateReservationFlat(db, args = {}) {
   resA.flatNumber = String(targetFlat.number);
   resA.reallocatedBy = "sofia_ai";
   resA.reallocationReason = args.reason || "Solicitação de troca pelo hóspede via WhatsApp";
-  resA.updatedAt = new Date().toISOString();
+  resA.updatedAt = nowIso;
 
   if (!Array.isArray(resA.auditLogs)) resA.auditLogs = [];
   resA.auditLogs.unshift({
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso,
     action: "RESERVATION_REALLOCATED_BY_SOFIA",
     actor: { name: "Sofia (IA CorpFlats)", role: "bot" },
     description: `Realocado do Flat ${oldFlatNumber} para o Flat ${targetFlat.number}${args.reason ? ` (${args.reason})` : ""}`
@@ -1301,12 +1424,12 @@ export function handleReallocateReservationFlat(db, args = {}) {
     if (reqA) {
       reqA.flatId = targetFlat.id;
       reqA.flatNumber = String(targetFlat.number);
-      reqA.updatedAt = new Date().toISOString();
+      reqA.updatedAt = nowIso;
     }
   }
 
-  const successMsg = displacedRes
-    ? `Flat remanejado com sucesso para ${targetFlat.number}! O hóspede ${displacedRes.guestName} foi realocado com sucesso para o Flat ${displacedRes.newFlat}.`
+  const successMsg = lastDisplacedInfo
+    ? `Flat remanejado com sucesso para ${targetFlat.number}! O hóspede ${lastDisplacedInfo.guestName} foi realocado com sucesso para o Flat ${lastDisplacedInfo.newFlat}.`
     : `Flat remanejado com sucesso para ${targetFlat.number}!`;
 
   return {
@@ -1317,7 +1440,8 @@ export function handleReallocateReservationFlat(db, args = {}) {
     guestName: resA.guestName,
     previousFlat: oldFlatNumber,
     newFlat: String(targetFlat.number),
-    displacedReservation: displacedRes,
+    displacedReservation: lastDisplacedInfo,
+    displacedCount: plannedDisplacements.length,
     message: successMsg
   };
 }
@@ -4640,27 +4764,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingWord}${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
   }
 
-  // 7.8 Comodidades e Estrutura dos Flats
-  if (/micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
-    return ret(`${greetingSalutation} ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
-  }
-
-  // 7.9 Animais e Pets
-  if (/pet|cachorro|animal|gato/i.test(text)) {
-    return ret(`${greetingSalutation} 🐾 ${kb.petPolicy}`);
-  }
-
-  // 7.10 Lazer, Cobertura, Piscina e Academia
-  if (/piscina|jacuzzi|academia|cobertura|lazer|hidro/i.test(text)) {
-    return ret(`${greetingSalutation} 🏊‍♂️ ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 para uso exclusivo dos hóspedes."}`);
-  }
-
-  // 7.11 Fumo e Cigarro
-  if (/fumo|fumar|cigarro|fumante/i.test(text)) {
-    return ret(`${greetingSalutation} 🚭 ${kb.smokingPolicy}`);
-  }
-
-  // 7.12 Comodidades Específicas dos Flats (Split, Micro-ondas, Casal, Solteiro, etc.)
+  // 7.8 Comodidades Específicas dos Flats (Split, Micro-ondas, Casal, Cama Inteira, Solteiro, etc.)
   if (/(?:split|ar[- ]?split)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
     const splitFlats = searchFlatsByAmenities(activeDb, { split: true });
     const numbers = splitFlats.map(f => f.number).join(", ");
@@ -4673,10 +4777,10 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingSalutation} Sim! Nossos flats dispõem de cozinha compacta equipada com micro-ondas e frigobar para sua total praticidade 🍽️⚡ (especialmente os flats: ${numbers || "113, 408, 511, 712"}).`);
   }
 
-  if (/(?:cama\s+de\s+casal|cama\s+casal)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
+  if (/(?:cama\s+de\s+casal|cama\s+casal|cama\s+inteira|cama_inteira)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
     const casalFlats = searchFlatsByAmenities(activeDb, { bedType: "casal" });
     const numbers = casalFlats.map(f => f.number).join(", ");
-    return ret(`${greetingSalutation} Sim! Nossos flats com cama de casal são: ${numbers || "113, 211, 408, 509, 511, 907"} 🛏️.`);
+    return ret(`${greetingSalutation} Sim! Nossos flats com cama inteira / casal são: ${numbers || "113, 211, 408, 509, 511, 907"} 🛏️.`);
   }
 
   if (/(?:2\s+camas?|duas\s+camas?|cama\s+solteiro|camas?\s+de\s+solteiro|solteiro)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
@@ -4685,12 +4789,37 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingSalutation} Sim! Nossos flats com duas camas de solteiro (twin) são: ${numbers || "114, 212, 215, 313, 512, 605, 712, 715, 1004, 1304"} 🛏️🛏️.`);
   }
 
+  // 7.9 Comodidades e Estrutura Geral dos Flats
+  if (/micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
+    return ret(`${greetingSalutation} ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
+  }
+
+  // 7.10 Animais e Pets
+  if (/pet|cachorro|animal|gato/i.test(text)) {
+    return ret(`${greetingSalutation} 🐾 ${kb.petPolicy}`);
+  }
+
+  // 7.11 Lazer, Cobertura, Piscina e Academia
+  if (/piscina|jacuzzi|academia|cobertura|lazer|hidro/i.test(text)) {
+    return ret(`${greetingSalutation} 🏊‍♂️ ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 para uso exclusivo dos hóspedes."}`);
+  }
+
+  // 7.12 Fumo e Cigarro
+  if (/fumo|fumar|cigarro|fumante/i.test(text)) {
+    return ret(`${greetingSalutation} 🚭 ${kb.smokingPolicy}`);
+  }
+
   // 7.13 Solicitação de Troca de Quarto / Remanejamento
   if (/(?:trocar|mudar|alterar)\s+(?:de\s+)?(?:flat|quarto|apartamento)\b/i.test(text) || /(?:pode\s+me\s+colocar|quero\s+ficar|prefiro\s+o)\s+(?:no\s+)?(?:flat|quarto|apto)?\s*(\d{3,4})\b/i.test(text)) {
     const targetMatch = text.match(/\b(\d{3,4})\b/);
     const targetFlatNum = targetMatch ? targetMatch[1] : null;
     const res = guestContext?.reservation;
     if (res && targetFlatNum) {
+      const botSettings = getBotActionsSettings(activeDb);
+      if (!botSettings.apiActionsEnabled || !botSettings.allowedActions?.reallocateReservationFlat) {
+        return ret(`${greetingSalutation} Compreendo seu pedido para o Flat ${targetFlatNum}. No momento, esta ação automática está pausada no sistema para validação da nossa equipe. Já registrei sua solicitação para a recepção verificar com prioridade! 🛎️✨`);
+      }
+
       const realloc = handleReallocateReservationFlat(activeDb, {
         reservationId: res.id,
         targetFlatNumber: targetFlatNum,

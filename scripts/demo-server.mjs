@@ -14762,8 +14762,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldCheckin = r.checkinDate;
   const oldCheckout = r.checkoutDate;
   const oldFlatId = r.flatId;
+  const oldFlatNumber = r.flatNumber;
   const oldStatus = r.status;
   const oldGuestName = r.guestName;
+  const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
+  const oldFlatLockReason = r.flatLockReason || "";
 
   if (req.body.checkinDate && oldCheckin && oldCheckin !== req.body.checkinDate) {
     r.previousCheckinDate = oldCheckin;
@@ -14819,7 +14822,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   const fields = [
-    "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel",
+    "flatId", "flatNumber", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel",
     "paymentMethod",
     "dailyRate", "dailyRates", "charges", "payments", "totalAmount", "paidAmount", "paymentStatus",
     "adults", "children", "notes", "prefersHighFloor", "twinBeds",
@@ -14833,6 +14836,13 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (req.body[f] !== undefined) r[f] = req.body[f];
   }
 
+  if (r.flatId !== undefined) {
+    const matchedFlat = (db.flats || []).find(f => f.id === Number(r.flatId));
+    if (matchedFlat) {
+      r.flatNumber = String(matchedFlat.number);
+    }
+  }
+
   if (req.body.isFlatLocked !== undefined || req.body.flatLocked !== undefined) {
     const isLockedVal = Boolean(req.body.isFlatLocked ?? req.body.flatLocked);
     r.isFlatLocked = isLockedVal;
@@ -14843,7 +14853,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   // Se o administrador alterou o flat de uma reserva com trava de Quarto Preferencial, registra em auditoria
-  const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
   if (wasFlatLocked && req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId)) {
     console.log(`[PMS Edição] Administrador alterou o flat da reserva ${r.code || r.id} com trava de Quarto Preferencial (de Flat ${oldFlatId} para Flat ${req.body.flatId}).`);
     try {
@@ -14857,8 +14866,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           code: r.code,
           guestName: r.guestName,
           oldFlatId,
+          oldFlatNumber,
           newFlatId: req.body.flatId,
-          flatLockReason: r.flatLockReason || "Quarto preferencial bloqueado"
+          newFlatNumber: r.flatNumber,
+          flatLockReason: oldFlatLockReason || r.flatLockReason || "Quarto preferencial bloqueado"
         }
       });
     } catch (_) {}

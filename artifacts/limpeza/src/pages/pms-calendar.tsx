@@ -4739,18 +4739,32 @@ export default function PmsCalendar() {
                   </div>
                 )}
 
-                {selectedRes && (selectedRes.isFlatLocked || selectedRes.flatLocked) && formFlatId && String(formFlatId) !== String(selectedRes.flatId) && (
-                  <div className="p-3 bg-amber-500/15 border-2 border-amber-500/50 rounded-xl text-amber-950 dark:text-amber-200 text-xs flex items-start gap-2.5 animate-in fade-in">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                    <div className="space-y-0.5">
-                      <p className="font-bold text-[12px] text-amber-900 dark:text-amber-300">
-                        Aviso: Quarto Preferencial / Bloqueado!
-                      </p>
-                      <p className="text-[11px] leading-tight text-amber-800 dark:text-amber-300/90">
-                        Esta reserva foi marcada com flat bloqueado{selectedRes.flatLockReason ? ` (${selectedRes.flatLockReason})` : ""}. A Sofia AI está proibida de alterar este quarto. Como administrador, você pode prosseguir com a alteração manual se desejar.
-                      </p>
+                {selectedRes && (selectedRes.isFlatLocked || selectedRes.flatLocked) && (
+                  String(formFlatId) !== String(selectedRes.flatId) ? (
+                    <div className="p-3 bg-amber-500/15 border-2 border-amber-500/50 rounded-xl text-amber-950 dark:text-amber-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-[12px] text-amber-900 dark:text-amber-300">
+                          Aviso: Alterando Quarto Preferencial / Bloqueado!
+                        </p>
+                        <p className="text-[11px] leading-tight text-amber-800 dark:text-amber-300/90">
+                          Esta reserva possui trava de quarto preferencial{selectedRes.flatLockReason ? ` (${selectedRes.flatLockReason})` : ""}. A Sofia AI está proibida de alterar este quarto. Como administrador, você pode prosseguir com a alteração manual e essa mudança será registrada em auditoria.
+                        </p>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span className="font-semibold text-[11.5px]">
+                          Quarto Preferencial Ativo{selectedRes.flatLockReason ? `: "${selectedRes.flatLockReason}"` : ""}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/30 text-amber-900 dark:text-amber-200 uppercase tracking-wider">
+                        Não Trocar
+                      </span>
+                    </div>
+                  )
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
