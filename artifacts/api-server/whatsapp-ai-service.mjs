@@ -3301,25 +3301,21 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
-  // 0.6 Se for demanda operacional não atendida pela base de conhecimento (ações, chamados, toalhas, checkout, etc.)
+  // 0.6 Comunicação de Check-out pelo Hóspede (Aviso de saída/desocupação)
   const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
-  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
-    if (queryAnalysis.primaryTopic === "checkout_comunicacao") {
-      const extractedFlat = guestContext?.flatNumber || (messageText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
-      const effectiveCtx = extractedFlat && (!guestContext || !guestContext.flatNumber)
-        ? { ...(guestContext || {}), flatNumber: extractedFlat }
-        : guestContext;
-      const checkoutResp = formatCheckoutCommunicationResponse(name, effectiveCtx);
-      let extraAnswer = "";
-      if (/almo[cç]|restaurante|comer|almo[cç]ar/i.test(messageText)) {
-        extraAnswer = "\n\n🍽️ Para refeições, temos ótimos restaurantes nos arredores (Rua Conselheiro Otaviano e Praça do Santíssimo Salvador). Qualquer dúvida adicional, nossa recepção está à disposição!";
-      } else if (/mala[s]?|bagagem|guardar/i.test(messageText)) {
-        extraAnswer = "\n\n🧳 Se precisar guardar suas malas após a saída enquanto aguarda sua viagem, você pode deixá-las com segurança na recepção 24h!";
-      }
-      return ret(`${checkoutResp}${extraAnswer}`);
+  if (queryAnalysis.type === "OPERATIONAL_DEMAND" && queryAnalysis.primaryTopic === "checkout_comunicacao") {
+    const extractedFlat = guestContext?.flatNumber || (messageText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
+    const effectiveCtx = extractedFlat && (!guestContext || !guestContext.flatNumber)
+      ? { ...(guestContext || {}), flatNumber: extractedFlat }
+      : guestContext;
+    const checkoutResp = formatCheckoutCommunicationResponse(name, effectiveCtx);
+    let extraAnswer = "";
+    if (/almo[cç]|restaurante|comer|almo[cç]ar/i.test(messageText)) {
+      extraAnswer = "\n\n🍽️ Para refeições, temos ótimos restaurantes nos arredores (Rua Conselheiro Otaviano e Praça do Santíssimo Salvador). Qualquer dúvida adicional, nossa recepção está à disposição!";
+    } else if (/mala[s]?|bagagem|guardar/i.test(messageText)) {
+      extraAnswer = "\n\n🧳 Se precisar guardar suas malas após a saída enquanto aguarda sua viagem, você pode deixá-las com segurança na recepção 24h!";
     }
-    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
-    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+    return ret(`${checkoutResp}${extraAnswer}`);
   }
 
   // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
@@ -3650,6 +3646,11 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`Olá${name}! 🚭 ${kb.smokingPolicy}`);
   }
 
+  // 9. Se for demanda operacional não atendida pela base de conhecimento
+  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
+    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
+    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+  }
 
   // 10. Se for dúvida não mapeada
   if (queryAnalysis.type === "UNKNOWN_INQUIRY") {
