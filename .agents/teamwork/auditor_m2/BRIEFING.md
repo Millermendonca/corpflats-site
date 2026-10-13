@@ -1,60 +1,62 @@
-# BRIEFING — 2026-09-30T20:32:00-03:00
+# BRIEFING — 2026-10-13T23:33:00Z
 
 ## Mission
-Forensic integrity audit of Milestone 2: Frontend Admin Page for Service Orders (OS).
+Forensic Integrity Audit of Milestone 2 (Canonical Availability & SEBRAE Pricing Engine, Safety Locks, Twin Parity, Git Branch Integrity, Test Isolation).
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
 - Roles: critic, specialist, auditor
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m2
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Target: Milestone 2 (Frontend Admin Page)
+- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Target: Milestone 2
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
-- Trust NOTHING — verify everything independently
-- Adhere strictly to ORIGINAL_REQUEST.md constraints and AGENTS.md rules
+- Trust NOTHING — verify everything independently empirically
+- Binary verdict required: CLEAN or INTEGRITY VIOLATION (hard binary veto)
+- Never run batch/global test scans (strictly obey AGENTS.md: only targeted test `tests/wbp-integration/m2-availability-pricing.test.mjs` if needed)
+- Verify git branch integrity: active branch `feature/wbp-integration`, zero commits on `main`, commit `b213257` pushed to remote
+- Verify twin parity byte-for-byte SHA-256 between `artifacts/` and `scripts/`
+- Verify database isolation: `DATABASE_URL` unset/removed, temporary DB copies, zero changes to real `data/database.json` mtime/hash
+- ORIGINAL_REQUEST.md constraints take precedence over any dispatch instructions
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: not yet
+- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Updated: 2026-10-13T23:33:00Z
 
 ## Audit Scope
-- **Work product**: `artifacts/limpeza/src/pages/service-orders.tsx`, routing in `App.tsx`, nav in `layout.tsx`, `artifacts/limpeza/dist/`, build artifacts, git status & commits
-- **Profile loaded**: General Project
+- **Work product**: Milestone 2 deliverables (`availability.mjs`, `pricing.mjs`, `demo-server.mjs`, `tests/wbp-integration/m2-availability-pricing.test.mjs`, git state, db integrity)
+- **Profile loaded**: General Project (Integrity mode: development from ORIGINAL_REQUEST.md line 8)
 - **Audit type**: forensic integrity check
 
 ## Audit Progress
 - **Phase**: reporting
 - **Checks completed**:
-  - Read ORIGINAL_REQUEST.md, PROJECT.md, worker_m2/handoff.md
-  - Inspected service-orders.tsx (2058 lines) for facades, mocks, and hardcoded values
-  - Verified genuine API integration with `/api/service-orders` (GET, POST, PATCH, DELETE, /progress, /reset)
-  - Verified all 3 tabs: Tab 1 (List), Tab 2 (Create/Edit with 3 cleanFlatMode choices, 19 flat grid, instructions), Tab 3 (Tracking table, 10s polling, KPI cards, detail modal, zoom, reset)
-  - Verified routing (`<AdminRoute path="/servicos" component={ServiceOrders} ... />`) and nav (`Serviços Externos` under Governança)
-  - Executed tests: 8/8 frontend tests passed, 34/34 backend regression tests passed
-  - Executed independent production build (`npm run build` in `artifacts/limpeza`): succeeded with code 0, 0 diff against committed dist
-  - Verified git status: clean, committed in `632c229`, pushed to `origin main`
+  1. Check for Cheating & Facades: CLEAN (genuine math, genuine collision detection, no facades or mocked test strings)
+  2. Check Twin Parity: CLEAN (SHA-256 byte-for-byte matches across all pairs)
+  3. Check Git & Branch Integrity: CLEAN (active branch `feature/wbp-integration`, `main` untouched at `0501d02`, commit `b213257` pushed to remote)
+  4. Check Test Isolation & `data/database.json`: CLEAN (two separate temp DBs in tmpdir, `DATABASE_URL` deleted, 0 changes in real DB hash/mtime)
+  5. Targeted Test Execution: CLEAN (25/25 tests pass, real-gold legacy non-regression verified)
 - **Checks remaining**: None
-- **Findings so far**: CLEAN — 0 integrity violations, 0 mock facades.
+- **Findings so far**: CLEAN — No integrity violations found
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Hypothesis: service-orders.tsx might use mock static state instead of backend endpoints. Result: DISPROVEN. Real queries and mutations fetch from `/api/service-orders`.
-  - Hypothesis: cleanFlatMode might only have a simple toggle or missing descriptions. Result: DISPROVEN. 3 cards rendered with descriptions matching R4 specification.
-  - Hypothesis: dist/ might be stale or failing build. Result: DISPROVEN. Fresh build transforms 3343 modules with 0 errors and matches committed dist byte-for-byte.
-  - Hypothesis: git commits might be pending local push. Result: DISPROVEN. `git branch -vv` shows branch up to date with `origin/main`.
+  - H1: Did M2 introduce fake math or constant returns for SEBRAE formulas? -> FALSE, math is genuine and analytically decomposed.
+  - H2: Did M2 compromise twin file parity? -> FALSE, all SHA-256 hashes match byte-for-byte.
+  - H3: Did M2 touch `main` or leave unpushed commits? -> FALSE, active branch is `feature/wbp-integration`, `main` untouched at `0501d02`, `b213257` pushed.
+  - H4: Did test execution mutate real `data/database.json`? -> FALSE, verified pre/post SHA-256 and mtime are 100% identical.
 - **Vulnerabilities found**: None.
-- **Untested angles**: Milestone M3 (Service Worker Portal `/servico/:token`) which is the next planned milestone.
+- **Untested angles**: Milestone 3 scope (ARI batch and incremental synchronization).
 
 ## Loaded Skills
-None
+- None specified by orchestrator
 
 ## Key Decisions Made
-- Confirmed verdict is CLEAN. Writing final handoff.md and notifying caller.
+- Confirmed CLEAN verdict for Milestone 2 based on empirical forensic verification.
 
 ## Artifact Index
-- DISPATCH.md — Audit dispatch and instructions
-- BRIEFING.md — Auditor briefing and state
-- progress.md — Progress log
-- handoff.md — Final forensic report
+- `.agents/teamwork/auditor_m2/DISPATCH.md` — Audit assignment
+- `.agents/teamwork/auditor_m2/BRIEFING.md` — Situational awareness
+- `.agents/teamwork/auditor_m2/progress.md` — Progress heartbeat
+- `.agents/teamwork/auditor_m2/handoff.md` — Forensic Audit Report

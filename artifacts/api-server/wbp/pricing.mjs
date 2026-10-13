@@ -339,7 +339,19 @@ export function applyPricingLocks({
   const rate = round2(Number(candidateRate || 0));
   const floor = round2(Math.max(Number(tarifaMinima || 0), Number(manualFloor || 0)));
 
-  // Trava 1: Piso Sustentável
+  // Trava 1: Piso Sustentável & Validação Numérica
+  if (isNaN(rate) || rate <= 0) {
+    return {
+      approved: false,
+      candidateRate: isNaN(rate) ? null : rate,
+      finalRate: null,
+      lockedReason: "FLOOR_LOCK",
+      floor,
+      deltaPct: 0,
+      message: "Tarifa proposta inválida ou não numérica."
+    };
+  }
+
   if (rate < floor) {
     return {
       approved: false,
@@ -355,7 +367,7 @@ export function applyPricingLocks({
   // Trava 2: Variação Brusca (padrão 30%)
   if (lastSentRate != null && !isNaN(Number(lastSentRate)) && Number(lastSentRate) > 0) {
     const prevRate = Number(lastSentRate);
-    const deltaPct = round2((rate - prevRate) / prevRate);
+    const deltaPct = (rate - prevRate) / prevRate;
     const maxVariation = Number(variationLimitPct || 0.30);
 
     if (Math.abs(deltaPct) > maxVariation) {

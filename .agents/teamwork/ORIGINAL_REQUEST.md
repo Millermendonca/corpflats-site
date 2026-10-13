@@ -192,3 +192,45 @@ CORREÇÃO URGENTE do usuário (repassar ao orquestrador e a todos os workers):
 3) `artifacts/api-server/audit_logs.jsonl` tem 11 linhas locais não commitadas, que devem ser preservadas (não fazer checkout ou reset desse arquivo).
 
 Respondam confirmando os três pontos.
+
+
+## Follow-up — 2026-10-13T22:49:53Z
+
+ALERTA DE RISCO OPERACIONAL para o M2 (repassar ao orquestrador e ao worker_m2):
+
+O motor de tarifas atual (`calculateDailyRate`, `getTariffSettings`, `calculateSebraeSustainableRate`, `db.tariffSettings`/`tariffOverrides`) também é usado FORA da integração: no motor de reservas do site (direct-booking), nas cotações do bot (`/api/bot-actions/quote`), na tela de Tarifas e no cálculo de `dailyRates` ao criar reservas manuais. Pelo R1, com a integração desligada o sistema deve se comportar EXATAMENTE como hoje.
+
+Requisitos para o M2:
+1) A nova precificação SEBRAE (custos corrigidos, imposto de 6%, sazonalidade por ocupação real etc.) NÃO pode alterar os preços que o site, o bot e as reservas manuais calculam hoje enquanto o usuário não a ativar explicitamente, pela pré-visualização e "Publicar" ou por uma chave própria. Os valores e os modos existentes de `db.tariffSettings` devem ser preservados, sem migração destrutiva.
+2) O cálculo canônico de disponibilidade alimenta o ARI. Nas telas atuais, ele só pode ACRESCENTAR avisos de conflito, sem bloquear e sem mudar os resultados dos endpoints de disponibilidade existentes para o site e o bot, a menos que isso seja explicitamente desejado e aprovado.
+3) Incluir no M2 um teste pontual de regressão: com a integração desligada e sem nenhuma publicação, `calculateDailyRate` e o endpoint de cotação retornam os mesmos valores de antes da mudança para um conjunto de datas, flats e canais.
+
+Confirmem.
+
+
+## Follow-up — 2026-10-13T23:09:48Z
+
+REVISÃO DO USUÁRIO/ORQUESTRADOR-PAI sobre tests/wbp-integration/m2-availability-pricing.test.mjs — BLOQUEANTE para o gate do M2 (não executar o teste antes de corrigir):
+
+1) ISOLAMENTO QUEBRADO (crítico): imports ESM são içados (hoisted). O `delete process.env.DATABASE_URL` da linha 24 roda DEPOIS de `demo-server.mjs` já ter sido avaliado (import da linha 42). Além disso o teste NÃO define DATA_FILE nem NODE_ENV=test, então o demo-server carrega e pode regravar o `data/database.json` REAL (DB_FILE, linha ~671 do demo-server). Corrigir: definir DATABASE_URL removida, DATA_FILE=cópia temporária em os.tmpdir() e NODE_ENV=test ANTES do carregamento — p.ex. num arquivo setup importado primeiro (`import "./_env-setup.mjs"` como primeiro import) ou via `await import()` dinâmico depois de configurar o env; ou seguir o padrão de tests/tariff-engine.test.mjs (servidor filho isolado). Provar no teste que DB_FILE aponta para a cópia e que o data/database.json real não teve mtime/hash alterado.
+
+2) GUARDA DE NÃO-REGRESSÃO FRACA: as asserções atuais só verificam proporções internas (booking = direct×1.18 etc.), o que passaria mesmo se o preço base mudasse. Exigência: comparar com valores-ouro do comportamento LEGADO real — gerar os valores de calculateDailyRate (vários flats, datas dia de semana/fim de semana/alta/baixa, canais direct/booking/airbnb, com e sem overrides P1–P4) usando o demo-server da `main` (commit 0501d02, via `git show 0501d02:artifacts/api-server/demo-server.mjs` num diretório temporário, sobre a MESMA cópia de dados) e afirmar igualdade exata com o da branch, com a integração desligada/não publicada.
+
+3) /api/bot-actions/quote: o cabeçalho diz que é coberto, mas não há teste. Adicionar comparação legado vs branch da cotação do bot e do endpoint de cotação/preço usado pelo site público, com integração desligada.
+
+4) Lembrete AGENTS.md: rodar apenas este arquivo de teste pontual; nada de lote.
+
+Por favor confirmem as correções e me mandem as linhas alteradas antes do gate.
+
+
+## Follow-up — 2026-10-13T23:21:48Z
+
+Revisei a nova versão do m2-availability-pricing.test.mjs. Isolamento e comparação com 0501d02: APROVADOS no conceito. Restam 3 ajustes (rápidos) antes do gate:
+
+1) P1–P4 provavelmente vazio (linhas 789–836): os overrides são gravados no arquivo DEPOIS dos servidores subirem; o demo-server mantém o estado em memória, então os dois devem estar comparando SEM overrides. Corrigir: injetar os overrides na cópia ANTES do spawn (ou via API idêntica nos dois servidores) e ASSERTAR que o override aparece (ex.: flat 1 em 2026-11-18 direct = 399.00 nos dois) — prova de que o caso não é vácuo.
+
+2) Um único arquivo de DB compartilhado pelos dois processos (legado e ativo gravam com debounce no mesmo isolatedDbPath) — frágil/condição de corrida. Usar DUAS cópias temporárias idênticas (uma por servidor) e apagá-las no after.
+
+3) O teste da linha 685 cria reserva (POST /api/pms/reservations) só no servidor ativo, o que faz os estados divergirem para as comparações seguintes (availability/quote). Mover para depois das comparações ou rodar contra uma instância separada; e garantir que as comparações de availability/quote cubram datas com reservas existentes (não só datas vazias).
+
+Rodar novamente apenas este arquivo pontual e me reportar a contagem de testes e as asserções do item 1.

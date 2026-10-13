@@ -1,65 +1,54 @@
-# BRIEFING — 2026-10-11T01:21:00Z
+# BRIEFING — 2026-10-13T22:45:00Z
 
 ## Mission
-Adversarial empirical testing of CorpFlats Milestone M1 (Tariff Engine & Bulk Update), challenging edge cases, rate calculations, overrides, and stress scenarios.
+Empirically verify concurrency and idempotency of Milestone 1 storage and webhook processing under 50+ simultaneous concurrent deliveries.
 
 ## 🔒 My Identity
-- Archetype: challenger
+- Archetype: empirical challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M1 (Tariff Engine & Settings)
+- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Milestone: Milestone 1
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code directly; report findings with empirical evidence
-- All bugs must be demonstrated empirically with runnable verification scripts / tests
-- Never place source code, tests, or data files in .agents/teamwork/
+- Review-only — do NOT modify implementation code
+- Run exclusively targeted test: node --test tests/wbp-integration/challenger-m1-concurrency.test.mjs (NEVER run global sweeps)
+- Strictly comply with AGENTS.md rules
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T01:13:51Z
+- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Updated: 2026-10-13T22:45:00Z
 
 ## Review Scope
-- **Files reviewed**:
-  - `artifacts/api-server/demo-server.mjs` (lines 19700-20350: Tariff Engine, Settings, Calendar, Bulk Update, Bot Actions Quote/Pipeline)
-  - `scripts/demo-server.mjs` (twin parity mirror)
-  - `tests/tariff-engine.test.mjs` (worker's 8 tests)
-  - `tests/bot-actions-api.test.mjs` (worker's 5 tests)
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, `orchestrator_4/PROJECT.md`
-- **Review criteria**: correctness, safety, edge cases, override priority, rounding/precision, performance under stress
+- **Files to review**: Milestone 1 implementation (`artifacts/api-server/wbp/storage.mjs`, `callbacks.mjs`)
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
+- **Review criteria**: Concurrency, idempotency, lock acquisition, race condition prevention
+
+## Key Decisions Made
+- Created comprehensive adversarial stress test in `tests/wbp-integration/challenger-m1-concurrency.test.mjs` with 7 test suites.
+- Validated 50 concurrent deliveries across 30 HTTP callbacks and 20 polling deliveries: exactly 1 acquired lock, exactly 49 deduplicated, 50 raw payloads recorded, 0 duplicate IDs.
+- Validated post-processing flood, multi-order bursts, failure lock release, concurrent crash recovery, polymorphic payload schemas, and ultra-concurrency burst (100 simultaneous requests).
+- Verdict: APPROVE.
+
+## Artifact Index
+- DISPATCH.md — Initial dispatch message
+- BRIEFING.md — Persistent working memory
+- progress.md — Heartbeat and status
+- tests/wbp-integration/challenger-m1-concurrency.test.mjs — Isolated empirical stress test
+- handoff.md — Final handoff report
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Date rollover & leap year correctness (2026-12-31 to 2027-01-01, 2026-03-31 to 2026-04-01, Feb non-leap year): PASSED
-  - Weekday vs weekend dynamics (Fri/Sat +15%, Sun-Thu 0%, weekendMarkup=0): PASSED
-  - Multi-channel normalization (direct/site/whatsapp/direto, unknown channel fallback, custom channels): PASSED
-  - 4-level override hierarchy collision (P1 > P2 > P3 > P4, ID vs flatNumber): PASSED
-  - Bulk update validation (startDate > endDate, invalid rate <= 0, idempotency): PASSED
-  - Stress batching (360 overrides in 37ms, 30-night quote sum verification): PASSED
-  - Calendar general query without flatId when specific flat override exists: DEFECT CONFIRMED (Finding 1)
-  - Calendar channel override lookup with titlecase/uppercase channel: DEFECT CONFIRMED (Finding 2)
-  - Bulk update daysOfWeek string array `["5", "6"]`: DEFECT CONFIRMED (Finding 3)
-  - Manual mode baseDailyRate = 0 falsy fallback: OBSERVATION CONFIRMED (Finding 4)
-- **Vulnerabilities found**:
-  - Bug 1: Leaking single flat override metadata into general calendar query while rate remains base rate.
-  - Bug 2: Case-sensitive `String(o.channel) === channel` in calendar overrides matching misses overrides when channel query is Titlecase ("Booking").
-  - Bug 3: `daysOfWeek` does not cast elements to Number, causing string arrays to silently fail with `updatedCount: 0`.
-- **Untested angles**:
-  - Gemini AI Function calling (belongs to Milestone M2).
+  1. 50 concurrent requests competing for the same booking lock/processing -> PASSED (exactly 1 lock acquired, 49 deduplicated).
+  2. Post-completion duplicate flood of 50 requests -> PASSED (0 locks acquired, 100% deduplicated with ALREADY_PROCESSED).
+  3. Burst across 5 distinct orders (50 requests total) -> PASSED (exactly 5 locks acquired, 45 deduplicated, no cross-talk).
+  4. Failure in worker processing holding lock -> PASSED (lock cleanly released, retry succeeds, no deadlock).
+  5. Crash recovery race across 5 worker threads for 50 items -> PASSED (10 distinct orders processed once, 0 duplicate processing).
+  6. Heterogeneous/polymorphic casing and types (OrderId number vs string, Booking vs reservation) -> PASSED (all normalized, exactly 1 lock).
+  7. Ultra-burst (100 simultaneous requests) -> PASSED (1 lock, 99 deduplications, 0 file corruption).
+- **Vulnerabilities found**: None in single-process / file mode. Storage and mutex hold robustly under high concurrency.
+- **Untested angles**: Multi-process clustering with PostgreSQL `pgPool` (when active in production with multiple containers, `wbp_idempotency` unique constraint protects commits, but in-flight lock is in-memory). Documented as caveat.
 
 ## Loaded Skills
-- None requested for this dispatch
-
-## Key Decisions Made
-- Created and executed `tests/challenger-tariff-stress.test.mjs` (26 tests, 100% pass on core engine rules).
-- Created and executed `tests/challenger-edge-probes.test.mjs` (demonstrating the 3 behavioral defects empirically).
-- Issuing verdict `REQUEST_CHANGES` to address the 3 defects in `demo-server.mjs`.
-
-## Artifact Index
-- `DISPATCH.md` — Incoming dispatch log
-- `BRIEFING.md` — Persistent situational awareness
-- `progress.md` — Liveness and step tracking
-- `handoff.md` — Final 5-component adversarial review report with REQUEST_CHANGES
-- `tests/challenger-tariff-stress.test.mjs` — 26-test stress and boundary suite
-- `tests/challenger-edge-probes.test.mjs` — Reproducible empirical proof of 3 defects
+- None

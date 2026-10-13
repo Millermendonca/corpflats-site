@@ -1,21 +1,24 @@
-## 2026-10-11T01:13:51Z
-Você é o Reviewer 1 para o Milestone M1 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O relatório do worker é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
-Você DEVE LER ORIGINAL_REQUEST.md antes de iniciar.
+## 2026-10-13T22:40:52Z
+You are Reviewer 1 for Milestone 1 (Operational Safety, Storage & WBP Simulator).
+Your dedicated working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1`
 
-Missão de Revisão:
-1. Examine a corretude, completude e robustez da implementação do Milestone M1 em artifacts/api-server/demo-server.mjs:
-   - Chave Mestra Global (apiActionsEnabled) e Matriz Granular (allowedActions).
-   - Respostas de erro 403 ACTION_DISABLED com flags de transbordo (requiresHandover: true).
-   - Endpoints /api/bot-actions/* (/availability, /quote, /payment-link, /pre-reserve, /commit-reservation).
-   - Motor de Tarifas (db.tariffSettings, db.tariffOverrides, cálculo SEBRAE em calculateSebraeSustainableRate, sazonalidade, fim de semana, comissões).
-   - Endpoints /api/tariffs/* (/settings, /calendar, /bulk-update, /overrides/:id).
-2. Execute a suíte de testes automatizados:
-   node --test tests/tariff-engine.test.mjs
-   node --test tests/bot-actions-api.test.mjs
-3. Verifique a conformidade de interfaces e segurança contra crashes.
-4. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1\handoff.md com veredicto APPROVE ou REQUEST_CHANGES.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+Read these documents before reviewing:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
+
+Your Mission:
+1. Objectively and adversarially review the implementation of Milestone 1 in:
+   - `artifacts/api-server/wbp/` vs `scripts/wbp/`
+   - `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
+   - `e2e/wbp-simulator/`
+   - `render.yaml`, `package.json`, `server.mjs`
+2. Verify:
+   - Branch: confirm `feature/wbp-integration` is active.
+   - Parity: compute and verify SHA-256 byte-for-byte identity across all twin file pairs.
+   - Safety switch: verify 'off' behavior is 100% inert.
+   - Storage: verify insert-only raw storage outside blob and immune to pruneDatabase().
+   - Test execution: run exclusively `node --test tests/wbp-integration/m1-safety-simulator.test.mjs`. Verify tests pass cleanly. (NEVER run global test suites!).
+3. State your explicit verdict in `handoff.md`: APPROVE or REQUEST_CHANGES. Send message to orchestrator.

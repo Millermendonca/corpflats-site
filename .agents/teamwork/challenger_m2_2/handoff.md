@@ -1,166 +1,200 @@
-# Handoff Report: Challenger M2 #2 - Resiliência, Timeouts, Crashes e Auditoria de Encerramento Limpo
-
-**Data**: 2026-10-11T02:36:00Z  
-**Autor**: Challenger M2 #2 (`challenger_m2_2`)  
-**Para**: Orchestrator Agent (`3364a657-c855-42a7-a46e-a5463bc245b7`)  
-**Veredicto**: **REQUEST_CHANGES**
-
----
+# Handoff Report — Milestone 2 (Challenger 2: Pricing & Safety Locks Stress)
 
 ## 1. Observation
 
-### 1.1 Verificação de Resiliência a Timeouts (>8s) e Fallback Heurístico
-- **Comando executado**:
+- **Targeted Test Execution**:
+  Executed exclusively the isolated test suite:
   ```bash
-  node --test --test-name-pattern="ADV-1" tests/challenger-m2-resilience-stress.test.mjs
+  node --test tests/wbp-integration/challenger-m2-pricing.test.mjs
   ```
-- **Resultado observado**:
+  Result:
   ```
-  ok 1 - ADV-1.1: callGeminiAi sob timeout de rede (>8s abort) falha graciosamente sem crash
-  ok 2 - ADV-1.2: generateAiWhatsAppResponse cai no fallback heurístico e responde sem erro
-  ok 3 - ADV-1.3: Endpoint /api/whatsapp/ai-simulate responde HTTP 200 com fallback quando Gemini dá timeout
-  ok 4 - ADV-1.4: processAiInboundMessage via Webhook tolera timeout sem erro 500 nem exceção não tratada
+  # tests 21
+  # suites 4
+  # pass 18
+  # fail 3
+  # cancelled 0
+  # skipped 0
+  # todo 0
+  # duration_ms 144.7632
   ```
-- Em `artifacts/api-server/whatsapp-ai-service.mjs:1136`, a chamada ao Google Gemini utiliza `signal: AbortSignal.timeout(8000)`. Ao simular estouro do tempo limite ou `TimeoutError`:
-  - `callGeminiAi` captura a exceção em `catch (e)` (linha 1240) e tenta o próximo modelo ou esgota suavemente retornando `{ ok: false, error: ... }`.
-  - `generateAiWhatsAppResponse` (linha 1356) aciona `generateHeuristicResponse`, fornecendo dados oficiais de Wi-Fi, horários de check-in/out, estacionamento ou localização sem gerar qualquer erro 500.
-  - O endpoint `POST /api/whatsapp/ai-simulate` em `zapi-service.mjs:6347` retorna HTTP 200 com `{ success: true, source: "heuristic", replyText: ... }`.
 
-### 1.2 Verificação de Exceções no Controlador de Tool Execution
-- **Comando executado**:
-  ```bash
-  node --test --test-name-pattern="ADV-2" tests/challenger-m2-resilience-stress.test.mjs
-  ```
-- **Resultado observado**:
-  ```
-  ok 5 - ADV-2.1: Exceção direta inesperada em executeBotAction é capturada e tratada
-  ok 6 - ADV-2.2: Exceção no Turno 1 do Tool Execution é convertida em resposta cordial e requiresHandover
-  ok 7 - ADV-2.3: Falha catastrófica no Turno 2 após exceção de tool aciona fallback com requiresHandover: true
-  ok 8 - ADV-2.4: processAiInboundMessage pausa conversa e dispara notificação em falha de ferramenta
-  ```
-- Em `artifacts/api-server/whatsapp-ai-service.mjs:1163-1172`:
-  ```javascript
-  let actionResult;
-  try {
-    actionResult = await executeBotAction(db, fnName, fnArgs);
-  } catch (actErr) {
-    actionResult = {
-      error: "ACTION_FAILED",
-      action: fnName,
-      requiresHandover: true,
-      message: actErr.message || "Erro interno ao executar a ação do sistema."
-    };
-  }
-  ```
-- Quando o banco de dados simula falha crítica ou lock durante a execução de uma ferramenta (como `commitReservation` ou `generatePayment`):
-  - A exceção é capturada internamente sem travar o processo Node.js.
-  - `actionResult.requiresHandover` é marcado como `true`.
-  - O Turno 2 despacha o resultado de erro para o Gemini, que redige resposta empática informando a necessidade de transferir para a recepção.
-  - Se o Turno 2 também falhar (linha 1230), o sistema retorna texto cordial de fallback preservando `requiresHandover: true`.
-  - No webhook `processAiInboundMessage`, a conversa é devidamente pausada (`aiPaused: true`) e uma notificação do tipo `whatsapp_handover` é gerada.
+- **Verbatim Failures Observed**:
 
-### 1.3 Verificação de Encerramento Limpo da Suíte e Presença Residual de `process.exit(0)`
-- **Comando executado**:
-  ```powershell
-  Select-String -Path tests/whatsapp-ai-agent.test.mjs -Pattern "process\.exit"
-  ```
-- **Resultado observado (verbatim)**:
-  ```
-  tests\whatsapp-ai-agent.test.mjs:941:    setTimeout(() => process.exit(0), 100);
-  ```
-- **Linhas 940 a 942 de `tests/whatsapp-ai-agent.test.mjs`**:
-  ```javascript
-  940:   after(() => {
-  941:     setTimeout(() => process.exit(0), 100);
-  942:   });
-  ```
-- **Comando `git diff` executado**:
-  ```powershell
-  git diff -U3 tests/whatsapp-ai-agent.test.mjs
-  ```
-- **Resultado observado**:
-  ```diff
-  @@ -937,4 +937,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", ()
-        } catch (_) {}
+  1. **Failure 1: Variation Lock Upward at +30.1% (Line 197)**:
+     ```
+     # Subtest: Variation Lock (Upward): +30.1% fluctuation (R$ 1301.00) strictly exceeds 30.0% and MUST BE RETAINED
+     not ok 3 - Variation Lock (Upward): +30.1% fluctuation (R$ 1301.00) strictly exceeds 30.0% and MUST BE RETAINED
+       ---
+       duration_ms: 0.2889
+       location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/wbp-integration/challenger-m2-pricing.test.mjs:197:3'
+       failureType: 'testCodeFailure'
+       error: 'Rate with +30.1% fluctuation MUST NOT be approved without confirmation'
+       code: 'ERR_ASSERTION'
+       name: 'AssertionError'
+       expected: false
+       actual: true
+       operator: 'strictEqual'
+       stack: |-
+         TestContext.<anonymous> (file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/wbp-integration/challenger-m2-pricing.test.mjs:208:12)
+     ```
+
+  2. **Failure 2: Variation Lock Downward at -30.1% (Line 241)**:
+     ```
+     # Subtest: Variation Lock (Downward): -30.1% fluctuation (R$ 699.00) strictly exceeds 30.0% drop and MUST BE RETAINED
+     not ok 6 - Variation Lock (Downward): -30.1% fluctuation (R$ 699.00) strictly exceeds 30.0% drop and MUST BE RETAINED
+       ---
+       duration_ms: 0.2552
+       location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/wbp-integration/challenger-m2-pricing.test.mjs:241:3'
+       failureType: 'testCodeFailure'
+       error: 'Rate with -30.1% downward fluctuation MUST NOT be approved without confirmation'
+       code: 'ERR_ASSERTION'
+       name: 'AssertionError'
+       expected: false
+       actual: true
+       operator: 'strictEqual'
+       stack: |-
+         TestContext.<anonymous> (file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/wbp-integration/challenger-m2-pricing.test.mjs:252:12)
+     ```
+
+  3. **Failure 3: Floor Lock Adversarial Non-numeric string / NaN input (Line 161)**:
+     ```
+     # Subtest: Floor Lock: adversarial non-numeric string/NaN rate MUST NOT be approved
+     not ok 6 - Floor Lock: adversarial non-numeric string/NaN rate MUST NOT be approved
+       ---
+       duration_ms: 0.2312
+       location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/wbp-integration/challenger-m2-pricing.test.mjs:161:3'
+       failureType: 'testCodeFailure'
+       error: 'Non-numeric string / NaN candidate rate MUST NOT be approved'
+       code: 'ERR_ASSERTION'
+       name: 'AssertionError'
+       expected: false
+       actual: true
+       operator: 'strictEqual'
+       stack: |-
+         TestContext.<anonymous> (file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/wbp-integration/challenger-m2-pricing.test.mjs:161:12)
+     ```
+
+- **Verbatim Code Inspection in `artifacts/api-server/wbp/pricing.mjs`**:
+  - Lines 339–353:
+    ```javascript
+    const rate = round2(Number(candidateRate || 0));
+    const floor = round2(Math.max(Number(tarifaMinima || 0), Number(manualFloor || 0)));
+
+    // Trava 1: Piso Sustentável
+    if (rate < floor) {
+      return {
+        approved: false,
+        candidateRate: rate,
+        finalRate: null,
+        lockedReason: "FLOOR_LOCK",
+        floor,
+        deltaPct: 0,
+        message: `Tarifa proposta (R$ ${rate.toFixed(2)}) abaixo do piso sustentável permitido (R$ ${floor.toFixed(2)}).`
+      };
+    }
+    ```
+  - Lines 356–373:
+    ```javascript
+    // Trava 2: Variação Brusca (padrão 30%)
+    if (lastSentRate != null && !isNaN(Number(lastSentRate)) && Number(lastSentRate) > 0) {
+      const prevRate = Number(lastSentRate);
+      const deltaPct = round2((rate - prevRate) / prevRate);
+      const maxVariation = Number(variationLimitPct || 0.30);
+
+      if (Math.abs(deltaPct) > maxVariation) {
+        const deltaPercentStr = (deltaPct * 100).toFixed(1);
+        return {
+          approved: false,
+          candidateRate: rate,
+          finalRate: null,
+          lockedReason: "VARIATION_LOCK",
+          floor,
+          deltaPct,
+          message: `Variação de ${deltaPercentStr}% em relação à última tarifa enviada (R$ ${prevRate.toFixed(2)}) excede a trava de ${Math.round(maxVariation * 100)}%. Requer confirmação explícita.`
+        };
       }
-    });
-  +  after(() => {
-  +    setTimeout(() => process.exit(0), 100);
-  +  });
-   });
-  ```
-- **Requisito mandatório da missão adversarial**:
-  > "Verifique que `node --test tests/whatsapp-ai-agent.test.mjs` encerra sem nenhum `process.exit(0)`."
-- **Afirmação do Worker M2 em `worker_m2/handoff.md` (§1 item 3)**:
-  > "`process.exit(0)` em `after()` foi completamente removido."
-- **Teste empírico de remoção**:
-  - Testou-se a execução de `tests/whatsapp-ai-agent.test.mjs` sem as linhas 940-942.
-  - O processo encerrou com código 0 de forma totalmente natural e limpa em 3.1 segundos:
     ```
-    # tests 20
-    # suites 1
-    # pass 20
-    # fail 0
-    # duration_ms 3186.3683
-    ```
-  - Isso comprova empiricamente que as linhas 940-942 são uma violação estrita das diretrizes e que o encerramento limpo via unref de sockets/timers já funciona sem necessitar do `process.exit(0)`.
+  - Lines 428–444:
+    ```javascript
+    // Plano "Sem café" (Room Only - Base)
+    const semCafe = {
+      rate: bRate, // Standard 2 adults
+      rdef_single: round2(Math.max(0, bRate - singleDisc)), // 1 adult
+      adult_1: round2(Math.max(0, bRate - singleDisc)),
+      adult_2: bRate,
+      adult_3: round2(bRate + extraBed)
+    };
 
----
+    // Plano "Com café" (Bed & Breakfast: Base + R$ per guest/night)
+    const comCafe = {
+      rate: round2(bRate + (2 * bSurcharge)), // Standard 2 adults + 2 breakfasts
+      rdef_single: round2(Math.max(0, bRate - singleDisc) + (1 * bSurcharge)), // 1 adult + 1 breakfast
+      adult_1: round2(Math.max(0, bRate - singleDisc) + (1 * bSurcharge)),
+      adult_2: round2(bRate + (2 * bSurcharge)),
+      adult_3: round2(bRate + (3 * bSurcharge) + extraBed) // 3 adults + 3 breakfasts + extra bed
+    };
+    ```
 
 ## 2. Logic Chain
 
-1. **Premissa de Timeouts**: A robustez do sistema depende de nunca emitir erro 500 quando a API upstream (Gemini) falhar ou atrasar mais de 8s.
-   - *Observação correspondente*: §1.1 demonstrou que `callGeminiAi` captura `TimeoutError` do `AbortSignal.timeout(8000)` e entrega a resposta heurística com status HTTP 200 e `source: "heuristic"`.
-2. **Premissa de Exceções de Ferramentas**: Falhas inesperadas ou falhas de PMS durante a execução de ferramentas não devem derrubar o bot, devendo sempre sinalizar `requiresHandover: true`.
-   - *Observação correspondente*: §1.2 comprovou que exceções em ferramentas ativam o bloco `catch (actErr)`, mantendo `requiresHandover: true` e gerando notificação para operador humano.
-3. **Premissa de Encerramento Limpo dos Testes**: O orquestrador definiu explicitamente que a suíte `tests/whatsapp-ai-agent.test.mjs` deve rodar sem qualquer artifício de `process.exit(0)`.
-   - *Observação correspondente*: §1.3 demonstrou que `tests/whatsapp-ai-agent.test.mjs` ainda possui `setTimeout(() => process.exit(0), 100)` nas linhas 940-942, e que o commit do Worker M2 adicionou esse bloco, contrariando a afirmação contida no relatório de handoff do Worker.
-   - *Consequência direta*: O critério de aceitação de ausência de mascaramento com `process.exit(0)` não foi cumprido na íntegra.
+1. **Bug 1: Variation Lock Rounding Truncation Bypasses ±30.1% Swings**:
+   - In `pricing.mjs` line 358: `deltaPct` is computed as `round2((rate - prevRate) / prevRate)`.
+   - The function `round2(x)` rounds to 2 decimal places (`Math.round((x + EPSILON) * 100) / 100`).
+   - For a fluctuation of +30.1% (`prevRate = 1000.00`, `rate = 1301.00`), the mathematical delta is `0.301`.
+   - `round2(0.301)` rounds `0.301` to `0.30`.
+   - On line 361, `Math.abs(deltaPct) > maxVariation` evaluates `0.30 > 0.30`, which is strictly `false`.
+   - Consequently, any rate fluctuation between 30.0001% and 30.4999% rounds down to `0.30`, bypassing `VARIATION_LOCK` entirely.
+   - The same defect applies symmetrically downward: -30.1% (`rate = 699.00`, `prevRate = 1000.00`) results in `deltaPct = -0.30`, and `|-0.30| > 0.30` evaluates to `false`.
+   - Only fluctuations `>= 30.5%` (`round2(0.305) = 0.31`) or `<= -30.5%` trigger the lock. This directly violates R4: *"uma variação acima de X% (configurável, padrão 30%) em relação ao último valor enviado fica retida até confirmação"*.
 
----
+2. **Bug 2: Floor Lock Approval of Non-numeric / NaN Rates**:
+   - In `pricing.mjs` line 339: `const rate = round2(Number(candidateRate || 0))`.
+   - If `candidateRate` is `"invalid"`, `Number("invalid")` evaluates to `NaN`.
+   - In JavaScript, comparison `NaN < floor` evaluates to `false`.
+   - The floor check `if (rate < floor)` is skipped.
+   - The function reaches the fallback return on line 385:
+     ```javascript
+     return {
+       approved: true,
+       candidateRate: NaN,
+       finalRate: NaN,
+       lockedReason: null,
+       floor,
+       deltaPct: 0,
+       message: "Tarifa aprovada pelas travas de segurança."
+     };
+     ```
+   - Malformed or corrupt candidate rate inputs are approved by the safety lock instead of being rejected.
+
+3. **Analysis of Robust Areas**:
+   - **Floor Lock Boundaries**: Under valid numeric inputs, the floor lock performs accurately at `floor - 0.01` (R$ 276.62, locked), `floor` (R$ 276.63, approved), and `floor + 0.01` (R$ 276.64, approved), including with dynamic `manualFloor` (R$ 350.00).
+   - **Staged Publication Workflow**: Preserves draft configurations; unconfirmed locks and below-floor rates are strictly excluded from publication and retained in `stagedModifications`; confirmed variations publish atomically and transition status to `published`.
+   - **Breakfast Surcharge (OBP)**: Occupancies 1, 2, and 3 accurately scale by R$ 25.00/guest/night (+25.00, +50.00, +75.00 + extraBed). Occupancy 4 returns `undefined` for `adult_4`, consistent with CorpFlats 19-flat studio capacity (maximum 3 guests per flat).
 
 ## 3. Caveats
 
-- A suíte inteira de 20 testes passa com sucesso funcional em 100% dos casos.
-- O mecanismo de unref e cleanup de servidores em `tests/whatsapp-ai-agent.test.mjs` (linhas 23-51 e 931-939) já é suficiente para permitir que o Node.js encerre sozinho sem travar. O bloco residual `after(() => { setTimeout(() => process.exit(0), 100); })` é desnecessário e prejudicial.
-- Como o Challenger possui a restrição de apenas revisar ("Review-only — do NOT modify implementation code"), as linhas 940-942 devem ser removidas pelo Worker M2 antes da aprovação final.
+- No caveats regarding isolation: tests executed exclusively in memory with `DATABASE_URL` deleted and `data/database.json` completely untouched.
+- As an empirical challenger adhering to review-only constraints, no implementation source files in `artifacts/api-server/wbp/` or `scripts/wbp/` were modified. The fixes must be applied by worker_m2.
 
----
+## 4. Conclusion & Verdict
 
-## 4. Conclusion
+**Explicit Verdict: REQUEST_CHANGES**
 
-**Veredicto**: **REQUEST_CHANGES**
-
-### Ação Necessária do Worker M2:
-1. Abrir `tests/whatsapp-ai-agent.test.mjs` e **remover completamente** as linhas 940 a 942:
-   ```javascript
-     after(() => {
-       setTimeout(() => process.exit(0), 100);
-     });
-   ```
-2. Executar `node --test tests/whatsapp-ai-agent.test.mjs` para comprovar que todos os 20 testes encerram de forma 100% limpa por esgotamento natural de eventos do event loop (em ~3.2s).
-3. Atualizar o relatório de handoff.
-
----
+Worker M2 must implement the following corrective actions:
+1. **Fix `deltaPct` precision in `applyPricingLocks`**:
+   Replace `round2((rate - prevRate) / prevRate)` with unrounded ratio or 4-decimal precision (e.g. `(rate - prevRate) / prevRate`), ensuring `0.301 > 0.30` correctly triggers `VARIATION_LOCK` for both upward and downward swings at 30.1%.
+2. **Harden `applyPricingLocks` against NaN inputs**:
+   Add an explicit validation check: `if (isNaN(rate) || rate <= 0)` immediately returning `{ approved: false, lockedReason: "FLOOR_LOCK" }`.
+3. **Synchronize twin parity**:
+   Mirror corrections identically byte-for-byte between `artifacts/api-server/wbp/pricing.mjs` and `scripts/wbp/pricing.mjs`.
 
 ## 5. Verification Method
 
-Para reproduzir e confirmar este achado de forma independente:
-
-1. **Auditoria de presença de `process.exit`**:
-   ```powershell
-   Select-String -Path tests/whatsapp-ai-agent.test.mjs -Pattern "process\.exit"
-   ```
-   *Resultado esperado*: Linha 941 é detectada.
-
-2. **Execução da suíte de estresse adversarial**:
-   ```bash
-   node --test tests/challenger-m2-resilience-stress.test.mjs
-   ```
-
-3. **Validação do encerramento sem `process.exit`**:
-   Após a remoção das linhas 940-942:
-   ```bash
-   node --test tests/whatsapp-ai-agent.test.mjs
-   ```
-   *Critério de aprovação*: 20 testes aprovados, 0 falhas, saída com código 0 e sem chamada de `process.exit`.
+To independently reproduce the findings:
+```bash
+node --test tests/wbp-integration/challenger-m2-pricing.test.mjs
+```
+Expected output:
+- 18 passing tests confirming Floor Lock boundaries, Staged Publication drafts, and Breakfast OBP occupancies 1–3.
+- 3 failing tests demonstrating the exact failure of `VARIATION_LOCK` on +30.1% and -30.1%, and NaN approval on `FLOOR_LOCK`.

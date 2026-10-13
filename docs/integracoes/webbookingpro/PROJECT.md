@@ -79,7 +79,7 @@ O sistema **Guest-Flow-Manager** (CorpFlats Soho Residence: 19 flats, Campos dos
 
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Operational Safety, Storage & WBP Simulator | F1, F2, F3, F4, F5, F6, F7, F8 | none | PLANNED |
+| M1 | Operational Safety, Storage & WBP Simulator | F1, F2, F3, F4, F5, F6, F7, F8 | none | DONE |
 | M2 | Canonical Availability & SEBRAE Pricing Engine | F9, F10, F11, F12, F13 | M1 | PLANNED |
 | M3 | ARI Mapping & Synchronizer | F14, F15, F16 | M2 | PLANNED |
 | M4 | Reservation Processing, Quarantine, Reconciler & Alerts | F17, F18, F19, F20, F21, F22, F23, F24 | M1, M2, M3 | PLANNED |

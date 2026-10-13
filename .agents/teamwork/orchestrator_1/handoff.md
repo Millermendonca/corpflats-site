@@ -1,112 +1,84 @@
-# Handoff Report — Project Orchestrator: External Service Provider Management Module (R1–R8)
+# Orchestrator Soft Handoff Report — Generation 1 to Generation 2
 
-**Type:** Hard Handoff  
-**Agent:** Project Orchestrator (`2a43f791-5cc7-4933-bdd2-688af9234cb1`)  
-**Parent / Caller:** Sentinel Parent (`551fb61c-c0a9-401e-9b52-5a3e519c1edc`)  
-**Date:** 2026-10-01T00:41:00Z  
-**Verdict:** **COMPLETE & APPROVED** (All Milestones M0 through M5 Passed Gate Verification)
-
----
-
-## 1. Executive Summary & Observation
-
-The External Service Provider Management Module (Ordens de Serviço de Prestadores Externos) has been completely specified, decomposed, implemented, adversarially verified, forensically audited, built, and synchronized to the remote GitHub repository across all requirements R1 through R8.
-
-### 1.1 Requirements Fulfillment Matrix (R1–R8)
-
-| Requirement | Description | Deliverables & Artifacts | Status |
-|---|---|---|---|
-| **R1** | Database Structure | Added root arrays `serviceOrders: []` and `serviceWorkers: []` in `data/database.json`. Added defensive initialization in `loadDatabase()` (`demo-server.mjs:2630`). | **DONE** |
-| **R2** | REST Endpoints (Admin & Public) | Implemented admin CRUD (`/api/service-orders/*`), progress reporting, flat reset, and public contractor endpoints (`/api/service/public/:token/*` for register, start, finish, photos). | **DONE** |
-| **R3** | Validations & Multi-Channel Notifications | Capacity limits (simultaneous & daily), cleanFlatMode (`never`, `priority`, `always`), mandatory `needsCleaning` check on clean flats, photo verification, WhatsApp to admin `5522998505276`, reception WhatsApp/Email, internal `db.notifications`, audit logging. | **DONE** |
-| **R4** | Admin Management Page | `artifacts/limpeza/src/pages/service-orders.tsx` (3 tabs: Lista, Criar/Editar, Acompanhamento com polling em tempo real), `<AdminRoute path="/servicos" ... />` in `App.tsx`, sidebar link under `🧹 Governança & Camareiras`. | **DONE** |
-| **R5** | Public Contractor Portal | `artifacts/limpeza/src/pages/service-worker-portal.tsx` (standalone mobile layout, identification banner with 11-digit CPF formatting/validation, helper team, start guard modal, flat cards with dynamic limits and occupancy badges, finish modal with photo upload and `compressImage`, public routes in `App.tsx`). | **DONE** |
-| **R6** | Maid Dashboard Integration | `artifacts/limpeza/src/components/flat-card.tsx` (amber border highlight, animated badge `"🔧 Serviço em andamento"`, card body alert box, disabled cleaning buttons with Radix Tooltip explaining lock, batch selection suppression). | **DONE** |
-| **R7** | PMS Calendar Integration | `artifacts/limpeza/src/pages/pms-calendar.tsx` (visual amber service order blocks in timeline with wrench icon, deletion trash icon suppression, reservation date overlap warning banner, admin `confirm()` override in save and drag-and-drop). | **DONE** |
-| **R8** | Build, Test & Git Synchronization | Strict byte-for-byte SHA256 mirror parity (0 diff bytes), clean Vite production build (`npm run build` in `artifacts/limpeza` exited with code 0), 141/141 automated tests passing across 8 suites, and commit `4c751fd` pushed to `origin main`. | **DONE** |
+**Workspace**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1`  
+**Parent Conversation ID**: `2588b79e-8f82-479c-ac3d-60f14235136b`  
+**Date**: 2026-10-13T23:38:00Z  
+**Type**: Soft Handoff (Succession Triggered at 16 Spawns)  
 
 ---
 
-## 2. Integrity & Forensic Audit Attestation
+## 1. Milestone State
 
-A dedicated Forensic Auditor was deployed at each milestone and concluded with a final victory audit:
-- **Verdict:** **CLEAN** (Zero integrity violations, zero facades, zero simulated bypasses).
-- **Backend Mirror Parity (Zero Tolerance):**
-  - `artifacts/api-server/demo-server.mjs`: `6B5013EF1EA47C6D5F098B558919EC86E755F90519FE4EB81550073EA9F6DA80`
-  - `scripts/demo-server.mjs`: `6B5013EF1EA47C6D5F098B558919EC86E755F90519FE4EB81550073EA9F6DA80`
-  - `git diff --no-index` confirms **0 diff bytes**.
-- **Production Build:**
-  - `npm run build` in `artifacts/limpeza` completed with exit code 0.
-  - 3,346 modules transformed. All static assets generated in `artifacts/limpeza/dist/public/`.
-- **Git Synchronization (AGENTS.md):**
-  - Local commit `4c751fd` is pushed to remote `origin main`.
-  - `git log origin/main..HEAD` is empty (0 unpushed commits).
+| # | Milestone | Status | Key Artifacts & Output |
+|---|-----------|--------|------------------------|
+| Phase 0 | Survey & Scope Mining | DONE | `spec_miner_wbp/handoff.md`, `explorer_codebase/handoff.md`, `spec_miner_sebrae/handoff.md`, `docs/integracoes/webbookingpro/PROJECT.md` |
+| E2E | Master Test Architecture | READY | `docs/integracoes/webbookingpro/TEST_INFRA.md` (352 planned test cases across Tiers 1–4, 4/4 smoke tests pass) |
+| M1 | Operational Safety, Storage & Simulator | DONE | Commit `13d5043`. Gate 1 PASS (100% approval + Auditor CLEAN). 13/13 tests pass. Memory limit 1536MB. |
+| M2 | Canonical Availability & SEBRAE Pricing Engine | IN_PROGRESS (Fix Required) | Commit `b213257`. 25/25 tests pass. Reviewer 1 APPROVE, Reviewer 2 APPROVE, Challenger 1 APPROVE, Auditor CLEAN. Challenger 2 REQUEST_CHANGES. |
+| M3 | ARI Mapping & Synchronizer | PLANNED | Scope defined in `PROJECT.md` (F14, F15, F16) |
+| M4 | Reservation Processing, Quarantine & Alerts | PLANNED | Scope defined in `PROJECT.md` (F17–F24) |
+| M5 | Credit Card Vault, Provisional Adapters & UI | PLANNED | Scope defined in `PROJECT.md` (F25–F31) |
+| FINAL | E2E Acceptance & Adversarial Hardening | PLANNED | Pass 100% E2E tests + Tier 5 Hardening |
 
 ---
 
-## 3. Automated Test Suite Battery (141/141 Passing)
+## 2. Immediate Next Steps for Successor (Milestone 2 Remediation)
 
-All 8 automated test suites were executed independently with 100% green status:
-1. `tests/service-orders.test.mjs` — 12/12 passed (Backend endpoints, mirror parity, start/finish rules).
-2. `tests/test-service-order-notifications.test.mjs` — 1/1 passed (Multi-channel notification pipeline & async email resilience).
-3. `tests/service-orders-admin-frontend.test.mjs` — 8/8 passed (Admin page tabs, form controls, route registration).
-4. `tests/service-worker-portal.test.mjs` — 25/25 passed (Public contractor portal, CPF formatting, mobile design, finish modal).
-5. `tests/service-orders-integrations.test.mjs` — 20/20 passed (Maid flat-card locking, PMS calendar blocks).
-6. `tests/service-orders-integrations-challenge.test.mjs` — 20/20 passed (Live HTTP propagation, date boundary overlap).
-7. `tests/service-orders-e2e-final.test.mjs` — 28/28 passed (Opaque-box end-to-end full lifecycle across R1–R8).
-8. `tests/service-orders-challenger-m5.test.mjs` — 27/27 passed (Adversarial stress-testing of edge cases).
+Milestone 2 is 95% complete and passed Reviewer 1, Reviewer 2, Challenger 1, and Forensic Auditor.
+Challenger 2 (`eedd7c93-5e0c-4920-b5cb-a0b029f56ea9`) identified two precise edge-case flaws in `applyPricingLocks` (`artifacts/api-server/wbp/pricing.mjs` e `scripts/wbp/pricing.mjs`):
 
-**Total: 141 automated tests, 141 passed, 0 failed.**
-
----
-
-## 4. Logic Chain & Key Architectural Decisions
-
-1. **Strict Mirror Discipline:**
-   The backend server lives simultaneously at `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`. All updates were mirrored with cryptographic hash verification to maintain 0 diff bytes.
-2. **Asynchronous Non-Blocking Notifications:**
-   In `dispatchServiceNotifications`, WhatsApp messages are dispatched via Z-API, emails via `sendEmailAsync`, and internal notifications to `db.notifications`. All third-party I/O is wrapped in error handling to ensure API responses never fail due to external network timeouts.
-3. **Radix UI Accessible Tooltips on Disabled Buttons:**
-   Disabled buttons do not dispatch mouse events in standard DOM. Wrapping the disabled button inside a container inside `<TooltipTrigger asChild>` ensures maids see the explanatory tooltip (`⚠️ Limpeza Bloqueada: Aguardando finalização do serviço: [Título]`).
-4. **Calendar Visual Advisory vs Hard Lock:**
-   Per R7, external service orders block maid cleaning operations but do not physically prevent front desk bookings; instead, PMS calendar renders an amber visual block, displays prominent warning banners on date intersection, and triggers administrative confirmation overrides (`confirm(...)`).
-5. **Contractor Action Guard:**
-   Public contractor portal enforces identification upfront with 11-digit CPF validation. Attempts to start an apartment without saved identification trigger a blocking guard dialog.
+1. **Bug 1: Variation Lock Rounding Truncation Flaw**:
+   - Line 358: `deltaPct = round2((rate - prevRate) / prevRate)` rounds `0.301` (+30.1%) to `0.30`.
+   - On line 361: `Math.abs(deltaPct) > maxVariation` (`0.30 > 0.30`) evaluates to `false`, allowing swings between ±30.01% and ±30.49% to bypass `VARIATION_LOCK`.
+   - **Fix**: Compute unrounded `(rate - prevRate) / prevRate` for the comparison threshold.
+2. **Bug 2: Floor Lock NaN Bypass**:
+   - Line 339: If `candidateRate` is non-numeric, `rate` becomes `NaN`, and `NaN < floor` evaluates to `false`, returning `approved: true`.
+   - **Fix**: Add check: `if (isNaN(rate) || rate <= 0) return { approved: false, lockedReason: "FLOOR_LOCK" }`.
+3. **Execution Steps**:
+   - Spawn a fresh Worker (`worker_m2_fix`) with Challenger 2 handoff (`.agents/teamwork/challenger_m2_2/handoff.md`).
+   - Worker applies fixes in `artifacts/api-server/wbp/pricing.mjs` and mirrors in `scripts/wbp/pricing.mjs` (SHA-256 parity).
+   - Worker runs:
+     - `node --test tests/wbp-integration/challenger-m2-pricing.test.mjs` (21/21 must pass).
+     - `node --test tests/wbp-integration/m2-availability-pricing.test.mjs` (25/25 must pass).
+   - Worker commits and pushes to `origin feature/wbp-integration`.
+   - Successor tallies Gate 2 as PASS, marks M2 = `DONE` in `docs/integracoes/webbookingpro/PROJECT.md`, and advances to Milestone 3.
 
 ---
 
-## 5. Caveats & Operating Notes
+## 3. Active Subagents
 
-- **Port Isolation for Test Suites:** Tests spinning up live backend instances allocate isolated ports (3997, 4199, 4299, 4399) and isolated database files.
-- **Production Notification Gateways:** Live WhatsApp and email delivery depend on active Z-API instance tokens and SMTP credentials configured in `.env`. In staging/offline environments, fallback logger prevents crashes.
+None. All 16 subagents spawned by Generation 1 are in `idle` state and delivered their handoffs.
 
 ---
 
-## 6. Independent Verification Method
+## 4. Key Constraints & Project Rules
 
-To verify the deliverables independently:
+1. **Git & Branch Discipline**:
+   - Working branch is exclusively `feature/wbp-integration`.
+   - NEVER commit or push to `main`.
+   - Confirm `git branch --show-current` before any commit.
+   - The 11 uncommitted audit log lines in `artifacts/api-server/audit_logs.jsonl` were committed in `13d5043`.
+2. **Documentation Isolation**:
+   - Do NOT overwrite root `PROJECT.md` (it belongs to "Smart Flat Hub", restored to `0501d02`).
+   - Project scope document is `docs/integracoes/webbookingpro/PROJECT.md`.
+   - Master test infrastructure document is `docs/integracoes/webbookingpro/TEST_INFRA.md`.
+3. **Twin Files Parity**:
+   - 100% SHA-256 byte-for-byte identity between `artifacts/` and `scripts/` for all duplicate files (`demo-server.mjs`, `callbacks.mjs`, `client.mjs`, `config.mjs`, `storage.mjs`, `availability.mjs`, `pricing.mjs`).
+4. **Targeted Test Execution**:
+   - Run EXCLUSIVELY targeted integration tests (`node --test tests/wbp-integration/...`).
+   - NEVER run `tests/*.test.mjs` in batch or global sweeps.
+   - NEVER mute notifications in code.
+   - Always run with `DATABASE_URL` unset and temp isolated DB copies in `os.tmpdir()`.
+5. **Forensic Integrity Veto**:
+   - Binary veto on Forensic Auditor violations. Never rationalize or bypass an audit veto.
 
-```powershell
-# 1. Verify strict byte-for-byte backend mirror parity
-Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"
-git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+---
 
-# 2. Run the complete test suite battery (141 tests)
-node --test tests/service-orders.test.mjs
-node --test tests/test-service-order-notifications.test.mjs
-node --test tests/service-orders-admin-frontend.test.mjs
-node --test tests/service-worker-portal.test.mjs
-node --test tests/service-orders-integrations.test.mjs
-node --test tests/service-orders-integrations-challenge.test.mjs
-node --test tests/service-orders-e2e-final.test.mjs
-node --test tests/service-orders-challenger-m5.test.mjs
+## 5. Artifact Index
 
-# 3. Verify production frontend build
-cd artifacts/limpeza
-npm run build
-cd ../..
-
-# 4. Verify clean git synchronization
-git status
-git log -n 1
-```
+- `docs/integracoes/webbookingpro/PROJECT.md` — Master Architecture & Milestones
+- `docs/integracoes/webbookingpro/TEST_INFRA.md` — E2E Master Test Infrastructure
+- `ORIGINAL_REQUEST.md` — Authoritative User Requirements (R1–R10)
+- `DISPATCH.md` — Dispatch Log & Parent Directives
+- `GATE_STATUS.md` — Current Gate Status
+- `.agents/teamwork/challenger_m2_2/handoff.md` — Challenger 2 Bug Report for M2

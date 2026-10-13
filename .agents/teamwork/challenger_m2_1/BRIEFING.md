@@ -1,62 +1,58 @@
-# BRIEFING — 2026-10-11T02:35:00Z
+# BRIEFING — 2026-10-13T23:33:15Z
 
 ## Mission
-Adversarial stress-testing of WhatsApp AI Service (M2 CorpFlats) across master switch combinations, action matrix permutations, and malicious/empty tool call payloads.
+Empirically stress-test canonical availability calculation under complex and adversarial calendar workloads for Milestone 2.
 
 ## 🔒 My Identity
 - Archetype: EMPIRICAL CHALLENGER
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M2
-- Instance: 1 of 1
+- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Milestone: Milestone 2 (Canonical Availability Engine)
+- Instance: 1 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Tests and probes must NOT be stored in .agents/teamwork/ (metadata only)
-- Empirical verification required: must run code, do not trust claims without reproduction
-- Report must include 5 components and clear APPROVE or REQUEST_CHANGES verdict
+- Write isolated targeted test script in tests/wbp-integration/challenger-m2-availability.test.mjs
+- Run exclusively: node --test tests/wbp-integration/challenger-m2-availability.test.mjs (NEVER run global sweeps)
+- Verify available units never exceed 19 and never drop below 0
+- State explicit verdict in handoff.md: APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T02:35:00Z
+- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Updated: 2026-10-13T23:33:15Z
 
 ## Review Scope
 - **Files to review**:
-  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
-  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md`
-  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`
-  - WhatsApp AI Service implementation files (`artifacts/api-server/whatsapp-ai-service.mjs`, `scripts/whatsapp-ai-service.mjs`)
-- **Interface contracts**: PROJECT.md / ORIGINAL_REQUEST.md
-- **Review criteria**: Empirical correctness, boundary behavior, security & payload injection handling, permission enforcement
-
-## Attack Surface
-- **Hypotheses tested**:
-  - H1: Master switch off yields `tools: []` and intercepts alucinated tool calls with `ACTION_DISABLED` + `requiresHandover: true` -> CONFIRMED (Pass)
-  - H2: Asymmetric action matrix (checkAvailability ON, commitReservation OFF) permits queries and triggers courteous handover on booking -> CONFIRMED (Pass)
-  - H3: Empty argument objects `{}` across all 5 actions handled cleanly without throwing -> CONFIRMED (Pass)
-  - H4: Temporal attacks (inverted dates, same-day, SQL/XSS strings, >90 nights) caught cleanly -> CONFIRMED (Pass)
-  - H5: Financial tampering (negative/zero/string amount) rejected with `INVALID_AMOUNT`; valid amounts generate valid BACEN CRC16 PIX -> CONFIRMED (Pass)
-  - H6: Committing non-existent, cancelled, or expired reservations strictly blocked -> CONFIRMED (Pass)
-  - H7: Dangerous/unknown actions (`dropDatabase`, `eval`, `__proto__`) neutralized safely -> CONFIRMED (Pass)
-  - H8: Multi-turn Turn 2 timeout or 500 server error falls back to courteous handover without crashing the process -> CONFIRMED (Pass)
-- **Vulnerabilities found**:
-  - Concurrency collision when running `node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs` in parallel due to shared `data/database.json`. Sequential execution runs 100% cleanly (13/13 pass). No vulnerabilities found in M2 WhatsApp AI service code.
-- **Untested angles**:
-  - Live external Z-API WhatsApp HTTP webhook delivery (mocked/intercepted deterministically in test environment).
-
-## Loaded Skills
-- None
+  - `artifacts/api-server/wbp/availability.mjs`
+  - `scripts/wbp/availability.mjs`
+  - `artifacts/api-server/demo-server.mjs` (endpoints /api/wbp/availability, /api/wbp/conflicts/check)
+  - `tests/wbp-integration/challenger-m2-availability.test.mjs`
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
+- **Review criteria**: Correctness under adversarial calendar workloads, turnover logic, ceiling limits, bounds [0, 19], maintenance and holds handling
 
 ## Key Decisions Made
-- Created and executed `tests/adversarial-m2.test.mjs` (15 adversarial probe test cases).
-- Executed all 4 project suites: 48 tests passing (100% success rate).
-- Verified Twin-Server Parity (SHA-256 identical).
+- Designed and authored 21 targeted adversarial stress tests across 13 suites in `tests/wbp-integration/challenger-m2-availability.test.mjs`.
+- Stress-tested 100 randomized calendar permutations to verify invariant `0 <= units <= 19` across extreme ceilings and high contention.
+- Verified same-day turnover (back-to-back checkouts/checkins) causes zero false collisions, preserves inventory, and handles multi-flat turnover.
+- Verified overlapping overbooking bookings do not trigger multiple decrements on a single flat.
+- Verified all 5 conflict types return non-blocking warnings (`isWarningOnly: true`).
+- Verified 100% SHA-256 byte-for-byte twin parity between `artifacts/` and `scripts/` availability modules.
 - Verdict: APPROVE.
 
 ## Artifact Index
-- `.agents/teamwork/challenger_m2_1/DISPATCH.md` — Dispatch log
-- `.agents/teamwork/challenger_m2_1/BRIEFING.md` — Situational awareness
-- `.agents/teamwork/challenger_m2_1/progress.md` — Liveness & step tracking
-- `.agents/teamwork/challenger_m2_1/handoff.md` — Final challenge report
-- `tests/adversarial-m2.test.mjs` — Comprehensive empirical adversarial test suite (15 tests)
+- `tests/wbp-integration/challenger-m2-availability.test.mjs` — isolated stress test harness (21 tests, 13 suites)
+- `.agents/teamwork/challenger_m2_1/handoff.md` — detailed 5-component handoff report
+
+## Attack Surface
+- **Hypotheses tested**:
+  1. Overlapping reservations on the same flat could double-decrement availability below 0 -> Refuted: flat is evaluated once per night, bounding available units.
+  2. Same-day turnover (checkout 12:00, checkin 14:00) could trigger false turnover collision -> Refuted: checkinDate <= night < checkoutDate correctly assigns turnover night to arriving guest.
+  3. Excessive ceiling (>19) or negative ceiling (<0) could breach bounds -> Refuted: Math.max(0, Math.min(ceiling, availableCount)) strictly enforces [0, 19].
+  4. Open-ended maintenance could fail to block subsequent nights -> Refuted: open-ended orders block all dates >= startedAt.
+  5. Paid pre-reservas past expiresAt might be prematurely freed -> Refuted: paymentStatus === 'pago_total' prevents premature expiration.
+- **Vulnerabilities found**: None. Engine is robust and correctly handles all adversarial cases.
+- **Untested angles**: None within Milestone 2 availability scope.
+
+## Loaded Skills
+- None

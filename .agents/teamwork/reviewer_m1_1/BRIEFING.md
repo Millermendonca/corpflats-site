@@ -1,67 +1,66 @@
-# BRIEFING — 2026-10-11T01:17:00Z
+# BRIEFING — 2026-10-13T22:45:00Z
 
 ## Mission
-Objective review and adversarial critique of Milestone M1 (Motor Tarifário SEBRAE e Ações Autônomas do Bot) implemented in artifacts/api-server/demo-server.mjs and tested in tests/.
+Review and adversarially test Milestone 1 implementation (Safety switch, SQLite/Postgres/JSONL Raw storage, and WBP Simulator).
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: reviewer-critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M1
+- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Milestone: Milestone 1 (Operational Safety, Storage & WBP Simulator)
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Check for integrity violations (hardcoding, facades, shortcuts, fake tests)
-- Adhere to Teamwork protocol (evidence-based findings, 5-component handoff)
-- Adhere to AGENTS.md rules
+- Integrity check: actively detect hardcoded tests, facades, shortcuts, fake verifications
+- STRICT TEST POLICY: Never run global tests or test sweeps. Run ONLY `node --test tests/wbp-integration/m1-safety-simulator.test.mjs`
+- Twin file parity: SHA-256 byte-for-byte identity between `artifacts/api-server/...` and `scripts/...`
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: not yet
+- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Updated: 2026-10-13T22:45:00Z
 
 ## Review Scope
 - **Files to review**:
-  - artifacts/api-server/demo-server.mjs (and twin scripts/demo-server.mjs)
-  - tests/tariff-engine.test.mjs
-  - tests/bot-actions-api.test.mjs
-  - data/database.json
-- **Interface contracts**:
-  - .agents/teamwork/ORIGINAL_REQUEST.md
-  - .agents/teamwork/orchestrator_4/PROJECT.md
-  - .agents/teamwork/worker_m1/handoff.md
-- **Review criteria**: correctness, completeness, SEBRAE formula fidelity, permission guards & handover flags, crash safety, integrity
+  - `artifacts/api-server/wbp/` vs `scripts/wbp/` (callbacks.mjs, client.mjs, config.mjs, storage.mjs)
+  - `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
+  - `e2e/wbp-simulator/server.mjs` & `e2e/wbp-simulator/schemas/index.mjs`
+  - `render.yaml`, `package.json`, `server.mjs`
+  - `tests/wbp-integration/m1-safety-simulator.test.mjs`
+- **Interface contracts**: `docs/integracoes/webbookingpro/PROJECT.md`, `ORIGINAL_REQUEST.md`
+- **Review criteria**: correctness, style, conformance, security, adversarial robustness, integrity
 
 ## Review Checklist
 - **Items reviewed**:
-  - `artifacts/api-server/demo-server.mjs` (lines 3440-3455, 19650-20590)
-  - `scripts/demo-server.mjs` (SHA-256 parity verification)
-  - `tests/tariff-engine.test.mjs` (8/8 tests pass)
-  - `tests/bot-actions-api.test.mjs` (5/5 tests pass)
-  - `data/database.json` (verified presence of tariffSettings, tariffOverrides, botActionsSettings)
-- **Verdict**: APPROVE (with documented Major & Minor hardening findings)
-- **Unverified claims**: all upstream claims independently verified and confirmed
+  - Branch and git status: `feature/wbp-integration` active and synchronized with remote.
+  - SHA-256 parity: 100% byte-for-byte identical across all 5 twin file pairs.
+  - Operational General Switch: confirmed 100% inert when mode is 'off' (0 outbound calls, HTTP 200 { ErrorCode: 1031 } on callbacks, 0 timers).
+  - Durable Raw Storage: verified insert-only storage outside blob, crash recovery, and complete immunity to `pruneDatabase()`.
+  - WBP API Client: verified 8 mandatory endpoints, UUID v4 GUID, retries reusing same GUID, version time offset deduction.
+  - WBP Simulator: verified OpenAPI schema validation, failure injection (1001, 1002, 1102, timeouts), form-urlencoded handling.
+  - Process memory: verified 1536MB in `render.yaml`, `package.json`, and `server.mjs`.
+  - Targeted test suite: executed strictly `node --test tests/wbp-integration/m1-safety-simulator.test.mjs` (13 passed, 0 failed).
+- **Verdict**: APPROVE
+- **Unverified claims**: None. All claims verified with direct evidence and tests.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Global master switch bypass: tested -> fully blocked (403 ACTION_DISABLED).
-  - Granular action toggle bypass: tested -> blocked per action.
-  - Zero/negative denominators in SEBRAE formula: guarded with `Math.max(0.1, ...)`.
-  - Empty flats in UH calculation: guarded with `Math.max(1, ...)`.
-  - Invalid date/month input in calculateDailyRate / calculateSebraeSustainableRate: tested -> gracefully falls back without server crash.
-  - Asynchronous TOCTOU concurrency in pre-reserve: reproduced -> concurrent requests return 200/200 (Major Finding).
-  - Unbounded date range loop in quote: identified -> lacks max nights cap (Minor Finding).
-- **Vulnerabilities found**:
-  - [Major] Asynchronous TOCTOU race condition in `POST /api/bot-actions/pre-reserve` between conflict check and DB insertion due to `await QRCode.toDataURL`.
-  - [Minor] Unbounded date range while-loop in `POST /api/bot-actions/quote` and `POST /api/tariffs/bulk-update`.
-  - [Minor] Guest parameter non-positive numbers in availability.
-- **Untested angles**: external real WhatsApp Z-API network delivery (out of scope for local sandbox).
+  - H1 (Integrity Violation): Check for hardcoded responses in client or facades in storage -> PASSED (real HTTP calls, real SQL/file storage).
+  - H2 (Switch Leakage): Can outbound calls escape when switch is 'off'? -> PASSED (WbpApiError 1031 raised before fetch, simulator receives 0 calls).
+  - H3 (Storage Tampering): Does `pruneDatabase()` purge raw payloads? -> PASSED (raw payloads are stored outside db/blob, 100% intact).
+  - H4 (Concurrency Race): Can 5 callbacks + 3 pollings create duplicate reservations? -> PASSED (mutex lock allows exactly 1 to claim, 7 deduplicated).
+  - H5 (Simulator Errata): Does simulator correctly handle form-urlencoded for NotifyBooking? -> PASSED (Express urlencoded parser active and verified).
+  - H6 (Crash Resilience): Does an unacknowledged payload get resumed on restart? -> PASSED (recovered from JSONL storage cleanly).
+- **Vulnerabilities found**: None in Milestone 1 scope.
+- **Untested angles**: M2-M5 logic (availability, pricing, reconciliation, credit cards) to be evaluated in respective milestones.
 
 ## Key Decisions Made
-- Concluded full audit: implementation is 100% authentic, no facade/hardcoding, all 13 tests pass, SHA-256 mirror parity confirmed. Verdict: APPROVE with architectural hardening recommendations.
+- Confirmed full compliance with Milestone 1 requirements, AGENTS.md, and ORIGINAL_REQUEST.md.
+- Issued APPROVE verdict.
 
 ## Artifact Index
-- DISPATCH.md — record of orchestrator assignment
-- progress.md — liveness heartbeat
-- handoff.md — final review and challenge report
+- DISPATCH.md — Initial dispatch instructions
+- BRIEFING.md — Working memory and constraints
+- progress.md — Liveness heartbeat
+- handoff.md — Complete 5-component review and adversarial report

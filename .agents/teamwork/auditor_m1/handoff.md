@@ -1,89 +1,86 @@
-# Forensic Audit Report: Milestone 1 (Backend Data & API)
+# Forensic Audit Report: Milestone 1 Integrity Audit
 
-**Auditor**: Forensic Auditor (`auditor_m1`)  
-**Target**: Milestone 1 — External Service Provider Backend Data & REST API  
-**Timestamp**: 2026-09-30T22:15:00Z  
-**Verdict**: **CLEAN**
+**Work Product**: Milestone 1 (Operational Safety, Storage & WBP Simulator)  
+**Profile**: General Project  
+**Integrity Mode**: Development (per `ORIGINAL_REQUEST.md`)  
+**Verdict**: **CLEAN**  
+**Auditor**: Forensic Integrity Auditor (`auditor_m1`)  
+**Recipient**: Orchestrator (`84d9f696-67d5-4529-bec4-c0232e9abea0`)  
+**Date**: 2026-10-13T22:48:00Z  
 
 ---
 
 ## 1. Observation
 
-### Observation 1: Absence of Hardcoded Mocks / Genuine Business Logic
-- File: `artifacts/api-server/demo-server.mjs:7778-8329`
-- Route handlers directly inspect and mutate in-memory state in `db.serviceOrders` and `db.serviceWorkers`, and persist changes to disk via `saveDatabase()`:
-  * Line 7812: Token generation executes genuine cryptographic randomness: `const token = crypto.randomBytes(12).toString("hex");` (24 hex characters).
-  * Lines 7780-7782, 7791-7793, 7875-7877, 7888-7890, 7942-7944, 7961-7963, 7997-7999: Admin routes strictly guard access via `getAuthUser(req)`, returning HTTP 401 if unauthenticated and HTTP 403 if `userAuth.role !== "admin"`.
-  * Lines 8133-8136: `POST /api/service/public/:token/flats/:flatId/start` enforces worker identification, returning HTTP 403 if absent from `db.serviceWorkers`.
-  * Lines 8150-8154: `start` enforces `maxSimultaneousFlats`, returning HTTP 400 when active flats count `>= maxSimul`.
-  * Lines 8156-8162: `start` enforces `maxFlatsPerDay`, returning HTTP 400 when today's completed flats count `>= maxPerDay`.
-  * Lines 8168-8182: `start` evaluates `cleanFlatMode` ("never", "priority", "always") against dirty status computed via `isFlatDirty(flat.flatId, flat.flatNumber, todayStr)`.
-  * Lines 8227-8232: `POST /api/service/public/:token/flats/:flatId/finish` enforces mandatory boolean `needsCleaning` if the flat was clean at start, returning HTTP 400 if missing.
-  * Lines 8234-8238: `finish` enforces photo attachment when `order.requirePhotos === true`, returning HTTP 400 if photos array is empty.
-  * Lines 8248-8276: `finish` automatically enqueues a `dirty` cleaning request in `db.cleaningRequests` if `needsCleaning === true`.
-  * Lines 5256-5370: Real multi-channel notification dispatcher (`dispatchServiceNotifications`) sends WhatsApp to admin `5522998505276`, WhatsApp to reception, Email to reception via `sendEmailAsync`, and system notifications via `createNotification`.
+1. **Git & Branch Integrity:**
+   - Command: `git branch --show-current` returned `feature/wbp-integration`.
+   - Command: `git log -n 1 main --oneline` returned `0501d02 build: update production dist bundle and action buttons`.
+   - Command: `git rev-parse origin/main` returned `0501d02ea20ef7662015b1cf49d567ed012cdf01`. Branch `main` was completely untouched (0 commits ahead of origin/main).
+   - Milestone 1 commit `13d5043` ("feat(wbp): implement Milestone 1 operational safety, durable storage & WBP simulator") was created on `feature/wbp-integration` and pushed to `origin/feature/wbp-integration` (`git status -sb` returned `## feature/wbp-integration...origin/feature/wbp-integration`).
+   - The 11 uncommitted audit log lines at the bottom of `artifacts/api-server/audit_logs.jsonl` (timestamps `2026-10-13T21:15:37.999Z` to `2026-10-13T21:15:48.907Z`) were preserved and committed in `13d5043` (`git show 13d5043 -- artifacts/api-server/audit_logs.jsonl` confirmed lines 1453 to 1464 were appended intact).
 
-### Observation 2: Strict Mirror Parity Check (Byte-for-Byte & Hash)
-- Tool execution:
-  ```powershell
-  node -e "const fs = require('fs'), crypto = require('crypto'); const f1 = fs.readFileSync('artifacts/api-server/demo-server.mjs'), f2 = fs.readFileSync('scripts/demo-server.mjs'); console.log(crypto.createHash('sha256').update(f1).digest('hex')); console.log(crypto.createHash('sha256').update(f2).digest('hex')); console.log(f1.equals(f2));"
-  ```
-- Output:
-  ```
-  artifacts/api-server/demo-server.mjs SHA256: d42afabb06421c27d16a839e0118ae0410064508e98054f25c30e044f62f57ab (1,062,781 bytes)
-  scripts/demo-server.mjs SHA256:              d42afabb06421c27d16a839e0118ae0410064508e98054f25c30e044f62f57ab (1,062,781 bytes)
-  Byte-for-byte equal?: true
-  ```
-- `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` returned 0 bytes difference (exit code 0).
+2. **Twin Files Parity (SHA-256 byte-for-byte identity):**
+   - Verified via `crypto.createHash('sha256')` across all 5 twin file pairs:
+     - `demo-server.mjs`:
+       - `artifacts/api-server/demo-server.mjs`: `94ab58374d761261d04c217523ec363450bc6ece570d223b66fb8caeee99d657`
+       - `scripts/demo-server.mjs`: `94ab58374d761261d04c217523ec363450bc6ece570d223b66fb8caeee99d657`
+       - Status: **MATCH** (100% byte-for-byte identical)
+     - `wbp/callbacks.mjs`:
+       - `artifacts/api-server/wbp/callbacks.mjs`: `6204e1e9df3fc236ac57c5e6436b69b61187928efb78b5eab0730e605730a5b8`
+       - `scripts/wbp/callbacks.mjs`: `6204e1e9df3fc236ac57c5e6436b69b61187928efb78b5eab0730e605730a5b8`
+       - Status: **MATCH** (100% byte-for-byte identical)
+     - `wbp/client.mjs`:
+       - `artifacts/api-server/wbp/client.mjs`: `faaae4b595d543d137b48467fadcbfe33457f38087dafa2e83a405d9f8250115`
+       - `scripts/wbp/client.mjs`: `faaae4b595d543d137b48467fadcbfe33457f38087dafa2e83a405d9f8250115`
+       - Status: **MATCH** (100% byte-for-byte identical)
+     - `wbp/config.mjs`:
+       - `artifacts/api-server/wbp/config.mjs`: `4d90469c16804acb06779600811bb222a0460bdefc9d04ed8051ee66686d0d84`
+       - `scripts/wbp/config.mjs`: `4d90469c16804acb06779600811bb222a0460bdefc9d04ed8051ee66686d0d84`
+       - Status: **MATCH** (100% byte-for-byte identical)
+     - `wbp/storage.mjs`:
+       - `artifacts/api-server/wbp/storage.mjs`: `97df9d7d507b46518ac751684a1e17b04da76ab0bd26d182bf9cce6d2a06fb91`
+       - `scripts/wbp/storage.mjs`: `97df9d7d507b46518ac751684a1e17b04da76ab0bd26d182bf9cce6d2a06fb91`
+       - Status: **MATCH** (100% byte-for-byte identical)
 
-### Observation 3: Data Integrity & Schema
-- File: `data/database.json`
-- Verification script confirmed root keys:
-  * `"serviceOrders": []` (valid JSON array, present)
-  * `"serviceWorkers": []` (valid JSON array, present)
-- In `artifacts/api-server/demo-server.mjs`:
-  * Lines 474-475 initialize default keys in initial state object.
-  * Lines 2637-2638 and 2812-2813 in `loadDatabase()` defend against null/undefined by coercing to arrays.
-  * All mutations call `saveDatabase()`, which synchronously writes atomic JSON to `data/database.json`.
+3. **Test Isolation:**
+   - In `tests/wbp-integration/m1-safety-simulator.test.mjs`, line 9: `delete process.env.DATABASE_URL;`.
+   - In `tests/wbp-integration/harness/test-env.mjs`, line 138: `DATABASE_URL: ""` strictly unset.
+   - In `artifacts/api-server/demo-server.mjs`, lines 268-290: Postgres pool is only instantiated when `process.env.DATABASE_URL` is truthy; when empty/unset, `pgPool` remains `null`.
+   - Temporary database files are stored in `tmp/` or unique random file paths (`data/test-wbp-env-...`) and cleaned up on teardown. No connections to production Postgres are opened.
 
-### Observation 4: Genuine Test Execution & Absence of Circumvention
-- Independent run of project test suites produced 100% pass rates:
-  1. `tests/service-orders.test.mjs`: 12/12 passed (duration: 231ms).
-  2. `tests/service-orders-api-live.test.mjs`: 16/16 passed (duration: 3141ms). The test spawns a real Node process on port 3987 and performs real HTTP `fetch` requests testing authentication, data generation, error bounds, photo upload, and state lifecycle.
-  3. `tests/checkout-occupancy-rule.test.mjs`: 22/22 passed (duration: 1012ms).
-  4. `tests/governance-integrity.test.mjs`: 90/90 passed (duration: 2149ms).
-  5. `tests/surveys-reformed.test.mjs`: 1/1 passed (duration: 134ms).
-  6. Peer Challenger suites (`tests/adversarial-milestone1.test.mjs`, `tests/challenger-m1-cleanflat-integrations.test.mjs`): 30/30 passed.
+4. **Source Code & Cheating / Facade Analysis:**
+   - `artifacts/api-server/wbp/storage.mjs`: Contains genuine Postgres table generation (`wbp_raw_payloads`, `wbp_idempotency`) and durable JSONL fallback (`storageFilePath`), deterministic SHA-256 payload hashing / orderId extraction (`deriveKeys`), atomic `_inFlightLocks` mutex via Promises, and recovery queue (`getUnprocessedPayloads`). Zero constant-return dummy methods.
+   - `artifacts/api-server/wbp/client.mjs`: Implements genuine outbound HTTP requests with UUID v4 GUID generation, error code discrimination (transient: 3, 1003, 1004 vs terminal: 1001, 1002, 1102), exponential backoff retrying with the **exact same GUID**, and timestamp 5-minute subtraction (`adjustBookingVersion`).
+   - `artifacts/api-server/wbp/callbacks.mjs`: Implements timing-safe shared secret verification (`crypto.timingSafeEqual`), general switch checking (returning HTTP 200 `{ ErrorCode: 1031 }` when off), raw payload recording before any processing, and background recovery worker.
+   - `e2e/wbp-simulator/server.mjs` & `schemas/index.mjs`: Fully implemented OpenAPI specification validator with tolerant errata handling, programmable failure modes (1001, 1002, 1102, timeout, disconnect), booking repository, and webhook dispatchers.
+   - No pre-populated test result files, logs, or attestation files exist in the repository.
 
-### Observation 5: Git Commit & Push State (AGENTS.md Compliance)
-- Command: `git status`
-  ```
-  On branch main
-  Your branch is up to date with 'origin/main'.
-  ```
-- Command: `git log origin/main..HEAD` returned empty output (0 unpushed commits).
-- Recent commits containing Milestone 1 deliverables:
-  * `c17b508f843871b2fa2dd6f9d4511b4c6f4c647f`: Backend service-orders endpoints and mirror synchronization.
-  * `eff9b663fc179934cba9ace43ee727ae89a5796f`: Backend database schemas and test suites.
-  * Both commits exist on `origin/main`.
+5. **Empirical Targeted Test Suite Execution:**
+   - Command: `node --test tests/wbp-integration/m1-safety-simulator.test.mjs`
+   - Exit code: 0
+   - Output: 13 passed, 0 failed, 7 suites passed, duration ~6.0s.
+   - Challenger test suites also independently executed:
+     - `node --test tests/wbp-integration/challenger-m1-concurrency.test.mjs`: 7/7 suites passed (50-100 concurrent deliveries, polymorphic casing, failure release).
+     - `node --test tests/wbp-integration/challenger-m1-faults.test.mjs`: 15/15 passed (OpenAPI schema rejection, terminal errors non-retry, transient retry with identical GUID).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Rule 1 (No Mock Facades)**: Observations 1 and 4 confirm that endpoints implement full business logic: crypto token generation, role verification, database mutations, calendar block synthesis, and notification dispatch. Test assertions inspect dynamic fields rather than hardcoded mock responses. Pass.
-2. **Rule 2 (Mirror Parity)**: Observation 2 proves byte-for-byte identity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`, with identical SHA-256 hashes (`d42afabb06421c27d16a839e0118ae0410064508e98054f25c30e044f62f57ab`) and 0 diff output. Pass.
-3. **Rule 3 (Data Integrity)**: Observation 3 proves `data/database.json` contains valid array structures for `serviceOrders` and `serviceWorkers`, backed by defensive initialization in `loadDatabase()` and persistent writes in `saveDatabase()`. Pass.
-4. **Rule 4 (Git Status & Push)**: Observation 5 confirms `HEAD` matches `origin/main` with zero unpushed commits, complying strictly with AGENTS.md rules. Pass.
-
-Therefore, every check specified in the HARD VETO RULE passed without exception.
+1. **Integrity Mode Compliance:** Per `ORIGINAL_REQUEST.md` line 8, the integrity mode is `development`. The core prohibitions under development mode are: hardcoded test expectations, dummy facades, fabricated verification outputs, and circumvented requirements.
+2. **Authenticity of Implementation:** Inspection of all M1 codebase components demonstrates genuine logic across all endpoints and modules:
+   - Concurrency deduplication is achieved through in-memory and relational mutexes rather than hardcoded order IDs.
+   - The OpenAPI simulator actually validates request envelopes and payload schemas using regex and type checks.
+   - The API client performs genuine HTTP requests, retries with exponential backoff, and preserves GUIDs across attempts.
+3. **Twin Parity Preservation:** All 5 twin pairs between `artifacts/` and `scripts/` have identical SHA-256 hashes, satisfying R10 and ensuring no deployment desynchronization.
+4. **Zero Impact on Production Environment:** Tests run with `DATABASE_URL` completely unset/removed, on isolated ephemeral ports and temporary JSON files. Branch `main` was not touched, and git commits were pushed to `origin/feature/wbp-integration`.
+5. **Preservation of Audit History:** The 11 uncommitted audit log lines from 2026-10-13 were preserved intact in commit `13d5043`.
 
 ---
 
 ## 3. Caveats
 
-1. **Advisory Timezone Note**: Challenger tests noted that `finishedAt.substring(0, 10)` in UTC compared against Brazil local date `getTodayStr()` between 21:00 and 23:59 UTC-3 represents a minor edge case for daily limit aggregation. This is an enhancement recommendation for future milestones, not an integrity violation.
-2. **Notification Sandbox**: Offline/local runs without active Z-API or SMTP credentials fall back gracefully to console logs and mock returns in helper services, preventing unhandled runtime crashes during tests.
+No caveats. All four forensic checkpoints were independently verified empirically.
 
 ---
 
@@ -91,47 +88,39 @@ Therefore, every check specified in the HARD VETO RULE passed without exception.
 
 **Verdict: CLEAN**
 
-Milestone 1 satisfies all forensic integrity criteria:
-- Real business logic with zero mock facades.
-- Complete absence of test circumvention or hardcoded fake responses.
-- 100% byte-for-byte mirror parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-- Clean data schema and persistence in `data/database.json`.
-- All commits pushed to `origin/main`.
-
-The backend implementation for Milestone 1 is verified and ready for Milestone 2 (Admin Management UI) and Milestone 3 (Worker Public Portal).
+Milestone 1 work product satisfies all forensic integrity criteria:
+- **Zero Cheating / Facades**: Genuine logic, real OpenAPI validation, genuine concurrency mutex locks.
+- **Twin Parity**: 100% SHA-256 parity across all twin file pairs.
+- **Git & Branch Integrity**: Active branch `feature/wbp-integration`, `main` untouched at `0501d02`, 11 audit log lines preserved.
+- **Test Isolation**: `DATABASE_URL` unset, zero connection to production database.
+- **Test Verification**: Targeted test suite passes 100% (13/13 tests).
 
 ---
 
 ## 5. Verification Method
 
-To independently verify this report:
+To independently reproduce the forensic verification:
 
-1. **Mirror Parity**:
+1. **Verify Git Branch and Main Integrity:**
    ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+   git branch --show-current
+   git log -n 1 main --oneline
    ```
-   *Expected*: Zero diff output (exit code 0).
+   *Expected: `feature/wbp-integration` and `0501d02`.*
 
-2. **Hash Comparison**:
+2. **Verify SHA-256 Twin Parity:**
    ```powershell
-   Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs -Algorithm SHA256
+   node -e "const fs = require('fs'), crypto = require('crypto'); const files = ['demo-server.mjs', 'wbp/callbacks.mjs', 'wbp/client.mjs', 'wbp/config.mjs', 'wbp/storage.mjs']; files.forEach(f => { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); console.log(f + ': ' + (h1 === h2 ? 'MATCH' : 'MISMATCH')); });"
    ```
-   *Expected*: Both hashes match `D42AFABB06421C27D16A839E0118AE0410064508E98054F25C30E044F62F57AB`.
+   *Expected: All 5 files report MATCH.*
 
-3. **Live HTTP API Tests**:
+3. **Execute Pontual Milestone 1 Test Suite:**
    ```powershell
-   node --test tests/service-orders-api-live.test.mjs
+   node --test tests/wbp-integration/m1-safety-simulator.test.mjs
    ```
-   *Expected*: 16/16 tests pass.
+   *Expected: 13 passed, 0 failed.*
 
-4. **Static Contract Tests**:
-   ```powershell
-   node --test tests/service-orders.test.mjs
-   ```
-   *Expected*: 12/12 tests pass.
-
-5. **Git Sync Verification**:
-   ```powershell
-   git log origin/main..HEAD
-   ```
-   *Expected*: Empty output (0 unpushed commits).
+4. **Invalidation Conditions:**
+   - Any mismatch between twin files in `artifacts/api-server/` and `scripts/`.
+   - Any commit pushed to the `main` branch.
+   - Any connection leakage to production PostgreSQL during test execution.

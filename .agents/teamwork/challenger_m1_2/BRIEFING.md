@@ -1,58 +1,64 @@
-# BRIEFING — 2026-10-11T01:21:00Z
+# BRIEFING — 2026-10-13T22:47:00Z
 
 ## Mission
-Adversarial empirical testing of M1 CorpFlats bot actions API, kill switches/toggles permutations, pre-reservation lifecycle/expiration, and concurrency races.
+Adversarially challenge Milestone 1: Empirically verify fault injection, timeout handling, retry behavior (terminal vs transient errors, GUID idempotency), and OpenAPI schema validation for WebBookingPro integration.
 
 ## 🔒 My Identity
-- Archetype: empirical-challenger
+- Archetype: EMPIRICAL CHALLENGER
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M1
-- Instance: 2 of 2
+- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Milestone: Milestone 1
+- Instance: 2 of 2 (Challenger 2)
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code (report findings/bugs, do not fix them)
-- Write metadata only to .agents/teamwork/challenger_m1_2 (never put source/test code in .agents/teamwork/)
-- Empirically verify everything by writing and executing tests
-- Final report at .agents/teamwork/challenger_m1_2/handoff.md with verdict APPROVE or REQUEST_CHANGES
-- Send message to parent orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7)
+- Review & adversarial testing — do NOT modify core production implementation unless reporting findings or requested
+- Strictly isolated test runs only: `node --test tests/wbp-integration/challenger-m1-faults.test.mjs`. NEVER run global sweeps or batches.
+- No source or tests inside `.agents/teamwork/` — write test to `tests/wbp-integration/challenger-m1-faults.test.mjs`.
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T01:21:00Z
+- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Updated: 2026-10-13T22:47:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/api-server/demo-server.mjs` and mirror `scripts/demo-server.mjs` (/api/bot-actions/*)
-- **Interface contracts**: ORIGINAL_REQUEST.md, orchestrator_4/PROJECT.md, worker_m1/handoff.md
-- **Review criteria**: Permutation enforcement, pre-reservation lifecycle and expiration, concurrency race safety
-
-## Key Decisions Made
-- Executed adversarial test suite `tests/challenger-m1-adversarial.test.mjs` covering all switch permutations, expiration lifecycle, and concurrency.
-- Verdict: REQUEST_CHANGES based on 4 confirmed empirical bugs (concurrency double-booking race condition, paid pre-reservation expiration bug, commit of expired reservations, and ignored hold minutes configuration).
-
-## Artifact Index
-- DISPATCH.md — incoming dispatch instructions
-- BRIEFING.md — persistent state index
-- progress.md — liveness heartbeat
-- tests/challenger-m1-adversarial.test.mjs — executable reproduction harness
-- handoff.md — final handoff report
+- **Files to review**:
+  - `docs/integracoes/webbookingpro/PROJECT.md`
+  - `docs/wbp/wbpAPI.yaml` & `docs/wbp/README.md`
+  - `artifacts/api-server/wbp/client.mjs`
+  - `e2e/wbp-simulator/server.mjs`
+  - `e2e/wbp-simulator/schemas/index.mjs`
+  - `tests/wbp-integration/m1-safety-simulator.test.mjs`
+  - `.agents/teamwork/worker_m1/handoff.md`
+- **Interface contracts**: WebBookingPro OpenAPI spec and Milestone 1 requirements
+- **Review criteria**:
+  - Simulator schema validation & rejection of invalid payloads missing required fields
+  - Terminal errors 1001, 1002, 1102 non-retry behavior
+  - Transient errors and timeouts retry behavior reusing identical GUID
+  - Verification code empirical execution
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Toggle matrix permutations (master switch + 5 individual actions): PASSED.
-  2. Unpaid expired pre-reservation release: PASSED.
-  3. Pre-reservation hold time configurability: FAILED (hardcoded 30 min).
-  4. Paid pre-reservation expiration bypass: FAILED (line 20189 omits paymentStatus check).
-  5. Committing expired reservation: FAILED (commit-reservation allows confirming expired reservations).
-  6. Concurrency race condition on pre-reserve: FAILED (TOCTOU race via async QRCode.toDataURL allows multiple 200 OK double-bookings).
+  - Simulator correctly rejects malformed/incomplete payloads: CONFIRMED when `strictSchemas: true` is configured and via `validateRequest()`. Caveat: when simulator is initialized with default options (`strictSchemas: false`), line 91 in `server.mjs` (`if (!validation.valid && this.strictSchemas)`) skips rejection and returns HTTP 200.
+  - Client does NOT retry terminal errors (1001, 1002, 1102): CONFIRMED (exactly 1 call logged, 0 retries).
+  - Client retries transient errors (1003, 1004) reusing identical GUID: CONFIRMED (1 initial + 2 retries = 3 attempts, identical GUID on all).
+  - Client retries timeouts reusing identical GUID: CONFIRMED.
+  - Client recovers when transient error resolves on retry 3, reusing same GUID: CONFIRMED.
+  - Client retries on socket hangup / dropConnection reusing identical GUID: CONFIRMED.
+  - Custom caller-supplied GUID is preserved across all retries: CONFIRMED.
 - **Vulnerabilities found**:
-  1. Critical: TOCTOU race condition in `POST /api/bot-actions/pre-reserve` allows simultaneous double-bookings on identical flats and dates.
-  2. High: `GET /api/bot-actions/availability` and `POST /api/bot-actions/pre-reserve` free flats with paid pre-reservations once `expiresAt` passes.
-  3. High: `POST /api/bot-actions/commit-reservation` accepts and confirms reservations with status `expirada`.
-  4. Medium: `preReservationHoldMinutes` configured in settings is completely ignored by `POST /api/bot-actions/pre-reserve`.
+  - Minor simulator configuration trap: `e2e/wbp-simulator/server.mjs` only rejects invalid payloads with HTTP 400 when `strictSchemas: true` is explicitly enabled. Recommended default: set `strictSchemas: true` by default or remove the `&& this.strictSchemas` guard so that `!validation.valid` always rejects invalid requests.
 - **Untested angles**:
-  - Out of scope for M1: Gemini AI Tool Calling multi-turn prompts (scheduled for M2).
+  - None within Milestone 1 scope.
 
 ## Loaded Skills
-- None
+- None specified for Challenger 2
+
+## Key Decisions Made
+- Authored isolated adversarial test suite in `tests/wbp-integration/challenger-m1-faults.test.mjs` covering 15 test assertions.
+- Executed strictly isolated test runner: `node --test tests/wbp-integration/challenger-m1-faults.test.mjs` (15/15 passed).
+- Issued explicit verdict: **APPROVE** with recommendation to enable `strictSchemas: true` by default in future milestones.
+
+## Artifact Index
+- `tests/wbp-integration/challenger-m1-faults.test.mjs` — Adversarial test suite (15 tests, 0 failures)
+- `handoff.md` — Final Challenger 2 assessment
+- `progress.md` — Heartbeat log

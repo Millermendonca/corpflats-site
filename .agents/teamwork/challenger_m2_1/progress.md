@@ -1,13 +1,14 @@
-# Progress — Challenger M2
+# Progress — Challenger 1 (Canonical Availability Stress)
 
-Last visited: 2026-10-11T02:35:30Z
+Last visited: 2026-10-13T23:33:00Z
 
-## Status
-- [x] Step 1: Initialize DISPATCH.md and BRIEFING.md
-- [x] Step 2: Read ORIGINAL_REQUEST.md, PROJECT.md, and worker_m2 handoff
-- [x] Step 3: Investigate WhatsApp AI Service implementation and existing test suite
-- [x] Step 4: Design empirical adversarial probes (Master switch, Matrix permissions, Injection/Malformed payloads, Chaos Multi-Turn)
-- [x] Step 5: Run existing tests and execute adversarial probe suite (`tests/adversarial-m2.test.mjs`)
-- [x] Step 6: Analyze empirical results and evaluate blast radius / vulnerabilities
-- [x] Step 7: Update BRIEFING.md and write handoff.md with verdict (APPROVE)
-- [ ] Step 8: Send report notification to orchestrator
+- [x] Initialized DISPATCH.md and BRIEFING.md
+- [x] Read required documents (ORIGINAL_REQUEST.md, PROJECT.md, AGENTS.md, worker_m2/handoff.md)
+- [x] Inspected availability implementation in `artifacts/api-server/wbp/availability.mjs` and `scripts/wbp/availability.mjs`
+- [x] Verified 100% SHA-256 byte-for-byte twin parity between twin modules
+- [x] Implemented isolated adversarial stress test `tests/wbp-integration/challenger-m2-availability.test.mjs` (21 tests across 13 suites)
+- [x] Executed targeted test: `node --test tests/wbp-integration/challenger-m2-availability.test.mjs` (21 pass, 0 fail, 1.8s)
+- [x] Verified multi-period availability, overlapping overbooking, same-day turnover (back-to-back checkouts/checkins), room blocks, multi-day/open-ended maintenance orders, expired vs active holds, permanent maintenance floor, ceiling limits, and bounds [0, 19]
+- [ ] Update BRIEFING.md
+- [ ] Write `handoff.md` with explicit APPROVE verdict
+- [ ] Send coordination message to orchestrator

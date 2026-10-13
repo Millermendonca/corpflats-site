@@ -17,12 +17,12 @@ Monitor and govern the PMS Guest-Flow-Manager and WebBookingPro integration proj
 - Enforce strict verification and cleanup on completion
 
 ## User Context
-- **Last user request**: CORREÇÃO URGENTE: Garantir branch feature/wbp-integration (não commitar na main), não sobrescrever documentação existente (usar docs/integracoes/webbookingpro/ e restaurar originais na raiz), preservar 11 linhas em artifacts/api-server/audit_logs.jsonl.
+- **Last user request**: AJUSTES FINAIS M2 TEST: Injetar overrides P1-P4 antes do spawn e assertar valor explícito (399.00); usar duas cópias isoladas de DB em os.tmpdir() (uma por servidor); mover criação de reserva em PMS para depois das comparações de availability/quote e cobrir datas com reservas.
 - **Pending clarifications**: none
-- **Delivered results**: Repassada instrução urgente ao orquestrador (84d9f696-67d5-4529-bec4-c0232e9abea0) e gravado em ORIGINAL_REQUEST.md.
+- **Delivered results**: Gravado em ORIGINAL_REQUEST.md e repassado imediatamente ao orquestrador (84d9f696-67d5-4529-bec4-c0232e9abea0).
 
 ## Project Status
-- **Phase**: in progress (urgency correction issued to orchestrator)
+- **Phase**: in progress (Milestone 2 Gate authorized and running)
 - **Active Orchestrator**: 84d9f696-67d5-4529-bec4-c0232e9abea0 (.agents/teamwork/orchestrator_1/)
 - **Cron 1 (Progress Reporting */8)**: 2588b79e-8f82-479c-ac3d-60f14235136b/task-16
 - **Cron 2 (Liveness Check */10)**: 2588b79e-8f82-479c-ac3d-60f14235136b/task-18

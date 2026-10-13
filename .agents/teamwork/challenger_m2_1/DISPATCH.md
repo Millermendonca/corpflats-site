@@ -1,16 +1,18 @@
-## 2026-10-11T02:28:51Z
-Você é o Challenger 1 para o Milestone M2 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O relatório do Worker M2 é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md
-Você DEVE LER ORIGINAL_REQUEST.md antes de iniciar.
+## 2026-10-13T23:28:20Z
+You are Challenger 1 (Canonical Availability Stress) for Milestone 2.
+Your dedicated working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1`
 
-Missão Adversarial:
-1. Desafie empiricamente o WhatsApp AI Service sob todas as combinações de chave mestra e matriz de ações:
-   - Teste chamadas com chave mestra desativada: confirme que tools é [] e resposta não tenta chamar função inválida.
-   - Teste chamadas com apenas checkAvailability ligada e commitReservation desligada: confirme que o bot executa a busca e transborda na reserva.
-   - Teste payload com injeção de parâmetros maliciosos ou argumentos vazios nas tool calls.
-2. Escreva testes ou execute probes.
-3. Escreva seu relatório em `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1\handoff.md` com veredicto APPROVE ou REQUEST_CHANGES.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+Read these documents before challenging:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`
+
+Your Mission:
+1. Empirically verify canonical availability calculation under complex and adversarial calendar workloads.
+2. Write an isolated targeted test script in `tests/wbp-integration/challenger-m2-availability.test.mjs`:
+   - Test multi-period availability with overlapping reservations, back-to-back checkouts/checkins (same day turnover), room blocks, maintenance orders spanning multiple days, expired vs active holds, permanent maintenance status, and ceiling limits `min(ceiling, available)`.
+   - Verify that available units never exceed 19 and never drop below 0.
+   - Run exclusively your test via `node --test tests/wbp-integration/challenger-m2-availability.test.mjs`. (NEVER run global sweeps!).
+3. Report empirical results and state your explicit verdict in `handoff.md`: APPROVE or REQUEST_CHANGES. Send message to orchestrator.

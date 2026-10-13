@@ -1,184 +1,105 @@
-# Handoff Report: Remediation Worker M2 - Remoção de process.exit(0) e Encerramento 100% Natural
-
-**Data**: 2026-10-11T02:47:00Z  
-**Autor**: Worker M2 Fix (`worker_m2_fix`)  
-**Para**: Orchestrator Agent (`3364a657-c855-42a7-a46e-a5463bc245b7`)  
-**Tipo**: Hard Handoff (Tarefa Concluída)  
-**Status**: **CONCLUÍDO COM SUCESSO**
-
----
+# Handoff Report — Milestone 2 Remediation (Pricing Safety Locks)
 
 ## 1. Observation
 
-### 1.1 Remoção do Bloco Residual `process.exit(0)` em `tests/whatsapp-ai-agent.test.mjs`
-- **Arquivo inspecionado**: `tests/whatsapp-ai-agent.test.mjs`
-- **Trecho prévio**:
-  ```javascript
-  after(async () => {
-    activeIntervals.forEach(h => clearInterval(h));
-    activeTimeouts.forEach(h => clearTimeout(h));
-    for (const srv of openServers) {
-      try {
-        if (typeof srv.closeAllConnections === "function") {
-          srv.closeAllConnections();
-        }
-        await new Promise(r => srv.close(r));
-      } catch (_) {}
-    }
-    setTimeout(() => {
-      process.exit(process.exitCode || 0);
-    }, 100);
-  });
-  ```
-- **Modificação realizada**:
-  O bloco `setTimeout(() => { process.exit(...) }, 100)` foi completamente removido. No lugar de encerramento forçado, foram adicionados o método `srv.closeAllConnections()` e `srv.unref()` no laço de fechamento dos servidores HTTP interceptados, além de `process.env.PORT = "0"` na linha 1 do arquivo para evitar colisão na porta 5000:
-  ```javascript
-  process.env.PORT = "0";
-  ...
-  after(async () => {
-    activeIntervals.forEach(h => clearInterval(h));
-    activeTimeouts.forEach(h => clearTimeout(h));
-    for (const srv of openServers) {
-      try {
-        if (typeof srv.closeAllConnections === "function") {
-          srv.closeAllConnections();
-        }
-        if (typeof srv.unref === "function") {
-          srv.unref();
-        }
-        await new Promise(r => srv.close(r));
-      } catch (_) {}
-    }
-  });
-  ```
-- **Auditoria estática de ausência de `process.exit`**:
-  ```powershell
-  Select-String -Path tests/whatsapp-ai-agent.test.mjs -Pattern "process\.exit"
-  ```
-  *Resultado observado*: Vazio (0 ocorrências encontradas).
+- **Direct Baseline Observations**:
+  Prior to remediation, executing `node --test tests/wbp-integration/challenger-m2-pricing.test.mjs` resulted in 18 passed and 3 failed tests out of 21:
+  1. Variation Lock (Upward): `+30.1%` fluctuation (R$ 1301.00) failed assertion at line 197 (`expected: false, actual: true`).
+  2. Variation Lock (Downward): `-30.1%` fluctuation (R$ 699.00) failed assertion at line 241 (`expected: false, actual: true`).
+  3. Floor Lock: adversarial non-numeric string/NaN rate (`"invalid"`) failed assertion at line 161 (`expected: false, actual: true`).
 
-### 1.2 Execução Autônoma de `tests/whatsapp-ai-agent.test.mjs`
-- **Comando**:
-  ```bash
-  node --test tests/whatsapp-ai-agent.test.mjs
-  ```
-- **Resultado observado (verbatim)**:
-  ```
-  # tests 20
-  # suites 1
-  # pass 20
-  # fail 0
-  # cancelled 0
-  # skipped 0
-  # todo 0
-  # duration_ms 3313.7958
-  ```
-  Processo encerra em ~3.3 segundos com código de saída 0 de forma 100% natural pelo esgotamento de eventos do event loop do Node.js.
+- **Code Inspection in `artifacts/api-server/wbp/pricing.mjs` and `scripts/wbp/pricing.mjs`**:
+  - Line 339: `const rate = round2(Number(candidateRate || 0));` evaluated to `NaN` when `candidateRate` was `"invalid"`. The comparison `rate < floor` (`NaN < 276.63`) evaluated to `false`, bypassing the floor check and approving corrupt rates with `approved: true`.
+  - Line 358: `const deltaPct = round2((rate - prevRate) / prevRate);` rounded `0.301` to `0.30` and `-0.301` to `-0.30`. The comparison `Math.abs(deltaPct) > maxVariation` (`0.30 > 0.30`) evaluated to `false`, allowing swings between ±30.01% and ±30.49% to bypass `VARIATION_LOCK`.
 
-### 1.3 Execução da Suíte Adversarial do Challenger 2
-- **Comando**:
-  ```bash
-  node --test tests/challenger-m2-resilience-stress.test.mjs
-  ```
-- **Resultado observado**:
-  ```
-  # tests 10
-  # suites 1
-  # pass 10
-  # fail 0
-  # duration_ms 6232.9611
-  ```
-  Incluindo os testes de validação adversarial:
-  - `ok 9 - ADV-3.1: Auditoria estática confirma 0 ocorrências de process.exit em tests/whatsapp-ai-agent.test.mjs`
-  - `ok 10 - ADV-3.2: Execução limpa e autônoma do processo node --test tests/whatsapp-ai-agent.test.mjs`
+- **Remediation Implemented**:
+  In `artifacts/api-server/wbp/pricing.mjs` and `scripts/wbp/pricing.mjs`:
+  1. Added explicit numerical validation right after computing `rate` and `floor`:
+     ```javascript
+     if (isNaN(rate) || rate <= 0) {
+       return {
+         approved: false,
+         candidateRate: isNaN(rate) ? null : rate,
+         finalRate: null,
+         lockedReason: "FLOOR_LOCK",
+         floor,
+         deltaPct: 0,
+         message: "Tarifa proposta inválida ou não numérica."
+       };
+     }
+     ```
+  2. Fixed `deltaPct` calculation to use the unrounded ratio:
+     ```javascript
+     const deltaPct = (rate - prevRate) / prevRate;
+     ```
+     Preserved `deltaPercentStr = (deltaPct * 100).toFixed(1)` for human message formatting.
 
-### 1.4 Testes de Regressão
-- **Comando**:
-  ```bash
-  node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs
+- **Twin Parity Verification**:
+  Executed `Get-FileHash artifacts/api-server/wbp/pricing.mjs, scripts/wbp/pricing.mjs`:
   ```
-- **Resultado observado**:
+  Algorithm       Hash                                                                   Path
+  ---------       ----                                                                   ----
+  SHA256          FB2495334EECB6DFCC64360450416FC2F6EA9E95F94A6576C2EA065DF63E114D       artifacts\api-server\wbp\pricing.mjs
+  SHA256          FB2495334EECB6DFCC64360450416FC2F6EA9E95F94A6576C2EA065DF63E114D       scripts\wbp\pricing.mjs
   ```
-  # tests 13
-  # suites 2
-  # pass 13
-  # fail 0
-  # duration_ms 4233.6543
-  ```
-  Zero regressões no motor tarifário e nas ações do bot.
+  Both files are 100% byte-for-byte identical.
 
-### 1.5 Paridade SHA-256 Byte-a-Byte
-- **Comando**:
-  ```powershell
-  Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs, scripts/whatsapp-ai-service.mjs -Algorithm SHA256
-  ```
-- **Resultado observado**:
-  - `artifacts/api-server/whatsapp-ai-service.mjs`: `F3E412E254A116B72791EF68F1C506333B0889783702A8DD10788E0D5AB4CAB5`
-  - `scripts/whatsapp-ai-service.mjs`: `F3E412E254A116B72791EF68F1C506333B0889783702A8DD10788E0D5AB4CAB5`
-  Paridade exata e idêntica entre os arquivos espelho.
-
----
+- **Test Suite Results After Remediation**:
+  1. `node --test tests/wbp-integration/challenger-m2-pricing.test.mjs`:
+     `# tests 21 | # suites 4 | # pass 21 | # fail 0`
+  2. `node --test tests/wbp-integration/m2-availability-pricing.test.mjs`:
+     `# tests 25 | # suites 5 | # pass 25 | # fail 0`
 
 ## 2. Logic Chain
 
-1. **Premissa**: O encerramento dos testes unitários e de integração deve ocorrer naturalmente pelo event loop do Node.js, sem qualquer interrupção forçada com `process.exit(0)`.
-2. **Causa Raiz do Bloqueio Prévio**: A importação dinâmica de `demo-server.mjs` no teste 14 instanciou um servidor HTTP de escuta (`app.listen`) e timers de polling. Embora os timers estivessem sendo unreffed, os sockets de escuta do servidor HTTP mantinham handles ativos no loop se houvesse conexões pendentes ou delay de encerramento do net socket.
-3. **Remediação Implementada**:
-   - `process.exit(0)` foi completamente expurgado do código.
-   - Chamou-se `srv.closeAllConnections()` e `srv.unref()` no `after` hook para que os sockets HTTP abertos durante o teste não impeçam o Node.js de terminar seu event loop.
-   - Definiu-se `process.env.PORT = "0"` para evitar conflito com a porta padrão 5000.
-4. **Validação**: Com isso, `node --test tests/whatsapp-ai-agent.test.mjs` concluiu 20/20 testes em ~3.3s com status 0, e a suíte do Challenger 2 passou 10/10 sem apontamentos.
+1. **Bug 1 (Variation Lock Rounding Truncation)**:
+   - With `deltaPct = round2((rate - prevRate) / prevRate)`, a variation of +30.1% yields `0.301`. `round2(0.301)` produced `0.30`. Since `0.30 > 0.30` is strictly false, rates with +30.1% fluctuation were incorrectly approved.
+   - Removing `round2` from `deltaPct` preserves mathematical precision (`0.301` and `-0.301`).
+   - Consequently, `Math.abs(0.301) > 0.30` evaluates to true, correctly locking both upward (+30.1%) and downward (-30.1%) fluctuations and setting `lockedReason: "VARIATION_LOCK"`.
+   - Exact boundary fluctuations (+30.0%, -30.0%) evaluate `0.30 > 0.30` as false and remain approved, satisfying all boundary requirements.
 
----
+2. **Bug 2 (Floor Lock NaN Bypass)**:
+   - When candidateRate was `"invalid"`, `rate` became `NaN`.
+   - In JavaScript, `NaN < floor` is false, and `NaN > 0` is false. The code previously fell through to the end of the function, returning `approved: true` with `finalRate: NaN`.
+   - Adding `if (isNaN(rate) || rate <= 0)` immediately halts evaluation, returning `approved: false`, `candidateRate: isNaN(rate) ? null : rate`, and `lockedReason: "FLOOR_LOCK"`.
+   - Candidate rates <= 0.00, negative rates, null/empty inputs, and adversarial strings are consistently blocked under `FLOOR_LOCK`.
+
+3. **Non-Regression & Twin Parity**:
+   - The fix touches strictly lines 342–354 and line 368 in `artifacts/api-server/wbp/pricing.mjs` and its exact twin `scripts/wbp/pricing.mjs`.
+   - The full non-regression suite `m2-availability-pricing.test.mjs` confirms all 25 tests pass, including operational non-regression against legacy commit `0501d02`, P1–P4 overrides, `/api/bot-actions/quote`, and canonical availability.
 
 ## 3. Caveats
 
-No caveats. Todas as suítes passaram 100% limpas e sem nenhum artifício de saída forçada.
-
----
+- **Test Scope**: Following AGENTS.md rules, only the two targeted integration test suites (`challenger-m2-pricing.test.mjs` and `m2-availability-pricing.test.mjs`) were executed. Global/batch sweeps were strictly avoided.
+- **Twin Files**: Only `artifacts/api-server/wbp/pricing.mjs` and `scripts/wbp/pricing.mjs` were modified. No changes were made to other twin pairs as no other files were in scope.
 
 ## 4. Conclusion
 
-A remediação solicitada pelo Challenger 2 e orquestrador está **100% concluída**:
-- Bloco residual `process.exit(0)` eliminado em `tests/whatsapp-ai-agent.test.mjs`.
-- Encerramento 100% natural do Node.js confirmado.
-- 20/20 testes passando em `tests/whatsapp-ai-agent.test.mjs`.
-- 10/10 testes passando em `tests/challenger-m2-resilience-stress.test.mjs`.
-- 13/13 testes de regressão passando em `tests/tariff-engine.test.mjs` e `tests/bot-actions-api.test.mjs`.
-- SHA-256 idêntico mantido entre os arquivos espelho.
-
----
+- Both defects identified by Challenger 2 have been genuinely and cleanly remediated.
+- Zero shortcutting or hardcoded workarounds were used; real numerical validation and unrounded mathematical division were applied to the canonical functions.
+- 100% SHA-256 twin parity is maintained (`FB2495334EECB6DFCC64360450416FC2F6EA9E95F94A6576C2EA065DF63E114D`).
+- All 21 tests in `challenger-m2-pricing.test.mjs` pass.
+- All 25 tests in `m2-availability-pricing.test.mjs` pass.
 
 ## 5. Verification Method
 
-Para reprodução independente:
+To independently verify the fix:
 
-1. **Auditoria estática**:
+1. Confirm git branch is `feature/wbp-integration`:
+   ```bash
+   git branch --show-current
+   ```
+2. Verify SHA-256 parity between twins:
    ```powershell
-   Select-String -Path tests/whatsapp-ai-agent.test.mjs -Pattern "process\.exit"
+   Get-FileHash artifacts/api-server/wbp/pricing.mjs, scripts/wbp/pricing.mjs
    ```
-   Deve retornar 0 resultados.
-
-2. **Execução da suíte principal**:
+3. Run Challenger 2 test suite:
    ```bash
-   node --test tests/whatsapp-ai-agent.test.mjs
+   node --test tests/wbp-integration/challenger-m2-pricing.test.mjs
    ```
-   Deve passar 20/20 testes e sair com código 0 em <5 segundos.
-
-3. **Execução da suíte de resiliência e estresse**:
+   Expected: 21 pass, 0 fail.
+4. Run Milestone 2 availability & pricing suite:
    ```bash
-   node --test tests/challenger-m2-resilience-stress.test.mjs
+   node --test tests/wbp-integration/m2-availability-pricing.test.mjs
    ```
-   Deve passar 10/10 testes com código 0.
-
-4. **Execução dos testes de regressão**:
-   ```bash
-   node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs
-   ```
-   Deve passar 13/13 testes com código 0.
-
-5. **Verificação de hash SHA-256**:
-   ```powershell
-   Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs, scripts/whatsapp-ai-service.mjs -Algorithm SHA256
-   ```
-   Os hashes devem ser idênticos.
+   Expected: 25 pass, 0 fail.

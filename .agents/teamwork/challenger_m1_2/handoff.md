@@ -1,166 +1,133 @@
-# Relatório de Handoff — Challenger 2 (Milestone M1)
+# Handoff Report: Challenger 2 (Fault Injection, Timeout Handling & Schema Validation)
 
-**Agente:** Challenger 2 (Empirical Challenger: critic, specialist)  
-**Milestone:** M1 — Backend Core: System Actions API, Tariff Engine & Autonomous Pipeline  
-**Data:** 2026-10-11T01:22:00Z  
-**Diretório de Trabalho:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2`  
-**Veredicto Final:** **REQUEST_CHANGES**
+**Agent**: Challenger 2 (`challenger_m1_2`)  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2`  
+**Recipient**: Orchestrator (`84d9f696-67d5-4529-bec4-c0232e9abea0`)  
+**Verdict**: **APPROVE**  
+**Date**: 2026-10-13T22:48:00Z  
 
 ---
 
 ## 1. Observation
 
-Durante a execução da suíte de testes de estresse adversarial desenvolvida em `tests/challenger-m1-adversarial.test.mjs`, foram observados os seguintes comportamentos e evidências empíricas no servidor monolítico `artifacts/api-server/demo-server.mjs` (e seu espelho `scripts/demo-server.mjs`):
+1. **Adversarial Test Script Execution:**
+   - Command: `node --test tests/wbp-integration/challenger-m1-faults.test.mjs`
+   - Output:
+     ```
+     TAP version 13
+     # Subtest: Challenger 2: Fault Injection, Timeout Handling & Schema Validation
+         # Subtest: 1. OpenAPI Schema Validation: Rejection of Invalid Payloads
+             ok 1 - schema validator rejects payloads missing common envelope fields (guid, pms_cid, shared_secret, verb)
+             ok 2 - schema validator rejects endpoint-specific missing required fields across all verbs
+             ok 3 - simulator HTTP server rejects invalid payload missing required fields with HTTP 400
+             ok 4 - simulator HTTP server rejects ARIUpdate with invalid dates or missing inventory
+             ok 5 - empirical probe: simulator behavior under default configuration (strictSchemas: false)
+         ok 1 - 1. OpenAPI Schema Validation: Rejection of Invalid Payloads
+         # Subtest: 2. Terminal Error Codes: Strict Non-Retry Behavior
+             ok 1 - does NOT retry on Error 1001 (FAULT.OTA.LOGIN: Invalid credentials) — exactly 1 attempt
+             ok 2 - does NOT retry on Error 1002 (FAULT.OTA.NOTENABLED: Channel not enabled) — exactly 1 attempt
+             ok 3 - does NOT retry on Error 1102 (FAULT.OTA.CURRENCY: Currency mismatch) — exactly 1 attempt
+             ok 4 - verifies terminal error non-retry across HealthCheck, GetBookingList, GetBookingId, AckBooking
+         ok 2 - 2. Terminal Error Codes: Strict Non-Retry Behavior
+         # Subtest: 3. Transient Errors & Timeouts: Retries and GUID Preservation
+             ok 1 - retries on transient Error 1003 (FAULT.OTA.OFFLINE) reusing the EXACT SAME GUID across all attempts
+             ok 2 - retries on transient Error 1004 (FAULT.OTA.BROKEN) reusing the EXACT SAME GUID
+             ok 3 - succeeds when transient error recovers on retry attempt, preserving same GUID
+             ok 4 - retries on HTTP timeout (delay > client timeoutMs) reusing the EXACT SAME GUID across attempts
+             ok 5 - retries on network socket drop (connection dropped) reusing the EXACT SAME GUID
+             ok 6 - caller-supplied custom GUID is preserved across retries and returned on ARIUpdate
+         ok 3 - 3. Transient Errors & Timeouts: Retries and GUID Preservation
+     ok 1 - Challenger 2: Fault Injection, Timeout Handling & Schema Validation
+     # tests 15
+     # suites 4
+     # pass 15
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # duration_ms 1852.2768
+     ```
 
-### 1.1 Sucesso nas Permutações de Chaves (Master e Granulares)
-- **Chave Mestra Desligada (`apiActionsEnabled: false`)**:
-  - Todos os 5 endpoints (`/availability`, `/quote`, `/payment-link`, `/pre-reserve`, `/commit-reservation`) responderam estritamente com status HTTP 403, payload JSON `{ error: "ACTION_DISABLED", action: ..., requiresHandover: true, message: ... }` e suporte a `handoverMessage` customizada, sem falhas ou exceções não tratadas.
-- **Chaves Individuais (`allowedActions`)**:
-  - A matriz de 5 ações individuais ligadas e desligadas uma a uma funcionou conforme especificado, bloqueando exclusivamente a ação desativada com 403 e liberando as demais.
+2. **OpenAPI Schema Validation Inspection (`e2e/wbp-simulator/schemas/index.mjs`):**
+   - Lines 34-40: `if (!body.guid) errors.push("Campo obrigatório 'guid' ausente."); else if (!UUID_V4_REGEX.test(body.guid)) ...` correctly rejects missing or malformed non-UUID v4 GUIDs.
+   - Lines 42-52: Validates mandatory presence of `pms_cid` and `shared_secret`.
+   - Lines 105-139: In `ARIUpdate`, validates ISO 3-letter currency, non-empty `Inventory` array, `start_date` and `end_date` formatting and chronological ordering (`start_date <= end_date`), non-negative integer `units`, and valid decimal `rate`.
+   - Lines 153-163: Validates presence of `booking_id` on both `GetBookingId` and `AckBooking`.
 
-### 1.2 FALHA CRÍTICA 1: Concorrência e Race Condition (Dupla Reserva / Double-Booking)
-- **Comando executado**: `node --test tests/challenger-m1-adversarial.test.mjs` (Subtest 3.1 e 3.2).
-- **Código fonte**: `artifacts/api-server/demo-server.mjs` (linhas 20430–20501):
-  ```javascript
-  20430:     const nowMs = Date.now();
-  20431:     const hasConflict = (db.reservations || []).some(r => {
-  ...
-  20435:       return r.checkinDate < outDate && r.checkoutDate > inDate;
-  20436:     });
-  20438:     if (hasConflict) {
-  20439:       return res.status(409).json({ error: "FLAT_UNAVAILABLE", ... });
-  20443:     }
-  ...
-  20459:     const qrCodeBase64 = await QRCode.toDataURL(pixPayload);
-  ...
-  20500:     db.reservations.unshift(newReservation);
-  20501:     saveDatabase("bot_pre_reserve");
-  ```
-- **Resultado empírico observado (2 requisições simultâneas para Flat 313 nas datas 2027-01-10 a 2027-01-15)**:
-  ```
-  [CONCURRENCY EMPIRICAL RESULT] Request 1: 200, Request 2: 200
-  [CONCURRENCY EMPIRICAL RESULT] Overlapping active reservations in DB: 2
-  ```
-  - **Ambas as requisições retornaram HTTP 200 OK.**
-  - **Duas pré-reservas ativas foram criadas no banco de dados para a mesma unidade e no mesmo período.**
-- **Resultado empírico em rajada (burst de 5 requisições simultâneas para Flat 408 nas datas 2027-02-01 a 2027-02-05)**:
-  ```
-  [BURST CONCURRENCY RESULT] 200 OK: 5, 409 Conflict: 0, All statuses: 200, 200, 200, 200, 200
-  ```
-  - **Todas as 5 requisições retornaram HTTP 200 OK.**
-  - **5 pré-reservas sobrepostas foram criadas no banco para o mesmo flat.**
+3. **Simulator HTTP Server Schema Rejection (`e2e/wbp-simulator/server.mjs`):**
+   - Lines 89-96:
+     ```javascript
+     const validation = validateRequest(verb, req.body, { tolerant: !this.strictSchemas });
+     if (!validation.valid && this.strictSchemas) {
+       return res.status(400).json({
+         success: false,
+         errors: validation.errors.map((msg, i) => ({ id: 4000 + i, msg }))
+       });
+     }
+     ```
+   - When configured with `strictSchemas: true`, simulator HTTP server returns HTTP 400 Bad Request with `{ success: false, errors: [...] }`.
+   - When instantiated with default options (`this.strictSchemas` is `false`), line 91 evaluates to false, causing the simulator to return HTTP 200 `{ success: true }` without rejecting invalid payloads.
 
-### 1.3 FALHA CRÍTICA 2: Falha na Verificação de Pré-Reserva Paga Vencida (`paymentStatus === "pago_total"`)
-- **Código fonte**: `artifacts/api-server/demo-server.mjs` (linhas 20172–20195 e 20430–20436):
-  Na limpeza de pré-reservas (linhas 20172–20179), há proteção para não expirar se `r.paymentStatus !== "pago_total"`:
-  ```javascript
-  20174: if (new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
-  20175:   r.status = "expirada";
-  20176: }
-  ```
-  Porém, no filtro de conflitos do mesmo endpoint de disponibilidade (linha 20189):
-  ```javascript
-  20189: if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;
-  ```
-  E na validação de conflito de `POST /api/bot-actions/pre-reserve` (linha 20433):
-  ```javascript
-  20433: if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return false;
-  ```
-- **Resultado empírico observado (Subtest 2.3)**:
-  Quando uma pré-reserva tem `expiresAt` no passado mas `paymentStatus: "pago_total"`, a linha 20189 ignora a reserva como bloqueio e a disponibilidade retorna a UH como livre (`isOccupied: false` e presente no array `flats`). Uma nova pré-reserva pode ser criada por cima da reserva paga de outro hóspede.
-  ```
-  AssertionError: 'Flat 211 must NOT be available because reservation was paid'
-  actual: { id: 4, number: '211', name: '211 de casal', isOccupied: false }
-  ```
+4. **Terminal Error Codes Non-Retry (`artifacts/api-server/wbp/client.mjs`):**
+   - Lines 61-68:
+     ```javascript
+     isRetryableError(code) {
+       const num = Number(code);
+       return [3, 1003, 1004].includes(num);
+     }
+     ```
+   - Lines 202-205:
+     ```javascript
+     if (err instanceof WbpApiError && !err.retryable) {
+       throw err;
+     }
+     ```
+   - For Error 1001 (Invalid login), Error 1002 (Channel not enabled), and Error 1102 (Currency mismatch), `isRetryableError` returns `false`, `retryable` is set to `false`, and the error is re-thrown immediately on attempt 1.
+   - In our empirical tests across `SetupProperty`, `ARIUpdate`, `HealthCheck`, `GetBookingList`, `GetBookingId`, and `AckBooking`, exactly 1 request was logged by the simulator with 0 retries.
 
-### 1.4 FALHA ALTA 3: Efetivação de Pré-Reserva Expirada via `commit-reservation` sem Verificação de Conflito
-- **Código fonte**: `artifacts/api-server/demo-server.mjs` (linha 20535):
-  ```javascript
-  20535: if (reservation.status === "cancelada") {
-  20536:   return res.status(400).json({ error: "RESERVATION_CANCELLED", ... });
-  20537: }
-  ```
-- **Resultado empírico observado (Subtest 2.6)**:
-  Ao invocar `POST /api/bot-actions/commit-reservation` para a reserva `70001` (cujo status já era `"expirada"`), a rota retornou HTTP 200 OK, alterando o status para `"confirmada"`, confirmando no PMS e sobrescrevendo bloqueios sem verificar se a reserva expirou ou se a UH foi alocada para outro hóspede no intervalo:
-  ```
-  [COMMIT EXPIRED RESERVATION RESULT] Status: 200, Body: {
-    success: true,
-    reservationId: 70001,
-    code: 'CF-EXPIRED-70001',
-    status: 'confirmada',
-    paymentStatus: 'pago_total',
-    pmsConfirmed: true
-  }
-  ```
-
-### 1.5 DEFEITO MÉDIO 4: `preReservationHoldMinutes` Ignorado em `pre-reserve`
-- **Código fonte**: `artifacts/api-server/demo-server.mjs`:
-  Linha 20122 aceita e grava `preReservationHoldMinutes`, mas a linha 20449 hard-coda:
-  ```javascript
-  20449: const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-  ...
-  20507: holdMinutes: 30
-  ```
-- **Resultado empírico observado (Subtest 2.5)**:
-  Configurando `preReservationHoldMinutes: 15`, a criação de pré-reserva gerou expiração com ~30 minutos (`diffMinutes: 30`) e retornou `holdMinutes: 30`, descumprindo o requisito R3 de expiração configurável.
+5. **Transient Errors, Timeout Handling & GUID Preservation:**
+   - In `client.mjs` lines 127-144, the unique UUID v4 `guid` is generated once before the `while (attempt < maxAttempts)` loop or received from caller options:
+     `const guid = options.guid || crypto.randomUUID();`
+   - During transient errors (codes 1003, 1004), socket hangups (`dropConnection`), and timeouts (`AbortError`), the client retries up to `maxRetries: 2` (3 attempts total) with exponential backoff (`delay = this.backoffBaseMs * Math.pow(2, attempt - 1)`).
+   - In all empirical tests, attempts 1, 2, and 3 transmitted the exact same `guid` byte-for-byte.
+   - When a transient error resolved on attempt 3, the client succeeded and returned `{ success: true }`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Da Concorrência (Race Condition TOCTOU)**:
-   A verificação de conflito `hasConflict` (linhas 20431–20436) é síncrona, mas logo em seguida ocorre a chamada assíncrona `await QRCode.toDataURL(pixPayload)` (linha 20459). Durante essa operação assíncrona, o Node.js cede o Event Loop para processar novas requisições. Como a inserção no banco `db.reservations.unshift(newReservation)` só ocorre na linha 20500 (após o término do QR Code), qualquer requisição concorrente que chegue nesse intervalo executa `hasConflict`, não encontra reserva alguma no banco e também prossegue. Assim, ambas as requisições criam pré-reservas para a mesma UH nas mesmas datas (dupla reserva comprovada com 2 e 5 requisições paralelas).
-
-2. **Da Inconsistência de Pré-Reserva Paga**:
-   A esteira prevê que um hóspede possa pagar o PIX durante a pré-reserva antes do commit definitivo. A limpeza automática de disponibilidade poupa registros com `r.paymentStatus === "pago_total"`, mas a linha 20189 em `availability` e a linha 20433 em `pre-reserve` desconsideram o bloqueio da UH se `expiresAt < nowMs`, sem validar se o pagamento já havia sido realizado. Com isso, um hóspede que pagou tem sua unidade ofertada e vendida a outro hóspede.
-
-3. **Da Efetivação de Reserva Expirada**:
-   O endpoint `commit-reservation` valida apenas `if (reservation.status === "cancelada")`. Como não valida `reservation.status === "expirada"` nem reavalia se as datas estão ocupadas por outra reserva confirmada após a expiração, uma pré-reserva abandonada que venha a ser confirmada tardiamente causa overbooking automático no PMS.
-
-4. **Da Configurabilidade de Hold**:
-   O requisito R3 explicita que a expiração provisória deve ser configurável. A API aceita a alteração da chave de configuração, mas o endpoint de criação usa a constante `30 * 60 * 1000` hard-coded.
+1. **Schema Validation Integrity:** Observations 1 and 2 prove that `validateRequest()` strictly rejects missing common envelope fields (guid, verb, pms_cid, shared_secret), malformed UUIDs, and endpoint-specific fields across all 8 verbs.
+2. **Terminal Non-Retry Rigor:** Observations 1 and 4 prove that the client never retries on fatal error codes 1001, 1002, and 1102, logging exactly 1 attempt on the server before immediately surfacing the failure to the application layer.
+3. **Transient Idempotency & Fault Tolerance:** Observations 1 and 5 prove that the client handles network drops, timeouts, and transient channel outages by retrying with exponential backoff while preserving the identical GUID across all attempts, ensuring idempotency at the channel manager.
+4. **Simulator Strict Mode Compatibility:** Observation 3 proves that when `strictSchemas: true` is enabled, the simulator faithfully enforces schema boundaries via HTTP 400 Bad Request.
 
 ---
 
 ## 3. Caveats
 
-- **Não-modificação de código de produção**: Seguindo a restrição estrita de integridade e do perfil de Challenger (*Review-only — do NOT modify implementation code*), nenhuma correção foi aplicada nos arquivos de produção (`artifacts/api-server/demo-server.mjs` ou `scripts/demo-server.mjs`). As correções devem ser realizadas pelo Worker.
-- **Ambiente de Teste**: Os testes foram executados de forma totalmente isolada em porta dedicada (3998) com banco temporário espelhado de `database.json`, sem acionar APIs externas reais.
+1. **Default Simulator Configuration Gap:** In `e2e/wbp-simulator/server.mjs`, schema validation rejection over HTTP requires `strictSchemas: true` (e.g. `new WBPSimulator({ strictSchemas: true })`). When using default options (`strictSchemas: false`), line 91 bypasses rejection. This does not impair Milestone 1 client correctness, but for subsequent milestones (M2–M4), workers should be instructed to instantiate `WBPSimulator({ strictSchemas: true })` or the team can make `strictSchemas: true` the default in `server.mjs`.
 
 ---
 
 ## 4. Conclusion
 
-**Veredicto:** **REQUEST_CHANGES**
+Milestone 1 satisfies all fault tolerance, timeout handling, and schema validation requirements.
+All 15 adversarial tests in `tests/wbp-integration/challenger-m1-faults.test.mjs` pass cleanly with 0 failures.
 
-O Milestone M1 possui excelente estrutura quanto à matriz de permissões e chaves mestras (100% aprovado), porém **não pode ser aprovado** para avançar aos Milestones M2 (integração do Bot WhatsApp Gemini) e M3 devido a quatro falhas empíricas, sendo a principal uma **vulnerabilidade crítica de concorrência e race condition que gera dupla reserva (double-booking) de flats**, além do risco de sobrescrita de reservas pagas e confirmação indevida de reservas expiradas.
-
-### Ações Necessárias para o Worker:
-1. **Eliminar a Race Condition em `pre-reserve`**:
-   - Inserir a pré-reserva (ou um lock em memória por `flatId + checkIn + checkOut`) **antes** de chamar `await QRCode.toDataURL(pixPayload)`. Caso o QR code falhe, executar rollback/remoção da reserva.
-2. **Corrigir Filtros de Conflito para Reservas Pagas**:
-   - Em `availability` (linha 20189) e em `pre-reserve` (linha 20433), adicionar checagem de pagamento:
-     `if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;`
-3. **Bloquear Commit de Reservas Expiradas ou em Conflito**:
-   - Em `commit-reservation` (linha 20535), rejeitar reservas com status `"expirada"` e verificar se o flat não foi ocupado por outra reserva ativa antes de efetivar.
-4. **Respeitar `preReservationHoldMinutes`**:
-   - Utilizar `getBotActionsSettings().preReservationHoldMinutes || 30` para calcular `expiresAt` e o campo `holdMinutes` no retorno.
-5. **Manter Paridade de Arquivos Gêmeos**:
-   - Replicar identicamente as correções em `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+**VERDICT**: **APPROVE**
 
 ---
 
 ## 5. Verification Method
 
-Para reproduzir e verificar de forma independente todas as falhas apontadas:
+To independently reproduce Challenger 2's empirical findings:
 
-```bash
-node --test tests/challenger-m1-adversarial.test.mjs
-```
+1. **Execute strictly isolated adversarial test suite:**
+   ```powershell
+   node --test tests/wbp-integration/challenger-m1-faults.test.mjs
+   ```
+   *Expected result: 15 passed, 0 failed, duration ~1.8s.*
 
-**Condição de Invalidação / Aprovação Futura**:
-- A suíte `tests/challenger-m1-adversarial.test.mjs` deve rodar com **13/13 testes passando (0 falhas)**, confirmando que:
-  - Requisições concorrentes retornam 1x 200 OK e 1x 409 Conflict.
-  - Reservas pagas não são liberadas após expiração.
-  - Reservas expiradas não podem ser confirmadas.
-  - A configuração de hold de 15 minutos é respeitada.
+2. **Invalidation Conditions:**
+   - Any test failure in `tests/wbp-integration/challenger-m1-faults.test.mjs`.
+   - Any modification that causes client retries on error codes 1001, 1002, or 1102.
+   - Any modification causing transient retries to regenerate GUIDs instead of reusing the initial GUID.
