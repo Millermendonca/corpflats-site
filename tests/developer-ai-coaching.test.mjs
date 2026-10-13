@@ -26,6 +26,10 @@ import {
   isOperationalNonPricingFaq,
   buildGuestContext,
   handleGetReservationDetails,
+  validateAndRefineResponse,
+  cleanDeveloperPreamble,
+  synthesizeGuidelineFromText,
+  getWhatsAppAiConfig,
   DEFAULT_AI_CONFIG
 } from "../scripts/whatsapp-ai-service.mjs";
 
@@ -672,7 +676,7 @@ test("R7: Desambiguação de Cotação de Diária com Café ('quanto tá a diár
 
 // ── 8. Síntese Não-Literal e Anti-Papagaio de Coaching do Desenvolvedor ────────
 test("R8: Síntese Não-Literal e Anti-Papagaio de Coaching do Desenvolvedor (Mensagem Real do Miller)", () => {
-  const realMillerMsg = "sou Miller, estou testando. meu Check-out é hoje, você não deveria ter mandado link de check in...";
+  const realMillerMsg = "sou Miller, estou testando.\n\nmeu Check-out é hoje, você não deveria ter mandado link de check in, talvez link de confirmação de check-out, informações sobre o check out, talvez informando que hoje o check-out e perguntando se quer estender. Ou até mesmo reforçar tbm que o check-out foi até 12:00 confirmando se a pessoa já saiu.";
 
   // 1. Classificação
   const devCheck = classifyDeveloperMessage(realMillerMsg);
@@ -825,6 +829,122 @@ test("R10: Tool Execution handleGetReservationDetails com Lógica Temporal", () 
   assert.equal(typeof details.reservation.isCheckoutDay, "boolean");
   assert.equal(typeof details.reservation.isHosted, "boolean");
   assert.ok(details.reservation.checkoutUrl);
+  assert.equal(details.reservation.rawCheckinUrl, null, "rawCheckinUrl DEVE ser nulo quando isCheckinRelevant é falso");
+  assert.ok(details.reservation.operationalGuidance.includes("CHECK-OUT HOJE"), "Deve conter guidance operacional de checkout");
+});
+
+// ── 11. Classificação e Sanitização de Variações de Coaching do Desenvolvedor ──
+test("R11: Classificação e Sanitização de Variações de Coaching do Desenvolvedor", () => {
+  // Variação 1: 'estou testando. quem já está hospedado não precisa de link de check-in'
+  const v1 = classifyDeveloperMessage("estou testando. quem já está hospedado não precisa de link de check-in");
+  assert.equal(v1.type, "factual_coaching");
+  assert.equal(v1.guideline.category, "checkout");
+  assert.ok(!v1.guideline.text.includes("estou testando"));
+  assert.ok(v1.guideline.text.includes("check-out") || v1.guideline.text.includes("hospedados"));
+
+  // Variação 2: 'Miller aqui: no checkout tem que avisar que a saída é 12h'
+  const v2 = classifyDeveloperMessage("Miller aqui: no checkout tem que avisar que a saída é 12h");
+  assert.equal(v2.type, "factual_coaching");
+  assert.equal(v2.guideline.category, "checkout");
+  assert.ok(!v2.guideline.text.includes("Miller aqui"));
+
+  // Variação 3: 'teste: não mande link de check-in para quem tem checkout hoje'
+  const v3 = classifyDeveloperMessage("teste: não mande link de check-in para quem tem checkout hoje");
+  assert.equal(v3.type, "factual_coaching");
+  assert.equal(v3.guideline.category, "checkout");
+  assert.ok(!v3.guideline.text.includes("teste:"));
+});
+
+// ── 12. Blindagem Semântica e Sanitização Pós-Geração em validateAndRefineResponse
+test("R12: Blindagem Semântica e Sanitização Pós-Geração em validateAndRefineResponse", () => {
+  // Cenário 1: Gemini tenta enviar link de pré-check-in para hóspede em checkout_hoje
+  const candidateFromAi = "Olá, Miller! Sua reserva no Flat 116 está confirmada!\n\n📋 Pré-Check-in Digital:\n👉 https://corpflats.onrender.com/pre-checkin/RES-116-0404";
+  const ctxCheckout = {
+    stayStatus: "checkout_hoje",
+    isCheckoutDay: true,
+    isHosted: true,
+    checkoutUrl: "https://corpflats.onrender.com/checkout/RES-116-0404",
+    reservation: {
+      flatNumber: "116",
+      code: "RES-116-0404"
+    }
+  };
+
+  const validated1 = validateAndRefineResponse({
+    queryText: "minha reserva está confirmada?",
+    candidateText: candidateFromAi,
+    guestContext: ctxCheckout
+  });
+
+  assert.ok(!validated1.replyText.includes("/pre-checkin/"), "validateAndRefineResponse DEVE remover URL de pre-checkin");
+  assert.ok(!validated1.replyText.includes("Pré-Check-in Digital"), "validateAndRefineResponse DEVE remover menção a pre-checkin");
+  assert.ok(validated1.replyText.includes("12:00h"), "validateAndRefineResponse DEVE injetar horário limite de 12:00h");
+  assert.ok(validated1.replyText.includes("late check-out") || validated1.replyText.includes("prorrogação"), "DEVE perguntar sobre late check-out");
+  assert.ok(validated1.replyText.includes("/checkout/RES-116-0404"), "DEVE conter URL de checkout");
+
+  // Cenário 2: Gemini tenta enviar link de pré-check-in para hóspede em_estadia
+  const ctxInStay = {
+    stayStatus: "em_estadia",
+    isHosted: true,
+    isCheckoutDay: false
+  };
+  const validated2 = validateAndRefineResponse({
+    queryText: "como está minha estadia?",
+    candidateText: "Olá! Tudo bem. Acesse o pré-check-in em https://corpflats.onrender.com/pre-checkin/RES-116",
+    guestContext: ctxInStay
+  });
+  assert.ok(!validated2.replyText.includes("/pre-checkin/"), "DEVE remover pre-checkin em estadia");
+
+  // Cenário 3: isGenericFallback para consulta de reserva em checkout_hoje
+  const validated3 = validateAndRefineResponse({
+    queryText: "dados da minha reserva",
+    candidateText: "Posso te ajudar com informações sobre *Wi-Fi*",
+    guestContext: {
+      hasReservation: true,
+      stayStatus: "checkout_hoje",
+      isCheckoutDay: true,
+      reservation: {
+        flatNumber: "116",
+        checkinDate: "2026-10-11",
+        checkoutDate: "2026-10-13",
+        status: "confirmada"
+      }
+    }
+  });
+  assert.ok(validated3.replyText.includes("12:00h"), "Generic fallback em checkout_hoje deve incluir 12:00h");
+  assert.ok(!validated3.replyText.includes("Pré-Check-in"), "Generic fallback em checkout_hoje NUNCA deve incluir pré-check-in");
+});
+
+// ── 13. Auto-Sintetização e Amostra Limpa em saveDeveloperGuideline ────────────
+test("R13: Auto-Sintetização e Amostra Limpa em saveDeveloperGuideline", () => {
+  const mockDb = { whatsappAiSettings: { developerGuidelines: [] } };
+  const saved = saveDeveloperGuideline(mockDb, {
+    text: "sou Miller, estou testando. checkout até 12h e perguntar de late checkout",
+    category: "checkout"
+  });
+
+  assert.ok(saved);
+  assert.ok(!saved.text.includes("sou Miller"), "Guideline salva nunca deve conter 'sou Miller'");
+  assert.ok(!saved.text.includes("estou testando"), "Guideline salva nunca deve conter 'estou testando'");
+  assert.ok(saved.sample);
+  assert.ok(!saved.sample.includes("estou testando"), "Sample nunca deve papagaiar 'estou testando'");
+  assert.ok(saved.sample.includes("12:00h"), "Sample de checkout deve citar 12:00h");
+});
+
+// ── 14. Migração e Sincronização Automática de systemPrompt em getWhatsAppAiConfig
+test("R14: Migração e Sincronização Automática de systemPrompt em getWhatsAppAiConfig", () => {
+  const legacyDb = {
+    zapiConfig: {
+      aiAgent: {
+        enabled: true,
+        systemPrompt: "Você é a Sofia. 5.1. Para perguntas sobre reserva: confirme a reserva e envie o link do Pré-Check-in Digital. 5.2. Para saudações iniciais responda olá."
+      }
+    }
+  };
+
+  const cfg = getWhatsAppAiConfig(legacyDb);
+  assert.ok(!cfg.systemPrompt.includes("e envie o link do Pré-Check-in Digital"), "Deve expurgar comando legado de mandar pré-checkin");
+  assert.ok(/l[oó]gica temporal de reserva/i.test(cfg.systemPrompt), "Deve migrar para Lógica Temporal de Reserva");
 });
 
 

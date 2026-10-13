@@ -150,6 +150,21 @@ export function getWhatsAppAiConfig(db) {
 - NUNCA ofereça ajuda com malas ou bagagens (o condomínio Soho não dispõe de serviço de maleiros/carregadores e essa oferta não condiz com a nossa operação).
 - Uso Contextual do Conhecimento (Sob Demanda): Mantenha total consciência do CONTEXTO DO HÓSPEDE nos bastidores (número do flat, status da estadia, datas de check-in/out, regras de Wi-Fi, garagem, café, etc., ou a ausência de reserva). Use esse conhecimento para formular uma resposta coerente, precisa e personalizada CONFORME O QUE O HÓSPEDE PERGUNTAR.\n\n`);
       }
+      if (current.systemPrompt.includes("e o link do Pré-Check-in Digital") || current.systemPrompt.includes("5.1. Para perguntas sobre reserva")) {
+        current.systemPrompt = current.systemPrompt.replace(/5\.1\. Para perguntas sobre reserva.*?(?=(?:5\.2|6\.|$))/s, `5.1. Lógica Temporal de Reserva e Pré-Check-in Digital:
+- Se o hóspede estiver com CHECK-OUT HOJE (checkout_hoje) ou JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in digital! Ele já realizou check-in há dias e já está no flat.
+- Para CHECK-OUT HOJE: confirme a reserva, informe que hoje é o dia de check-out (horário limite de desocupação até as 12:00h), oriente sobre os procedimentos de saída e devolução de chaves, pergunte gentilmente se deseja prorrogar a estadia (solicitar late check-out mediante disponibilidade) ou verifique se já desocupou o flat. Se disponível no contexto, forneça o link de confirmação de check-out.
+- Para EM ESTADIA: informe que ele está acomodado no flat com saída prevista até a data de check-out (até as 12:00h), sem pré-check-in, e ofereça suporte para a estadia em andamento.
+- Para CHECK-IN HOJE ou RESERVA FUTURA: forneça as informações de chegada e o link de Pré-Check-in Digital para agilizar a liberação com a portaria 24h.
+- Se o hóspede NÃO possuir reserva vinculada ao número: informe cordialmente que não localizou reserva ativa ou futura para o número e solicite o nome completo do titular ou código da reserva.\n\n`);
+      }
+      if (!/l[oó]gica temporal de reserva/i.test(current.systemPrompt)) {
+        current.systemPrompt = current.systemPrompt + `\n\n[LÓGICA TEMPORAL DE RESERVA E PRÉ-CHECK-IN DIGITAL]:
+- Hóspede com CHECK-OUT HOJE (checkout_hoje) ou JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in digital!
+- Para CHECK-OUT HOJE: confirme a reserva, informe que hoje é o dia de check-out (horário limite até as 12:00h), pergunte se deseja prorrogar (late check-out) ou se já desocupou o flat, e forneça link de confirmação de check-out.
+- Para EM ESTADIA: confirme a permanência e apoie na estadia sem pré-check-in.
+- Para CHECK-IN HOJE ou RESERVA FUTURA: envie link de Pré-Check-in Digital.`;
+      }
       if (!current.systemPrompt.includes("Cotações, Tarifas e Valores de Diárias")) {
         current.systemPrompt = current.systemPrompt + `\n\n5. Cotações, Tarifas e Valores de Diárias (Distinção entre Preço e Logística de Café):
 - Quando o hóspede ou cliente perguntar sobre preço, diárias, quanto custa, quanto tá, valores ou cotação (ex: "quanto tá a diária? 1 pessoa com café", "qual o valor da diária com café?", "quanto custa a diária?"):
@@ -1280,6 +1295,15 @@ export function handleGetReservationDetails(db, args = {}) {
   const checkoutUrl = `${appOrigin}/checkout/${matched.code || matched.reservationCode || `RES-${matched.flatNumber}`}`;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
+  let operationalGuidance = "";
+  if (isCheckoutDay) {
+    operationalGuidance = "HÓSPEDE EM DIA DE CHECK-OUT HOJE (saída hoje até as 12:00h). NUNCA enviar link de pré-check-in digital. Informar sobre horário limite de saída até 12:00h, orientar sobre procedimentos de desocupação e devolução de chaves, perguntar se deseja prorrogação (late check-out) mediante disponibilidade ou verificar se já desocupou o flat. Fornecer link de confirmação de check-out.";
+  } else if (stayStatus === "em_estadia") {
+    operationalGuidance = "HÓSPEDE JÁ ACOMODADO NO FLAT (em estadia). NUNCA enviar link de pré-check-in digital. Fornecer apoio à estadia em andamento.";
+  } else if (stayStatus === "checkin_hoje") {
+    operationalGuidance = "HÓSPEDE COM ENTRADA HOJE (a partir das 14:00h). Enviar link de pré-check-in digital para agilizar liberação na portaria 24h.";
+  }
+
   return {
     success: true,
     found: true,
@@ -1300,8 +1324,9 @@ export function handleGetReservationDetails(db, args = {}) {
       isCheckoutDay,
       isHosted,
       checkinUrl,
-      rawCheckinUrl,
-      checkoutUrl
+      rawCheckinUrl: isCheckinRelevant ? rawCheckinUrl : null,
+      checkoutUrl,
+      operationalGuidance
     }
   };
 }
@@ -1962,7 +1987,9 @@ export function cleanDeveloperPreamble(rawText) {
     cleaned = cleaned
       .replace(/^sofia\s*[,:]\s*/i, "")
       .replace(/^(?:(?:sou|aqui\s+[eé])\s+(?:o\s+)?(?:miller|desenvolvedor|dev|criador|programador)[.!?,;:]*\s*)+/i, "")
+      .replace(/^(?:(?:miller|desenvolvedor|dev|criador|programador)\s+(?:aqui|falando)[.!?,;:]*\s*)+/i, "")
       .replace(/^(?:(?:estou|apenas|s[oó]|em)\s+test(?:ando|e)[.!?,;:]*\s*)+/i, "")
+      .replace(/^(?:(?:teste|testando)[.!?,;:]*\s*)+/i, "")
       .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;]*\s*/i, "")
       .trim();
   }
@@ -1990,10 +2017,10 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
 
   // Caso 2.5: Regra sobre check-out / hóspede hospedado / não mandar pré-check-in em check-out ou estadia
   const isCheckoutOrInStayCoaching = (
-    /(?:check[- ]?out|sa[ií]da).*?(?:n[aã]o\s+(?:deveria|deve|pode|mande|mandar)|link\s+(?:de\s+)?check[- ]?in|estender|prorroga|late\s+check[- ]?out|12:00|desocup)/i.test(lower) ||
-    /(?:n[aã]o\s+(?:deveria|deve|pode|mande|mandar)\s+(?:ter\s+)?mandad[ao]\s+link\s+(?:de\s+)?check[- ]?in)/i.test(lower) ||
-    /(?:estou\s+hospedad[ao]|j[aá]\s+hospedad[ao]|em\s+estadia).*?(?:check[- ]?out|sa[ií]da|link\s+(?:de\s+)?check[- ]?in)/i.test(lower) ||
-    (category === "checkout" && /(?:check[- ]?in|estender|prorroga|12:00|desocup)/i.test(lower))
+    /(?:check[- ]?out|sa[ií]da).*?(?:n[aã]o\s+(?:deveria|deve|pode|mande|mandar|precisa)|link\s+(?:de\s+)?check[- ]?in|estender|prorroga|late\s+check[- ]?out|12:00|12h|desocup)/i.test(lower) ||
+    /(?:n[aã]o\s+(?:deveria|deve|pode|mande|mandar|precisa)\s+(?:ter\s+)?mandad[ao]\s+link\s+(?:de\s+)?check[- ]?in)/i.test(lower) ||
+    /(?:estou\s+hospedad[ao]|j[aá]\s+hospedad[ao]|em\s+estadia|quem\s+j[aá]\s+est[aá]\s+hospedad[ao]).*?(?:check[- ]?out|sa[ií]da|link\s+(?:de\s+)?check[- ]?in|pre[- ]?check[- ]?in|n[aã]o\s+precisa)/i.test(lower) ||
+    (category === "checkout" && /(?:check[- ]?in|estender|prorroga|12:00|12h|desocup|hor[aá]rio|sa[ií]da)/i.test(lower))
   );
   if (isCheckoutOrInStayCoaching) {
     return "Para hóspedes já hospedados ou em dia de check-out, priorizar procedimentos de check-out (horário limite até às 12:00h) e verificar se o hóspede deseja estender a estadia ou se já desocupou o flat, sem envio de link de pré-check-in.";
@@ -2037,10 +2064,12 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
   let synthesized = text
     .replace(/^sofia\s*[,:]\s*/i, "")
     .replace(/^(?:(?:sou|aqui\s+[eé])\s+(?:o\s+)?(?:miller|desenvolvedor|dev|criador)[.!?,;:]*\s*)/i, "")
+    .replace(/^(?:(?:miller|desenvolvedor|dev)\s+(?:aqui|falando)[.!?,;:]*\s*)/i, "")
     .replace(/^(?:(?:estou|apenas|s[oó]|em)\s+test(?:ando|e)[.!?,;:]*\s*)/i, "")
+    .replace(/^(?:(?:teste|testando)[.!?,;:]*\s*)/i, "")
     .replace(/^(?:quando|sempre\s+que|toda\s+vez\s+que|se)\s+(?:algu[eé]m|o\s+h[oó]spede|o\s+cliente|um\s+h[oó]spede|[a-z]+)\s+pergu?i?nt[^,.:;]+(?:voc[eê]\s+deve|favor|deve-se|tem\s+que)\s+/i, "Ao ser questionada sobre este tema: ")
     .replace(/^voc[eê]\s+deve\s+/i, "Sempre ")
-    .replace(/\b(?:estou\s+testando|sou\s+miller|apenas\s+testando)\b[.!?]*\s*/gi, "")
+    .replace(/\b(?:estou\s+testando|sou\s+miller|miller\s+aqui|apenas\s+testando|em\s+teste|teste:)\b[.!?]*\s*/gi, "")
     .replace(/\bvoc[eê]\s+n[aã]o\s+deveria\s+ter\s+mandad[ao]\b/gi, "não enviar")
     .replace(/\bvoc[eê]\s+n[aã]o\s+deve\s+mandar\b/gi, "não enviar")
     .trim();
@@ -2117,10 +2146,14 @@ export function classifyDeveloperMessage(messageText, db = null) {
   // 2. Detecção de Treinamento Factual / Aprendizado de Diretriz (factual_coaching)
   const isDirectDevCoaching = (
     // Miller se identificando como criador/dev
-    /\b(?:sou\s+(?:o\s+)?miller|aqui\s+[eé]\s+(?:o\s+)?miller|sou\s+(?:o\s+)?(?:desenvolvedor|dev|criador|programador))\b/i.test(lower) ||
+    /\b(?:sou\s+(?:o\s+)?miller|aqui\s+[eé]\s+(?:o\s+)?miller|miller\s+(?:aqui|falando)|sou\s+(?:o\s+)?(?:desenvolvedor|dev|criador|programador)|dev\s+aqui)\b/i.test(lower) ||
+    // Menção explícita a testes do desenvolvedor
+    /\b(?:estou\s+testando|apenas\s+testando|em\s+teste|teste:\s*|testando:\s*|modo\s+teste)\b/i.test(lower) ||
     // Feedback de erro / crítica comportamental
     /\b(?:n[aã]o\s+deve|n[aã]o\s+pode|n[aã]o\s+pergunte|n[aã]o\s+diga|n[aã]o\s+fale|n[aã]o\s+responda|n[aã]o\s+mande)\s+(?:assim|dessa\s+forma|desse\s+jeito|isso)\b/i.test(lower) ||
-    /\b(?:n[aã]o\s+deve\s+(?:perguntar|dizer|falar|responder|mandar|agir|tratar|usar|oferecer))\b/i.test(lower) ||
+    /\b(?:n[aã]o\s+(?:deve|deveria|precisa|pode)\s+(?:perguntar|dizer|falar|responder|mandar|enviar|ter\s+mandado|agir|tratar|usar|oferecer))\b/i.test(lower) ||
+    /\b(?:n[aã]o\s+(?:deveria|precisa|deve|pode)\s+(?:ter\s+)?mandad[ao]\s+(?:link|mensagem|pre-?check-?in|check-?in))\b/i.test(lower) ||
+    /\b(?:n[aã]o\s+precisa\s+(?:de\s+)?(?:link|pre-?check-?in|check-?in))\b/i.test(lower) ||
     /\b(?:malas?|bagag(?:em|ens)?)\b/i.test(lower) ||
     /\b(?:n[aã]o\s+assumir|s[oó]\s+deve\s+usar|apenas\s+responder|esse\s+seja\s+o\s+racioc[ií]nio|racioc[ií]nio)\b/i.test(lower) ||
     /\b(?:n[aã]o\s+faz\s+sentido|a\s+menos\s+que|s[oó]\s+se\s+a\s+pessoa|s[oó]\s+(?:pergunte|fale|diga|mande)\s+se)\b/i.test(lower) ||
@@ -2132,6 +2165,8 @@ export function classifyDeveloperMessage(messageText, db = null) {
     /\b(?:quando|sempre\s+que|toda\s+vez\s+que)\s+.*?\bper(?:g|gi|gui)u?nt/i.test(lower) ||
     /\b(?:voc[eê]\s+(?:deve|precisa|tem\s+que)|sempre\s+verifique|favor\s+verificar|verifique\s+se|n[aã]o\s+(?:responda|diga|fale|mande)|responda\s+que|oriente\s+que)\b/i.test(lower) ||
     /\b(informa[cç][aã]o\s+correta|o\s+correto\s+[eé]|nova\s+regra|regra\s+(?:geral|[eé])|aprenda\s+que|anote\s+(?:a[ií]|isso)|grave\s+que|lembre\s+que|hor[aá]rio\s+mudou|mudou\s+para|n[aã]o\s+diga\s+que|nunca\s+diga\s+que|n[aã]o\s+informe\s+que|retifique|corre[cç][aã]o:)\b/i.test(lower) ||
+    // Orientações sobre checkout vs in-stay
+    /\b(?:link\s+de\s+confirma[cç][aã]o\s+de\s+check-?out|informa[cç][oõ]es\s+sobre\s+o\s+check-?out|perguntando\s+se\s+quer\s+estender|refor[cç]ar\s+t(?:am)?b(?:[eé]m)?\s+que\s+o\s+check-?out|confirmando\s+se\s+a\s+pessoa\s+j[aá]\s+saiu)\b/i.test(lower) ||
     // Sofia sendo chamada com diretriz ou correção
     (/^sofia\s*[,:]/i.test(lower) && !/^(?:sofia\s*[,:]\s*)?(?:qual|quanto|tem|como|onde|posso|voc[eê]s?\s+t[eê]m|aceita)\s+(?:a\s+senha|o\s+wi-?fi|o\s+hor[aá]rio|o\s+valor|a\s+di[aá]ria|vaga|garagem|caf[eé]|pet|ferro)/i.test(lower)) ||
     (/\b(?:para\s+o\s+flat|no\s+flat|sobre\s+o\s+flat)\s+(\d{2,4})\b/i.test(lower) && /\b(informa[cç][aã]o|corret|regra|senha|mudou)\b/i.test(lower))
@@ -2144,10 +2179,14 @@ export function classifyDeveloperMessage(messageText, db = null) {
     const cleanText = cleanDeveloperPreamble(text);
 
     let category = "geral";
-    // Ordem de precedência: checkout deve vir antes de checkin para mensagens como "meu check-out é hoje, não mande link de check-in"
-    if (/(?:check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out)/i.test(lower)) category = "checkout";
-    else if (/(?:sauda[cç][aã]o|hospedad[ao]|esteja\s+hospedad[ao]|perguntar\s+assim|tornar\s+a\s+estadia|n[aã]o\s+assumir|racioc[ií]nio)/i.test(lower)) category = "saudacao";
-    else if (/(?:malas?|bagag)/i.test(lower)) category = "malas";
+    // Ordem de precedência: checkout deve vir antes de checkin para mensagens como "meu check-out é hoje, não mande link de check-in" ou "quem já está hospedado não precisa de link de check-in"
+    if (/(?:check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out)/i.test(lower) ||
+        (/(?:hospedad[ao]|em\s+estadia)/i.test(lower) && /(?:check[- ]?in|pr[eé][- ]?check[- ]?in|link)/i.test(lower))) {
+      category = "checkout";
+    } else if (/(?:sauda[cç][aã]o|perguntar\s+assim|tornar\s+a\s+estadia|n[aã]o\s+assumir|racioc[ií]nio)/i.test(lower) ||
+               (/(?:hospedad[ao]|esteja\s+hospedad[ao])/i.test(lower) && /(?:sauda[cç][aã]o|bom\s+dia|ol[aá]|pergunt)/i.test(lower))) {
+      category = "saudacao";
+    } else if (/(?:malas?|bagag)/i.test(lower)) category = "malas";
     else if (/reserva|estadia|h[oó]spede\s+com\s+reserva/i.test(lower)) category = "reserva";
     else if (/caf[eé]|desjejum/i.test(lower)) category = "cafe";
     else if (/check[- ]?in|entrada/i.test(lower)) category = "checkin";
@@ -2350,11 +2389,19 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
     db.whatsappAiSettings.developerGuidelines = [];
   }
 
-  const sample = guidelineData.sample || guidelineData.sampleResponse || null;
+  const rawText = String(guidelineData.text || "").trim();
+  const cat = guidelineData.category || inferFaqCategory(rawText) || "geral";
+  const synthesizedText = synthesizeGuidelineFromText(rawText, cat);
+  const sample = guidelineData.sample || guidelineData.sampleResponse || generateSampleGuestResponse({
+    category: cat,
+    ruleText: synthesizedText,
+    targetFlat: guidelineData.targetFlat || null
+  });
+
   const newGuideline = {
     id: guidelineData.id || `guideline_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    text: (guidelineData.text || "").trim(),
-    category: guidelineData.category || inferFaqCategory(guidelineData.text || "") || "geral",
+    text: synthesizedText,
+    category: cat,
     targetFlat: guidelineData.targetFlat || null,
     sample,
     sampleResponse: sample,
@@ -2851,17 +2898,61 @@ export function validateAndRefineResponse({
       (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("confirmada") && !replyText.includes("reserva"));
 
     if (isGenericFallback) {
-      if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada") {
+      if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada" && guestContext.reservation.status !== "cancelled") {
         const r = guestContext.reservation;
         const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
         const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
         const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
-        const linkUrl = r.checkinUrl || guestContext.checkinUrl;
-        const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-        replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${linkMsg}\n\nEstamos à disposição para tornar sua estadia excelente!`);
+        const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
+        const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+        const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
+
+        if (guestContext.stayStatus === "checkout_hoje") {
+          const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
+        } else if (guestContext.stayStatus === "em_estadia") {
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
+        } else if (guestContext.stayStatus === "checkin_hoje") {
+          const linkUrl = r.checkinUrl || guestContext.checkinUrl;
+          const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
+        } else {
+          const linkUrl = r.checkinUrl || guestContext.checkinUrl;
+          const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+        }
       } else {
         replyText = ret(`Olá${name}! Não localizei nenhuma reserva confirmada para este número de WhatsApp no sistema. Se a reserva foi realizada em outro nome ou plataforma, me informe o *nome completo do titular* ou o *código da reserva* que consulto para você! 🛎️✨`);
       }
+    }
+  }
+
+  // Regra 6: Blindagem Semântica & Sanitização Temporal Pós-Geração (Zero Pré-Check-in em Checkout/Estadia)
+  if (guestContext?.stayStatus === "checkout_hoje" || guestContext?.isCheckoutDay) {
+    if (/pr[eé]-?check-?in/i.test(replyText) || /pre-checkin/i.test(replyText)) {
+      replyText = replyText
+        .replace(/📋\s*\*?Pr[eé]-Check-in(?:\s+Digital)?:\*?\s*\n?(?:👉\s*)?(?:https?:\/\/)?[^\s]*/gi, "")
+        .replace(/(?:👉\s*)?(?:https?:\/\/)?[^\s]*pre-?checkin[^\s]*/gi, "")
+        .replace(/(?:acesse|fa[cç]a|preencha|link\s+(?:do|de)|realize\s+(?:o\s+)?)\s*(?:o\s+)?(?:nosso\s+)?pr[eé]-?check-?in(?:\s+em|\s+pelo|\s+no|\s+digital)?[^\n.]*[.\n]?/gi, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+    const mentionsReservaOrCheckout = /reserva|flat|estadia|quarto|sa[ií]da|checkout|check-out/i.test(queryText) || /reserva|flat|estadia/i.test(replyText);
+    const hasCheckoutDetails = /12:00|12h|hor[aá]rio\s+limite/i.test(replyText);
+    if (mentionsReservaOrCheckout && !hasCheckoutDetails) {
+      const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+      const checkoutUrl = guestContext.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
+      const checkoutLinkMsg = checkoutUrl && !replyText.includes(checkoutUrl) ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
+      replyText += `\n\nLembramos que hoje é o dia do seu check-out, com horário limite de desocupação até as 12:00h.${checkoutLinkMsg}\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! ✨`;
+    }
+  } else if (guestContext?.stayStatus === "em_estadia" || guestContext?.isHosted) {
+    if (/pr[eé]-?check-?in/i.test(replyText) || /pre-checkin/i.test(replyText)) {
+      replyText = replyText
+        .replace(/📋\s*\*?Pr[eé]-Check-in(?:\s+Digital)?:\*?\s*\n?(?:👉\s*)?(?:https?:\/\/)?[^\s]*/gi, "")
+        .replace(/(?:👉\s*)?(?:https?:\/\/)?[^\s]*pre-?checkin[^\s]*/gi, "")
+        .replace(/(?:acesse|fa[cç]a|preencha|link\s+(?:do|de)|realize\s+(?:o\s+)?)\s*(?:o\s+)?(?:nosso\s+)?pr[eé]-?check-?in(?:\s+em|\s+pelo|\s+no|\s+digital)?[^\n.]*[.\n]?/gi, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
     }
   }
 
@@ -4054,7 +4145,7 @@ export async function processAiInboundMessage({
 
     if (devClassification.type === "factual_coaching") {
       let finalGuideline = devClassification.guideline;
-      const devApiKey = aiConfig?.apiKey || (typeof process !== "undefined" && process.env?.GEMINI_API_KEY) || null;
+      const devApiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY || aiConfig?.apiKey || null;
       if (devApiKey) {
         try {
           const aiSynthesized = await synthesizeDeveloperCoachingWithAi({
