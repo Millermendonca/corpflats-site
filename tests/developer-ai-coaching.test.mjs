@@ -22,6 +22,8 @@ import {
   applyToneFormatting,
   generateHeuristicResponse,
   processAiInboundMessage,
+  isPricingOrQuoteInquiry,
+  isOperationalNonPricingFaq,
   DEFAULT_AI_CONFIG
 } from "../scripts/whatsapp-ai-service.mjs";
 
@@ -594,4 +596,76 @@ test("R6: Saudação Natural com Escuta Ativa (Anti-Presunção e Zero Oferta de
   assert.ok(respSemReserva.includes("Como posso te ajudar hoje?"), "Deve saudar e perguntar como ajudar");
   assert.ok(!respSemReserva.toLowerCase().includes("mala"), "Zero malas");
 });
+
+// ── 7. Desambiguação de Cotações com Café da Manhã vs FAQ Operacional ──────────
+test("R7: Desambiguação de Cotação de Diária com Café ('quanto tá a diária? 1 pessoa com café') vs FAQ Operacional", () => {
+  const db = {
+    tariffSettings: {
+      baseDailyRate: 237,
+      weekendMarkupPct: 0.15,
+      channelMarkups: { direct: { markupPct: 0.0 } }
+    },
+    faqItems: [
+      {
+        id: "faq-cafe-quarto",
+        question: "Como funciona o café da manhã no quarto?",
+        variations: ["tem café da manhã?", "o café é servido no quarto?", "qual o horário do café?"],
+        keywords: ["cafe", "café", "cafe da manha", "café da manhã", "bandeja", "horario cafe", "cardapio cafe", "desjejum"],
+        answer: "Nosso serviço de café da manhã é servido com todo conforto diretamente no seu flat através de uma deliciosa bandeja personalizada. Horário de entrega: Das 06:30 às 10:00. Se a sua reserva não possuir café incluso, você pode solicitar a inclusão avulsa.",
+        status: "ativo"
+      }
+    ]
+  };
+
+  // 1. Pergunta exata do usuário: 'quanto tá a diária? 1 pessoa com café'
+  assert.equal(isPricingOrQuoteInquiry("quanto tá a diária? 1 pessoa com café"), true, "Deve detectar cotação de diária com café");
+  const resp1PessoaCafe = generateHeuristicResponse(
+    "quanto tá a diária? 1 pessoa com café",
+    { guestName: "Miller", hasReservation: false },
+    DEFAULT_AI_CONFIG,
+    db.faqItems,
+    db
+  );
+
+  // Verificações essenciais:
+  assert.ok(resp1PessoaCafe.includes("272,00"), "Deve informar a diária de 1 pessoa com café a partir de R$ 272,00");
+  assert.ok(resp1PessoaCafe.includes("237,00"), "Deve informar a diária sem café a partir de R$ 237,00");
+  assert.ok(resp1PessoaCafe.includes("taxa de limpeza"), "Deve mencionar a taxa de limpeza e isenção");
+  assert.ok(!resp1PessoaCafe.includes("Horário de entrega: Das 06:30 às 10:00"), "NUNCA deve responder com a FAQ operacional da bandeja");
+  assert.ok(resp1PessoaCafe.toLowerCase().includes("datas"), "Deve solicitar as datas para consulta exata");
+
+  // 2. Variação: 'qual o valor da diária com café?'
+  const respValorComCafe = generateHeuristicResponse(
+    "qual o valor da diária com café?",
+    { hasReservation: false },
+    DEFAULT_AI_CONFIG,
+    db.faqItems,
+    db
+  );
+  assert.ok(respValorComCafe.includes("272,00"), "Deve cotar a diária com café");
+  assert.ok(!respValorComCafe.includes("Horário de entrega: Das 06:30 às 10:00"), "NUNCA deve retornar a FAQ operacional");
+
+  // 3. Variação: 'quanto tá a diária?' (sem especificar café)
+  const respDiariaGenerica = generateHeuristicResponse(
+    "quanto tá a diária?",
+    { hasReservation: false },
+    DEFAULT_AI_CONFIG,
+    db.faqItems,
+    db
+  );
+  assert.ok(respDiariaGenerica.includes("237,00"), "Deve conter a diária base sem café R$ 237,00");
+  assert.ok(respDiariaGenerica.includes("272,00"), "Deve conter a diária com café R$ 272,00");
+
+  // 4. Pergunta puramente operacional: 'Como funciona o café da manhã no quarto?'
+  assert.equal(isPricingOrQuoteInquiry("Como funciona o café da manhã no quarto?"), false, "Dúvida operacional não é cotação");
+  const respOperacional = generateHeuristicResponse(
+    "Como funciona o café da manhã no quarto?",
+    { hasReservation: false },
+    DEFAULT_AI_CONFIG,
+    db.faqItems,
+    db
+  );
+  assert.ok(respOperacional.includes("Nosso serviço de café da manhã é servido"), "Dúvida operacional deve responder com a FAQ de funcionamento");
+});
+
 

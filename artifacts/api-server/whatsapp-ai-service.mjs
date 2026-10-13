@@ -72,8 +72,13 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
   * Exemplo: se perguntar sobre horários de saída ou check-in, use os dados da reserva dele.
   * Exemplo: se perguntar "minha reserva está confirmada?", confirme com o número do flat e datas. Se não encontrar reserva para o número, informe com gentileza e peça o nome ou código.
   * Exemplo: se não tiver reserva e perguntar sobre diárias ou flats, apresente as opções da CorpFlats com entusiasmo.
-5. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
-6. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.`,
+5. Cotações, Tarifas e Valores de Diárias (Distinção entre Preço e Logística de Café):
+- Quando o hóspede ou cliente perguntar sobre preço, diárias, quanto custa, quanto tá, valores ou cotação (ex: "quanto tá a diária? 1 pessoa com café", "qual o valor da diária com café?", "quanto custa a diária?"):
+  * Trate isso ESTRITAMENTE como consulta de COTAÇÃO/TARIFA, NUNCA como uma dúvida operacional sobre entrega de bandeja de café!
+  * Apresente os valores das diárias de forma clara, acolhedora e objetiva (ex: diária direta a partir de R$ 237,00 sem café (+ taxa única de limpeza de R$ 70,00); com café da manhã no quarto por apenas R$ 35,00/pessoa adicional, totalizando a partir de R$ 272,00 para 1 pessoa, com o grande benefício de ISENÇÃO TOTAL da taxa de limpeza!).
+  * Pergunte para quais datas (entrada e saída) a pessoa deseja se hospedar para consultar a disponibilidade e fornecer o orçamento exato.
+6. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
+7. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.`,
   knowledgeBase: {
     address: "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     checkinTime: "14:00 (Check-in padrão a partir das 14h)",
@@ -127,6 +132,13 @@ export function getWhatsAppAiConfig(db) {
 - NUNCA presuma que já sabe do que se trata o contato logo na saudação. Não faça suposições precipitadas nem despeje datas ou status de reserva logo de início sem que o hóspede tenha perguntado.
 - NUNCA ofereça ajuda com malas ou bagagens (o condomínio Soho não dispõe de serviço de maleiros/carregadores e essa oferta não condiz com a nossa operação).
 - Uso Contextual do Conhecimento (Sob Demanda): Mantenha total consciência do CONTEXTO DO HÓSPEDE nos bastidores (número do flat, status da estadia, datas de check-in/out, regras de Wi-Fi, garagem, café, etc., ou a ausência de reserva). Use esse conhecimento para formular uma resposta coerente, precisa e personalizada CONFORME O QUE O HÓSPEDE PERGUNTAR.\n\n`);
+      }
+      if (!current.systemPrompt.includes("Cotações, Tarifas e Valores de Diárias")) {
+        current.systemPrompt = current.systemPrompt + `\n\n5. Cotações, Tarifas e Valores de Diárias (Distinção entre Preço e Logística de Café):
+- Quando o hóspede ou cliente perguntar sobre preço, diárias, quanto custa, quanto tá, valores ou cotação (ex: "quanto tá a diária? 1 pessoa com café", "qual o valor da diária com café?", "quanto custa a diária?"):
+  * Trate isso ESTRITAMENTE como consulta de COTAÇÃO/TARIFA, NUNCA como uma dúvida operacional sobre entrega de bandeja de café!
+  * Apresente os valores das diárias de forma clara, acolhedora e objetiva (ex: diária direta a partir de R$ 237,00 sem café (+ taxa única de limpeza de R$ 70,00); com café da manhã no quarto por apenas R$ 35,00/pessoa adicional, totalizando a partir de R$ 272,00 para 1 pessoa, com o grande benefício de ISENÇÃO TOTAL da taxa de limpeza!).
+  * Pergunte para quais datas (entrada e saída) a pessoa deseja se hospedar para consultar a disponibilidade e fornecer o orçamento exato.`;
       }
     }
     if (!current.knowledgeBase) current.knowledgeBase = { ...DEFAULT_AI_CONFIG.knowledgeBase };
@@ -1923,6 +1935,42 @@ export function formatBrDate(dateStr) {
 }
 
 /**
+ * Detecta se a mensagem é uma consulta de cotação, tarifas, diárias ou valores
+ */
+export function isPricingOrQuoteInquiry(text = "") {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase().trim();
+
+  // Expressões explícitas de cotação / preço / diária / orçamento
+  return (
+    /\b(?:quanto\s+(?:t[aá]|custa|[eé]|fica|sai)|qual\s+(?:o\s+)?(?:valor|pre[cç]o))\b/i.test(lower) ||
+    /\b(?:pre[cç]o|valor|valores|pre[cç]os|tarifa|tarifas|tabela)\s+(?:da[s]?\s+di[aá]rias?|de\s+di[aá]rias?|do\s+flat|do\s+quarto|da\s+hospedagem|da\s+estadia|com\s+caf[eé])\b/i.test(lower) ||
+    /\b(?:di[aá]rias?|hospedagem|estadia)\s+(?:com\s+caf[eé]|sem\s+caf[eé]|para\s+\d+\s+pesso|para\s+casal|individual|solteiro)\b/i.test(lower) ||
+    /\b(?:or[cç]amento|cota[cç][aã]o|cotar)\b/i.test(lower) ||
+    /\bdi[aá]rias?\b/i.test(lower) ||
+    /\b(?:nova\s+reserva|fazer\s+reserva|quero\s+reservar|reservar\s+quarto|alugar\s+flat)\b/i.test(lower)
+  );
+}
+
+/**
+ * Identifica se a FAQ é puramente operacional/logística de café da manhã ou governança sem relação com valores/preços
+ */
+export function isOperationalNonPricingFaq(faq) {
+  if (!faq) return false;
+  const id = String(faq.id || "").toLowerCase();
+  if (id.includes("faq-cafe-quarto") || id.includes("faq-recolhimento-loucas") || id.includes("faq-loucas")) {
+    return true;
+  }
+  const q = String(faq.question || "").toLowerCase();
+  const cat = String(faq.category || "").toLowerCase();
+  if ((cat === "cafe" || cat === "cafe_manha" || cat === "cafe_quarto") &&
+      !q.includes("valor") && !q.includes("preço") && !q.includes("preco") && !q.includes("quanto") && !q.includes("diária") && !q.includes("diaria")) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
 export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null) {
@@ -1930,7 +1978,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
   const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
 
-  const activeDb = dbParam || (dbOrFaqs && typeof dbOrFaqs === "object" && !Array.isArray(dbOrFaqs) && dbOrFaqs.whatsappAiSettings ? dbOrFaqs : (typeof globalThis !== "undefined" ? globalThis.db : null));
+  const activeDb = dbParam || (dbOrFaqs && typeof dbOrFaqs === "object" && !Array.isArray(dbOrFaqs) ? dbOrFaqs : (typeof globalThis !== "undefined" ? globalThis.db : null));
   const activeGuidelines = (activeDb?.whatsappAiSettings?.developerGuidelines || []).filter(g => g && g.active !== false);
   const toneSettings = activeDb?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
   const ret = (msg) => applyToneFormatting(msg, toneSettings);
@@ -1946,8 +1994,8 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       }
     }
 
-    // 0.2 Café da manhã
-    if (/caf[eé]|desjejum/i.test(text)) {
+    // 0.2 Café da manhã (apenas se NÃO for consulta de cotação/preço de diária)
+    if (/caf[eé]|desjejum/i.test(text) && !isPricingOrQuoteInquiry(text)) {
       const cafeGuideline = activeGuidelines.find(g => g.category === "cafe" || (g.text || "").toLowerCase().includes("café"));
       if (cafeGuideline) {
         return ret(`Olá${name}! 🥐☕ ${cafeGuideline.text}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
@@ -2002,6 +2050,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     let highestScore = 0;
 
     for (const faq of activeFaqs) {
+      if (isPricingOrQuoteInquiry(text) && isOperationalNonPricingFaq(faq)) {
+        continue;
+      }
       let score = 0;
       const qNorm = (faq.question || "")
         .toLowerCase()
@@ -2093,6 +2144,109 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
+  // 0.7 Consulta sobre Reserva Existente / Confirmação de Reserva (Prioridade para quem já tem reserva)
+  const isExistingReservationInquiry = (
+    /(?:m[ij]nhas?\s+reservas?|minhas?\s+di[aá]rias?|minha\s+estadia)/i.test(text) ||
+    /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
+    /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
+    /(?:tenho|tem|existe|possui)\s+(?:alguma\s+)?reserva/i.test(text) ||
+    /(?:verificar|consultar|conferir|confirmar|saber)\s+(?:minha\s+|se\s+tenho\s+|a\s+)?reserva/i.test(text) ||
+    /^(?:est[aá]|t[aá])\s+confirmad[ao]\??$/i.test(text)
+  );
+
+  if (isExistingReservationInquiry) {
+    if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada" && guestContext.reservation.status !== "cancelled") {
+      const r = guestContext.reservation;
+      const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
+      const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
+      const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
+      const stayMsg = guestContext.stayStatus === "reserva_futura"
+        ? `Sua estadia está confirmada e programada para início em *${checkinFmt}*!`
+        : (guestContext.stayStatus === "checkin_hoje"
+          ? `O seu check-in é hoje (${checkinFmt}) a partir das 14:00h!`
+          : (guestContext.stayStatus === "em_estadia"
+            ? `Você já está acomodado(a) no *Flat ${flatStr}*!`
+            : `Sua estadia está confirmada!`));
+      const linkUrl = r.checkinUrl || guestContext.checkinUrl;
+      const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
+      const paymentStr = r.paymentStatus === "pago_total" ? "Pagamento Quitado" : "Pagamento Pendente";
+      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\n${stayMsg}${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+    } else {
+      const displayPhone = clientPhone ? ` (*${formatPhoneDisplay ? formatPhoneDisplay(clientPhone) : clientPhone}*)` : "";
+      return ret(`Olá${name}! Não localizei nenhuma reserva ativa ou futura confirmada para este número de WhatsApp${displayPhone} no nosso sistema.\n\nSe a sua reserva foi realizada em outro nome, com outro telefone ou por plataformas como Booking.com ou Airbnb, por favor me informe o seu *nome completo* ou o *código da reserva* para que eu possa verificar com a nossa equipe! 🛎️✨`);
+    }
+  }
+
+  // 0.8 Motor Dinâmico de Cotações, Diárias e Tarifas (Prioridade Máxima sobre comodidades e rotinas operacionais)
+  if (isPricingOrQuoteInquiry(text) || /reserva|diaria|diária|preco|preço|valor|alugar|vaga|disponibilidade/i.test(text)) {
+    // 1. Extrai número de hóspedes mencionado no texto
+    const isCoupleOr2 = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(text);
+    const is3Guests = /\b(?:3|tr[eê]s)\s+pessoas\b/i.test(text);
+    const isExplicit1 = /\b(?:1|uma)\s+pessoa|\bsolteir[ao]\b|\bindividual\b/i.test(text);
+
+    // 2. Extrai menção a café da manhã
+    const mentionsWithBreakfast = /\b(?:com\s+caf[eé]|incluso\s+caf[eé]|incluindo\s+caf[eé]|caf[eé]\s+incluso)/i.test(text);
+    const mentionsWithoutBreakfast = /\b(?:sem\s+caf[eé]|s[oó]\s+o\s+quarto|somente\s+quarto)/i.test(text);
+    const isOnlyBreakfastAlone = (
+      /\b(?:caf[eé]|desjejum)/i.test(text) &&
+      !/\b(?:di[aá]rias?|estadia|hospedagem|quarto|flat|apto|pernoite|aluguel|alugar)/i.test(text) &&
+      !isExplicit1 && !isCoupleOr2 && !is3Guests
+    );
+
+    // 2.1 Pergunta estritamente sobre o valor do café avulso (sem diária de quarto)
+    if (isOnlyBreakfastAlone) {
+      return ret(`Olá${name}! 🥐☕ O café da manhã da CorpFlats é servido exclusivamente em deliciosa bandeja personalizada com todo conforto diretamente no seu flat!\n\n• *Valor avulso:* R$ 35,00 por pessoa/dia.\n• *Dica especial:* Ao reservar sua diária diretamente conosco no plano com café incluso, você ganha o benefício exclusivo de *isenção total da taxa de limpeza*!\n\nGostaria de consultar as diárias com café para alguma data específica? ✨`);
+    }
+
+    // 3. Consulta valores base no banco dinâmico
+    const tSettings = activeDb?.tariffSettings || {};
+    const baseDailyRate = Number(tSettings.baseDailyRate != null ? tSettings.baseDailyRate : 237);
+    const breakfastFeePerson = 35;
+    const cleaningFee = 70;
+
+    // 4. Se especificou "1 pessoa com café" (pergunta exata do usuário!)
+    if (isExplicit1 && mentionsWithBreakfast) {
+      const withBreakfastRate = baseDailyRate + breakfastFeePerson; // 237 + 35 = 272
+      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *1 pessoa com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
+    }
+
+    // 5. Se especificou "1 pessoa sem café"
+    if (isExplicit1 && mentionsWithoutBreakfast) {
+      const withBreakfastRate = baseDailyRate + breakfastFeePerson; // 272
+      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *1 pessoa sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${withBreakfastRate},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída para que eu consulte as vagas para você! 🏨`);
+    }
+
+    // 6. Se especificou casal / 2 pessoas com café
+    if (isCoupleOr2 && mentionsWithBreakfast) {
+      const withBreakfastRate2 = baseDailyRate + (breakfastFeePerson * 2); // 237 + 70 = 307
+      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate2},00* (com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas vocês pretendem vir? Me informe o check-in e check-out que já consulto a disponibilidade! 🏨`);
+    }
+
+    // 7. Se especificou casal / 2 pessoas sem café
+    if (isCoupleOr2 && mentionsWithoutBreakfast) {
+      const withBreakfastRate2 = baseDailyRate + (breakfastFeePerson * 2);
+      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no quarto:* a partir de *R$ ${withBreakfastRate2},00 / diária* para o casal (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você gostaria da reserva? Me informe o período desejado! 🏨`);
+    }
+
+    // 8. Se mencionou "com café" genérico (sem quantidade explícita de pessoas)
+    if (mentionsWithBreakfast) {
+      const rate1 = baseDailyRate + breakfastFeePerson; // 272
+      const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
+      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias com *café da manhã incluso servido no flat* são a partir de:\n• *1 pessoa:* a partir de *R$ ${rate1},00 / diária*\n• *2 pessoas (casal):* a partir de *R$ ${rate2},00 / diária*\n\n🎁 *Grande benefício:* No plano com café incluso, você tem *isenção total da taxa de limpeza*!\n(Na opção sem café, a diária base é a partir de R$ ${baseDailyRate},00 + taxa única de limpeza de R$ ${cleaningFee},00).\n\nPara qual período você planeja a sua estadia? Me informe as datas de entrada e saída que já verifico as vagas! 🏨`);
+    }
+
+    // 9. Se mencionou "sem café" genérico
+    if (mentionsWithoutBreakfast) {
+      const rate1 = baseDailyRate + breakfastFeePerson;
+      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária de acomodação completa *sem café* é a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no flat:* a partir de *R$ ${rate1},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você precisa da hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
+    }
+
+    // 10. Pergunta genérica de diária / valores / cotação
+    const rate1 = baseDailyRate + breakfastFeePerson; // 272
+    const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
+    return ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${rate1},00 / diária* (1 pessoa) ou *R$ ${rate2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nDispomos de flats com cozinha completa, ar Split, Wi-Fi veloz e garagem no melhor ponto de Campos/RJ.\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
+  }
+
   // 1. Wi-Fi / Internet
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
     const flatNum = guestContext?.flatNumber || "";
@@ -2137,44 +2291,6 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     if (guestContext.stayStatus === "em_estadia") {
       return ret(`Olá${name}! Você está acomodado(a) no *Flat ${guestContext.flatNumber}*. Caso precise de alguma manutenção, toalhas extras ou limpeza durante a estadia, é só nos avisar por aqui que cuidaremos para você! 🛎️`);
     }
-  }
-
-  // 6.8 Consulta sobre Reserva Existente / Confirmação de Reserva
-  const isExistingReservationInquiry = (
-    /(?:m[ij]nhas?\s+reservas?|minhas?\s+di[aá]rias?|minha\s+estadia)/i.test(text) ||
-    /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
-    /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
-    /(?:tenho|tem|existe|possui)\s+(?:alguma\s+)?reserva/i.test(text) ||
-    /(?:verificar|consultar|conferir|confirmar|saber)\s+(?:minha\s+|se\s+tenho\s+|a\s+)?reserva/i.test(text) ||
-    /^(?:est[aá]|t[aá])\s+confirmad[ao]\??$/i.test(text)
-  );
-
-  if (isExistingReservationInquiry) {
-    if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada" && guestContext.reservation.status !== "cancelled") {
-      const r = guestContext.reservation;
-      const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
-      const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
-      const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
-      const stayMsg = guestContext.stayStatus === "reserva_futura"
-        ? `Sua estadia está confirmada e programada para início em *${checkinFmt}*!`
-        : (guestContext.stayStatus === "checkin_hoje"
-          ? `O seu check-in é hoje (${checkinFmt}) a partir das 14:00h!`
-          : (guestContext.stayStatus === "em_estadia"
-            ? `Você já está acomodado(a) no *Flat ${flatStr}*!`
-            : `Sua estadia está confirmada!`));
-      const linkUrl = r.checkinUrl || guestContext.checkinUrl;
-      const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-      const paymentStr = r.paymentStatus === "pago_total" ? "Pagamento Quitado" : "Pagamento Pendente";
-      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\n${stayMsg}${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
-    } else {
-      const displayPhone = clientPhone ? ` (*${formatPhoneDisplay ? formatPhoneDisplay(clientPhone) : clientPhone}*)` : "";
-      return ret(`Olá${name}! Não localizei nenhuma reserva ativa ou futura confirmada para este número de WhatsApp${displayPhone} no nosso sistema.\n\nSe a sua reserva foi realizada em outro nome, com outro telefone ou por plataformas como Booking.com ou Airbnb, por favor me informe o seu *nome completo* ou o *código da reserva* para que eu possa verificar com a nossa equipe! 🛎️✨`);
-    }
-  }
-
-  // 7. Cotação / Nova Reserva / Preço
-  if (/reserva|diaria|diária|preco|preço|valor|alugar|vaga|disponibilidade/i.test(text)) {
-    return ret(`Olá${name}! ✨ Será um enorme prazer receber você no CorpFlats!\n\nDispomos de 19 flats executivos finamente decorados, equipados com ar-condicionado Split, cozinha completa, Wi-Fi veloz e vaga de garagem no melhor ponto de Campos/RJ.\n\nPara consultar disponibilidade exata e garantir a melhor tarifa direta sem taxas de intermediários, acesse nosso site oficial:\n👉 ${kb.siteUrl}\n\nOu me informe as datas desejadas (entrada e saída) que posso te ajudar! 🏨`);
   }
 
   // 7.5 Pré-Check-in / Link de Check-in
@@ -2403,8 +2519,11 @@ DIRETRIZES ESPECÍFICAS:
     ? db.faqItems
     : (Array.isArray(db?.knowledgeBaseFaq) ? db.knowledgeBaseFaq : []);
 
+  const isPricingQuery = isPricingOrQuoteInquiry(messageText);
   const applicableFaqs = allFaqItems.filter(faq => {
-    return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, phone);
+    if (!faq || faq.status !== "ativo" || !isFaqApplicableToClient(faq, phone)) return false;
+    if (isPricingQuery && isOperationalNonPricingFaq(faq)) return false;
+    return true;
   });
 
   let dynamicFaqPromptSection = "";
@@ -2458,6 +2577,23 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Benefícios Reserva Direta: ${aiConfig.knowledgeBase.directBookingBenefits}
 - Site Oficial para Reservas: ${aiConfig.knowledgeBase.siteUrl}
 - WhatsApp da Recepção: ${aiConfig.knowledgeBase.receptionPhone}
+
+[TARIFAS E DIÁRIAS OFICIAIS CORPFLATS - CANAL DIRETO / WHATSAPP]
+- Flats executivos de alto padrão completos e decorados (Edifício Soho Residence Service).
+- Diária base de acomodação (flat completo): a partir de R$ 237,00 / noite.
+- Café da manhã avulso: R$ 35,00 por pessoa/dia (servido em deliciosa bandeja personalizada diretamente no flat).
+- Opção 1: DIÁRIA COM CAFÉ DA MANHÃ (Recomendada):
+  * 1 pessoa: a partir de R$ 272,00 / diária (R$ 237 base + R$ 35 café).
+  * 2 pessoas (casal): a partir de R$ 307,00 / diária (R$ 237 base + 2x R$ 35 café).
+  * VANTAGEM EXCLUSIVA: ISENÇÃO TOTAL da taxa de limpeza no plano com café incluso!
+- Opção 2: DIÁRIA SEM CAFÉ DA MANHÃ (Apenas acomodação):
+  * A partir de R$ 237,00 / diária (+ taxa única de limpeza de R$ 70,00 por estadia).
+- Cama extra / 3º hóspede: R$ 60,00 adicional por diária.
+- Benefícios exclusivos da reserva direta: melhor tarifa garantida sem taxas de intermediários, prioridade de early check-in a partir das 10h (quando disponível pela governança) e suporte direto.
+- REGRA CRÍTICA PARA PERGUNTAS DE VALORES E DIÁRIAS (mesmo citando café, ex: "quanto tá a diária? 1 pessoa com café"):
+  * Forneça sempre os valores das diárias com clareza e acolhimento (ex: R$ 272 com café / R$ 237 sem café).
+  * NUNCA responda apenas explicando o funcionamento da bandeja ou horários do café quando o hóspede perguntar preço/diária!
+  * Solicite gentilmente as datas desejadas de check-in e check-out para verificar a disponibilidade exata e fechar a cotação.
 ${dynamicFaqPromptSection}
 ${systemActionsNotice}
 `;
