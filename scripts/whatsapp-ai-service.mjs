@@ -1871,7 +1871,8 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:late\s*check-?out|sair\s*mais\s*tarde|sa[ií]da\s*tardia|estender\s*(?:a\s*)?(?:estadia|sa[ií]da|di[aá]ria)|desocupar\s*mais\s*tarde|sair\s*(?:as|às)\s*(?:1[3-9]|20)\b)/i.test(lower)) {
+  if (/\b(?:late\s*check-?out|sair\s*mais\s*tarde|sa[ií]da\s*tardia|estender\s*(?:a\s*)?(?:estadia|sa[ií]da|di[aá]ria)|desocupar\s*mais\s*tarde|sair\s*(?:as|às)\s*(?:1[3-9]|20)\b)/i.test(lower) &&
+      !(/\b(?:consigo|posso|pode|como|d[aá]\s+para|d[aá]\s+pra|tem\s+como|[eé]\s+poss[ií]vel)\s+.*?(?:estender|prorrogar)\b/i.test(lower) || /\b(?:estender|prorrogar)\b.*?\b(?:pelo|no|via|por)\s+whatsapp\b/i.test(lower))) {
     return {
       category: "late_checkout",
       demandTitle: UNMET_DEMAND_CATEGORIES.late_checkout.title,
@@ -2432,6 +2433,155 @@ export function classifyDeveloperMessage(messageText, db = null) {
 }
 
 /**
+ * Destila o par (Dúvida do Hóspede + Resposta do Operador) em uma diretriz conceitual
+ * permanente para a base de conhecimento vivo da IA ("Anti-Copia-e-Cola")
+ */
+export function distillGuidelineFromOperatorResponse({ question = "", response = "", category = "geral", targetFlat = null }) {
+  const qClean = String(question || "").trim();
+  const rClean = String(response || "").trim();
+  const qLower = qClean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const rLower = rClean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  const isAffirmative = /^(?:sim|com certeza|claro|pode|consegue|tem|temos|positivo|perfeito|liberado|dispon[ií]vel|aceita|aceitamos|isso|exato|correto)\b/i.test(rLower);
+  const isNegative = /^(?:n[aã]o|infelizmente n[aã]o|n[aã]o pode|n[aã]o permitimos|proibido|n[aã]o temos|negativo|imposs[ií]vel)\b/i.test(rLower);
+
+  let synthesizedGuideline = "";
+  let sampleResponse = "";
+  let finalCategory = category || "geral";
+
+  // 1. Extensão de estadia / prorrogação de reserva (WhatsApp ou geral)
+  if (/(?:estender|prorroga|prolongar|mais\s+di[aá]rias?|ficar\s+mais)/i.test(qLower)) {
+    finalCategory = "checkout";
+    if (!isNegative) {
+      synthesizedGuideline = "É possível estender e prorrogar a reserva de flat diretamente pelo WhatsApp com a equipe, mediante disponibilidade do flat.";
+      sampleResponse = "Olá! Sim, é possível estender a sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! ✨ Para verificarmos a extensão, por favor me informe até que data gostaria de ficar.";
+    } else {
+      synthesizedGuideline = "Não é possível prorrogar a reserva diretamente para este período devido à indisponibilidade de vagas no flat.";
+      sampleResponse = "Olá! No momento não é possível estender a estadia diretamente por aqui devido à ocupação do flat. Qualquer dúvida, estou à disposição!";
+    }
+  }
+  // 2. Horário de check-out / saída
+  else if (/(?:check[- ]?out|sa[ií]da|desocup)/i.test(qLower) && /(?:hor[aá]rio|horas?|quando|limite)/i.test(qLower)) {
+    finalCategory = "checkout";
+    const timeMatch = rClean.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)?(?:\s*\d{1,2}(?::\d{2})?(?:h)?)?)\b/i);
+    const timeStr = timeMatch ? timeMatch[0] : "12:00h";
+    synthesizedGuideline = `O horário de check-out é até as ${timeStr}.`;
+    sampleResponse = `Olá! O horário de check-out deve ser realizado até as ${timeStr}. Basta deixar os cartões-chave na recepção/portaria ao sair! 🕛👋`;
+  }
+  // 3. Horário de check-in / entrada
+  else if (/(?:check[- ]?in|entrada|chegada)/i.test(qLower) && /(?:hor[aá]rio|horas?|quando|limite)/i.test(qLower)) {
+    finalCategory = "checkin";
+    const timeMatch = rClean.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)?(?:\s*\d{1,2}(?::\d{2})?(?:h)?)?)\b/i);
+    const timeStr = timeMatch ? timeMatch[0] : "14:00h";
+    synthesizedGuideline = `O horário de check-in inicia a partir das ${timeStr}.`;
+    sampleResponse = `Olá! O horário de check-in inicia a partir das ${timeStr}. Se chegar antes, faremos o possível para liberar o flat conforme a disponibilidade! 🔑🛎️`;
+  }
+  // 4. Micro-ondas e cozinha
+  else if (/micro[- ]?ondas/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    if (!isNegative) {
+      synthesizedGuideline = "Todos os nossos flats dispõem de forno micro-ondas e frigobar para total comodidade dos hóspedes.";
+      sampleResponse = "Olá! Sim, todos os nossos flats dispõem de micro-ondas, frigobar e cozinha compacta equipada! 🍽️⚡";
+    } else {
+      synthesizedGuideline = "Os flats não dispõem de micro-ondas.";
+      sampleResponse = "Olá! Informamos que os flats não dispõem de micro-ondas.";
+    }
+  }
+  // 5. Frigobar / Geladeira
+  else if (/frigobar|geladeira|congelador/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    if (!isNegative) {
+      synthesizedGuideline = "Todos os flats contam com frigobar privativo ligado para uso dos hóspedes.";
+      sampleResponse = "Olá! Sim, todos os flats contam com frigobar privativo limpo e ligado para sua comodidade! 🧊";
+    }
+  }
+  // 6. Ferro de passar / tábua
+  else if (/ferro|passar\s+roupa|t[aá]bua/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    if (!isNegative) {
+      synthesizedGuideline = "Disponibilizamos ferro de passar roupa nos flats para comodidade dos hóspedes.";
+      sampleResponse = "Olá! Sim, disponibilizamos ferro de passar roupa nos flats para seu uso durante a estadia! 👔✨";
+    }
+  }
+  // 7. Voltagem / tomadas
+  else if (/voltagem|110|220|127|tomada/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    const volt = /220/i.test(rLower) ? "220V" : "127V (110V)";
+    synthesizedGuideline = `A voltagem padrão em todos os flats é ${volt}.`;
+    sampleResponse = `Olá! A voltagem padrão em todos os nossos flats é ${volt}. 🔌⚡`;
+  }
+  // 8. Pet / Animais
+  else if (/pet|cachorro|animal|gato/i.test(qLower)) {
+    finalCategory = "pet";
+    if (!isNegative) {
+      synthesizedGuideline = "Aceitamos pets de pequeno porte mediante taxa única e cumprimento das normas condominiais.";
+      sampleResponse = "Olá! Sim, aceitamos pets de pequeno porte com todo carinho (máximo 1 pet por flat, mediante taxa única)! 🐾✨";
+    } else {
+      synthesizedGuideline = "Não é permitida a estadia de animais de estimação nos flats.";
+      sampleResponse = "Olá! Informamos que não é permitida a estadia de animais de estimação nas acomodações. 🛑🐾";
+    }
+  }
+  // 9. Vaga de garagem / Estacionamento
+  else if (/garagem|estacionamento|vaga|carro|ve[ií]culo/i.test(qLower)) {
+    finalCategory = "garagem";
+    if (!isNegative) {
+      synthesizedGuideline = "Dispomos de 1 vaga de garagem rotativa coberta e gratuita por flat no condomínio Soho.";
+      sampleResponse = "Olá! Sim, dispomos de 1 vaga de garagem rotativa gratuita por flat no condomínio Soho! 🚗";
+    } else {
+      synthesizedGuideline = "Não dispomos de vaga de garagem inclusa nesta acomodação.";
+      sampleResponse = "Olá! Informamos que esta acomodação não dispõe de vaga de garagem inclusa.";
+    }
+  }
+  // 10. Wi-Fi / Internet
+  else if (/wi-?fi|internet|senha/i.test(qLower)) {
+    finalCategory = "wifi";
+    synthesizedGuideline = "O Wi-Fi é individual e de alta velocidade em cada acomodação.";
+    sampleResponse = "Olá! O Wi-Fi é individual e de alta velocidade no flat! A rede é o número do apartamento e a senha padrão é 1234567890123. 📶";
+  }
+  // 11. Café da manhã
+  else if (/caf[eé]|desjejum/i.test(qLower)) {
+    finalCategory = "cafe";
+    if (!isNegative) {
+      synthesizedGuideline = "O café da manhã é servido em deliciosa bandeja personalizada diretamente no quarto, mediante agendamento até a véspera pelo portal do hóspede.";
+      sampleResponse = "Olá! 🥐☕ O café da manhã é servido em bandeja diretamente no seu quarto das 05:00 às 09:30, com agendamento prévio pelo Portal do Hóspede!";
+    }
+  }
+  // 12. Regra Geral / Fallback
+  else {
+    if (rClean.length >= 25) {
+      synthesizedGuideline = synthesizeGuidelineFromText(rClean, finalCategory);
+      sampleResponse = `Olá! ${rClean}`;
+    } else if (isAffirmative) {
+      const cleanedQuestionTheme = qClean
+        .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;]*\s*/i, "")
+        .replace(/^(?:voc[eê]s?\s+)?(?:consigo|posso|tem|temos|possui|possuem|aceita|aceitam|d[aá]\s+para|d[aá]\s+pra|existe|existem|fornece|fornecem|oferece|oferecem)\s+/i, "")
+        .replace(/\?+$/, "")
+        .trim();
+      synthesizedGuideline = `É confirmado e disponível para os hóspedes: ${cleanedQuestionTheme}.`;
+      sampleResponse = `Olá! Sim, temos ${cleanedQuestionTheme} disponível para sua comodidade! ✨`;
+    } else if (isNegative) {
+      const cleanedQuestionTheme = qClean
+        .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;]*\s*/i, "")
+        .replace(/^(?:voc[eê]s?\s+)?(?:consigo|posso|tem|temos|possui|possuem|aceita|aceitam|d[aá]\s+para|d[aá]\s+pra|existe|existem|fornece|fornecem|oferece|oferecem)\s+/i, "")
+        .replace(/\?+$/, "")
+        .trim();
+      synthesizedGuideline = `Não é disponibilizado nem permitido aos hóspedes: ${cleanedQuestionTheme}.`;
+      sampleResponse = `Olá! Informamos que não dispomos de ${cleanedQuestionTheme} no momento.`;
+    } else {
+      synthesizedGuideline = synthesizeGuidelineFromText(rClean, finalCategory);
+      sampleResponse = `Olá! ${rClean}`;
+    }
+  }
+
+  return {
+    guidelineText: synthesizedGuideline,
+    category: finalCategory,
+    sampleResponse,
+    targetFlat
+  };
+}
+
+/**
  * Gera um exemplo de resposta REALISTA e PROFISSIONAL da Sofia a um hóspede no WhatsApp
  * sem repetir meta-conversas internas, saudações de teste ou texto do desenvolvedor
  */
@@ -2599,7 +2749,9 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
 
   const rawText = String(guidelineData.text || "").trim();
   const cat = guidelineData.category || inferFaqCategory(rawText) || "geral";
-  const synthesizedText = synthesizeGuidelineFromText(rawText, cat);
+  const synthesizedText = (guidelineData.synthesized || guidelineData.source === "operator_response" || guidelineData.source === "faq_approval")
+    ? rawText
+    : synthesizeGuidelineFromText(rawText, cat);
   const sample = guidelineData.sample || guidelineData.sampleResponse || generateSampleGuestResponse({
     category: cat,
     ruleText: synthesizedText,
@@ -2613,6 +2765,8 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
     targetFlat: guidelineData.targetFlat || null,
     sample,
     sampleResponse: sample,
+    question: guidelineData.question || null,
+    operatorText: guidelineData.operatorText || null,
     active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : true,
     createdAt: guidelineData.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -2725,7 +2879,7 @@ export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
 
   let guidelinesSection = "";
   if (activeGuidelines.length > 0) {
-    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${activeGuidelines.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text}`).join("\n")}\n`;
+    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${activeGuidelines.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text}`).join("\n")}\n\n[REGRA ANTI-COPIA-E-COLA & GERAÇÃO MULTITÓPICO CONTEXTUAL]\n- NUNCA use respostas prontas, engessadas ou cópia-e-cola de mensagens anteriores.\n- Use os fatos aprendidos acima como base de conhecimento vivo para sintetizar uma resposta inédita, humanizada e personalizada ao contexto do hóspede.\n- Se o hóspede enviar saudações (ex: "bom dia", "boa tarde", "olá"), retribua a saudação cordialmente pelo nome do hóspede.\n- Se a mensagem contiver múltiplas dúvidas juntas (ex: horário de checkout + se pode estender a reserva pelo WhatsApp), responda a TODOS os pontos de forma clara, acolhedora e integrada na mesma mensagem.\n`;
   }
 
   return { toneSection, guidelinesSection };
@@ -3242,17 +3396,32 @@ export function validateAndRefineResponse({
 }
 
 /**
+ * Retorna a saudação contextual correspondente ao que o hóspede enviou (retribuição cordial de Bom dia / Boa tarde / Boa noite)
+ */
+export function getGreetingSalutation(messageText, name = "") {
+  const lower = String(messageText || "").toLowerCase().trim();
+  if (/\bbom\s+dia\b/i.test(lower)) return `Bom dia${name}!`;
+  if (/\bboa\s+tarde\b/i.test(lower)) return `Boa tarde${name}!`;
+  if (/\bboa\s+noite\b/i.test(lower)) return `Boa noite${name}!`;
+  return `Olá${name}!`;
+}
+
+/**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
 export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null) {
   const text = (messageText || "").toLowerCase().trim();
   const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
   const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
+  const greetingSalutation = getGreetingSalutation(messageText, name);
 
   const activeDb = dbParam || (dbOrFaqs && typeof dbOrFaqs === "object" && !Array.isArray(dbOrFaqs) ? dbOrFaqs : (typeof globalThis !== "undefined" ? globalThis.db : null));
   const activeGuidelines = (activeDb?.whatsappAiSettings?.developerGuidelines || []).filter(g => g && g.active !== false);
   const toneSettings = activeDb?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
   const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  const asksExtension = /(?:estender|prorroga|prolongar|mais\s+di[aá]rias|ficar\s+mais)/i.test(text);
+  const asksCheckoutTime = /(?:hor[aá]rio\s+(?:de\s+)?check-?out|que\s+horas\s+(?:é\s+o\s+|tenho\s+que\s+)?sair|hor[aá]rio\s+de\s+sa[ií]da|hor[aá]rio\s+do\s+check-?out|limite\s+de\s+sa[ií]da)/i.test(text);
 
   // 0. Diretrizes do Desenvolvedor (Prioridade Máxima)
   if (activeGuidelines.length > 0) {
@@ -3261,7 +3430,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     if (flatNum) {
       const flatGuideline = activeGuidelines.find(g => String(g.targetFlat) === String(flatNum));
       if (flatGuideline) {
-        return ret(`Olá${name}! Sobre o Flat ${flatNum}: ${flatGuideline.text} Estamos à disposição! ✨`);
+        return ret(`${greetingSalutation} Sobre o Flat ${flatNum}: ${flatGuideline.text} Estamos à disposição! ✨`);
       }
     }
 
@@ -3269,7 +3438,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     if (/caf[eé]|desjejum/i.test(text) && !isPricingOrQuoteInquiry(text)) {
       const cafeGuideline = activeGuidelines.find(g => g.category === "cafe" || (g.text || "").toLowerCase().includes("café"));
       if (cafeGuideline) {
-        return ret(`Olá${name}! 🥐☕ ${cafeGuideline.text}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
+        return ret(`${greetingSalutation} 🥐☕ ${cafeGuideline.text}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
       }
     }
 
@@ -3277,7 +3446,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
       const checkinGuideline = activeGuidelines.find(g => g.category === "checkin" || (g.text || "").toLowerCase().includes("check-in"));
       if (checkinGuideline) {
-        return ret(`Olá${name}! ${checkinGuideline.text} 🔑`);
+        return ret(`${greetingSalutation} ${checkinGuideline.text} 🔑`);
       }
     }
 
@@ -3285,20 +3454,70 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     if (/pet|cachorro|animal/i.test(text)) {
       const petGuideline = activeGuidelines.find(g => g.category === "pet" || (g.text || "").toLowerCase().includes("pet"));
       if (petGuideline) {
-        return ret(`Olá${name}! 🐾 ${petGuideline.text}`);
+        return ret(`${greetingSalutation} 🐾 ${petGuideline.text}`);
       }
     }
 
-    // 0.5 Check-out / Saída / Extensão
-    if (classifyUnmetDemand(text).category !== "checkout_comunicacao" && /check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out/i.test(text)) {
+    // 0.5.A Geração Multitópico Composta: Horário de Check-out + Extensão de Reserva pelo WhatsApp
+    if (asksExtension && asksCheckoutTime) {
+      const extGuide = activeGuidelines.find(g => /(?:estender|prorroga|prolongar)/i.test(g.text || "") || g.category === "checkout");
+      const extContent = extGuide
+        ? extGuide.text
+        : "É possível estender e prorrogar a reserva de flat diretamente pelo WhatsApp com a equipe, mediante disponibilidade do flat.";
+      const extPhrase = extContent.toLowerCase().startsWith("é possível")
+        ? `E sim, ${extContent.charAt(0).toLowerCase() + extContent.slice(1)}`
+        : `E sim, é possível estender: ${extContent}`;
+      return ret(`${greetingSalutation} O horário de check-out é até as 12:00h. ${extPhrase} Caso queira prorrogar sua estadia, por favor me informe até que data gostaria de ficar para verificarmos a disponibilidade! 🏨✨`);
+    }
+
+    // 0.5.B Pergunta sobre Extensão de Reserva via WhatsApp / Prorrogação
+    if (asksExtension && !isPricingOrQuoteInquiry(text)) {
+      const extGuide = activeGuidelines.find(g => /(?:estender|prorroga|prolongar)/i.test(g.text || "") || /(?:estender|prorroga)/i.test(g.category || ""));
+      if (extGuide) {
+        const gText = extGuide.text;
+        const phrase = gText.toLowerCase().startsWith("é possível")
+          ? `É possível ${gText.replace(/^é possível\s*/i, "")}`
+          : gText;
+        return ret(`${greetingSalutation} Sim! ${phrase} Caso queira estender sua estadia, por favor me informe até que data gostaria de permanecer para verificarmos para você! 🏨✨`);
+      }
+    }
+
+    // 0.5.C Check-out / Saída / Horário simples
+    if (classifyUnmetDemand(text).category !== "checkout_comunicacao" && /check[- ]?out|sa[ií]da|desocup|late\s+check[- ]?out/i.test(text) && !asksExtension) {
       const checkoutGuideline = activeGuidelines.find(g => g.category === "checkout" || (g.text || "").toLowerCase().includes("check-out") || (g.text || "").toLowerCase().includes("checkout"));
       if (checkoutGuideline) {
         const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
         const checkoutUrl = guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
         const linkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
-        return ret(`Olá${name}! ${checkoutGuideline.text}${linkMsg}`);
+        return ret(`${greetingSalutation} ${checkoutGuideline.text}${linkMsg}`);
       }
     }
+
+    // 0.6 Outras Diretrizes Aprendidas Dinâmicas (Correspondência Semântica por Tokens e Pergunta Original)
+    for (const g of activeGuidelines) {
+      if (!g || !g.text || g.active === false) continue;
+      if (g.category === "cafe" || g.category === "checkin" || g.category === "pet" || g.category === "checkout") continue;
+
+      const gNorm = (g.text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const qClean = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const qTokens = qClean.split(/\s+/).filter(w => w.length > 3 && !PORTUGUESE_STOP_WORDS.has(w));
+      const gTokens = gNorm.split(/\s+/).filter(w => w.length > 3 && !PORTUGUESE_STOP_WORDS.has(w));
+
+      const commonTokens = qTokens.filter(t => gTokens.includes(t));
+      const matchesOrigQ = g.question && qClean.includes((g.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim());
+
+      if (commonTokens.length >= 2 || matchesOrigQ) {
+        return ret(`${greetingSalutation} ${g.text}`);
+      }
+    }
+  }
+
+  // 0.5.D Fallback para Extensão de Reserva se ainda não houver diretriz cadastrada
+  if (asksExtension && asksCheckoutTime) {
+    return ret(`${greetingSalutation} O horário de check-out é até as 12:00h. E sim, é possível estender e prorrogar a sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! Caso queira prorrogar, por favor me informe até que data gostaria de ficar! 🏨✨`);
+  }
+  if (asksExtension && !isPricingOrQuoteInquiry(text)) {
+    return ret(`${greetingSalutation} Sim! É possível solicitar a extensão ou prorrogação da sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! 🏨✨ Para verificar, por favor me informe até que data gostaria de ficar.`);
   }
 
   // 0.6 Comunicação de Check-out pelo Hóspede (Aviso de saída/desocupação)
@@ -3439,7 +3658,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
 
     if (bestFaq && highestScore >= 50) {
-      return ret(`Olá${name}! ${bestFaq.answer}`);
+      return ret(`${greetingSalutation} ${bestFaq.answer}`);
     }
   }
 
@@ -3628,22 +3847,22 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
   // 7.8 Comodidades e Estrutura dos Flats
   if (/micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
-    return ret(`Olá${name}! ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
+    return ret(`${greetingSalutation} ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
   }
 
   // 7.9 Animais e Pets
   if (/pet|cachorro|animal|gato/i.test(text)) {
-    return ret(`Olá${name}! 🐾 ${kb.petPolicy}`);
+    return ret(`${greetingSalutation} 🐾 ${kb.petPolicy}`);
   }
 
   // 7.10 Lazer, Cobertura, Piscina e Academia
   if (/piscina|jacuzzi|academia|cobertura|lazer|hidro/i.test(text)) {
-    return ret(`Olá${name}! 🏊‍♂️ ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 para uso exclusivo dos hóspedes."}`);
+    return ret(`${greetingSalutation} 🏊‍♂️ ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 para uso exclusivo dos hóspedes."}`);
   }
 
   // 7.11 Fumo e Cigarro
   if (/fumo|fumar|cigarro|fumante/i.test(text)) {
-    return ret(`Olá${name}! 🚭 ${kb.smokingPolicy}`);
+    return ret(`${greetingSalutation} 🚭 ${kb.smokingPolicy}`);
   }
 
   // 9. Se for demanda operacional não atendida pela base de conhecimento

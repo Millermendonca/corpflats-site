@@ -755,25 +755,48 @@ export function FaqKnowledgeBase() {
                 </CardHeader>
 
                 <CardContent className="p-4 pt-1 space-y-3 flex-1">
-                  {/* Resposta Sugerida pelo Operador (se aguardando aprovação) */}
-                  {isAwaitingApproval && item.suggestedAnswer && (
+                  {/* Resposta Sugerida pelo Operador / Diretriz Destilada (se aguardando aprovação) */}
+                  {isAwaitingApproval && (item.suggestedAnswer || item.distilledGuideline) && (
                     <div className="p-3 rounded-xl bg-purple-100/70 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-purple-900 dark:text-purple-300 flex items-center gap-1">
                           <Sparkles className="w-3 h-3 text-purple-600" />
-                          {item.answeredBy === "operador" ? "Resposta Sugerida pelo Operador:" : "Sugestão Inteligente da IA:"}
+                          {item.answeredBy === "operador" ? "🧠 Aprendizado com Operador (Diretriz Viva):" : "Sugestão Inteligente da IA:"}
                         </span>
+                        {item.distilledGuideline && (
+                          <Badge className="bg-purple-200 text-purple-900 dark:bg-purple-900 dark:text-purple-200 text-[9px] font-bold border-0">
+                            Diretriz Viva
+                          </Badge>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                        {item.suggestedAnswer}
-                      </p>
+
+                      {item.operatorRawResponse && (
+                        <div className="p-1.5 rounded-md bg-purple-200/50 dark:bg-purple-900/30 text-[11px] text-purple-950 dark:text-purple-200">
+                          <span className="font-bold">Intervenção do operador no WhatsApp:</span> "{item.operatorRawResponse}"
+                        </div>
+                      )}
+
+                      {item.distilledGuideline && (
+                        <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-purple-200/60 dark:border-purple-800 text-xs">
+                          <span className="font-bold text-purple-900 dark:text-purple-300 block mb-0.5">📌 Fato / Regra Conceitual Aprendida:</span>
+                          <span className="text-slate-700 dark:text-slate-300">{item.distilledGuideline}</span>
+                        </div>
+                      )}
+
+                      {item.suggestedAnswer && (
+                        <div className="text-xs text-slate-800 dark:text-slate-200">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-0.5">Amostra Contextual Dinâmica:</span>
+                          <p className="whitespace-pre-wrap leading-relaxed">{item.suggestedAnswer}</p>
+                        </div>
+                      )}
+
                       <Button
                         size="sm"
                         onClick={() => approveFaq(item.id)}
                         className="w-full text-xs font-black bg-purple-600 hover:bg-purple-700 text-white gap-1.5 shadow-xs"
                       >
                         <Check className="w-3.5 h-3.5" />
-                        ✓ Aprovar Resposta em 1 Clique
+                        ✓ Confirmar e Ativar Diretriz
                       </Button>
                     </div>
                   )}
@@ -1042,10 +1065,22 @@ export function FaqKnowledgeBase() {
                     </TableCell>
 
                     <TableCell>
-                      {isAwaitingApproval && item.suggestedAnswer ? (
-                        <div className="p-2 rounded bg-purple-50 dark:bg-purple-950/40 border border-purple-200 text-xs text-purple-950 dark:text-purple-200">
-                          <span className="font-bold text-[10px] text-purple-700 block mb-0.5">Sugestão do Operador:</span>
-                          <span className="line-clamp-2">{item.suggestedAnswer}</span>
+                      {isAwaitingApproval && (item.distilledGuideline || item.suggestedAnswer) ? (
+                        <div className="p-2 rounded bg-purple-50 dark:bg-purple-950/40 border border-purple-200 text-xs text-purple-950 dark:text-purple-200 space-y-1">
+                          {item.distilledGuideline ? (
+                            <div>
+                              <span className="font-bold text-[10px] text-purple-700 block">🧠 Diretriz Viva:</span>
+                              <span className="line-clamp-2">{item.distilledGuideline}</span>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="font-bold text-[10px] text-purple-700 block">Sugestão:</span>
+                              <span className="line-clamp-2">{item.suggestedAnswer}</span>
+                            </div>
+                          )}
+                          {item.operatorRawResponse && (
+                            <span className="text-[10px] text-purple-600/90 block italic">WhatsApp: "{item.operatorRawResponse}"</span>
+                          )}
                         </div>
                       ) : (
                         <span className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2">

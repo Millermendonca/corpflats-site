@@ -40,7 +40,9 @@ import {
   formatCheckoutCommunicationResponse,
   validateAndRefineResponse,
   generateFaqResponseSuggestions,
-  generateIntelligentFaqDraft
+  generateIntelligentFaqDraft,
+  distillGuidelineFromOperatorResponse,
+  getGreetingSalutation
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -65,7 +67,9 @@ export {
   formatCheckoutCommunicationResponse,
   validateAndRefineResponse,
   generateFaqResponseSuggestions,
-  generateIntelligentFaqDraft
+  generateIntelligentFaqDraft,
+  distillGuidelineFromOperatorResponse,
+  getGreetingSalutation
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
@@ -1405,7 +1409,38 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
   const targetItem = candidates[0];
   const nowIso = new Date().toISOString();
 
-  targetItem.suggestedAnswer = trimmedText;
+  // Destilação Conceitual Factual (Anti-Copia-e-Cola):
+  // Transforma o par (Dúvida do Hóspede + Resposta do Operador) em regra conceitual viva
+  const distilled = distillGuidelineFromOperatorResponse({
+    question: targetItem.question,
+    response: trimmedText,
+    category: targetItem.category || "geral"
+  });
+
+  // Salva a diretriz destilada na base viva de conhecimento da IA
+  const newGuideline = saveDeveloperGuideline(db, {
+    text: distilled.guidelineText,
+    category: distilled.category || targetItem.category || "geral",
+    sample: distilled.sampleResponse,
+    sampleResponse: distilled.sampleResponse,
+    source: "operator_response",
+    question: targetItem.question,
+    operatorText: trimmedText,
+    synthesized: true
+  });
+
+  targetItem.operatorRawResponse = trimmedText;
+  targetItem.distilledGuideline = distilled.guidelineText;
+  targetItem.guidelineId = newGuideline?.id || null;
+
+  // Se a resposta humana for curta ("sim", "pode", etc.), sugere a resposta articulada completa
+  // Se já for uma frase completa (>= 25 chars), preserva a redação do operador
+  if (trimmedText.length < 25 && /^(?:sim|n[aã]o|pode|consegue|claro|positivo|temos|tem)\b/i.test(trimmedText)) {
+    targetItem.suggestedAnswer = distilled.sampleResponse;
+  } else {
+    targetItem.suggestedAnswer = trimmedText;
+  }
+
   targetItem.status = "aguardando_aprovacao";
   targetItem.answeredAt = nowIso;
   targetItem.answeredBy = answeredBy;
@@ -7451,6 +7486,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     item.status = "ativo";
     item.approvedAt = new Date().toISOString();
     item.updatedAt = new Date().toISOString();
+
+    if (!item.guidelineId) {
+      const gText = item.distilledGuideline || finalAnswer;
+      const newG = saveDeveloperGuideline(db, {
+        text: gText,
+        category: item.category || "geral",
+        sample: finalAnswer,
+        source: "faq_approval",
+        question: item.question,
+        synthesized: true
+      });
+      if (newG) item.guidelineId = newG.id;
+    }
 
     if (typeof saveDatabase === "function") saveDatabase();
     res.json({ success: true, item });

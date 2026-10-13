@@ -29,6 +29,10 @@ export interface FaqItem {
   suggestedAnswer?: string
   sourceClientPhone?: string
   sourceClientName?: string
+  answeredBy?: string
+  operatorRawResponse?: string
+  distilledGuideline?: string
+  guidelineId?: string
   createdAt: string
   updatedAt: string
   approvedAt?: string
