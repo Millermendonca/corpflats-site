@@ -24,6 +24,8 @@ import {
   processAiInboundMessage,
   isPricingOrQuoteInquiry,
   isOperationalNonPricingFaq,
+  buildGuestContext,
+  handleGetReservationDetails,
   DEFAULT_AI_CONFIG
 } from "../scripts/whatsapp-ai-service.mjs";
 
@@ -667,5 +669,163 @@ test("R7: Desambiguação de Cotação de Diária com Café ('quanto tá a diár
   );
   assert.ok(respOperacional.includes("Nosso serviço de café da manhã é servido"), "Dúvida operacional deve responder com a FAQ de funcionamento");
 });
+
+// ── 8. Síntese Não-Literal e Anti-Papagaio de Coaching do Desenvolvedor ────────
+test("R8: Síntese Não-Literal e Anti-Papagaio de Coaching do Desenvolvedor (Mensagem Real do Miller)", () => {
+  const realMillerMsg = "sou Miller, estou testando. meu Check-out é hoje, você não deveria ter mandado link de check in...";
+
+  // 1. Classificação
+  const devCheck = classifyDeveloperMessage(realMillerMsg);
+  assert.equal(devCheck.type, "factual_coaching");
+  assert.equal(devCheck.guideline.category, "checkout");
+
+  // 2. Anti-papagaio na regra sintetizada
+  assert.ok(!devCheck.guideline.text.includes("sou Miller"), "Regra NUNCA deve conter 'sou Miller'");
+  assert.ok(!devCheck.guideline.text.includes("estou testando"), "Regra NUNCA deve conter 'estou testando'");
+  assert.ok(!devCheck.guideline.text.includes("você não deveria"), "Regra NUNCA deve conter tom de bronca informal");
+  assert.ok(devCheck.guideline.text.includes("check-out") || devCheck.guideline.text.includes("checkout"), "Regra deve abordar check-out");
+  assert.ok(devCheck.guideline.text.includes("pré-check-in") || devCheck.guideline.text.includes("check in") || devCheck.guideline.text.includes("check-in"), "Regra deve orientar sobre pré-check-in");
+
+  // 3. Confirmação gerada para o desenvolvedor
+  const confirmation = formatDeveloperCoachingConfirmation({
+    newGuideline: devCheck.guideline
+  });
+  assert.ok(confirmation.includes("Entendido perfeitamente, Miller!"), "Confirmação deve ser cordial");
+  assert.ok(!confirmation.includes("Estou testando"), "Confirmação NUNCA deve papagaiar 'Estou testando'");
+  assert.ok(!confirmation.includes("sou Miller"), "Confirmação NUNCA deve papagaiar 'sou Miller'");
+  assert.ok(!confirmation.includes("Conforme nossa política atualizada: Estou testando"), "Zero papagaio de política com teste");
+  assert.ok(confirmation.includes("Como responderei aos hóspedes:"), "Deve exibir amostra de resposta ao hóspede");
+  assert.ok(confirmation.includes("12:00h"), "Amostra deve citar horário limite de check-out até às 12:00h");
+  assert.ok(confirmation.includes("estender sua estadia") || confirmation.includes("late check-out"), "Amostra deve oferecer extensão/late checkout");
+});
+
+// ── 9. Lógica Temporal de Reserva: Checkout Hoje vs Em Estadia vs Checkin Hoje ─
+test("R9: Lógica Temporal de Reserva: Checkout Hoje x Em Estadia x Checkin Hoje (Zero Pré-Checkin no Checkout)", () => {
+  const db = {
+    settings: { baseUrl: "https://corpflats.onrender.com" },
+    reservations: [
+      {
+        id: "res-116",
+        code: "RES-116-0404",
+        guestName: "Miller",
+        guestPhone: "5522998505276",
+        flatNumber: "116",
+        checkinDate: "2026-10-11",
+        checkoutDate: "2026-10-13",
+        status: "confirmada",
+        paymentStatus: "pago_total"
+      }
+    ],
+    flats: [{ id: "f116", number: "116", status: "clean" }]
+  };
+
+  // 1. Simula 'hoje' sendo 13/10/2026 (dia do check-out)
+  const todayCheckoutDate = new Date("2026-10-13T10:00:00-03:00");
+  const ctxCheckout = buildGuestContext({
+    cleanPhone: "5522998505276",
+    db,
+    now: todayCheckoutDate
+  });
+
+  assert.equal(ctxCheckout.stayStatus, "checkout_hoje");
+  assert.equal(ctxCheckout.isCheckoutDay, true);
+  assert.equal(ctxCheckout.isHosted, true);
+  assert.equal(ctxCheckout.isCheckinRelevant, false);
+  assert.equal(ctxCheckout.checkinUrl, null, "checkinUrl DEVE ser nulo para quem tem checkout hoje");
+  assert.ok(ctxCheckout.checkoutUrl.includes("/checkout/RES-116-0404"));
+
+  // Resposta heurística para a dúvida exata do print: "Queira saber sobre minha reserva, estou hospedado"
+  const guestQuery = "Queira saber sobre minha reserva, estou hospedado";
+  const respCheckout = generateHeuristicResponse(
+    guestQuery,
+    ctxCheckout,
+    DEFAULT_AI_CONFIG,
+    [],
+    db
+  );
+
+  assert.ok(respCheckout.includes("116"), "Deve confirmar flat 116");
+  assert.ok(respCheckout.includes("12:00h"), "Deve alertar sobre horário limite de saída até as 12:00h");
+  assert.ok(!respCheckout.includes("Pré-Check-in Digital"), "NUNCA deve enviar link de pré-check-in para checkout hoje");
+  assert.ok(!respCheckout.includes("/pre-checkin/"), "NUNCA deve conter URL de pre-checkin");
+  assert.ok(respCheckout.includes("prorrogação") || respCheckout.includes("late check-out"), "Deve perguntar sobre prorrogação ou desocupação");
+  assert.ok(respCheckout.includes("/checkout/RES-116-0404"), "Deve conter link para confirmação de checkout");
+
+  // 2. Simula 'hoje' sendo 12/10/2026 (em estadia, saída amanhã)
+  const todayInStayDate = new Date("2026-10-12T10:00:00-03:00");
+  const ctxInStay = buildGuestContext({
+    cleanPhone: "5522998505276",
+    db,
+    now: todayInStayDate
+  });
+
+  assert.equal(ctxInStay.stayStatus, "em_estadia");
+  assert.equal(ctxInStay.isCheckoutDay, false);
+  assert.equal(ctxInStay.isHosted, true);
+  assert.equal(ctxInStay.isCheckinRelevant, false);
+  assert.equal(ctxInStay.checkinUrl, null, "checkinUrl DEVE ser nulo em estadia");
+
+  const respInStay = generateHeuristicResponse(
+    "estou hospedado, queria informações da minha reserva",
+    ctxInStay,
+    DEFAULT_AI_CONFIG,
+    [],
+    db
+  );
+  assert.ok(respInStay.includes("116"), "Deve confirmar flat 116");
+  assert.ok(!respInStay.includes("Pré-Check-in Digital"), "NUNCA deve enviar pré-check-in para hóspede já acomodado");
+  assert.ok(!respInStay.includes("/pre-checkin/"));
+  assert.ok(respInStay.includes("acomodado") || respInStay.includes("estadia"));
+
+  // 3. Simula 'hoje' sendo 11/10/2026 (dia de check-in) -> DEVE conter pré-check-in
+  const todayCheckinDate = new Date("2026-10-11T10:00:00-03:00");
+  const ctxCheckin = buildGuestContext({
+    cleanPhone: "5522998505276",
+    db,
+    now: todayCheckinDate
+  });
+
+  assert.equal(ctxCheckin.stayStatus, "checkin_hoje");
+  assert.equal(ctxCheckin.isCheckinRelevant, true);
+  assert.ok(ctxCheckin.checkinUrl != null, "checkinUrl DEVE existir no dia de check-in");
+
+  const respCheckin = generateHeuristicResponse(
+    "minha reserva tá confirmada?",
+    ctxCheckin,
+    DEFAULT_AI_CONFIG,
+    [],
+    db
+  );
+  assert.ok(respCheckin.includes("Pré-Check-in Digital"), "Check-in hoje deve enviar pré-check-in digital");
+  assert.ok(respCheckin.includes("14:00h"), "Deve citar entrada a partir das 14:00h");
+});
+
+// ── 10. Tool Execution handleGetReservationDetails com Lógica Temporal ────────
+test("R10: Tool Execution handleGetReservationDetails com Lógica Temporal", () => {
+  const db = {
+    settings: { baseUrl: "https://corpflats.onrender.com" },
+    reservations: [
+      {
+        id: "res-out",
+        code: "RES-OUT-101",
+        guestName: "Miller",
+        guestPhone: "5522998505276",
+        flatNumber: "101",
+        checkinDate: "2026-10-10",
+        checkoutDate: "2026-10-13",
+        status: "confirmada"
+      }
+    ]
+  };
+
+  const details = handleGetReservationDetails(db, { code: "RES-OUT-101" });
+  assert.equal(details.success, true);
+  assert.ok(details.reservation);
+  assert.equal(typeof details.reservation.isCheckinRelevant, "boolean");
+  assert.equal(typeof details.reservation.isCheckoutDay, "boolean");
+  assert.equal(typeof details.reservation.isHosted, "boolean");
+  assert.ok(details.reservation.checkoutUrl);
+});
+
 
 

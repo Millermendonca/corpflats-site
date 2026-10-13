@@ -72,6 +72,11 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
   * Exemplo: se perguntar sobre horários de saída ou check-in, use os dados da reserva dele.
   * Exemplo: se perguntar "minha reserva está confirmada?", confirme com o número do flat e datas. Se não encontrar reserva para o número, informe com gentileza e peça o nome ou código.
   * Exemplo: se não tiver reserva e perguntar sobre diárias ou flats, apresente as opções da CorpFlats com entusiasmo.
+- LÓGICA TEMPORAL DE RESERVA E PRÉ-CHECK-IN DIGITAL:
+  * HÓSPEDE COM CHECK-OUT HOJE (checkout_hoje) OU JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in! Ele já fez check-in há dias e já está no flat.
+  * Para CHECK-OUT HOJE: confirme a reserva, informe que hoje é o dia de check-out (horário limite de desocupação até as 12:00h), oriente sobre os procedimentos de saída, pergunte gentilmente se deseja prorrogar a estadia (solicitar late check-out mediante disponibilidade) ou verifique se já desocupou o flat. Se aplicável, forneça o link de confirmação de check-out.
+  * Para EM ESTADIA: informe que ele está acomodado no flat com saída prevista até a data de check-out (até as 12:00h), sem pré-check-in, e ofereça suporte para a estadia em andamento.
+  * Para CHECK-IN HOJE ou RESERVA FUTURA: forneça as informações de chegada e o link de Pré-Check-in Digital para agilizar a liberação com a portaria 24h.
 5. Cotações, Tarifas e Valores de Diárias (Distinção entre Preço e Logística de Café):
 - Quando o hóspede ou cliente perguntar sobre preço, diárias, quanto custa, quanto tá, valores ou cotação (ex: "quanto tá a diária? 1 pessoa com café", "qual o valor da diária com café?", "quanto custa a diária?"):
   * Trate isso ESTRITAMENTE como consulta de COTAÇÃO/TARIFA, NUNCA como uma dúvida operacional sobre entrega de bandeja de café!
@@ -236,9 +241,18 @@ export function getBrasiliaDateParts(d = new Date()) {
 /**
  * Constrói o contexto em tempo real do hóspede consultando reservas, flats e governança
  */
-export function buildGuestContext(db, phone) {
+export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
+  let db = dbOrOptions;
+  let phone = phoneArg;
+  let now = nowArg || new Date();
+
+  if (dbOrOptions && typeof dbOrOptions === "object" && ("db" in dbOrOptions || "cleanPhone" in dbOrOptions || "phone" in dbOrOptions)) {
+    db = dbOrOptions.db || null;
+    phone = dbOrOptions.cleanPhone || dbOrOptions.phone || null;
+    if (dbOrOptions.now) now = dbOrOptions.now;
+  }
+
   const cleanPhone = normalizePhone(phone);
-  const now = new Date();
   const { todayStr, timeStr } = getBrasiliaDateParts(now);
 
   let matchedReservation = null;
@@ -334,7 +348,12 @@ export function buildGuestContext(db, phone) {
   }
 
   const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
-  const checkinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, 1, appOrigin, db) : null;
+  const rawCheckinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, 1, appOrigin, db) : null;
+  const isCheckinRelevant = stayStatus === "checkin_hoje" || stayStatus === "reserva_futura";
+  const isCheckoutDay = stayStatus === "checkout_hoje";
+  const isHosted = stayStatus === "em_estadia" || isCheckoutDay;
+  const checkoutUrl = matchedReservation ? `${appOrigin}/checkout/${matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`}` : null;
+  const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
   return {
     todayStr,
@@ -343,6 +362,11 @@ export function buildGuestContext(db, phone) {
     guestName,
     hasReservation: Boolean(matchedReservation && matchedReservation.status !== "cancelada" && matchedReservation.status !== "cancelled" && stayStatus !== "estadia_passada"),
     checkinUrl,
+    rawCheckinUrl,
+    checkoutUrl,
+    isCheckinRelevant,
+    isCheckoutDay,
+    isHosted,
     reservation: matchedReservation ? {
       code: matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`,
       guestName: matchedReservation.guestName,
@@ -353,7 +377,13 @@ export function buildGuestContext(db, phone) {
       paymentStatus: matchedReservation.paymentStatus,
       channel: matchedReservation.channel,
       totalAmount: matchedReservation.totalAmount,
-      checkinUrl
+      checkinUrl,
+      rawCheckinUrl,
+      checkoutUrl,
+      isCheckinRelevant,
+      isCheckoutDay,
+      isHosted,
+      stayStatus
     } : null,
     stayStatus,
     flatNumber,
@@ -1228,7 +1258,27 @@ export function handleGetReservationDetails(db, args = {}) {
   }
 
   const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
-  const checkinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
+  const rawCheckinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
+
+  const todayStr = getBrasiliaDateParts().todayStr;
+  let stayStatus = "sem_reserva_ativa";
+  if (matched.checkinDate === todayStr) {
+    stayStatus = "checkin_hoje";
+  } else if (matched.checkoutDate === todayStr) {
+    stayStatus = "checkout_hoje";
+  } else if (matched.checkinDate < todayStr && matched.checkoutDate > todayStr) {
+    stayStatus = "em_estadia";
+  } else if (matched.checkinDate > todayStr) {
+    stayStatus = "reserva_futura";
+  } else {
+    stayStatus = "estadia_passada";
+  }
+
+  const isCheckinRelevant = stayStatus === "checkin_hoje" || stayStatus === "reserva_futura";
+  const isCheckoutDay = stayStatus === "checkout_hoje";
+  const isHosted = stayStatus === "em_estadia" || isCheckoutDay;
+  const checkoutUrl = `${appOrigin}/checkout/${matched.code || matched.reservationCode || `RES-${matched.flatNumber}`}`;
+  const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
   return {
     success: true,
@@ -1245,7 +1295,13 @@ export function handleGetReservationDetails(db, args = {}) {
       paymentStatus: matched.paymentStatus,
       channel: matched.channel,
       totalAmount: matched.totalAmount,
-      checkinUrl
+      stayStatus,
+      isCheckinRelevant,
+      isCheckoutDay,
+      isHosted,
+      checkinUrl,
+      rawCheckinUrl,
+      checkoutUrl
     }
   };
 }
@@ -1897,8 +1953,29 @@ const PORTUGUESE_STOP_WORDS = new Set([
  * Sintetiza o texto de coaching do desenvolvedor em uma diretriz profissional
  * sem repetir erros de digitação ou frases informais literais ("Anti-Papagaio")
  */
+export function cleanDeveloperPreamble(rawText) {
+  if (!rawText || typeof rawText !== "string") return "";
+  let cleaned = rawText.trim();
+  let prev = "";
+  while (prev !== cleaned) {
+    prev = cleaned;
+    cleaned = cleaned
+      .replace(/^sofia\s*[,:]\s*/i, "")
+      .replace(/^(?:(?:sou|aqui\s+[eé])\s+(?:o\s+)?(?:miller|desenvolvedor|dev|criador|programador)[.!?,;:]*\s*)+/i, "")
+      .replace(/^(?:(?:estou|apenas|s[oó]|em)\s+test(?:ando|e)[.!?,;:]*\s*)+/i, "")
+      .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;]*\s*/i, "")
+      .trim();
+  }
+  return cleaned;
+}
+
+/**
+ * Sintetiza o texto de coaching do desenvolvedor em uma diretriz profissional
+ * sem repetir erros de digitação ou frases informais literais ("Anti-Papagaio")
+ */
 export function synthesizeGuidelineFromText(rawText, category = "geral") {
-  const text = String(rawText || "").trim();
+  const cleanedText = cleanDeveloperPreamble(rawText);
+  const text = cleanedText || String(rawText || "").trim();
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   // Caso 1: Regra sobre malas / bagagens
@@ -1911,6 +1988,17 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
     return "Adotar postura de escuta ativa: em saudações iniciais (olá, bom dia, etc.), cumprimentar cordialmente e apenas perguntar abertamente como pode ajudar hoje, sem presumir o assunto e sem despejar detalhes da reserva logo de início. O conhecimento sobre o hóspede ou reserva deve ser usado nos bastidores para responder com coerência sob demanda, conforme o que for perguntado.";
   }
 
+  // Caso 2.5: Regra sobre check-out / hóspede hospedado / não mandar pré-check-in em check-out ou estadia
+  const isCheckoutOrInStayCoaching = (
+    /(?:check[- ]?out|sa[ií]da).*?(?:n[aã]o\s+(?:deveria|deve|pode|mande|mandar)|link\s+(?:de\s+)?check[- ]?in|estender|prorroga|late\s+check[- ]?out|12:00|desocup)/i.test(lower) ||
+    /(?:n[aã]o\s+(?:deveria|deve|pode|mande|mandar)\s+(?:ter\s+)?mandad[ao]\s+link\s+(?:de\s+)?check[- ]?in)/i.test(lower) ||
+    /(?:estou\s+hospedad[ao]|j[aá]\s+hospedad[ao]|em\s+estadia).*?(?:check[- ]?out|sa[ií]da|link\s+(?:de\s+)?check[- ]?in)/i.test(lower) ||
+    (category === "checkout" && /(?:check[- ]?in|estender|prorroga|12:00|desocup)/i.test(lower))
+  );
+  if (isCheckoutOrInStayCoaching) {
+    return "Para hóspedes já hospedados ou em dia de check-out, priorizar procedimentos de check-out (horário limite até às 12:00h) e verificar se o hóspede deseja estender a estadia ou se já desocupou o flat, sem envio de link de pré-check-in.";
+  }
+
   // Caso 3: Regra sobre checagem de reserva
   if (/pergu?i?nt.*reserva|verific.*reserva/i.test(lower)) {
     return "Ao ser questionada se tem reserva ou se a reserva está confirmada ('minha reserva está confirmada?'), verificar no sistema se o hóspede possui reserva ativa para data atual ou futura. Se confirmada, apresentar os detalhes do flat, check-in, check-out e link do pré-check-in. Se não localizada pelo número, solicitar o nome completo do titular ou código da reserva com cortesia.";
@@ -1921,7 +2009,7 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
     return "Ao saudar o hóspede, verificar primeiro o status da estadia no sistema: só perguntar sobre 'tornar a estadia mais agradável' se a pessoa já estiver hospedada (em estadia). Se for reserva futura, check-in hoje que ainda não entrou ou sem reserva, adaptar a saudação ao momento exato da chegada.";
   }
 
-  // Caso 2: Regra sobre café com horário específico informado
+  // Caso 4: Regra sobre café com horário específico informado
   if (/caf[eé]|desjejum/i.test(lower)) {
     const timeMatch = text.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)\s*\d{1,2}(?::\d{2})?(?:h)?)\b/i);
     if (timeMatch) {
@@ -1929,20 +2017,32 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
     }
   }
 
-  // Caso 3: Regra sobre check-in / check-out com horário específico
-  if (/check-?in|entrada/i.test(lower)) {
+  // Caso 5: Regra sobre check-in com horário específico
+  if (/check[- ]?in|entrada/i.test(lower) && !/check[- ]?out/i.test(lower)) {
     const timeMatch = text.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)\s*\d{1,2}(?::\d{2})?(?:h)?)\b/i);
     if (timeMatch) {
       return `O horário de check-in é a partir das ${timeMatch[0]}.`;
     }
   }
 
-  // Caso 4: Regra genérica bem sintetizada preservando fatos
+  // Caso 6: Regra sobre check-out com horário específico
+  if (/check[- ]?out|sa[ií]da/i.test(lower)) {
+    const timeMatch = text.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)\s*\d{1,2}(?::\d{2})?(?:h)?)\b/i);
+    if (timeMatch) {
+      return `O horário de check-out é até as ${timeMatch[0]}.`;
+    }
+  }
+
+  // Caso 7: Regra genérica bem sintetizada preservando fatos (anti-papagaio estrito)
   let synthesized = text
     .replace(/^sofia\s*[,:]\s*/i, "")
     .replace(/^(?:(?:sou|aqui\s+[eé])\s+(?:o\s+)?(?:miller|desenvolvedor|dev|criador)[.!?,;:]*\s*)/i, "")
+    .replace(/^(?:(?:estou|apenas|s[oó]|em)\s+test(?:ando|e)[.!?,;:]*\s*)/i, "")
     .replace(/^(?:quando|sempre\s+que|toda\s+vez\s+que|se)\s+(?:algu[eé]m|o\s+h[oó]spede|o\s+cliente|um\s+h[oó]spede|[a-z]+)\s+pergu?i?nt[^,.:;]+(?:voc[eê]\s+deve|favor|deve-se|tem\s+que)\s+/i, "Ao ser questionada sobre este tema: ")
     .replace(/^voc[eê]\s+deve\s+/i, "Sempre ")
+    .replace(/\b(?:estou\s+testando|sou\s+miller|apenas\s+testando)\b[.!?]*\s*/gi, "")
+    .replace(/\bvoc[eê]\s+n[aã]o\s+deveria\s+ter\s+mandad[ao]\b/gi, "não enviar")
+    .replace(/\bvoc[eê]\s+n[aã]o\s+deve\s+mandar\b/gi, "não enviar")
     .trim();
 
   if (synthesized.length > 0) {
@@ -2041,24 +2141,27 @@ export function classifyDeveloperMessage(messageText, db = null) {
     const flatMatch = text.match(/\b(?:flat|apto|apartamento|quarto)\s*(\d{2,4})\b/i);
     const targetFlat = flatMatch ? flatMatch[1] : null;
 
-    let cleanText = text
-      .replace(/^sofia\s*[,:]\s*/i, "")
-      .replace(/^(?:(?:sou|aqui\s+[eé])\s+(?:o\s+)?(?:miller|desenvolvedor|dev|criador)[.!?,;:]*\s*)/i, "")
-      .trim();
+    const cleanText = cleanDeveloperPreamble(text);
 
     let category = "geral";
-    if (/(?:sauda[cç][aã]o|hospedad[ao]|esteja\s+hospedad[ao]|perguntar\s+assim|tornar\s+a\s+estadia|n[aã]o\s+assumir|racioc[ií]nio)/i.test(lower)) category = "saudacao";
+    // Ordem de precedência: checkout deve vir antes de checkin para mensagens como "meu check-out é hoje, não mande link de check-in"
+    if (/(?:check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out)/i.test(lower)) category = "checkout";
+    else if (/(?:sauda[cç][aã]o|hospedad[ao]|esteja\s+hospedad[ao]|perguntar\s+assim|tornar\s+a\s+estadia|n[aã]o\s+assumir|racioc[ií]nio)/i.test(lower)) category = "saudacao";
     else if (/(?:malas?|bagag)/i.test(lower)) category = "malas";
-    else if (/reserva|estadia|check-?in\s+futuro|h[oó]spede\s+com\s+reserva/i.test(lower)) category = "reserva";
+    else if (/reserva|estadia|h[oó]spede\s+com\s+reserva/i.test(lower)) category = "reserva";
     else if (/caf[eé]|desjejum/i.test(lower)) category = "cafe";
-    else if (/check-?in|entrada/i.test(lower)) category = "checkin";
-    else if (/check-?out|sa[ií]da/i.test(lower)) category = "checkout";
+    else if (/check[- ]?in|entrada/i.test(lower)) category = "checkin";
     else if (/wi-?fi|internet|senha/i.test(lower)) category = "wifi";
     else if (/garagem|estacionamento|vaga|carro/i.test(lower)) category = "garagem";
     else if (/pet|cachorro|animal/i.test(lower)) category = "pet";
     else if (targetFlat) category = `flat_${targetFlat}`;
 
     const synthesizedRule = synthesizeGuidelineFromText(cleanText, category);
+    const sampleResponse = generateSampleGuestResponse({
+      category,
+      ruleText: synthesizedRule,
+      targetFlat
+    });
 
     return {
       type: "factual_coaching",
@@ -2066,7 +2169,9 @@ export function classifyDeveloperMessage(messageText, db = null) {
         text: synthesizedRule,
         category,
         targetFlat,
-        rawInput: text
+        rawInput: text,
+        sample: sampleResponse,
+        sampleResponse
       },
       originalText: text
     };
@@ -2077,6 +2182,103 @@ export function classifyDeveloperMessage(messageText, db = null) {
     type: "guest_simulation",
     originalText: text
   };
+}
+
+/**
+ * Gera um exemplo de resposta REALISTA e PROFISSIONAL da Sofia a um hóspede no WhatsApp
+ * sem repetir meta-conversas internas, saudações de teste ou texto do desenvolvedor
+ */
+export function generateSampleGuestResponse({ category = "geral", ruleText = "", targetFlat = null }) {
+  const lowerRule = (ruleText || "").toLowerCase();
+  if (category === "checkout" || (category === "geral" && (lowerRule.includes("check-out") || lowerRule.includes("checkout") || lowerRule.includes("saída") || lowerRule.includes("saida")))) {
+    return "Olá! Lembramos que hoje é o dia do seu check-out, com horário limite até às 12:00h. Deseja estender sua estadia ou solicitar late check-out? Caso já tenha desocupado o flat, basta nos avisar por aqui. Estamos à disposição! 🏨✨";
+  }
+  if (category === "saudacao" || (category === "geral" && (lowerRule.includes("saudar") || lowerRule.includes("saudação") || lowerRule.includes("hospedada")))) {
+    return "Olá! Vi que você tem uma estadia confirmada a partir de 12/10 no Flat 712. Como posso te ajudar na preparação da sua chegada hoje? 🏨✨";
+  }
+  if (category === "reserva" || (category === "geral" && lowerRule.includes("reserva"))) {
+    return "Olá! Sim, sua reserva está confirmada! 🏨✨\n• Flat: 605\n• Entrada: 15/10 a partir das 14:00h\n• Saída: 18/10 até as 12:00h\n• Status: Confirmada\n(Se não houver reserva ativa ou futura vinculada ao número, informo com cortesia e solicito o nome do titular ou código da reserva).";
+  }
+  if (category === "cafe" || (category === "geral" && (lowerRule.includes("café") || lowerRule.includes("cafe")))) {
+    return "Olá! O café da manhã é servido exclusivamente em bandeja personalizada diretamente no seu flat. Qualquer dúvida sobre a escolha dos itens pelo portal, conte conosco! ☕✨";
+  }
+  if (category === "wifi" || (category === "geral" && (lowerRule.includes("wi-fi") || lowerRule.includes("wifi")))) {
+    return "Olá! Cada apartamento conta com rede Wi-Fi individualizada no formato apto {número do flat}, com senha '1234567890123'. Tenha uma excelente conexão! 📶✨";
+  }
+  if (category === "garagem" || (category === "geral" && (lowerRule.includes("garagem") || lowerRule.includes("estacionamento")))) {
+    return "Olá! Dispomos de garagem rotativa gratuita no condomínio. Lembre-se de cadastrar a placa do seu veículo no portal para liberação na portaria! 🚗✨";
+  }
+  if (category === "pet" || (category === "geral" && lowerRule.includes("pet"))) {
+    return "Olá! Aceitamos com carinho cães de até 10kg com taxa adicional por diária. Se precisar de orientações para a hospedagem do seu pet, estou à disposição! 🐾✨";
+  }
+  if (targetFlat) {
+    return `Olá! Sobre o Flat ${targetFlat}: informamos que dispõe de todas as comodidades para sua estadia. Se precisar de algo, conte conosco! 🔑✨`;
+  }
+  return "Olá! Estamos à inteira disposição para apoiar você em sua estadia na CorpFlats. Conte conosco para qualquer dúvida ou solicitação! 🏨✨";
+}
+
+/**
+ * Sintetiza o treinamento do desenvolvedor via IA (Gemini) extraindo a regra abstrata e amostra realista
+ */
+export async function synthesizeDeveloperCoachingWithAi({
+  rawText,
+  category = "geral",
+  targetFlat = null,
+  apiKey,
+  db = null
+}) {
+  if (!apiKey || !rawText) return null;
+
+  const systemInstruction = `Você é o assistente sênior de calibração do sistema hoteleiro CorpFlats no Edifício Soho Residence Service.
+O desenvolvedor ou gestor do sistema (Miller) enviou uma orientação/crítica de treinamento informal pelo WhatsApp:
+"${rawText}"
+
+Sua missão é sintetizar essa instrução de forma conceitual, profissional e não-literal ("Anti-Papagaio"):
+1. "ruleText": Diretriz operacional formal e limpa em terceira pessoa para a base de conhecimento da Sofia (concierge virtual).
+   - NUNCA inclua meta-conversa ou termos de teste (PROIBIDO usar "estou testando", "sou Miller", "você errou", "segundo o teste", etc.).
+   - Deve ser uma diretriz abstrata de alto nível da operação.
+   - Exemplo para checkout: "Para hóspedes já hospedados ou em dia de check-out, priorizar procedimentos de check-out (horário limite até 12:00h) e verificar se o hóspede deseja estender a estadia ou se já desocupou o flat, sem envio de link de pré-check-in."
+2. "sampleResponse": Amostra REALISTA e PRÁTICA de resposta direta da Sofia a um HÓSPEDE no WhatsApp sob essa regra.
+   - Deve ser um atendimento acolhedor e impecável ao hóspede ("Olá! ...").
+   - NUNCA use frases internas ou diga "Conforme nossa política atualizada: Estou testando...".
+3. "category": Categoria da diretriz (ex: "checkout", "checkin", "reserva", "cafe", "saudacao", "garagem", "wifi", "pet", "geral").
+
+Retorne EXCLUSIVAMENTE um objeto JSON no formato:
+{
+  "ruleText": "...",
+  "sampleResponse": "...",
+  "category": "..."
+}`;
+
+  try {
+    const res = await callGeminiAi({
+      apiKey,
+      systemInstruction,
+      prompt: `Sintetize a instrução recebida: "${rawText}"`,
+      db,
+      customPrompt: true
+    });
+
+    if (res?.ok && res?.text) {
+      const jsonMatch = res.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed?.ruleText && parsed?.sampleResponse) {
+          const parrotCheck = /estou testando|sou miller|n[aã]o deveria ter mandado/i;
+          if (!parrotCheck.test(parsed.ruleText) && !parrotCheck.test(parsed.sampleResponse)) {
+            return {
+              ruleText: String(parsed.ruleText).trim(),
+              sampleResponse: String(parsed.sampleResponse).trim(),
+              category: parsed.category || category
+            };
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[synthesizeDeveloperCoachingWithAi] Fallback para sintetizador heurístico:", err.message);
+  }
+  return null;
 }
 
 /**
@@ -2148,11 +2350,14 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
     db.whatsappAiSettings.developerGuidelines = [];
   }
 
+  const sample = guidelineData.sample || guidelineData.sampleResponse || null;
   const newGuideline = {
     id: guidelineData.id || `guideline_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     text: (guidelineData.text || "").trim(),
     category: guidelineData.category || inferFaqCategory(guidelineData.text || "") || "geral",
     targetFlat: guidelineData.targetFlat || null,
+    sample,
+    sampleResponse: sample,
     active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : true,
     createdAt: guidelineData.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -2220,20 +2425,11 @@ export function formatDeveloperCoachingConfirmation({ newGuideline, sampleRespon
     `• *Status:* Ativa com prioridade máxima`
   ];
 
-  let sample = sampleResponse;
-  if (!sample) {
-    if (newGuideline.category === "saudacao" || newGuideline.text.toLowerCase().includes("saudar") || newGuideline.text.toLowerCase().includes("saudação") || newGuideline.text.toLowerCase().includes("hospedada")) {
-      sample = "Olá! Vi que você tem uma estadia confirmada a partir de 12/10 no Flat 712. Como posso te ajudar na preparação da sua chegada hoje? 🏨✨";
-    } else if (newGuideline.category === "reserva" || newGuideline.text.toLowerCase().includes("reserva")) {
-      sample = "Olá! Sim, sua reserva está confirmada! 🏨✨\n• Flat: 605\n• Entrada: 15/10 a partir das 14:00h\n• Saída: 18/10 até as 12:00h\n• Status: Confirmada\n(Se não houver reserva ativa ou futura vinculada ao número, informo com cortesia e solicito o nome do titular ou código da reserva).";
-    } else if (newGuideline.category === "cafe" || newGuideline.text.toLowerCase().includes("café")) {
-      sample = `Olá! ${newGuideline.text} Qualquer dúvida, estamos à disposição! ☕✨`;
-    } else if (newGuideline.targetFlat) {
-      sample = `Olá! Sobre o Flat ${newGuideline.targetFlat}: ${newGuideline.text} Conte conosco! 🔑`;
-    } else {
-      sample = `Olá! Conforme nossa política atualizada: ${newGuideline.text} Estamos à disposição! ✨`;
-    }
-  }
+  const sample = sampleResponse || newGuideline.sampleResponse || newGuideline.sample || generateSampleGuestResponse({
+    category: newGuideline.category,
+    ruleText: newGuideline.text,
+    targetFlat: newGuideline.targetFlat
+  });
 
   return `${intro}\n\n${details.join("\n")}\n\n👉 *Como responderei aos hóspedes:*\n"${sample}"\n\nA diretriz já está ativa e valendo para todos os atendimentos! 🚀`;
 }
@@ -2726,6 +2922,17 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         return ret(`Olá${name}! 🐾 ${petGuideline.text}`);
       }
     }
+
+    // 0.5 Check-out / Saída / Extensão
+    if (/check[- ]?out|sa[ií]da|desocup|estender|prorroga|late\s+check[- ]?out/i.test(text)) {
+      const checkoutGuideline = activeGuidelines.find(g => g.category === "checkout" || (g.text || "").toLowerCase().includes("check-out") || (g.text || "").toLowerCase().includes("checkout"));
+      if (checkoutGuideline) {
+        const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
+        const checkoutUrl = guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
+        const linkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
+        return ret(`Olá${name}! ${checkoutGuideline.text}${linkMsg}`);
+      }
+    }
   }
 
   // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
@@ -2859,7 +3066,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
     /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
     /(?:tenho|tem|existe|possui)\s+(?:alguma\s+)?reserva/i.test(text) ||
-    /(?:verificar|consultar|conferir|confirmar|saber)\s+(?:minha\s+|se\s+tenho\s+|a\s+)?reserva/i.test(text) ||
+    /(?:verificar|consultar|conferir|confirmar|saber)\s+(?:minha\s+|se\s+tenho\s+|a\s+|sobre\s+(?:a\s+|minha\s+)?)?reserva/i.test(text) ||
+    /(?:saber\s+sobre|dados\s+da|informa[cç][oõ]es?\s+da)\s+minha\s+reserva/i.test(text) ||
+    /(?:estou\s+hospedad[ao]|j[aá]\s+estou\s+hospedad[ao])/i.test(text) ||
     /^(?:est[aá]|t[aá])\s+confirmad[ao]\??$/i.test(text)
   );
 
@@ -2869,17 +3078,32 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
       const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
       const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
-      const stayMsg = guestContext.stayStatus === "reserva_futura"
-        ? `Sua estadia está confirmada e programada para início em *${checkinFmt}*!`
-        : (guestContext.stayStatus === "checkin_hoje"
-          ? `O seu check-in é hoje (${checkinFmt}) a partir das 14:00h!`
-          : (guestContext.stayStatus === "em_estadia"
-            ? `Você já está acomodado(a) no *Flat ${flatStr}*!`
-            : `Sua estadia está confirmada!`));
+      const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
+      const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
+      const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
+
+      // 1. Check-out hoje (Hóspede já hospedado, hoje é a data de saída até 12:00h - NUNCA mandar pré-check-in)
+      if (guestContext.stayStatus === "checkout_hoje") {
+        const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
+      }
+
+      // 2. Em estadia (Hóspede já hospedado, saída em data futura - NUNCA mandar pré-check-in)
+      if (guestContext.stayStatus === "em_estadia") {
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
+      }
+
+      // 3. Check-in hoje (Chegada hoje a partir das 14:00h)
+      if (guestContext.stayStatus === "checkin_hoje") {
+        const linkUrl = r.checkinUrl || guestContext.checkinUrl;
+        const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
+      }
+
+      // 4. Reserva futura
       const linkUrl = r.checkinUrl || guestContext.checkinUrl;
       const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-      const paymentStr = r.paymentStatus === "pago_total" ? "Pagamento Quitado" : "Pagamento Pendente";
-      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\n${stayMsg}${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
     } else {
       const displayPhone = clientPhone ? ` (*${formatPhoneDisplay ? formatPhoneDisplay(clientPhone) : clientPhone}*)` : "";
       return ret(`Olá${name}! Não localizei nenhuma reserva ativa ou futura confirmada para este número de WhatsApp${displayPhone} no nosso sistema.\n\nSe a sua reserva foi realizada em outro nome, com outro telefone ou por plataformas como Booking.com ou Airbnb, por favor me informe o seu *nome completo* ou o *código da reserva* para que eu possa verificar com a nossa equipe! 🛎️✨`);
@@ -3291,18 +3515,25 @@ ${formattedFaqs}
 `;
   }
 
+  let stayStatusNotice = guestContext.stayStatus;
+  if (guestContext.stayStatus === "checkout_hoje") {
+    stayStatusNotice = "CHECK-OUT HOJE (Data de saída). ATENÇÃO: Hóspede em dia de saída. Limite de check-out até às 12:00h. NUNCA envie link de pré-check-in digital. Oriente sobre procedimentos de saída e devolução de chaves, pergunte se precisa prorrogar/late check-out ou se já desocupou o flat. Link para confirmação de check-out: " + (guestContext.checkoutUrl || "Não aplicável");
+  } else if (guestContext.stayStatus === "em_estadia") {
+    stayStatusNotice = "EM ESTADIA (Hóspede já acomodado no flat). ATENÇÃO: NUNCA envie link de pré-check-in digital! Preste suporte à estadia em andamento.";
+  }
+
   const contextString = `
 [CONTEXTO EM TEMPO REAL]
 - Data atual: ${guestContext.todayStr} | Horário: ${guestContext.timeStr} (Brasília)
 - Telefone do contato: ${guestContext.phone}
 - Nome do contato: ${guestContext.guestName || "Não identificado ainda (possível novo cliente / lead)"}
-- Status da estadia: ${guestContext.stayStatus}
+- Status da estadia: ${stayStatusNotice}
 - Possui reserva: ${guestContext.hasReservation ? "SIM" : "NÃO"}
 ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber || "A definir"}
 - Período da reserva: ${guestContext.reservation?.checkinDate} até ${guestContext.reservation?.checkoutDate}
 - Status da reserva: ${guestContext.reservation?.status}
-- Link do Pré-Check-in Digital: ${guestContext.checkinUrl || "Não aplicável"}
-- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
+- Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / sem relevância)"}
+${guestContext.isCheckoutDay && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]
 - Endereço: ${aiConfig.knowledgeBase.address}
@@ -3822,14 +4053,40 @@ export async function processAiInboundMessage({
     }
 
     if (devClassification.type === "factual_coaching") {
-      console.log(`[WhatsApp AI Developer Mode] Treinamento Factual recebido de ${cleanTarget}:`, devClassification.guideline);
-      const newGuideline = saveDeveloperGuideline(db, devClassification.guideline);
+      let finalGuideline = devClassification.guideline;
+      const devApiKey = aiConfig?.apiKey || (typeof process !== "undefined" && process.env?.GEMINI_API_KEY) || null;
+      if (devApiKey) {
+        try {
+          const aiSynthesized = await synthesizeDeveloperCoachingWithAi({
+            rawText: incomingInfo.text,
+            category: devClassification.guideline?.category,
+            targetFlat: devClassification.guideline?.targetFlat,
+            apiKey: devApiKey,
+            db
+          });
+          if (aiSynthesized && aiSynthesized.ruleText) {
+            finalGuideline = {
+              ...devClassification.guideline,
+              text: aiSynthesized.ruleText,
+              category: aiSynthesized.category || devClassification.guideline?.category,
+              sample: aiSynthesized.sampleResponse,
+              sampleResponse: aiSynthesized.sampleResponse
+            };
+          }
+        } catch (err) {
+          console.warn("[WhatsApp AI Developer Mode] Erro na síntese via IA, mantendo heurística:", err?.message || err);
+        }
+      }
+
+      console.log(`[WhatsApp AI Developer Mode] Treinamento Factual recebido de ${cleanTarget}:`, finalGuideline);
+      const newGuideline = saveDeveloperGuideline(db, finalGuideline);
       if (typeof saveDatabase === "function") {
         try { saveDatabase("developer_guideline_saved"); } catch (_) {}
       }
 
       const confirmationText = formatDeveloperCoachingConfirmation({
         newGuideline,
+        sampleResponse: newGuideline.sampleResponse || newGuideline.sample,
         db
       });
 
