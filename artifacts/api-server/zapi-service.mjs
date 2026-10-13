@@ -35,7 +35,9 @@ import {
   handleGetPricingInfo,
   handleRecordUnmetDemand,
   analyzeGuestQuery,
-  validateAndRefineResponse
+  validateAndRefineResponse,
+  generateFaqResponseSuggestions,
+  generateIntelligentFaqDraft
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -55,7 +57,9 @@ export {
   handleGetPricingInfo,
   handleRecordUnmetDemand,
   analyzeGuestQuery,
-  validateAndRefineResponse
+  validateAndRefineResponse,
+  generateFaqResponseSuggestions,
+  generateIntelligentFaqDraft
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
@@ -1243,16 +1247,49 @@ export function isFaqApplicableToClient(faqItem, clientPhone) {
   return true;
 }
 
+/**
+ * Identifica se uma mensagem foi gerada automaticamente pela Sofia / Bot / Sistema
+ * para impedir que mensagens automáticas do robô sejam capturadas como sugestão humana do operador.
+ */
+export function isBotMessage(text) {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  // 1. Identificação explícita de Sofia / Concierge Virtual / CorpFlats
+  if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|corpflats\s*🏨|posso\s+te\s+ajudar\s+com\s+informa[cç][oõ]es\s+sobre\s+\*?wi-?fi)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 2. Mensagens automatizadas de registro/espera de FAQ ou demanda
+  if (/\b(?:anotei\s+sua\s+d[uú]vida|como\s+n[aã]o\s+tenho\s+essa\s+informa[cç][aã]o|j[aá]\s+registrei\s+sua\s+pergunta\s+para\s+a\s+equipe|j[aá]\s+registrei\s+o\s+seu\s+pedido\s+no\s+sistema)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 3. Notificações automáticas de transbordo e comandos de coaching
+  if (/\b(?:se\s+preferir\s+falar\s+com\s+um\s+atendente\s+da\s+recep[cç][aã]o|diretriz\s+registrada|aprendizado\s+conclu[ií]do|tom\s+calibrado|comandos?\s+do\s+desenvolvedor)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 4. Frases padrões de boas-vindas / saudação de robô
+  if (/^ol[aá].*?recebi\s+sua\s+mensagem\.\s+sou\s+a\s+sofia/i.test(lower)) {
+    return true;
+  }
+
+  return false;
+}
+
 // ── Captura Automática da Resposta Humana do Operador (Auto-Aprendizado FAQ) ────
 export function linkOperatorResponseToPendingFaq(db, param1, param2) {
   let clientPhone = "";
   let text = "";
   let answeredBy = "operador";
+  let senderName = "";
 
   if (param1 && typeof param1 === "object") {
     clientPhone = param1.clientPhone || param1.phone || "";
     text = param1.text || param1.message || "";
     answeredBy = param1.answeredBy || "operador";
+    senderName = param1.senderName || "";
   } else {
     clientPhone = param1 || "";
     text = param2 || "";
@@ -1261,6 +1298,16 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
   if (!db || !Array.isArray(db.faqItems) || !clientPhone || !text) {
     return null;
   }
+
+  // Se a mensagem foi enviada pelo bot/Sofia ou for identificada como mensagem automática da IA:
+  if (
+    /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(answeredBy).trim()) ||
+    /^(?:sofia|sofia\s+ai|concierge\s+virtual)$/i.test(String(senderName).trim()) ||
+    isBotMessage(text)
+  ) {
+    return null;
+  }
+
   const cleanPhone = cleanWhatsAppPhone(clientPhone);
   if (!cleanPhone) return null;
 
@@ -6027,39 +6074,45 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
       // Se for mensagem enviada pelo operador (fromMe: true) no WhatsApp móvel ou desktop:
       if (incomingInfo.fromMe && !incomingInfo.isGroup && cleanTarget) {
-        // 1. Pausa a IA nesta conversa para assegurar controle humano total
-        const conv = updatedConv || (db.whatsappConversations || []).find(c => matchClientPhone(c.phone, cleanTarget));
-        if (conv) {
-          if (!isDeveloperPhone(cleanTarget, db)) {
-            conv.aiPaused = true;
-            conv.aiPausedAt = incomingInfo.timestamp || new Date().toISOString();
-            conv.aiPausedReason = "operator_manual_reply";
-          } else {
-            conv.isDeveloper = true;
-            conv.aiPaused = false;
-            conv.aiPausedReason = null;
+        const isBot = isBotMessage(incomingInfo.text) ||
+                      /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim());
+
+        if (!isBot) {
+          // 1. Pausa a IA nesta conversa para assegurar controle humano total
+          const conv = updatedConv || (db.whatsappConversations || []).find(c => matchClientPhone(c.phone, cleanTarget));
+          if (conv) {
+            if (!isDeveloperPhone(cleanTarget, db)) {
+              conv.aiPaused = true;
+              conv.aiPausedAt = incomingInfo.timestamp || new Date().toISOString();
+              conv.aiPausedReason = "operator_manual_reply";
+            } else {
+              conv.isDeveloper = true;
+              conv.aiPaused = false;
+              conv.aiPausedReason = null;
+            }
           }
-        }
 
-        // 2. Auto-aprendizado: vincula a resposta do operador se houver pergunta pendente nas últimas 24h
-        if (incomingInfo.text) {
-          const linkedFaq = linkOperatorResponseToPendingFaq(db, {
-            clientPhone: cleanTarget,
-            text: incomingInfo.text,
-            answeredBy: "operador"
-          });
+          // 2. Auto-aprendizado: vincula a resposta do operador se houver pergunta pendente nas últimas 24h
+          if (incomingInfo.text) {
+            const linkedFaq = linkOperatorResponseToPendingFaq(db, {
+              clientPhone: cleanTarget,
+              text: incomingInfo.text,
+              answeredBy: "operador",
+              senderName: incomingInfo.senderName || "operador"
+            });
 
-          if (linkedFaq) {
-            console.log(`[Z-API Webhook fromMe] Resposta do operador vinculada ao FAQ [${linkedFaq.id}] ("${linkedFaq.question.substring(0, 40)}...") -> aguardando aprovação.`);
-            if (typeof createNotification === "function") {
-              createNotification({
-                category: "whatsapp",
-                title: "💡 Sugestão de FAQ Capturada",
-                message: `Resposta do operador para "${linkedFaq.question.substring(0, 60)}" aguardando aprovação no painel de FAQ.`,
-                type: "faq_suggestion",
-                targetUrl: "/whatsapp-automation?tab=faq",
-                link: "/whatsapp-automation?tab=faq"
-              });
+            if (linkedFaq) {
+              console.log(`[Z-API Webhook fromMe] Resposta do operador vinculada ao FAQ [${linkedFaq.id}] ("${linkedFaq.question.substring(0, 40)}...") -> aguardando aprovação.`);
+              if (typeof createNotification === "function") {
+                createNotification({
+                  category: "whatsapp",
+                  title: "💡 Sugestão de FAQ Capturada",
+                  message: `Resposta do operador para "${linkedFaq.question.substring(0, 60)}" aguardando aprovação no painel de FAQ.`,
+                  type: "faq_suggestion",
+                  targetUrl: "/whatsapp-automation?tab=faq",
+                  link: "/whatsapp-automation?tab=faq"
+                });
+              }
             }
           }
         }
@@ -7342,6 +7395,65 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     if (typeof saveDatabase === "function") saveDatabase();
     res.json({ success: true, item });
+  });
+
+  // 11. Refinar / Gerar Sugestões de Respostas com IA (Ad-hoc ou Pré-salvamento)
+  app.post("/api/whatsapp/faq/refine-suggestion", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    try {
+      const { question, currentAnswer, instruction, category } = req.body || {};
+      const result = await generateFaqResponseSuggestions({
+        question: question || "",
+        currentAnswer: currentAnswer || "",
+        instruction: instruction || "",
+        category: category || "estrutura_flat",
+        db,
+        aiConfig: db?.whatsappAiConfig
+      });
+      res.json(result);
+    } catch (err) {
+      console.error("[FAQ Refine Suggestion Error]", err);
+      res.status(500).json({ error: "Falha ao gerar sugestões com IA.", details: err.message });
+    }
+  });
+
+  // 12. Refinar / Gerar Sugestões de Respostas para Item Existente do FAQ
+  app.post("/api/whatsapp/faq/:id/refine-suggestion", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const item = (db.faqItems || []).find(i => i.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item do FAQ não encontrado." });
+    }
+
+    try {
+      const body = req.body || {};
+      const instruction = body.instruction || body.directive || body.prompt || "";
+      const result = await generateFaqResponseSuggestions({
+        question: item.question,
+        currentAnswer: item.suggestedAnswer || item.answer || "",
+        instruction,
+        category: item.category || "estrutura_flat",
+        db,
+        aiConfig: db?.whatsappAiConfig
+      });
+
+      // Se solicitado aplicar automaticamente a sugestão como suggestedAnswer:
+      if (body.applySuggestion !== undefined && result.suggestions && result.suggestions.length > 0) {
+        const selectedIndex = typeof body.applySuggestion === "number" ? body.applySuggestion : 0;
+        const selected = result.suggestions[selectedIndex] || result.suggestions[0];
+        item.suggestedAnswer = selected.text;
+        item.status = "aguardando_aprovacao";
+        item.updatedAt = new Date().toISOString();
+        if (typeof saveDatabase === "function") saveDatabase();
+      }
+
+      res.json({ success: true, item, ...result });
+    } catch (err) {
+      console.error("[FAQ Item Refine Suggestion Error]", err);
+      res.status(500).json({ error: "Falha ao refinar sugestões para o item do FAQ.", details: err.message });
+    }
   });
 
   // Auto-sincronização de webhooks e notifySentByMe na inicialização

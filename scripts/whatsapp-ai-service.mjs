@@ -2028,8 +2028,8 @@ export function classifyDeveloperMessage(messageText, db = null) {
     /\b(?:t[aá]\s+errad[ao]|est[aá]\s+errad[ao]|t[aá]\s+burra|est[aá]\s+burra|falhando|melhor(?:e|ar)\s+(?:a\s+resposta|isso)|corrij?a|aprenda\s+a)\b/i.test(lower) ||
     /\b(?:por\s+que\s+voc[eê]\s+(?:disse|falou|perguntou|respondeu))\b/i.test(lower) ||
     // Instruções condicionais de atendimento ("quando alguém...", "se o hóspede...")
-    /\b(?:quando|sempre\s+que|toda\s+vez\s+que)\s+(?:algu[eé]m|o\s+h[oó]spede|o\s+cliente|um\s+h[oó]spede|[a-z]+)\s+.*?\bpergu?i?nt/i.test(lower) ||
-    /\b(?:quando|sempre\s+que|toda\s+vez\s+que)\s+pergu?i?nt/i.test(lower) ||
+    /\b(?:quando|sempre\s+que|toda\s+vez\s+que)\s+(?:algu[eé]m|o\s+h[oó]spede|o\s+cliente|um\s+h[oó]spede|[a-z]+)\s+.*?\bper(?:g|gi|gui)u?nt/i.test(lower) ||
+    /\b(?:quando|sempre\s+que|toda\s+vez\s+que)\s+.*?\bper(?:g|gi|gui)u?nt/i.test(lower) ||
     /\b(?:voc[eê]\s+(?:deve|precisa|tem\s+que)|sempre\s+verifique|favor\s+verificar|verifique\s+se|n[aã]o\s+(?:responda|diga|fale|mande)|responda\s+que|oriente\s+que)\b/i.test(lower) ||
     /\b(informa[cç][aã]o\s+correta|o\s+correto\s+[eé]|nova\s+regra|regra\s+(?:geral|[eé])|aprenda\s+que|anote\s+(?:a[ií]|isso)|grave\s+que|lembre\s+que|hor[aá]rio\s+mudou|mudou\s+para|n[aã]o\s+diga\s+que|nunca\s+diga\s+que|n[aã]o\s+informe\s+que|retifique|corre[cç][aã]o:)\b/i.test(lower) ||
     // Sofia sendo chamada com diretriz ou correção
@@ -2606,14 +2606,19 @@ export function validateAndRefineResponse({
         createNotification
       });
 
-      autoCreatePendingFaq({
-        db,
-        questionText: queryText,
-        senderPhone: guestContext?.phone,
-        senderName: guestContext?.guestName || "Hóspede",
-        saveDatabase,
-        createNotification
-      });
+      const isDevCaller = isDeveloperPhone(guestContext?.phone, db) ||
+        (classifyDeveloperMessage(queryText, db).type !== "guest_simulation");
+
+      if (!isDevCaller) {
+        autoCreatePendingFaq({
+          db,
+          questionText: queryText,
+          senderPhone: guestContext?.phone,
+          senderName: guestContext?.guestName || "Hóspede",
+          saveDatabase,
+          createNotification
+        });
+      }
     }
 
     if (isGenericFallback) {
@@ -3415,6 +3420,9 @@ export function isPotentialGuestQuestion(text) {
   if (/^(ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá] bom|blz|agrade[cç]o|sim|n[aã]o|positivo)[?!.\s]*$/i.test(lower)) return false;
   if (/^(?:quero|preciso|gostaria)?\s*(?:de\s+)?(?:falar\s+com\s+)?(?:um\s+|uma\s+)?(?:humano|atendente|pessoa|algu[eé]m|recep[cç][aã]o|recepcionista|gerente|operador)(?:\s+urgente)?[?!.\s]*$/i.test(lower)) return false;
 
+  // Descartar comandos do desenvolvedor, coaching, correções ou feedbacks
+  if (/\b(?:sou\s+(?:o\s+)?miller|aqui\s+[eé]\s+(?:o\s+)?miller|sofia\s*[,:]|quando\s+(?:algu[eé]m|o\s+h[oó]spede|um\s+h[oó]spede|[a-z]+)\s+.*?\bper|n[aã]o\s+deve|n[aã]o\s+pode|n[aã]o\s+pergunte|n[aã]o\s+diga|voc[eê]\s+deve|voc[eê]\s+verificou|est[aá]\s+errad[ao]|aprenda\s+a|corrij[ao]|tom\s+calibrado)\b/i.test(lower)) return false;
+
   // Interrogação explícita
   if (t.includes("?")) return true;
 
@@ -3533,6 +3541,60 @@ export function findExistingPendingFaq(text, db, clientPhone) {
   }) || null;
 }
 
+export function generateIntelligentFaqDraft(questionText, db = null, category = "estrutura_flat") {
+  if (!questionText || typeof questionText !== "string") return "";
+  const lower = questionText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Micro-ondas / Cozinha / Eletrodomésticos
+  if (/micro[- ]?ondas/i.test(lower)) {
+    return "Sim! Todos os nossos flats dispõem de cozinha compacta equipada com micro-ondas, frigobar e utensílios completos para sua total comodidade. 🍽️⚡";
+  }
+  if (/frigobar|geladeira/i.test(lower)) {
+    return "Sim! Todos os flats contam com frigobar privativo limpo e ligado para uso particular dos hóspedes. 🧊";
+  }
+  if (/cafeteira/i.test(lower)) {
+    return "Sim! Nossos flats dispõem de cozinha compacta equipada com cafeteira para seu conforto. ☕";
+  }
+  if (/cooktop|fog[aã]o|panela|cozinha/i.test(lower)) {
+    return "Sim! Nossos flats possuem cozinha compacta equipada com cooktop, micro-ondas, frigobar e utensílios essenciais para refeições práticas. 🍳";
+  }
+  if (/ferro|passar|t[aá]bua/i.test(lower)) {
+    return "Sim! Disponibilizamos ferro de passar roupa nos flats para seu uso (sem tábua de passar). 👔✨";
+  }
+  if (/voltagem|110|220|tomada/i.test(lower)) {
+    return "A voltagem padrão em todos os nossos flats é 127V (110V), com tomadas no padrão ABNT. 🔌⚡";
+  }
+  if (/secador(?:\s+de\s+cabelo)?/i.test(lower)) {
+    return "Sim! Os banheiros dos flats contam com secador de cabelo e ducha higiênica para seu conforto. 🚿";
+  }
+  if (/ar[- ]?condicionado|split|climatiza/i.test(lower)) {
+    return "Sim! Todos os flats possuem ar-condicionado Split potente e controle individual. ❄️";
+  }
+  if (/cafe(?:\s+da\s+manha)?|desjejum/i.test(lower)) {
+    return "Nosso delicioso café da manhã é servido em bandeja diretamente no seu quarto das 05:00 às 09:30, agendado previamente pelo portal do hóspede. ☕🥐";
+  }
+  if (/wi[- ]?fi|internet|senha(?:\s+do\s+wi-?fi)?/i.test(lower)) {
+    return "O Wi-Fi é individual e de alta velocidade em cada flat! O nome da rede é o número do seu apartamento e a senha padrão é 1234567890123. 📶";
+  }
+  if (/piscina|jacuzzi|cobertura|lazer/i.test(lower)) {
+    return "A área de lazer na cobertura (com piscina/jacuzzi aquecida e academia) funciona diariamente das 06:00 às 22:00 exclusivamente para hóspedes. 🏊‍♂️✨";
+  }
+  if (/pet|cachorro|animal|gato/i.test(lower)) {
+    return "Sim! Aceitamos pets de pequeno porte com todo carinho (máximo 1 pet por flat, mediante taxa única). 🐾✨";
+  }
+  if (/garagem|estacionamento|vaga/i.test(lower)) {
+    return "Dispomos de vaga de garagem coberta gratuita (rotativa) para 1 veículo de passeio por flat no condomínio Soho! 🚗";
+  }
+  if (/check[- ]?in|horario\s+de\s+entrada|horario\s+de\s+chegada/i.test(lower)) {
+    return "O horário de check-in inicia a partir das 14:00. Caso chegue antes, faremos o possível para liberar o flat conforme a disponibilidade. 🕒🛎️";
+  }
+  if (/check[- ]?out|horario\s+de\s+saida/i.test(lower)) {
+    return "O check-out deve ser realizado até as 12:00. Basta deixar os cartões-chave na recepção/portaria ao sair. 🕛👋";
+  }
+
+  return "";
+}
+
 export function autoCreatePendingFaq({
   db,
   questionText,
@@ -3548,6 +3610,21 @@ export function autoCreatePendingFaq({
   if (!text) return null;
 
   const cleanPhone = cleanWhatsAppPhone(senderPhone) || String(senderPhone || "").replace(/\D/g, "");
+
+  // 1. Mensagens de desenvolvedores ou comandos de coaching NUNCA devem virar FAQ
+  if (isDeveloperPhone(cleanPhone, db)) {
+    return null;
+  }
+
+  const devCheck = classifyDeveloperMessage(text, db);
+  if (devCheck && devCheck.type !== "guest_simulation") {
+    return null;
+  }
+
+  const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/\b(?:sou\s+(?:o\s+)?miller|aqui\s+[eé]\s+(?:o\s+)?miller|sofia\s*[,:]|quando\s+.*?\bper|n[aã]o\s+deve|n[aã]o\s+pode|voc[eê]\s+deve|voc[eê]\s+verificou|est[aá]\s+errad[ao]|aprenda\s+a)\b/i.test(lower)) {
+    return null;
+  }
 
   const existing = findExistingPendingFaq(text, db, cleanPhone);
   if (existing) {
@@ -3570,6 +3647,8 @@ export function autoCreatePendingFaq({
   const keywords = extractFaqKeywords(text);
   const randomSuffix = Math.random().toString(36).substring(2, 7);
 
+  const intelligentDraft = generateIntelligentFaqDraft(text, db, category);
+
   const newFaq = {
     id: `faq_${Date.now()}_${randomSuffix}`,
     question: text,
@@ -3577,7 +3656,8 @@ export function autoCreatePendingFaq({
     category,
     keywords,
     variations: [text],
-    status: "pendente",
+    status: intelligentDraft ? "aguardando_aprovacao" : "pendente",
+    suggestedAnswer: intelligentDraft || undefined,
     source: "auto_aprendizado",
     scope: "all",
     clientPhones: cleanPhone ? [cleanPhone] : [],
@@ -3602,16 +3682,18 @@ export function autoCreatePendingFaq({
     try {
       createNotification({
         category: "whatsapp",
-        title: `❓ Nova Dúvida Hóspede: ${senderName || cleanPhone}`,
-        message: `Pergunta não mapeada recebida: "${text.substring(0, 100)}". Registrada como pendente no FAQ.`,
-        type: "whatsapp_faq_pending",
+        title: intelligentDraft ? `💡 Nova Sugestão de FAQ: ${senderName || cleanPhone}` : `❓ Nova Dúvida Hóspede: ${senderName || cleanPhone}`,
+        message: intelligentDraft 
+          ? `Pergunta identificada com rascunho de resposta sugerido: "${text.substring(0, 80)}". Aguardando aprovação.`
+          : `Pergunta não mapeada recebida: "${text.substring(0, 100)}". Registrada como pendente no FAQ.`,
+        type: intelligentDraft ? "faq_suggestion" : "whatsapp_faq_pending",
         targetUrl: "/whatsapp-automation",
         link: "/whatsapp-automation"
       });
     } catch (_) {}
   }
 
-  console.log(`[Auto-Aprendizado FAQ] Nova dúvida não mapeada registrada como pendente: "${text}" (${cleanPhone})`);
+  console.log(`[Auto-Aprendizado FAQ] Nova dúvida ${intelligentDraft ? "com sugestão inteligente" : "pendente"}: "${text}" (${cleanPhone})`);
 
   return newFaq;
 }
@@ -3816,7 +3898,7 @@ export async function processAiInboundMessage({
   const needsHandoverOrFallback = Boolean(aiResult.shouldHandover || aiResult.requiresHandover || isFallback);
 
   let unmappedFaq = null;
-  if (isQuestion && !isMapped && needsHandoverOrFallback) {
+  if (isQuestion && !isMapped && needsHandoverOrFallback && !isDev) {
     unmappedFaq = autoCreatePendingFaq({
       db,
       questionText: incomingInfo.text,
@@ -3951,3 +4033,127 @@ export async function processAiInboundMessage({
     unmetDemand
   };
 }
+
+/**
+ * Refinamento e Regeneração de Sugestões de Respostas de FAQ com IA
+ * Permite ao operador indicar qual a resposta correta ou o que deseja mudar,
+ * gerando 3 opções contextualizadas e formatadas para WhatsApp.
+ */
+export async function generateFaqResponseSuggestions({
+  question = "",
+  currentAnswer = "",
+  instruction = "",
+  category = "estrutura_flat",
+  db = null,
+  aiConfig = null
+}) {
+  const cfg = aiConfig || getWhatsAppAiConfig(db);
+  const kb = cfg.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
+  const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+
+  const cleanInstruction = String(instruction || "").trim();
+  const cleanQuestion = String(question || "").trim();
+
+  // 1. Se houver chave Gemini, tenta gerar alternativas via LLM
+  if (apiKey) {
+    try {
+      const systemInstruction = `Você é o redator oficial do FAQ e das respostas da Sofia (Concierge Virtual da CorpFlats Hotéis).
+Seu objetivo é gerar opções de respostas profissionais, corretas e acolhedoras para WhatsApp com base na orientação do operador.
+
+[DADOS DO HOTEL CORPFLATS]:
+- Endereço: ${kb.address}
+- Check-in: ${kb.checkinTime} | Check-out: ${kb.checkoutTime}
+- Wi-Fi: Individual por flat (apto {número}), senha ${kb.wifiPassword}
+- Estrutura e Comodidades: ${kb.amenities}
+- Café da manhã: ${kb.breakfastInfo}
+- Garagem: ${kb.garageInfo}
+- Pets: ${kb.petPolicy}
+- Lazer: ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura 06h às 22h"}
+
+[REGRAS DE FORMATAÇÃO WHATSAPP]:
+- Use *negrito* para termos-chave e horários.
+- Use emojis elegantes e moderados (ex: ✨, 🏨, 🛎️, ☕, 🚗).
+- Não use markdown complexo como tabelas ou títulos (#); apenas formatação nativa de WhatsApp.
+- Gere EXATAMENTE 3 opções com propostas de tom distintas:
+  1. "Direta & Objetiva" (1 a 2 frases concisas, ideal para quem quer rapidez)
+  2. "Completa & Acolhedora" (mais calorosa, trazendo detalhes úteis e acolhimento)
+  3. "Executiva & Formal" (tom profissional e corporativo)`;
+
+      const prompt = `[PERGUNTA DO HÓSPEDE]:
+"${cleanQuestion}"
+
+[RESPOSTA ANTERIOR / SUGERIDA]:
+"${currentAnswer || "Nenhuma"}"
+
+[ORIENTAÇÃO DO OPERADOR / O QUE DEVE SER DITO OU MUDADO]:
+"${cleanInstruction}"
+
+Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
+{
+  "suggestions": [
+    { "id": "opt_1", "label": "Direta & Objetiva", "text": "..." },
+    { "id": "opt_2", "label": "Completa & Acolhedora", "text": "..." },
+    { "id": "opt_3", "label": "Executiva & Formal", "text": "..." }
+  ]
+}`;
+
+      const res = await callGeminiAi({
+        apiKey,
+        systemInstruction,
+        prompt,
+        db
+      });
+
+      if (res?.ok && res?.text) {
+        const jsonMatch = res.text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0) {
+            return {
+              success: true,
+              source: "gemini",
+              suggestions: parsed.suggestions.map((s, idx) => ({
+                id: s.id || `opt_${idx + 1}`,
+                label: s.label || (idx === 0 ? "Direta & Objetiva" : (idx === 1 ? "Completa & Acolhedora" : "Executiva & Formal")),
+                text: String(s.text || "").trim()
+              }))
+            };
+          }
+        }
+      }
+    } catch (llmErr) {
+      console.warn("[FAQ Suggestion Refinement] Gemini falhou ou indisponível, gerando via motor heurístico inteligente:", llmErr.message);
+    }
+  }
+
+  // 2. Motor Heurístico Contextual Inteligente (Geração garantida 100% offline / resiliente)
+  let coreDirective = cleanInstruction
+    .replace(/^(?:dizer\s+que|informar\s+que|explicar\s+que|falar\s+que|responder\s+que)\s+/i, "")
+    .replace(/^(?:diga\s+que|informe\s+que|explique\s+que|fale\s+que|responda\s+que)\s+/i, "")
+    .replace(/^(?:sim,?\s*|n[aã]o,?\s*)/i, "")
+    .trim();
+
+  if (!coreDirective) {
+    coreDirective = generateIntelligentFaqDraft(cleanQuestion, db, category) || "nossos flats dispõem de acomodação executiva completa com total conforto";
+    coreDirective = coreDirective.replace(/^Sim!\s*/i, "").trim();
+  }
+
+  // Normalização de capitalização
+  coreDirective = coreDirective.charAt(0).toLowerCase() + coreDirective.slice(1);
+  coreDirective = coreDirective.replace(/[.!?]+$/, "");
+
+  const opt1 = `Olá! ✨ Sim, ${coreDirective}. Qualquer dúvida, estamos à total disposição! 🏨`;
+  const opt2 = `Olá! ✨ Sim, ${coreDirective}. Todos os flats da CorpFlats contam com estrutura pensada no seu conforto e praticidade. Se precisar de qualquer suporte, basta me avisar por aqui! 😊`;
+  const opt3 = `Olá! Confirmamos que ${coreDirective}. Permanecemos à inteira disposição para o que você necessitar durante sua hospedagem. 🛎️`;
+
+  return {
+    success: true,
+    source: "heuristic_smart_generator",
+    suggestions: [
+      { id: "opt_1", label: "Direta & Objetiva", text: opt1 },
+      { id: "opt_2", label: "Completa & Acolhedora", text: opt2 },
+      { id: "opt_3", label: "Executiva & Formal", text: opt3 }
+    ]
+  };
+}
+

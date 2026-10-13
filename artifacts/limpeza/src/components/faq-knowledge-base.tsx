@@ -6,7 +6,8 @@ import {
   FaqStatus, 
   FaqScope, 
   FAQ_CATEGORIES, 
-  formatDisplayPhone 
+  formatDisplayPhone,
+  FaqSuggestionOption
 } from "@/hooks/use-faq"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -62,7 +63,11 @@ import {
   LayoutGrid, 
   List, 
   X, 
-  CheckCircle2
+  CheckCircle2,
+  Wand2,
+  Copy,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
 
 // Mapeamento dinâmico de ícones Lucide
@@ -100,6 +105,7 @@ export function FaqKnowledgeBase() {
     deleteFaq,
     approveFaq,
     toggleStatus,
+    refineSuggestion,
     resetFilters
   } = useFaq()
 
@@ -123,6 +129,64 @@ export function FaqKnowledgeBase() {
   // Estado do Dialog de Exclusão
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [itemToDelete, setItemToDelete] = useState<FaqItem | null>(null)
+
+  // Estados do Assistente de Refinamento com IA
+  const [refiningItemId, setRefiningItemId] = useState<string | null>(null)
+  const [cardDirective, setCardDirective] = useState("")
+  const [cardAiLoading, setCardAiLoading] = useState(false)
+  const [cardSuggestions, setCardSuggestions] = useState<Record<string, FaqSuggestionOption[]>>({})
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  // Assistente de IA no Modal
+  const [modalAiOpen, setModalAiOpen] = useState(false)
+  const [modalDirective, setModalDirective] = useState("")
+  const [modalAiLoading, setModalAiLoading] = useState(false)
+  const [modalSuggestions, setModalSuggestions] = useState<FaqSuggestionOption[]>([])
+
+  const handleRefineForCard = async (item: FaqItem) => {
+    setCardAiLoading(true)
+    try {
+      const res = await refineSuggestion({
+        id: item.id,
+        question: item.question,
+        currentAnswer: item.suggestedAnswer || item.answer || "",
+        instruction: cardDirective,
+        category: item.category
+      })
+      if (res?.suggestions) {
+        setCardSuggestions(prev => ({
+          ...prev,
+          [item.id]: res.suggestions
+        }))
+      }
+    } finally {
+      setCardAiLoading(false)
+    }
+  }
+
+  const handleRefineForModal = async () => {
+    setModalAiLoading(true)
+    try {
+      const res = await refineSuggestion({
+        id: editingItem?.id,
+        question: formQuestion,
+        currentAnswer: formAnswer,
+        instruction: modalDirective,
+        category: formCategory
+      })
+      if (res?.suggestions) {
+        setModalSuggestions(res.suggestions)
+      }
+    } finally {
+      setModalAiLoading(false)
+    }
+  }
+
+  const handleCopyText = (text: string, id: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
 
   // Abrir Modal de Criação
   const handleOpenCreate = (preselectedCategory?: FaqCategory) => {
@@ -715,6 +779,121 @@ export function FaqKnowledgeBase() {
                     </div>
                   )}
 
+                  {/* Botão para alternar Painel de Refinamento / Novas Sugestões com IA */}
+                  <div className="pt-0.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (refiningItemId === item.id) {
+                          setRefiningItemId(null)
+                        } else {
+                          setRefiningItemId(item.id)
+                          setCardDirective("")
+                        }
+                      }}
+                      className={`w-full h-7 text-[11px] font-semibold gap-1.5 transition-all ${
+                        refiningItemId === item.id
+                          ? "bg-indigo-100 text-indigo-950 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-200"
+                          : "text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                      }`}
+                    >
+                      <Wand2 className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                      {refiningItemId === item.id ? "Fechar Assistente de IA" : "🪄 Ajustar / Novas Sugestões com IA"}
+                    </Button>
+                  </div>
+
+                  {/* Painel Expansível de Refinamento com IA */}
+                  {refiningItemId === item.id && (
+                    <div className="p-3 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 space-y-2.5">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] font-bold text-indigo-950 dark:text-indigo-200">
+                            O que deve ser dito ou alterado?
+                          </Label>
+                          <span className="text-[10px] text-muted-foreground">Ex: "Dizer que tem micro-ondas"</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <Input
+                            placeholder="Instrução para a IA (ou deixe vazio para padrão)..."
+                            value={cardDirective}
+                            onChange={e => setCardDirective(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") {
+                                e.preventDefault()
+                                handleRefineForCard(item)
+                              }
+                            }}
+                            className="h-7 text-xs bg-white dark:bg-slate-900"
+                          />
+                          <Button
+                            size="sm"
+                            type="button"
+                            onClick={() => handleRefineForCard(item)}
+                            disabled={cardAiLoading}
+                            className="h-7 px-2.5 text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 gap-1"
+                          >
+                            <Sparkles className={`w-3 h-3 ${cardAiLoading ? "animate-spin" : ""}`} />
+                            {cardAiLoading ? "Gerando..." : "Gerar Opções"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Opções Geradas */}
+                      {cardSuggestions[item.id] && cardSuggestions[item.id].length > 0 && (
+                        <div className="space-y-2 pt-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-900 dark:text-indigo-300 block">
+                            Opções Formatadas para WhatsApp:
+                          </span>
+                          {cardSuggestions[item.id].map((sug, sIdx) => (
+                            <div
+                              key={sug.id || sIdx}
+                              className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-indigo-100 dark:border-indigo-900 space-y-2 text-xs shadow-2xs"
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <Badge variant="secondary" className="text-[10px] font-bold text-indigo-700 bg-indigo-50 dark:bg-indigo-950">
+                                  {sug.label}
+                                </Badge>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleCopyText(sug.text, `${item.id}_${sIdx}`)}
+                                    className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+                                    title="Copiar texto"
+                                  >
+                                    {copiedId === `${item.id}_${sIdx}` ? (
+                                      <span className="text-emerald-600 font-bold text-[10px]">Copiado!</span>
+                                    ) : (
+                                      <Copy className="w-3 h-3" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={async () => {
+                                      await approveFaq(item.id, { answer: sug.text })
+                                      setRefiningItemId(null)
+                                    }}
+                                    className="h-6 px-2 text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                                  >
+                                    <Check className="w-2.5 h-2.5" />
+                                    Aprovar Esta
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed text-[11px]">
+                                {sug.text}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Escopo de Clientes */}
                   <div className="flex items-center justify-between text-xs pt-1 border-t border-border/40">
                     <span className="text-muted-foreground text-[11px]">Regra:</span>
@@ -987,6 +1166,94 @@ export function FaqKnowledgeBase() {
                 </p>
               </div>
             )}
+
+            {/* Assistente de Redação com IA no Modal */}
+            <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                  <Wand2 className="w-3.5 h-3.5 text-indigo-600" />
+                  Assistente de Redação com IA
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setModalAiOpen(!modalAiOpen)}
+                  className="h-6 text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold"
+                >
+                  {modalAiOpen ? "Ocultar Assistente" : "🪄 Abrir Assistente de IA"}
+                </Button>
+              </div>
+
+              {modalAiOpen && (
+                <div className="space-y-2.5 pt-1">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                      Instrução para a IA (o que dizer ou mudar):
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Ex: 'Informar que todos os quartos contam com micro-ondas e cafeteira'"
+                        value={modalDirective}
+                        onChange={e => setModalDirective(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            handleRefineForModal()
+                          }
+                        }}
+                        className="text-xs h-8 bg-white dark:bg-slate-900"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleRefineForModal}
+                        disabled={modalAiLoading}
+                        className="h-8 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 gap-1.5"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${modalAiLoading ? "animate-spin" : ""}`} />
+                        {modalAiLoading ? "Gerando..." : "Gerar Opções"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {modalSuggestions.length > 0 && (
+                    <div className="space-y-2 pt-1 border-t border-indigo-200/50 dark:border-indigo-900">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-900 dark:text-indigo-300 block">
+                        Escolha uma opção para preencher a Resposta Oficial:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {modalSuggestions.map((sug, idx) => (
+                          <div
+                            key={sug.id || idx}
+                            className="p-2.5 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 flex flex-col justify-between space-y-2 hover:border-indigo-500 transition-colors"
+                          >
+                            <div className="space-y-1">
+                              <Badge variant="outline" className="text-[10px] font-bold text-indigo-700 border-indigo-300">
+                                {sug.label}
+                              </Badge>
+                              <p className="text-[11px] text-slate-800 dark:text-slate-200 line-clamp-4 leading-relaxed whitespace-pre-wrap">
+                                {sug.text}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                setFormAnswer(sug.text)
+                              }}
+                              className="w-full h-6 text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-900 dark:bg-indigo-950 dark:hover:bg-indigo-900 dark:text-indigo-200"
+                            >
+                              Usar Esta Resposta
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Resposta Oficial Formatada WhatsApp */}
             <div className="space-y-1.5">

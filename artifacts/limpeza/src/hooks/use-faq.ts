@@ -66,6 +66,28 @@ export interface ApproveFaqInput {
   question?: string
 }
 
+export interface FaqSuggestionOption {
+  id: string
+  label: string
+  text: string
+}
+
+export interface RefineSuggestionInput {
+  id?: string
+  question?: string
+  currentAnswer?: string
+  instruction: string
+  category?: FaqCategory
+  applySuggestion?: boolean | number
+}
+
+export interface RefineSuggestionResult {
+  success: boolean
+  source?: string
+  suggestions: FaqSuggestionOption[]
+  item?: FaqItem
+}
+
 export interface FaqCategoryMeta {
   id: FaqCategory
   label: string
@@ -453,6 +475,35 @@ export function useFaq(options?: { autoFetch?: boolean }) {
     return updateFaq(item.id, { status: nextStatus })
   }
 
+  const refineSuggestion = async (input: RefineSuggestionInput): Promise<RefineSuggestionResult | null> => {
+    try {
+      const url = input.id
+        ? `/api/whatsapp/faq/${encodeURIComponent(input.id)}/refine-suggestion`
+        : "/api/whatsapp/faq/refine-suggestion"
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Erro ao refinar sugestões com IA.")
+      }
+      if (data.item) {
+        setItems(prev => prev.map(i => (i.id === data.item.id ? data.item : i)))
+      }
+      return data
+    } catch (err: any) {
+      toast({
+        title: "Erro ao gerar sugestões com IA",
+        description: err.message || "Não foi possível gerar alternativas de resposta.",
+        variant: "destructive"
+      })
+      return null
+    }
+  }
+
   const resetFilters = () => {
     setSearch("")
     setSelectedCategory("all")
@@ -483,6 +534,7 @@ export function useFaq(options?: { autoFetch?: boolean }) {
     deleteFaq,
     approveFaq,
     toggleStatus,
+    refineSuggestion,
     resetFilters
   }
 }
