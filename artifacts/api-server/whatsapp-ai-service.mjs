@@ -78,7 +78,19 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
   * Apresente os valores das diárias de forma clara, acolhedora e objetiva (ex: diária direta a partir de R$ 237,00 sem café (+ taxa única de limpeza de R$ 70,00); com café da manhã no quarto por apenas R$ 35,00/pessoa adicional, totalizando a partir de R$ 272,00 para 1 pessoa, com o grande benefício de ISENÇÃO TOTAL da taxa de limpeza!).
   * Pergunte para quais datas (entrada e saída) a pessoa deseja se hospedar para consultar a disponibilidade e fornecer o orçamento exato.
 6. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
-7. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.`,
+7. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.
+8. ARQUITETURA EM DUAS VIAS E AUTO-AVALIAÇÃO CRÍTICA OBRIGATÓRIA:
+- VIA 1 (Perguntas Genéricas/Institucionais): Responda usando o FAQ ATIVO e a BASE DE CONHECIMENTO oficial (Wi-Fi, localização, horários, regras de pet, fumo, garagem, lazer, comodidades).
+- VIA 2 (Leitura do Sistema Operacional): Use as ferramentas autorizadas para consultar dados reais:
+  * Tarifas, diárias e valores com ou sem café (getPricingInfo, calculateQuote);
+  * Dados e status de reservas (getReservationDetails);
+  * Status e higienização de flats/quartos (getFlatStatus);
+  * Vagas e disponibilidade para períodos específicos (checkAvailability).
+- AUTO-CRÍTICA ANTES DE ENVIAR: Analise criticamente se a sua resposta REALMENTE responde à pergunta feita. Jamais confunda assuntos (se perguntou preço, forneça valores e NUNCA apenas regras de bandeja de café).
+- DEMANDAS OPERACIONAIS SEM ACESSO AUTÔNOMO: Se o hóspede solicitar uma ação operacional (cancelamento, alteração de datas, troca de flat, nota fiscal, toalhas extras, chamado de manutenção, itens especiais como berço) ou dados não disponíveis no sistema/FAQ:
+  * NÃO invente dados nem dê respostas evasivas;
+  * Chame imediatamente a ferramenta recordUnmetDemand para registrar a oportunidade na fila de automação do sistema;
+  * Responda de forma acolhedora informando que registrou a solicitação e que a equipe humana da recepção dará seguimento!`,
   knowledgeBase: {
     address: "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     checkinTime: "14:00 (Check-in padrão a partir das 14h)",
@@ -356,6 +368,7 @@ export function buildGuestContext(db, phone) {
 export function getBotActionsSettings(db) {
   if (db?.botActionsSettings) {
     const s = db.botActionsSettings;
+    const hasCustomAllowed = s.allowedActions && typeof s.allowedActions === "object";
     return {
       apiActionsEnabled: s.apiActionsEnabled !== false,
       allowedActions: {
@@ -364,6 +377,10 @@ export function getBotActionsSettings(db) {
         generatePayment: s.allowedActions?.generatePayment !== false,
         createPreReservation: s.allowedActions?.createPreReservation !== false,
         commitReservation: s.allowedActions?.commitReservation !== false,
+        getReservationDetails: hasCustomAllowed ? s.allowedActions.getReservationDetails === true : true,
+        getFlatStatus: hasCustomAllowed ? s.allowedActions.getFlatStatus === true : true,
+        getPricingInfo: hasCustomAllowed ? s.allowedActions.getPricingInfo === true : true,
+        recordUnmetDemand: hasCustomAllowed ? s.allowedActions.recordUnmetDemand === true : true,
         ...(s.allowedActions || {})
       },
       preReservationHoldMinutes: Number(s.preReservationHoldMinutes) || 30,
@@ -377,7 +394,11 @@ export function getBotActionsSettings(db) {
       calculateQuote: true,
       generatePayment: true,
       createPreReservation: true,
-      commitReservation: true
+      commitReservation: true,
+      getReservationDetails: true,
+      getFlatStatus: true,
+      getPricingInfo: true,
+      recordUnmetDemand: true
     },
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
@@ -537,6 +558,112 @@ export function buildGeminiTools(actionsSettings = {}) {
           }
         },
         required: ["reservationId"]
+      }
+    });
+  }
+
+  if (allowed.getReservationDetails === true) {
+    declarations.push({
+      name: "getReservationDetails",
+      description: "Consulta dados e status de reservas no sistema pelo código da reserva (ex: 'RES-101-9999', 'CF-123456'), telefone, nome do titular ou número do flat.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          code: {
+            type: "STRING",
+            description: "Código da reserva (ex: 'RES-101-9999', 'CF-123456')"
+          },
+          guestName: {
+            type: "STRING",
+            description: "Nome do titular da reserva"
+          },
+          flatNumber: {
+            type: "STRING",
+            description: "Número do flat/quarto"
+          },
+          phone: {
+            type: "STRING",
+            description: "Telefone do hóspede com DDD"
+          }
+        }
+      }
+    });
+  }
+
+  if (allowed.getFlatStatus === true) {
+    declarations.push({
+      name: "getFlatStatus",
+      description: "Consulta o status em tempo real de um flat/apartamento no sistema (se está limpo/higienizado pela governança, liberado para entrada antecipada, ou ocupado).",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          flatNumber: {
+            type: "STRING",
+            description: "Número do flat/apartamento (ex: '101', '202', '605')"
+          }
+        },
+        required: ["flatNumber"]
+      }
+    });
+  }
+
+  if (allowed.getPricingInfo === true) {
+    declarations.push({
+      name: "getPricingInfo",
+      description: "Consulta a tabela de tarifas, diárias e valores oficiais da CorpFlats (com ou sem café da manhã) para fornecer valores exatos ao hóspede.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          checkIn: {
+            type: "STRING",
+            description: "Data de entrada (opcional, formato YYYY-MM-DD)"
+          },
+          checkOut: {
+            type: "STRING",
+            description: "Data de saída (opcional, formato YYYY-MM-DD)"
+          },
+          guests: {
+            type: "INTEGER",
+            description: "Quantidade de hóspedes (padrão 1)"
+          },
+          withBreakfast: {
+            type: "BOOLEAN",
+            description: "Se inclui café da manhã servido no quarto"
+          }
+        }
+      }
+    });
+  }
+
+  if (allowed.recordUnmetDemand === true) {
+    declarations.push({
+      name: "recordUnmetDemand",
+      description: "Registra na fila de Oportunidades de Automação e Demandas Sem Acesso qualquer solicitação operacional do hóspede que o sistema não possua capacidade autônoma de realizar (ex: cancelamento de reserva, alteração de datas, solicitação de toalhas/enxoval, chamado de manutenção, troca de quarto, nota fiscal com CNPJ, solicitação de berço/itens extras).",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          demandTitle: {
+            type: "STRING",
+            description: "Título descritivo da demanda (ex: 'Solicitação de Berço', 'Cancelamento de Reserva')"
+          },
+          guestRequest: {
+            type: "STRING",
+            description: "Mensagem ou solicitação original do hóspede"
+          },
+          category: {
+            type: "STRING",
+            description: "Categoria da demanda (ex: 'cancelamento_reserva', 'alteracao_datas', 'enxoval_toalhas', 'chamado_manutencao', 'emissao_nota_fiscal', 'itens_especiais_comodidades', 'outros')"
+          },
+          reason: {
+            type: "STRING",
+            description: "Motivo: 'capability_missing', 'requires_operator' ou 'data_unavailable'"
+          },
+          suggestedFeature: {
+            type: "STRING",
+            description: "Sugestão técnica de recurso para desenvolvimento posterior"
+          }
+        },
+        required: ["demandTitle", "guestRequest"]
       }
     });
   }
@@ -1049,6 +1176,228 @@ function handleCommitReservation(db, args = {}) {
   };
 }
 
+export function handleGetReservationDetails(db, args = {}) {
+  const targetCode = String(args.code || args.reservationCode || args.reservationId || "").trim();
+  const targetName = String(args.guestName || args.name || "").trim().toLowerCase();
+  const targetPhone = normalizePhone(args.phone || args.guestPhone || "");
+  const targetFlat = String(args.flatNumber || args.flatId || "").trim();
+
+  const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+  let matched = null;
+
+  // 1. Busca por código de reserva
+  if (targetCode) {
+    matched = reservations.find(r =>
+      r && (String(r.code || "").toLowerCase() === targetCode.toLowerCase() ||
+            String(r.id || "") === targetCode)
+    );
+  }
+
+  // 2. Busca por telefone
+  if (!matched && targetPhone) {
+    matched = reservations.find(r => {
+      if (!r) return false;
+      const rPhone = normalizePhone(r.guestPhone || r.phone || "");
+      return rPhone && (targetPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(targetPhone.slice(-8)));
+    });
+  }
+
+  // 3. Busca por nome do hóspede
+  if (!matched && targetName) {
+    matched = reservations.find(r =>
+      r && r.guestName && r.guestName.toLowerCase().includes(targetName)
+    );
+  }
+
+  // 4. Busca por número do flat
+  if (!matched && targetFlat) {
+    const todayStr = getBrasiliaDateParts().todayStr;
+    matched = reservations.find(r =>
+      r && (String(r.flatNumber) === targetFlat || String(r.flatId) === targetFlat) &&
+      r.status !== "cancelada" && r.status !== "expirada" &&
+      (r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
+    );
+  }
+
+  if (!matched) {
+    return {
+      success: false,
+      found: false,
+      message: "Nenhuma reserva foi localizada no sistema com os critérios informados."
+    };
+  }
+
+  const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const checkinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
+
+  return {
+    success: true,
+    found: true,
+    reservation: {
+      id: matched.id,
+      code: matched.code || matched.reservationCode || `RES-${matched.flatNumber}`,
+      guestName: matched.guestName,
+      guestPhone: matched.guestPhone || matched.phone,
+      checkinDate: matched.checkinDate,
+      checkoutDate: matched.checkoutDate,
+      flatNumber: matched.flatNumber,
+      status: matched.status,
+      paymentStatus: matched.paymentStatus,
+      channel: matched.channel,
+      totalAmount: matched.totalAmount,
+      checkinUrl
+    }
+  };
+}
+
+export function handleGetFlatStatus(db, args = {}) {
+  const targetFlat = String(args.flatNumber || args.flatId || "").trim();
+  if (!targetFlat) {
+    return {
+      success: false,
+      error: "MISSING_FLAT_NUMBER",
+      message: "Número do flat é obrigatório."
+    };
+  }
+
+  const flats = Array.isArray(db?.flats) ? db.flats : [];
+  const flat = flats.find(f => String(f.number) === targetFlat || String(f.id) === targetFlat);
+
+  if (!flat) {
+    return {
+      success: false,
+      error: "FLAT_NOT_FOUND",
+      message: `Flat ${targetFlat} não foi encontrado no cadastro.`
+    };
+  }
+
+  const todayStr = getBrasiliaDateParts().todayStr;
+  let cleaningStatus = "desconhecido";
+  let isRoomReady = false;
+
+  const cleanReq = (db?.cleaningRequests || []).find(c =>
+    (String(c.flatNumber) === String(flat.number) || String(c.flatId) === String(flat.id)) &&
+    (c.requestDate === todayStr || c.effectiveDate === todayStr)
+  );
+
+  if (cleanReq) {
+    cleaningStatus = cleanReq.status || "pendente";
+    isRoomReady = cleanReq.status === "clean" || cleanReq.completedAt != null;
+  } else if (flat.status === "clean") {
+    cleaningStatus = "clean";
+    isRoomReady = true;
+  } else {
+    cleaningStatus = flat.status || "dirty";
+    isRoomReady = flat.status === "clean";
+  }
+
+  const activeReservation = (db?.reservations || []).find(r =>
+    (String(r.flatNumber) === String(flat.number) || String(r.flatId) === String(flat.id)) &&
+    r.status !== "cancelada" && r.status !== "expirada" &&
+    r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+  );
+
+  return {
+    success: true,
+    flatNumber: String(flat.number),
+    flatId: flat.id,
+    cleaningStatus,
+    isRoomReady,
+    isOccupied: Boolean(activeReservation),
+    currentGuestName: activeReservation?.guestName || null,
+    statusDescription: isRoomReady
+      ? `Flat ${flat.number} está 100% limpo, higienizado e pronto para entrada.`
+      : `Flat ${flat.number} está em higienização ou pendente de liberação pela governança.`
+  };
+}
+
+export function handleGetPricingInfo(db, args = {}) {
+  const inDate = args.checkIn || args.checkin || getBrasiliaDateParts().todayStr;
+  const outDate = args.checkOut || args.checkout || null;
+  const guests = Math.max(1, Number(args.guests || 1));
+  const flatId = args.flatId || null;
+  const withBreakfast = args.withBreakfast === true;
+
+  const tSettings = db?.tariffSettings || {};
+  const baseDailyRate = Number(tSettings.baseDailyRate != null ? tSettings.baseDailyRate : 237);
+  const breakfastFeePerPerson = 35;
+
+  if (outDate && inDate < outDate) {
+    const quote = handleCalculateQuote(db, {
+      checkIn: inDate,
+      checkOut: outDate,
+      guests,
+      flatId,
+      ratePlan: withBreakfast ? "with_breakfast" : "room_only"
+    });
+    return {
+      success: true,
+      hasPeriod: true,
+      checkIn: inDate,
+      checkOut: outDate,
+      nights: quote.nights,
+      guests,
+      withBreakfast,
+      totalAmount: quote.total,
+      dailyRateAverage: Math.round((quote.total / (quote.nights || 1)) * 100) / 100,
+      cleaningFee: quote.cleaningFee,
+      isCleaningFeeExempt: withBreakfast
+    };
+  }
+
+  const breakfastTotal = withBreakfast ? (breakfastFeePerPerson * guests) : 0;
+  const dailyRate = baseDailyRate + breakfastTotal;
+
+  return {
+    success: true,
+    hasPeriod: false,
+    baseRateWithoutBreakfast: baseDailyRate,
+    rateWithBreakfastFor1: baseDailyRate + breakfastFeePerPerson,
+    rateWithBreakfastFor2: baseDailyRate + (breakfastFeePerPerson * 2),
+    cleaningFeeStandard: 70,
+    cleaningFeeWithBreakfast: 0,
+    breakfastPerPerson: breakfastFeePerPerson,
+    isCleaningFeeExemptOnBreakfast: true,
+    calculatedDailyRate: dailyRate,
+    summary: `Diária a partir de R$ ${baseDailyRate},00 sem café (+ taxa única de limpeza R$ 70,00); ou a partir de R$ ${baseDailyRate + breakfastFeePerPerson},00 com café no quarto (1 pessoa) com ISENÇÃO TOTAL da taxa de limpeza!`
+  };
+}
+
+export function handleRecordUnmetDemand(db, args = {}) {
+  const text = args.guestRequest || args.text || args.message || "";
+  const title = args.demandTitle || args.title || "";
+  const category = args.category || inferFaqCategory(text) || "outros";
+  const reason = args.reason || "capability_missing";
+  const suggestedFeature = args.suggestedFeature || "";
+
+  const demand = detectAndRecordUnmetDemand({
+    db,
+    text,
+    senderPhone: args.senderPhone || args.phone || "",
+    senderName: args.senderName || args.guestName || "Hóspede",
+    guestContext: args.guestContext || null,
+    actionTarget: args.actionTarget || null,
+    reason,
+    saveDatabase: args.saveDatabase || null,
+    createNotification: args.createNotification || null
+  });
+
+  if (demand && title) {
+    demand.demandTitle = title;
+  }
+  if (demand && suggestedFeature) {
+    demand.suggestedFeature = suggestedFeature;
+  }
+
+  return {
+    success: true,
+    demandId: demand?.id,
+    demandTitle: demand?.demandTitle,
+    category: demand?.category,
+    message: "Demanda registrada com sucesso em Oportunidades de Automação."
+  };
+}
+
 // ── Mapeamento Contínuo de Demandas Sem Acesso & Oportunidades de Automação ──
 
 export const UNMET_DEMAND_CATEGORIES = {
@@ -1131,6 +1480,21 @@ export const UNMET_DEMAND_CATEGORIES = {
     category: "operacoes_sistema_pausadas",
     title: "Operação com Chave Mestra Pausada",
     defaultSuggested: "Reativar Chave Mestra Global de Ações do Bot no painel do Agente de IA."
+  },
+  itens_especiais_comodidades: {
+    category: "itens_especiais_comodidades",
+    title: "Solicitação de Item / Comodidade Especial (ex: Berço, Secador, Ferro)",
+    defaultSuggested: "Mapear controle de estoque de comodidades adicionais para disponibilização aos hóspedes."
+  },
+  dados_reserva_indisponiveis: {
+    category: "dados_reserva_indisponiveis",
+    title: "Consulta de Reserva Não Localizada",
+    defaultSuggested: "Aprimorar busca com correspondência fonética ou integração com OTAs (Booking/Airbnb)."
+  },
+  dados_sistema_indisponiveis: {
+    category: "dados_sistema_indisponiveis",
+    title: "Dados do Sistema Não Localizados / Indisponíveis",
+    defaultSuggested: "Disponibilizar endpoint ou leitura para este tipo de dado operacional na base."
   },
   outros: {
     category: "outros",
@@ -1304,6 +1668,16 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
+  if (/\b(?:ber[cç]o|secador(?:\s+de\s+cabelo)?|ferro(?:\s+de\s+passar)?|t[aá]bua|micro[- ]ondas|cafeteira|liquidificador|panela|utens[ií]lio|tomada\s+220|adaptador|recarga|carro\s+el[eé]trico|aquecedor)\b/i.test(lower)) {
+    return {
+      category: "itens_especiais_comodidades",
+      demandTitle: UNMET_DEMAND_CATEGORIES.itens_especiais_comodidades.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.itens_especiais_comodidades.defaultSuggested
+    };
+  }
+
   return {
     category: "outros",
     demandTitle: UNMET_DEMAND_CATEGORIES.outros.title,
@@ -1469,6 +1843,14 @@ export async function executeBotAction(db, actionName, args = {}) {
       return handleGeneratePayment(db, args);
     case "commitReservation":
       return handleCommitReservation(db, args);
+    case "getReservationDetails":
+      return handleGetReservationDetails(db, args);
+    case "getFlatStatus":
+      return handleGetFlatStatus(db, args);
+    case "getPricingInfo":
+      return handleGetPricingInfo(db, args);
+    case "recordUnmetDemand":
+      return handleRecordUnmetDemand(db, args);
     default:
       return {
         error: "UNKNOWN_ACTION",
@@ -1943,8 +2325,8 @@ export function isPricingOrQuoteInquiry(text = "") {
 
   // Expressões explícitas de cotação / preço / diária / orçamento
   return (
-    /\b(?:quanto\s+(?:t[aá]|custa|[eé]|fica|sai)|qual\s+(?:o\s+)?(?:valor|pre[cç]o))\b/i.test(lower) ||
-    /\b(?:pre[cç]o|valor|valores|pre[cç]os|tarifa|tarifas|tabela)\s+(?:da[s]?\s+di[aá]rias?|de\s+di[aá]rias?|do\s+flat|do\s+quarto|da\s+hospedagem|da\s+estadia|com\s+caf[eé])\b/i.test(lower) ||
+    /\b(?:quanto\s+(?:t[aá]|custa|[eé]|fica|sai)|qual\s+(?:o\s+)?(?:valor|pre[cç]o)|saber\s+(?:o\s+)?(?:valor|pre[cç]o|tarifa))\b/i.test(lower) ||
+    /\b(?:pre[cç]o|valor|valores|pre[cç]os|tarifa|tarifas|tabela)\s+(?:de\s+(?:uma\s+)?|da[s]?\s+|do\s+)?(?:di[aá]rias?|flat|quarto|hospedagem|estadia|reserva|per[ií]odo|caf[eé])\b/i.test(lower) ||
     /\b(?:di[aá]rias?|hospedagem|estadia)\s+(?:com\s+caf[eé]|sem\s+caf[eé]|para\s+\d+\s+pesso|para\s+casal|individual|solteiro)\b/i.test(lower) ||
     /\b(?:or[cç]amento|cota[cç][aã]o|cotar)\b/i.test(lower) ||
     /\bdi[aá]rias?\b/i.test(lower) ||
@@ -1968,6 +2350,250 @@ export function isOperationalNonPricingFaq(faq) {
     return true;
   }
   return false;
+}
+
+/**
+ * Analisador Semântico de Intenção do Hóspede:
+ * Opera na classificação precisa entre as DUAS VIAS e suas categorias:
+ * - GREETING_ONLY: Saudação pura sem solicitação de informação
+ * - PRICING_QUOTE: Consulta de valores, diárias e cotações (VIA 2 - Leitura do Sistema)
+ * - EXISTING_RESERVATION: Consulta de reserva existente (VIA 2 - Leitura do Sistema)
+ * - FLAT_READY_STATUS: Consulta de status e prontidão do flat (VIA 2 - Leitura do Sistema)
+ * - GENERIC_FAQ: Perguntas institucionais da base/FAQ (VIA 1 - FAQ e Conhecimento)
+ * - OPERATIONAL_DEMAND: Solicitações operacionais sem acesso autônomo (Gera Demanda Não Atendida)
+ * - UNKNOWN_INQUIRY: Dúvida não mapeada (Gera Demanda e FAQ pendente)
+ */
+export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) {
+  const text = String(rawText || "").trim();
+  const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // 1. Saudação Pura
+  const GREETING_WORDS = "(?:oi|ola|opa|ei|hello|hi|bom\\s+dia|boa\\s+tarde|boa\\s+noite)";
+  const COURTESY_WORDS = "(?:tudo\\s+bem|tudo\\s+bom|como\\s+vai|como\\s+esta|beleza|tudo\\s+certo)";
+  const NAME_WORDS = "(?:sofia|corpflats|atendente|recepcao)";
+  const isGreetingOnly =
+    new RegExp(`^(?:(?:${GREETING_WORDS}|${COURTESY_WORDS}|${NAME_WORDS})\\s*[,.]?\\s*)+[!?\\s]*$`, "i").test(lower) ||
+    /^(?:ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá]\s+bom|blz|agrade[cç]o|sim|n[aã]o|positivo)[.!?\s]*$/i.test(text);
+
+  if (isGreetingOnly) {
+    return {
+      type: "GREETING_ONLY",
+      primaryTopic: "saudacao",
+      rawText: text
+    };
+  }
+
+  // 2. Preços, Tarifas, Diárias e Cotações (VIA 2 - Leitura do Sistema)
+  if (isPricingOrQuoteInquiry(text)) {
+    return {
+      type: "PRICING_QUOTE",
+      primaryTopic: "cotacao_precos",
+      rawText: text
+    };
+  }
+
+  // 3. Status de Reserva Existente / Confirmação (VIA 2 - Leitura do Sistema)
+  const isResInquiry = (
+    /(?:minhas?\s+reservas?|minhas?\s+di[aá]rias?|minha\s+estadia)/i.test(text) ||
+    /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
+    /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
+    /(?:tenho|tem|existe|possui)\s+(?:alguma\s+)?reserva/i.test(text) ||
+    /(?:verificar|consultar|conferir|confirmar|saber)\s+(?:minha\s+|se\s+tenho\s+|a\s+)?reserva/i.test(text) ||
+    /^(?:est[aá]|t[aá])\s+confirmad[ao]\??$/i.test(text) ||
+    /\b(?:res-\d+|cf-\d+)\b/i.test(text)
+  );
+
+  if (isResInquiry) {
+    return {
+      type: "EXISTING_RESERVATION",
+      primaryTopic: "consulta_reserva",
+      rawText: text
+    };
+  }
+
+  // 4. Status de Higienização / Quarto Liberado / Entrada Antecipada (VIA 2 - Leitura do Sistema)
+  const isFlatStatusInquiry = (
+    /(?:quarto|flat|apartamento|chave|porta).*(?:pront|liberad|limp|entrar|chegand)/i.test(text) ||
+    /(?:pront|liberad).*(?:quarto|flat|apartamento)/i.test(text) ||
+    /posso\s+(?:entrar|ir)|senha\s+da\s+porta|chegando/i.test(text)
+  );
+
+  if (isFlatStatusInquiry) {
+    return {
+      type: "FLAT_READY_STATUS",
+      primaryTopic: "status_quarto",
+      rawText: text
+    };
+  }
+
+  // 5. Demanda Operacional Sem Acesso Autônomo
+  const demandClassification = classifyUnmetDemand(text);
+  if (demandClassification && demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas") {
+    return {
+      type: "OPERATIONAL_DEMAND",
+      primaryTopic: demandClassification.category,
+      demandClassification,
+      rawText: text
+    };
+  }
+
+  // 6. Perguntas Institucionais / FAQ Genérico (VIA 1 - FAQ & Conhecimento)
+  const isGenericFaqMatch = (
+    /wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text) ||
+    /caf[eé]|desjejum/i.test(text) ||
+    /garagem|estacionamento|vaga|carro/i.test(text) ||
+    /endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar/i.test(text) ||
+    /check-?in|entrada|hor[aá]rio\s+de\s+entrada|chegada/i.test(text) ||
+    /check-?out|sa[ií]da|hor[aá]rio\s+de\s+sa[ií]da/i.test(text) ||
+    /pet|cachorro|animal/i.test(text) ||
+    /piscina|jacuzzi|academia|cobertura|lazer/i.test(text) ||
+    /fumo|fumar|cigarro/i.test(text)
+  );
+
+  if (isGenericFaqMatch) {
+    return {
+      type: "GENERIC_FAQ",
+      primaryTopic: inferFaqCategory(text),
+      rawText: text
+    };
+  }
+
+  // 7. Demanda não mapeada / Dúvida Desconhecida
+  return {
+    type: isPotentialGuestQuestion(text) ? "UNKNOWN_INQUIRY" : "OTHER",
+    primaryTopic: inferFaqCategory(text) || "outros",
+    rawText: text
+  };
+}
+
+/**
+ * Auto-Crítica Semântica e Validador Pré-Envio:
+ * Avalia criticamente a resposta candidata antes de enviar para garantir
+ * que ela realmente responde à pergunta feita pelo hóspede, evitando falsos positivos
+ * (ex: responder regras de entrega de bandeja quando a pessoa perguntou preço).
+ * Se a demanda não possui dados ou capacidade operacional no sistema, registra
+ * em db.unmetDemands imediatamente e gera resposta transparente e cordial.
+ */
+export function validateAndRefineResponse({
+  queryText = "",
+  candidateText = "",
+  guestContext = {},
+  db = null,
+  aiConfig = DEFAULT_AI_CONFIG,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  const analysis = analyzeGuestQuery(queryText, guestContext, db);
+  let replyText = candidateText;
+  let unmetDemand = null;
+  let missingDataOrCapability = false;
+  let shouldHandover = false;
+  let requiresHandover = false;
+
+  const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
+  const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
+  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  // Regra 1: Validação Crítica de Cotação / Preço vs Regras Operacionais (Ex: Café da Manhã)
+  if (analysis.type === "PRICING_QUOTE") {
+    const isHandoverMessage = /transferindo|pausad[ao]s|manuten[cç][aã]o|atendimento\s+humano|equipe\s+humana/i.test(replyText);
+    const hasPriceIndicator = /\b(?:r\$|\d+,\d{2}|\d+\s*reais)\b/i.test(replyText);
+    const hasOnlyBreakfastLogistics = /servido\s+em\s+bandeja|das\s+05:00|portal\s+\/cafe|agendamento\s+at[eé]\s+a\s+v[eé]spera/i.test(replyText) && !hasPriceIndicator;
+
+    // Se o texto candidato NÃO fornece preço ou é apenas sobre a logística da bandeja, E não for um transbordo:
+    if (!isHandoverMessage && (!hasPriceIndicator || hasOnlyBreakfastLogistics)) {
+      console.log(`[Semantic Critique] Mismatch detectado para query de preço ("${queryText}"). Substituindo resposta por valores oficiais do sistema.`);
+      const pricing = handleGetPricingInfo(db, {
+        guests: /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText) ? 2 : 1,
+        withBreakfast: /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText)
+      });
+
+      const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText);
+      const withBreakfast = /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText);
+      const withoutBreakfast = /\b(?:sem\s+caf[eé])/i.test(queryText);
+
+      if (withBreakfast) {
+        const rate = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
+        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} com café da manhã* servido no quarto fica a partir de *R$ ${rate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
+      } else if (withoutBreakfast) {
+        const rateWithBf = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
+        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} sem café* fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${rateWithBf},00 / diária* (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
+      } else {
+        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${pricing.baseRateWithoutBreakfast},00 / diária* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${pricing.rateWithBreakfastFor1},00 / diária* (1 pessoa) ou *R$ ${pricing.rateWithBreakfastFor2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
+      }
+    }
+  }
+
+  // Regra 2: Demanda Operacional Sem Acesso Autônomo (Missing Operational Capability)
+  if (analysis.type === "OPERATIONAL_DEMAND") {
+    missingDataOrCapability = true;
+    const cat = analysis.demandClassification?.category || inferFaqCategory(queryText);
+    const demandTitle = analysis.demandClassification?.demandTitle || UNMET_DEMAND_CATEGORIES[cat]?.title || "Demanda Operacional";
+
+    if (db) {
+      unmetDemand = detectAndRecordUnmetDemand({
+        db,
+        text: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        guestContext,
+        actionTarget: null,
+        reason: "capability_missing",
+        saveDatabase,
+        createNotification
+      });
+    }
+
+    const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
+      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
+
+    if (isGenericFallback || !replyText.toLowerCase().includes(cat.replace(/_/g, " "))) {
+      replyText = ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+    }
+  }
+
+  // Regra 3: Dúvida Desconhecida / Não Mapeada (Unknown Inquiry)
+  if (analysis.type === "UNKNOWN_INQUIRY") {
+    missingDataOrCapability = true;
+    const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
+      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei"));
+
+    if (db) {
+      unmetDemand = detectAndRecordUnmetDemand({
+        db,
+        text: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        guestContext,
+        actionTarget: null,
+        reason: "capability_missing",
+        saveDatabase,
+        createNotification
+      });
+
+      autoCreatePendingFaq({
+        db,
+        questionText: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        saveDatabase,
+        createNotification
+      });
+    }
+
+    if (isGenericFallback) {
+      replyText = ret(`Olá${name}! Anotei sua dúvida. Como não tenho essa informação cadastrada no sistema, já registrei sua pergunta para a equipe da recepção te responder por aqui em instantes! 🛎️✨`);
+    }
+  }
+
+  return {
+    replyText,
+    analysis,
+    unmetDemand,
+    missingDataOrCapability,
+    shouldHandover,
+    requiresHandover
+  };
 }
 
 /**
@@ -2310,7 +2936,19 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingWord}${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
   }
 
-  // 9. Resposta padrão prestativa
+  // 9. Se for demanda operacional não atendida pela base de conhecimento
+  const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
+  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
+    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
+    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+  }
+
+  // 10. Se for dúvida não mapeada
+  if (queryAnalysis.type === "UNKNOWN_INQUIRY") {
+    return ret(`Olá${name}! Anotei sua dúvida. Como não tenho essa informação cadastrada no sistema, já registrei sua pergunta para a equipe da recepção te responder por aqui em instantes! 🛎️✨`);
+  }
+
+  // 11. Resposta padrão prestativa
   return ret(`Olá${name}! Recebi sua mensagem. Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar? Se preferir falar com um atendente da recepção, basta me avisar! ✨`);
 }
 
@@ -2614,15 +3252,27 @@ ${systemActionsNotice}
       });
 
       if (geminiRes.ok && geminiRes.text) {
+        const validation = validateAndRefineResponse({
+          queryText: messageText,
+          candidateText: geminiRes.text,
+          guestContext,
+          db,
+          aiConfig
+        });
+
+        const finalReply = geminiRes.requiresHandover ? geminiRes.text : (validation.replyText || geminiRes.text);
+
         return {
-          shouldHandover: Boolean(geminiRes.requiresHandover),
-          requiresHandover: Boolean(geminiRes.requiresHandover),
-          replyText: geminiRes.text,
+          shouldHandover: Boolean(geminiRes.requiresHandover || validation.shouldHandover),
+          requiresHandover: Boolean(geminiRes.requiresHandover || validation.requiresHandover),
+          replyText: finalReply,
           guestContext,
           modelUsed: geminiRes.model,
           source: "gemini",
           functionCall: geminiRes.functionCall || null,
-          functionResult: geminiRes.functionResult || null
+          functionResult: geminiRes.functionResult || null,
+          unmetDemand: validation.unmetDemand || null,
+          missingDataOrCapability: validation.missingDataOrCapability || false
         };
       }
     } catch (err) {
@@ -2632,12 +3282,23 @@ ${systemActionsNotice}
 
   // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
   const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs, db);
+  const validation = validateAndRefineResponse({
+    queryText: messageText,
+    candidateText: heuristicText,
+    guestContext,
+    db,
+    aiConfig
+  });
+
   return {
-    shouldHandover: false,
-    replyText: heuristicText,
+    shouldHandover: Boolean(validation.shouldHandover),
+    requiresHandover: Boolean(validation.requiresHandover),
+    replyText: validation.replyText || heuristicText,
     guestContext,
     modelUsed: "heuristic_fallback",
-    source: "heuristic"
+    source: "heuristic",
+    unmetDemand: validation.unmetDemand || null,
+    missingDataOrCapability: validation.missingDataOrCapability || false
   };
 }
 
@@ -3069,7 +3730,7 @@ export async function processAiInboundMessage({
   }
 
   // 6.6. Mapeamento de Demandas Não Atendidas & Oportunidades de Automação
-  let unmetDemand = null;
+  let unmetDemand = aiResult.unmetDemand || null;
   const isActionDisabled = Boolean(
     aiResult.functionResult?.error === "ACTION_DISABLED" ||
     (aiResult.requiresHandover && aiResult.functionCall)
@@ -3077,8 +3738,9 @@ export async function processAiInboundMessage({
   const actionTarget = aiResult.functionCall?.name || (aiResult.functionResult?.action || null);
   const demandClassification = classifyUnmetDemand(incomingInfo.text, isActionDisabled ? actionTarget : null);
   const isOperationalDemand = demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas";
+  const isMissingSystemDataOrCapability = Boolean(aiResult.missingDataOrCapability || (isQuestion && !isMapped && needsHandoverOrFallback));
 
-  if (isActionDisabled || aiResult.shouldHandover || aiResult.requiresHandover || isOperationalDemand) {
+  if (!unmetDemand && (isActionDisabled || aiResult.shouldHandover || aiResult.requiresHandover || isOperationalDemand || isMissingSystemDataOrCapability)) {
     try {
       unmetDemand = detectAndRecordUnmetDemand({
         db,
@@ -3087,7 +3749,7 @@ export async function processAiInboundMessage({
         senderName: incomingInfo.senderName || conv?.name || "Hóspede",
         guestContext: aiResult.guestContext || null,
         actionTarget: isActionDisabled ? actionTarget : null,
-        reason: isActionDisabled ? "action_disabled" : (aiResult.shouldHandover ? "capability_missing" : "requires_operator"),
+        reason: isActionDisabled ? "action_disabled" : ((aiResult.shouldHandover || aiResult.missingDataOrCapability) ? "capability_missing" : "requires_operator"),
         saveDatabase,
         createNotification
       });

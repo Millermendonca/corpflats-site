@@ -29,7 +29,13 @@ import {
   detectAndRecordUnmetDemand,
   UNMET_DEMAND_CATEGORIES,
   applyToneCalibration,
-  saveDeveloperGuideline
+  saveDeveloperGuideline,
+  handleGetReservationDetails,
+  handleGetFlatStatus,
+  handleGetPricingInfo,
+  handleRecordUnmetDemand,
+  analyzeGuestQuery,
+  validateAndRefineResponse
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -43,7 +49,13 @@ export {
   detectAndRecordUnmetDemand,
   UNMET_DEMAND_CATEGORIES,
   applyToneCalibration,
-  saveDeveloperGuideline
+  saveDeveloperGuideline,
+  handleGetReservationDetails,
+  handleGetFlatStatus,
+  handleGetPricingInfo,
+  handleRecordUnmetDemand,
+  analyzeGuestQuery,
+  validateAndRefineResponse
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
