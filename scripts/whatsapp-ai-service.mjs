@@ -429,6 +429,7 @@ export function getBotActionsSettings(db) {
         commitReservation: s.allowedActions?.commitReservation !== false,
         reallocateReservationFlat: s.allowedActions?.reallocateReservationFlat !== false,
         getFlatAmenities: s.allowedActions?.getFlatAmenities !== false,
+        querySystemData: hasCustomAllowed ? s.allowedActions.querySystemData !== false : true,
         getReservationDetails: hasCustomAllowed ? s.allowedActions.getReservationDetails === true : true,
         getFlatStatus: hasCustomAllowed ? s.allowedActions.getFlatStatus === true : true,
         getPricingInfo: hasCustomAllowed ? s.allowedActions.getPricingInfo === true : true,
@@ -450,6 +451,7 @@ export function getBotActionsSettings(db) {
       commitReservation: true,
       reallocateReservationFlat: true,
       getFlatAmenities: true,
+      querySystemData: true,
       getReservationDetails: true,
       getFlatStatus: true,
       getPricingInfo: true,
@@ -459,6 +461,590 @@ export function getBotActionsSettings(db) {
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
   };
+}
+
+// ── Utilitários de Mascaramento LGPD ──────────────────────────────────────────
+
+export function maskSensitivePhone(phone) {
+  if (!phone) return "";
+  const s = String(phone).replace(/\D/g, "");
+  if (s.length < 8) return "***";
+  return `(${s.slice(-11, -9) || "XX"}) *****-${s.slice(-4)}`;
+}
+
+export function maskSensitiveCpf(cpf) {
+  if (!cpf) return "";
+  const s = String(cpf).replace(/\D/g, "");
+  if (s.length !== 11) return "***.***.***-**";
+  return `***.${s.slice(3, 6)}.***-**`;
+}
+
+export function maskSensitiveEmail(email) {
+  if (!email || !email.includes("@")) return "";
+  const [user, domain] = email.split("@");
+  return `${user.slice(0, 2)}***@${domain}`;
+}
+
+export function maskSensitiveName(name) {
+  if (!name || typeof name !== "string") return "Hóspede";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2) + "***";
+  }
+  return `${parts[0]} ${parts.slice(1).map(p => p[0] + "***").join(" ")}`;
+}
+
+export const DEFAULT_BREAKFAST_MENU = {
+  availableTimes: ["05:00", "05:30", "06:00", "06:30", "07:00", "07:30", "08:00", "08:30", "09:00", "09:30"],
+  categories: [
+    { id: "bebidas", name: "☕ Cafés & Bebidas", items: ["Café", "Café duplo", "Café com leite", "Leite", "Suco de laranja", "Achocolatado gelado", "Água mineral", "Vitamina de banana com iogurte de morango"] },
+    { id: "paes", name: "🍞 Pães Tradicionais", items: ["Pão francês", "Pão de queijo"] },
+    { id: "acompanhamentos", name: "🧀 Frios & Acompanhamentos", items: ["Queijo mussarela", "Presunto", "Queijo prato", "Queijo Minas frescal", "Peito de Peru", "Ovos mexidos"] },
+    { id: "complementos", name: "🧈 Complementos", items: ["Manteiga", "Requeijão"] },
+    { id: "doces", name: "🍰 Doces & Biscoitos", items: ["Bolo do dia", "Torradas amanteigadas", "Casadinho (biscoito com goiabada)"] },
+    { id: "frutas", name: "🍎 Frutas Selecionadas", items: ["Banana", "Maçã", "Mamão", "Salada de frutas"] }
+  ]
+};
+
+export const DEFAULT_STANDARD_BREAKFAST = {
+  coffee: "Café, Leite",
+  otherBeverage: "Suco de laranja",
+  breads: ["Pão francês", "Pão de queijo"],
+  accompaniments: ["Queijo mussarela", "Presunto", "Ovos mexidos"],
+  complements: ["Manteiga"],
+  sweets: ["Bolo do dia"],
+  fruit: "Fruta do dia",
+  sweetener: "Açúcar",
+  description: "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia."
+};
+
+/**
+ * Motor Universal de Consulta a Dados do Sistema CorpFlats
+ * Suporta consulta contextual a flats, reservas, limpeza, manutenção, café da manhã, garagem,
+ * achados e perdidos, FAQs, financeiro e avaliações/sentimento com proteção LGPD por perfil.
+ */
+export async function querySystemData(db, {
+  module,
+  query = "",
+  filters = {},
+  requesterRole = "guest",
+  requesterPhone = ""
+} = {}) {
+  const normModule = String(module || "").toLowerCase().trim();
+
+  switch (normModule) {
+    case "flats": {
+      const flats = Array.isArray(db?.flats) ? db.flats : [];
+      const cleaningReqs = Array.isArray(db?.cleaningRequests) ? db.cleaningRequests : [];
+      const serviceOrders = Array.isArray(db?.serviceOrders) ? db.serviceOrders : [];
+      const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+      const todayStr = new Date().toISOString().slice(0, 10);
+
+      let list = flats.map(f => {
+        const flatNum = String(f.number);
+        const activeRes = reservations.find(r =>
+          (r.flatId === f.id || String(r.flatNumber) === flatNum) &&
+          r.status !== "cancelada" &&
+          r.checkinDate <= todayStr && r.checkoutDate > todayStr
+        );
+        const latestClean = cleaningReqs
+          .filter(c => String(c.flatNumber) === flatNum || c.flatId === f.id)
+          .sort((a, b) => new Date(b.requestDate || b.createdAt || 0) - new Date(a.requestDate || a.createdAt || 0))[0];
+
+        const activeSO = serviceOrders.filter(so =>
+          so.status === "active" && Array.isArray(so.flats) &&
+          so.flats.some(sf => (sf.flatId === f.id || String(sf.flatNumber) === flatNum) && sf.status !== "done")
+        );
+
+        const isOwn = requesterRole === "admin" || (requesterPhone && activeRes && doesReservationMatchPhone(activeRes, requesterPhone));
+
+        return {
+          id: f.id,
+          number: f.number,
+          isActive: f.isActive !== false,
+          isOccupied: Boolean(activeRes || f.isOccupied),
+          airConditionerType: f.airConditionerType || (f.tags?.some(t => /split/i.test(t)) ? "split" : "janela"),
+          bedType: f.bedType || (f.tags?.some(t => /casal/i.test(t)) ? "casal" : "solteiro"),
+          hasMicrowave: Boolean(f.hasMicrowave || f.tags?.some(t => /micro/i.test(t))),
+          tags: Array.isArray(f.tags) ? f.tags : [],
+          cleaningStatus: latestClean?.status || (f.isOccupied ? "occupied" : "clean"),
+          maintenanceStatus: activeSO.length > 0 ? "em_manutencao" : "normal",
+          currentGuest: requesterRole === "admin"
+            ? (activeRes ? { name: activeRes.guestName, code: activeRes.code, checkin: activeRes.checkinDate, checkout: activeRes.checkoutDate } : null)
+            : (isOwn && activeRes ? { name: activeRes.guestName, code: activeRes.code } : null)
+        };
+      });
+
+      if (query) {
+        const qLower = String(query).toLowerCase().trim();
+        list = list.filter(f =>
+          String(f.number).includes(qLower) ||
+          f.airConditionerType.toLowerCase().includes(qLower) ||
+          f.bedType.toLowerCase().includes(qLower) ||
+          f.tags.some(t => t.toLowerCase().includes(qLower)) ||
+          (qLower.includes("livre") && !f.isOccupied) ||
+          (qLower.includes("ocupado") && f.isOccupied)
+        );
+      }
+
+      if (filters.number) list = list.filter(f => String(f.number) === String(filters.number));
+      if (filters.bedType) list = list.filter(f => f.bedType === filters.bedType);
+      if (filters.airConditionerType) list = list.filter(f => f.airConditionerType === filters.airConditionerType);
+      if (filters.isOccupied !== undefined) list = list.filter(f => f.isOccupied === Boolean(filters.isOccupied));
+
+      return {
+        success: true,
+        module: "flats",
+        totalFlats: flats.length,
+        count: list.length,
+        flats: list
+      };
+    }
+
+    case "reservations": {
+      const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+      let list = reservations;
+
+      if (query) {
+        const qLower = String(query).toLowerCase().trim();
+        list = list.filter(r =>
+          String(r.code || "").toLowerCase().includes(qLower) ||
+          String(r.id || "").toLowerCase().includes(qLower) ||
+          String(r.guestName || "").toLowerCase().includes(qLower) ||
+          String(r.flatNumber || "").includes(qLower) ||
+          String(r.status || "").toLowerCase().includes(qLower) ||
+          String(r.checkinDate || "").includes(qLower) ||
+          String(r.checkoutDate || "").includes(qLower)
+        );
+      }
+
+      if (filters.status) list = list.filter(r => r.status === filters.status);
+      if (filters.flatNumber) list = list.filter(r => String(r.flatNumber) === String(filters.flatNumber));
+      if (filters.code) list = list.filter(r => String(r.code).toLowerCase() === String(filters.code).toLowerCase());
+      if (filters.date) {
+        list = list.filter(r => r.checkinDate <= filters.date && r.checkoutDate >= filters.date);
+      }
+
+      const sanitized = list.map(r => {
+        const isOwn = requesterRole === "admin" || (requesterPhone && doesReservationMatchPhone(r, requesterPhone));
+
+        if (requesterRole === "admin") {
+          return { ...r };
+        }
+
+        if (isOwn) {
+          return {
+            id: r.id,
+            code: r.code,
+            guestName: r.guestName,
+            flatNumber: r.flatNumber,
+            checkinDate: r.checkinDate,
+            checkoutDate: r.checkoutDate,
+            status: r.status,
+            paymentStatus: r.paymentStatus,
+            totalAmount: r.totalAmount,
+            paidAmount: r.paidAmount,
+            includeBreakfast: r.includeBreakfast,
+            checkinTime: r.checkinTime || "14:00",
+            checkoutTime: r.checkoutTime || "12:00"
+          };
+        }
+
+        return {
+          code: r.code ? r.code.slice(0, 4) + "****" : "****",
+          flatNumber: r.flatNumber,
+          checkinDate: r.checkinDate,
+          checkoutDate: r.checkoutDate,
+          status: r.status === "cancelada" ? "cancelada" : "ocupado",
+          guestName: maskSensitiveName(r.guestName),
+          guestPhone: maskSensitivePhone(r.guestPhone || r.phone),
+          guestCpf: maskSensitiveCpf(r.guestCpf || r.cpf),
+          guestEmail: maskSensitiveEmail(r.guestEmail || r.email),
+          totalAmount: "[RESTRITO_LGPD]",
+          paidAmount: "[RESTRITO_LGPD]",
+          paymentStatus: "[RESTRITO_LGPD]"
+        };
+      });
+
+      return {
+        success: true,
+        module: "reservations",
+        count: sanitized.length,
+        reservations: sanitized
+      };
+    }
+
+    case "cleaning": {
+      const cleaningReqs = Array.isArray(db?.cleaningRequests) ? db.cleaningRequests : [];
+      let list = cleaningReqs;
+
+      if (query) {
+        const qLower = String(query).toLowerCase().trim();
+        list = list.filter(c =>
+          String(c.flatNumber || "").includes(qLower) ||
+          String(c.status || "").toLowerCase().includes(qLower) ||
+          String(c.assignedUsername || "").toLowerCase().includes(qLower)
+        );
+      }
+      if (filters.flatNumber) list = list.filter(c => String(c.flatNumber) === String(filters.flatNumber));
+      if (filters.status) list = list.filter(c => c.status === filters.status);
+
+      const sanitized = list.map(c => {
+        if (requesterRole === "admin") {
+          return { ...c };
+        }
+        const firstName = c.assignedUsername ? c.assignedUsername.trim().split(/\s+/)[0] : "Equipe de Governança";
+        return {
+          id: c.id,
+          flatNumber: c.flatNumber,
+          status: c.status,
+          isClean: c.status === "clean",
+          assignedTo: firstName,
+          requestDate: c.requestDate,
+          effectiveDate: c.effectiveDate,
+          completedAt: c.completedAt || null
+        };
+      });
+
+      return {
+        success: true,
+        module: "cleaning",
+        count: sanitized.length,
+        cleaningRequests: sanitized
+      };
+    }
+
+    case "maintenance": {
+      const serviceOrders = Array.isArray(db?.serviceOrders) ? db.serviceOrders : [];
+      let list = serviceOrders;
+
+      if (query) {
+        const qLower = String(query).toLowerCase().trim();
+        list = list.filter(so =>
+          String(so.title || "").toLowerCase().includes(qLower) ||
+          String(so.status || "").toLowerCase().includes(qLower) ||
+          (Array.isArray(so.flats) && so.flats.some(f => String(f.flatNumber).includes(qLower) || String(f.instructions || "").toLowerCase().includes(qLower)))
+        );
+      }
+      if (filters.status) list = list.filter(so => so.status === filters.status);
+      if (filters.flatNumber) {
+        list = list.filter(so => Array.isArray(so.flats) && so.flats.some(f => String(f.flatNumber) === String(filters.flatNumber)));
+      }
+
+      const sanitized = list.map(so => {
+        if (requesterRole === "admin") {
+          const worker = (db?.serviceWorkers || []).find(w => w.token === so.token || w.serviceOrderId === so.id);
+          return {
+            ...so,
+            workerName: worker?.mainWorker?.name || null,
+            workerCpf: worker?.mainWorker?.cpf || null,
+            vehicle: worker?.vehicle || null
+          };
+        }
+        return {
+          id: so.id,
+          title: so.title,
+          status: so.status,
+          createdAt: so.createdAt,
+          flats: (so.flats || []).map(f => ({
+            flatNumber: f.flatNumber,
+            status: f.status,
+            startedAt: f.startedAt || null,
+            completedAt: f.completedAt || null
+          }))
+        };
+      });
+
+      return {
+        success: true,
+        module: "maintenance",
+        count: sanitized.length,
+        serviceOrders: sanitized
+      };
+    }
+
+    case "breakfast": {
+      const menu = db?.breakfastMenu || DEFAULT_BREAKFAST_MENU;
+      const standardConfig = db?.standardBreakfastConfig || DEFAULT_STANDARD_BREAKFAST;
+      const orders = Array.isArray(db?.breakfastOrders) ? db.breakfastOrders : [];
+
+      let sanitizedOrders = [];
+      if (requesterRole === "admin") {
+        sanitizedOrders = orders;
+        if (filters.date) sanitizedOrders = sanitizedOrders.filter(o => o.date === filters.date);
+        if (filters.roomNumber) sanitizedOrders = sanitizedOrders.filter(o => String(o.roomNumber) === String(filters.roomNumber));
+      } else {
+        sanitizedOrders = orders.filter(o => {
+          const phoneMatches = requesterPhone && (o.phone === requesterPhone || cleanWhatsAppPhone(o.phone) === cleanWhatsAppPhone(requesterPhone));
+          return Boolean(phoneMatches);
+        });
+      }
+
+      return {
+        success: true,
+        module: "breakfast",
+        deliveryHours: menu.availableTimes || DEFAULT_BREAKFAST_MENU.availableTimes,
+        menuCategories: menu.categories || DEFAULT_BREAKFAST_MENU.categories,
+        standardConfig,
+        orders: sanitizedOrders
+      };
+    }
+
+    case "garage": {
+      const garageAuthorizations = Array.isArray(db?.garageAuthorizations) ? db.garageAuthorizations : [];
+      const rules = {
+        policy: "1 vaga rotativa gratuita por flat no condomínio Soho (qualquer vaga livre disponível).",
+        requiresPreCheckin: true,
+        heightLimitMeters: "2.10m a 2.20m",
+        supportedVehicles: "Veículos de passeio, SUVs e caminhonetes."
+      };
+
+      let sanitizedAuths = [];
+      if (requesterRole === "admin") {
+        sanitizedAuths = garageAuthorizations;
+        if (query) {
+          const qLower = String(query).toLowerCase().trim();
+          sanitizedAuths = sanitizedAuths.filter(a =>
+            String(a.plate || "").toLowerCase().includes(qLower) ||
+            String(a.guestName || "").toLowerCase().includes(qLower) ||
+            String(a.flatNumber || "").includes(qLower) ||
+            String(a.model || "").toLowerCase().includes(qLower)
+          );
+        }
+      } else {
+        if (requesterPhone) {
+          const cleanReqPhone = cleanWhatsAppPhone(requesterPhone);
+          sanitizedAuths = garageAuthorizations.filter(a => {
+            const authPhone = cleanWhatsAppPhone(a.phone || a.guestPhone || "");
+            return cleanReqPhone && authPhone === cleanReqPhone;
+          });
+
+          if (query) {
+            const qPlate = String(query).toUpperCase().replace(/[^A-Z0-9]/g, "");
+            sanitizedAuths = sanitizedAuths.filter(a => {
+              const cleanA = String(a.plate || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+              return qPlate && cleanA.includes(qPlate);
+            });
+          }
+
+          sanitizedAuths = sanitizedAuths.map(a => ({
+            plate: a.plate,
+            model: a.model,
+            flatNumber: a.flatNumber,
+            status: a.status,
+            checkinDate: a.checkinDate,
+            checkoutDate: a.checkoutDate
+          }));
+        }
+      }
+
+      return {
+        success: true,
+        module: "garage",
+        rules,
+        authorizedCount: sanitizedAuths.length,
+        authorizations: sanitizedAuths
+      };
+    }
+
+    case "lost_and_found": {
+      const items = Array.isArray(db?.lostAndFound) ? db.lostAndFound : [];
+      let list = items;
+
+      if (query) {
+        const qLower = String(query).toLowerCase().trim();
+        list = list.filter(i =>
+          String(i.description || "").toLowerCase().includes(qLower) ||
+          String(i.flatNumber || "").includes(qLower) ||
+          String(i.locationInRoom || "").toLowerCase().includes(qLower) ||
+          String(i.status || "").toLowerCase().includes(qLower)
+        );
+      }
+      if (filters.flatNumber) list = list.filter(i => String(i.flatNumber) === String(filters.flatNumber));
+      if (filters.status) list = list.filter(i => i.status === filters.status);
+
+      const sanitized = list.map(i => {
+        if (requesterRole === "admin") {
+          return { ...i };
+        }
+        return {
+          id: i.id,
+          description: i.description,
+          flatNumber: i.flatNumber,
+          locationInRoom: i.locationInRoom,
+          status: i.status,
+          createdAt: i.createdAt
+        };
+      });
+
+      return {
+        success: true,
+        module: "lost_and_found",
+        count: sanitized.length,
+        items: sanitized
+      };
+    }
+
+    case "faq": {
+      const faqList = Array.isArray(db?.faqItems) ? db.faqItems : [];
+      const kb = DEFAULT_AI_CONFIG.knowledgeBase;
+      let activeFaqs = faqList.filter(f => f && f.status === "ativo");
+
+      if (query) {
+        const qLower = String(query).toLowerCase().trim();
+        activeFaqs = activeFaqs.filter(f =>
+          String(f.question || "").toLowerCase().includes(qLower) ||
+          String(f.answer || "").toLowerCase().includes(qLower) ||
+          (Array.isArray(f.keywords) && f.keywords.some(k => k.toLowerCase().includes(qLower)))
+        );
+      }
+
+      return {
+        success: true,
+        module: "faq",
+        knowledgeBaseSummary: {
+          address: kb.address,
+          checkinTime: kb.checkinTime,
+          checkoutTime: kb.checkoutTime,
+          wifiPassword: kb.wifiPassword,
+          petPolicy: kb.petPolicy,
+          smokingPolicy: kb.smokingPolicy,
+          leisureInfo: kb.leisureInfo,
+          amenities: kb.amenities
+        },
+        count: activeFaqs.length,
+        faqs: activeFaqs.map(f => ({ id: f.id, question: f.question, answer: f.answer, category: f.category }))
+      };
+    }
+
+    case "finance": {
+      if (requesterRole !== "admin") {
+        return {
+          error: "ACCESS_DENIED",
+          module: "finance",
+          message: "Acesso negado: Informações financeiras globais e de faturamento são estritamente restritas à administração da CorpFlats (LGPD)."
+        };
+      }
+
+      const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+      const activeRes = reservations.filter(r => r.status !== "cancelada");
+      const tariffSettings = db?.tariffSettings || { baseDailyRate: 237, weekendMarkupPct: 0.15, cleaningFee: 70, breakfastFeePerson: 35 };
+
+      let totalRevenue = 0;
+      let totalNights = 0;
+      const channelTotals = { direct: 0, booking: 0, airbnb: 0, other: 0 };
+
+      activeRes.forEach(r => {
+        const amt = Number(r.totalAmount) || 0;
+        totalRevenue += amt;
+        const chan = String(r.channel || "").toLowerCase();
+        if (chan.includes("site") || chan.includes("whatsapp") || chan.includes("direct") || chan.includes("direta")) {
+          channelTotals.direct += amt;
+        } else if (chan.includes("booking")) {
+          channelTotals.booking += amt;
+        } else if (chan.includes("airbnb")) {
+          channelTotals.airbnb += amt;
+        } else {
+          channelTotals.other += amt;
+        }
+
+        try {
+          if (r.checkinDate && r.checkoutDate) {
+            const d1 = new Date(r.checkinDate);
+            const d2 = new Date(r.checkoutDate);
+            const nights = Math.max(1, Math.round((d2 - d1) / 86400000));
+            totalNights += nights;
+          } else {
+            totalNights += 1;
+          }
+        } catch {
+          totalNights += 1;
+        }
+      });
+
+      const adr = totalNights > 0 ? Math.round(totalRevenue / totalNights) : tariffSettings.baseDailyRate;
+
+      return {
+        success: true,
+        module: "finance",
+        activeReservationsCount: activeRes.length,
+        totalNights,
+        totalRevenueEstimated: Math.round(totalRevenue * 100) / 100,
+        averageDailyRate: adr,
+        revenueByChannel: channelTotals,
+        tariffSettings: {
+          baseDailyRate: tariffSettings.baseDailyRate,
+          weekendMarkupPct: tariffSettings.weekendMarkupPct,
+          cleaningFee: tariffSettings.cleaningFee,
+          breakfastFeePerson: tariffSettings.breakfastFeePerson
+        },
+        tariffOverridesCount: (db?.tariffOverrides || []).length
+      };
+    }
+
+    case "sentiment": {
+      const reviews = Array.isArray(db?.reviews) ? db.reviews : [];
+      const sentiments = Array.isArray(db?.guestSentiment) ? db.guestSentiment : [];
+      const nps = Array.isArray(db?.npsResponses) ? db.npsResponses : [];
+
+      const avgReviewRating = reviews.length > 0
+        ? (reviews.reduce((acc, r) => acc + (Number(r.rating) || 5), 0) / reviews.length).toFixed(1)
+        : "4.9";
+
+      const positiveSentiments = sentiments.filter(s => s.overallTone === "positive").length;
+      const neutralSentiments = sentiments.filter(s => s.overallTone === "neutral").length;
+      const negativeSentiments = sentiments.filter(s => s.overallTone === "negative").length;
+
+      if (requesterRole !== "admin") {
+        return {
+          success: true,
+          module: "sentiment",
+          averageRating: Number(avgReviewRating),
+          totalReviews: reviews.length,
+          generalSatisfactionRate: "98% de aprovação dos hóspedes"
+        };
+      }
+
+      return {
+        success: true,
+        module: "sentiment",
+        averageRating: Number(avgReviewRating),
+        totalReviews: reviews.length,
+        sentimentsAnalyzed: sentiments.length,
+        toneDistribution: {
+          positive: positiveSentiments,
+          neutral: neutralSentiments,
+          negative: negativeSentiments
+        },
+        nps: {
+          total: nps.length,
+          promoters: nps.filter(n => n.score === 5).length,
+          detractors: nps.filter(n => n.score != null && n.score <= 2).length
+        },
+        recentFeedbacks: reviews.slice(0, 5).map(r => ({
+          author: r.author || "Hóspede",
+          rating: r.rating,
+          comment: r.comment || r.text || "",
+          date: r.date
+        }))
+      };
+    }
+
+    default:
+      return {
+        error: "UNKNOWN_MODULE",
+        module,
+        message: `Módulo '${module}' não suportado pelo motor universal. Módulos válidos: flats, reservations, cleaning, maintenance, breakfast, garage, lost_and_found, faq, finance, sentiment.`
+      };
+  }
+}
+
+/**
+ * Handler para o Gemini Function Calling de querySystemData
+ */
+export async function handleQuerySystemData(db, args = {}) {
+  const { module, query, filters, requesterRole = "guest", requesterPhone = "" } = args;
+  return await querySystemData(db, { module, query, filters, requesterRole, requesterPhone });
 }
 
 /**
@@ -789,6 +1375,31 @@ export function buildGeminiTools(actionsSettings = {}) {
           }
         },
         required: ["targetFlatNumber"]
+      }
+    });
+  }
+
+  if (allowed.querySystemData !== false) {
+    declarations.push({
+      name: "querySystemData",
+      description: "Consulta universal e inteligente aos dados em tempo real do sistema CorpFlats (flats, reservas, limpeza/governança, manutenção/OS, café da manhã, garagem, achados e perdidos, regras/FAQs, financeiro e avaliações/sentimento).",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          module: {
+            type: "STRING",
+            description: "Módulo do sistema a consultar: 'flats', 'reservations', 'cleaning', 'maintenance', 'breakfast', 'garage', 'lost_and_found', 'faq', 'finance' ou 'sentiment'."
+          },
+          query: {
+            type: "STRING",
+            description: "Termo de busca, pergunta, número de flat, nome de hóspede ou filtro textual."
+          },
+          filters: {
+            type: "OBJECT",
+            description: "Filtros adicionais opcionais (ex: status, flatNumber, date, category)."
+          }
+        },
+        required: ["module"]
       }
     });
   }
@@ -2800,6 +3411,8 @@ export async function executeBotAction(db, actionName, args = {}) {
       return handleGetFlatAmenities(db, args);
     case "reallocateReservationFlat":
       return handleReallocateReservationFlat(db, args);
+    case "querySystemData":
+      return handleQuerySystemData(db, args);
     default:
       return {
         error: "UNKNOWN_ACTION",
@@ -4710,12 +5323,75 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
   // 2. Café da Manhã (verificado antes de termos genéricos de acomodação)
   if (/caf[eé]|desjejum/i.test(text)) {
+    if (/card[aá]pio|itens|o\s+que\s+tem|op[cç][oõ]es/i.test(text)) {
+      return ret(`${greetingSalutation} 🥐☕ Nosso café da manhã é servido pontualmente no seu quarto das *05:00 às 09:30* em deliciosa bandeja.\n\nO cardápio padrão inclui:\n• *Bebidas:* Café, café com leite, leite e suco natural de laranja\n• *Pães:* Pão francês quentinho e pão de queijo\n• *Frios & Quentes:* Queijo mussarela, presunto e ovos mexidos\n• *Complementos & Doces:* Manteiga, bolo do dia e frutas frescas (mamão, maçã ou banana).\n\nPara agendar o horário e personalizar sua bandeja, basta acessar o link do Café no seu Portal do Hóspede até a véspera! ✨`);
+    }
+
+    const clientPhone = guestContext?.phone || (typeof guestContext === "string" ? guestContext : null);
+    const roomNum = guestContext?.flatNumber;
+    const orders = Array.isArray(activeDb?.breakfastOrders) ? activeDb.breakfastOrders : [];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayOrder = orders.find(o =>
+      (o.date === todayStr || !o.date) &&
+      ((roomNum && String(o.roomNumber) === String(roomNum)) || (clientPhone && cleanWhatsAppPhone(o.phone) === cleanWhatsAppPhone(clientPhone)))
+    );
+
+    if (todayOrder) {
+      return ret(`${greetingSalutation} 🥐☕ Localizamos o seu pedido de café da manhã para o Flat ${todayOrder.roomNumber || roomNum}! A entrega na bandeja está agendada para às *${todayOrder.deliveryTime || "07:00"}h* no seu quarto. Tenha um excelente dia! ✨`);
+    }
+
     return ret(`${greetingSalutation} 🥐☕ ${kb.breakfastInfo}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
   }
 
   // 3. Garagem / Estacionamento / Carro
   if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa/i.test(text)) {
+    const clientPhone = guestContext?.phone || (typeof guestContext === "string" ? guestContext : null);
+    const roomNum = guestContext?.flatNumber;
+    const auths = Array.isArray(activeDb?.garageAuthorizations) ? activeDb.garageAuthorizations : [];
+    const resVeh = guestContext?.reservation?.vehicle;
+
+    const matchedAuth = auths.find(a =>
+      (roomNum && String(a.flatNumber) === String(roomNum)) ||
+      (clientPhone && cleanWhatsAppPhone(a.phone) === cleanWhatsAppPhone(clientPhone)) ||
+      (resVeh?.plate && String(a.plate).toUpperCase() === String(resVeh.plate).toUpperCase())
+    );
+
+    if (matchedAuth || resVeh?.plate) {
+      const plate = matchedAuth?.plate || resVeh?.plate;
+      const model = matchedAuth?.model || resVeh?.model || "veículo";
+      return ret(`${greetingSalutation} 🚗 Ótima notícia! O seu veículo (*${model} - Placa ${plate}*) já consta com liberação ativa na portaria 24h do condomínio Soho! Dispomos de 1 vaga rotativa gratuita coberta. Qualquer dúvida ao chegar, basta se identificar na portaria! ✨`);
+    }
+
     return ret(`${greetingSalutation} 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, acesse seu Pré-Check-in Digital ou envie por aqui a *Placa, Modelo e Cor* que já providenciamos a autorização com a portaria!`);
+  }
+
+  // 3.1 Achados e Perdidos / Objetos Esquecidos
+  if (/(?:achad[ao]s?\s+e\s+perdid[ao]s?|esquec(?:i|eu|emos|ido)|perdi\s+(?:meu|minha|um|uma)|deixei\s+(?:no\s+quarto|no\s+flat|l[aá])|objeto\s+esquecido)/i.test(text)) {
+    const flatNum = guestContext?.flatNumber || (text.match(/\b(?:flat|apto|quarto)\s*(\d{2,4})\b/i)?.[1] || null);
+    const lostList = Array.isArray(activeDb?.lostAndFound) ? activeDb.lostAndFound : [];
+    if (flatNum) {
+      const foundItem = lostList.find(i => String(i.flatNumber) === String(flatNum) && i.status !== "devolvido");
+      if (foundItem) {
+        return ret(`${greetingSalutation} 🔍 Localizamos um item registrado para o Flat ${flatNum}: *${foundItem.description}* (local: ${foundItem.locationInRoom || "apartamento"}). O objeto está guardado com total segurança pela nossa equipe. Nossa recepção dará continuidade com você por aqui para combinar a retirada ou envio! 🧳✨`);
+      }
+    }
+    return ret(`${greetingSalutation} 🧳 Todos os objetos encontrados nos apartamentos são catalogados e guardados com segurança pela nossa equipe de governança. Poderia nos informar qual item foi esquecido e o número do seu flat? Nossa equipe da recepção verificará imediatamente no sistema! 🔍✨`);
+  }
+
+  // 3.2 Manutenção / Reparos / Ordens de Serviço
+  if (/(?:manuten[cç][aã]o|conserto|reparo|defeito|estragad[ao]|n[aã]o\s+(?:est[aá]\s+)?funcionando|quebrad[ao]|ar\s+(?:n[aã]o\s+gela|pingando)|chuveiro\s+(?:frio|n[aã]o\s+esquenta|queimado)|l[aâ]mpada\s+queimada|vazamento|ordem\s+de\s+servi[cç]o)\b/i.test(text)) {
+    const flatNum = guestContext?.flatNumber || (text.match(/\b(?:flat|apto|quarto)\s*(\d{2,4})\b/i)?.[1] || null);
+    const serviceOrders = Array.isArray(activeDb?.serviceOrders) ? activeDb.serviceOrders : [];
+    if (flatNum) {
+      const activeOrder = serviceOrders.find(so =>
+        so.status === "active" && Array.isArray(so.flats) &&
+        so.flats.some(sf => String(sf.flatNumber) === String(flatNum) && sf.status !== "done")
+      );
+      if (activeOrder) {
+        return ret(`${greetingSalutation} 🛠️ Identificamos que já existe um chamado de manutenção aberto para o Flat ${flatNum} (*${activeOrder.title}*). Nossa equipe técnica já está atuando para normalizar o item com a maior brevidade possível! Caso precise de algo adicional, estamos à disposição! 🛎️`);
+      }
+    }
+    return ret(`${greetingSalutation} 🛠️ Lamentamos pelo inconveniente! Já registrei o chamado de manutenção para a nossa equipe técnica e recepção cuidarem do conserto com prioridade. Se puder nos dar mais detalhes do problema e o número do seu flat, agilizaremos o atendimento imediatamente! 🛎️✨`);
   }
 
   // 4. Localização / Endereço / Onde fica
@@ -4851,7 +5527,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 /**
  * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
  */
-export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false }) {
+export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest" }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
   const candidateModels = [
@@ -4921,7 +5597,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
 
       let actionResult;
       try {
-        actionResult = await executeBotAction(db, fnName, fnArgs);
+        actionResult = await executeBotAction(db, fnName, { ...fnArgs, requesterRole: fnArgs.requesterRole || requesterRole });
       } catch (actErr) {
         actionResult = {
           error: "ACTION_FAILED",

@@ -7,6 +7,7 @@ import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import { cancelGoogleOneTap } from '@/lib/auth-client';
 import { useGetMe } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
+import { AdminAiCopilot } from '@/components/admin-ai-copilot';
 
 import Login from '@/pages/login';
 import Dashboard from '@/pages/dashboard';
@@ -429,6 +430,7 @@ function App() {
         <VersionGuard>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <Router />
+            <AdminAiCopilot />
           </WouterRouter>
           <Toaster />
         </VersionGuard>
