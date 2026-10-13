@@ -1,192 +1,194 @@
 # Original User Request
 
-## Initial Request — 2026-10-11T20:59:22Z
+## Initial Request — 2026-10-13T22:04:17Z
 
-This is a single self-contained fix; keep it small and focused.
+Construir a integração do PMS **Guest-Flow-Manager** (CorpFlats Soho Residence: 19 flats, Campos dos Goytacazes/RJ) com o channel manager **WebBookingPro** pela API "Build-To-Us". O PMS passa a ser a fonte da verdade de disponibilidade, tarifas e restrições, enviando-as à WebBookingPro, e passa a receber automaticamente as reservas da Booking.com e do Airbnb. Junto com isso, reestruturar o módulo de precificação tendo a planilha SEBRAE do usuário como modelo. É um sistema de **produção** de um hotel em operação: **nenhuma perda de dados e nenhuma interferência na operação atual** são os requisitos mais importantes. Ainda não existem credenciais da WebBookingPro, então todo o desenvolvimento e os testes devem rodar contra um **simulador fiel à especificação**.
 
-Investigar e resolver o aumento no consumo de memória RAM (que saltou de ~200MB para mais de 400MB) e os travamentos críticos do Event Loop (com picos de 302ms e até 1.263ms) no servidor Node.js (CorpFlats no Render) após os deploys recentes, restabelecendo o uso médio de memória para o patamar seguro de ~200MB e garantindo fluidez total na execução.
-
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Working directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager` (trabalhar na branch `feature/wbp-integration`; nunca fazer merge na `main` sem aprovação do usuário)
 Integrity mode: development
+
+## Material de referência
+- **Documentação completa da API, copiada localmente:** `C:\Users\mille\.gemini\antigravity\brain\70356aec-b041-4a86-8517-6963f7cb2aa9\wbp_docs\`
+  - `wbpAPI.yaml` é a especificação OpenAPI completa e a fonte da verdade.
+  - `README.md` traz as regras-chave, as lacunas e inconsistências já identificadas e os códigos de erro.
+  - `pages/` tem uma página por endpoint.
+  - Versionar uma cópia dessa pasta no repositório, para consulta futura.
+- **Planilha de precificação do usuário:** `c:\Users\mille\OneDrive\Hotel\Arquivos Antigravity\Kit Precificacao Hoteleira SEBRAE.xlsx`
+  - A extração completa (valores e fórmulas) está em `C:\Users\mille\.gemini\antigravity\brain\70356aec-b041-4a86-8517-6963f7cb2aa9\scratch\sebrae_dump.txt`.
+  - A análise de lacunas em relação ao sistema atual está em `C:\Users\mille\.gemini\antigravity\brain\70356aec-b041-4a86-8517-6963f7cb2aa9\analise_precificacao_sebrae.md`.
+- **Regras do projeto:** `AGENTS.md` (obrigatório; ver R10) e `PROJECT.md`.
+- **Fatos do código atual,** levantados na pesquisa. Os números de linha podem ter mudado.
+  - **Backend:** é um arquivo único, `artifacts/api-server/demo-server.mjs`, com cópia gêmea **byte a byte idêntica** em `scripts/demo-server.mjs` (paridade SHA-256). O mesmo vale para os serviços duplicados.
+  - **Persistência:** o estado inteiro fica num blob JSONB no Postgres (`system_store`, `key='db_state'`), regravado com debounce. Há poda automática de reservas antigas e snapshots só das últimas cerca de 6 h.
+  - **Hospedagem:** Render, plano pago com cerca de 2 GB de RAM. Hoje o processo se limita a cerca de 384 MB via `server.mjs` e `render.yaml`.
+  - **Flats:** são 19 flats individuais, sem tipos de quarto.
+  - **Reservas:** não existe campo de ID externo. As reservas de OTA são digitadas à mão (`channel` = booking/airbnb), e a regra atual força `pago_total` para elas.
+  - **Tarifas:** `db.tariffSettings`, `db.tariffOverrides` e `calculateDailyRate`, em modo `auto` (SEBRAE simplificado) ou `manual`. Não há plano tarifário nem restrições, e `minNights` é ignorado.
+  - **Disponibilidade:** é calculada de 4 formas divergentes (só `hasReservationConflict` considera holds e roomBlocks), e o servidor não valida overbooking.
+  - **Automações ao criar reserva:** WhatsApp, SERPRO/FNRH, PIX (pré-reserva), e-mails de portaria/garagem, governança e café.
+  - **Autenticação:** o cookie de sessão não é assinado e várias rotas de escrita não checam autenticação.
+  - **Testes pontuais:** seguem o padrão `node:test` sobre uma cópia de `data/database.json`, como em `tests/tariff-engine.test.mjs`.
 
 ## Requirements
 
-### R1. Diagnóstico e Redução do Consumo de Memória RAM
-Identificar as fontes de retenção e alocação desnecessária de memória no processo Node.js — analisando tanto o serviço de telemetria/monitoramento (tamanho dos buffers circulares de histórico/diagnósticos, chamadas frequentes a `process.memoryUsage()` em middlewares, e parsing de payloads OTel) quanto as rotas do backend (como alocações repetidas de Maps e arrays) —, ajustando-as para que o consumo em repouso retorne ao patamar nominal de ~200MB a 250MB.
+### R1. Segurança operacional e integridade de dados (prioridade máxima)
+- **Interruptor geral:** a integração inteira fica atrás de um interruptor geral, **desligado por padrão**. Desligada, o sistema se comporta exatamente como hoje: nenhuma chamada de saída, nenhum agendamento e nenhuma mudança visível para a recepção.
+- **Modos de operação:** `desligado` → `somente observar` (recebe e registra tudo, mas não cria nem altera reservas e não dispara automações) → `automático`.
+- **Registro antes do processamento:** todo payload recebido da WebBookingPro (callback ou polling) é gravado de forma durável e só de inserção, **fora do blob principal e imune à poda**, antes de qualquer processamento. O processamento é idempotente: o mesmo booking recebido N vezes, por callback, polling ou ambos, produz exatamente um efeito. Uma falha entre o recebimento e o processamento é retomada automaticamente.
+- **Escritas da integração:** as escritas no estado de reservas são serializadas, para evitar IDs ou códigos duplicados em chamadas concorrentes.
+- **Isolamento dos testes:** nenhum teste ou simulador pode tocar o banco de produção (`DATABASE_URL` sempre removida nos testes) e as cópias de banco usadas em testes não podem vazar dados pessoais reais para fora da máquina.
 
-### R2. Eliminação de Bloqueios Síncronos do Event Loop
-Localizar e isolar as operações síncronas pesadas que provocaram travamentos críticos no loop de eventos durante a inicialização/requisições (como serializações `JSON.stringify` de grandes volumes de dados, operações síncronas de arquivo ou varreduras sequenciais de listas volumosas), convertendo-as em execuções assíncronas não bloqueantes ou fatiadas (`setImmediate`/streaming).
+### R2. Cliente da API e simulador
+- **Implementação da especificação:**
+  - Chamadas obrigatórias: HealthCheck, SetupProperty, GetRoomTypes, GetRatePlans, ARIUpdate, GetBookingList e GetBookingId.
+  - Também: AckBooking.
+  - Callbacks no PMS: BookingCreate, NotifyBooking (form-urlencoded), ARIFullRefresh e RoomInfo.
+  - Seguir o formato de autenticação, o `guid` por requisição, os códigos de erro e as regras do README, como `end_date` inclusivo, a margem de 5 min no `wbp_booking_version` e o fim de semana em UTC.
+- **Simulador local da WebBookingPro:**
+  - Valida cada requisição recebida contra os schemas de `wbpAPI.yaml`, tolerando as inconsistências documentadas.
+  - Permite injetar reservas novas, alteradas e canceladas, falhas, timeouts e respostas de erro.
+  - É usado em todos os testes.
+- **Credenciais:** `cid`, `shared_secret`, ID e senha da propriedade e URL ficam configuráveis por variáveis de ambiente ou tela de administração. Os segredos **não** podem ficar no blob do banco.
+- **Callbacks:** os endpoints de callback validam o `shared_secret`, respondem rápido (após o registro durável) e o polling de backup roda a cada 30 min (configurável).
 
-### R3. Preservação de Funcionalidades e Blindagem do Monitor
-Assegurar que as funcionalidades do painel de monitoramento em tempo real, os alertas de RCA, as métricas e a integração com o Render continuem operando normalmente, porém com custo computacional e de memória desprezível (overhead inferior a 5MB).
+### R3. Mapeamento e publicação de ARI
+- **Modelo atual:** **1 tipo de quarto "Flat"**, com estoque = nº de flats livres por data, e **2 planos tarifários**: "Sem café" e "Com café". Os anúncios com e sem café da Booking e do Airbnb apontam para esses planos.
+- **Tela de mapeamento:** deve permitir, no futuro, criar categorias (cada flat pertence a uma categoria) e mais planos, sem reescrever a integração.
+- **Estoque compartilhado:** qualquer venda baixa o estoque de todos os planos. Cada plano pode ter um **teto opcional** por data, e o valor enviado é sempre `min(teto, flats livres)`.
+- **Cálculo único de disponibilidade:** considera reservas ativas, bloqueios e manutenções (roomBlocks e ordens de serviço), holds e pré-reservas não expiradas, com status normalizados. Ele é usado para o ARI.
+- **Conflitos nas telas atuais:** criar ou mover uma reserva com conflito passa a exibir um **aviso claro, sem bloquear**.
+- **Preço:**
+  - "Sem café" vem do motor de precificação (R4).
+  - "Com café" = "Sem café" + **valor configurável por hóspede por noite**, enviado de forma coerente nos campos de preço por ocupação da API (`rate`, `rdef_single` e os campos de adultos adicionais).
+- **Restrições configuráveis** por data, período e plano: estadia mínima, estadia máxima, stop-sell (por plano ou geral), CTA, CTD e antecedência mínima e máxima. A `minNights` atual passa a valer.
+- **Envios:** carga completa inicial até o fim do ano seguinte e, depois, envio incremental em segundos após qualquer mudança (reserva, cancelamento, bloqueio, tarifa ou restrição), com agrupamento de datas, lotes, retentativa e consumo de memória controlado.
 
-### R4. Paridade Rigorosa dos Servidores Twin
-Garantir que todas as alterações feitas no backend sejam replicadas com paridade estrita de 100% (hash SHA-256 idêntico) entre os pares de arquivos correspondentes:
-- `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`
-- `scripts/server-monitor-service.mjs` e `artifacts/api-server/server-monitor-service.mjs`
-- `scripts/zapi-service.mjs` e `artifacts/api-server/zapi-service.mjs`
+### R4. Precificação estilo SEBRAE, com travas
+- **Funcionalidades da planilha, reestruturadas para a rotina do usuário:**
+  - Custo por UH com os itens reais: fixos, limpeza, enxoval, energia e cartão.
+  - Custo fixo por diária vendida, com a ocupação, e por diária disponível, com os dias reais do mês.
+  - Tarifa mínima = custo ÷ (1 − comissão − margem − **imposto sobre faturamento de 6%**, Simples/ISS), com uma composição que **fecha**.
+  - **Contagem dupla de comissão corrigida:** a planilha inclui "Comissão do canal R$ 28,50/diária" no custo por UH e também desconta a comissão % na fórmula. O usuário decidiu remover a comissão em R$ do custo e manter só a comissão % na fórmula.
+  - Tarifa líquida por canal (comissão + taxa de cartão/VCC).
+  - Sazonalidade calculada a partir da **ocupação histórica real** dos flats, com override manual.
+  - Ajustes por segmento e canal.
+  - Telas de análise de **Orçamento anual** e **Indicadores por canal** (mix, receita líquida, RevPAR líquido).
+- **Comissões:** os markups por canal não podem ser aplicados em dobro.
+- **Travas obrigatórias:**
+  1. **Piso:** nunca enviar abaixo da tarifa mínima sustentável ou de um piso manual.
+  2. **Variação:** uma variação acima de X% (configurável, padrão 30%) em relação ao último valor enviado fica retida até confirmação.
+  3. **Publicação:** mudanças de custos e configurações só vão às OTAs depois de **pré-visualização + "Publicar"** pelo administrador.
+- **Aprovação da interface:** a tela segue os mockups aprovados pelo usuário (ver Verification Resources).
+
+### R5. Importação de reservas: caixa de entrada, quarentena, alterações e transição
+- **Caixa de Entrada OTA:** toda reserva recebida entra numa "Caixa de Entrada OTA".
+  - No modo automático, sem conflito, vira reserva real com flat alocado automaticamente pelo motor de alocação existente, café da manhã marcado conforme o plano, ID externo da OTA gravado e canal correto.
+  - Com conflito ou dúvida, vai para a **quarentena**, onde o administrador decide.
+- **Pagamento:**
+  - `PaymentCollect=Channel`: pago pela OTA, com o valor líquido a receber registrado.
+  - `PaymentCollect=Property`: pendente de cobrança no hotel, com alerta à recepção.
+- **Automações (só no modo automático):** iguais às de uma reserva Booking/Airbnb digitada hoje (governança, café, e-mails de portaria/garagem, WhatsApp de boas-vindas e SERPRO/FNRH), **sem PIX**. No modo "somente observar", nenhuma automação dispara.
+- **Cancelamento da OTA:** é aplicado automaticamente (cancela, libera o flat e reenvia o ARI), salvo se o hóspede já fez check-in; nesse caso vai para a quarentena.
+- **Alteração da OTA:** é aplicada automaticamente se couber no mesmo flat ou em outro livre; se não couber, vai para a quarentena.
+- **Histórico:** toda mudança grava o "antes e depois" no histórico da reserva.
+- **Transição:** uma reserva recebida que corresponda com segurança a uma reserva digitada à mão (mesmo canal, mesmas datas, nome semelhante) é **vinculada**, sem duplicar e sem alterar a reserva existente. Na dúvida, vai para a quarentena. Antes de ligar, deve existir um **relatório de conciliação inicial**.
+
+### R6. Cartões de crédito
+- **Armazenamento:** o cartão recebido na reserva é guardado **criptografado**, com a chave fora do banco, em variável de ambiente. O **CVV nunca é armazenado**.
+- **Visualização:** só administradores podem ver, após **redigitar a senha**, que gera um token de uso único de 5 min. Cada visualização é auditada.
+- **Exclusão automática:** 7 dias após o check-out, ou imediatamente em caso de cancelamento sem multa.
+- **Vazamento:** o número completo nunca aparece em logs, no blob, em respostas de listagem ou em backups em texto claro.
+- **Escopo da proteção:** as telas e endpoints da integração exigem admin verificado no servidor. **Não alterar o login atual dos demais usuários.**
+
+### R7. Mensagens e Avaliações (provisório)
+- **Integração:** GetMessages/SendMessage com o chat de WhatsApp existente e GetReviews/RespondReview com a tela Review Insights existente.
+- **Isolamento:** como a documentação oficial dessas seções está incompleta, a implementação fica isolada atrás de um adaptador, **desligada por padrão** e marcada como provisória até a WebBookingPro confirmar o formato.
+
+### R8. Alertas
+- **No sistema:** contador da Caixa de Entrada OTA e central de notificações.
+- **WhatsApp e e-mail ao(s) gestor(es) em eventos críticos:** reserva em quarentena, overbooking, falha de envio de ARI por mais de 15 min e preço retido pela trava.
+- **Resumo diário:** reservas recebidas, canceladas e pendências.
+- **Configuração:** cada canal de alerta e cada tipo de evento pode ser ligado ou desligado por caixas de seleção.
+
+### R9. Página de ajuda dentro do sistema (manual)
+- **Formato:** um manual **bem elaborado, em português, para uso humano**, entregue **apenas como página de ajuda dentro do sistema**, com capturas de tela reais das telas construídas.
+- **Parte do administrador:**
+  - Como obter as credenciais da WebBookingPro.
+  - Configuração e mapeamento de quartos e planos.
+  - Modos (desligado, observar, automático) e como testar no sandbox.
+  - Conciliação inicial e entrada em produção.
+  - Precificação e travas, cartões, alertas.
+  - Solução de problemas por código de erro.
+- **Parte da recepção:** rotina diária, caixa de entrada e quarentena, conflitos, pagamentos.
+
+### R10. Regras do projeto (AGENTS.md e repositório)
+- **Paridade:** manter a paridade byte a byte entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`, e também entre qualquer serviço duplicado novo ou alterado.
+- **Build e commits:** ao alterar `artifacts/limpeza/src`, rodar `npm run build` em `artifacts/limpeza` e commitar o `dist/`. Todo commit recebe `git push` imediato para a branch ativa.
+- **Testes:** **rodar SOMENTE os testes pontuais da integração criados neste projeto.** É proibido rodar `tests/*.test.mjs` em lote, varreduras ou testes de outros módulos. Não silenciar notificações no código.
+- **Memória:** ajustar o limite de memória do processo para aproveitar o plano atual (cerca de 2 GB), com margem de segurança.
 
 ## Acceptance Criteria
 
-### Consumo de Memória & Telemetria
-- [ ] O consumo de memória RAM do processo Node.js em regime estável (RSS e Heap) é reduzido de forma mensurável, retornando à faixa de ~200MB a 250MB.
-- [ ] O serviço de monitoramento mantém retenção enxuta de memória, sem acúmulo contínuo ou vazamento nos buffers de histórico.
+### Segurança operacional
+- [ ] Com o interruptor geral desligado, os testes pontuais da integração provam que não ocorre nenhuma chamada de saída à WebBookingPro (simulador com contador = 0), nenhum timer da integração é registrado e os callbacks respondem "não habilitado" sem gravar reservas.
+- [ ] O mesmo booking entregue 5× por callback e 3× por polling, inclusive de forma concorrente, resulta em exatamente 1 reserva, sem ID ou código duplicado.
+- [ ] Quando o processo é encerrado depois do registro do payload e antes do processamento, a reserva é processada corretamente ao reiniciar.
+- [ ] O payload bruto fica gravado fora do blob principal e não é afetado por `pruneDatabase`.
+- [ ] No modo "somente observar", nenhuma reserva é criada e nenhuma automação dispara (mocks de WhatsApp, e-mail e SERPRO com contador = 0).
+- [ ] Os testes rodam com `DATABASE_URL` removida e sobre uma cópia do banco, demonstradamente.
 
-### Latência do Event Loop
-- [ ] O atraso do Event Loop (`loopLag.max` e percentil `p99`) permanece abaixo de 100ms em condições nominais, sem registrar novos eventos críticos de travamento (>300ms).
+### API e simulador
+- [ ] 100% das requisições enviadas ao simulador nos testes passam pela validação contra `wbpAPI.yaml`.
+- [ ] O simulador consegue injetar reserva nova, alterada, cancelada, erro 1001/1002/1102, timeout e NotifyBooking em form-urlencoded, e cada cenário tem teste pontual.
+- [ ] O polling usa `wbp_booking_version` − 5 min e trata `null` (teste).
 
-### Integridade e Testes
-- [ ] Os testes unitários pontuais associados (`tests/server-monitor-rca.test.mjs` e `tests/whatsapp-status-cache.test.mjs`) passam com 100% de sucesso.
-- [ ] A paridade de hash SHA-256 entre `scripts/` e `artifacts/api-server/` é confirmada como idêntica para todos os arquivos modificados.
-- [ ] O build de frontend (`npm --prefix artifacts/limpeza run build`) conclui sem erros caso algum arquivo de interface seja ajustado.
+### ARI e precificação
+- [ ] A carga completa cobre todas as datas de hoje até 31/12 do ano seguinte para o tipo "Flat" × 2 planos, e `units` bate com o cálculo único de disponibilidade em datas com reservas, bloqueios, manutenções e pré-reservas (teste com cenários construídos).
+- [ ] Teto por plano: o valor enviado é sempre `min(teto, livres)` (teste).
+- [ ] Preço "Com café" = "Sem café" + valor por hóspede, e é refletido corretamente para 1, 2 e 3 hóspedes nos campos da API (teste).
+- [ ] As 7 restrições aparecem no ARI quando configuradas, e `minNights` passa a ser respeitada (teste).
+- [ ] Após criar ou cancelar uma reserva, o ARI incremental das datas afetadas chega ao simulador em ≤ 10 s (teste).
+- [ ] Trava de piso: nenhum preço abaixo do piso é enviado. Trava de variação: uma mudança acima de X% fica retida até confirmação. Mudanças de configuração não são enviadas antes de "Publicar" (testes).
+- [ ] Com os dados reais da planilha, corrigida a contagem dupla de comissão (custo por UH = R$ 101,62 + 23,25 + 15,51 + 9,00 = **R$ 149,38**, sem a "comissão R$/diária"), a tarifa mínima = 149,38 ÷ (1 − 0,15 − 0,25 − 0,06) = **R$ 276,63 (± R$ 0,05)**, e a composição soma exatamente a tarifa mínima (teste).
+
+### Reservas
+- [ ] Reserva sem conflito no modo automático: flat alocado, café conforme o plano, ID externo gravado, `PaymentCollect` mapeado corretamente, automações disparadas (exceto PIX) (teste).
+- [ ] Os conflitos (overbooking, flat bloqueado, correspondência ambígua com reserva manual) vão para a quarentena e geram um alerta (teste).
+- [ ] O cancelamento libera o flat e reenvia o ARI. Com check-in feito, vai para a quarentena (teste).
+- [ ] A alteração é aplicada quando cabe e vai para a quarentena quando não cabe, e o histórico contém o "antes e depois" (teste).
+- [ ] Uma reserva manual pré-existente compatível é vinculada, não duplicada, e permanece inalterada, exceto pelo vínculo (teste). O relatório de conciliação inicial lista as correspondências seguras e as duvidosas.
+
+### Cartões
+- [ ] Depois de receber uma reserva com cartão, uma busca pelo número completo e pelo CVV no blob do banco, nos logs, no `audit_logs.jsonl` e nas respostas da API retorna **zero** ocorrências (teste).
+- [ ] A visualização exige o token de redigitação de senha (expira em 5 min, uso único) e é auditada. A exclusão automática ocorre na regra de 7 dias e no cancelamento (teste com time-travel).
+
+### Repositório e entrega
+- [ ] Os hashes SHA-256 dos arquivos gêmeos são idênticos no commit final.
+- [ ] `npm run build` em `artifacts/limpeza` conclui sem erro e o `dist/` está commitado.
+- [ ] Todo o trabalho está commitado e com push na branch `feature/wbp-integration`, e a `main` não foi alterada.
+- [ ] A página de ajuda existe no sistema, cobre todos os tópicos do R9 e contém capturas de tela reais. Um avaliador independente confere tópico a tópico e reprova se algum estiver ausente ou genérico.
+- [ ] A tela de precificação corresponde aos mockups aprovados. Um avaliador independente compara elemento a elemento.
+- [ ] Mensagens e Avaliações estão implementadas atrás de um adaptador, desligadas por padrão, com testes contra o simulador.
 
 ## Verification Resources
-- Teste pontual do monitor e RCA: `node --test tests/server-monitor-rca.test.mjs`
-- Teste pontual de cache e Z-API: `node --test tests/whatsapp-status-cache.test.mjs`
-- Verificação de paridade de hash SHA-256 via PowerShell:
-  `powershell -Command "(Get-FileHash scripts/demo-server.mjs).Hash -eq (Get-FileHash artifacts/api-server/demo-server.mjs).Hash; (Get-FileHash scripts/server-monitor-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/server-monitor-service.mjs).Hash"`
+- O padrão de teste pontual do repositório é `tests/tariff-engine.test.mjs`: servidor isolado com porta exclusiva, `DATA_FILE` numa cópia e `NODE_ENV=test`.
+- Há infraestrutura de sandbox em `e2e/sandbox/` (mock-zapi, mock-smtp, time-travel, db-seeder).
+- Mockups da interface (layout e fluxo), em `C:\Users\mille\.gemini\antigravity\brain\70356aec-b041-4a86-8517-6963f7cb2aa9\`:
+  - `mockup_precificacao_1791928509939.jpg`: aba Tarifa Mínima. Os números do desenho são os antigos; valem os do critério corrigido (R$ 149,38 → R$ 276,63).
+  - `mockup_previsualizacao_v2_1791928602700.jpg`: Pré-visualização & Publicar.
+  - `mockup_caixa_entrada_ota_1791928543273.jpg`: Caixa de Entrada OTA. As linhas repetidas da lista são um erro do desenho.
+  - As notas sobre os mockups estão em `mockups.md`.
+- Estado do repositório em 13/10 às 18:56: `main` sincronizada com `origin/main` (último commit `0501d02`) e arquivos gêmeos idênticos. A única alteração não commitada são 11 linhas de log local em `artifacts/api-server/audit_logs.jsonl`. Preservá-las no primeiro commit da branch.
 
 
-## Follow-up — 2026-10-11T23:13:31Z
+## Follow-up — 2026-10-13T22:21:28Z
 
-Desenvolver e integrar o Modo Desenvolvedor & Treinamento Inteligente no WhatsApp para o CorpFlats. O número do desenvolvedor (22998505276 / 5522998505276) deve possuir atuação dupla e fluida: simular conversas normais de hóspede (para testes dinâmicos de atendimento, disponibilidade e FAQ) e atuar como treinador/criador do sistema, enviando correções, comandos de calibração de tom/estilo (ex: "responda de forma mais curta por favor") que a IA Sofia interpreta de forma contextual e não-literal (extraindo a regra subjacente e atualizando a calibração de tom/prompt no painel), além de um fluxo simples para retificar e corrigir mensagens enviadas para hóspedes reais tanto via WhatsApp quanto pelo painel Web do Chat.
+CORREÇÃO URGENTE do usuário (repassar ao orquestrador e a todos os workers):
 
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-Integrity mode: development
+1) BRANCH: a verificação às 19:21 mostra que o repositório está em `main` (git branch --show-current = main), com PROJECT.md modificado na working tree da main. Antes de QUALQUER commit, criar e fazer checkout de `feature/wbp-integration` a partir de `0501d02` (git switch -c feature/wbp-integration), levando junto as alterações não commitadas. Nenhum commit ou push na main. Confirmem o branch antes de cada commit.
 
----
+2) NÃO PERDER DOCUMENTAÇÃO EXISTENTE: `PROJECT.md` (projeto anterior "Smart Flat Hub") foi sobrescrito, e `TEST_INFRA.md` / `TEST_READY.md` (projeto anterior "Reservation Modification Flow") correm o mesmo risco. Preservar o conteúdo original: o mais simples é usar arquivos próprios deste projeto, por exemplo `docs/integracoes/webbookingpro/PROJECT.md` e `.../TEST_INFRA.md`, e restaurar os originais na raiz com `git checkout 0501d02 -- PROJECT.md`. A alternativa é acrescentar uma seção nova sem remover nada do conteúdo anterior.
 
-## Requirements
+3) `artifacts/api-server/audit_logs.jsonl` tem 11 linhas locais não commitadas, que devem ser preservadas (não fazer checkout ou reset desse arquivo).
 
-### R1. Reconhecimento de Identidade do Desenvolvedor & Modo Híbrido Dinâmico
-1. **Identificação Segura & Bypass de Pausa**:
-   - Reconhecer de forma persistente o número do desenvolvedor (`22998505276` / `5522998505276`) com flag de desenvolvedor/admin.
-   - O chat com o desenvolvedor NUNCA deve sofrer silenciamento involuntário por `aiPaused: true`, garantindo continuidade ininterrupta nos testes.
-2. **Alternância Natural de Intenção**:
-   - **Fluxo Hóspede**: Quando Miller enviar perguntas sobre serviços, estadias ou comodidades (*"Qual horário de check-in?", "Flat 408 está livre?", "Tem Wi-Fi no flat 605?"*), a Sofia responde no tom acolhedor e profissional de Concierge Virtual, simulando a experiência final do hóspede.
-   - **Fluxo Treinador/Feedback**: Quando Miller enviar orientações, correções ou ajustes conceituais (*"Sofia, melhore essa resposta...", "O horário mudou...", "Não responda dessa forma, seja mais objetiva..."*), a Sofia reconhece Miller como criador do sistema e ativa o módulo de aprendizagem.
-
-### R2. Comandos de Calibração de Tom & Persona via WhatsApp
-1. **Interpretação e Atualização de Tom**:
-   - Quando o desenvolvedor enviar comandos como *"responda de forma mais curta por favor"*, *"use menos emojis"*, *"adote um tom mais descontraído"* ou *"seja mais executiva"*:
-   - O motor de IA interpreta o ajuste estilístico e atualiza diretamente a calibração de tom em `aiConfig.systemPrompt` e `aiConfig.toneSettings` no banco (`database.json`), sem sobrescrever a identidade básica nem apagar regras essenciais.
-2. **Confirmação com Amostra**:
-   - A Sofia responde a Miller no WhatsApp:
-     a) Confirmando cordialmente que a calibração de tom foi salva nas configurações do sistema;
-     b) Resumindo a nova diretriz de estilo adotada;
-     c) Apresentando uma amostra imediata de resposta no novo tom calibrado.
-
-### R3. Correção Simples de Mensagens Enviadas para Hóspedes Reais
-1. **Correção via Painel Web (`/whatsapp-chat`)**:
-   - Em cada balão de mensagem enviada pela Sofia no chat do hóspede, incluir o botão **"✏️ Corrigir / Ensinar Sofia"**.
-   - Ao clicar, abre um popover/modal simples onde o operador informa o que estava incorreto ou como deve ser a resposta.
-   - Duas ações integradas em 1 clique:
-     - **Ensinar a IA**: Salva a nova regra/diretriz na base da Sofia;
-     - **Retificar com o Hóspede**: Envia uma mensagem cordial de retificação automaticamente no WhatsApp do hóspede (com prévia editável).
-2. **Correção via WhatsApp pelo Desenvolvedor**:
-   - Miller pode enviar mensagens citando o hóspede ou quarto (ex: *"Sofia, para o flat 905 a informação correta é..."* ou respondendo a uma mensagem).
-   - A Sofia processa a correção, atualiza a base e oferece/dispara a retificação para o cliente com confirmação.
-
-### R4. Persistência em Tempo Real & Gestão Administrativa
-1. **Armazenamento e Reflexo Global**:
-   - Salvar as diretrizes aprendidas e calibrações de tom em `db.whatsappAiSettings.developerGuidelines` e `aiConfig.systemPrompt`.
-   - Injetar dinamicamente as diretrizes ativas no prompt do sistema de todas as instâncias e conversas com hóspedes reais.
-2. **Interface Administrativa (Frontend)**:
-   - Na aba do Agente de IA em `/whatsapp-automation`, exibir um card com as diretrizes e calibrações de tom aprendidas via WhatsApp, permitindo visualização, edição, teste e exclusão.
-
----
-
-## Acceptance Criteria
-
-### Experiência do Desenvolvedor & Hóspede
-- [ ] Mensagens de teste de hóspede vindas de `22998505276` recebem respostas normais de concierge da Sofia.
-- [ ] A conversa com o desenvolvedor nunca é silenciada ou travada por `aiPaused` involuntário.
-
-### Calibração de Tom & Não-Literalidade
-- [ ] Ao receber comandos de tom (ex: *"responda de forma mais curta por favor"*), a Sofia extrai o ajuste estilístico e atualiza a calibração de tom nas configurações (`aiConfig.systemPrompt` / `database.json`).
-- [ ] A resposta ao desenvolvedor apresenta: confirmação cordial + resumo da calibração + amostra prática no novo tom.
-
-### Correção de Mensagens para Hóspedes Reais
-- [ ] No painel Web do Chat, mensagens da Sofia possuem botão de ação rápido para corrigir a resposta, salvando o aprendizado e permitindo retificar com o hóspede em 1 clique.
-- [ ] Correções enviadas pelo desenvolvedor via WhatsApp identificam o contexto do hóspede/quarto e assimilam a informação correta.
-
-### Infraestrutura, Paridade & Regras do Projeto
-- [ ] **Twin-Server Parity Mandate**: 100% de paridade SHA-256 entre `artifacts/api-server/` e `scripts/`.
-- [ ] **Regra AGENTS.md**: Build de produção executado com sucesso (`npm run build` em `artifacts/limpeza`) e arquivos em `dist/` incluídos.
-- [ ] **Git Push**: Todo commit deve ser enviado imediatamente para `origin main`.
-- [ ] **Testes Pontuais**: Teste automatizado pontual dedicado (`tests/developer-ai-coaching.test.mjs`) cobrindo calibração de tom, síntese de feedback e fluxo de retificação, com 100% de aprovação.
-
----
-
-## Verification Plan
-
-### Testes Automatizados Programáticos
-1. `tests/developer-ai-coaching.test.mjs`:
-   - Classificação de pergunta de hóspede vs comando de calibração de tom vs correção factual.
-   - Envio de *"responda de forma mais curta por favor"* -> verifica atualização de `aiConfig.systemPrompt` com a nova restrição de concisão.
-   - Envio de feedback factual -> verifica persistência de `developerGuidelines` sem repetição mecânica.
-   - Teste do endpoint de retificação `/api/whatsapp/chat/:phone/correct-message` -> verifica disparo de mensagem retificadora ao cliente e absorção no conhecimento da IA.
-   - Verificação de imunidade a `aiPaused` no chat do desenvolvedor.
-
-### Verificação de Build & Paridade
-- Script de conferência de hash SHA-256 dos arquivos gêmeos.
-- `npm run build` na pasta `artifacts/limpeza` com 0 erros de compilação.
-
-
-## Follow-up — 2026-10-11T23:35:41Z
-
-# Teamwork Project Prompt
-
-> Status: Launched
-> Goal: Execução via equipe de agentes Teamwork
-> Requested team: Equipe multidisciplinar completa (especialistas em UI/React, Arquiteto IoT para guia de hardware e UX de Hospitalidade)
-
-Desenvolvimento do Smart Flat Hub no sistema Guest-Flow-Manager: uma interface web mobile-first de controle domótico com regras operacionais de chegada (coleta de previsão de chegada, programação restrita a até 30min antes do ETA, desligamento automático fail-safe se o hóspede não confirmar entrada até 30min após o ETA, com alerta prévio de segurança, e música ambiente de boas-vindas automática no dia do check-in a partir do horário oficial). Acompanha guia de arquitetura de hardware IoT e especificações para aquisição.
-
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-Integrity mode: development
-
-## Requirements
-
-### R1. Interface Web do Hóspede (Smart Flat Hub UI) em Modo Sandbox / Preview Oculto
-- **Restrição Crítica de Privacidade:** NADA deste recurso deve estar visível ou acessível para clientes/hóspedes reais no portal em produção no momento, pois trata-se de um projeto para o futuro cujos equipamentos ainda serão adquiridos.
-- A tela e os componentes do Smart Flat Hub devem ser desenvolvidos em rota isolada de laboratório/preview (ex: `/preview/smart-flat`, `/admin/smart-flat-preview` ou acessível apenas via parâmetro especial `?preview=smart_flat`), sem adicionar botões ou cards visíveis aos hóspedes reais nas páginas públicas vigentes.
-- Interface responsiva mobile-first (PWA), com visual polido no design system do Guest-Flow-Manager (Tailwind CSS, Radix UI, Lucide icons).
-- Coleta/validação do horário previsto de chegada (ETA) antes de liberar os agendamentos.
-
-### R2. Programação Inteligente com Janela de Antecedência (Até 30min antes do ETA)
-- O hóspede só pode programar a cafeteira ou ligar o ar-condicionado com antecedência máxima de 30 minutos em relação ao horário de chegada informado (ex.: se chega às 14:00, o sistema só permite programar a partir de 13:30, bloqueando ativações anteriores para evitar desperdício e risco térmico).
-- Seletor de temperatura do ar-condicionado (18°C a 26°C), modos e botão de acionamento do café com avisos visuais.
-
-### R3. Ciclo Fail-Safe de Presença & Desligamento por Segurança
-- Se o hóspede programou o equipamento para ligar, mas **não confirmou a entrada no flat** (seja pelo botão de confirmação ou pela recepção/portaria):
-  - **Aviso Preventivo:** Antes do desligamento, o sistema exibe notificação/aviso: *"Você já chegou? Não esqueça de informar sua entrada aqui."*
-  - **Desligamento Automático:** Caso passem 30 minutos após o horário previsto de chegada (ex: 14:30 para chegada prevista às 14:00) sem confirmação de entrada, o sistema desliga automaticamente a cafeteira e o ar-condicionado.
-  - **Feedback Transparente:** Exibe status claro e envia aviso: *"Equipamento desligado automaticamente por questão de segurança e economia de energia."*
-
-### R4. Trilha Sonora de Boas-Vindas (Welcome Playlist) Automática
-- Em flats com check-in agendado para o dia, simular/configurar a reprodução automática de música ambiente de boas-vindas a partir do horário oficial de check-in (ex: 14:00), independente de o hóspede ter programado ou não qualquer aparelho.
-- Controle no painel para pausar, retomar ou trocar de música.
-
-### R5. Guia de Hardware IoT & Recomendações de Compra
-- Especificação técnica completa e lista de compras de dispositivos custo-benefício (Tomadas inteligentes Tuya/Wi-Fi 16A com proteção térmica para cafeteiras, Smart IR Blasters infravermelho para ar-condicionado split, caixas de som inteligentes Echo Pop/Dot Alexa e interruptores touch de parede).
-
-## Acceptance Criteria
-
-### Isolamento & Invisibilidade para Clientes Reais
-- [ ] Nenhum elemento novo, botão ou menção ao Smart Flat é exibido para hóspedes reais no fluxo normal de produção do portal (`guest-portal.tsx`).
-- [ ] A interface Smart Flat Hub é completamente funcional e testável via rota/modo de preview interno.
-
-### Fluxo de Chegada, Agendamento e Travas Temporais
-- [ ] O sistema impede programar cafeteira/ar com mais de 30 minutos de antecedência do horário informado de chegada.
-- [ ] O aviso *"Você já chegou?"* é disparado quando o horário previsto se aproxima/ultrapassa sem confirmação de check-in.
-- [ ] O desligamento automático de segurança desativa os aparelhos após 30 minutos do horário previsto caso a entrada não tenha sido confirmada.
-- [ ] O status de desligamento por segurança é registrado e exibido na UI.
-
-### Música Ambiente de Boas-Vindas
-- [ ] O status da música de boas-vindas indica ativação automática a partir do horário oficial de check-in nos flats com entrada no dia.
-- [ ] Controle visual de reprodução (Play / Pause / Volume) direto no hub de preview.
-
-### Qualidade de Código & Build
-- [ ] O build do frontend (`npm run build` na pasta `artifacts/limpeza`) executa e é concluído com sucesso (código 0, sem erros TypeScript).
-- [ ] NUNCA rodar testes em lote ou globais. Executar estritamente testes pontuais novos se criados, de acordo com o `AGENTS.md`.
+Respondam confirmando os três pontos.

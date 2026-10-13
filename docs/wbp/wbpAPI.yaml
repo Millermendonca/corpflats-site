@@ -1,0 +1,4892 @@
+openapi: 3.1.2
+info:
+  title: WebBookingPro <-> PMS API
+  version: '1.0'
+  contact:
+    url: https://www.webbookingpro.com/become-a-partner/
+  license:
+    name: WebBookingPro API Terms
+    url: https://www.webbookingpro.com
+  description: >
+    # Introduction
+
+
+    This API allows an PMS ("Property Manager System") to integrate with the
+    WebBookingPro channel
+
+    manager by implementing an API receiver in their environment for bookings
+    and API push from their side for ARI.
+
+
+    # Getting Started
+
+
+    ## Becoming A Partner
+
+
+    To be considered as a partner, please complete our [partnership
+    form](https://www.webbookingpro.com/become-a-partner/).
+
+    Your application will be placed in a queue to be reviewed for fit
+    andcompatibility. We will reach out if the partnership is approved.
+
+
+    Upon completion of the API Credentialing, you will then have access to your
+    Test Account login information, 
+
+    you will receive channel ID (`cid`), and the `shared_secret` that is
+    required for the API calls.
+
+
+    We request that you update our team at least once every two weeks while in
+    development with your estimated completion date.
+
+
+    Partners that fail to provide an estimated completion date may have their
+    participation eligibility rescinded.
+
+
+    Once you have finished your development process, you will be guided on
+    certification integration process.
+
+
+    Once you get certified, our team will inform you of the next steps,
+    including providing us with:
+
+
+    * Logos
+
+    * Information about your service
+
+    * Contact Information to various departments of your business (support,
+    marketing, etc.)
+
+
+    ## Flow
+
+
+    If the Property is not existing already on WebBookingPro, you will have
+    ability to Create Property using our API and automatically receive all
+    required information needed for mapping. 
+
+
+    Any existing WebBookingPro property use can add integration with your System
+    through "Integrations" menu. The property owner then maps the rooms and rate
+    plans in your System to complete the connection.
+
+
+    After a property has been setup, you should push full refresh to
+    WebBookingPro channel maanger.  This means PMS should send all availability,
+    rates and restrictions
+
+    for the next 1+ years (usually until the end of next year) for all rooms and
+    rate plans. After this initial sync has been
+
+    completed PMS should update the WebBookingPro whenever there is a change to
+    ARI, eg. because a booking has been imported, room types of booking has been
+    changed, price has been altered.
+
+
+    PMS should poll for bookings as backup in regular configurable intervals
+    (e.g. 30 minutes). Bookings can and should be sent via a callback to your
+    PMS to speed up
+
+    the import.
+
+
+    In this case you have to provide us your endpoint for receiving push of
+    reservations.
+
+
+    # Booking Format
+
+
+    The full booking format is
+
+    [documented here]().
+
+    Please take note of which fields are required and which fields are optional.
+
+
+    # Error Codes
+
+
+    You can respond with error IDs listed in our
+
+    [error code]() list. Please
+
+    use the numeric codes in the `ID` column. Only errors whose code starts with
+
+    `FAULT.OTA.` are supported.
+
+
+    # Rate Plans
+
+
+    On the WebBookingPro channel manager rooms and rate plans have a
+    many-to-many relationship. This
+
+    means that a room can have one or more rate plans, and each rate plan can be
+    used in one or more 
+
+    rooms. For the `ARIUpdate` calls we can send different
+
+    `wbp_rate_id` values for the same `wbp_room_id`. Rates and restrictions are
+
+    tied to rate plans, while availability is usually (99%) tied to rooms, so
+    the `units`
+
+    will be constant across different rate plans for the same dates and for the
+
+    same room, but rates and restrictions can vary. To close off a rate plan we
+
+    are using the `close` flag. 
+
+
+    Also there is a possibility that rate plan has it's own separater
+    availability. 
+
+    In this case you can send availabilty even on rate plan level.
+
+
+    Each Rate Plan on WebBookingPro can have either separate or inherited
+    pricing, seprate on inherited inventory availability, seprate or inherited
+    restrictions (close, minimum stay, maximum stay).
+
+
+    # FAQ
+
+
+    ## Terminology
+
+
+    * OTA: Online travel agency (ex: booking.com, or competitor)
+
+    * PMS: Property Management System (your system you are integration with
+    WebBookingPro)
+
+    * cid: Channel ID - a two to four character code used by WebBookingPro
+    uniquely identify an PMS. WebBookingPro will define this upon approving
+    request.
+
+    * guid: Globally unique identifier, a unique 36 character code which
+    identifies a request. Useful for seeing if a request is a retry and for
+    debugging.
+
+
+    ## Requests
+
+
+    PMS should send requests to the WebBookingPro with content-type
+
+    `application/json`, with the payload being in the body of the request. Gzip
+
+    compression and keep-alives will be used if supported. HTTPS
+
+    (SSL encryption) is required for any endpoint (WebBookingPro or yours).
+
+
+    HTTP response codes from WebBookingPro should always be 200. They have the
+
+    content-type `application/json`.
+
+
+    ## Required API calls
+
+
+    As a minimum these API calls need to be implemented on the OTA side:
+
+
+    * HealthCheck
+
+    * SetupProperty
+
+    * GetRoomTypes
+
+    * GetRatePlans
+
+    * ARIUpdate
+
+    * GetBookingList
+
+    * GetBookingId
+servers:
+  - url: https://secure.webbookingpro.com/api/cloudpms
+    description: WebBookingPro endpoint
+security:
+  - shared_secret: []
+paths:
+  /HealthCheck:
+    post:
+      operationId: health_check
+      description: >
+        Called prior to `SetupProperty` or other configuration requests to
+        verify proper operation. Should always return true.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              HealthCheck:
+                summary: HealthCheck
+                value:
+                  verb: HealthCheck
+                  wbp_property_id: ''
+                  wbp_property_password: ''
+                  pms_property_id: ''
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              type: object
+              properties:
+                pms_property_id:
+                  oneOf:
+                    - type: string
+                      description: Property ID on the Your PMS if already set
+                      minimum: 1
+                    - type: string
+                      enum:
+                        - ''
+                      description: Empty string otherwise if not previously setup
+                wbp_property_id:
+                  description: >-
+                    Property ID on the WebBookinPro if already set, empty string
+                    otherwise
+                  type: integer
+                wbp_property_password:
+                  description: >-
+                    Password for property on WebBookingPro if already set, empty
+                    string otherwise.
+                  type: string
+                guid:
+                  description: >-
+                    Request reference ID, used for debugging and support
+                    requests.
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$
+                shared_secret:
+                  description: >-
+                    Authentication between the PMS and the WebBookingPro.
+                    Identical for all requests. Not to be shared with customers.
+                  type: string
+                pms_cid:
+                  description: PMS ID as given by WebBookingPro
+                  type: string
+                  pattern: ^[a-z0-9]+$
+                verb:
+                  type: string
+                  enum:
+                    - HealthCheck
+              required:
+                - verb
+                - guid
+                - pms_property_id
+                - wbp_property_id
+                - wbp_property_password
+                - shared_secret
+                - pms_cid
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Failure
+                  value:
+                    success: false
+                    errors:
+                      - id: 1003
+                        msg: Problems processing requests
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: HealthCheck
+      summary: HealthCheck
+  /SetupProperty:
+    post:
+      operationId: setup_property
+      description: >-
+        Check/verify/validate the credentials stored in `wbp_property_id` and
+
+        `wbp_property_password`. If the credentials are invalid return with
+        error
+
+        ID `1001`. If the connection needs to be enabled from the WBP side first
+
+        return with error ID `1002`.
+
+
+        You can prepare UI for integration with WebBookingPro where user will be
+        prompted to put in the credentials
+
+        (`wbp_property_id` and `wbp_property_password`), which are provided by
+        WebBookingPro. Both `wbp_property_id` 
+
+        and `wbp_property_password` should be retained by
+
+        PMS and passed in every call. 
+
+
+        It is up to your system if you will be handling connection and setup of
+        password manually, visible to user or not, or using CreateProperty
+        operationId.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              SetupProperty:
+                summary: SetupProperty (normal)
+                value:
+                  verb: SetupProperty
+                  wbp_property_id: ''
+                  wbp_property_password: ''
+                  pms_property_id: '14524'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+              SetupProperty2:
+                summary: SetupProperty (with RoomInfo)
+                value:
+                  verb: SetupProperty
+                  wbp_property_id: ''
+                  wbp_property_password: ''
+                  pms_property_id: '14524'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  RoomInfo:
+                    - pms_room_id: 45829
+                      units: 5
+                      beds: 2
+                      dormitory: false
+                      label: Double Room
+                      description: A potentially long description about the room
+                    - pms_room_id: 290
+                      units: 25
+                      maxPersons: 3
+                      maxAdults: 2
+                      maxChildren: 2
+                      dormitory: false
+                      label: 4-person private
+                      description: null
+            schema:
+              type: object
+              properties:
+                pms_property_id:
+                  description: Property ID on your PMS
+                  type: string
+                wbp_property_id:
+                  type: integer
+                  description: Property ID on the WebBookingPro
+                wbp_property_password:
+                  type: string
+                  description: Password for property on WebBookingPro
+                guid:
+                  description: >-
+                    Request reference ID, used for debugging and support
+                    requests.
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$
+                shared_secret:
+                  description: >-
+                    Authentication between the PMS and the WebBookingPro.
+                    Identical for all requests. Not to be shared with customers.
+                  type: string
+                pms_cid:
+                  description: PMS ID as given by WebBookingPro
+                  type: string
+                  pattern: ^[a-z0-9]+$
+                verb:
+                  type: string
+                  enum:
+                    - SetupProperty
+                RoomInfo:
+                  type: array
+                  description: >
+                    This list should contain of rooms enabled for the the
+                    Channel Manager. By default this is not present. It's only
+                    necessary for deep integrations or situations where the
+                    WebBookingPro plans to automatically/create destroy rooms
+                    using the PMS configuration. In a normal integration this
+                    isn't very usual.
+                  items:
+                    $ref: '#/components/schemas/room_info'
+              required:
+                - verb
+                - guid
+                - pms_property_id
+                - wbp_property_id
+                - shared_secret
+                - pms_cid
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Failure (invalid credentials)
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+                Failure2:
+                  summary: Failure (CM not enabled)
+                  value:
+                    success: false
+                    errors:
+                      - id: 1002
+                        msg: Credentials not enabled for channel management.
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: SetupProperty
+      summary: SetupProperty
+  /GetRoomTypes:
+    post:
+      operationId: get_room_types
+      description: Returns a list of rooms configured for the passed credentials.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetRoomTypes:
+                summary: GetRoomTypes (normal)
+                value:
+                  verb: GetRoomTypes
+                  wbp_property_id: 1111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+              GetRoomTypes2:
+                summary: GetRoomTypes (with RoomInfo)
+                value:
+                  verb: GetRoomTypes
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  RoomInfo:
+                    - pms_room_id: 45829
+                      units: 5
+                      maxPersons: 2
+                      dormitory: false
+                      label: Double Room
+                      description: A potentially long description about the room
+                    - pms_room_id: 290
+                      units: 25
+                      maxPersons: 4
+                      dormitory: false
+                      label: 4-person private
+                      description: null
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetRoomTypes
+                    RoomInfo:
+                      type: array
+                      description: >
+                        This list of rooms will only be returned if enabled for
+                        the WebBookingPro by your PMS. By default this is not
+                        present. It's only necessary for deep integrations or
+                        situations where the PMS plans to automatically/create
+                        destroy rooms using PMS configuration. In a normal
+                        integration this isn't very usual.
+                      items:
+                        $ref: '#/components/schemas/room_info'
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                    Rooms:
+                      - wbp_room_id: 111
+                        label: 6-bed shared dorm
+                        maxPersons: 6
+                        dorm: true
+                      - wbp_room_id: 112
+                        label: 5-person private
+                        maxPersons: 5
+                        dorm: false
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful room retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      Rooms:
+                        type: array
+                        description: |
+                          List of rooms on the WebBookingPro.
+                        items:
+                          type: object
+                          properties:
+                            wbp_room_id:
+                              type: integer
+                              description: Room ID on the WebBookingPro
+                            label:
+                              type: string
+                              description: Name, label or short summary of the room type
+                            maxPersons:
+                              type: integer
+                              minimum: 1
+                              description: Number of people that can stay in this room.
+                            dorm:
+                              type: boolean
+                              description: If `true` the room is a dormitory/shared room.
+                          required:
+                            - wbp_room_id
+                            - title
+                    required:
+                      - success
+                      - Rooms
+                  - $ref: '#/components/schemas/response_error'
+          description: GetRoomTypes
+      summary: GetRoomTypes
+  /GetRatePlans:
+    post:
+      operationId: get_rate_plans
+      description: |-
+        PMS should use this call to retrieve a list of rate plans, which are
+        either specific to each room, or global for all rooms.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetRatePlans:
+                summary: GetRatePlans
+                value:
+                  verb: GetRatePlans
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetRatePlans
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - specific rate plans per room
+                  value:
+                    success: true
+                    RatePlans:
+                      - wbp_room_id: DR_556
+                        wbp_rate_id: DEF_9910
+                        title: Default Rate Plan
+                      - wbp_room_id: PR_1952
+                        wbp_rate_id: NRF_7001
+                        title: Non-refundable rate
+                Success2:
+                  summary: Success - global rate plans
+                  value:
+                    success: true
+                    RatePlans:
+                      - wbp_room_id: '0'
+                        wbp_rate_id: DEF_9910
+                        title: Default Rate Plan
+                      - wbp_room_id: '0'
+                        wbp_rate_id: NRF_7001
+                        title: Non-refundable rate
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      RatePlans:
+                        type: array
+                        description: |
+                          List of rate plans on the OTA.
+                        items:
+                          type: object
+                          properties:
+                            wbp_room_id:
+                              type: string
+                              description: >
+                                Room ID on the OTA tied to the rate plan. If the
+                                rate plan is available to all rooms set this to
+                                `0`.
+                            wbp_rate_id:
+                              type: string
+                              description: >-
+                                Rate plan ID on the OTA.  Cannot be `0`, empty
+                                string or otherwise falsy.
+                            title:
+                              type: string
+                              description: Name, label or short summary of the rate plan
+                          required:
+                            - wbp_room_id
+                            - wbp_rate_id
+                            - title
+                    required:
+                      - success
+                      - RatePlans
+                  - $ref: '#/components/schemas/response_error'
+          description: GetRatePlans
+      summary: GetRatePlans
+  /GetPromotions:
+    post:
+      operationId: get_promotions
+      description: PMS should use this call to retrieve a list of all promotions
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetPromotions:
+                summary: GetPromotions
+                value:
+                  verb: GetPromotions
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetPromotions
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all promotions
+                  value:
+                    success: true
+                    Promotions:
+                      - wbp_promotion_id: 111
+                        is_active: 1
+                        title: Long Stay Discount
+                      - wbp_promotion_id: 112
+                        is_active: 1
+                        title: Last minute Discount
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      Promotions:
+                        type: array
+                        description: |
+                          List of all promotions on WebBookingPro
+                        items:
+                          type: object
+                          properties:
+                            wbp_promotion_id:
+                              type: integer
+                              description: |
+                                WBP Promotion ID
+                            is_active:
+                              type: boolean
+                              description: Promotion Active status
+                            title:
+                              type: string
+                              description: Name, label or short summary of the promotion
+                          required:
+                            - wbp_promotion_id
+                            - title
+                            - is_active
+                    required:
+                      - success
+                      - Promotions
+                  - $ref: '#/components/schemas/response_error'
+          description: GetPromotions
+      summary: GetPromotions
+      tags:
+        - Promotions
+  /SetPromotion:
+    post:
+      operationId: update_promotion
+      description: PMS should use this call to update exact promotion
+      requestBody:
+        content:
+          application/json:
+            examples:
+              SetPromotion:
+                summary: SetPromotion
+                value:
+                  verb: SetPromotion
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_promotion_id: 121
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - SetPromotion
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all promotions
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: SetPromotion
+      summary: SetPromotion
+      tags:
+        - Promotions
+  /RemovePromotion:
+    post:
+      operationId: delete_promotion
+      description: PMS should use this call to delete exact promotion
+      requestBody:
+        content:
+          application/json:
+            examples:
+              DeletePromotion:
+                summary: RemovePromotion
+                value:
+                  verb: RemovePromotion
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_promotion_id: 121
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - RemovePromotion
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all promotions
+                  value:
+                    success: true
+                    Promotions:
+                      - wbp_promotion_id: 111
+                        is_active: 1
+                        title: Long Stay Discount
+                      - wbp_promotion_id: 112
+                        is_active: 1
+                        title: Last minute Discount
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      Promotions:
+                        type: array
+                        description: |
+                          List of all promotions on WebBookingPro
+                        items:
+                          type: object
+                          properties:
+                            wbp_promotion_id:
+                              type: integer
+                              description: |
+                                WBP Promotion ID
+                            is_active:
+                              type: boolean
+                              description: Promotion Active status
+                            title:
+                              type: string
+                              description: Name, label or short summary of the promotion
+                          required:
+                            - wbp_promotion_id
+                            - title
+                            - is_active
+                    required:
+                      - success
+                      - Promotions
+                  - $ref: '#/components/schemas/response_error'
+          description: RemovePromotion
+      summary: RemovePromotion
+      tags:
+        - Promotions
+  /GetChannels:
+    post:
+      operationId: get_channels
+      description: PMS should use this call to retrieve a list of all Channels
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetChannels:
+                summary: GetChannels
+                value:
+                  verb: GetChannels
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetChannels
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all Channels
+                  value:
+                    success: true
+                    Channels:
+                      - wbp_channel_id: 111
+                        is_active: 1
+                        title: Long Stay Discount
+                      - wbp_channel_id: 112
+                        is_active: 1
+                        title: Last minute Discount
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      Channels:
+                        type: array
+                        description: |
+                          List of all Channels on WebBookingPro
+                        items:
+                          type: object
+                          properties:
+                            wbp_channel_id:
+                              type: integer
+                              description: |
+                                WBP Channel ID
+                            is_active:
+                              type: boolean
+                              description: Channel Active status
+                            title:
+                              type: string
+                              description: Name, label or short summary of the Channel
+                          required:
+                            - wbp_Channel_id
+                            - title
+                            - is_active
+                    required:
+                      - success
+                      - Channels
+                  - $ref: '#/components/schemas/response_error'
+          description: GetChannels
+      summary: GetChannels
+      tags:
+        - Channels
+  /AddChannel:
+    post:
+      operationId: add_channel
+      description: PMS should use this call to add new Channel
+      requestBody:
+        content:
+          application/json:
+            examples:
+              SetChannel:
+                summary: AddChannel
+                value:
+                  verb: AddChannel
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_channel_id: 121
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - AddChannel
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all Channels
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: AddChannel
+      summary: AddChannel
+      tags:
+        - Channels
+  /RemoveChannel:
+    post:
+      operationId: delete_channel
+      description: PMS should use this call to delete exact Channel
+      requestBody:
+        content:
+          application/json:
+            examples:
+              DeleteChannel:
+                summary: RemoveChannel
+                value:
+                  verb: RemoveChannel
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_Channel_id: 121
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - RemoveChannel
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all Channels
+                  value:
+                    success: true
+                    Channels:
+                      - wbp_channel_id: 111
+                        is_active: 1
+                        title: Long Stay Discount
+                      - wbp_channel_id: 112
+                        is_active: 1
+                        title: Last minute Discount
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      Channels:
+                        type: array
+                        description: |
+                          List of all Channels on WebBookingPro
+                        items:
+                          type: object
+                          properties:
+                            wbp_channel_id:
+                              type: integer
+                              description: |
+                                WBP Channel ID
+                            is_active:
+                              type: boolean
+                              description: Channel Active status
+                            title:
+                              type: string
+                              description: Name, label or short summary of the Channel
+                          required:
+                            - wbp_Channel_id
+                            - title
+                            - is_active
+                    required:
+                      - success
+                      - Channels
+                  - $ref: '#/components/schemas/response_error'
+          description: RemoveChannel
+      summary: RemoveChannel
+      tags:
+        - Channels
+  /GetChannelRooms:
+    post:
+      operationId: get_channel_rooms
+      description: PMS should use this call to retrieve a list of all promotions
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetChannelRooms:
+                summary: GetChannelRooms
+                value:
+                  verb: GetChannelRooms
+                  wbp_property_id: 111
+                  wbp_channel_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetChannelRooms
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all promotions
+                  value:
+                    success: true
+                    ChannelRooms:
+                      - wbp_room_id: 111
+                        cm_room_id: '1'
+                        title: Double room from Channel
+                      - wbp_room_id: 112
+                        cm_room_id: '12'
+                        title: Deluxe room from Channel
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      ChannelRooms:
+                        type: array
+                        description: |
+                          List of all promotions on WebBookingPro
+                        items:
+                          type: object
+                          properties:
+                            wbp_promotion_id:
+                              type: integer
+                              description: |
+                                WBP Promotion ID
+                            is_active:
+                              type: boolean
+                              description: Promotion Active status
+                            title:
+                              type: string
+                              description: Name, label or short summary of the promotion
+                          required:
+                            - wbp_promotion_id
+                            - title
+                            - is_active
+                    required:
+                      - success
+                      - ChannelRooms
+                  - $ref: '#/components/schemas/response_error'
+          description: GetChannelRooms
+      summary: GetChannelRooms
+      tags:
+        - Channels
+  /SetChannelRooms:
+    post:
+      operationId: update_channel_rooms
+      description: PMS should use this call to update exact ChannelRooms
+      requestBody:
+        content:
+          application/json:
+            examples:
+              SetChannelRooms:
+                summary: SetChannelRooms
+                value:
+                  verb: SetChannelRooms
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - SetChannelRooms
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all ChannelRoomss
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: SetChannelRooms
+      summary: SetChannelRooms
+      tags:
+        - Channels
+  /GetChannelRates:
+    post:
+      operationId: get_channel_rates
+      description: PMS should use this call to retrieve a list of all promotions
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetChannelRates:
+                summary: GetChannelRates
+                value:
+                  verb: GetChannelRates
+                  wbp_property_id: 111
+                  wbp_channel_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetChannelRates
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all promotions
+                  value:
+                    success: true
+                    ChannelRates:
+                      - wbp_room_id: 111
+                        cm_room_id: '1'
+                        title: Double room from Channel
+                      - wbp_room_id: 112
+                        cm_room_id: '12'
+                        title: Deluxe room from Channel
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      ChannelRates:
+                        type: array
+                        description: |
+                          List of all promotions on WebBookingPro
+                        items:
+                          type: object
+                          properties:
+                            wbp_promotion_id:
+                              type: integer
+                              description: |
+                                WBP Promotion ID
+                            is_active:
+                              type: boolean
+                              description: Promotion Active status
+                            title:
+                              type: string
+                              description: Name, label or short summary of the promotion
+                          required:
+                            - wbp_promotion_id
+                            - title
+                            - is_active
+                    required:
+                      - success
+                      - ChannelRates
+                  - $ref: '#/components/schemas/response_error'
+          description: GetChannelRates
+      summary: GetChannelRates
+      tags:
+        - Channels
+  /SetChannelRates:
+    post:
+      operationId: update_channel_rates
+      description: PMS should use this call to update exact ChannelRates
+      requestBody:
+        content:
+          application/json:
+            examples:
+              SetChannelRates:
+                summary: SetChannelRates
+                value:
+                  verb: SetChannelRates
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - SetChannelRates
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success - all ChannelRatess
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful rate plan retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: SetChannelRates
+      summary: SetChannelRates
+      tags:
+        - Channels
+  /ARIUpdate:
+    post:
+      operationId: ari_update
+      description: >-
+        This call is used to send availability, rates and restrictions to your
+        OTA.
+
+        We will combine the updates into as few date ranges as possible, and we
+
+        split bigger updates into several API requests. We also cache data and
+        will
+
+        not send ARI updates if the ARI data has not changed within a certain
+
+        timeframe. You can ask us to alter the number of `Inventory` objects we
+        send
+
+        per request. It's also possible to ask us to restrict maximum number of
+        days
+
+        per date range.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              ARIUpdate:
+                summary: ARIUpdate
+                value:
+                  verb: ARIUpdate
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  currency: USD
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  Inventory:
+                    - wbp_room_id: '61365'
+                      wbp_rate_id: rate_456
+                      start_date: '2025-01-22'
+                      end_date: '2025-02-12'
+                      units: 5
+                      rate: '15.00'
+                      rdef_single: '12.00'
+                      max_los: 14
+                      min_los: 2
+                      closearr: false
+                      closedep: false
+                      close: false
+                      min_advanced_offset: 2
+                      max_advanced_offset: 30
+                      num_adults_included: 2
+                      num_children_included: 2
+                      adult_3: '8.00'
+                      child_3: '5.00'
+                    - wbp_room_id: '61365'
+                      wbp_rate_id: rate_888
+                      start_date: '2025-01-22'
+                      end_date: '2025-02-12'
+                      units: 5
+                      rate: '30.00'
+                      close: true
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - ARIUpdate
+                    currency:
+                      type: string
+                      pattern: ^[A-Z]{3}$
+                      description: >
+                        3-letter ISO 4217 currency code. This is the currency
+                        the property has set for the channel connection, and may
+                        differ from the property's native currency. The OTA can
+                        use this field to assert that rates are sent in the
+                        correct currency.
+                    Inventory:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          wbp_room_id:
+                            type: string
+                            description: Room ID on the OTA.
+                          wbp_rate_id:
+                            type: string
+                            description: Rate plan ID on the OTA
+                          start_date:
+                            type: string
+                            format: date
+                            description: Start date for when the sent ARI is applicable.
+                          end_date:
+                            type: string
+                            format: date
+                            description: >
+                              End date for when the sent ARI is applicable. Note
+                              that this date is inclusive. For example, if the
+                              `end_date` is 2028-08-29 and we send `rate` =
+                              `20.15`, then this rate is applicable for someone
+                              staying/arriving on 2028-08-29.
+                          units:
+                            type: integer
+                            minimum: 0
+                            description: >
+                              Number of rooms bookable (available) for private
+                              rooms, or for the number of beds for shared/dorm
+                              rooms.
+                          rate:
+                            type: string
+                            pattern: ^\d+(\.\d+)?$
+                            description: |
+                              Price per unit for a single night.
+                          rdef_single:
+                            type: string
+                            pattern: ^\d+(\.\d+)?$
+                            description: >
+                              The single use rate, if only one person is
+                              staying. This will only be present for private
+                              rooms, and only if the occupancy of this room is
+                              higher than `1`. If the value is `0` we recommend
+                              to not make the single use rate available, or to
+                              just use the same price as for `rate`.
+                          num_adults_included:
+                            type: integer
+                            minimum: 0
+                            description: >
+                              Number of adults included in base rate. Sent for
+                              OBP enabled channels.
+                          num_children_included:
+                            type: integer
+                            minimum: 0
+                            description: >
+                              Number of children included in base rate. Sent for
+                              OBP enabled channels.
+                          max_los:
+                            type: integer
+                            minimum: 0
+                            description: >-
+                              Maximum length of stay. A guest should not be able
+                              to
+
+                              book if they selected more nights than this value.
+                              A
+
+                              value of `0` means that there is no restriction.
+
+
+                              There are two ways to restrict bookings by this
+                              value:
+
+                              a) Check the `max_los` value for the arrival date,
+
+                              or b) check the `max_los` value for all days the
+                              guest
+
+                              is intending to stay and restrict by the lowest
+                              value.
+                          min_los:
+                            type: integer
+                            minimum: 1
+                            description: >-
+                              Minimum length of stay. A guest should not be able
+                              to
+
+                              book if they selected fewer nights than this
+                              value.
+
+
+                              There are two ways to restrict bookings by this
+                              value:
+
+                              a) Check the `min_los` value for the arrival date,
+
+                              or b) check the `min_los` value for all days the
+                              guest
+
+                              is intending to stay and restrict by the lowest
+                              value.
+                          closearr:
+                            type: boolean
+                            description: >
+                              Restricts whether a guest can arrive within the
+                              specified date range. If `true` the guest can stay
+                              and depart within the date range, but not arrive.
+                          closedep:
+                            type: boolean
+                            description: >
+                              Restricts whether a guest can depart within the
+                              specified date range. If `true` the guest can stay
+                              and arrive within the date range, but not depart.
+                          close:
+                            type: boolean
+                            description: >
+                              Restricts whether a guest can stay within the
+                              specified date range. If `true` the guest cannot
+                              arrive, stay or depart within the date range. In
+                              many cases this is equivalent to `units` = 0,
+                              however it is also used to make specific rate
+                              plans unavailable while leaving others bookable.
+                          min_advanced_offset:
+                            type: integer
+                            minimum: 0
+                            description: >
+                              Cut off restriction: Specifies the number of days
+                              before the arrival date guests are allowed to
+                              book. The value of 0 resets to no restriction,
+                              which is the default. This restriction is mainly
+                              used for properties that want to have a lot of
+                              advanced bookings by offering a heavily discounted
+                              rate if guests book at least X number of days in
+                              advance.
+                          max_advanced_offset:
+                            type: integer
+                            minimum: 0
+                            description: >
+                              Last Minute restriction: The number of days before
+                              the arrival date guests can book. The value of 0
+                              resets to no restriction, which is the default.
+                              This restriction is mainly used to boost
+                              last-minute reservations.
+                        patternProperties:
+                          ^adult_\d+$:
+                            type: string
+                            pattern: ^\d+(\.\d+)?$
+                            description: >-
+                              Extra price for the Nth adult (e.g., adult_3,
+                              adult_4). Sent for OBP enabled channels.
+                          ^child_\d+$:
+                            type: string
+                            pattern: ^\d+(\.\d+)?$
+                            description: >-
+                              Extra price for the Nth child (e.g., child_3,
+                              child_4). Sent for OBP enabled channels.
+                        required:
+                          - wbp_room_id
+                          - wbp_rate_id
+                          - start_date
+                          - end_date
+              required:
+                - verb
+                - currency
+                - Inventory
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Incorrect currency settings
+                  value:
+                    success: false
+                    errors:
+                      - id: 1102
+                        msg: >
+                          Your currency setting doesn't match the channel's
+                          currency setting. Transmitted: EUR. Setting on OTA:
+                          USD.
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: ARIUpdate
+      summary: ARIUpdate
+  /GetBookingList:
+    post:
+      operationId: get_booking_list
+      description: >-
+        Returns a list of bookings/reservations which have not been previously
+
+        downloaded or have been modified.
+
+
+        The pull interval can be freely set. For channels that do not support
+        the
+
+        `CreateBooking` callback the interval is usually set to pull bookings
+        every
+
+        5 minutes. If `CreateBooking` is supported then the `GetBookingList`
+        will
+
+        be used as a fallback every 30 minutes.
+
+
+        The WebBookingPro can also send to your PMS a `NotifyBooking` callback
+        to inform about
+
+        new bookings available to be polled.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetBookingList:
+                summary: GetBookingList
+                value:
+                  verb: GetBookingList
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_booking_version: '2022-03-22 12:09:19'
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetBookingList
+                    wbp_booking_version:
+                      type:
+                        - string
+                        - 'null'
+                      description: >-
+                        With each request we send along `wbp_booking_version`,
+                        which
+
+                        has the format `YYYY-MM-DD HH:MM:SS` and indicates the
+                        time
+
+                        in UTC we last successfully requested bookings. It can
+                        be
+
+                        `null` if no successful response has been received so
+
+                        far. Please use `wbp_booking_version` to only return to
+                        us
+
+                        new or modified bookings made since then. To ensure that
+                        no
+
+                        booking are skipped due to a time-offset between your
+                        and
+
+                        our servers make sure to always reduce 5 or more minutes
+
+                        from the time given. Example: we provide 2017-06-22
+
+                        12:09:19, then please return all new/modified/cancelled
+
+                        bookings since 2017-06-22 12:04:19 (5 minutes before the
+
+                        time sent).
+
+
+                        If `wbp_booking_version` is `null` please return all
+                        bookings.
+              required:
+                - verb
+                - wbp_booking_version
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                    Bookings:
+                      - booking_id: B84372-281192312
+                        version: '1'
+                      - booking_id: B84372-281192314
+                        version: '2'
+                      - booking_id: H1238-99825634
+                        version: '1'
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful booking list retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      Bookings:
+                        type: array
+                        description: |
+                          List of bookings to be retrieved with `GetBookingId`.
+                        items:
+                          type: object
+                          properties:
+                            booking_id:
+                              type: string
+                              description: >-
+                                Unique booking ID on the OTA. Maximum of 64
+                                characters.
+                            version:
+                              type: string
+                              description: >
+                                Most recent version number of the booking, if
+                                the OTA wants to support retrieval of different
+                                versions of bookings. Not commonly implemented.
+                          required:
+                            - booking_id
+                    required:
+                      - success
+                      - Bookings
+                  - $ref: '#/components/schemas/response_error'
+          description: GetBookingList
+      summary: GetBookingList
+  /GetBookingId:
+    post:
+      operationId: get_booking_id
+      description: >-
+        Returns detailed bookings made on WebBookingPro.
+
+
+        The booking format is described
+
+        [here in full detail]().
+
+
+        Most fields are optional. This specification lists only the minimum
+        required
+
+        fields to be eligible for a successful Build-To-Us integration.
+
+
+        Prices: Send us sell rates (rates including taxes and fees). The sum of
+        all
+
+        room prices should equal the `TotalPrice` field. Day rates should be per
+
+        unit, so the sum of all day rates multiplied by the number of units
+        should
+
+        equal the room price.
+
+
+        Country codes: For CustomerCountry and CustomerNationality (if you
+        include
+
+        those fields) make sure to pass the country code as uppercase Alpha-2
+
+        ISO-3166 codes.
+
+
+        Currency codes: Make sure they are valid ISO-4217 (uppercase).
+
+
+        Make sure to provide `OrderDate` and `OrderTime`. They have to be
+        provided in
+
+        UTC.
+
+
+        Guest's credit/debit card details can be provided with the `Payments`
+        field.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetBookingId:
+                summary: GetBookingId
+                value:
+                  verb: GetBookingId
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  booking_id: 111
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetBookingId
+                    booking_id:
+                      type: string
+                      description: |
+                        OTA booking ID of the booking to be retrieved.
+              required:
+                - verb
+                - booking_id
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                    reservation:
+                      OrderId: '123456789'
+                      OrderDate: '2018-04-22'
+                      OrderTime: '18:02:58'
+                      IsCancellation: 0
+                      IsModification: 0
+                      OrderAdults: 2
+                      OrderChildren: 0
+                      OrderCustomers: 2
+                      TotalCurrency: USD
+                      TotalPrice: 134
+                      PaymentCollect: Property
+                      Customers:
+                        - CustomerCountry: US
+                          CustomerEmail: test@test.com
+                          CustomerFName: Test Firstname
+                          CustomerLName: Test Lastname
+                      Rooms:
+                        - ChannelRoomType: abcdef
+                          Currency: USD
+                          Adults: 2
+                          Babies: 0
+                          Children: 0
+                          Occupancy: 2
+                          RateDesc: Refundable Rate
+                          RateId: '13649'
+                          DayRates:
+                            - Date: '2017-11-08'
+                              Description: Refundable Rate
+                              Rate: 32.5
+                              Currency: USD
+                              RateId: '13649'
+                            - Date: '2017-11-09'
+                              Description: Refundable Rate
+                              Rate: 34.5
+                              Currency: USD
+                              RateId: '13649'
+                          StartDate: '2017-11-08'
+                          EndDate: '2017-11-09'
+                          Price: 134
+                          Units: 2
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful booking retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      reservation:
+                        $ref: '#/components/schemas/booking'
+                    required:
+                      - success
+                      - Booking
+                  - $ref: '#/components/schemas/response_error'
+          description: GetBookingId
+      summary: GetBookingId
+  /AckBooking:
+    post:
+      operationId: ack_booking
+      description: >-
+        Allows PMS to acknowledge a booking on your WebBookingPro from the PMS
+        side.
+
+
+        * 4004 - booking cannot be acknowledged. The reason is provided in the
+        `msg` field.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              AckBooking:
+                summary: AckBooking
+                value:
+                  verb: AckBooking
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  booking_id: H7736-29385551
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - AckBooking
+                    booking_id:
+                      type: string
+                      description: |
+                        OTA booking ID of the booking to be acknowledged.
+              required:
+                - verb
+                - booking_id
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Failure:
+                  summary: Booking has already been acknowledged
+                  value:
+                    success: false
+                    errors:
+                      - id: 4001
+                        msg: Booking has already been acknowledged
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: AckBooking
+      summary: AckBooking
+  /CancelBooking:
+    post:
+      operationId: cancel_booking
+      description: >-
+        Allows a property to cancel a booking on WebBookingPro from the PMS
+        side.
+
+
+        *IMPORTANT*: Please contact us to enable this capability for your
+        channel. It
+
+        is NOT enabled by default.
+
+
+        The reason why the booking is to be canceled is given in the reason
+        field.
+
+        If the booking cannot be canceled the error code should be provided.
+        Here
+
+        are possible error codes:
+
+
+        * 4001 - booking has already departed
+
+        * 4002 - booking is already canceled
+
+        * 4003 - booking cannot be canceled. The reason is provided in the `msg`
+        field.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              CancelBooking:
+                summary: CancelBooking
+                value:
+                  verb: CancelBooking
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  booking_id: H7736-29385551
+                  reason: Guest called and requested cancellation
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - CancelBooking
+                    booking_id:
+                      type: string
+                      description: |
+                        OTA booking ID of the booking to be cancelled.
+                    reason:
+                      type: string
+                      description: >
+                        Free text reason given by property as to why the booking
+                        was cancelled.
+              required:
+                - verb
+                - booking_id
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Failure:
+                  summary: Booking has already departed
+                  value:
+                    success: false
+                    errors:
+                      - id: 4001
+                        msg: Booking has already departed
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: CancelBooking
+      summary: CancelBooking
+  /CreateProperty:
+    post:
+      operationId: create_property
+      description: >-
+        Can be used to create a new property (including rooms) on WebBookingPro
+        based on
+
+        the details that you have in your PMS (eg. property name, address,
+        images,
+
+        room details, etc). This call needs to be activated explicitly from our
+        side
+
+        before you can use it. Please talk to your WebBookingPro contact before
+
+        implementing this call!
+
+
+        Rate plan information was added at a later date and is only transmitted
+        for
+
+        new build-to-us implementations or if the feature has been enabled
+
+        explicitly. Note that every room has a default rate plan, and the ID
+
+        (even across different rooms) is always `0`.
+
+
+        Once approved please provide us with your terms & conditions for us to
+
+        display to a property. You should provide them as a HTML file with only
+
+        basic styling.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              CreateProperty:
+                summary: CreateProperty
+                value:
+                  wbp_property_id: ''
+                  wbp_property_password: ''
+                  pms_property_id: '12345'
+                  pms_cid: mycloudpms1
+                  verb: CreateProperty
+                  shared_secret: s3cr3ts4uc3
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  Property:
+                    name: Sample Hostel
+                    country: US
+                    currency: EUR
+                    email_default: someone@example.com
+                    email_channel_booking: bookings@example.com
+                    email_contact: person@example.com
+                    default_min_los: 3
+                    default_max_los: 0
+                    breakfast: ''
+                    weekend:
+                      - tuesday
+                      - saturday
+                      - sunday
+                    firstname: John
+                    lastname: Smith
+                    taxes:
+                      - amount: 10.567
+                        applies_per: booking
+                        calculation_basis: rate
+                        category: vat
+                        code: IVA
+                        description: Impuesto
+                        id: 4761
+                        is_fee: false
+                        is_inclusive: true
+                        is_per_night: false
+                        is_percent: true
+                        is_refundable: false
+                        name: IVA
+                    timezone: Asia/Thimphu
+                    address:
+                      address_line_1: Main St
+                      address_line_2: Annex
+                      city: San Diego
+                      zip: '92120'
+                      state: CA
+                      country: US
+                      website: http://example.com
+                      lon: '32.715736'
+                      lat: '-117.161087'
+                      phone: '+1 123123123 '
+                      fax: +1 123123123
+                    business_contact:
+                      main_contact_name: Jeff Johnson
+                      company_name: Hostels Inc.
+                      account_manager_name: Hillary Jackson
+                      vat_id: US2345678
+                      address_line_1: Office Street
+                      address_line_2: 3rd floor
+                      state: Office State
+                      zip: '22222'
+                      city: Office City
+                      country: DE
+                    images:
+                      - url: >-
+                          https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c37.jpg
+                        description: Outside View
+                        sort_order: 1
+                      - url: >-
+                          https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c38.jpg
+                        description: Reception Area
+                        sort_order: 2
+                    rooms:
+                      - pms_room_id: 45829
+                        units: 5
+                        beds: 2
+                        dormitory: false
+                        gender: MIXED
+                        label: Double Room
+                        description: A potentially long description about the room
+                        images:
+                          - url: >-
+                              https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c37.jpg
+                            description: Double bed
+                            sort_order: 1
+                          - url: >-
+                              https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c38.jpg
+                            description: Bath room
+                            sort_order: 2
+                          - url: >-
+                              https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c99.jpg
+                            description: Balcony
+                            sort_order: 3
+                        rateplans:
+                          - pms_rate_id: 0
+                            label_public: Default Rate Plan
+                            label_private: Default Rate Plan
+                            meal_codes:
+                              - 21
+                          - label_public: Non-refundable
+                            label_private: NR
+                            pms_rate_id: 850
+                            meal_codes:
+                              - 19
+                              - 21
+                              - 22
+                          - label_public: With Breakfast
+                            label_private: BR
+                            pms_rate_id: 851
+                            meal_codes:
+                              - 19
+                      - pms_room_id: 290
+                        units: 25
+                        beds: 4
+                        dormitory: false
+                        label: 4-person private
+                        description: null
+                        images: []
+                        rateplans:
+                          - label_private: Default Rate Plan
+                            label_public: Default Rate Plan
+                            pms_rate_id: 0
+                      - pms_room_id: 329
+                        units: 7
+                        beds: 3
+                        dormitory: false
+                        label: 3-person private
+                        description: Best three bed room in town
+                        images:
+                          - url: >-
+                              https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c37.jpg
+                            description: 3-bed room
+                            sort_order: 1
+                        rateplans:
+                          - label_public: Default Rate Plan
+                            label_private: Default Rate Plan
+                            pms_rate_id: 0
+                          - pms_rate_id: 853
+                            label_private: NR
+                            label_public: Non-refundable
+                      - pms_room_id: 52
+                        units: 3
+                        beds: 30
+                        dormitory: true
+                        gender: MIXED
+                        label: 30-person mixed shared
+                        description: null
+                        images: []
+                        rateplans:
+                          - pms_rate_id: 0
+                            label_public: Default Rate Plan
+                            label_private: Default Rate Plan
+                          - pms_rate_id: 852
+                            label_public: Non-refundable
+                            label_private: NR
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    pms_property_id:
+                      description: Property ID on your PMS
+                      type: string
+                      minimum: 1
+                    guid:
+                      description: >-
+                        Request reference ID, used for debugging and support
+                        requests.
+                      type: string
+                      pattern: ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$
+                    shared_secret:
+                      description: >-
+                        Authentication between the OTA and the channel.
+                        Identical for all requests. Not to be shared with
+                        customers.
+                      type: string
+                    pms_cid:
+                      description: PMS ID as given by WebBookingPro
+                      type: string
+                      pattern: ^[a-z0-9]+$
+                    verb:
+                      type: string
+                      enum:
+                        - CreateProperty
+                    Property:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Property name
+                        country:
+                          type: string
+                          pattern: ^[A-Z]{2}$
+                          description: >
+                            2-letter ISO 3166-1 alpha-2 country code. This is
+                            the country the property is located in.
+                        currency:
+                          type: string
+                          pattern: ^[A-Z]{3}$
+                          description: >
+                            3-letter ISO 4217 currency code. This is the default
+                            currency of the property.
+                        timezone:
+                          type: string
+                          description: >
+                            Timezone the property is located in. Check (this
+                            document)[https://apidocs.myallocator.com/timezone-list.html]
+                            for valid values.
+                        email_default:
+                          type: string
+                          format: email
+                          description: >
+                            The default property email address. Defaults to
+                            default user email.
+                        email_channel_booking:
+                          type: string
+                          format: email
+                          description: >
+                            The email address used when forwarding channel
+                            booking emails. Defaults to default user email.
+                        email_contact:
+                          type: string
+                          format: email
+                          description: >
+                            The email address of the contact person responsible
+                            for the property creation.
+                        default_min_los:
+                          type: integer
+                          minimum: 1
+                          description: >
+                            Default minimum length of stay setting for this
+                            property. See the description for `min_los` in the
+                            `ARIUpdate` call for more details on this
+                            restriction.
+                        default_max_los:
+                          type: integer
+                          minimum: 0
+                          description: >-
+                            Default maximum length of stay setting for this
+                            property.
+
+                            See the description for `max_los` in the `ARIUpdate`
+                            call
+
+                            for more details on this restriction.
+
+
+                            `0` means there is no restriction.
+                        breakfast:
+                          type: string
+                          enum:
+                            - ''
+                            - IN
+                            - EX
+                          description: >-
+                            Default breakfast setting for the property. Empty
+                            string
+
+                            means no breakfast is available, `IN` means
+                            breakfast is
+
+                            included in the day rates and `EX` means breakfast
+                            is
+
+                            excluded from day rates.
+
+
+                            Note that this setting is likely not very useful and
+                            too
+
+                            broad.
+                        weekend:
+                          type: array
+                          items:
+                            type: string
+                            enum:
+                              - monday
+                              - tuesday
+                              - wednesday
+                              - thursday
+                              - friday
+                              - saturday
+                              - sunday
+                          description: >-
+                            List of weekdays that the property considers to be
+                            their
+
+                            weekend.
+
+
+                            Note that this setting is likely not very useful.
+                        firstname:
+                          type: string
+                          description: |
+                            First name of property owner/manager.
+                        lastname:
+                          type: string
+                          description: |
+                            First name of property owner/manager.
+                        address:
+                          type: object
+                          description: Address of the property.
+                          properties:
+                            address_line_1:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                First address line of the property (usually the
+                                street name and house number)
+                            address_line_2:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                Second address line of the property (if
+                                applicable)
+                            city:
+                              type:
+                                - string
+                                - 'null'
+                              description: City or locality the property is located in
+                            zip:
+                              type:
+                                - string
+                                - 'null'
+                              description: Post Code (ZIP) of the property
+                            state:
+                              type:
+                                - string
+                                - 'null'
+                              description: State of the property (if applicable)
+                            country:
+                              type: string
+                              pattern: ^[A-Z]{2}$
+                              description: >
+                                2-letter ISO 3166-1 alpha-2 country code. This
+                                is the country the property is located in. Same
+                                as `country` on the top level.
+                            website:
+                              type:
+                                - string
+                                - 'null'
+                              description: Homepage of the property
+                            lon:
+                              type:
+                                - string
+                                - 'null'
+                              description: >
+                                Geographic longitude of the property, given as
+                                decimal degrees. Positive for east, negative for
+                                west. Example: `-117.15292`
+                            lat:
+                              type:
+                                - string
+                                - 'null'
+                              description: >
+                                Geographic latitude of the property, given as
+                                decimal degrees. Positive for north, negative
+                                for south. Example: `32.70954`
+                            phone:
+                              type:
+                                - string
+                                - 'null'
+                              description: >
+                                Phone number for the property with international
+                                country code (eg. `+44 350 5697864`)
+                            fax:
+                              type:
+                                - string
+                                - 'null'
+                              description: >
+                                Fax number for the property with international
+                                country code (eg. `+44 350 5697864`)
+                          required:
+                            - country
+                        business_contact:
+                          type: object
+                          description: Contact information for invoicing
+                          properties:
+                            main_contact_name:
+                              type:
+                                - string
+                                - 'null'
+                              description: Name of the main contact for the property
+                            company_name:
+                              type:
+                                - string
+                                - 'null'
+                              description: Name of the company owning the property
+                            account_manager_name:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                Name of the account manager responsible for the
+                                property
+                            vat_id:
+                              type:
+                                - string
+                                - 'null'
+                              description: Tax ID for the property
+                            address_line_1:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                First address line of the company or property
+                                owner (usually the street name and house number)
+                            address_line_2:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                Second address line of the company or property
+                                owner (if applicable)
+                            state:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                State of the company or property owner (if
+                                applicable)
+                            zip:
+                              type:
+                                - string
+                                - 'null'
+                              description: Post Code (ZIP) of the company or property owner
+                            city:
+                              type:
+                                - string
+                                - 'null'
+                              description: >-
+                                City or locality the company or property owner
+                                is located in
+                            country:
+                              type: string
+                              pattern: ^[A-Z]{2}$
+                              description: >
+                                2-letter ISO 3166-1 alpha-2 country code. This
+                                is the country the the company or property owner
+                                is located in.
+                          required:
+                            - country
+                        images:
+                          type: array
+                          description: List of property-level images
+                          items:
+                            type: object
+                            properties:
+                              url:
+                                type: string
+                                description: >-
+                                  Publicly accessible URL to the full resolution
+                                  image
+                              description:
+                                type: string
+                                description: >-
+                                  Description of the image to show on a channel
+                                  (max. 2000 characters)
+                              sort_order:
+                                type: integer
+                                minimum: 0
+                                description: >
+                                  Number indicating the displayed sort order.
+                                  Lower numbers means further left/top. Defaults
+                                  to 0.
+                        rooms:
+                          type: array
+                          description: List of rooms configured for the property
+                          items:
+                            type: object
+                            properties:
+                              pms_room_id:
+                                type: integer
+                                minimum: 1
+                                description: Room ID on your PMS
+                              units:
+                                type: integer
+                                minimum: 1
+                                description: How many rooms of this type there are.
+                              beds:
+                                type: integer
+                                minimum: 1
+                                description: Number of people that can stay in this room.
+                              dormitory:
+                                type: boolean
+                                description: >
+                                  `true` if it's a dormitory (shared room),
+                                  `false` for private rooms.
+                              gender:
+                                type: string
+                                description: Required for dormitory
+                                enum:
+                                  - MALE
+                                  - FEMALE
+                                  - MIXED
+                              label:
+                                type: string
+                                description: >
+                                  Short string that describes the room for
+                                  displaying purposes.
+                              description:
+                                type:
+                                  - string
+                                  - 'null'
+                                description: >
+                                  Longer description of the room which describes
+                                  a room to a potential guest.
+                              images:
+                                type: array
+                                description: List of room-level images.
+                                items:
+                                  type: object
+                                  properties:
+                                    url:
+                                      type: string
+                                      description: >-
+                                        Publicly accessible URL to the full
+                                        resolution image
+                                    description:
+                                      type:
+                                        - string
+                                        - 'null'
+                                      description: >-
+                                        Description of the image to show on a
+                                        channel (max. 2000 characters)
+                                    sort_order:
+                                      type: integer
+                                      minimum: 0
+                                      description: >
+                                        Number indicating the displayed sort
+                                        order. Lower numbers means further
+                                        left/top. Defaults to 0.
+                                  required:
+                                    - url
+                                    - description
+                                    - sort_order
+                              rateplans:
+                                type: array
+                                description: List of rate plans configured for the room
+                                items:
+                                  type: object
+                                  properties:
+                                    pms_rate_id:
+                                      type: integer
+                                      minimum: 0
+                                      description: >
+                                        Rate plan ID on your PMS. Every room has
+                                        a default rate plan, and the ID (even
+                                        across different rooms) is always `0`.
+                                        Any non-default rate plans have a higher
+                                        ID.
+                                    label_public:
+                                      type:
+                                        - string
+                                        - 'null'
+                                      description: >
+                                        Name or short summary of the rate plan,
+                                        suitable for display to guests. The
+                                        label is chosen by the property.
+                                    label_private:
+                                      type:
+                                        - string
+                                        - 'null'
+                                      description: >
+                                        Name or short summary of the rate plan,
+                                        aimed to be shown just to the property.
+                                        This could for example be a code like
+                                        `NF` for "Non-refundable". The label is
+                                        chosen by the property.
+                                    meal_codes:
+                                      type: array
+                                      description: >
+                                        Combination (list) of meal codes that
+                                        are available for this rate plan. `1`
+                                        for All-Inclusive, `19` for Breakfast,
+                                        `21` for Lunch, `22` for Dinner
+                                      items:
+                                        type: integer
+                                        enum:
+                                          - 1
+                                          - 19
+                                          - 21
+                                          - 22
+                                  required:
+                                    - pms_rate_id
+                                    - label_public
+                                    - label_private
+                            required:
+                              - pms_room_id
+                              - units
+                              - beds
+                              - dormitory
+                              - label
+                              - description
+                              - images
+                        taxes:
+                          type: array
+                          description: |
+                            Property taxes and fees.
+                          items:
+                            $ref: '#/components/schemas/tax_info'
+                      required:
+                        - name
+                        - country
+                        - currency
+                        - timezone
+                        - email_default
+                        - email_channel_booking
+                        - email_contact
+                        - default_min_los
+                        - default_max_los
+                        - breakfast
+                        - weekend
+                        - firstname
+                        - lastname
+                        - address
+                        - business_contact
+                        - images
+                        - rooms
+              required:
+                - guid
+                - pms_property_id
+                - shared_secret
+                - pms_cid
+                - verb
+                - Property
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Failure:
+                  summary: Uncategorised error
+                  value:
+                    success: false
+                    errors:
+                      - id: 3
+                        msg: Property already exists
+                Success with room mapping:
+                  summary: Success
+                  value:
+                    success: true
+                    wbp_property_id: 111
+                    wbp_property_password: secret_password
+                    instruction_text: |-
+                      It worked!
+
+                      Now click the link.
+                    instruction_link: https://ota.com/instructions
+                    room_mappings:
+                      - wbp_room_id: '11111'
+                        pms_room_id: 45829
+                        wbp_rate_id: rp6623
+                        pms_rate_id: 0
+                      - wbp_room_id: '11111'
+                        pms_room_id: 45829
+                        wbp_rate_id: rp6624
+                        pms_rate_id: 850
+                      - wbp_room_id: '11111'
+                        pms_room_id: 45829
+                        wbp_rate_id: rp6624
+                        pms_rate_id: 851
+                      - wbp_room_id: '22222'
+                        pms_room_id: 290
+                        wbp_rate_id: rp6625
+                        pms_rate_id: 0
+                      - wbp_room_id: '22222'
+                        pms_room_id: 290
+                        wbp_rate_id: rp6626
+                        pms_rate_id: 853
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful creation
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      wbp_property_id:
+                        type: integer
+                        description: New property ID on WebBookingPro
+                      wbp_property_password:
+                        type: string
+                        description: >
+                          WebBookingPro will set up first password used for
+                          integration. You have to store this password in your
+                          system. This can be visible to user or not..
+                      instruction_text:
+                        type: string
+                        description: >
+                          The instruction text will be displayed to the hotel
+                          after the property creation is complete. We will
+                          escape any HTML characters, so please only return
+                          plain text. You can include linebreaks (`\n`) which
+                          will be converted into actual line breaks for HTML
+                          display.
+                      instruction_link:
+                        type: string
+                        description: >
+                          If an instruction link is provided we will display the
+                          clickable link below the instruction text (if
+                          present).
+                      room_mappings:
+                        type: array
+                        description: >
+                          Returning this field will help PMS to automatically
+                          map the WebBookingPro room IDs to the PMS room IDs.
+                          This is required to automatically send a full refresh
+                          after successful property creation. We strongly
+                          recommend that you return this field. If you do not
+                          support rate plans you do not need to return
+                          `wbp_rate_id` and `pms_rate_id`.
+                        items:
+                          type: object
+                          properties:
+                            wbp_room_id:
+                              type: string
+                              description: WebBookingPro room ID
+                            pms_room_id:
+                              type: integer
+                              minimum: 1
+                              description: Room ID on your PMS
+                            wbp_rate_id:
+                              type: string
+                              description: WebBookingPro rate plan ID
+                            pms_rate_id:
+                              type: integer
+                              minimum: 0
+                              description: Rate plan ID on your PMS
+                          required:
+                            - wbp_room_id
+                            - pms_room_id
+                    required:
+                      - success
+                      - wbp_property_id
+                  - $ref: '#/components/schemas/response_error'
+          description: CreateProperty
+      summary: CreateProperty
+  /DeleteRoom:
+    post:
+      operationId: delete_room
+      description: |
+        Delete room after it has been deleted on your PMS.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              DeleteRoom:
+                summary: DeleteRoom
+                value:
+                  verb: DeleteRoom
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  shared_secret: s3cr3ts4uc3
+                  pms_cid: mycloudpms1
+                  room:
+                    pms_room_id: 45769
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    room:
+                      type: object
+                      description: Room data
+                      properties:
+                        pms_room_id:
+                          type: integer
+                          minimum: 1
+                          description: Room ID on the your PMS
+                      required:
+                        - pms_room_id
+                    verb:
+                      type: string
+                      enum:
+                        - DeleteRoom
+                  required:
+                    - room
+                    - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: DeleteRoom
+      summary: DeleteRoom
+  /UpdateRoom:
+    post:
+      operationId: update_room
+      description: |
+        Create or update room after it has been changed on the your PMS
+      requestBody:
+        content:
+          application/json:
+            examples:
+              UpdateRoom:
+                summary: UpdateRoom
+                value:
+                  verb: UpdateRoom
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  shared_secret: s3cr3ts4uc3
+                  pms_cid: mycloudpms1
+                  room:
+                    pms_room_id: 45829
+                    units: 5
+                    beds: 2
+                    dormitory: false
+                    label: Double Room
+                    description: A potentially long description about the room
+                    gender: MIXED
+                    images:
+                      - url: >-
+                          https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c37.jpg
+                        description: Double bed
+                        sort_order: 1
+                      - url: >-
+                          https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c38.jpg
+                        description: Bath room
+                        sort_order: 2
+                      - url: >-
+                          https://inbox.myallocator.com/n/user_image.xt?pid=1&img=97f471e5-5898-4e9a-ab94-da0751e19c99.jpg
+                        description: Balcony
+                        sort_order: 3
+                    rateplans:
+                      - pms_rate_id: 0
+                        label_public: Default Rate Plan
+                        label_private: Default Rate Plan
+                        meal_codes:
+                          - 21
+                      - label_public: Non-refundable
+                        label_private: NR
+                        pms_rate_id: 850
+                        meal_codes:
+                          - 19
+                          - 21
+                          - 22
+                      - label_public: With Breakfast
+                        label_private: BR
+                        pms_rate_id: 851
+                        meal_codes:
+                          - 19
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    room:
+                      type: object
+                      properties:
+                        pms_room_id:
+                          type: integer
+                          minimum: 1
+                          description: Room ID on your PMS
+                        wbp_room_id:
+                          type: string
+                          description: Room ID on the OTA.
+                        units:
+                          type: integer
+                          minimum: 1
+                          description: How many rooms of this type there are.
+                        beds:
+                          type: integer
+                          minimum: 1
+                          description: Number people that can stay in this room.
+                        dormitory:
+                          type: boolean
+                          description: >
+                            If `true` it's a dormitory (shared room), `false`
+                            for private rooms.
+                        gender:
+                          type: string
+                          description: Gender. Required for dormitory
+                          enum:
+                            - MALE
+                            - FEMALE
+                            - MIXED
+                        label:
+                          type: string
+                          description: >
+                            Short string that describes the room for displaying
+                            purposes.
+                        description:
+                          type:
+                            - string
+                            - 'null'
+                          description: >
+                            Longer description of the room which describes a
+                            room to a potential guest.
+                        images:
+                          type: array
+                          description: List of property-level images
+                          items:
+                            type: object
+                            properties:
+                              url:
+                                type: string
+                                description: >-
+                                  Publicly accessible URL to the full resolution
+                                  image
+                              description:
+                                type: string
+                                description: >-
+                                  Description of the image to show on a channel
+                                  (max. 2000 characters)
+                              sort_order:
+                                type: integer
+                                minimum: 0
+                                description: >
+                                  Number indicating the displayed sort order.
+                                  Lower numbers means further left/top. Defaults
+                                  to 0.
+                            required:
+                              - url
+                              - description
+                              - sort_order
+                        rateplans:
+                          type: array
+                          description: List of rate plans configured for the room
+                          items:
+                            type: object
+                            properties:
+                              pms_rate_id:
+                                type: integer
+                                minimum: 0
+                                description: >
+                                  Rate plan ID on your PMS. Every room has a
+                                  default rate plan, and the ID (even across
+                                  different rooms) is always `0`. Any
+                                  non-default rate plans have a higher ID.
+                              label_public:
+                                type:
+                                  - string
+                                  - 'null'
+                                description: >
+                                  Name or short summary of the rate plan,
+                                  suitable for display to guests. The label is
+                                  chosen by the property.
+                              label_private:
+                                type:
+                                  - string
+                                  - 'null'
+                                description: >
+                                  Name or short summary of the rate plan, aimed
+                                  to be shown just to the property. This could
+                                  for example be a code like `NF` for
+                                  "Non-refundable". The label is chosen by the
+                                  property.
+                              meal_codes:
+                                type: array
+                                description: >
+                                  Combination (list) of meal codes that are
+                                  available for this rate plan. `1` for
+                                  All-Inclusive, `19` for Breakfast, `21` for
+                                  Lunch, `22` for Dinner
+                                items:
+                                  type: integer
+                                  enum:
+                                    - 1
+                                    - 19
+                                    - 21
+                                    - 22
+                            required:
+                              - pms_rate_id
+                              - label_public
+                              - label_private
+                      required:
+                        - pms_room_id
+                        - units
+                        - beds
+                        - dormitory
+                        - label
+                        - description
+                        - images
+                    verb:
+                      type: string
+                      enum:
+                        - UpdateRoom
+                  required:
+                    - room
+                    - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Success with mapping:
+                  summary: Success with mapping
+                  value:
+                    success: true
+                    room_mappings:
+                      - wbp_room_id: '11111'
+                        pms_rate_id: 0
+                        wbp_rate_id: DEF-3456
+                      - wbp_room_id: '11111'
+                        pms_rate_id: 850
+                        wbp_rate_id: NR-3456
+                      - wbp_room_id: '11111'
+                        pms_rate_id: 851
+                        wbp_rate_id: BR-3456
+                Failure:
+                  summary: Invalid credentials
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect
+              schema:
+                oneOf:
+                  - type: object
+                    title: Success
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      room_mappings:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            pms_rate_id:
+                              type: integer
+                              minimum: 0
+                              description: Rate plan ID on your PMS
+                            wbp_room_id:
+                              type: string
+                              description: OTA room ID
+                            wbp_rate_id:
+                              type: string
+                              description: OTA rate plan ID
+                          required:
+                            - wbp_room_id
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: UpdateRoom
+      summary: UpdateRoom
+  /DeleteRatePlan:
+    post:
+      operationId: delete_rateplan
+      description: |
+        Delete rateplan after it has been deleted on your PMS.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              DeleteRatePlan:
+                summary: DeleteRatePlan
+                value:
+                  verb: DeleteRatePlan
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  shared_secret: s3cr3ts4uc3
+                  pms_cid: mycloudpms1
+                  rateplan:
+                    pms_rate_id: 115326
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    rateplan:
+                      type: object
+                      description: Rate plan to delete
+                      properties:
+                        pms_rate_id:
+                          type: integer
+                          minimum: 1
+                          description: Rate plan ID on your PMS
+                      required:
+                        - pms_rate_id
+                    verb:
+                      type: string
+                      enum:
+                        - DeleteRatePlan
+                  required:
+                    - rateplan
+                    - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                $ref: '#/components/schemas/response_simple'
+          description: DeleteRatePlan
+      summary: DeleteRatePlan
+  /UpdateRatePlan:
+    post:
+      operationId: update_rateplan
+      description: |
+        Create of update rate plan after it has been changed on your PMS
+      requestBody:
+        content:
+          application/json:
+            examples:
+              UpdateRatePlan:
+                summary: UpdateRateplan
+                value:
+                  verb: UpdateRatePlan
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  shared_secret: s3cr3ts4uc3
+                  pms_cid: mycloudpms1
+                  rateplan:
+                    pms_rate_id: 115629
+                    label_private: NR
+                    label_public: Non-refundable
+                    max_occupancy: 3
+                    min_occupancy: 1
+                    meal_codes:
+                      - 19
+                      - 21
+                      - 22
+                    wbp_rate_id: '3456'
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    rateplan:
+                      type: object
+                      properties:
+                        pms_rate_id:
+                          type: integer
+                          minimum: 1
+                          description: Rate plan ID on your PMS
+                        wbp_rate_id:
+                          type: string
+                          description: Channel rate plan ID.
+                        label_private:
+                          type: string
+                          description: >-
+                            The private name of the rate plan, only shown to the
+                            property.
+                        label_public:
+                          type: string
+                          description: >-
+                            The public name of the rate plan, that can also be
+                            shown to customers.
+                        max_occupancy:
+                          type: integer
+                          minimum: 0
+                          description: Maximum occupancy, `0` means no restrictions.
+                        min_occupancy:
+                          type: integer
+                          minimum: 0
+                          description: Minimum occupancy, `0` means no restrictions.
+                        meal_codes:
+                          type: array
+                          description: >
+                            Combination (list) of meal codes that are available
+                            for this rate plan. `1` for All-Inclusive, `19` for
+                            Breakfast, `21` for Lunch, `22` for Dinner
+                          items:
+                            type: integer
+                            enum:
+                              - 1
+                              - 19
+                              - 21
+                              - 22
+                      required:
+                        - pms_rate_id
+                        - label_public
+                        - label_private
+                    verb:
+                      type: string
+                      enum:
+                        - UpdateRatePlan
+                  required:
+                    - rateplan
+                    - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Success with mapping:
+                  summary: Success with mapping
+                  value:
+                    success: true
+                    room_mappings:
+                      - wbp_room_id: '11111'
+                        pms_room_id: 45829
+                        wbp_rate_id: '3456'
+                Failure:
+                  summary: Invalid credentials
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect
+              schema:
+                oneOf:
+                  - type: object
+                    title: Success
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                      room_mappings:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            pms_room_id:
+                              type: integer
+                              minimum: 1
+                              description: Room ID on your PMS
+                            wbp_room_id:
+                              type: string
+                              description: OTA room ID
+                            wbp_rate_id:
+                              type: string
+                              description: OTA rate plan ID
+                          required:
+                            - pms_room_id
+                            - wbp_room_id
+                            - wbp_rate_id
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: UpdateRatePlan
+      summary: UpdateRatePlan
+  /FullRefreshChannel:
+    post:
+      operationId: full_refresh_channel
+      description: |
+        Request full refresh of channel
+      requestBody:
+        content:
+          application/json:
+            examples:
+              UpdateRatePlan:
+                summary: FullRefreshChannel
+                value:
+                  verb: FullRefreshChannel
+                  wbp_property_id: 111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  shared_secret: s3cr3ts4uc3
+                  pms_cid: mycloudpms1
+                  wbp_channel_id: 111
+                  periodFrom: '2025-11-01'
+                  periodTo: '2025-12-01'
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - UpdateRatePlan
+                  required:
+                    - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Success with mapping:
+                  summary: Success with mapping
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect
+              schema:
+                oneOf:
+                  - type: object
+                    title: Success
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: FullRefreshChannel
+      summary: FullRefreshChannel
+      tags:
+        - Channels
+  /GetReviews:
+    post:
+      operationId: get_reviews
+      description: Get All Reviews by Property ID
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetReviews:
+                summary: RespondReview
+                value:
+                  verb: RespondReview
+                  wbp_property_id: 1111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetReviews
+                    RoomInfo:
+                      type: array
+                      description: >
+                        This list of rooms will only be returned if enabled for
+                        the WebBookingPro by your PMS. By default this is not
+                        present. It's only necessary for deep integrations or
+                        situations where the PMS plans to automatically/create
+                        destroy rooms using PMS configuration. In a normal
+                        integration this isn't very usual.
+                      items:
+                        $ref: '#/components/schemas/room_info'
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful room retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: GetReviews
+      summary: GetReviews
+      tags:
+        - Reviews
+  /RespondReview:
+    post:
+      operationId: respond_review
+      description: Respond to a review by ID
+      requestBody:
+        content:
+          application/json:
+            examples:
+              RespondReview:
+                summary: RespondReview
+                value:
+                  verb: RespondReview
+                  wbp_property_id: 1111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_review_id: 111
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - RespondReview
+                    RoomInfo:
+                      type: array
+                      description: >
+                        This list of rooms will only be returned if enabled for
+                        the WebBookingPro by your PMS. By default this is not
+                        present. It's only necessary for deep integrations or
+                        situations where the PMS plans to automatically/create
+                        destroy rooms using PMS configuration. In a normal
+                        integration this isn't very usual.
+                      items:
+                        $ref: '#/components/schemas/room_info'
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful room retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: RespondReview
+      summary: RespondReview
+      tags:
+        - Reviews
+  /GetMessages:
+    post:
+      operationId: get_messages
+      description: Get All Messages by Property ID
+      requestBody:
+        content:
+          application/json:
+            examples:
+              GetMessages:
+                summary: RespondMessage
+                value:
+                  verb: RespondMessage
+                  wbp_property_id: 1111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - GetMessages
+                    RoomInfo:
+                      type: array
+                      description: >
+                        This list of rooms will only be returned if enabled for
+                        the WebBookingPro by your PMS. By default this is not
+                        present. It's only necessary for deep integrations or
+                        situations where the PMS plans to automatically/create
+                        destroy rooms using PMS configuration. In a normal
+                        integration this isn't very usual.
+                      items:
+                        $ref: '#/components/schemas/room_info'
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful room retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: GetMessages
+      summary: GetMessages
+      tags:
+        - Messages
+  /SendMessage:
+    post:
+      operationId: respond_Message
+      description: Respond to a Message by ID
+      requestBody:
+        content:
+          application/json:
+            examples:
+              RespondMessage:
+                summary: RespondMessage
+                value:
+                  verb: SendMessage
+                  wbp_property_id: 1111
+                  wbp_property_password: very-secret-password
+                  pms_property_id: '25678'
+                  guid: 6C08B96E-450D-4E6A-9933-7D0305730305
+                  pms_cid: mycloudpms1
+                  shared_secret: s3cr3ts4uc3
+                  wbp_Message_id: 111
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/auth'
+                - type: object
+                  properties:
+                    verb:
+                      type: string
+                      enum:
+                        - SendMessage
+                    RoomInfo:
+                      type: array
+                      description: >
+                        This list of rooms will only be returned if enabled for
+                        the WebBookingPro by your PMS. By default this is not
+                        present. It's only necessary for deep integrations or
+                        situations where the PMS plans to automatically/create
+                        destroy rooms using PMS configuration. In a normal
+                        integration this isn't very usual.
+                      items:
+                        $ref: '#/components/schemas/room_info'
+              required:
+                - verb
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    success: true
+                Failure:
+                  summary: Invalid credentials sent
+                  value:
+                    success: false
+                    errors:
+                      - id: 1001
+                        msg: The login details you provided are incorrect.
+              schema:
+                oneOf:
+                  - type: object
+                    title: Successful room retrieval
+                    properties:
+                      success:
+                        type: boolean
+                        enum:
+                          - true
+                    required:
+                      - success
+                  - $ref: '#/components/schemas/response_error'
+          description: SendMessage
+      summary: SendMessage
+      tags:
+        - Messages
+  /ARIFullRefresh:
+    post:
+      operationId: ari_full_refresh
+      description: >
+        *Note that the endpoint for this API call is on your PMS!*
+
+        This is for technical support on the WebBookingPro enqueue a full
+        refresh of the property. You may use either `wbp_property_id` (it may be
+        resolved into a number of PMS IDs) or `pms_property_id`.
+
+        Note that full refreshes are heavy operations, so only call this when
+        absolutely necessary. Under no circumstances use this callback on a
+        scheduled basis.
+      servers:
+        - url: >-
+            your_endpoint_url e.g.
+            (https://yourcloudpms.com/api/callback/webookingpro)
+      requestBody:
+        content:
+          application/json:
+            examples:
+              ARIFullRefresh:
+                summary: ARIFullRefresh
+                value:
+                  pms_property_id: '998201'
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              type: object
+              properties:
+                pms_property_id:
+                  description: Property ID on your PMS
+                  type: string
+                  minimum: 1
+                wbp_property_id:
+                  description: |
+                    Username, WebBookingPro Property ID
+                  type: string
+                shared_secret:
+                  description: >-
+                    Authentication between the OTA and the channel. Identical
+                    for all requests. Not to be shared with customers.
+                  type: string
+              required:
+                - shared_secret
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    UpdateId: 99277138491
+                Failure:
+                  summary: Failure
+                  value:
+                    ErrorCode: 1031
+                    Error: Channel not enabled for property
+              schema:
+                oneOf:
+                  - title: Successful request
+                    type: object
+                    properties:
+                      UpdateId:
+                        type: integer
+                        minimum: 1
+                        description: >
+                          If present indicates that at least one full refresh
+                          was enqueued into PMS to be sent to the WebBookingPro
+                  - $ref: '#/components/schemas/response_callback_error'
+          description: ARIFullRefresh
+      summary: ARIFullRefresh
+      tags:
+        - Callbacks
+  /BookingCreate:
+    post:
+      operationId: booking_create
+      description: >-
+        *Note that the endpoint for this API call is on your PMS!*
+
+
+        WebBookingPro uses this callback to send us new bookings to your PMS.
+        Using this callback ensures that
+
+        there is no delay between the creation of the booking and import on
+
+        PMS. Therefore it's strongly recommend to implement this callback.
+
+        Even when implemented it's still necessary to also implement the
+
+        `GetBookingList` and `GetBookingId` calls, which act as fallbacks if
+
+        the `CreateBooking` notification fails, when a reimport due to
+        processing
+
+        issues on PMS is necessary, or when a specific booking needs to be
+
+        debugged.
+
+
+        The booking format is identical to what is being returned in the
+
+        `GetBookingId` call. The booking format is described
+
+        [here in full detail]().
+
+
+        See the documentation about `GetBookingId` for more details on the
+        format.
+
+        The specification listed here is not complete and just the minimal
+
+        requirement.
+      servers:
+        - url: >-
+            your_endpoint_url e.g.
+            (https://yourcloudpms.com/api/callback/webookingpro)
+      requestBody:
+        content:
+          application/json:
+            examples:
+              BookingCreate:
+                summary: BookingCreate
+                value:
+                  pms_property_id: '998201'
+                  wbp_property_id: 111
+                  shared_secret: s3cr3ts4uc3
+                  reservation:
+                    OrderId: 123456789
+                    OrderDate: '2018-04-22'
+                    OrderTime: '18:02:58'
+                    IsCancellation: 0
+                    TotalCurrency: USD
+                    TotalPrice: 134
+                    Customers:
+                      - CustomerCountry: US
+                        CustomerEmail: test@test.com
+                        CustomerFName: Test Firstname
+                        CustomerLName: Test Lastname
+                    Rooms:
+                      - ChannelRoomType: 111
+                        Currency: USD
+                        DayRates:
+                          - Date: '2017-11-08'
+                            Description: Refundable Rate
+                            Rate: 32.5
+                            Currency: USD
+                            RateId: 13649
+                          - Date: '2017-11-09'
+                            Description: Refundable Rate
+                            Rate": 34.5
+                            Currency: USD
+                            RateId: 13649
+                        StartDate: '2017-11-08'
+                        EndDate: '2017-11-09'
+                        Price: 134
+                        Units: 2
+            schema:
+              type: object
+              properties:
+                pms_property_id:
+                  description: Property ID on your PMS
+                  type: string
+                  minimum: 1
+                wbp_property_id:
+                  description: WebBookingPro Property ID
+                  type: string
+                shared_secret:
+                  description: >-
+                    Authentication between the OTA and the channel. Identical
+                    for all requests. Not to be shared with customers.
+                  type: string
+                reservation:
+                  type: object
+                  description: >
+                    The booking payload. See the response for `GetBookingId` for
+                    a minimal example and check the "Booking Format" section of
+                    this documentation.
+              required:
+                - shared_secret
+                - booking
+            encoding:
+              booking_json:
+                contentType: application/json
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value: {}
+                Failure:
+                  summary: Failure
+                  value:
+                    Error: 1031
+                    ErrorMsg: Channel not enabled for property
+              schema:
+                oneOf:
+                  - title: Successful Request
+                    type: object
+                    description: >
+                      No returned error means the booking has been enqueued into
+                      PMS for import. The response will be an empty JSON object.
+                  - $ref: '#/components/schemas/response_callback_error'
+          description: BookingCreate
+      summary: BookingCreate
+      tags:
+        - Callbacks
+  /NotifyBooking:
+    post:
+      operationId: notify_booking
+      description: >-
+        *Note that the endpoint for this API call is on your PMS!*
+
+
+        With this API call the WebBookingPro can notify PMS to immediately
+        request a
+
+        `GetBookingList` call based on the `wbp_property_id`
+
+        and the passed `booking_id`. This should be send on any new booking OR
+        any
+
+        changes such as cancellations to an existing booking.
+
+
+        If the `BookingCreate` API call has been implemented then
+        `NotifyBooking`
+
+        is not required.
+      servers:
+        - url: >-
+            your_endpoint_url e.g.
+            (https://yourcloudpms.com/api/callback/webookingpro)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            examples:
+              NotifyBooking:
+                summary: NotifyBooking
+                value:
+                  wbp_property_id: 111
+                  shared_secret: s3cr3ts4uc3
+                  booking_id: '123456789'
+            schema:
+              type: object
+              properties:
+                wbp_property_id:
+                  description: WebBookingPro Property ID
+                  type: integer
+                booking_id:
+                  type: integer
+                  description: WebBookingPro booking ID of the booking to be retrieved.
+                shared_secret:
+                  description: >-
+                    Authentication between the WebBookingPro and PMS. Identical
+                    for all requests. Not to be shared with customers.
+                  type: string
+              required:
+                - shared_secret
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value: {}
+                Failure:
+                  summary: Failure
+                  value:
+                    Error: 1031
+                    ErrorMsg: Channel not enabled for property
+              schema:
+                oneOf:
+                  - title: Successful Request
+                    type: object
+                    description: >
+                      No returned error means the notification has been enqueued
+                      into PMS for import. The response will be an empty JSON
+                      object.
+                  - $ref: '#/components/schemas/response_callback_error'
+          description: NotifyBooking
+      summary: NotifyBooking
+      tags:
+        - Callbacks
+  /RoomInfo:
+    post:
+      operationId: room_info
+      description: >-
+        *Note that the endpoint for this API call is on your PMS!*
+
+
+        Returns the rooms configured on your PMS. It's only necessary for deep
+
+        integrations or situations where the WebBookingPro plans to
+        automatically/create
+
+        destroy rooms using PMS's configuration. In a normal integration this
+
+        isn't very common.
+      servers:
+        - url: >-
+            your_endpoint_url e.g.
+            (https://yourcloudpms.com/api/callback/webookingpro)
+      requestBody:
+        content:
+          application/json:
+            examples:
+              RoomInfo:
+                summary: RoomInfo
+                value:
+                  pms_property_id: '998201'
+                  shared_secret: s3cr3ts4uc3
+            schema:
+              type: object
+              properties:
+                pms_property_id:
+                  description: Property ID on the your PMS
+                  type: string
+                  minimum: 1
+                shared_secret:
+                  description: >-
+                    Authentication between the OTA and the channel. Identical
+                    for all requests. Not to be shared with customers.
+                  type: string
+              required:
+                - pms_property_id
+                - shared_secret
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  summary: Success
+                  value:
+                    RoomInfo:
+                      - pms_room_id: 45829
+                        units: 5
+                        beds: 2
+                        dormitory: false
+                        label: Double Room
+                        description: A potentially long description about the room
+                      - pms_room_id: 290
+                        units: 25
+                        beds: 4
+                        dormitory: false
+                        label: 4-person private
+                        description: null
+                Failure:
+                  summary: Failure
+                  value:
+                    ErrorCode: 9203
+                    Error: pms_property_id is invalid
+              schema:
+                oneOf:
+                  - title: Successful Request
+                    type: object
+                    properties:
+                      RoomInfo:
+                        type: array
+                        description: |
+                          List of rooms configured on your PMS.
+                        items:
+                          $ref: '#/components/schemas/room_info'
+                    required:
+                      - RoomInfo
+                  - $ref: '#/components/schemas/response_callback_error'
+          description: RoomInfo
+      summary: RoomInfo
+      tags:
+        - Callbacks
+components:
+  securitySchemes:
+    shared_secret:
+      type: apiKey
+      in: query
+      name: shared_secret
+      description: >-
+        Authentication between the PMS and the WebBookingPro. Identical for all
+        requests. Not to be shared with customers.
+  schemas:
+    response_simple:
+      type: object
+      title: Standard Response
+      properties:
+        errors:
+          description: Array of error objects. Required when `success` is `false`.
+          type: array
+          items:
+            description: Error object
+            type: object
+            properties:
+              id:
+                type: integer
+                minimum: 1
+                description: >
+                  Error code. Check the "Error Codes" section of the
+                  specification for valid codes.
+              msg:
+                type: string
+                description: >
+                  Optional error string to give more details about the error.
+                  Myallocator localises errors into different languages, so this
+                  field is generally ignored and only useful for debugging.
+            required:
+              - id
+        success:
+          type: boolean
+          enum:
+            - true
+            - false
+      required:
+        - success
+    room_info:
+      type: object
+      properties:
+        pms_room_id:
+          type: integer
+          minimum: 1
+          description: Room ID on the your PMS
+        units:
+          type: integer
+          minimum: 1
+          description: How many rooms of this type there are.
+        maxPersons:
+          type: integer
+          minimum: 1
+          description: Number people that can stay in this room.
+        maxAdults:
+          type: integer
+          minimum: 1
+          description: Number of adults that can stay in this room.
+        maxChildren:
+          type: integer
+          minimum: 1
+          description: Number of children that can stay in this room.
+        dormitory:
+          type: boolean
+          description: |
+            If `true` it's a dormitory (shared room), `false` for private rooms.
+        pricingModel:
+          type: string
+          description: >
+            Pricing Model. It can be "occ" for occupancy (default), "pax" for
+            per adult person, "room" for per room/unit, "dormitory", "camp" for
+            campsites (plot + per persons)
+                    
+        label:
+          type: string
+          description: |
+            Short string that describes the room for displaying purposes.
+        description:
+          type:
+            - string
+            - 'null'
+          description: >
+            Longer description of the room which describes a room to a potential
+            guest.
+      required:
+        - pms_room_id
+        - units
+        - beds
+        - dormitory
+        - label
+        - description
+    auth:
+      type: object
+      properties:
+        pms_property_id:
+          description: Property ID on the your PMS
+          type: integer
+          minimum: 1
+        wbp_property_id:
+          description: Username, login or property ID on the OTA
+          type: string
+        wbp_property_password:
+          description: Password for property on WebBookingPro
+          type: string
+        guid:
+          description: Request reference ID, used for debugging and support requests.
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$
+        shared_secret:
+          description: >-
+            Authentication between the PMS and the WebBookingPro. Identical for
+            all requests. Not to be shared with customers.
+          type: string
+        pms_cid:
+          description: PMS ID as given by WebBookingPro
+          type: string
+          pattern: ^[a-z0-9]+$
+      required:
+        - guid
+        - pms_property_id
+        - wbp_property_id
+        - wbp_property_password
+        - shared_secret
+        - pms_cid
+    response_error:
+      type: object
+      title: Error Response
+      properties:
+        errors:
+          description: Array of error objects.
+          type: array
+          items:
+            description: Error object
+            type: object
+            properties:
+              id:
+                type: integer
+                minimum: 1
+                description: >
+                  Error code. Check the "Error Codes" section of the
+                  specification for valid codes.
+              msg:
+                type: string
+                description: >
+                  Optional error string to give more details about the error.
+                  Myallocator localises errors into different langauges, so this
+                  field is generally ignored and only useful for debugging.
+            required:
+              - id
+        success:
+          type: boolean
+          enum:
+            - false
+      required:
+        - errors
+        - success
+    booking:
+      type: object
+      description: >
+        Object describing the booking. The fields listed here are just the
+        minimum required fields.
+      properties:
+        OrderId:
+          type: string
+          description: Unique booking ID on the OTA. Maximum of 64 characters.
+        OrderAdults:
+          type: integer
+          minimum: 0
+          description: >
+            Total number of unique adults. Adult age threshold is defined by the
+            channel. Should equal sum of Adults in each room if this breakdown
+            is given.
+        OrderChildren:
+          type: integer
+          minimum: 0
+          description: >
+            Total number of unique children or babies. Child/baby age threshold
+            is defined by the channel. Should equal sum of `Children` plus
+            `Babies` in each room if this breakdown is given.
+        OrderCustomers:
+          type: integer
+          minimum: 1
+          description: >
+            Total number of unique customers. Should equal sum of `Occupancy` in
+            each room if this breakdown is given. Should also equal the sum of
+            `OrderAdults` and `OrderChildren` if those fields are present.
+        OrderDate:
+          type: string
+          format: date
+          description: Date of booking creation, in UTC (not date when modified!).
+        OrderTime:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$
+          description: >
+            Time of booking creation, in UTC. If seconds are not provided, set
+            value to ":00". Presence of `OrderTime` requires presence of
+            `OrderDate`.
+        OrderModifDate:
+          type: string
+          format: date
+          description: >
+            Date of booking modification, in UTC. Do not pass if booking has not
+            been modified.
+        OrderModifTime:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$
+          description: >
+            Time of booking modification, in UTC. Do not pass if booking has not
+            been modified. If seconds are not provided, set value to ":00".
+        IsCancellation:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: '`1` if booking is cancelled.'
+        IsModification:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: '`1` if booking is modified.'
+        TotalCurrency:
+          type: string
+          pattern: ^[A-Z]{3}$
+          description: |
+            3-letter ISO 4217 currency code for the `TotalPrice` field.
+        TotalPrice:
+          type: number
+          description: >
+            Total price of the booking, including taxes, commission and deposit,
+            after discounts. It should reflect the price the guest will have to
+            pay in total (or has already paid).
+        PaymentCollect:
+          type: string
+          enum:
+            - Property
+            - Channel
+          description: >
+            Who collects outstanding balance from the guest? `Property` means
+            that the property takes the payment, either by charging the credit
+            card, or on arrival. `Channel` means that the channel will take the
+            payment, and the property is paid by the channel. Do not set this to
+            `Channel` if you are only collecting the commission/deposit.
+        Customers:
+          type: array
+          items:
+            type: object
+            properties:
+              CustomerCountry:
+                type: string
+                pattern: ^[A-Z]{2}$
+                description: >-
+                  2-letter ISO 3166-1 alpha-2 country code in which the customer
+                  resides, corresponding to their address. Value is uppercase.
+              CustomerEmail:
+                type: string
+                format: email
+                description: Email address of the customer.
+              CustomerFName:
+                type: string
+                description: >
+                  First name(s) of the customer. If the name is not stored
+                  separated by first and last name, provide full name in
+                  `CustomerLName`.
+              CustomerLName:
+                type: string
+                description: Last (family) name or full name of the customer.
+            required:
+              - CustomerCountry
+              - CustomerEmail
+              - CustomerFName
+              - CustomerLName
+        Rooms:
+          type: array
+          description: List of rooms booked
+          items:
+            type: object
+            properties:
+              Adults:
+                type: integer
+                minimum: 0
+                description: >
+                  Number of adults staying in this room. Adult age threshold is
+                  defined by the channel.
+              Babies:
+                type: integer
+                minimum: 0
+                description: >
+                  Number of babies staying in this room. Baby age threshold is
+                  defined by the channel.
+              ChannelRoomType:
+                type: string
+                description: The ID of the room on the OTA.
+              Children:
+                type: integer
+                minimum: 0
+                description: >
+                  Number of children staying in this room. Child age threshold
+                  is defined by the channel.
+              Currency:
+                type: string
+                pattern: ^[A-Z]{3}$
+                description: |
+                  3-letter ISO 4217 currency code for the `Price` field.
+              DayRates:
+                type: array
+                description: >
+                  Contains as many objects as the number of nights of the room
+                  stay. They need to be sorted by date.
+                items:
+                  type: object
+                  properties:
+                    Date:
+                      type: string
+                      format: date
+                      description: Date of day rate.
+                    Description:
+                      type: string
+                      description: >
+                        Name or short description of the rateplan booked.
+                        Example: "Non-refundable rate" or "10% festival
+                        discount".
+                    Rate:
+                      type: number
+                      description: |
+                        Price for this day, including `Commission` and `Tax`.
+                    Currency:
+                      type: string
+                      pattern: ^[A-Z]{3}$
+                      description: |
+                        3-letter ISO 4217 currency code for the `Rate` field.
+                    RateId:
+                      type: string
+                      description: Applicable channel rate plan ID for this day rate.
+                  required:
+                    - Date
+                    - Description
+                    - Rate
+                    - Currency
+                    - RateId
+              StartDate:
+                type: string
+                format: date
+                description: Arrival date of the customer.
+              EndDate:
+                type: string
+                format: date
+                description: >
+                  The date of the last night of stay (equal to departure date
+                  minus one).
+              Occupancy:
+                type: integer
+                minimum: 1
+                description: >
+                  Total number of persons staying in this room, including
+                  children and babies. Should be the sum of `Adults`, `Children`
+                  and `Babies` if those are present.
+              Price:
+                type: number
+                minimum: 0
+                description: >
+                  Total price of the room, for all units and all days, including
+                  taxes and fees. Example: stay is for two days and three units
+                  and a single night costs €10 (including tax), then `Price` is
+                  2 * 3 * 10 = 60.
+              Units:
+                type: integer
+                minimum: 1
+                description: >
+                  Number of rooms booked (for private rooms) or number of beds
+                  booked (for dorms/shared rooms).
+              RateDesc:
+                type: string
+                description: >-
+                  Description of the booked rate plan, as provided by the
+                  channel.
+              RateId:
+                type: string
+                description: >
+                  Applicable rate plan ID for this booking. Normally there is
+                  only one. If there are multiple, list them comma-separated.
+            required:
+              - Adults
+              - Babies
+              - ChannelRoomType
+              - Children
+              - Currency
+              - DayRates
+              - EndDate
+              - Occupancy
+              - Price
+              - RateDesc
+              - RateId
+              - StartDate
+              - Units
+      required:
+        - Customers
+        - IsCancellation
+        - IsModification
+        - OrderAdults
+        - OrderChildren
+        - OrderCustomers
+        - OrderDate
+        - OrderId
+        - OrderTime
+        - PaymentCollect
+        - Rooms
+        - TotalCurrency
+        - TotalPrice
+    tax_conditions:
+      type: array
+      description: |
+        Array of conditions that determine if this amount will be applied.
+      items:
+        type: object
+        properties:
+          min_start:
+            type: string
+            description: >
+              Amount of parameter above which tax is applied. For example, if
+              `condition_parameter` is "total-price" and here we have 200, this
+              means that tax/fee is applied when total price is more or equal
+              200.
+          max_end:
+            type: string
+            description: >
+              Amount of parameter below which tax is applied. For example, if
+              `condition_parameter` is "total-price" and here we have 200, this
+              means that tax/fee is applied when total price is less or equal
+              200.
+          one_of:
+            type: array
+            description: >
+              List of values of a parameter. For example, if
+              `condition_parameter` is "day-of-week" then ["SAT","SUN"] might be
+              here.
+            items:
+              type: string
+          max_end_inclusive:
+            type: boolean
+            default: true
+            description: >
+              Whether the `max_end` parameter is inclusive (less or equal) or
+              not (strictly less).
+          min_start_inclusive:
+            type: boolean
+            default: true
+            description: >
+              Whether the `min_start` parameter is inclusive (greater or equal)
+              or not (strictly greater).
+          condition_parameter:
+            type: string
+            description: >
+              Parameter that determines whether this tax/fee will be applied or
+              not.
+            enum:
+              - adult-age
+              - booking-date
+              - checkin-date
+              - checkout-date
+              - child-age
+              - date-in-range
+              - day-of-week
+              - length-of-stay
+              - night-number
+              - nightly-rate
+              - nights-booked-in-advance
+              - number-of-guests
+              - number-of-nights
+              - number-of-pets
+              - payment-type
+              - product-code-id
+              - rate-type
+              - room-id
+              - stay-dates-intersect
+              - total-price
+        required:
+          - condition_parameter
+    tax_info:
+      type: object
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Tax/fee ID in your PMS
+        is_fee:
+          type: boolean
+          description: '`true` if it''s a fee, otherwise it''s a tax.'
+        is_inclusive:
+          type: boolean
+          default: true
+          description: '`true` when tax/fee included in rate.'
+        is_per_night:
+          type: boolean
+          default: true
+          description: '`true` when tax/fee is per night, otherwise per stay.'
+        is_percent:
+          type: boolean
+          default: true
+          description: '`true` when amount represents percentage, otherwise absolute value.'
+        is_refundable:
+          type: boolean
+          default: true
+          description: For example, refundable damage deposit fee will set this `true`.
+        amount:
+          type: number
+          description: >
+            Tax/fee amount. Either amount in currency or percent, depending on
+            `is_percent` field. For example 20.5 can mean 20.5% or $20.5. Only
+            one element either `amount` or `amounts` is supposed to be active,
+            not both.
+        amounts:
+          type: array
+          description: >
+            Array of tax/fee amounts. Multiple amounts may apply at the same
+            time depending on the conditions for each item. Only one element
+            either `amount` or `amounts` is supposed to be active, not both.
+          items:
+            type: object
+            properties:
+              amount:
+                description: >-
+                  Tax/fee amount. Either amount in currency or percent,
+                  depending on is_percent field. For example 20.5 can mean 20.5%
+                  or $20.5.
+                type: number
+              conditions:
+                $ref: '#/components/schemas/tax_conditions'
+            required:
+              - amount
+        category:
+          type: string
+          description: |
+            Tax category.
+          enum:
+            - occupancy_tax
+            - other_fee
+            - other_tax
+            - resort_tax
+            - sales_tax
+            - service_charge
+            - tourism_tax
+            - vat
+        code:
+          type: string
+          description: Issued by federal government tax/fee code.
+        external_id:
+          type: string
+          description: >
+            Optional custom field to store an external system ID. Not guaranteed
+            to be unique.
+        description:
+          type: string
+          description: Tax/fee description.
+        name:
+          type: string
+          description: Tax/fee name.
+        applies_per:
+          type: string
+          description: |
+            To which entity tax/fee is applied.
+          enum:
+            - adult
+            - all-adults
+            - booking
+            - booking-external-item
+            - child
+            - children
+            - guest
+            - pet
+            - pets
+            - rateplan
+            - room
+            - room-type
+            - service
+        conditions:
+          $ref: '#/components/schemas/tax_conditions'
+        tax_basis_includes_fees:
+          type: array
+          items:
+            type: object
+            description: >-
+              Array of fee IDs which will be summed up before calculating this
+              tax. Depends on calculation_basis.
+            properties:
+              fee_id:
+                type: integer
+                description: ID of a fee
+                minimum: 1
+            required:
+              - fee_id
+        calculation_basis:
+          type: string
+          description: >
+            To what value percentage will be applied in order to calculate tax
+            amount in currency. Only applicable if `is_percent` is `true`.
+          enum:
+            - fees
+            - fees-per-night
+            - rate
+            - rate-and-fees
+            - rate-and-fees-per-night
+            - rate-per-night
+      required:
+        - applies_per
+        - category
+        - id
+        - is_inclusive
+        - is_per_night
+        - is_percent
+        - is_refundable
+        - name
+    response_callback_error:
+      type: object
+      title: Error Response
+      properties:
+        ErrorCode:
+          type: integer
+          minimum: 1
+          description: >
+            Error code. Check the "Error Codes" section of the specification for
+            valid codes.
+        Error:
+          type: string
+          description: Human-readable error message.
+      required:
+        - ErrorCode
+        - Error

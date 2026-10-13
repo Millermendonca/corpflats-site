@@ -138,6 +138,9 @@ import {
   querySystemData,
   callGeminiAi
 } from "./whatsapp-ai-service.mjs";
+import { createWbpCallbackRouter } from "./wbp/callbacks.mjs";
+import { getIntegrationMode, isWbpEnabled, setIntegrationMode, WBP_MODES } from "./wbp/config.mjs";
+import { defaultStorage as wbpStorage } from "./wbp/storage.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -294,6 +297,32 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 app.use(serverMonitorMiddleware);
+
+// ── WebBookingPro (WBP) Channel Manager Callbacks & Mode Endpoints ───────────
+if (pgPool) {
+  wbpStorage.pgPool = pgPool;
+}
+app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage }));
+
+app.get("/api/wbp/mode", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.json({
+    mode: getIntegrationMode(db),
+    enabled: isWbpEnabled(db)
+  });
+});
+
+app.post("/api/wbp/mode", (req, res) => {
+  const { mode } = req.body || {};
+  try {
+    const updated = setIntegrationMode(mode, db);
+    saveDatabase();
+    res.json({ success: true, mode: updated });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 app.use("/api/storage/files", express.static(UPLOADS_DIR));
 app.use("/storage/files", express.static(UPLOADS_DIR));
 app.get([
@@ -4265,6 +4294,11 @@ async function loadDatabase() {
         } catch (ddlErr) {
           console.warn("[PostgreSQL] Aviso ao verificar tabelas DDL:", ddlErr.message);
         }
+
+        try {
+          wbpStorage.pgPool = pgPool;
+          await wbpStorage.init();
+        } catch (_) {}
 
         let res = null;
         let attempts = 0;

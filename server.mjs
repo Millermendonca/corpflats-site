@@ -17,13 +17,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
 
-// Render Free Tier tem limite estrito de 512MB RAM total para a instância.
-// Se o processo Node foi iniciado sem --max-old-space-size adequado (< 450MB),
-// o V8 expande o heap para > 1.4GB e o kernel Linux mata o container com SIGKILL (OOM).
-// Respawna de forma transparente limitando o heap a 384MB para forçar GC agressivo.
+// Render container (~2GB RAM total no plano contratado).
+// Se o processo Node foi iniciado sem limite de heap explícito (ex: padrão > 1600MB em máquinas com muita RAM),
+// respawna de forma transparente limitando o heap a 1536MB para margem de segurança de 512MB contra OOM.
 const currentHeapLimitMB = Math.round(v8.getHeapStatistics().heap_size_limit / (1024 * 1024));
-if (isDirectRun && !process.env.__CONTAINER_OPT__ && currentHeapLimitMB > 450 && process.env.NODE_ENV !== "test") {
-  const child = spawn(process.execPath, ["--max-old-space-size=384", ...process.argv.slice(1)], {
+if (isDirectRun && !process.env.__CONTAINER_OPT__ && currentHeapLimitMB > 1600 && process.env.NODE_ENV !== "test") {
+  const child = spawn(process.execPath, ["--max-old-space-size=1536", ...process.argv.slice(1)], {
     stdio: "inherit",
     env: { ...process.env, __CONTAINER_OPT__: "1" }
   });

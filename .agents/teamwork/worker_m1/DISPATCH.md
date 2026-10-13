@@ -1,42 +1,63 @@
-## 2026-10-11T00:56:22Z
-Você é o Worker de Implementação do Milestone M1 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O relatório de exploração técnica de backend é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\analysis.md
+## 2026-10-13T22:20:02Z
 
-MANDATORY INTEGRITY WARNING:
+You are the Milestone 1 Implementation Worker for the Guest-Flow-Manager WebBookingPro Integration.
+Your dedicated working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1`
+
 DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-Arquivos de sua propriedade exclusiva:
-- `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` (espelho obrigatório byte-a-byte)
-- `data/database.json`
-- `tests/tariff-engine.test.mjs`
-- `tests/bot-actions-api.test.mjs`
+Read these authoritative documents before starting:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\spec_miner_wbp\handoff.md` and `analysis.md`
+5. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_codebase\handoff.md` and `analysis.md`
 
-Missão:
-Implementar o Milestone M1:
-1. R1: Chave Mestra Global (`apiActionsEnabled`) e Matriz Granular (`allowedActions`: checkAvailability, calculateQuote, generatePayment, createPreReservation, commitReservation) em `db.botActionsSettings`.
-   - Endpoints `/api/bot-actions/settings` (GET e POST com persistência e hot-update).
-   - Middleware/verificador de ação: quando `!apiActionsEnabled` OU `!allowedActions[actionKey]`, rejeita com status 403 e payload:
-     `{ error: "ACTION_DISABLED", action: "<actionKey>", requiresHandover: true, message: "Esta ação do sistema está pausada ou requer atendimento humano." }`.
-   - Endpoints REST `/api/bot-actions/*`:
-     - `GET /api/bot-actions/availability`: query checkIn, checkOut, guests. Consulta conflitos no PMS e desconsidera pré-reservas vencidas (`expiresAt < Date.now()`).
-     - `POST /api/bot-actions/quote`: body { checkIn, checkOut, guests, flatId, channel, ratePlan }. Usa o Motor de Tarifas para calcular as noites, aplica markup de canal, soma adicionais de `siteConfig` (limpeza, cama extra, café da manhã se plano com café), discrimina itens e total com validade.
-     - `POST /api/bot-actions/payment-link`: body { reservationId, amount, guestName }. Gera payload PIX Copia-e-Cola (BACEN BR Code válido) e QR Code em base64.
-     - `POST /api/bot-actions/pre-reserve`: body { flatId, checkIn, checkOut, guestName, guestPhone, guests, channel, total }. Registra reserva com status "pre_reserva" e `expiresAt: Date.now() + 30 * 60 * 1000` (30 min de hold).
-     - `POST /api/bot-actions/commit-reservation`: body { reservationId }. Efetiva no PMS para status "confirmada", bloqueio permanente da UH e notificação da recepção.
+Your Scope (Milestone 1: Operational Safety, Storage & WBP Simulator):
+1. Git Setup:
+   - Check current git branch. Create and switch to branch `feature/wbp-integration` from `main`.
+   - Preserve the 11 uncommitted audit log lines in `artifacts/api-server/audit_logs.jsonl` (and project files).
+   - Perform `git push -u origin feature/wbp-integration` on every commit. Never commit to `main`.
+2. Memory Limit:
+   - In `render.yaml`, `package.json`, and `server.mjs`, update the max-old-space-size to `--max-old-space-size=1536` to leverage the paid ~2 GB Render container with 512 MB safety margin.
+3. Durable Raw Storage:
+   - Implement `storage.mjs` in `artifacts/api-server/wbp/storage.mjs` and mirror byte-to-byte in `scripts/wbp/storage.mjs`.
+   - Stores raw payloads before processing in a durable insert-only mechanism outside PostgreSQL `system_store` JSONB blob and completely immune to `pruneDatabase`. In tests/local mode without Postgres, stores in dedicated durable JSONL (`data/wbp_raw_payloads.jsonl` or isolated test path).
+   - Implement idempotency tracking table/map to ensure identical payloads (or OrderId) delivered multiple times produce exactly 1 processed record.
+   - Support resuming unprocessed raw payloads upon process restart.
+4. Operational General Switch:
+   - Add general switch configuration `wbp_integration_mode` with values `off` (default), `observe`, `auto`.
+   - When `off`: system is 100% inert. 0 outbound requests to WBP, 0 timers/polling active, callbacks return HTTP 200 `{ ErrorCode: 1031, Error: "Integration disabled" }` without saving bookings.
+5. WBP Client:
+   - Implement `client.mjs` in `artifacts/api-server/wbp/client.mjs` and mirror byte-to-byte in `scripts/wbp/client.mjs`.
+   - Implements outbound endpoints: HealthCheck, SetupProperty, GetRoomTypes, GetRatePlans, ARIUpdate, GetBookingList, GetBookingId, AckBooking.
+   - Uses UUID v4 `guid` per request, attaches required auth fields, handles timeouts, retries, and errors (1001, 1002, 1102).
+6. Local WBP Simulator:
+   - Implement `e2e/wbp-simulator/server.mjs` (Express/HTTP server).
+   - Validates requests against OpenAPI schemas from `wbpAPI.yaml` (with tolerant mode for errata E1-E10).
+   - Supports injection API: inject new, modified, cancelled bookings.
+   - Supports programmable failure modes: error codes 1001, 1002, 1102, timeouts.
+   - Handles form-urlencoded `NotifyBooking`.
+7. Twin Files Parity:
+   - Ensure byte-for-byte SHA-256 parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`, and between all corresponding files in `artifacts/api-server/wbp/` and `scripts/wbp/`.
+8. Targeted Test:
+   - Create `tests/wbp-integration/m1-safety-simulator.test.mjs` running under `node --test` with isolated port and `DATABASE_URL` removed.
+   - Test: switch `off` leaves simulator calls at 0, no timers.
+   - Test: 5x callback + 3x polling concurrent delivery produces exactly 1 record.
+   - Test: unprocessed raw payload is picked up on restart.
+   - Test: raw payload survives pruneDatabase.
+   - Test: simulator validates against OpenAPI schemas and injects errors 1001/1002/1102 and timeouts.
+   - Execute ONLY this targeted test command. NEVER run global test suites!
 
-2. R2: Motor de Tarifas Inteligente & Gestor Multi-Canal:
-   - Estrutura `db.tariffSettings` (modo "auto" ou "manual", markups por canal direct/booking/airbnb, weekendMarkupPct) e `db.tariffOverrides` (array com flatId, date, channel, rate).
-   - Função de cálculo de diária `calculateDailyRate(flatId, date, channel)`: se modo "auto", calcula a diária sustentável mínima a partir de `getFinancialSettings()` (custos fixos + variáveis / margem SEBRAE) aplicando a curva de sazonalidade do mês; se modo "manual", usa baseRate; aplica fim de semana (+15%) e markup de canal; respeita overrides com prioridade.
-   - Sincronização de adicionais (limpeza, cama extra, café) com `db.siteConfig`.
-   - Endpoints `/api/tariffs/settings` (GET/POST), `/api/tariffs/calendar` (GET para matriz mensal), `/api/tariffs/bulk-update` (POST para override em lote com filtros), `/api/tariffs/overrides/:id` (DELETE).
+Your write ownership:
+`render.yaml`, `package.json`, `server.mjs`, `artifacts/api-server/wbp/*`, `scripts/wbp/*`, `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `e2e/wbp-simulator/*`, `tests/wbp-integration/m1-safety-simulator.test.mjs`.
 
-3. R3: Criação de Testes Automatizados e Execução:
-   - Crie `tests/tariff-engine.test.mjs` testando cálculo SEBRAE, markup de canais, fim de semana, overrides individuais e em massa.
-   - Crie `tests/bot-actions-api.test.mjs` testando chave mestra ligada/desligada, chaves individuais ligadas/desligadas (403 ACTION_DISABLED e requiresHandover), e fluxo completo ponta a ponta (availability -> quote -> pre-reserve -> payment-link -> commit).
-   - Execute os testes usando `node --test tests/tariff-engine.test.mjs` e `node --test tests/bot-actions-api.test.mjs` até obter 100% de aprovação.
+Write your findings and test execution proof in `progress.md` and complete handoff to `handoff.md` in your working directory. Send a completion message to orchestrator.
 
-4. Twin-Server Parity Mandate:
-   - Copie `artifacts/api-server/demo-server.mjs` para `scripts/demo-server.mjs` e certifique-se de que os hashes SHA-256 são rigorosamente idênticos.
+## 2026-10-13T22:23:19Z
+**Context**: Milestone 1 Implementation - Preservação de Documentação e Branch.
+**Content**: ATENÇÃO: Diretrizes mandatórias do usuário:
+1. Estamos e devemos permanecer exclusivamente na branch `feature/wbp-integration`. NUNCA commitar ou fazer push na `main`. Sempre confirmar `git branch --show-current` antes de commitar.
+2. Não sobrescrever arquivos de projetos anteriores na raiz (`PROJECT.md`, `TEST_INFRA.md`, etc.). O `PROJECT.md` desta integração está isolado em `docs/integracoes/webbookingpro/PROJECT.md`.
+3. As 11 linhas não commitadas de `artifacts/api-server/audit_logs.jsonl` DEVEM ser preservadas e incluídas no primeiro commit da branch.
+**Action**: Siga com a implementação de M1 respeitando essas regras.
