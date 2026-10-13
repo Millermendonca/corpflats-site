@@ -274,6 +274,7 @@ export default function ServiceOrders() {
   const [formTitle, setFormTitle] = useState("");
   const [formWorkerName, setFormWorkerName] = useState("");
   const [formWorkerCpf, setFormWorkerCpf] = useState("");
+  const [formWorkerPhone, setFormWorkerPhone] = useState("");
   const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("priority");
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
   const [formMaxPerDay, setFormMaxPerDay] = useState<number>(4);
@@ -295,11 +296,18 @@ export default function ServiceOrders() {
       events: ["entry_request", "start", "finish"],
     },
     {
+      id: "garage",
+      name: "Garagem / Portaria",
+      phone: "5522997124021",
+      role: "garage",
+      events: ["entry_request"],
+    },
+    {
       id: "miller_admin",
-      name: "Miller (Admin)",
+      name: "Miller",
       phone: "22998505276",
       role: "custom",
-      events: ["start", "finish", "delay"],
+      events: ["start", "finish"],
     },
   ];
   const [formRecipients, setFormRecipients] = useState<ServiceNotificationRecipient[]>(DEFAULT_NOTIFICATION_RECIPIENTS);
@@ -345,6 +353,7 @@ export default function ServiceOrders() {
     setFormTitle("");
     setFormWorkerName("");
     setFormWorkerCpf("");
+    setFormWorkerPhone("");
     setFormCleanFlatMode("priority");
     setFormMaxSimultaneous(2);
     setFormMaxPerDay(4);
@@ -365,6 +374,7 @@ export default function ServiceOrders() {
     setFormTitle(order.title || "");
     setFormWorkerName((order as any).workerName || "");
     setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
+    setFormWorkerPhone((order as any).workerPhone || "");
     setFormCleanFlatMode(order.cleanFlatMode || "priority");
     setFormMaxSimultaneous(order.maxSimultaneousFlats || 2);
     setFormMaxPerDay(order.maxFlatsPerDay || 4);
@@ -432,6 +442,7 @@ export default function ServiceOrders() {
         notificationRecipients: formRecipients,
         workerName: formWorkerName.trim() || undefined,
         workerCpf: cleanCpfDigits(formWorkerCpf) || undefined,
+        workerPhone: formWorkerPhone ? formWorkerPhone.replace(/\D/g, "") : undefined,
         flats: flatsPayload,
       };
 
@@ -1044,7 +1055,7 @@ export default function ServiceOrders() {
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="space-y-1">
                         <Label htmlFor="worker-name" className="text-xs font-semibold">
                           Nome do Prestador / Empresa
@@ -1067,6 +1078,18 @@ export default function ServiceOrders() {
                           value={formWorkerCpf}
                           onChange={(e) => setFormWorkerCpf(formatCpfInput(e.target.value))}
                           maxLength={14}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="worker-phone" className="text-xs font-semibold">
+                          WhatsApp / Telefone (Avisos)
+                        </Label>
+                        <Input
+                          id="worker-phone"
+                          placeholder="Ex: (22) 99850-5276"
+                          value={formWorkerPhone}
+                          onChange={(e) => setFormWorkerPhone(e.target.value)}
                           className="h-9 text-xs"
                         />
                       </div>
@@ -1346,16 +1369,106 @@ export default function ServiceOrders() {
                           Cadastre quem deve ser notificado e selecione quais mensagens cada pessoa ou setor receberá.
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleAddRecipient}
-                        className="h-8 text-xs gap-1 border-dashed border-primary/50 text-primary hover:text-primary hover:bg-primary/10 self-start sm:self-auto"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        + Adicionar Pessoa
-                      </Button>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (!formRecipients.some((r) => r.phone.includes("22998505276") || r.name.toLowerCase().includes("miller"))) {
+                              setFormRecipients((prev) => [
+                                ...prev,
+                                {
+                                  id: `rec_miller_${Date.now()}`,
+                                  name: "Miller",
+                                  phone: "22998505276",
+                                  role: "custom",
+                                  events: ["start", "finish"],
+                                },
+                              ]);
+                            }
+                          }}
+                          className="h-7 text-[11px] px-2"
+                        >
+                          + Miller (22998505276)
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (!formRecipients.some((r) => r.phone.includes("229999999") || r.name.toLowerCase().includes("grazi"))) {
+                              setFormRecipients((prev) => [
+                                ...prev,
+                                {
+                                  id: `rec_grazi_${Date.now()}`,
+                                  name: "Grazi",
+                                  phone: "229999999",
+                                  role: "custom",
+                                  events: ["finish"],
+                                },
+                              ]);
+                            }
+                          }}
+                          className="h-7 text-[11px] px-2"
+                        >
+                          + Grazi (229999999)
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (!formRecipients.some((r) => r.role === "reception" || r.id === "reception")) {
+                              setFormRecipients((prev) => [
+                                ...prev,
+                                {
+                                  id: "reception",
+                                  name: "Recepção",
+                                  phone: "5522997124021",
+                                  role: "reception",
+                                  events: ["entry_request", "start", "finish"],
+                                },
+                              ]);
+                            }
+                          }}
+                          className="h-7 text-[11px] px-2"
+                        >
+                          + Recepção
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (!formRecipients.some((r) => r.role === "garage" || r.id === "garage")) {
+                              setFormRecipients((prev) => [
+                                ...prev,
+                                {
+                                  id: "garage",
+                                  name: "Garagem / Portaria",
+                                  phone: "5522997124021",
+                                  role: "garage",
+                                  events: ["entry_request"],
+                                },
+                              ]);
+                            }
+                          }}
+                          className="h-7 text-[11px] px-2"
+                        >
+                          + Garagem
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleAddRecipient}
+                          className="h-7 text-[11px] px-2 border-dashed border-primary/50 text-primary hover:text-primary hover:bg-primary/10 self-start sm:self-auto"
+                        >
+                          <Plus className="w-3.5 h-3.5 mr-1" />
+                          + Outra Pessoa
+                        </Button>
+                      </div>
                     </div>
 
                     <div className="space-y-3">

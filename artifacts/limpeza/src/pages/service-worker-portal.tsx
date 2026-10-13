@@ -1529,7 +1529,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               Identificação Obrigatória
             </DialogTitle>
             <DialogDescription className="text-center text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-              Identificação Obrigatória: Você precisa preencher e salvar sua identificação (Nome e CPF) antes de iniciar qualquer apartamento.
+              Você precisa preencher e salvar sua identificação (Nome, CPF e WhatsApp) para prosseguir com o serviço e liberação na portaria.
             </DialogDescription>
           </DialogHeader>
 
@@ -1554,6 +1554,18 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 className="mt-1 text-sm"
               />
             </div>
+            <div>
+              <Label className="text-xs font-semibold">WhatsApp / Telefone para Contato *</Label>
+              <Input
+                placeholder="(22) 99850-5276"
+                value={mainWorkerPhone}
+                onChange={(e) => setMainWorkerPhone(e.target.value)}
+                className="mt-1 text-sm"
+              />
+              <span className="text-[10px] text-muted-foreground block mt-0.5">
+                Utilizado para avisos automáticos de previsão e liberação.
+              </span>
+            </div>
           </div>
 
           <DialogFooter className="mt-3 flex flex-col sm:flex-row gap-2">
@@ -1571,9 +1583,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 try {
                   await registerMutation.mutateAsync();
                   setGuardDialogOpen(false);
-                  if (pendingStartFlat) {
-                    startMutation.mutate({ flatId: pendingStartFlat.flatId, workerName: mainWorkerName.trim(), workerCpf: cleanCpf });
-                    setPendingStartFlat(null);
+                  if (pendingAction) {
+                    const action = pendingAction;
+                    setPendingAction(null);
+                    if (action.type === "request_entry") {
+                      requestEntryMutation.mutate(action.flat.flatId);
+                    } else if (action.type === "start") {
+                      handleStartFlatClick(action.flat);
+                    }
                   }
                 } catch (err: any) {
                   toast({
@@ -1591,7 +1608,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               ) : (
                 <Check className="w-4 h-4 mr-1.5" />
               )}
-              Salvar Identificação e Iniciar Flat
+              {pendingAction?.type === "request_entry" ? "Salvar Identificação e Solicitar Entrada" : "Salvar Identificação e Continuar"}
             </Button>
             <Button
               variant="outline"
