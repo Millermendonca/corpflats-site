@@ -316,8 +316,10 @@ export function useBotDemands(options?: { autoFetch?: boolean }) {
     }
 
     if (statusFilter !== "all") {
-      if (statusFilter === "aberta" || statusFilter === "pendente") {
-        result = result.filter(d => (d.status || "aberta") === "aberta" || d.status === "pendente" || (d.status as string) === "nova")
+      if (statusFilter === "aberta") {
+        result = result.filter(d => (d.status || "aberta") === "aberta" || (d.status as string) === "nova" || d.status === "pendente")
+      } else if (statusFilter === "pendente") {
+        result = result.filter(d => d.status === "pendente")
       } else {
         result = result.filter(d => (d.status || "aberta") === statusFilter)
       }

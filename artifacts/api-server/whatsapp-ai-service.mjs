@@ -426,6 +426,7 @@ export function getBotActionsSettings(db) {
         getFlatStatus: hasCustomAllowed ? s.allowedActions.getFlatStatus === true : true,
         getPricingInfo: hasCustomAllowed ? s.allowedActions.getPricingInfo === true : true,
         recordUnmetDemand: hasCustomAllowed ? s.allowedActions.recordUnmetDemand === true : true,
+        informCheckout: hasCustomAllowed ? s.allowedActions.informCheckout === true : false,
         ...(s.allowedActions || {})
       },
       preReservationHoldMinutes: Number(s.preReservationHoldMinutes) || 30,
@@ -443,7 +444,8 @@ export function getBotActionsSettings(db) {
       getReservationDetails: true,
       getFlatStatus: true,
       getPricingInfo: true,
-      recordUnmetDemand: true
+      recordUnmetDemand: true,
+      informCheckout: false
     },
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
@@ -709,6 +711,30 @@ export function buildGeminiTools(actionsSettings = {}) {
           }
         },
         required: ["demandTitle", "guestRequest"]
+      }
+    });
+  }
+
+  if (allowed.informCheckout !== false && allowed.informCheckout) {
+    declarations.push({
+      name: "informCheckout",
+      description: "Registra a comunicação de check-out informada pelo hóspede via WhatsApp, atualizando o flat como desocupado no quadro de governança/limpeza e marcando a reserva como concluída.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          flatNumber: {
+            type: "STRING",
+            description: "Número do flat/apartamento desocupado (ex: '101', '204', '302')"
+          },
+          guestName: {
+            type: "STRING",
+            description: "Nome do hóspede informando a saída (opcional)"
+          },
+          phone: {
+            type: "STRING",
+            description: "Telefone do hóspede com DDD (opcional)"
+          }
+        }
       }
     });
   }
@@ -1479,6 +1505,136 @@ export function handleRecordUnmetDemand(db, args = {}) {
   };
 }
 
+export function handleInformCheckout(db, args = {}) {
+  if (!db) return { success: false, error: "Database not available" };
+
+  const targetFlat = String(args.flatNumber || args.flatId || args.guestContext?.flatNumber || "").trim();
+  const phone = cleanWhatsAppPhone(args.phone || args.senderPhone || args.guestPhone || args.guestContext?.phone || "");
+  const now = new Date().toISOString();
+  const todayStr = getBrasiliaDateParts().todayStr;
+
+  const flats = Array.isArray(db.flats) ? db.flats : [];
+  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+
+  let matchedFlat = null;
+  if (targetFlat) {
+    matchedFlat = flats.find(f => String(f.number) === targetFlat || String(f.id) === targetFlat);
+  }
+
+  // Se não localizou pelo número do flat, tenta pelo telefone do hóspede em reserva ativa hoje
+  let matchedRes = null;
+  if (phone) {
+    matchedRes = reservations.find(r => {
+      const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+      const isPhoneMatch = rPhone && (phone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(phone.slice(-8)));
+      return isPhoneMatch && r.status !== "cancelada" && r.status !== "cancelled" &&
+        (r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr));
+    });
+    if (matchedRes && !matchedFlat) {
+      matchedFlat = flats.find(f => f.id === matchedRes.flatId || String(f.number) === String(matchedRes.flatNumber));
+    }
+  }
+
+  const resolvedFlatNum = matchedFlat ? String(matchedFlat.number) : (targetFlat || (matchedRes ? String(matchedRes.flatNumber) : null));
+
+  if (!resolvedFlatNum) {
+    return {
+      success: false,
+      error: "FLAT_NOT_IDENTIFIED",
+      message: "Não foi possível identificar o número do flat para registrar o check-out."
+    };
+  }
+
+  // Se ainda não localizou a reserva pelo telefone, tenta localizar pelo flat para a data de hoje
+  if (!matchedRes && (matchedFlat || resolvedFlatNum)) {
+    matchedRes = reservations.find(r =>
+      (matchedFlat ? (r.flatId === matchedFlat.id || String(r.flatNumber) === String(matchedFlat.number)) : String(r.flatNumber) === String(resolvedFlatNum)) &&
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      (r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr))
+    );
+  }
+
+  // 1. Marca flat como desocupado
+  if (matchedFlat) {
+    matchedFlat.isOccupied = false;
+    matchedFlat.updatedAt = now;
+  }
+
+  // 2. Atualiza ou cria solicitação de limpeza
+  if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+  let cleanReq = db.cleaningRequests.find(r => 
+    (matchedFlat && r.flatId === matchedFlat.id) || String(r.flatNumber) === resolvedFlatNum
+  );
+
+  const guestName = args.guestName || args.senderName || matchedRes?.guestName || "Hóspede";
+
+  if (cleanReq) {
+    cleanReq.isVacant = true;
+    cleanReq.isVacantExplicitlySet = true;
+    cleanReq.vacantSource = "whatsapp_guest";
+    cleanReq.vacantSetAt = now;
+    cleanReq.leavingGuest = cleanReq.leavingGuest || guestName;
+    cleanReq.updatedAt = now;
+  } else {
+    cleanReq = {
+      id: db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => r.id)) + 1 : 1,
+      flatId: matchedFlat ? matchedFlat.id : (matchedRes?.flatId || `flat_${resolvedFlatNum}`),
+      flatNumber: resolvedFlatNum,
+      requestDate: todayStr,
+      source: "whatsapp_guest",
+      status: "dirty",
+      assignedUserId: null,
+      isVacant: true,
+      isVacantExplicitlySet: true,
+      vacantSource: "whatsapp_guest",
+      vacantSetAt: now,
+      isPriority: false,
+      leavingGuest: guestName,
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: null,
+      cleaningStartedAt: null,
+      completedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    db.cleaningRequests.unshift(cleanReq);
+  }
+
+  // 3. Atualiza reserva ativa se houver
+  if (matchedRes) {
+    matchedRes.status = "completed";
+    matchedRes.checkoutDone = true;
+    matchedRes.checkoutMethod = matchedRes.checkoutMethod ? `${matchedRes.checkoutMethod} + whatsapp_guest` : "whatsapp_guest";
+    matchedRes.actualCheckoutAt = matchedRes.actualCheckoutAt || now;
+    matchedRes.actualCheckoutTime = matchedRes.actualCheckoutTime || getBrasiliaDateParts().timeStr;
+    matchedRes.updatedAt = now;
+  }
+
+  // 4. Cria notificação para governança e recepção se houver array no db
+  if (Array.isArray(db.notifications)) {
+    db.notifications.unshift({
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      title: `Check-out Comunicado - Flat ${resolvedFlatNum}`,
+      message: `${guestName} comunicou a saída do Flat ${resolvedFlatNum} via WhatsApp. Unidade desocupada e pronta para governança.`,
+      type: "checkout",
+      category: "governance",
+      flatNumber: resolvedFlatNum,
+      read: false,
+      createdAt: now
+    });
+  }
+
+  return {
+    success: true,
+    flatNumber: resolvedFlatNum,
+    cleaningRequestId: cleanReq.id,
+    isVacant: true,
+    reservationId: matchedRes?.id || null,
+    message: `Check-out do Flat ${resolvedFlatNum} comunicado pelo hóspede via WhatsApp e registrado com sucesso.`
+  };
+}
+
 // ── Mapeamento Contínuo de Demandas Sem Acesso & Oportunidades de Automação ──
 
 export const UNMET_DEMAND_CATEGORIES = {
@@ -1728,27 +1884,34 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
   // 3.10 Comunicação / Notificação de Check-out e Desocupação pelo Hóspede via WhatsApp
   const isCheckoutCommunication = (
     // 1. Verbos/expressões de intenção comunicativa + checkout/saída/desocupação
-    /\b(?:informar|avisar|comunicar|notificar|passar|dar|confirmar|registro|registrar)\s+(?:o|a|meu|minha|nosso|nossa)?\s*(?:check[- ]?out|saida|desocupacao|liberacao)\b/i.test(norm) ||
-    /\b(?:gostaria|quero|preciso|queria|favor|desejo)\s+(?:de\s+)?(?:informar|avisar|comunicar|fazer|dar)\s+(?:o|a|meu|minha|nosso|nossa)?\s*(?:check[- ]?out|saida)\b/i.test(norm) ||
+    /\b(?:informar|informando|avisar|avisando|comunicar|comunicando|notificar|notificando|passar|passando|dar|dando|confirmar|confirmando|registro|registrar|registrando|vim\s+fazer)\s+(?:o|a|meu|minha|nosso|nossa)?\s*(?:check[- ]?out|saida|desocupacao|liberacao|baixa)\b/i.test(norm) ||
+    /\b(?:gostaria|quero|preciso|queria|favor|desejo)\s+(?:de\s+)?(?:informar|avisar|comunicar|fazer|dar|passar|registrar)\s+(?:o|a|meu|minha|nosso|nossa)?\s*(?:check[- ]?out|saida|baixa)\b/i.test(norm) ||
     // 2. Ação de saída/desocupação em andamento ou recém concluída
-    /\b(?:estou|to|estamos)\s+(?:fazendo|realizando)\s+(?:o|meu|nosso)?\s*check[- ]?out\b/i.test(norm) ||
-    /\b(?:estou|to|estamos)\s+(?:saindo|desocupando|liberando)\s+(?:do|da|o|a)?\s*(?:flat|quarto|apartamento|agora)\b/i.test(norm) ||
+    /\b(?:estou|to|estamos|ja|vim)\s+(?:fazendo|realizando)\s+(?:o|meu|nosso)?\s*check[- ]?out\b/i.test(norm) ||
+    /\b(?:fazendo|realizando)\s+(?:o|meu|nosso)?\s*check[- ]?out(?:\s+agora)?\b/i.test(norm) ||
+    /\b(?:estou|to|estamos|ja)\s+(?:saindo|desocupando|liberando|deixando|indo\s+embora|partindo)\b/i.test(norm) ||
+    /\b(?:saindo|desocupando|liberando|deixando|indo\s+embora)\s+(?:do|da|o|a)?\s*(?:flat|quarto|apartamento|apto|uh|hotel|condominio|soho|edificio|\d{2,4}|agora)\b/i.test(norm) ||
     /\b(?:estou|to|estamos)\s+(?:entregando|deixando|devolvendo)\s+(?:as?|os?)?\s*chave[s]?\b/i.test(norm) ||
-    /\b(?:acabei|acabamos)\s+de\s+(?:sair|desocupar|liberar|entregar|fazer\s+(?:o\s+)?check[- ]?out)\b/i.test(norm) ||
-    /\b(?:ja\s+)?(?:sai|saimos|deixei|deixamos|entreguei|entregamos|desocupe?i|desocupamos|liberei|liberamos)\s+(?:o|a|as|os|do|da)?\s*(?:flat|quarto|apartamento|chave|chaves|portaria|recepcao)\b/i.test(norm) ||
+    /\b(?:acabei|acabamos)\s+de\s+(?:sair|desocupar|liberar|entregar|deixar|devolver|fazer\s+(?:o\s+)?check[- ]?out)\b/i.test(norm) ||
+    (/\b(?:ja\s+)?(?:sai|saimos|deixei|deixamos|entreguei|entregamos|devolvi|devolvemos|desocupe?i|desocupamos|liberei|liberamos|fui\s+embora|fomos\s+embora)\b/i.test(norm) && /\b(?:flat|quarto|apartamento|apto|uh|unidade|\d{2,4}|chave|chaves|portaria|recepcao|hotel|desocupe?i|desocupamos|check[- ]?out)\b/i.test(norm)) ||
     /\b(?:ja\s+)?(?:fiz|fizemos|conclui|concluimos|realizei|realizamos)\s+(?:o|meu|nosso)?\s*check[- ]?out\b/i.test(norm) ||
-    /\b(?:flat|quarto|apartamento)\s+(?:desocupado|liberado)\b/i.test(norm) ||
+    /\b(?:flat|quarto|apartamento|apto|uh|unidade)\s*(?:\d{2,4}\s*)?(?:desocupado|liberado|vazio)\b/i.test(norm) ||
     /\b(?:aviso|comunicacao|notificacao)\s+de\s+(?:check[- ]?out|saida)\b/i.test(norm) ||
     /\b(?:saida|check[- ]?out)\s+(?:realizad[ao]|conclu[ií]d[ao]|feit[ao]|informad[ao])\b/i.test(norm) ||
-    /\b(?:chave|chaves)\s+(?:entregue[s]?|deixada[s]?)\s+(?:na|para\s+a)\s+(?:portaria|recepcao)\b/i.test(norm)
-  ) && !/\b(?:horario|que\s+horas|qual\s+a\s+hora|ate\s+que\s+horas|preco|valor|custo|taxa|politica)\b/i.test(norm);
+    /\b(?:chave|chaves)\s+(?:entregue[s]?|deixada[s]?|devolvida[s]?)\s+(?:na|no|para\s+a)\s+(?:portaria|recepcao|mesa|bancada|balcao)\b/i.test(norm) ||
+    /\b(?:chave|chaves)\s+(?:na|no|em\s+cima\s+d[ao])\s+(?:portaria|recepcao|mesa|bancada|balcao)\b/i.test(norm)
+  ) && !(
+    /\b(?:qual\s+(?:e\s+)?o\s+horario|que\s+horas\s+(?:e|seria|posso\s+fazer\s+o)|ate\s+que\s+horas\s+(?:e\s+o|posso\s+ficar))\s+(?:de\s+|do\s+)?check[- ]?out\b/i.test(norm) ||
+    /\b(?:quanto\s+custa|qual\s+(?:o\s+)?(?:preco|valor|custo|taxa))\s+(?:do|de)?\s*(?:check[- ]?out|late\s*check[- ]?out)\b/i.test(norm) ||
+    (/\b(?:politica|regras?)\s+de\s+check[- ]?out\b/i.test(norm) && !/\b(?:sai|saimos|deixei|entreguei|desocupe|liberei)\b/i.test(norm))
+  );
 
   if (isCheckoutCommunication) {
     return {
       category: "checkout_comunicacao",
       demandTitle: UNMET_DEMAND_CATEGORIES.checkout_comunicacao.title,
-      reason: "capability_missing",
-      actionTarget: null,
+      reason: actionTarget ? "action_disabled" : "capability_missing",
+      actionTarget: "informCheckout",
       suggestedFeature: UNMET_DEMAND_CATEGORIES.checkout_comunicacao.defaultSuggested
     };
   }
@@ -1990,6 +2153,8 @@ export async function executeBotAction(db, actionName, args = {}) {
       return handleGetPricingInfo(db, args);
     case "recordUnmetDemand":
       return handleRecordUnmetDemand(db, args);
+    case "informCheckout":
+      return handleInformCheckout(db, args);
     default:
       return {
         error: "UNKNOWN_ACTION",
@@ -2728,28 +2893,28 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     };
   }
 
-  // 4. Status de Higienização / Quarto Liberado / Entrada Antecipada (VIA 2 - Leitura do Sistema)
-  const isFlatStatusInquiry = (
-    /(?:quarto|flat|apartamento|chave|porta).*(?:pront|liberad|limp|entrar|chegand)/i.test(text) ||
-    /(?:pront|liberad).*(?:quarto|flat|apartamento)/i.test(text) ||
-    /posso\s+(?:entrar|ir)|senha\s+da\s+porta|chegando/i.test(text)
-  );
-
-  if (isFlatStatusInquiry) {
-    return {
-      type: "FLAT_READY_STATUS",
-      primaryTopic: "status_quarto",
-      rawText: text
-    };
-  }
-
-  // 5. Demanda Operacional Sem Acesso Autônomo (Ações, Trocas, Manutenção, Chamados)
+  // 4. Demanda Operacional Sem Acesso Autônomo (Ações, Trocas, Manutenção, Chamados, Comunicação de Check-out)
   const demandClassification = classifyUnmetDemand(text);
   if (demandClassification && demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas") {
     return {
       type: "OPERATIONAL_DEMAND",
       primaryTopic: demandClassification.category,
       demandClassification,
+      rawText: text
+    };
+  }
+
+  // 5. Status de Higienização / Quarto Liberado / Entrada Antecipada (VIA 2 - Leitura do Sistema)
+  const isFlatStatusInquiry = (
+    /(?:quarto|flat|apartamento|chave|porta).*(?:pront|liberad|limp|entrar|chegand)/i.test(text) ||
+    /(?:pront|liberad).*(?:quarto|flat|apartamento)/i.test(text) ||
+    /posso\s+(?:entrar|ir)|senha\s+da\s+porta|chegando/i.test(text)
+  ) && !/check[- ]?out|sa[ií]da|desocup|deix|entreg|devolv|indo\s+embora/i.test(text);
+
+  if (isFlatStatusInquiry) {
+    return {
+      type: "FLAT_READY_STATUS",
+      primaryTopic: "status_quarto",
       rawText: text
     };
   }
@@ -2787,8 +2952,16 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
 export const analyzeGuestIntentSemantic = analyzeGuestQuery;
 
 export function formatCheckoutCommunicationResponse(name = "", guestContext = null) {
+  let greetingPart = "";
+  if (name && typeof name === "string") {
+    if (name.startsWith(" ") || name.startsWith(",")) {
+      greetingPart = name;
+    } else if (name.trim()) {
+      greetingPart = `, ${name.trim()}`;
+    }
+  }
   const flatStr = guestContext?.flatNumber ? ` do *Flat ${guestContext.flatNumber}*` : "";
-  return `Olá${name}! Muito obrigado por nos avisar! ✨\n\nRegistrei a sua comunicação de check-out${flatStr} em nosso sistema. A nossa equipe de governança e recepção já foi notificada da desocupação da unidade para os procedimentos de liberação e conferência.\n\nAgradecemos imensamente pela sua estadia com a CorpFlats e esperamos ter a alegria de te receber novamente em breve! Tenha uma excelente viagem de retorno! 🏨🗝️`;
+  return `Olá${greetingPart}! Muito obrigado por nos avisar! ✨\n\nRegistrei a sua comunicação de check-out${flatStr} em nosso sistema. A nossa equipe de governança e recepção já foi notificada da desocupação da unidade para os procedimentos de liberação e conferência.\n\nAgradecemos imensamente pela sua estadia com a CorpFlats e esperamos ter a alegria de te receber novamente em breve! Tenha uma excelente viagem de retorno! 🏨🗝️`;
 }
 
 /**
@@ -2855,14 +3028,52 @@ export function validateAndRefineResponse({
     const cat = analysis.demandClassification?.category || inferFaqCategory(queryText);
     const demandTitle = analysis.demandClassification?.demandTitle || UNMET_DEMAND_CATEGORIES[cat]?.title || "Demanda Operacional";
 
-    if (db) {
+    // Extrai número do flat da mensagem caso não conste no contexto
+    const extractedFlat = guestContext?.flatNumber || (queryText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
+    const effectiveContext = extractedFlat && (!guestContext || !guestContext.flatNumber)
+      ? { ...(guestContext || {}), flatNumber: extractedFlat }
+      : guestContext;
+
+    const botActionsSettings = getBotActionsSettings(db);
+    const isCheckoutActionEnabled = botActionsSettings?.apiActionsEnabled !== false && botActionsSettings?.allowedActions?.informCheckout === true;
+
+    if (cat === "checkout_comunicacao" && isCheckoutActionEnabled && db) {
+      // Se a ação informCheckout estiver habilitada pelo admin, Sofia atua com autonomia total!
+      const actionResult = handleInformCheckout(db, {
+        flatNumber: extractedFlat,
+        phone: guestContext?.phone,
+        guestName: guestContext?.guestName
+      });
+      if (actionResult && actionResult.success) {
+        missingDataOrCapability = false;
+        unmetDemand = null;
+        if (typeof saveDatabase === "function") {
+          try { saveDatabase("bot_action_inform_checkout_auto"); } catch (_) {}
+        }
+      } else {
+        // Se a ação estava habilitada mas o flat não pôde ser identificado
+        unmetDemand = detectAndRecordUnmetDemand({
+          db,
+          text: queryText,
+          senderPhone: guestContext?.phone,
+          senderName: guestContext?.guestName || "Hóspede",
+          guestContext: effectiveContext,
+          actionTarget: "informCheckout",
+          reason: "capability_missing",
+          category: cat,
+          demandTitle,
+          saveDatabase,
+          createNotification
+        });
+      }
+    } else if (db) {
       unmetDemand = detectAndRecordUnmetDemand({
         db,
         text: queryText,
         senderPhone: guestContext?.phone,
         senderName: guestContext?.guestName || "Hóspede",
-        guestContext,
-        actionTarget: null,
+        guestContext: effectiveContext,
+        actionTarget: cat === "checkout_comunicacao" ? "informCheckout" : null,
         reason: "capability_missing",
         category: cat,
         demandTitle,
@@ -2872,7 +3083,17 @@ export function validateAndRefineResponse({
     }
 
     if (cat === "checkout_comunicacao") {
-      replyText = ret(formatCheckoutCommunicationResponse(name, guestContext));
+      const checkoutAck = formatCheckoutCommunicationResponse(name, effectiveContext);
+      // Se a resposta candidata respondia a outra pergunta (ex: restaurante, malas, táxi, almoço)
+      // e não era apenas a instrução padrão de check-out ou fallback genérico, preserva o conteúdo útil!
+      const isCheckoutFaqOrFallback = /12:00h|instruções\s+de\s+check-?out|deixe\s+a\s+chave|portaria\s+24h|posso\s+te\s+ajudar\s+com\s+informaç/i.test(replyText) ||
+        (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("almoç") && !replyText.includes("restaurante") && !replyText.includes("mala") && !replyText.includes("táxi") && !replyText.includes("uber"));
+
+      if (!isCheckoutFaqOrFallback && replyText.trim().length > 15) {
+        replyText = ret(`${checkoutAck}\n\n${replyText.trim()}`);
+      } else {
+        replyText = ret(checkoutAck);
+      }
     } else {
       const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
         (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
@@ -3078,6 +3299,27 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         return ret(`Olá${name}! ${checkoutGuideline.text}${linkMsg}`);
       }
     }
+  }
+
+  // 0.6 Se for demanda operacional não atendida pela base de conhecimento (ações, chamados, toalhas, checkout, etc.)
+  const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
+  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
+    if (queryAnalysis.primaryTopic === "checkout_comunicacao") {
+      const extractedFlat = guestContext?.flatNumber || (messageText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
+      const effectiveCtx = extractedFlat && (!guestContext || !guestContext.flatNumber)
+        ? { ...(guestContext || {}), flatNumber: extractedFlat }
+        : guestContext;
+      const checkoutResp = formatCheckoutCommunicationResponse(name, effectiveCtx);
+      let extraAnswer = "";
+      if (/almo[cç]|restaurante|comer|almo[cç]ar/i.test(messageText)) {
+        extraAnswer = "\n\n🍽️ Para refeições, temos ótimos restaurantes nos arredores (Rua Conselheiro Otaviano e Praça do Santíssimo Salvador). Qualquer dúvida adicional, nossa recepção está à disposição!";
+      } else if (/mala[s]?|bagagem|guardar/i.test(messageText)) {
+        extraAnswer = "\n\n🧳 Se precisar guardar suas malas após a saída enquanto aguarda sua viagem, você pode deixá-las com segurança na recepção 24h!";
+      }
+      return ret(`${checkoutResp}${extraAnswer}`);
+    }
+    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
+    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
   }
 
   // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
@@ -3323,16 +3565,6 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     const rate1 = baseDailyRate + breakfastFeePerson; // 272
     const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
     return ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${rate1},00 / diária* (1 pessoa) ou *R$ ${rate2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nDispomos de flats com cozinha completa, ar Split, Wi-Fi veloz e garagem no melhor ponto de Campos/RJ.\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
-  }
-
-  // 0.9 Se for demanda operacional não atendida pela base de conhecimento (ações, chamados, toalhas, checkout, etc.)
-  const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
-  if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
-    if (queryAnalysis.primaryTopic === "checkout_comunicacao") {
-      return ret(formatCheckoutCommunicationResponse(name, guestContext));
-    }
-    const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
-    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
   }
 
   // 1. Wi-Fi / Internet

@@ -18,6 +18,9 @@ import {
   formatCheckoutCommunicationResponse,
   validateAndRefineResponse,
   analyzeGuestIntentSemantic,
+  analyzeGuestQuery,
+  handleInformCheckout,
+  generateHeuristicResponse,
   UNMET_DEMAND_CATEGORIES
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
 
@@ -207,7 +210,16 @@ describe("Bot Unmet Demands & Automation Opportunities Suite", () => {
         "acabei de desocupar o apartamento",
         "estamos saindo do flat agora",
         "aviso de check-out",
-        "chaves entregues na portaria"
+        "chaves entregues na portaria",
+        "quarto 204 liberado",
+        "apto 105 desocupado",
+        "flat 302 desocupado",
+        "informando check-out",
+        "avisando checkout",
+        "devolvi a chave do 204",
+        "desocupando o 302",
+        "indo embora do hotel",
+        "já saí do flat, até que horas o café é servido?"
       ];
 
       for (const phrase of phrases) {
@@ -215,6 +227,7 @@ describe("Bot Unmet Demands & Automation Opportunities Suite", () => {
         assert.strictEqual(res.category, "checkout_comunicacao", `Failed for phrase: "${phrase}"`);
         assert.strictEqual(res.reason, "capability_missing");
         assert.strictEqual(res.demandTitle, UNMET_DEMAND_CATEGORIES.checkout_comunicacao.title);
+        assert.strictEqual(res.actionTarget, "informCheckout");
       }
 
       // Disabled actionTarget test
@@ -288,6 +301,121 @@ describe("Bot Unmet Demands & Automation Opportunities Suite", () => {
       assert.strictEqual(mockDb.unmetDemands.length, 1);
       assert.strictEqual(mockDb.unmetDemands[0].category, "checkout_comunicacao");
       assert.strictEqual(mockDb.unmetDemands[0].status, "pendente");
+    });
+
+    it("should update cleaning card and reservation status when handleInformCheckout is executed with flat number", () => {
+      const mockDb = {
+        flats: [{ id: "f302", number: 302, isOccupied: true }],
+        reservations: [{
+          id: 99,
+          flatId: "f302",
+          flatNumber: 302,
+          guestName: "Roberto Lima",
+          guestPhone: "5521999993333",
+          checkinDate: "2026-10-10",
+          checkoutDate: "2026-10-13",
+          status: "confirmed"
+        }],
+        cleaningRequests: [],
+        notifications: []
+      };
+
+      const result = handleInformCheckout(mockDb, { flatNumber: "302" });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.flatNumber, "302");
+      assert.strictEqual(result.isVacant, true);
+
+      // 1. Flat marked unoccupied
+      assert.strictEqual(mockDb.flats[0].isOccupied, false);
+
+      // 2. Cleaning request card marked vacant
+      assert.strictEqual(mockDb.cleaningRequests.length, 1);
+      assert.strictEqual(mockDb.cleaningRequests[0].isVacant, true);
+      assert.strictEqual(mockDb.cleaningRequests[0].vacantSource, "whatsapp_guest");
+      assert.strictEqual(mockDb.cleaningRequests[0].leavingGuest, "Roberto Lima");
+
+      // 3. Reservation marked completed with checkoutDone and checkoutTime
+      assert.strictEqual(mockDb.reservations[0].status, "completed");
+      assert.strictEqual(mockDb.reservations[0].checkoutDone, true);
+      assert.ok(mockDb.reservations[0].actualCheckoutAt);
+      assert.ok(mockDb.reservations[0].actualCheckoutTime);
+
+      // 4. Notification generated for dashboard
+      assert.strictEqual(mockDb.notifications.length, 1);
+      assert.strictEqual(mockDb.notifications[0].type, "checkout");
+    });
+
+    it("should autonomously execute checkout action without logging unmet demand when informCheckout is enabled", () => {
+      const mockDb = {
+        flats: [{ id: "f302", number: 302, isOccupied: true }],
+        reservations: [{
+          id: 99,
+          flatId: "f302",
+          flatNumber: 302,
+          guestName: "Roberto Lima",
+          guestPhone: "5521999993333",
+          checkinDate: "2026-10-10",
+          checkoutDate: "2026-10-13",
+          status: "confirmed"
+        }],
+        cleaningRequests: [],
+        unmetDemands: [],
+        botActionsSettings: {
+          apiActionsEnabled: true,
+          allowedActions: {
+            informCheckout: true
+          }
+        }
+      };
+
+      const result = validateAndRefineResponse({
+        queryText: "estou desocupando o flat 302 agora",
+        candidateText: "Sou a Sofia, concierge virtual...",
+        guestContext: {
+          phone: "5521999993333",
+          guestName: "Roberto Lima",
+          flatNumber: "302"
+        },
+        db: mockDb
+      });
+
+      // Demand met autonomously: no unmet demand logged!
+      assert.strictEqual(result.unmetDemand, null);
+      assert.strictEqual(result.missingDataOrCapability, false);
+      assert.strictEqual(mockDb.unmetDemands.length, 0);
+
+      // Flat marked as vacant
+      assert.strictEqual(mockDb.flats[0].isOccupied, false);
+      assert.strictEqual(mockDb.cleaningRequests[0].isVacant, true);
+      assert.strictEqual(mockDb.reservations[0].status, "completed");
+
+      // Cordial response returned
+      assert.ok(result.replyText.includes("Muito obrigado por nos avisar!"));
+      assert.ok(result.replyText.includes("Flat 302"));
+    });
+
+    it("should preserve compound query responses alongside checkout acknowledgment", () => {
+      const compoundQuery = "já entreguei a chave na portaria, onde posso almoçar por perto?";
+      const analysis = analyzeGuestQuery(compoundQuery);
+      assert.strictEqual(analysis.type, "OPERATIONAL_DEMAND");
+      assert.strictEqual(analysis.primaryTopic, "checkout_comunicacao");
+
+      // Test validateAndRefineResponse preserving candidate supplementary answer
+      const validated = validateAndRefineResponse({
+        queryText: compoundQuery,
+        candidateText: "Para almoçar por perto, recomendo o Restaurante Romano a 50m da portaria!",
+        guestContext: { guestName: "Carlos", flatNumber: "204" }
+      });
+
+      assert.ok(validated.replyText.includes("Muito obrigado por nos avisar!"));
+      assert.ok(validated.replyText.includes("Flat 204"));
+      assert.ok(validated.replyText.includes("Restaurante Romano a 50m da portaria"));
+
+      // Test generateHeuristicResponse in fallback mode generating compound restaurant advice
+      const heuristic = generateHeuristicResponse(compoundQuery, { guestName: "Carlos", flatNumber: "204" });
+      assert.ok(heuristic.includes("Muito obrigado por nos avisar!"));
+      assert.ok(heuristic.includes("Flat 204"));
+      assert.ok(heuristic.includes("restaurantes"));
     });
   });
 

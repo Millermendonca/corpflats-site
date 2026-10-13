@@ -23896,8 +23896,10 @@ app.get("/api/bot-demands", (req, res) => {
     const { status, category, reason, search, sort } = req.query;
 
     if (status && status !== "all") {
-      if (status === "aberta" || status === "pendente") {
-        list = list.filter(d => (d.status || "aberta") === "aberta" || d.status === "pendente" || d.status === "nova");
+      if (status === "aberta") {
+        list = list.filter(d => (d.status || "aberta") === "aberta" || d.status === "nova" || d.status === "pendente");
+      } else if (status === "pendente") {
+        list = list.filter(d => d.status === "pendente");
       } else {
         list = list.filter(d => (d.status || "aberta") === status);
       }

@@ -391,6 +391,7 @@ export function BotDemandsBacklog({ onNavigateToAiAgent }: BotDemandsBacklogProp
             <SelectContent>
               <SelectItem value="all">Todos Status</SelectItem>
               <SelectItem value="aberta">Abertas</SelectItem>
+              <SelectItem value="pendente">Pendentes</SelectItem>
               <SelectItem value="em_analise">Em Análise</SelectItem>
               <SelectItem value="planejada">Planejadas</SelectItem>
               <SelectItem value="implementada">Implementadas</SelectItem>
@@ -591,8 +592,8 @@ export function BotDemandsBacklog({ onNavigateToAiAgent }: BotDemandsBacklogProp
                       </p>
                     </div>
 
-                    {/* Se for ação existente desativada, exibe botão de ativação com 1 clique */}
-                    {demand.reason === "action_disabled" && (meta.isAction || demand.actionTarget) && demand.status !== "implementada" && (
+                    {/* Se for ação existente desativada ou mapeada para chave do bot, exibe botão de ativação com 1 clique */}
+                    {(demand.reason === "action_disabled" || meta.isAction || Boolean(demand.actionTarget)) && demand.status !== "implementada" && (
                       <Button
                         size="sm"
                         onClick={() => handleQuickActivate(demand.id)}
