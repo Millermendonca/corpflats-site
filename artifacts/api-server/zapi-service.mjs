@@ -1247,6 +1247,47 @@ export function isFaqApplicableToClient(faqItem, clientPhone) {
   return true;
 }
 
+// ── Rastreamento de Mensagens Enviadas pelo Robô/Sistema ────────────────────────
+const recentBotSentMessages = new Map(); // key: phone_normalizedText, val: timestamp
+const recentBotMessageIds = new Set();
+
+export function recordBotSentMessage({ messageId = "", phone = "", text = "" } = {}) {
+  const now = Date.now();
+  if (messageId) {
+    recentBotMessageIds.add(String(messageId).trim());
+    if (recentBotMessageIds.size > 200) {
+      const first = recentBotMessageIds.values().next().value;
+      recentBotMessageIds.delete(first);
+    }
+  }
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  const cleanText = String(text || "").trim().slice(0, 80);
+  if (cleanPhone && cleanText) {
+    recentBotSentMessages.set(`${cleanPhone}_${cleanText}`, now);
+    if (recentBotSentMessages.size > 200) {
+      for (const [k, time] of recentBotSentMessages.entries()) {
+        if (now - time > 60000) recentBotSentMessages.delete(k);
+      }
+    }
+  }
+}
+
+export function isRecentBotSentMessage({ messageId = "", phone = "", text = "" } = {}) {
+  if (messageId && recentBotMessageIds.has(String(messageId).trim())) {
+    return true;
+  }
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  const cleanText = String(text || "").trim().slice(0, 80);
+  if (cleanPhone && cleanText) {
+    const key = `${cleanPhone}_${cleanText}`;
+    const timestamp = recentBotSentMessages.get(key);
+    if (timestamp && (Date.now() - timestamp) <= 60000) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Identifica se uma mensagem foi gerada automaticamente pela Sofia / Bot / Sistema
  * para impedir que mensagens automáticas do robô sejam capturadas como sugestão humana do operador.
@@ -1256,12 +1297,12 @@ export function isBotMessage(text) {
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
   // 1. Identificação explícita de Sofia / Concierge Virtual / CorpFlats
-  if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|corpflats\s*🏨|posso\s+te\s+ajudar\s+com\s+informa[cç][oõ]es\s+sobre\s+\*?wi-?fi)\b/i.test(lower)) {
+  if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|corpflats\s*🏨|posso\s+te\s+ajudar\s+com\s+informa[cç][oõ]es\s+sobre\s+\*?wi-?fi|sou\s+a\s+assistente\s+virtual)\b/i.test(lower)) {
     return true;
   }
 
   // 2. Mensagens automatizadas de registro/espera de FAQ ou demanda
-  if (/\b(?:anotei\s+sua\s+d[uú]vida|como\s+n[aã]o\s+tenho\s+essa\s+informa[cç][aã]o|j[aá]\s+registrei\s+sua\s+pergunta\s+para\s+a\s+equipe|j[aá]\s+registrei\s+o\s+seu\s+pedido\s+no\s+sistema)\b/i.test(lower)) {
+  if (/\b(?:anotei\s+sua\s+d[uú]vida|como\s+n[aã]o\s+tenho\s+essa\s+informa[cç][aã]o|j[aá]\s+registrei\s+sua\s+pergunta|j[aá]\s+registrei\s+o\s+seu\s+pedido|encaminhei\s+sua\s+solicita[cç][aã]o\s+para\s+a\s+nossa\s+equipe)\b/i.test(lower)) {
     return true;
   }
 
@@ -1272,6 +1313,11 @@ export function isBotMessage(text) {
 
   // 4. Frases padrões de boas-vindas / saudação de robô
   if (/^ol[aá].*?recebi\s+sua\s+mensagem\.\s+sou\s+a\s+sofia/i.test(lower)) {
+    return true;
+  }
+
+  // 5. Modelos de mensagens rápidas do sistema
+  if (/\b(?:corpflats\s*•\s*agradecemos\s+sua\s+prefer[eê]ncia|corpflats\s*•\s*sua\s+opini[aã]o\s+vale\s+muito|corpflats\s*•\s*guia\s+de\s+conviv[eê]ncia|manual_do_hospede_corpflats\.pdf)\b/i.test(lower)) {
     return true;
   }
 
@@ -1299,17 +1345,18 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
     return null;
   }
 
+  const cleanPhone = cleanWhatsAppPhone(clientPhone);
+  if (!cleanPhone) return null;
+
   // Se a mensagem foi enviada pelo bot/Sofia ou for identificada como mensagem automática da IA:
   if (
     /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(answeredBy).trim()) ||
     /^(?:sofia|sofia\s+ai|concierge\s+virtual)$/i.test(String(senderName).trim()) ||
-    isBotMessage(text)
+    isBotMessage(text) ||
+    isRecentBotSentMessage({ phone: cleanPhone, text })
   ) {
     return null;
   }
-
-  const cleanPhone = cleanWhatsAppPhone(clientPhone);
-  if (!cleanPhone) return null;
 
   const trimmedText = String(text).trim();
   if (!trimmedText || /^\[(image|audio|video|document|location)\]$/i.test(trimmedText)) {
@@ -1319,9 +1366,11 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
   const now = Date.now();
   const maxAgeMs = 24 * 60 * 60 * 1000; // 24 horas
 
-  // Busca itens de FAQ com status "pendente" para o telefone do cliente nas últimas 24h
+  // Busca itens de FAQ com status "pendente" ou "aguardando_aprovacao" (não aprovados por humano ainda) para o telefone do cliente nas últimas 24h
   const candidates = db.faqItems.filter(item => {
-    if (!item || item.status !== "pendente") return false;
+    if (!item) return false;
+    const isUnapproved = item.status === "pendente" || (item.status === "aguardando_aprovacao" && !item.approvedAt && item.answeredBy !== "operador");
+    if (!isUnapproved) return false;
 
     // Correspondência pelo sourceClientPhone ou pela lista de clientPhones
     const matchesSource = item.sourceClientPhone && matchClientPhone(item.sourceClientPhone, cleanPhone);
@@ -2805,6 +2854,7 @@ export async function sendZapiMessage(config, {
           messageId: data.zaapId || data.id,
           data
         };
+        recordBotSentMessage({ messageId: primaryResult.messageId, phone: cleanPhone, text: message });
       } else {
         primaryResult = {
           success: false,
@@ -2879,6 +2929,7 @@ export async function sendZapiMessage(config, {
           messageId: data.zaapId || data.id || "ok",
           data
         };
+        recordBotSentMessage({ messageId: primaryResult.messageId, phone: cleanPhone, text: message });
       } else {
         console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
 
@@ -2903,6 +2954,7 @@ export async function sendZapiMessage(config, {
               messageId: textData.zaapId || textData.id,
               data: textData
             };
+            recordBotSentMessage({ messageId: primaryResult.messageId, phone: cleanPhone, text: message });
           } else {
             primaryResult = {
               success: false,
@@ -6075,7 +6127,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       // Se for mensagem enviada pelo operador (fromMe: true) no WhatsApp móvel ou desktop:
       if (incomingInfo.fromMe && !incomingInfo.isGroup && cleanTarget) {
         const isBot = isBotMessage(incomingInfo.text) ||
-                      /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim());
+                      /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim()) ||
+                      isRecentBotSentMessage({ messageId: incomingInfo.messageId, phone: cleanTarget, text: incomingInfo.text });
 
         if (!isBot) {
           // 1. Pausa a IA nesta conversa para assegurar controle humano total
@@ -7411,7 +7464,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         db,
         aiConfig: db?.whatsappAiConfig
       });
-      res.json(result);
+      res.json({ success: true, ...result });
     } catch (err) {
       console.error("[FAQ Refine Suggestion Error]", err);
       res.status(500).json({ error: "Falha ao gerar sugestões com IA.", details: err.message });
@@ -7430,11 +7483,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     try {
       const body = req.body || {};
       const instruction = body.instruction || body.directive || body.prompt || "";
+      const question = (body.question && String(body.question).trim()) || item.question || "";
+      const currentAnswer = (body.currentAnswer !== undefined ? String(body.currentAnswer).trim() : "") || item.suggestedAnswer || item.answer || "";
+      const category = body.category || item.category || "estrutura_flat";
+
       const result = await generateFaqResponseSuggestions({
-        question: item.question,
-        currentAnswer: item.suggestedAnswer || item.answer || "",
+        question,
+        currentAnswer,
         instruction,
-        category: item.category || "estrutura_flat",
+        category,
         db,
         aiConfig: db?.whatsappAiConfig
       });

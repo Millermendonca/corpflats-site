@@ -3058,7 +3058,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 /**
  * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
  */
-export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [] }) {
+export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
   const candidateModels = [
@@ -3075,7 +3075,9 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     parts: [{ text: String(m.text || "") }]
   })).filter(c => c.parts[0].text.trim().length > 0);
 
-  const fullPrompt = `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+  const fullPrompt = customPrompt
+    ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
+    : `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
   for (const { ver, model } of candidateModels) {
     try {
@@ -3549,47 +3551,68 @@ export function generateIntelligentFaqDraft(questionText, db = null, category = 
   if (/micro[- ]?ondas/i.test(lower)) {
     return "Sim! Todos os nossos flats dispõem de cozinha compacta equipada com micro-ondas, frigobar e utensílios completos para sua total comodidade. 🍽️⚡";
   }
-  if (/frigobar|geladeira/i.test(lower)) {
+  if (/frigobar|geladeira|congelador/i.test(lower)) {
     return "Sim! Todos os flats contam com frigobar privativo limpo e ligado para uso particular dos hóspedes. 🧊";
   }
-  if (/cafeteira/i.test(lower)) {
+  if (/cafeteira|cafezinh/i.test(lower)) {
     return "Sim! Nossos flats dispõem de cozinha compacta equipada com cafeteira para seu conforto. ☕";
   }
-  if (/cooktop|fog[aã]o|panela|cozinha/i.test(lower)) {
+  if (/cooktop|fog[aã]o|panela|cozinha|lou[cç]a|talher|prato|copo/i.test(lower)) {
     return "Sim! Nossos flats possuem cozinha compacta equipada com cooktop, micro-ondas, frigobar e utensílios essenciais para refeições práticas. 🍳";
   }
   if (/ferro|passar|t[aá]bua/i.test(lower)) {
     return "Sim! Disponibilizamos ferro de passar roupa nos flats para seu uso (sem tábua de passar). 👔✨";
   }
-  if (/voltagem|110|220|tomada/i.test(lower)) {
+  if (/voltagem|110|220|127|tomada|eletric/i.test(lower)) {
     return "A voltagem padrão em todos os nossos flats é 127V (110V), com tomadas no padrão ABNT. 🔌⚡";
   }
   if (/secador(?:\s+de\s+cabelo)?/i.test(lower)) {
     return "Sim! Os banheiros dos flats contam com secador de cabelo e ducha higiênica para seu conforto. 🚿";
   }
-  if (/ar[- ]?condicionado|split|climatiza/i.test(lower)) {
+  if (/ar[- ]?condicionado|split|climatiza|calor|frio/i.test(lower)) {
     return "Sim! Todos os flats possuem ar-condicionado Split potente e controle individual. ❄️";
   }
   if (/cafe(?:\s+da\s+manha)?|desjejum/i.test(lower)) {
     return "Nosso delicioso café da manhã é servido em bandeja diretamente no seu quarto das 05:00 às 09:30, agendado previamente pelo portal do hóspede. ☕🥐";
   }
-  if (/wi[- ]?fi|internet|senha(?:\s+do\s+wi-?fi)?/i.test(lower)) {
+  if (/wi[- ]?fi|internet|senha(?:\s+do\s+wi-?fi)?|conex[aã]o/i.test(lower)) {
     return "O Wi-Fi é individual e de alta velocidade em cada flat! O nome da rede é o número do seu apartamento e a senha padrão é 1234567890123. 📶";
   }
-  if (/piscina|jacuzzi|cobertura|lazer/i.test(lower)) {
+  if (/piscina|jacuzzi|cobertura|lazer|hidro/i.test(lower)) {
     return "A área de lazer na cobertura (com piscina/jacuzzi aquecida e academia) funciona diariamente das 06:00 às 22:00 exclusivamente para hóspedes. 🏊‍♂️✨";
+  }
+  if (/academia|muscula[cç][aã]o|fitness|treino/i.test(lower)) {
+    return "Sim! Nossa academia fica na cobertura do edifício e funciona diariamente das 06:00 às 22:00 com equipamentos completos para seu treino. 🏋️‍♂️✨";
   }
   if (/pet|cachorro|animal|gato/i.test(lower)) {
     return "Sim! Aceitamos pets de pequeno porte com todo carinho (máximo 1 pet por flat, mediante taxa única). 🐾✨";
   }
-  if (/garagem|estacionamento|vaga/i.test(lower)) {
+  if (/garagem|estacionamento|vaga|ve[ií]culo|carro|moto|caminhonete/i.test(lower)) {
     return "Dispomos de vaga de garagem coberta gratuita (rotativa) para 1 veículo de passeio por flat no condomínio Soho! 🚗";
   }
-  if (/check[- ]?in|horario\s+de\s+entrada|horario\s+de\s+chegada/i.test(lower)) {
+  if (/check[- ]?in|horario\s+(?:de\s+)?(?:entrada|chegada)|(?:horas?|quando)\s+(?:posso\s+|da\s+para\s+)?entrar|entrar\s+antes|early/i.test(lower)) {
     return "O horário de check-in inicia a partir das 14:00. Caso chegue antes, faremos o possível para liberar o flat conforme a disponibilidade. 🕒🛎️";
   }
-  if (/check[- ]?out|horario\s+de\s+saida/i.test(lower)) {
+  if (/check[- ]?out|horario\s+(?:de\s+)?saida|(?:horas?|quando)\s+(?:posso\s+|preciso\s+|tenho\s+que\s+)?sair|sair\s+depois|late/i.test(lower)) {
     return "O check-out deve ser realizado até as 12:00. Basta deixar os cartões-chave na recepção/portaria ao sair. 🕛👋";
+  }
+  if (/reserva|confirmad[ao]|voucher|localizador/i.test(lower)) {
+    return "Para consultar os detalhes da sua reserva e status de confirmação, basta nos informar o nome completo do titular ou código da reserva. Também é possível acessar todos os dados diretamente no Portal do Hóspede! 🏨📋";
+  }
+  if (/toalha|roupa\s+de\s+cama|len[cç]ol|travesseiro|enxoval/i.test(lower)) {
+    return "Sim! Disponibilizamos enxoval completo de cama e banho higienizado e de alta qualidade para todos os hóspedes da acomodação. 🛏️✨";
+  }
+  if (/limpeza|camareira|faxina|arruma[cç][aã]o/i.test(lower)) {
+    return "O flat é entregue completamente limpo e higienizado antes do seu check-in. Limpezas extras durante a estadia podem ser solicitadas com a nossa equipe mediante taxa de serviço. 🧹✨";
+  }
+  if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar/i.test(lower)) {
+    return "Estamos localizados na Av. Jornalista Roberto Marinho, Edifício Soho, em Macaé/RJ, em localização privilegiada e de fácil acesso! 📍🏨";
+  }
+  if (/fumar|cigarro|narguile|tabaco/i.test(lower)) {
+    return "Por lei e pelo regulamento do condomínio, é estritamente proibido fumar no interior dos flats e nas áreas comuns fechadas. 🚭";
+  }
+  if (/visita|convidad[ao]|terceiros/i.test(lower)) {
+    return "Por segurança condominial, o acesso às instalações e áreas de lazer é restrito aos hóspedes devidamente cadastrados na reserva. 🛑👥";
   }
 
   return "";
@@ -3611,11 +3634,7 @@ export function autoCreatePendingFaq({
 
   const cleanPhone = cleanWhatsAppPhone(senderPhone) || String(senderPhone || "").replace(/\D/g, "");
 
-  // 1. Mensagens de desenvolvedores ou comandos de coaching NUNCA devem virar FAQ
-  if (isDeveloperPhone(cleanPhone, db)) {
-    return null;
-  }
-
+  // 1. Comandos de coaching ou mensagens administrativas do desenvolvedor NUNCA devem virar FAQ
   const devCheck = classifyDeveloperMessage(text, db);
   if (devCheck && devCheck.type !== "guest_simulation") {
     return null;
@@ -3898,7 +3917,8 @@ export async function processAiInboundMessage({
   const needsHandoverOrFallback = Boolean(aiResult.shouldHandover || aiResult.requiresHandover || isFallback);
 
   let unmappedFaq = null;
-  if (isQuestion && !isMapped && needsHandoverOrFallback && !isDev) {
+  const isDevCoaching = isDev && classifyDeveloperMessage(incomingInfo.text, db)?.type !== "guest_simulation";
+  if (isQuestion && !isMapped && needsHandoverOrFallback && !isDevCoaching) {
     unmappedFaq = autoCreatePendingFaq({
       db,
       questionText: incomingInfo.text,
@@ -4101,7 +4121,8 @@ Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
         apiKey,
         systemInstruction,
         prompt,
-        db
+        db,
+        customPrompt: true
       });
 
       if (res?.ok && res?.text) {
@@ -4127,24 +4148,77 @@ Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
   }
 
   // 2. Motor Heurístico Contextual Inteligente (Geração garantida 100% offline / resiliente)
-  let coreDirective = cleanInstruction
+  let cleanDir = cleanInstruction
     .replace(/^(?:dizer\s+que|informar\s+que|explicar\s+que|falar\s+que|responder\s+que)\s+/i, "")
     .replace(/^(?:diga\s+que|informe\s+que|explique\s+que|fale\s+que|responda\s+que)\s+/i, "")
-    .replace(/^(?:sim,?\s*|n[aã]o,?\s*)/i, "")
     .trim();
 
-  if (!coreDirective) {
-    coreDirective = generateIntelligentFaqDraft(cleanQuestion, db, category) || "nossos flats dispõem de acomodação executiva completa com total conforto";
-    coreDirective = coreDirective.replace(/^Sim!\s*/i, "").trim();
+  // Se o usuário digitou apenas "Sim" ou "Não"
+  if (/^sim[.!]*$/i.test(cleanDir)) {
+    cleanDir = generateIntelligentFaqDraft(cleanQuestion, db, category) || "temos essa comodidade à disposição";
+    cleanDir = cleanDir.replace(/^Sim!\s*/i, "").trim();
+  } else if (/^n[aã]o[.!]*$/i.test(cleanDir)) {
+    cleanDir = "não dispomos dessa comodidade no momento";
+  }
+
+  // Se não foi fornecida instrução, gera rascunho com base na pergunta
+  if (!cleanDir) {
+    cleanDir = generateIntelligentFaqDraft(cleanQuestion, db, category) || "nossos flats dispõem de acomodação executiva completa com total conforto";
+    cleanDir = cleanDir.replace(/^Sim!\s*/i, "").trim();
+  }
+
+  // Verifica se é uma instrução negativa / restritiva
+  const isNegative = /^(?:n[aã]o|nunca|proibid[ao]|sem\b|indispon[ií]vel)/i.test(cleanDir) ||
+                     /\b(?:n[aã]o\s+(?:temos|h[aá]|possu[ií]|aceita|permite|disp[oõ]e|conta|fornece|est[aá]|pode)|proibid[ao]\s+|sem\s+(?:vaga|estrutura|micro|aceite)|indispon[ií]vel)\b/i.test(cleanDir);
+
+  // Normaliza o texto principal mantendo verbos e substantivos intactos
+  let coreDirective = cleanDir
+    .replace(/^sim[,!]\s*/i, "")
+    .replace(/^n[aã]o,\s*(?:n[aã]o\s+)?/i, "não ")
+    .trim();
+
+  if (isNegative && !/^n[aã]o\b/i.test(coreDirective)) {
+    if (/^proibid[ao]\b/i.test(coreDirective)) {
+      coreDirective = `é ${coreDirective}`;
+    } else if (/^(?:sem\b|indispon[ií]vel)/i.test(coreDirective)) {
+      coreDirective = `está ${coreDirective}`;
+    } else {
+      coreDirective = `não ${coreDirective}`;
+    }
   }
 
   // Normalização de capitalização
   coreDirective = coreDirective.charAt(0).toLowerCase() + coreDirective.slice(1);
   coreDirective = coreDirective.replace(/[.!?]+$/, "");
 
-  const opt1 = `Olá! ✨ Sim, ${coreDirective}. Qualquer dúvida, estamos à total disposição! 🏨`;
-  const opt2 = `Olá! ✨ Sim, ${coreDirective}. Todos os flats da CorpFlats contam com estrutura pensada no seu conforto e praticidade. Se precisar de qualquer suporte, basta me avisar por aqui! 😊`;
-  const opt3 = `Olá! Confirmamos que ${coreDirective}. Permanecemos à inteira disposição para o que você necessitar durante sua hospedagem. 🛎️`;
+  let opt1 = "";
+  let opt2 = "";
+  let opt3 = "";
+
+  if (isNegative) {
+    opt1 = `Olá! ✨ Informamos que ${coreDirective}. Qualquer dúvida, estamos à total disposição! 🏨`;
+    opt2 = `Olá! ✨ No momento, ${coreDirective}. Nosso time está à disposição caso necessite de qualquer assistência ou comodidade adicional! 😊`;
+    opt3 = `Olá! Confirmamos que ${coreDirective}. Permanecemos à inteira disposição para o que você precisar durante a sua hospedagem. 🛎️`;
+  } else {
+    const isExplicitAffirmative = /^(?:sim\b|temos\b|disp[oõ]e|conta\b|possui|pode|liberad[ao]|incluso)/i.test(coreDirective);
+    const isInformative = /^(?:o\s+caf[eé]|o\s+check|a\s+voltagem|o\s+hor[aá]rio|a\s+taxa|o\s+valor|o\s+endere[cç]o|a\s+senha|a\s+rede|a\s+garagem|a\s+piscina|a\s+academia|das\b|de\s+\d|a\s+partir)/i.test(coreDirective);
+
+    if (isExplicitAffirmative) {
+      opt1 = `Olá! ✨ Sim, ${coreDirective}. Qualquer dúvida, estamos à total disposição! 🏨`;
+      opt2 = `Olá! ✨ Sim, ${coreDirective}. Todos os flats da CorpFlats contam com estrutura pensada no seu conforto e praticidade. Se precisar de qualquer suporte, basta me avisar! 😊`;
+      opt3 = `Olá! Confirmamos que ${coreDirective}. Permanecemos à inteira disposição para o que você necessitar durante sua hospedagem. 🛎️`;
+    } else if (isInformative) {
+      const capitalized = coreDirective.charAt(0).toUpperCase() + coreDirective.slice(1);
+      opt1 = `Olá! ✨ ${capitalized}. Qualquer dúvida, estamos à total disposição! 🏨`;
+      opt2 = `Olá! ✨ ${capitalized}. Se precisar de qualquer suporte adicional, estou à disposição por aqui! 😊`;
+      opt3 = `Olá! Informamos que ${coreDirective}. Permanecemos à inteira disposição durante a sua hospedagem. 🛎️`;
+    } else {
+      const capitalized = coreDirective.charAt(0).toUpperCase() + coreDirective.slice(1);
+      opt1 = `Olá! ✨ ${capitalized}. Qualquer dúvida, estamos à disposição! 🏨`;
+      opt2 = `Olá! ✨ Sim, ${coreDirective}. Nosso time CorpFlats está à total disposição caso precise de algo mais! 😊`;
+      opt3 = `Olá! Confirmamos que ${coreDirective}. Permanecemos à inteira disposição para auxiliá-lo. 🛎️`;
+    }
+  }
 
   return {
     success: true,

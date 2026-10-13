@@ -202,11 +202,14 @@ export function FaqKnowledgeBase() {
     setBulkPhoneInput("")
     setShowBulkPhones(false)
     setFormStatus("ativo")
+    setModalDirective("")
+    setModalSuggestions([])
+    setModalAiOpen(false)
     setModalOpen(true)
   }
 
   // Abrir Modal de Edição
-  const handleOpenEdit = (item: FaqItem) => {
+  const handleOpenEdit = (item: FaqItem, openAi: boolean = false) => {
     setEditingItem(item)
     setFormCategory(item.category || "estrutura_flat")
     setFormQuestion(item.question || "")
@@ -219,6 +222,9 @@ export function FaqKnowledgeBase() {
     setBulkPhoneInput("")
     setShowBulkPhones(false)
     setFormStatus(item.status || "ativo")
+    setModalDirective("")
+    setModalSuggestions([])
+    setModalAiOpen(openAi)
     setModalOpen(true)
   }
 
@@ -755,7 +761,7 @@ export function FaqKnowledgeBase() {
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-purple-900 dark:text-purple-300 flex items-center gap-1">
                           <Sparkles className="w-3 h-3 text-purple-600" />
-                          Resposta Sugerida pelo Operador:
+                          {item.answeredBy === "operador" ? "Resposta Sugerida pelo Operador:" : "Sugestão Inteligente da IA:"}
                         </span>
                       </div>
                       <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
@@ -869,6 +875,20 @@ export function FaqKnowledgeBase() {
                                     ) : (
                                       <Copy className="w-3 h-3" />
                                     )}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      handleOpenEdit(item)
+                                      setFormAnswer(sug.text)
+                                    }}
+                                    className="h-6 px-1.5 text-[10px] font-bold text-indigo-700 border-indigo-300 hover:bg-indigo-50 dark:text-indigo-300 dark:border-indigo-800"
+                                    title="Abrir no editor para personalizar"
+                                  >
+                                    <Edit3 className="w-2.5 h-2.5 mr-0.5" />
+                                    Editar
                                   </Button>
                                   <Button
                                     type="button"
@@ -1055,6 +1075,16 @@ export function FaqKnowledgeBase() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          onClick={() => handleOpenEdit(item, true)}
+                          className="h-7 w-7 p-0 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/50"
+                          title="Ajustar / Gerar Sugestões com IA"
+                        >
+                          <Wand2 className="w-3.5 h-3.5" />
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           onClick={() => handleOpenEdit(item)}
                           className="h-7 w-7 p-0"
                           title="Editar"
@@ -1149,7 +1179,7 @@ export function FaqKnowledgeBase() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-purple-900 dark:text-purple-300 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                    Resposta Sugerida Capturada do Operador:
+                    {editingItem.answeredBy === "operador" ? "Resposta Sugerida pelo Operador:" : "Sugestão Inteligente da IA:"}
                   </span>
                   <Button
                     type="button"
@@ -1236,16 +1266,32 @@ export function FaqKnowledgeBase() {
                                 {sug.text}
                               </p>
                             </div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() => {
-                                setFormAnswer(sug.text)
-                              }}
-                              className="w-full h-6 text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-900 dark:bg-indigo-950 dark:hover:bg-indigo-900 dark:text-indigo-200"
-                            >
-                              Usar Esta Resposta
-                            </Button>
+                            <div className="flex items-center gap-1.5 pt-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => {
+                                  setFormAnswer(sug.text)
+                                }}
+                                className="flex-1 h-7 text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-900 dark:bg-indigo-950 dark:hover:bg-indigo-900 dark:text-indigo-200"
+                              >
+                                Usar Esta Resposta
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleCopyText(sug.text, `modal_${idx}`)}
+                                className="h-7 px-2 text-[10px] text-muted-foreground hover:text-foreground shrink-0"
+                                title="Copiar texto"
+                              >
+                                {copiedId === `modal_${idx}` ? (
+                                  <span className="text-emerald-600 font-bold text-[10px]">Copiado!</span>
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </Button>
+                            </div>
                           </div>
                         ))}
                       </div>

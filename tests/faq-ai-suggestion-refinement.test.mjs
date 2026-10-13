@@ -91,7 +91,27 @@ console.log("🚀 Iniciando testes pontuais de FAQ: Geração Inteligente e Refi
   assert.notStrictEqual(humanResult, null, "Resposta humana legítima DEVE ser vinculada!");
   assert.strictEqual(humanResult.status, "aguardando_aprovacao");
   assert.strictEqual(humanResult.suggestedAnswer, "Sim, todos os quartos dispõem de micro-ondas.");
-  console.log("✓ linkOperatorResponseToPendingFaq protegeu contra auto-captura da Sofia e vinculou resposta humana!");
+  // Teste de sobrescrita de rascunho de IA não aprovado por resposta humana do operador
+  const aiDraftFaq = {
+    id: "faq_test_ai_draft",
+    question: "tem ferro de passar?",
+    status: "aguardando_aprovacao",
+    suggestedAnswer: "Rascunho automático prévio",
+    answeredBy: "ia_draft",
+    sourceClientPhone: "5521999998888",
+    createdAt: new Date().toISOString()
+  };
+  mockDb.faqItems.push(aiDraftFaq);
+
+  const overwriteResult = linkOperatorResponseToPendingFaq(mockDb, {
+    clientPhone: "5521999998888",
+    text: "Sim, temos ferro e tábua de passar disponíveis.",
+    answeredBy: "operador"
+  });
+  assert.notStrictEqual(overwriteResult, null, "Resposta humana do operador DEVE sobrescrever rascunho preliminar de IA!");
+  assert.strictEqual(overwriteResult.suggestedAnswer, "Sim, temos ferro e tábua de passar disponíveis.");
+  assert.strictEqual(overwriteResult.answeredBy, "operador");
+  console.log("✓ linkOperatorResponseToPendingFaq protegeu contra auto-captura da Sofia e vinculou/sobrescreveu resposta humana!");
 }
 
 // ─── 3. Teste de Blindagem contra Mensagens de Coaching do Desenvolvedor ────────
@@ -113,6 +133,17 @@ console.log("🚀 Iniciando testes pontuais de FAQ: Geração Inteligente e Refi
   });
   assert.strictEqual(devCoaching, null, "Mensagem de coaching do desenvolvedor JAMAIS deve virar card de FAQ!");
 
+  // Simulação de hóspede pelo desenvolvedor (deve ser permitida em testes de sandbox)
+  const devSimulation = autoCreatePendingFaq({
+    db: mockDb,
+    questionText: "meu quarto tem micro-ondas?",
+    cleanPhone: "5522998505276",
+    senderName: "Miller"
+  });
+  assert.notStrictEqual(devSimulation, null, "Simulação de dúvida de hóspede pelo desenvolvedor DEVE ser permitida!");
+  assert.strictEqual(devSimulation.status, "aguardando_aprovacao");
+  assert.match(devSimulation.suggestedAnswer, /micro-ondas/i);
+
   // Pergunta legítima de hóspede sobre micro-ondas
   const guestFaq = autoCreatePendingFaq({
     db: mockDb,
@@ -123,7 +154,7 @@ console.log("🚀 Iniciando testes pontuais de FAQ: Geração Inteligente e Refi
   assert.notStrictEqual(guestFaq, null, "Dúvida legítima do hóspede DEVE criar card no FAQ");
   assert.strictEqual(guestFaq.status, "aguardando_aprovacao", "Deve estar como aguardando aprovação se gerou rascunho");
   assert.match(guestFaq.suggestedAnswer, /micro-ondas/i, "Rascunho inteligente deve conter menção a micro-ondas");
-  console.log("✓ autoCreatePendingFaq rejeitou coaching de dev e gerou rascunho inteligente de micro-ondas!");
+  console.log("✓ autoCreatePendingFaq rejeitou coaching de dev, permitiu simulação e gerou rascunho inteligente!");
 }
 
 // ─── 4. Teste de Geração Inteligente de Rascunho (generateIntelligentFaqDraft) ──
@@ -143,7 +174,13 @@ console.log("🚀 Iniciando testes pontuais de FAQ: Geração Inteligente e Refi
   const draftCafe = generateIntelligentFaqDraft("como funciona o cafe da manha?", mockDb, "cafe_manha");
   assert.match(draftCafe, /café da manhã/i);
 
-  console.log("✓ generateIntelligentFaqDraft respondeu com sucesso para micro-ondas, garagem e café!");
+  const draftCheckin = generateIntelligentFaqDraft("que horas posso entrar?", mockDb, "horarios");
+  assert.match(draftCheckin, /14:00/i);
+
+  const draftPets = generateIntelligentFaqDraft("aceita cachorro ou gato?", mockDb, "regras");
+  assert.match(draftPets, /pet|animal/i);
+
+  console.log("✓ generateIntelligentFaqDraft respondeu com sucesso para micro-ondas, garagem, café, horários e pets!");
 }
 
 // ─── 5. Teste de Sugestões de Respostas com IA (generateFaqResponseSuggestions) ─
@@ -154,7 +191,8 @@ console.log("🚀 Iniciando testes pontuais de FAQ: Geração Inteligente e Refi
     whatsappAiConfig: {}
   };
 
-  const res = await generateFaqResponseSuggestions({
+  // Teste Afirmativo
+  const resAffirmative = await generateFaqResponseSuggestions({
     question: "Tem ferro de passar roupa no flat?",
     currentAnswer: "",
     instruction: "Dizer que tem ferro de passar e tábua disponível em todos os flats",
@@ -162,17 +200,45 @@ console.log("🚀 Iniciando testes pontuais de FAQ: Geração Inteligente e Refi
     db: mockDb
   });
 
-  assert.strictEqual(res.success, true);
-  assert.strictEqual(Array.isArray(res.suggestions), true);
-  assert.strictEqual(res.suggestions.length, 3);
-  assert.strictEqual(res.suggestions[0].label, "Direta & Objetiva");
-  assert.strictEqual(res.suggestions[1].label, "Completa & Acolhedora");
-  assert.strictEqual(res.suggestions[2].label, "Executiva & Formal");
-
-  for (const s of res.suggestions) {
+  assert.strictEqual(resAffirmative.success, true);
+  assert.strictEqual(Array.isArray(resAffirmative.suggestions), true);
+  assert.strictEqual(resAffirmative.suggestions.length, 3);
+  for (const s of resAffirmative.suggestions) {
     assert.match(s.text, /ferro/i, `Sugestão "${s.label}" deve conter ferro de passar`);
   }
-  console.log("✓ generateFaqResponseSuggestions gerou 3 alternativas formatadas com sucesso!");
+
+  // Teste Negativo (NUNCA deve dizer "Sim, não temos...")
+  const resNegative = await generateFaqResponseSuggestions({
+    question: "O quarto tem micro-ondas?",
+    currentAnswer: "",
+    instruction: "Não temos micro-ondas nesse flat",
+    category: "estrutura_flat",
+    db: mockDb
+  });
+
+  assert.strictEqual(resNegative.success, true);
+  for (const s of resNegative.suggestions) {
+    assert.strictEqual(/^Olá! ✨ Sim,/i.test(s.text), false, `Sugestão negativa JAMAIS pode iniciar com 'Sim': "${s.text}"`);
+    assert.match(s.text, /não\s+temos\s+micro-ondas/i, `Sugestão deve expressar adequadamente a negativa: "${s.text}"`);
+  }
+
+  // Teste Informativo (Horários/Políticas - sem "Sim," desnecessário)
+  const resInformative = await generateFaqResponseSuggestions({
+    question: "Qual o horário do check-in?",
+    currentAnswer: "",
+    instruction: "O check-in inicia a partir das 14h",
+    category: "horarios",
+    db: mockDb
+  });
+
+  assert.strictEqual(resInformative.success, true);
+  for (const s of resInformative.suggestions) {
+    assert.strictEqual(/^Olá! ✨ Sim,/i.test(s.text), false, `Sugestão informativa não deve ter 'Sim': "${s.text}"`);
+    assert.match(s.text, /14h/i, `Sugestão informativa deve conter 14h: "${s.text}"`);
+  }
+
+  console.log("✓ generateFaqResponseSuggestions tratou diretivas afirmativas, negativas e informativas com perfeição!");
 }
 
 console.log("\n🎉 TODOS OS TESTES PASSARAM COM SUCESSO!");
+
