@@ -376,8 +376,8 @@ export class WbpSimulatorHarness {
   }
 
   _handleARIUpdate(body, res) {
-    // Validate that updates array exists
-    const updates = body?.updates || body?.ari_updates || [];
+    // Validate that updates array exists (wbpAPI.yaml wire format: Inventory)
+    const updates = body?.Inventory || body?.updates || body?.ari_updates || [];
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({

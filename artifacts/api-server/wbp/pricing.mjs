@@ -336,11 +336,50 @@ export function applyPricingLocks({
   manualFloor = 276.63,
   variationLimitPct = 0.30
 }) {
-  const rate = round2(Number(candidateRate || 0));
-  const floor = round2(Math.max(Number(tarifaMinima || 0), Number(manualFloor || 0)));
+  const rate = round2(Number(candidateRate));
+
+  const numTarifaMinima = (typeof tarifaMinima === "number" || typeof tarifaMinima === "string") ? Number(tarifaMinima) : NaN;
+  const numManualFloor = (typeof manualFloor === "number" || typeof manualFloor === "string") ? Number(manualFloor) : NaN;
+
+  const isTmValid = Number.isFinite(numTarifaMinima) && numTarifaMinima > 0;
+  const isMfValid = Number.isFinite(numManualFloor) && numManualFloor > 0;
+
+  if (!isTmValid && !isMfValid) {
+    return {
+      approved: false,
+      candidateRate: Number.isFinite(rate) ? rate : null,
+      finalRate: null,
+      lockedReason: "FLOOR_LOCK",
+      floor: null,
+      deltaPct: 0,
+      message: "Piso tarifário inválido ou não numérico."
+    };
+  }
+
+  let effectiveFloor;
+  if (isTmValid && isMfValid) {
+    effectiveFloor = Math.max(numTarifaMinima, numManualFloor);
+  } else if (isTmValid) {
+    effectiveFloor = numTarifaMinima;
+  } else {
+    effectiveFloor = numManualFloor;
+  }
+
+  const floor = round2(effectiveFloor);
+  if (!Number.isFinite(floor) || floor <= 0) {
+    return {
+      approved: false,
+      candidateRate: Number.isFinite(rate) ? rate : null,
+      finalRate: null,
+      lockedReason: "FLOOR_LOCK",
+      floor: null,
+      deltaPct: 0,
+      message: "Piso tarifário inválido ou não numérico."
+    };
+  }
 
   // Trava 1: Piso Sustentável & Validação Numérica
-  if (isNaN(rate) || rate <= 0) {
+  if (isNaN(rate) || !Number.isFinite(rate) || rate <= 0) {
     return {
       approved: false,
       candidateRate: isNaN(rate) ? null : rate,
@@ -365,10 +404,19 @@ export function applyPricingLocks({
   }
 
   // Trava 2: Variação Brusca (padrão 30%)
+  let maxVariation = 0.30;
+  if (typeof variationLimitPct === "number" && Number.isFinite(variationLimitPct) && variationLimitPct > 0) {
+    maxVariation = variationLimitPct;
+  } else if (typeof variationLimitPct === "string" && Number.isFinite(Number(variationLimitPct)) && Number(variationLimitPct) > 0) {
+    maxVariation = Number(variationLimitPct);
+  } else {
+    console.warn(`[WBP Pricing] variationLimitPct inválido (${variationLimitPct}), usando padrão 0.30.`);
+    maxVariation = 0.30;
+  }
+
   if (lastSentRate != null && !isNaN(Number(lastSentRate)) && Number(lastSentRate) > 0) {
     const prevRate = Number(lastSentRate);
     const deltaPct = (rate - prevRate) / prevRate;
-    const maxVariation = Number(variationLimitPct || 0.30);
 
     if (Math.abs(deltaPct) > maxVariation) {
       const deltaPercentStr = (deltaPct * 100).toFixed(1);
@@ -494,6 +542,12 @@ export class WbpPricingManager {
    * @returns {object}
    */
   static updateSettings(newSettings, db) {
+    if (newSettings && newSettings.variationLimitPct !== undefined) {
+      const v = Number(newSettings.variationLimitPct);
+      if (!Number.isFinite(v) || v <= 0) {
+        throw new Error(`variationLimitPct inválido (${newSettings.variationLimitPct}). Deve ser um número positivo maior que zero.`);
+      }
+    }
     const state = this.getPricingState(db);
     state.settings = {
       ...state.settings,
