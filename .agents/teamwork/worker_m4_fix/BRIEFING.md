@@ -1,61 +1,65 @@
-# BRIEFING — 2026-10-11T04:05:00Z
+# BRIEFING — 2026-10-14T03:17:00Z
 
 ## Mission
-Remediação final do Milestone M4 do CorpFlats: restauração da paridade estrita SHA-256 dos servidores espelho (`demo-server.mjs`, `whatsapp-ai-service.mjs`, etc.), guarda de UX de seleção em lote em `tarifas.tsx`, aprovação de 100% dos testes automatizados, build de produção em `artifacts/limpeza/dist/`, commit e push remoto.
+Remediate the 5 technical defects identified during Gate 4 for Milestone 4 WebBookingPro integration, maintain strict twin parity, and verify via targeted test suite.
 
 ## 🔒 My Identity
-- Archetype: worker
-- Roles: implementer, qa, specialist
+- Archetype: implementer
+- Roles: implementer, qa
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4_fix
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M4 (Final Remediation & Verification)
+- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Milestone: Milestone 4 Remediation
 
 ## 🔒 Key Constraints
-- Twin-Server Parity Mandate: 100% byte-a-byte idêntico entre `artifacts/api-server/` e `scripts/`.
-- AGENTS.md: sempre executar `git push` por padrão; sempre rodar `npm run build` na pasta `artifacts/limpeza` e commitar `artifacts/limpeza/dist/`.
-- Integrity Mandate: sem atalhos, sem mocks artificiais, implementação real e verificável.
-- Handoff completo de 5 seções + comunicação ao orquestrador via `send_message`.
+- DO NOT CHEAT: genuine logic, real state and real behavior.
+- Targeted tests only: DO NOT run global tests or full test sweeps (per AGENTS.md).
+- Ensure 100% SHA-256 twin parity between `artifacts/` and `scripts/`.
+- Ensure `data/database.json` baseline SHA-256 (e37d74b7...) and `artifacts/api-server/audit_logs.jsonl` remain untouched.
+- Git push after git commit on branch `feature/wbp-integration`.
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T04:05:00Z
+- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Updated: 2026-10-14T03:17:00Z
 
 ## Task Summary
-- **What to build**: 
-  1. Twin-Server mirror sync between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` with matching SHA-256. [DONE]
-  2. Defensive UX checks in `artifacts/limpeza/src/pages/tarifas.tsx` for bulk update when flats/channels are empty. [DONE]
-  3. Run all test suites ensuring 100% pass (especially Subtest 10 of `whatsapp-ai-agent.test.mjs`). [DONE]
-  4. Build frontend (`npm run build` in `artifacts/limpeza`). [DONE]
-  5. Git commit & git push origin main. [PENDING]
-  6. Handoff report and notification to parent. [PENDING]
-- **Success criteria**: 100% test pass, exact SHA256 match, build success code 0, git push confirmed, handoff.md written.
-- **Interface contracts**: `PROJECT.md`
-- **Code layout**: `PROJECT.md § Code Layout`
+- **What to build**: Fixed 5 technical defects:
+  1. Defect 1: Collision Blindness in `handleOtaModification` (availability.mjs & inbox.mjs) - safely handling primitive string/number flat values and passing structured flat reference.
+  2. Defect 2: False-Positive Reconciler Ambiguity for Unrelated Guests on Same Dates (reconciler.mjs) - enforcing `nameSim >= 0.50` for ambiguity and filtering out non-matches.
+  3. Defect 3: Safe Match Score Adjustment (reconciler.mjs) - auto-adjusting score to at least 80 when channel, dates, and name similarity (>=0.85) match.
+  4. Defect 4: Quarantine Triggers Coverage for MAINTENANCE_BLOCKED and MALFORMED_PAYLOAD (inbox.mjs) - correctly categorizing payload errors and maintenance blocks, covered by tests in `m4-reservations-inbox.test.mjs`.
+  5. Defect 5: Autonomous Schedulers in Server Runtime (demo-server.mjs) - starting `wbpWorker` and `wbpAlertsManager` schedulers on server boot and mode transition.
+- **Success criteria**:
+  - All targeted test suites pass (25/25 challenger m4 quarantine, 5/5 challenger m4 webhooks, 26/26 m4 reservations inbox, 21/21 m3 ari sync).
+  - 100% SHA-256 twin parity across all mirrored files.
+  - database.json baseline hash (`e37d74b7...`) and audit_logs.jsonl untouched.
+  - Git commit and pushed to origin/feature/wbp-integration.
+- **Interface contracts**: PROJECT.md / docs/integracoes/webbookingpro/PROJECT.md
+- **Code layout**: Twin architecture in `artifacts/api-server/` and `scripts/`.
 
 ## Key Decisions Made
-- Sincronização estrita e auditoria com `crypto.createHash('sha256')` em todos os 7 pares espelho (`demo-server.mjs`, `whatsapp-ai-service.mjs`, `zapi-service.mjs`, `mail-service.mjs`, `storage-service.mjs`, `fnrh-pdf-service.mjs`, `fnrh-serpro-service.mjs`).
-- Adição de guarda preventiva com Toast de alerta no frontend em `handleExecuteBulkUpdate` quando `bulkFlatMode === 'selected' && bulkSelectedFlats.length === 0` ou `bulkChannelMode === 'selected' && bulkSelectedChannels.length === 0`.
-- Liberação do processo zumbi que ocupava a porta de teste 3997 para permitir execução limpa de testes de integração com live server.
+- All 5 defects remediated strictly adhering to the minimal change principle.
+- Full twin parity preserved across `availability.mjs`, `reconciler.mjs`, `inbox.mjs`, and `demo-server.mjs`.
 
 ## Artifact Index
-- `.agents/teamwork/worker_m4_fix/DISPATCH.md` — Assignment instructions
-- `.agents/teamwork/worker_m4_fix/BRIEFING.md` — Persistent state tracking
-- `.agents/teamwork/worker_m4_fix/progress.md` — Liveness & heartbeat
-- `.agents/teamwork/worker_m4_fix/handoff.md` — Final handoff report
+- `.agents/teamwork/worker_m4_fix/DISPATCH.md` — Dispatch directives
+- `.agents/teamwork/worker_m4_fix/BRIEFING.md` — Situational awareness
+- `.agents/teamwork/worker_m4_fix/progress.md` — Liveness and execution tracking
+- `.agents/teamwork/worker_m4_fix/handoff.md` — Final 5-component handoff report
 
 ## Change Tracker
-- **Files modified**: 
-  - `artifacts/limpeza/src/pages/tarifas.tsx`: guardas preventivas no Bulk Update
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: paridade estrita e rotas time-travel/overrides
-  - `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`: paridade estrita
-  - `artifacts/limpeza/dist/`: bundle de produção compilado com sucesso
-- **Build status**: PASS (exit code 0 em 51.59s)
-- **Pending issues**: Git commit, push e handoff final
+- **Files modified**:
+  - `artifacts/api-server/wbp/availability.mjs` & `scripts/wbp/availability.mjs`: handle primitive flat references in `checkFlatBlockedOnNight`.
+  - `artifacts/api-server/wbp/reconciler.mjs` & `scripts/wbp/reconciler.mjs`: name similarity ambiguity guard and safe match score adjustment.
+  - `artifacts/api-server/wbp/inbox.mjs` & `scripts/wbp/inbox.mjs`: currentFlatRef in modification, MAINTENANCE_BLOCKED and MALFORMED_PAYLOAD handling.
+  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: autonomous scheduler startup on boot and mode change.
+  - `tests/wbp-integration/m4-reservations-inbox.test.mjs`: added tests for all 7 quarantine triggers.
+- **Build status**: All tests passing cleanly (0 failures).
+- **Pending issues**: None.
 
 ## Quality Status
-- **Build/test result**: 100% PASS em todas as 8 suítes de teste (whatsapp-ai-agent 24/24, tariff-engine 8/8, bot-actions-api 5/5, challenger-m3-tariff 4/4, challenger-m3-ui 20/20, challenger-tariff-stress 26/26, challenger-m4-journey 11/11, challenger-m4-concurrency 12/12)
-- **Lint status**: 0 violações
-- **Tests added/modified**: Testes existentes executados e validados integralmente
+- **Build/test result**: Pass (all targeted suites: 25/25, 5/5, 26/26, 21/21).
+- **Lint status**: Clean.
+- **Tests added/modified**: 4 new tests in `m4-reservations-inbox.test.mjs`.
 
 ## Loaded Skills
 - None

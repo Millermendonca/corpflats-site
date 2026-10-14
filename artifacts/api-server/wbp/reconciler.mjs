@@ -272,6 +272,11 @@ export function computeReconciliationScore(pmsRes, otaBooking) {
     }
   }
 
+  // Defect 3 / Problema B: When exactChannelMatch && exactDateMatch && nameSim >= 0.85, adjust score to at least 80
+  if (exactChannelMatch && exactDateMatch && nameSim >= 0.85) {
+    score = Math.max(score, 80);
+  }
+
   // Clamp score between 0 and 100
   const finalScore = Math.max(0, Math.min(100, score));
 
@@ -280,8 +285,8 @@ export function computeReconciliationScore(pmsRes, otaBooking) {
   const qualifiesSafe = exactChannelMatch && exactDateMatch && nameSim >= 0.85 && finalScore >= 80;
   const isSafeMatch = qualifiesSafe;
 
-  // If score >= 50 but not safe match (e.g. divergent dates or divergent channels), ALWAYS classify as isAmbiguous
-  const isAmbiguous = !isSafeMatch && finalScore >= 50;
+  // Only classify as ambiguous if there is plausible guest name similarity
+  const isAmbiguous = !isSafeMatch && finalScore >= 50 && nameSim >= 0.50;
   const isNoMatch = !isSafeMatch && !isAmbiguous;
 
   return {
@@ -338,7 +343,7 @@ export function findBestManualMatch(db, otaBooking) {
     }
   }
 
-  if (bestMatch && bestScoreResult && bestScoreResult.score >= 50) {
+  if (bestMatch && bestScoreResult && (bestScoreResult.isSafeMatch || bestScoreResult.isAmbiguous)) {
     return {
       bestMatch,
       scoreResult: bestScoreResult

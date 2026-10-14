@@ -802,6 +802,15 @@ app.post("/api/wbp/mode", (req, res) => {
   try {
     const updated = setIntegrationMode(mode, db);
     saveDatabase();
+    if (process.env.NODE_ENV !== "test") {
+      if (updated === "auto" || updated === "observe") {
+        wbpWorker.start();
+        wbpAlertsManager.startDailySummaryScheduler(db);
+      } else if (updated === "off") {
+        wbpWorker.stop();
+        wbpAlertsManager.stopDailySummaryScheduler();
+      }
+    }
     res.json({ success: true, mode: updated });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
@@ -36291,6 +36300,10 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   setAuditLogger(logAuditEvent);
   if (process.env.NODE_ENV !== "test") {
     startMonitoringEngine();
+    if (isWbpEnabled(db)) {
+      wbpWorker.start();
+      wbpAlertsManager.startDailySummaryScheduler(db);
+    }
   }
 });
 httpServer.on("error", (err) => {

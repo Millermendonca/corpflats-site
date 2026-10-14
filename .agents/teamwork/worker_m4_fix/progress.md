@@ -1,12 +1,18 @@
-# Progress Log - Worker M4 Fix
+# Progress Tracking - Milestone 4 Remediation
 
-Last visited: 2026-10-11T04:05:00Z
+Last visited: 2026-10-14T03:17:30Z
+Status: Completed
 
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Inspect diff between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
-- [x] Ensure full parity and verify SHA-256 identical hashes across all twin files
-- [x] Update `artifacts/limpeza/src/pages/tarifas.tsx` with preventive bulk selection guard
-- [x] Run all test suites (whatsapp-ai-agent 24/24, tariff-engine 8/8, bot-actions-api 5/5, challengers 4/4, 20/20, 26/26, 11/11, 12/12) -> 100% PASS
-- [x] Run frontend build (`npm run build` in `artifacts/limpeza`) -> SUCCESS
-- [ ] Git commit and push (`git push origin main`)
-- [ ] Write handoff.md and send message to orchestrator
+## Tasks
+- [x] Read authoritative documents (ORIGINAL_REQUEST.md, PROJECT.md, AGENTS.md, reviewer_m4_wbp_2 handoff, challenger_m4_wbp_2 handoff)
+- [x] Inspect existing codebase for Defect 1, 2, 3, 4, 5
+- [x] Implement Defect 1: Collision Blindness in `handleOtaModification` (availability.mjs, inbox.mjs)
+- [x] Implement Defect 2: False-Positive Reconciler Ambiguity for Unrelated Guests (reconciler.mjs)
+- [x] Implement Defect 3: Safe Match Score Adjustment (reconciler.mjs)
+- [x] Implement Defect 4: Quarantine Triggers Coverage for MAINTENANCE_BLOCKED and MALFORMED_PAYLOAD (inbox.mjs, test)
+- [x] Implement Defect 5: Autonomous Schedulers in Server Runtime (demo-server.mjs)
+- [x] Sync twin files (`scripts/` <-> `artifacts/api-server/`) and verify SHA-256 twin parity
+- [x] Run targeted tests (all 4 suites pass, 0 failures)
+- [x] Verify baseline database.json and audit_logs.jsonl untouched
+- [ ] Git commit and push to origin feature/wbp-integration
+- [ ] Write handoff.md and report to parent

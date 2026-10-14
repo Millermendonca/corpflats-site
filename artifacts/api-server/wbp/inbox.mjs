@@ -307,29 +307,43 @@ export function allocateFairShareFlat(checkinDate, checkoutDate, options = {}) {
 
   // 1. Filter candidates where checkFlatBlockedOnNight returns false for every single night of stay
   const candidateFlats = [];
+  const blockedByFlat = [];
   for (const flat of flats) {
     let unblocked = true;
+    let firstBlock = null;
     for (const night of nights) {
       const check = checkFlatBlockedOnNight(flat, night, db, {
         excludeReservationId: options.excludeReservationId
       });
       if (check.isBlocked) {
         unblocked = false;
+        firstBlock = check;
         break;
       }
     }
     if (unblocked) {
       candidateFlats.push(flat);
+    } else {
+      blockedByFlat.push({ flat, block: firstBlock });
     }
   }
 
-  // Zero available -> OVERBOOKING!
+  // Zero available -> check whether capacity was lost to maintenance or general overbooking
   if (candidateFlats.length === 0) {
+    const maintenanceBlock = blockedByFlat.find(b =>
+      b.block && (
+        b.block.reason === "flat_maintenance" ||
+        b.block.reason === "room_block" ||
+        b.block.reason === "service_order"
+      )
+    );
+
     return {
       allocated: false,
       flat: null,
       availableCount: 0,
-      reason: "OVERBOOKING"
+      reason: maintenanceBlock ? "MAINTENANCE_BLOCKED" : "OVERBOOKING",
+      blockedDetails: maintenanceBlock ? maintenanceBlock.block.details : null
     };
   }
 
@@ -381,38 +395,39 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
     db.wbpQuarantine = [];
   }
 
+  const b = booking && typeof booking === "object" ? booking : { rawPayload: booking };
   const quarantineId = `quar_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
   const record = {
     id: quarantineId,
-    bookingId: booking.externalOrderId || booking.wbpBookingId || "N/A",
-    externalOrderId: booking.externalOrderId || "N/A",
-    rawPayloadId: booking.rawPayloadId || null,
-    source: booking.source || "webhook",
-    channel: booking.channel || "booking",
-    guestName: booking.guestName || booking.guest?.name || "Hóspede",
-    guestEmail: booking.guestEmail || booking.guest?.email || "",
-    guestPhone: booking.guestPhone || booking.guest?.phone || "",
-    guestCountry: booking.guestCountry || "BR",
-    checkinDate: booking.checkinDate,
-    checkoutDate: booking.checkoutDate,
-    nights: booking.nights,
-    adults: booking.adults || 1,
-    children: booking.children || 0,
-    totalPrice: booking.totalPrice || 0,
-    currency: booking.currency || "BRL",
-    ratePlanId: booking.ratePlanId || "sem_cafe",
-    breakfastIncluded: Boolean(booking.includeBreakfast),
-    paymentCollect: booking.paymentCollect || "Channel",
-    isModification: Boolean(booking.isModification),
-    isCancellation: Boolean(booking.isCancellation),
+    bookingId: b.externalOrderId || b.wbpBookingId || "N/A",
+    externalOrderId: b.externalOrderId || "N/A",
+    rawPayloadId: b.rawPayloadId || null,
+    source: b.source || "webhook",
+    channel: b.channel || "booking",
+    guestName: b.guestName || b.guest?.name || "Hóspede",
+    guestEmail: b.guestEmail || b.guest?.email || "",
+    guestPhone: b.guestPhone || b.guest?.phone || "",
+    guestCountry: b.guestCountry || "BR",
+    checkinDate: b.checkinDate,
+    checkoutDate: b.checkoutDate,
+    nights: b.nights,
+    adults: b.adults || 1,
+    children: b.children || 0,
+    totalPrice: b.totalPrice || 0,
+    currency: b.currency || "BRL",
+    ratePlanId: b.ratePlanId || "sem_cafe",
+    breakfastIncluded: Boolean(b.includeBreakfast),
+    paymentCollect: b.paymentCollect || "Channel",
+    isModification: Boolean(b.isModification),
+    isCancellation: Boolean(b.isCancellation),
     reason, // OVERBOOKING | CONFLICT | MAINTENANCE_BLOCKED | CHECKED_IN_CANCELLATION | MODIFICATION_CONFLICT | AMBIGUOUS_MATCH | MALFORMED_PAYLOAD
     reasonDetails,
     cardReference: {
-      maskedPan: booking.cardLast4 ? `**** **** **** ${booking.cardLast4}` : "",
-      cardBrand: booking.cardBrand || "",
-      cardExpMonth: booking.cardExpMonth || "",
-      cardExpYear: booking.cardExpYear || ""
+      maskedPan: b.cardLast4 ? `**** **** **** ${b.cardLast4}` : "",
+      cardBrand: b.cardBrand || "",
+      cardExpMonth: b.cardExpMonth || "",
+      cardExpYear: b.cardExpYear || ""
     },
     status: "pending", // pending | resolved | rejected
     createdAt: new Date().toISOString(),
@@ -567,8 +582,9 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
   // Case A: Is the current flat available for the new dates?
   const nights = getNightsBetween(newCheckin, newCheckout);
   let sameFlatFree = true;
+  const currentFlatRef = { id: existing.flatId, number: existing.flatNumber };
   for (const night of nights) {
-    const check = checkFlatBlockedOnNight(existing.flatNumber, night, db, {
+    const check = checkFlatBlockedOnNight(currentFlatRef, night, db, {
       excludeReservationId: existing.id
     });
     if (check.isBlocked) {
@@ -733,7 +749,38 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   }
 
   // 1. Normalization & Card Hygiene
-  const normalized = normalizeOtaBooking(rawPayload);
+  let normalized;
+  try {
+    normalized = normalizeOtaBooking(rawPayload);
+  } catch (err) {
+    return routeToQuarantine({
+      db,
+      booking: typeof rawPayload === "object" && rawPayload !== null ? rawPayload : { rawPayload },
+      reason: "MALFORMED_PAYLOAD",
+      reasonDetails: {
+        message: `Payload malformado ou corrompido: ${err.message}`,
+        error: err.message
+      },
+      alertsManager
+    });
+  }
+
+  // Validate critical stay dates on non-cancellation bookings
+  if (!normalized.isCancellation) {
+    if (!normalized.checkinDate || !normalized.checkoutDate || normalized.checkinDate >= normalized.checkoutDate) {
+      return routeToQuarantine({
+        db,
+        booking: normalized,
+        reason: "MALFORMED_PAYLOAD",
+        reasonDetails: {
+          message: `Datas de estadia ausentes ou inválidas: checkin=${normalized.checkinDate}, checkout=${normalized.checkoutDate}`,
+          checkinDate: normalized.checkinDate,
+          checkoutDate: normalized.checkoutDate
+        },
+        alertsManager
+      });
+    }
+  }
 
   // 2. Mutations: Check Cancellation
   if (normalized.isCancellation) {
@@ -795,6 +842,34 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   // 6. Fair-Share Flat Allocation
   const alloc = allocateFairShareFlat(normalized.checkinDate, normalized.checkoutDate, { db });
   if (!alloc.allocated || !alloc.flat) {
+    if (alloc.reason === "INVALID_DATES") {
+      return routeToQuarantine({
+        db,
+        booking: normalized,
+        reason: "MALFORMED_PAYLOAD",
+        reasonDetails: {
+          message: `Datas de estadia inválidas para alocação: checkin=${normalized.checkinDate}, checkout=${normalized.checkoutDate}`,
+          checkinDate: normalized.checkinDate,
+          checkoutDate: normalized.checkoutDate
+        },
+        alertsManager
+      });
+    }
+
+    if (alloc.reason === "MAINTENANCE_BLOCKED") {
+      return routeToQuarantine({
+        db,
+        booking: normalized,
+        reason: "MAINTENANCE_BLOCKED",
+        reasonDetails: {
+          message: `Nenhum flat disponível devido a bloqueio de manutenção no período (${normalized.checkinDate} a ${normalized.checkoutDate}).`,
+          details: alloc.blockedDetails,
+          availableCount: 0
+        },
+        alertsManager
+      });
+    }
+
     return routeToQuarantine({
       db,
       booking: normalized,

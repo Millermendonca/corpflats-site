@@ -1,128 +1,134 @@
-# Handoff Report - Worker M4 Fix (Final Remediation & Verification)
-
-**Milestone**: M4 (Final Milestone: Full Verification, Parity Audit, Build & Deploy)  
-**Agent**: Worker M4 Fix (worker_m4_fix)  
-**Date**: 2026-10-11T04:06:00Z  
-**Verdict**: **RESOLVED / READY FOR FINAL CLEARANCE & DEPLOY**
-
----
+# Milestone 4 Remediation Worker Handoff Report
 
 ## 1. Observation
 
-### A. Auditoria e Resolução de Paridade Twin Mirror (SHA-256)
-1. **Verificação Inicial**:
-   - O Reviewer 2 havia apontado discrepância em `demo-server.mjs` no Subteste 10 de `tests/whatsapp-ai-agent.test.mjs`:
+1. **Initial Failing Challenger Subtests**:
+   Running `node --test tests/wbp-integration/challenger-m4-quarantine-reconciliation.test.mjs` initially reproduced 3 failing subtests:
+   - Subtest 4 (Suite 4): `No Match: completely different guest name (<60% similarity) does not link and is treated as new electronic booking` failed with:
      ```
-     expected: '619d2221fefe3cf5ba8ce4ada2a58e1e63a60231a0c54222f3304e1a29318d13'
-     actual: '0b7b271dfda2b85527f2dd825cd95ca670bd79fa1989b39ec56c4ecb109d6093'
+     error: 'Should return null (score < 50), not ambiguous nor safe'
+     actual: { bestMatch: { id: 991, guestName: 'Carlos Eduardo Mendes', ... }, scoreResult: { score: 55, isAmbiguous: true, isNoMatch: false } }
      ```
-   - O espelhamento integral de `artifacts/api-server/` e `scripts/` foi restabelecido e validado byte a byte.
-   - Execução do script de verificação de integridade criptográfica SHA-256 em todos os 7 pares espelho:
+   - Subtest 2 (Suite 5): `Reallocated modification captures old flat and new flat in structured diff` failed with:
      ```
-     [OK] whatsapp-ai-service.mjs -> beb2b29116b8579db6d5178eaebbee9a486983d1a3175247905be2eafbd7db98
-     [OK] zapi-service.mjs        -> ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb
-     [OK] mail-service.mjs        -> 3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c
-     [OK] storage-service.mjs     -> c3b6dbe78a5464d89e220e32c79e6cf56eefcbc3d33b6ec5cb35a8c5fb48fb10
-     [OK] fnrh-pdf-service.mjs    -> 845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b
-     [OK] fnrh-serpro-service.mjs -> daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a
-     [OK] demo-server.mjs         -> e25395dad503cdb3b483f32c22d174411939d2b39f6f513bd9c1d58018e06a3c
-     ALL 7 MIRROR PAIRS ARE 100% IDENTICAL
+     Expected values to be strictly equal:
+     + 'modified_same_flat'
+     - 'modified_reallocated'
+     ```
+   - Subtest 6 (Suite 2): `Bonus Condition 6: MODIFICATION_CONFLICT — routes to Quarantine when modification cannot fit anywhere` failed with `undefined == true`.
+
+2. **Source Code Defect Locations Identified**:
+   - `artifacts/api-server/wbp/availability.mjs:121` (and `scripts/wbp/availability.mjs:121`): `checkFlatBlockedOnNight` assumed `flat` was always an object, causing string primitives (e.g. `"113"`) to produce empty `flatNumStr` and `flatIdStr`, evaluating all night blocks to false.
+   - `artifacts/api-server/wbp/inbox.mjs:571` (and `scripts/wbp/inbox.mjs:571`): `handleOtaModification` passed string `existing.flatNumber` to `checkFlatBlockedOnNight`, bypassing conflict checks.
+   - `artifacts/api-server/wbp/reconciler.mjs:284` & `341` (and `scripts/wbp/reconciler.mjs`): `computeReconciliationScore` classified any score >= 50 as ambiguous regardless of name similarity, and did not adjust safe match score to >= 80 for exact channel + exact date + nameSim >= 0.85 without phone/price bonus. `findBestManualMatch` also returned matches when score >= 50 even if `isNoMatch: true`.
+   - `artifacts/api-server/wbp/inbox.mjs:326` & `735`: `allocateFairShareFlat` returned only `OVERBOOKING` even when flats were blocked by maintenance/room blocks, and `processIncomingOTA` lacked guards for `MALFORMED_PAYLOAD`.
+   - `artifacts/api-server/demo-server.mjs:800` & `36292`: `wbpWorker.start()` and `wbpAlertsManager.startDailySummaryScheduler(db)` were never called on boot or mode switch to `auto`/`observe`.
+
+3. **Post-Remediation Verification Output**:
+   - `node --test tests/wbp-integration/challenger-m4-quarantine-reconciliation.test.mjs`:
+     ```
+     # tests 25
+     # suites 6
+     # pass 25
+     # fail 0
+     ```
+   - `node --test tests/wbp-integration/m4-reservations-inbox.test.mjs`:
+     ```
+     # tests 26
+     # suites 8
+     # pass 26
+     # fail 0
+     ```
+   - `node --test tests/wbp-integration/challenger-m4-webhooks-concurrency.test.mjs`:
+     ```
+     # tests 5
+     # suites 5
+     # pass 5
+     # fail 0
+     ```
+   - `node --test tests/wbp-integration/m3-ari-sync.test.mjs`:
+     ```
+     # tests 21
+     # suites 7
+     # pass 21
+     # fail 0
      ```
 
-### B. Refinamento de UX no Modal de Edição em Lote (`tarifas.tsx`)
-1. **Arquivo Modificado**: `artifacts/limpeza/src/pages/tarifas.tsx` (linhas 231–247).
-2. **Implementação de Guarda Preventiva**:
-   ```typescript
-   if (bulkFlatMode === "selected" && bulkSelectedFlats.length === 0) {
-     toast({
-       title: "Nenhum flat selecionado",
-       description: "Selecione ao menos um flat para aplicar a edição em lote.",
-       variant: "destructive"
-     })
-     return
-   }
-
-   if (bulkChannelMode === "selected" && bulkSelectedChannels.length === 0) {
-     toast({
-       title: "Nenhum canal selecionado",
-       description: "Selecione ao menos um canal de venda para aplicar a edição em lote.",
-       variant: "destructive"
-     })
-     return
-   }
-   ```
-   A função `handleExecuteBulkUpdate` agora intercepta preventivamente a submissão com arrays vazios, disparando toast instrutivo e cancelando a requisição antes de onerar a API.
-
-### C. Execução das Baterias de Teste Automatizadas (100% Verde)
-1. **`node --test tests/whatsapp-ai-agent.test.mjs`**:
-   - 24/24 subtestes passaram com sucesso (100% PASS, duração ~3.7s).
-   - Subteste 10 ("10. Integridade dos Arquivos Duplos Espelhados (SHA256)") passou com `ok 10`.
-2. **`node --test tests/tariff-engine.test.mjs`**:
-   - 8/8 subtestes passaram com sucesso (100% PASS, duração ~3.5s).
-3. **`node --test tests/bot-actions-api.test.mjs`**:
-   - 5/5 subtestes passaram com sucesso (100% PASS, duração ~4.4s).
-4. **`node --test tests/challenger-m3-tariff-adversarial.test.mjs`**:
-   - 4/4 subtestes passaram com sucesso (100% PASS, duração ~3.0s).
-5. **`node --test tests/challenger-m3-ui-actions.test.mjs`**:
-   - 20/20 subtestes passaram com sucesso (100% PASS, duração ~3.0s).
-6. **`node --test tests/challenger-tariff-stress.test.mjs`**:
-   - 26/26 subtestes passaram com sucesso (100% PASS, duração ~2.8s).
-7. **`node --test tests/challenger-m4-journey.test.mjs`**:
-   - 11/11 subtestes passaram com sucesso (100% PASS, duração ~4.4s).
-8. **`node --test tests/challenger-m4-concurrency-resilience.test.mjs`**:
-   - 12/12 subtestes passaram com sucesso (100% PASS, duração ~6.3s).
-
-### D. Build de Produção do Frontend
-- Comando: `npm --prefix artifacts/limpeza run build`
-- Resultado: Sucesso com código de saída 0 em 51.59s.
-- Arquivos gerados e verificados em `artifacts/limpeza/dist/public/`:
-  - `dist/public/index.html` (2.65 kB)
-  - `dist/public/assets/index.css` (384.58 kB)
-  - `dist/public/assets/index.js` (3,212.04 kB)
-  - `dist/public/assets/pdf-z6sF223D.js` (379.02 kB)
-  - workers e bundles estáticos íntegros.
+4. **Database & File Integrity**:
+   - `data/database.json` SHA-256: `e37d74b7c78622903745709f781c92942be36732de878ac7543f6aeff7eb1882` (100% untouched).
+   - `artifacts/api-server/audit_logs.jsonl`: 0 changes, 100% clean working tree.
+   - Twin file SHA-256 parity: 100% identical between `artifacts/api-server/` and `scripts/` across all mirrored files (`demo-server.mjs`, `wbp/alerts.mjs`, `wbp/ari-sync.mjs`, `wbp/availability.mjs`, `wbp/callbacks.mjs`, `wbp/client.mjs`, `wbp/config.mjs`, `wbp/inbox.mjs`, `wbp/pricing.mjs`, `wbp/reconciler.mjs`, `wbp/storage.mjs`).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Premissa 1**: O Reviewer 2 emitiu veredicto `REQUEST_CHANGES` devido a: (a) Descasamento SHA-256 no Subteste 10 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`; (b) Ausência de validação preventiva no formulário de Bulk Update em `tarifas.tsx` quando `bulkFlatMode === 'selected'` ou `bulkChannelMode === 'selected'` não possuíam itens marcados.
-2. **Dedução 1**: Sincronizando integralmente os espelhos e auditando todos os 7 arquivos pares via `crypto.createHash('sha256')`, garante-se a estrita equivalência byte-a-byte exigida pelo Twin-Server Parity Mandate.
-3. **Dedução 2**: Adicionando as checagens com toast em `handleExecuteBulkUpdate` antes do envio do payload, a experiência do usuário é aprimorada e requisições inválidas são contidas na camada de apresentação.
-4. **Dedução 3**: A execução de todas as 8 suítes de teste (com 100% de aprovação e zero regressões) e a compilação do bundle de produção com Vite comprovam que o sistema atingiu o estado ideal para deploy contínuo em produção.
+1. **Remediation for Defect 1 (Collision Blindness in handleOtaModification)**:
+   - *Premise*: When `checkFlatBlockedOnNight` accepts primitive string/number, normalizing with `typeof flat === "object" && flat !== null ? flat : { number: String(flat) }` ensures `flatNumStr` is correctly populated.
+   - *Premise*: In `handleOtaModification`, passing `{ id: existing.flatId, number: existing.flatNumber }` ensures matching against both id and number properties.
+   - *Deduction*: When another reservation occupies the flat on modified dates, `check.isBlocked` evaluates to `true`, correctly falling back to fair-share reallocation or `MODIFICATION_CONFLICT` quarantine. Both Subtest 2 in Suite 5 and Bonus Condition 6 in Suite 2 pass.
+
+2. **Remediation for Defect 2 & Defect 3 (Reconciler Ambiguity Guard & Safe Match Score Adjustment)**:
+   - *Premise*: Hotel guests booking the same dates and channel should only be considered ambiguous duplicates if there is plausible name similarity (`nameSim >= 0.50`). Unrelated guests (`nameSim < 0.50`) must have `isAmbiguous: false` and `isNoMatch: true`.
+   - *Premise*: In `findBestManualMatch`, only records where `isSafeMatch || isAmbiguous` should be returned. If `isNoMatch: true`, it returns `null`, allowing legitimate bookings for new guests to be created automatically.
+   - *Premise*: When `exactChannelMatch && exactDateMatch && nameSim >= 0.85`, setting `score = Math.max(score, 80)` guarantees that manual reservations entered without PMS guest phone or exact price match still qualify as Safe Match (`qualifiesSafe = true`, `isSafeMatch = true`).
+   - *Deduction*: Subtest 4 in Suite 4 passes, and Reviewer 2 verification command outputs `Score: 80 isSafeMatch: true`.
+
+3. **Remediation for Defect 4 (Quarantine Triggers MAINTENANCE_BLOCKED and MALFORMED_PAYLOAD)**:
+   - *Premise*: When candidate flats are 0, checking whether blocked flats include `flat_maintenance`, `room_block`, or `service_order` isolates cases where capacity was lost specifically to maintenance, returning `MAINTENANCE_BLOCKED`.
+   - *Premise*: In `processIncomingOTA`, wrapping normalization in try/catch and validating stay dates (`!checkinDate || !checkoutDate || checkinDate >= checkoutDate`) routes corrupted/invalid payloads to `MALFORMED_PAYLOAD`.
+   - *Deduction*: All 7 quarantine triggers are now actively functional and covered by dedicated unit tests.
+
+4. **Remediation for Defect 5 (Autonomous Schedulers in Server Runtime)**:
+   - *Premise*: When `process.env.NODE_ENV !== "test"`, calling `wbpWorker.start()` and `wbpAlertsManager.startDailySummaryScheduler(db)` on server startup (if `isWbpEnabled(db)`) and in `POST /api/wbp/mode` (when mode changes to `auto` or `observe`) activates the 30-min background polling and 08:00 handover alert.
+   - *Premise*: Calling `stop()` when mode transitions to `off` ensures timers are halted when the integration is disabled.
+   - *Deduction*: Autonomous scheduling operates in server runtime without leaking unstopped timers into test suites.
 
 ---
 
 ## 3. Caveats
 
-No caveats. Todos os apontamentos foram integralmente remediados, testados em ambiente real e validados de ponta a ponta.
+- In test runs (`NODE_ENV === "test"`), schedulers remain dormant by design to ensure fast, deterministic tests without leaking background timers.
+- No other caveats.
 
 ---
 
 ## 4. Conclusion
 
-O Milestone M4 está completamente remediado e validado. Todos os critérios de integridade, paridade de espelho, UX do frontend, compilação e qualidade de código foram cumpridos com 100% de aprovação. Pronto para commit e push para `origin main`.
+All 5 technical defects identified during Gate 4 are completely remediated with genuine logic and verified across all targeted test suites. 100% byte-for-byte SHA-256 twin parity is preserved, `data/database.json` and `artifacts/api-server/audit_logs.jsonl` remain untouched, and the codebase is ready for final Gate 4 validation.
 
 ---
 
 ## 5. Verification Method
 
-1. **Verificação de Paridade SHA-256**:
-   ```bash
-   node -e "const fs = require('fs'), crypto = require('crypto'); ['whatsapp-ai-service.mjs', 'zapi-service.mjs', 'mail-service.mjs', 'storage-service.mjs', 'fnrh-pdf-service.mjs', 'fnrh-serpro-service.mjs', 'demo-server.mjs'].forEach(f => { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); console.assert(h1 === h2, 'Mismatch in ' + f); console.log(f, 'MATCH:', h1 === h2); });"
+To independently verify this remediation:
+
+1. **Run Challenger 2 Suite (25/25 tests must pass)**:
+   ```powershell
+   node --test tests/wbp-integration/challenger-m4-quarantine-reconciliation.test.mjs
    ```
-2. **Execução de Testes Unitários e Integrados**:
-   ```bash
-   node --test tests/whatsapp-ai-agent.test.mjs
-   node --test tests/tariff-engine.test.mjs
-   node --test tests/bot-actions-api.test.mjs
-   node --test tests/challenger-m3-tariff-adversarial.test.mjs
-   node --test tests/challenger-m3-ui-actions.test.mjs
-   node --test tests/challenger-tariff-stress.test.mjs
-   node --test tests/challenger-m4-journey.test.mjs
-   node --test tests/challenger-m4-concurrency-resilience.test.mjs
+
+2. **Run Challenger 1 Webhooks Suite (5/5 tests must pass)**:
+   ```powershell
+   node --test tests/wbp-integration/challenger-m4-webhooks-concurrency.test.mjs
    ```
-3. **Build do Frontend**:
-   ```bash
-   npm --prefix artifacts/limpeza run build
+
+3. **Run M4 Reservations Inbox Suite (26/26 tests must pass)**:
+   ```powershell
+   node --test tests/wbp-integration/m4-reservations-inbox.test.mjs
+   ```
+
+4. **Run M3 Regression Suite (21/21 tests must pass)**:
+   ```powershell
+   node --test tests/wbp-integration/m3-ari-sync.test.mjs
+   ```
+
+5. **Verify Twin Parity (100% match)**:
+   ```powershell
+   node -e "const fs = require('fs'); const path = require('path'); const crypto = require('crypto'); const files = ['demo-server.mjs', ...fs.readdirSync('artifacts/api-server/wbp').map(f => 'wbp/' + f)]; for (const f of files) { const p1 = path.join('artifacts/api-server', f); const p2 = path.join('scripts', f); if (!fs.existsSync(p2)) continue; const h1 = crypto.createHash('sha256').update(fs.readFileSync(p1)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync(p2)).digest('hex'); if (h1 !== h2) process.exit(1); } console.log('ALL TWINS MATCH 100%');"
+   ```
+
+6. **Verify Production DB Hash**:
+   ```powershell
+   node -e "const fs = require('fs'); const crypto = require('crypto'); const h = crypto.createHash('sha256').update(fs.readFileSync('data/database.json')).digest('hex'); if (h !== 'e37d74b7c78622903745709f781c92942be36732de878ac7543f6aeff7eb1882') process.exit(1); console.log('DB OK');"
    ```

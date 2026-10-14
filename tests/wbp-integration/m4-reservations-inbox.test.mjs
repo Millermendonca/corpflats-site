@@ -386,6 +386,144 @@ describe("Milestone 4: Feature 20 & Quarantine Management Engine", () => {
     assert.equal(qItem.reason, "OVERBOOKING");
     assert.equal(qItem.status, "pending");
   });
+
+  it("routes to quarantine with reason MAINTENANCE_BLOCKED when zero flats available due to maintenance/room blocks", async () => {
+    // 18 flats occupied by reservations, and 19th flat under maintenance block
+    const mockDb = {
+      settings: { wbp_integration_mode: "auto" },
+      flats: CORPFLATS_19_FLATS,
+      reservations: CORPFLATS_19_FLATS.slice(1).map((f, i) => ({
+        id: 501 + i,
+        flatNumber: String(f.number),
+        checkinDate: "2026-12-01",
+        checkoutDate: "2026-12-03",
+        status: "ativa"
+      })),
+      roomBlocks: [
+        {
+          id: "RB-101",
+          flatNumber: String(CORPFLATS_19_FLATS[0].number),
+          startDate: "2026-12-01",
+          endDate: "2026-12-03",
+          reason: "Manutenção de ar-condicionado"
+        }
+      ],
+      wbpQuarantine: []
+    };
+
+    const incoming = {
+      OrderId: "BKG-MAINT-101",
+      Channel: "booking",
+      TotalPrice: 600.00,
+      Rooms: [{ StartDate: "2026-12-01", EndDate: "2026-12-02" }]
+    };
+
+    const result = await processIncomingOTA(incoming, { db: mockDb });
+    assert.ok(result.id, "Must return quarantine record");
+    assert.equal(result.reason, "MAINTENANCE_BLOCKED");
+    assert.equal(mockDb.wbpQuarantine.length, 1);
+    assert.equal(mockDb.wbpQuarantine[0].reason, "MAINTENANCE_BLOCKED");
+  });
+
+  it("routes to quarantine with reason MALFORMED_PAYLOAD when payload has missing or invalid stay dates or corrupted structure", async () => {
+    const mockDb = {
+      settings: { wbp_integration_mode: "auto" },
+      flats: CORPFLATS_19_FLATS,
+      reservations: [],
+      wbpQuarantine: []
+    };
+
+    // Missing stay dates
+    const badPayload = {
+      OrderId: "BKG-BAD-DATE",
+      Channel: "booking",
+      TotalPrice: 450.00,
+      Rooms: []
+    };
+
+    const result = await processIncomingOTA(badPayload, { db: mockDb });
+    assert.ok(result.id, "Must return quarantine record");
+    assert.equal(result.reason, "MALFORMED_PAYLOAD");
+    assert.equal(mockDb.wbpQuarantine.length, 1);
+    assert.equal(mockDb.wbpQuarantine[0].reason, "MALFORMED_PAYLOAD");
+
+    // Inverted stay dates (checkin >= checkout)
+    const invertedDatesPayload = {
+      OrderId: "BKG-INVERTED",
+      Channel: "booking",
+      TotalPrice: 450.00,
+      Rooms: [{ StartDate: "2026-12-05", EndDate: "2026-12-03" }]
+    };
+
+    const result2 = await processIncomingOTA(invertedDatesPayload, { db: mockDb });
+    assert.ok(result2.id, "Must return quarantine record");
+    assert.equal(result2.reason, "MALFORMED_PAYLOAD");
+    assert.equal(mockDb.wbpQuarantine.length, 2);
+    assert.equal(mockDb.wbpQuarantine[0].reason, "MALFORMED_PAYLOAD");
+  });
+
+  it("routes to quarantine with reason CONFLICT when cancellation targets non-existent reservation", async () => {
+    const mockDb = {
+      settings: { wbp_integration_mode: "auto" },
+      flats: CORPFLATS_19_FLATS,
+      reservations: [],
+      wbpQuarantine: []
+    };
+
+    const ghostCancel = {
+      OrderId: "BKG-GHOST-CANCEL",
+      IsCancellation: 1
+    };
+
+    const result = await processIncomingOTA(ghostCancel, { db: mockDb });
+    assert.ok(result.id);
+    assert.equal(result.reason, "CONFLICT");
+    assert.equal(mockDb.wbpQuarantine.length, 1);
+    assert.equal(mockDb.wbpQuarantine[0].reason, "CONFLICT");
+  });
+
+  it("routes to quarantine with reason MODIFICATION_CONFLICT when modification cannot fit anywhere", async () => {
+    // Reservation exists on flat 113. All 19 flats occupied on new dates 2026-12-10 to 2026-12-15
+    const mockDb = {
+      settings: { wbp_integration_mode: "auto" },
+      flats: CORPFLATS_19_FLATS,
+      reservations: [
+        {
+          id: 601,
+          code: "RES-113-601",
+          flatId: CORPFLATS_19_FLATS[0].id,
+          flatNumber: String(CORPFLATS_19_FLATS[0].number),
+          externalOrderId: "BKG-MOD-CANNOT-FIT",
+          checkinDate: "2026-12-01",
+          checkoutDate: "2026-12-05",
+          totalAmount: 1000,
+          status: "ativa"
+        },
+        ...CORPFLATS_19_FLATS.map((f, i) => ({
+          id: 700 + i,
+          flatId: f.id,
+          flatNumber: String(f.number),
+          checkinDate: "2026-12-10",
+          checkoutDate: "2026-12-15",
+          status: "ativa"
+        }))
+      ],
+      wbpQuarantine: []
+    };
+
+    const modPayload = {
+      OrderId: "BKG-MOD-CANNOT-FIT",
+      IsModification: 1,
+      TotalPrice: 1500,
+      Rooms: [{ StartDate: "2026-12-10", EndDate: "2026-12-14" }] // Modifies to 10-15 where all 19 are occupied
+    };
+
+    const result = await processIncomingOTA(modPayload, { db: mockDb });
+    assert.ok(result.id, "Must return quarantine record");
+    assert.equal(result.reason, "MODIFICATION_CONFLICT");
+    assert.equal(mockDb.wbpQuarantine.length, 1);
+    assert.equal(mockDb.wbpQuarantine[0].reason, "MODIFICATION_CONFLICT");
+  });
 });
 
 describe("Milestone 4: Feature 21 & OTA Mutations (Cancellation & Modification)", () => {

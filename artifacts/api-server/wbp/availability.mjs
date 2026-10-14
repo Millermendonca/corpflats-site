@@ -120,14 +120,15 @@ export function matchFlat(flatRef1, flatRef2) {
  */
 export function checkFlatBlockedOnNight(flat, nightDate, db = {}, options = {}) {
   const nowMs = Number(options.nowMs || Date.now());
-  const flatIdStr = flat.id != null ? String(flat.id) : "";
-  const flatNumStr = flat.number != null ? String(flat.number) : "";
+  const flatObj = typeof flat === "object" && flat !== null ? flat : { number: String(flat) };
+  const flatIdStr = flatObj.id != null ? String(flatObj.id) : "";
+  const flatNumStr = flatObj.number != null ? String(flatObj.number) : "";
 
   // 1. Permanent / Operational Flat Maintenance Status
   if (
-    flat.isActive === false ||
-    flat.status === "manutencao_bloqueada" ||
-    flat.maintenanceStatus === "em_manutencao"
+    flatObj.isActive === false ||
+    flatObj.status === "manutencao_bloqueada" ||
+    flatObj.maintenanceStatus === "em_manutencao"
   ) {
     return {
       isBlocked: true,
@@ -135,8 +136,8 @@ export function checkFlatBlockedOnNight(flat, nightDate, db = {}, options = {}) 
       details: {
         flatNumber: flatNumStr,
         flatId: flatIdStr,
-        status: flat.status,
-        maintenanceStatus: flat.maintenanceStatus
+        status: flatObj.status,
+        maintenanceStatus: flatObj.maintenanceStatus
       }
     };
   }
