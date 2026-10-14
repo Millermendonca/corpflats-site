@@ -178,6 +178,20 @@ import {
   updateWbpAlertSettings
 } from "./wbp/alerts.mjs";
 import { WBPClient } from "./wbp/client.mjs";
+import {
+  CreditCardVault,
+  getCardVault,
+  startCardAutoPurgeScheduler,
+  stopCardAutoPurgeScheduler
+} from "./wbp/vault.mjs";
+import {
+  WbpProvisionalAdapter,
+  getProvisionalAdapter,
+  isProvisionalMessagesEnabled,
+  isProvisionalReviewsEnabled,
+  setProvisionalMessagesEnabled,
+  setProvisionalReviewsEnabled
+} from "./wbp/provisional.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -776,6 +790,8 @@ if (pgPool) {
 const wbpAlertsManager = getAlertsManager();
 const wbpClient = new WBPClient({ db });
 const wbpWorker = new WbpBackgroundWorker({ db, storage: wbpStorage, client: wbpClient, alertsManager: wbpAlertsManager });
+const wbpVault = getCardVault();
+const wbpProvisional = getProvisionalAdapter(wbpClient, db);
 
 // Wire persistent failure alerts from ARI Synchronizer to Alerts Manager
 const wbpAriSync = getAriSynchronizer(db, wbpClient, wbpStorage);
@@ -806,9 +822,11 @@ app.post("/api/wbp/mode", (req, res) => {
       if (updated === "auto" || updated === "observe") {
         wbpWorker.start();
         wbpAlertsManager.startDailySummaryScheduler(db);
+        startCardAutoPurgeScheduler(db, wbpVault);
       } else if (updated === "off") {
         wbpWorker.stop();
         wbpAlertsManager.stopDailySummaryScheduler();
+        stopCardAutoPurgeScheduler();
       }
     }
     res.json({ success: true, mode: updated });
@@ -1462,6 +1480,207 @@ app.post("/api/wbp/worker/poll", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── WebBookingPro: Credit Card Vault Endpoints (Features 25 & 26 — R6) ─────────────
+app.post("/api/wbp/vault/reauth", (req, res) => {
+  try {
+    const { username, password, reservationId } = req.body || {};
+    const authUser = typeof getAuthUser === "function" ? getAuthUser(req) : null;
+    const targetUsername = username || authUser?.username;
+
+    if (!targetUsername || !password) {
+      return res.status(400).json({ success: false, error: "Usuário e senha são obrigatórios." });
+    }
+
+    const user = (db.users || []).find(u => u.username === targetUsername && u.role === "admin");
+    if (!user) {
+      logAuditEvent({
+        action: "WBP_VAULT_REAUTH_FAILED",
+        level: "warning",
+        category: "security",
+        details: { username: targetUsername, reason: "Usuário não é administrador ou não existe." }
+      });
+      return res.status(401).json({ success: false, error: "Credenciais de administrador inválidas." });
+    }
+
+    const isValid = verifyPassword(password, user.passwordHash);
+    if (!isValid) {
+      logAuditEvent({
+        action: "WBP_VAULT_REAUTH_FAILED",
+        level: "warning",
+        category: "security",
+        details: { username: targetUsername, reason: "Senha incorreta." }
+      });
+      return res.status(401).json({ success: false, error: "Credenciais de administrador inválidas." });
+    }
+
+    const tokenData = wbpVault.createReauthToken(targetUsername, reservationId);
+    logAuditEvent({
+      action: "WBP_VAULT_REAUTH_SUCCESS",
+      level: "info",
+      category: "security",
+      details: { username: targetUsername, reservationId, expiresInSeconds: 300 }
+    });
+
+    res.json({
+      success: true,
+      token: tokenData.token,
+      expiresInSeconds: 300,
+      expiresAt: tokenData.expiresAt
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/vault/view", (req, res) => {
+  try {
+    const { token, reservationId, cardId, bookingId } = req.body || {};
+    const identifier = reservationId || cardId || bookingId;
+
+    if (!token || !identifier) {
+      return res.status(400).json({ success: false, error: "Token e identificador da reserva são obrigatórios." });
+    }
+
+    // Invalidate token immediately upon consumption (SINGLE-USE!)
+    const tokenUser = wbpVault.consumeReauthToken(token, reservationId);
+    if (!tokenUser) {
+      logAuditEvent({
+        action: "WBP_VAULT_VIEW_UNAUTHORIZED",
+        level: "warning",
+        category: "security",
+        details: { identifier, reason: "Token inválido, expirado ou já utilizado." }
+      });
+      return res.status(403).json({ success: false, error: "Token de visualização inválido, expirado ou já utilizado." });
+    }
+
+    const cardData = wbpVault.decryptCardByIdentifier(identifier, db);
+    if (!cardData) {
+      return res.status(404).json({ success: false, error: "Cartão de crédito não encontrado para a reserva informada." });
+    }
+
+    // Assert CVV is NEVER present
+    delete cardData.cvv;
+    delete cardData.card_cvv;
+    delete cardData.cvc;
+    delete cardData.security_code;
+
+    logAuditEvent({
+      action: "WBP_VAULT_CARD_VIEW",
+      level: "info",
+      category: "security",
+      details: {
+        identifier,
+        viewedBy: tokenUser.username,
+        cardBrand: cardData.brand || "Desconhecida",
+        maskedPan: cardData.maskedPan || `•••• •••• •••• ${String(cardData.cardNumber).slice(-4)}`
+      }
+    });
+
+    res.json({
+      success: true,
+      card: cardData
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/vault/purge", (req, res) => {
+  try {
+    const { currentDate, user = "admin" } = req.body || {};
+    const effectiveDate = currentDate || new Date().toISOString().slice(0, 10);
+    const purgedCount = wbpVault.purgeExpiredCards(effectiveDate, db);
+
+    if (purgedCount > 0) {
+      saveDatabase("wbp_vault_purge");
+      logAuditEvent({
+        action: "WBP_CARDS_PURGED",
+        level: "info",
+        category: "security",
+        details: { purgedCount, effectiveDate, triggeredBy: user }
+      });
+    }
+
+    res.json({
+      success: true,
+      purgedCount,
+      effectiveDate
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── WebBookingPro: Provisional Messages & Reviews Adapters (Feature 27 — R7) ───────
+app.get("/api/wbp/provisional/messages", async (req, res) => {
+  try {
+    const { propertyId, limit } = req.query;
+    const result = await wbpProvisional.getMessages({ propertyId, db, limit: limit ? Number(limit) : 50 });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, provisional: true, error: err.message });
+  }
+});
+
+app.post("/api/wbp/provisional/messages/send", async (req, res) => {
+  try {
+    const { messageId, text, recipient, channel, propertyId } = req.body || {};
+    if (!text) {
+      return res.status(400).json({ success: false, error: "Campo 'text' é obrigatório." });
+    }
+    const result = await wbpProvisional.sendMessage({ propertyId, messageId, text, recipient, channel, db });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, provisional: true, error: err.message });
+  }
+});
+
+app.get("/api/wbp/provisional/reviews", async (req, res) => {
+  try {
+    const { propertyId, limit } = req.query;
+    const result = await wbpProvisional.getReviews({ propertyId, db, limit: limit ? Number(limit) : 50 });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, provisional: true, error: err.message });
+  }
+});
+
+app.post("/api/wbp/provisional/reviews/respond", async (req, res) => {
+  try {
+    const { reviewId, response, propertyId } = req.body || {};
+    if (!reviewId || !response) {
+      return res.status(400).json({ success: false, error: "Campos 'reviewId' e 'response' são obrigatórios." });
+    }
+    const result = await wbpProvisional.respondReview({ propertyId, reviewId, responseText: response, db });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, provisional: true, error: err.message });
+  }
+});
+
+app.get("/api/wbp/provisional/settings", (req, res) => {
+  res.json({
+    provisionalMessagesEnabled: isProvisionalMessagesEnabled(db),
+    provisionalReviewsEnabled: isProvisionalReviewsEnabled(db)
+  });
+});
+
+app.post("/api/wbp/provisional/settings", (req, res) => {
+  const { messagesEnabled, reviewsEnabled } = req.body || {};
+  if (messagesEnabled !== undefined) {
+    setProvisionalMessagesEnabled(messagesEnabled, db);
+  }
+  if (reviewsEnabled !== undefined) {
+    setProvisionalReviewsEnabled(reviewsEnabled, db);
+  }
+  saveDatabase("wbp_provisional_settings");
+  res.json({
+    success: true,
+    provisionalMessagesEnabled: isProvisionalMessagesEnabled(db),
+    provisionalReviewsEnabled: isProvisionalReviewsEnabled(db)
+  });
 });
 
 const DEFAULT_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
@@ -14667,9 +14886,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
   const isPropertyCollect = Boolean(
     req.body.paymentCollect === "Property" ||
-    paymentCollect === "Property" ||
-    req.body.collectAtCheckin === true ||
-    collectAtCheckin === true
+    req.body.collectAtCheckin === true
   );
   let resolvedPaidAmount = Number(paidAmount) || 0;
   let resolvedPaymentStatus = paymentStatus || "pendente";
@@ -36303,6 +36520,7 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
     if (isWbpEnabled(db)) {
       wbpWorker.start();
       wbpAlertsManager.startDailySummaryScheduler(db);
+      startCardAutoPurgeScheduler(db, wbpVault);
     }
   }
 });
@@ -36326,5 +36544,7 @@ export {
   getAriSynchronizer,
   notifyPmsMutation,
   getWbpRestrictionsState,
-  resolveRestrictions
+  resolveRestrictions,
+  wbpVault,
+  wbpProvisional
 };

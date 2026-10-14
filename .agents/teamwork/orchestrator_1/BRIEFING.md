@@ -27,11 +27,11 @@ Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBoo
   4. E2E Testing Infrastructure (TEST_INFRA.md) [done]
   5. Milestone 2 Implementation & Gate [done]
   6. Milestone 3 (ARI Synchronizer) [done]
-  7. Milestone 4 (Reservations, Quarantine & Alerts) [in-progress]
-  8. Milestone 5 (Card Vault, Provisional & UI) [pending]
+  7. Milestone 4 (Reservations, Quarantine & Alerts) [done]
+  8. Milestone 5 (Card Vault, Provisional & UI) [in-progress]
   9. Final Acceptance & Adversarial Hardening [pending]
-- **Current phase**: Marco 4 Remediation Loop
-- **Current focus**: worker_m4_fix aplicando correções pontuais apontadas por Reviewer 2 e Challenger 2
+- **Current phase**: Marco 5 Exploration Loop
+- **Current focus**: Despacho de 3 Explorers em paralelo para mapeamento técnico de F25 a F31
 
 ## 🔒 Key Constraints
 - NUNCA editar ou criar código-fonte diretamente (DISPATCH-ONLY).
@@ -94,12 +94,17 @@ Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBoo
 | challenger_m4_wbp_1 | teamwork_preview_challenger | M4 Challenger: Webhooks & Concurrency Stress | completed (APPROVE) | 2bbba82b-0e31-4700-86ad-ec0b5de41c87 |
 | challenger_m4_wbp_2 | teamwork_preview_challenger | M4 Challenger: Quarantine, Reconciler & Mutations Stress | completed (REQUEST_CHANGES) | 60e8247a-cb9a-4218-a167-03047ebb8431 |
 | auditor_m4_wbp | teamwork_preview_auditor | M4 Forensic Integrity Audit | completed (CLEAN) | 4baaca20-14f8-412c-9aaf-41209c9d5cb4 |
-| worker_m4_fix | teamwork_preview_worker | Milestone 4 Remediation: Collision fix, Reconciler thresholds, Triggers & Schedulers | in-progress | 4d1a1bab-ad1b-451c-add2-bee7bfc3b93b |
+| worker_m4_fix | teamwork_preview_worker | Milestone 4 Remediation: Collision fix, Reconciler thresholds, Triggers & Schedulers | completed (commit d8274d6) | 4d1a1bab-ad1b-451c-add2-bee7bfc3b93b |
+| explorer_m5_wbp_1 | teamwork_preview_explorer | M5 Exploration: Credit Card Vault & Security | completed | 25382c2c-fc65-4ce5-a3be-42f54f351269 |
+| explorer_m5_wbp_2 | teamwork_preview_explorer | M5 Exploration: Provisional Adapters & Backend | completed | 5ac16573-ec27-4624-bced-1a6955394565 |
+| explorer_m5_wbp_3 | teamwork_preview_explorer | M5 Exploration: Frontend UI & Help Manual | completed | abca2e86-bda4-4b91-935d-ef29266e417a |
+| worker_m5_backend | teamwork_preview_worker | M5 Backend: Vault, Crypto, Reauth, Purge & Provisional | in-progress | da528942-a8a0-40be-93bd-930f3e535028 |
+| worker_m5_frontend | teamwork_preview_worker | M5 Frontend: Pricing, OTA Inbox, Help Manual & Build | in-progress | 9db06c46-acb0-4df2-849c-3de07390a6f4 |
 
 ## Succession Status
 - Succession required: no (orchestrator is top-level dispatch agent)
-- Spawn count: 31
-- Pending subagents: 4d1a1bab-ad1b-451c-add2-bee7bfc3b93b
+- Spawn count: 39
+- Pending subagents: da528942-a8a0-40be-93bd-930f3e535028, 9db06c46-acb0-4df2-849c-3de07390a6f4
 - Predecessor: none
 - Successor: none
 

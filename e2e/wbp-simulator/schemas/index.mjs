@@ -25,8 +25,13 @@ export function validateCommonEnvelope(body, expectedVerb, options = { tolerant:
   if (!body.verb) {
     errors.push("Campo obrigatório 'verb' ausente.");
   } else if (expectedVerb && body.verb !== expectedVerb) {
-    // Tolerant handling for Erratum E7 (FullRefreshChannel vs UpdateRatePlan)
-    if (!(options.tolerant && expectedVerb === "FullRefreshChannel" && body.verb === "UpdateRatePlan")) {
+    // Tolerant handling for Erratum E7 and OpenAPI documentation gaps (GetMessages/GetReviews examples)
+    const isToleratedMismatch = options.tolerant && (
+      (expectedVerb === "FullRefreshChannel" && body.verb === "UpdateRatePlan") ||
+      (expectedVerb === "GetMessages" && body.verb === "RespondMessage") ||
+      (expectedVerb === "GetReviews" && body.verb === "RespondReview")
+    );
+    if (!isToleratedMismatch) {
       errors.push(`'verb' incompatível: esperado '${expectedVerb}', recebido '${body.verb}'.`);
     }
   }
@@ -159,6 +164,26 @@ export function validateRequest(verb, body, options = { tolerant: true }) {
     case "AckBooking":
       if (!body.booking_id && body.booking_id !== 0) {
         errors.push("AckBooking requer 'booking_id'.");
+      }
+      break;
+
+    case "GetMessages":
+      // Validates common envelope
+      break;
+
+    case "SendMessage":
+      if (!body.wbp_Message_id && body.wbp_Message_id !== 0 && !body.message && !body.text) {
+        errors.push("SendMessage requer 'wbp_Message_id' ou 'message'.");
+      }
+      break;
+
+    case "GetReviews":
+      // Validates common envelope
+      break;
+
+    case "RespondReview":
+      if (!body.wbp_review_id && body.wbp_review_id !== 0 && !body.response) {
+        errors.push("RespondReview requer 'wbp_review_id' ou 'response'.");
       }
       break;
 

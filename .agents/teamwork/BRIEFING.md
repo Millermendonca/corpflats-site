@@ -1,13 +1,15 @@
-# BRIEFING — 2026-10-12T00:20:30Z
+# BRIEFING — 2026-10-14T04:16:00Z
 
 ## Mission
-Coordinate and monitor the implementation of Smart Flat Hub in Guest-Flow-Manager via Project Orchestrator (orchestrator_8).
+Coordinate and monitor the complete bidirectional integration between PMS Guest-Flow-Manager and WebBookingPro channel manager, plus the SEBRAE pricing engine overhaul, via Project Orchestrator (orchestrator_1).
 
 ## 🔒 My Identity
 - Archetype: sentinel
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork
 - Orchestrator: 26335f75-5ae5-4381-97dc-4cdaaa103cfd (completed, retired)
 - Victory Auditor: 9e6da7f8-68ed-421b-a182-55627571e821 (completed, retired)
+- Active Orchestrator (WBP): 84d9f696-67d5-4529-bec4-c0232e9abea0
+- Parent Caller: 70356aec-b041-4a86-8517-6963f7cb2aa9
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
@@ -15,42 +17,36 @@ Coordinate and monitor the implementation of Smart Flat Hub in Guest-Flow-Manage
 - Route: General (teamwork_preview_orchestrator)
 - AGENTS.md rules: no batch/global tests, git push on every commit, build verification in artifacts/limpeza
 - Twin-server SHA-256 parity when applicable
+- Dedicated branch: feature/wbp-integration (zero commits or merges to main without explicit approval)
+- Zero data loss and zero production disruption for CorpFlats Soho Residence
+- Fail-closed security: zero plaintext PAN/CVV, 5-min single-use admin token
+- Strict targeted test execution only
 
 ## User Context
-- **Last user request**: Smart Flat Hub no Guest-Flow-Manager: interface web mobile-first de controle domótico com regras operacionais de chegada em modo preview oculto (R1), programação inteligente com janela de até 30min antes do ETA (R2), ciclo fail-safe de presença e desligamento por segurança (R3), trilha sonora de boas-vindas automática no dia do check-in (R4), guia de hardware IoT e recomendações de compra (R5).
+- **Last user request**: R9 Manual refinement in `WbpHelpManualPage.tsx` (real screenshots in `artifacts/limpeza/public/manual/`, admin subtopics 1.1, 1.6 go-live checklist, 1.7 critical alerts & 08:00 summary, 1.8 provisional adapters, and full WBP error codes 1004, 1100, 1101) + previous backend vault safety directives.
 - **Pending clarifications**: none
 - **Delivered results**:
-  - Smart Flat Hub UI sandbox mobile-first em rota oculta `/preview/smart-flat` com zero exposição em produção (R1).
-  - Programação inteligente restrita a até 30min antes do ETA (R2).
-  - Ciclo fail-safe de presença com alerta preventivo e desligamento compulsório 30min pós-ETA sem entrada (R3).
-  - Trilha sonora de boas-vindas automática a partir das 14:00 no dia do check-in com Web Audio API (R4).
-  - Guia técnico de hardware IoT e lista de compras em `docs/SMART_FLAT_HARDWARE_GUIDE.md` (R5).
-  - 100% de paridade SHA-256 entre os servidores twin (`scripts/` e `artifacts/api-server/`).
-  - Suíte pontual `tests/smart-flat-hub.test.mjs` aprovada 6/6 (100%).
-  - Build do frontend aprovado com código 0 e commits enviados ao GitHub (`origin/main`).
+  - M1: Operational Safety, Storage & Simulator (commit 13d5043)
+  - M2: Canonical Availability & SEBRAE Pricing Engine (commit 6c33558)
+  - M3: ARI Mapping, 7 Restrictions & Synchronizer (commit 1a141ba)
+  - M4: Reservation Processing, Quarantine, Reconciler & Alerts (commit d8274d6)
+  - M5 (In progress): Credit Card Vault, Provisional Adapters, UI & Manual
 
 ## Project Status
-- **Phase**: complete
+- **Phase**: in progress (Milestone 5)
 - **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_8
-- **Active Orchestrator ID**: 26335f75-5ae5-4381-97dc-4cdaaa103cfd (retired)
-- **Cron 1 (Reporting)**: cancelled / cleaned up
-- **Cron 2 (Liveness)**: cancelled / cleaned up
+- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_1
+- **Active Orchestrator ID**: 84d9f696-67d5-4529-bec4-c0232e9abea0
+- **Cron 1 (Reporting)**: active (task-16)
+- **Cron 2 (Liveness)**: active (task-18)
 
 ## Victory Audit Status
-- **Triggered**: yes
-- **Auditor ID**: 9e6da7f8-68ed-421b-a182-55627571e821
-- **Verdict**: VICTORY CONFIRMED
+- **Triggered**: no (Milestone 5 in progress)
+- **Verdict**: pending
 - **Retry count**: 0
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative user request
-- PROJECT.md — Master project blueprint and feature inventory
-- docs/SMART_FLAT_HARDWARE_GUIDE.md — Comprehensive IoT hardware specification and BOM
-- tests/smart-flat-hub.test.mjs — Dedicated pontual test suite
-- artifacts/limpeza/src/pages/smart-flat-preview.tsx — Frontend Smart Flat Hub UI
-- artifacts/limpeza/src/components/smart-flat/* — Modular components
-- scripts/demo-server.mjs & artifacts/api-server/demo-server.mjs — Backend twin engines
-- orchestrator_8/handoff.md — Orchestrator handoff report
-- victory_auditor_8/handoff.md — Victory Auditor report
-- handoff.md — Sentinel final handoff report
+- docs/integracoes/webbookingpro/PROJECT.md — Architecture & Milestones
+- docs/integracoes/webbookingpro/TEST_INFRA.md — E2E Master Test Infrastructure
+- orchestrator_1/progress.md — Active orchestrator progress log

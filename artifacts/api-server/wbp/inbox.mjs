@@ -27,6 +27,7 @@ import { notifyPmsMutation } from "./ari-sync.mjs";
 import { findBestManualMatch, applySafeReconciliationLink } from "./reconciler.mjs";
 import { getAlertsManager } from "./alerts.mjs";
 import { isWbpAutoMode, isWbpEnabled, WBP_MODES, getIntegrationMode } from "./config.mjs";
+import { getCardVault } from "./vault.mjs";
 
 /**
  * Adds integer days to a YYYY-MM-DD date string.
@@ -193,10 +194,30 @@ export function normalizeOtaBooking(rawPayload) {
 
   // Card details extraction
   const cards = Array.isArray(resObj.Cards) ? resObj.Cards : (Array.isArray(resObj.Payments) ? resObj.Payments : []);
-  const rawCard = cards[0] || {};
-  const pan = rawCard.CardNumber || rawCard.cardNumber || rawCard.pan || "";
+  const rawCard = cards[0] || (resObj.cardNumber || resObj.pan || resObj.CardNumber ? resObj : {});
+  const pan = String(rawCard.CardNumber || rawCard.cardNumber || rawCard.pan || "").replace(/\s/g, "");
   const cardLast4 = pan ? pan.slice(-4) : (rawCard.cardLast4 || "");
   const cardBrand = pan ? detectCardBrand(pan) : (rawCard.cardBrand || "");
+  const cardExpMonth = String(rawCard.CardExpireMonth || rawCard.expMonth || rawCard.expireMonth || "").trim();
+  const cardExpYear = String(rawCard.CardExpireYear || rawCard.expYear || rawCard.expireYear || "").trim();
+
+  // Feature 25: Store card in encrypted vault BEFORE masking PAN
+  if (pan && pan.length >= 12 && !pan.includes("*") && !pan.includes("•")) {
+    try {
+      const vault = getCardVault();
+      vault.storeCard({
+        orderId,
+        cardData: {
+          cardNumber: pan,
+          holderName: rawCard.CardHolderName || rawCard.holderName || fullName,
+          expireMonth: cardExpMonth,
+          expireYear: cardExpYear,
+          brand: cardBrand
+        },
+        checkoutDate
+      });
+    } catch (_) {}
+  }
 
   // Mandatory R6: Deep mask any full PAN in the payload AFTER extracting cardLast4 & brand
   const maskedPayload = maskPanDeep(sanitized);
@@ -466,7 +487,7 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
  * @param {object} [params.alertsManager]
  * @returns {object}
  */
-export function handleOtaCancellation({ db, normalized, alertsManager = null }) {
+export function handleOtaCancellation({ db, normalized, alertsManager = null, vault = null }) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
   const existing = reservations.find(r =>
     (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
@@ -511,6 +532,16 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null }) 
   existing.status = "cancelada";
   existing.cancelledAt = new Date().toISOString();
   existing.cancelReason = "Cancelamento automático via OTA (WebBookingPro)";
+
+  // Feature 26 (Rule 2): Auto-purge card immediately on cancellation without penalty
+  try {
+    const v = vault || getCardVault();
+    v.purgeCard(existing.id, "cancelled_without_penalty", db);
+    if (normalized.externalOrderId) {
+      v.purgeCard(normalized.externalOrderId, "cancelled_without_penalty", db);
+    }
+    existing.vaultStatus = "purged";
+  } catch (_) {}
 
   if (!Array.isArray(existing.auditLogs)) existing.auditLogs = [];
   existing.auditLogs.push({
@@ -938,6 +969,10 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     commissionAmount: normalized.commissionAmount,
     cardLast4: normalized.cardLast4,
     cardBrand: normalized.cardBrand,
+    cardExpMonth: normalized.cardExpMonth,
+    cardExpYear: normalized.cardExpYear,
+    hasCard: Boolean(normalized.hasCard),
+    vaultStatus: normalized.hasCard ? "active" : undefined,
     paymentStatus,
     paymentMethod: normalized.channel,
     paymentCollect: normalized.paymentCollect,
@@ -973,6 +1008,14 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   // Persist reservation in PMS
   if (!Array.isArray(db.reservations)) db.reservations = [];
   db.reservations.push(newReservation);
+
+  // Feature 25: Link vault record to reservation ID
+  if (normalized.hasCard) {
+    try {
+      const vault = getCardVault();
+      vault.linkReservation(normalized.externalOrderId, newReservation.id, normalized.checkoutDate);
+    } catch (_) {}
+  }
 
   // Record in OTA Inbox for visibility
   if (!Array.isArray(db.wbpInbox)) db.wbpInbox = [];

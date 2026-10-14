@@ -17,12 +17,17 @@ Monitor and govern the PMS Guest-Flow-Manager and WebBookingPro integration proj
 - Enforce strict verification and cleanup on completion
 
 ## User Context
-- **Last user request**: HIGIENE DO REPOSITÓRIO ANTES DO COMMIT DE M4 (2026-10-14T02:42:05Z): Restaurar `artifacts/api-server/audit_logs.jsonl` com `git checkout -- artifacts/api-server/audit_logs.jsonl` (remover linhas de teste synthetic) e isolar `AUDIT_LOG_FILE` na linha ~6869 do `demo-server.mjs` (e espelho em `scripts/demo-server.mjs`) usando `process.env.AUDIT_LOG_FILE || (process.env.NODE_ENV === "test" && process.env.DATA_FILE ? path.join(path.dirname(process.env.DATA_FILE), "audit_logs.jsonl") : path.join(__dirname, "audit_logs.jsonl"))` para nunca poluir o repositório em testes.
+- **Last user request**: DIRETIVA PREVENTIVA DE ARQUITETURA PARA O MARCO 5 (2026-10-14T03:33:42Z):
+  1) Cofre de Cartões (F25/F26): AES-256-GCM com chave em env, descartar CVV em memória imediatamente e criptografar ANTES de mascarar PAN; zero PAN/CVV em logs/blob; token de 5 min de uso único para admin após senha; auto-purge em 7 dias pós-checkout e no cancelamento sem multa.
+  2) Adaptadores Provisórios (F27): mensagens e reviews isolados e desligados por padrão.
+  3) Telas de UI (F28/F29): fiéis aos mockups (Precificação R$ 149,38 -> R$ 276,63 e Caixa de Entrada OTA sem linhas duplicadas).
+  4) Manual Humano de Ajuda (F30): exclusivamente dentro do sistema com guias de Admin e Recepção, tabela de códigos de erro e capturas reais.
+  5) Build & Paridade (F31): `npm run build` em `artifacts/limpeza` com `dist/` e 100% SHA-256 em arquivos gêmeos.
 - **Pending clarifications**: none
 - **Delivered results**: Gravado em ORIGINAL_REQUEST.md e repassado imediatamente ao orquestrador (84d9f696-67d5-4529-bec4-c0232e9abea0).
 
 ## Project Status
-- **Phase**: in progress (Milestone 4 Implementation: audit_logs.jsonl isolation directive relayed)
+- **Phase**: in progress (Milestone 4 CLEARED -> Transitioning to Milestone 5)
 - **Active Orchestrator**: 84d9f696-67d5-4529-bec4-c0232e9abea0 (.agents/teamwork/orchestrator_1/)
 - **Active Worker**: worker_m4_wbp (.agents/teamwork/worker_m4_wbp/)
 - **Gate 3 Final Verdict**: PASS (unanimous 5/5)

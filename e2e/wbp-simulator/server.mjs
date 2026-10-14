@@ -38,6 +38,10 @@ export class WBPSimulator {
     this.failureModes = new Map();
     this.bookings = new Map();
     this.acknowledgedBookings = new Set();
+    this.simulatedMessages = [];
+    this.simulatedReviews = [];
+    this.sentMessagesHistory = [];
+    this.reviewResponsesHistory = [];
 
     // Default room types and rate plans
     this.roomTypes = [
@@ -183,6 +187,46 @@ export class WBPSimulator {
           return res.json({ success: true });
         }
 
+        case "GetMessages": {
+          return res.json({
+            success: true,
+            Messages: this.simulatedMessages
+          });
+        }
+
+        case "SendMessage": {
+          const sentItem = {
+            wbp_Message_id: req.body?.wbp_Message_id || 111,
+            message: req.body?.message || req.body?.text || "",
+            timestamp: new Date().toISOString()
+          };
+          this.sentMessagesHistory.push(sentItem);
+          return res.json({
+            success: true,
+            wbp_Message_id: sentItem.wbp_Message_id
+          });
+        }
+
+        case "GetReviews": {
+          return res.json({
+            success: true,
+            Reviews: this.simulatedReviews
+          });
+        }
+
+        case "RespondReview": {
+          const respItem = {
+            wbp_review_id: req.body?.wbp_review_id || 111,
+            response: req.body?.response || "",
+            timestamp: new Date().toISOString()
+          };
+          this.reviewResponsesHistory.push(respItem);
+          return res.json({
+            success: true,
+            wbp_review_id: respItem.wbp_review_id
+          });
+        }
+
         default:
           return res.status(404).json({ success: false, errors: [{ id: 1000, msg: "Endpoint não encontrado" }] });
       }
@@ -197,7 +241,11 @@ export class WBPSimulator {
       "ARIUpdate",
       "GetBookingList",
       "GetBookingId",
-      "AckBooking"
+      "AckBooking",
+      "GetMessages",
+      "SendMessage",
+      "GetReviews",
+      "RespondReview"
     ];
 
     for (const v of verbs) {
@@ -271,6 +319,10 @@ export class WBPSimulator {
     this.failureModes.clear();
     this.bookings.clear();
     this.acknowledgedBookings.clear();
+    this.simulatedMessages = [];
+    this.simulatedReviews = [];
+    this.sentMessagesHistory = [];
+    this.reviewResponsesHistory = [];
   }
 
   /**
@@ -538,5 +590,26 @@ export class WBPSimulator {
   clearHistory() {
     this.receivedRequests = [];
     this.receivedARI = [];
+    this.sentMessagesHistory = [];
+    this.reviewResponsesHistory = [];
+  }
+
+  injectMessage(msg) {
+    this.simulatedMessages.push(msg);
+  }
+
+  injectReview(review) {
+    this.simulatedReviews.push(review);
+  }
+
+  getSentMessages() {
+    return [...this.sentMessagesHistory];
+  }
+
+  getReviewResponses() {
+    return [...this.reviewResponsesHistory];
   }
 }
+
+export { WBPSimulator as WbpSimulatorServer };
+

@@ -352,3 +352,60 @@ HIGIENE DO REPOSITÓRIO ANTES DO COMMIT DE M4 (`audit_logs.jsonl`):
   2) Na linha ~6869 de `artifacts/api-server/demo-server.mjs` (e espelhar em `scripts/demo-server.mjs`), isolar o `AUDIT_LOG_FILE` em testes:
      `const AUDIT_LOG_FILE = process.env.AUDIT_LOG_FILE || (process.env.NODE_ENV === "test" && process.env.DATA_FILE ? path.join(path.dirname(process.env.DATA_FILE), "audit_logs.jsonl") : path.join(__dirname, "audit_logs.jsonl"));`
      Assim qualquer teste com `NODE_ENV === "test"` e `DATA_FILE` em `os.tmpdir()` grava `audit_logs.jsonl` no diretório temporário e nunca suja o repositório.
+
+## Follow-up — 2026-10-14T03:33:42Z
+
+DIRETIVA PREVENTIVA DE ARQUITETURA PARA O MARCO 5 (F25 a F31 — incorporar nos Explorers e Workers de M5):
+
+1) COFRE DE CARTÕES (F25 & F26 — R6):
+   - Integrar o `CreditCardVault` (AES-256-GCM com chave em variável de ambiente, nunca no blob) ao fluxo de entrada de reservas (`callbacks.mjs` / `inbox.mjs`): capturar o cartão (descartando o CVV em memória imediatamente!) e criptografá-lo no cofre ANTES do mascaramento do PAN no payload.
+   - Garantir em teste que uma varredura pelo PAN completo e pelo CVV no blob do banco, no `wbp_storage_state.json`, nos logs, no `audit_logs.jsonl` e nas respostas de listagem da API retorna **ZERO ocorrências**.
+   - Token de visualização: exige admin + redigitação da senha → gera token de **uso único** (invalidado após 1 leitura!) e **validade de 5 minutos**, gravando auditoria a cada visualização. **Não alterar o login atual dos demais usuários.**
+   - Auto-purge: expurgar automaticamente cartões **7 dias após o check-out** e **imediatamente no cancelamento sem multa** (testar ambos com avanço de tempo/data).
+
+2) ADAPTADORES PROVISÓRIOS DE MENSAGENS E AVALIAÇÕES (F27 — R7):
+   - `GetMessages`/`SendMessage` (integrado ao chat existente) e `GetReviews`/`RespondReview` (integrado ao Review Insights existente) isolados atrás de um adaptador, **desligados por padrão**, marcados como provisórios e testados contra o simulador WBP.
+
+3) TELAS DE UI FIÉIS AOS MOCKUPS APROVADOS (F28 & F29 — R4, R5):
+   - Precificação SEBRAE: seguir o layout de `mockup_precificacao_1791928509939.jpg` com os números corrigidos (**Custo por UH R$ 149,38 → Tarifa Mínima R$ 276,63** e decomposição 100%), mais o modal/painel de Pré-visualização & Publicar (`mockup_previsualizacao_v2_1791928602700.jpg`), Orçamento Anual, Indicadores por Canal (mix, receita líquida, RevPAR líquido), Mapeamento de Quartos/Planos e 7 Restrições.
+   - Caixa de Entrada OTA e Quarentena: seguir `mockup_caixa_entrada_ota_1791928543273.jpg` (sem linhas duplicadas), com abas, filtros, gaveta de resolução de quarentena, conciliação inicial e visualização segura de cartão com modal de senha do admin.
+
+4) PÁGINA DE AJUDA / MANUAL HUMANO EM PORTUGUÊS COM CAPTURAS REAIS (F30 — R9):
+   - Entregue **apenas como página de ajuda dentro do sistema**, rica e didática em português:
+     • **Parte do Administrador:** obtenção de credenciais WBP (formulário de parceria, `cid`, `shared_secret`), configuração e mapeamento de quartos/planos, modos (`off`, `observe`, `auto`) e teste no sandbox, conciliação inicial e entrada em produção, precificação SEBRAE e travas, cofre de cartões, configuração de alertas e tabela de solução de problemas por código de erro (`4`, `1001`, `1002`, `1003`, `1031`, `1102`, `9203`).
+     • **Parte da Recepção:** rotina diária, Caixa de Entrada OTA e Quarentena, resolução de conflitos, cobrança `PaymentCollect=Property` vs `Channel`.
+     • **Capturas de tela reais** das telas construídas no sistema (servidas em `public/` ou embutidas na página de ajuda).
+
+5) BUILD & PARIDADE (F31 — R10):
+   - Rodar `npm run build` em `artifacts/limpeza` e incluir `artifacts/limpeza/dist/` no commit. Manter paridade SHA-256 em 100% dos arquivos gêmeos de `artifacts/api-server/` e `scripts/`.
+
+## Follow-up — 2026-10-14T04:10:30Z
+
+AJUSTES PREVENTIVOS EM `artifacts/api-server/wbp/vault.mjs` E INTEGRAÇÃO COM `callbacks.mjs` / `inbox.mjs` (aplicar já no `worker_m5_backend` e espelhar em `scripts/wbp/`):
+
+1) Segurança de boot em Produção sem variável configurada (`vault.mjs`, linha 140):
+   - Hoje `_resolveKey()` é chamado no construtor `new CreditCardVault()` e lança `Error("Vault key missing...")` se `NODE_ENV !== "test"` e `CREDIT_CARD_VAULT_KEY` não estiver definida.
+   - Risco crítico: quando o código subir para o Render com a integração desligada por padrão (antes de o usuário cadastrar `CREDIT_CARD_VAULT_KEY` no painel do Render), qualquer chamada a `getCardVault()` no startup derrubaria o servidor!
+   - Correção: não lançar erro no construtor de `CreditCardVault`; se `CREDIT_CARD_VAULT_KEY` / `WBP_VAULT_KEY` não estiver definida, usar uma chave derivada local de fallback (com `console.warn` apenas quando tentar criptografar em produção), garantindo que o servidor sempre suba com segurança.
+
+2) Guarda do interruptor geral em `startCardAutoPurgeScheduler` (`vault.mjs`, linha 607):
+   - Se a integração estiver `off` (`!isWbpEnabled(db)`), `startCardAutoPurgeScheduler` NÃO deve registrar `setInterval` (critério de aceite: zero timers registrados com o interruptor geral desligado).
+
+3) Fiação automática do Cofre na entrada e no cancelamento (`callbacks.mjs` e `inbox.mjs`):
+   - Na entrada da reserva (`BookingCreate`, `NotifyBooking`/`GetBookingId`, `processIncomingOTA`): antes de mascarar o PAN, extrair o cartão (já sem CVV!) e gravar no cofre via `getCardVault().storeCard({ orderId, cardData, checkoutDate })`, vinculando `reservationId` e `checkoutDate` ao criar a reserva (`linkReservation`).
+   - Em `handleOtaCancellation` (`inbox.mjs`): ao cancelar a reserva (sem multa), chamar automaticamente `getCardVault().purgeCard(normalized.externalOrderId, "cancelled_without_penalty", db)` para cumprir o critério de exclusão imediata no cancelamento sem multa.
+
+## Follow-up — 2026-10-14T04:15:34Z
+
+DIRETIVAS DE REFINAMENTO DO MANUAL OPERACIONAL EM `WbpHelpManualPage.tsx` (Critério Estrito de Avaliação do R9):
+
+1. **Capturas de Tela Reais (tags `<img>`) em `WbpHelpManualPage.tsx`:**
+   - Na Seção 4 (`value="screens"`), incluir elementos reais `<img>` apontando para `/manual/...` (copiar as imagens dos mockups aprovados ou capturas reais para `artifacts/limpeza/public/manual/`, ex: `precificacao-sebrae.jpg`, `previsualizacao-publicar.jpg`, `caixa-entrada-ota.jpg`).
+   - Usar `<img src="/manual/..." alt="..." className="w-full rounded-xl border border-border shadow-sm" />` para que as capturas visuais reais sejam renderizadas na página de ajuda interna.
+
+2. **Completude Explícita de Todos os Subtópicos de Administrador (R9) na Seção 1 (`value="admin"`):**
+   - **1.1 (Credenciais):** incluir URL oficial de solicitação de parceria (`https://www.webbookingpro.com/become-a-partner/`), credenciamento de conta de teste (`cid`, `shared_secret`), alinhamentos quinzenais de status e certificação, além do uso do simulador/sandbox local (`e2e/wbp-simulator`).
+   - **1.6. Conciliação Inicial e Checklist de Entrada em Produção (Go-Live):** guia passo a passo da emissão do relatório de conciliação inicial (`/api/wbp/reconciliation-report`) antes de ligar o modo `auto`, vinculação segura de reservas manuais existentes (`channel` + `checkIn`/`checkOut` + similaridade de nome >= 80%) sem duplicar nem alterar, envio de casos ambíguos para quarentena, validação prévia em modo `observe` e disparo da carga completa de ARI inicial (até 31/dez do ano seguinte).
+   - **1.7. Configuração de Alertas Críticos e Resumo Diário (08:00):** documentação do badge de notificação no sistema, alertas de WhatsApp/e-mail para a gerência nos 4 eventos críticos (reserva em quarentena, overbooking, falha de envio de ARI > 15 min, preço retido pela trava de variação), resumo diário às 08:00 (recebidas, canceladas, pendentes) e checkboxes de opt-in/opt-out por canal e evento.
+   - **1.8. Mensagens e Avaliações (Adaptador Provisório):** explicitar que `GetMessages`/`SendMessage` e `GetReviews`/`RespondReview` estão isolados em adaptador provisório, desligados por padrão até a homologação da especificação final pela WebBookingPro.
+   - **Seção 2 (Códigos de Erro):** adicionar também os códigos de erro `1004` (Invalid rate plan / room mapping) e `1100` / `1101` (Invalid date range / past date) de `docs/wbp/README.md` para cobrir todos os códigos `FAULT.OTA.*` documentados.

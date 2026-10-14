@@ -95,3 +95,58 @@ export function getWbpConfig(db = null) {
     maxRetries: parseInt(process.env.WBP_MAX_RETRIES || "3", 10)
   };
 }
+
+/**
+ * Checks if provisional messages feature is enabled.
+ * Default is FALSE per Requirement R7.
+ *
+ * @param {object} [db]
+ * @returns {boolean}
+ */
+export function isProvisionalMessagesEnabled(db = null) {
+  if (process.env.WBP_PROVISIONAL_MESSAGES_ENABLED === "true") return true;
+  return db?.settings?.wbp_provisional_messages_enabled === true;
+}
+
+/**
+ * Checks if provisional reviews feature is enabled.
+ * Default is FALSE per Requirement R7.
+ *
+ * @param {object} [db]
+ * @returns {boolean}
+ */
+export function isProvisionalReviewsEnabled(db = null) {
+  if (process.env.WBP_PROVISIONAL_REVIEWS_ENABLED === "true") return true;
+  return db?.settings?.wbp_provisional_reviews_enabled === true;
+}
+
+/**
+ * Toggles provisional messages feature in database settings.
+ *
+ * @param {boolean} enabled
+ * @param {object} db
+ * @returns {boolean}
+ */
+export function setProvisionalMessagesEnabled(enabled, db) {
+  if (db) {
+    if (!db.settings) db.settings = {};
+    db.settings.wbp_provisional_messages_enabled = Boolean(enabled);
+  }
+  return Boolean(enabled);
+}
+
+/**
+ * Toggles provisional reviews feature in database settings.
+ *
+ * @param {boolean} enabled
+ * @param {object} db
+ * @returns {boolean}
+ */
+export function setProvisionalReviewsEnabled(enabled, db) {
+  if (db) {
+    if (!db.settings) db.settings = {};
+    db.settings.wbp_provisional_reviews_enabled = Boolean(enabled);
+  }
+  return Boolean(enabled);
+}
+

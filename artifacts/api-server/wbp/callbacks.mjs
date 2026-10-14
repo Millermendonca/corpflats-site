@@ -27,10 +27,12 @@ import { WBPClient } from "./client.mjs";
 import { getAriSynchronizer } from "./ari-sync.mjs";
 import { processIncomingOTA, stripCvvDeep, maskPan, detectCardBrand } from "./inbox.mjs";
 import { getAlertsManager } from "./alerts.mjs";
+import { getCardVault } from "./vault.mjs";
 
 /**
  * Recursively sanitizes card data deeply in memory:
  * - Discards any variant of CVV/CVC/security_code immediately.
+ * - Stores card in encrypted vault BEFORE masking PAN.
  * - Masks full PAN if present, preserving only brand and last 4 digits.
  *
  * @param {any} payload
@@ -40,13 +42,13 @@ export function sanitizeCardDataInMemory(payload) {
   if (!payload || typeof payload !== "object") return payload;
   const clone = JSON.parse(JSON.stringify(payload));
 
-  function scrub(obj) {
+  // 1. First pass: scrub all CVV/CVC fields deeply
+  function scrubCvv(obj) {
     if (!obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) {
-      obj.forEach(scrub);
+      obj.forEach(scrubCvv);
       return;
     }
-
     for (const key of Object.keys(obj)) {
       const lower = key.toLowerCase();
       if (
@@ -54,10 +56,61 @@ export function sanitizeCardDataInMemory(payload) {
         lower.includes("cvc") ||
         lower.includes("security_code") ||
         lower === "securitycode" ||
-        lower === "card_cvv"
+        lower === "card_cvv" ||
+        lower === "cid"
       ) {
         delete obj[key];
-      } else if (lower === "cardnumber" || lower === "card_number" || lower === "pan") {
+      } else if (typeof obj[key] === "object") {
+        scrubCvv(obj[key]);
+      }
+    }
+  }
+  scrubCvv(clone);
+
+  // 2. Extract card and store into vault BEFORE masking PAN
+  try {
+    const resObj = clone.reservation || clone.booking || clone.Booking || clone;
+    const cards = Array.isArray(resObj.Cards) ? resObj.Cards : (Array.isArray(resObj.Payments) ? resObj.Payments : []);
+    const rawCard = cards[0] || (resObj.cardNumber || resObj.pan || resObj.CardNumber ? resObj : null);
+    const orderId = String(
+      resObj.OrderId || resObj.orderId || clone.orderId || clone.OrderId || clone.booking_id || ""
+    ).trim();
+
+    if (rawCard) {
+      const pan = String(rawCard.CardNumber || rawCard.cardNumber || rawCard.pan || "").replace(/\s/g, "");
+      if (pan && pan.length >= 12 && !pan.includes("*") && !pan.includes("•")) {
+        const checkoutDate = resObj.checkoutDate || resObj.checkout || resObj.EndDate || null;
+        const holderName = rawCard.CardHolderName || rawCard.holderName || resObj.guestName || "Hóspede OTA";
+        const expireMonth = String(rawCard.CardExpireMonth || rawCard.expMonth || rawCard.expireMonth || "").trim();
+        const expireYear = String(rawCard.CardExpireYear || rawCard.expYear || rawCard.expireYear || "").trim();
+        const brand = detectCardBrand(pan);
+
+        const vault = getCardVault();
+        vault.storeCard({
+          orderId,
+          cardData: {
+            cardNumber: pan,
+            holderName,
+            expireMonth,
+            expireYear,
+            brand
+          },
+          checkoutDate
+        });
+      }
+    }
+  } catch (_) {}
+
+  // 3. Second pass: deeply mask any full PAN
+  function scrubPan(obj) {
+    if (!obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) {
+      obj.forEach(scrubPan);
+      return;
+    }
+    for (const key of Object.keys(obj)) {
+      const lower = key.toLowerCase();
+      if (lower === "cardnumber" || lower === "card_number" || lower === "pan") {
         const val = String(obj[key]);
         if (val.length >= 8) {
           obj.cardBrand = detectCardBrand(val);
@@ -65,12 +118,12 @@ export function sanitizeCardDataInMemory(payload) {
           obj[key] = maskPan(val);
         }
       } else if (typeof obj[key] === "object") {
-        scrub(obj[key]);
+        scrubPan(obj[key]);
       }
     }
   }
+  scrubPan(clone);
 
-  scrub(clone);
   return clone;
 }
 
