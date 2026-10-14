@@ -2050,33 +2050,6 @@ function sanitizeAndRecoverCleanings() {
       createdAt: "2026-09-01T06:13:30.314Z",
       updatedAt: "2026-09-01T18:43:20.067Z"
     },
-    {
-      id: 1,
-      flatId: 22,
-      flatNumber: "509",
-      requestDate: "2026-09-01",
-      effectiveDate: "2026-09-01",
-      source: "checkout",
-      status: "clean",
-      assignedUserId: 3,
-      assignedUsername: "Grazi",
-      assignedUserName: "Grazi",
-      isVacant: true,
-      isPriority: false,
-      isExtended: false,
-      twinBeds: false,
-      extraMattress: false,
-      adminNote: null,
-      leavingGuest: "Fabiano",
-      arrivingGuest: null,
-      pendingObservation: null,
-      willCleanAt: "2026-09-01T18:40:49.412Z",
-      cleaningStartedAt: "2026-09-01T18:05:00.000Z",
-      completedAt: "2026-09-01T18:40:49.441Z",
-      durationMinutes: 35,
-      createdAt: "2026-09-01T18:40:49.412Z",
-      updatedAt: "2026-09-01T18:40:49.441Z"
-    },
     // 02/09/2026 - Cris (4 quartos)
     {
       id: 225,
@@ -2568,6 +2541,7 @@ function sanitizeAndRecoverCleanings() {
   const uniqueSeen = new Set();
   db.cleaningRequests = db.cleaningRequests.filter(r => {
     if (!r) return false;
+    if (r.id === 1 && (r.flatId === 22 || r.requestDate === "2026-09-01")) return false;
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     const key = isInst ? `${r.flatNumber || r.flatId}_${r.requestDate}_inst_${r.id}` : `${r.flatNumber || r.flatId}_${r.requestDate}_${r.status}`;
     if (uniqueSeen.has(key)) return false;
@@ -2582,6 +2556,101 @@ function sanitizeAndRecoverCleanings() {
     if (!db.cleaningRates.userRates) db.cleaningRates.userRates = {};
     if (db.cleaningRates.userRates["2"] === undefined) db.cleaningRates.userRates["2"] = 22.50;
     if (db.cleaningRates.userRates["3"] === undefined) db.cleaningRates.userRates["3"] = 23.25;
+  }
+
+  // 6. Reconciliação financeira canônica de Setembro (remoção de Flat 22 fantasma, ajuste de taxa e quitação da 2ª Quinzena de Setembro)
+  if (!Array.isArray(db.maidPayments)) db.maidPayments = [];
+  if (!Array.isArray(db.maidStatementEntries)) db.maidStatementEntries = [];
+
+  db.maidStatementEntries = db.maidStatementEntries.filter(e => {
+    if (!e) return false;
+    if (e.description === "Diária — Flat 22" || (e.entryType === "credit" && e.cleaningRequestId === 1)) return false;
+    return true;
+  });
+
+  for (const e of db.maidStatementEntries) {
+    if (e.entryType === "credit" && (e.entryDate || "") >= "2026-09-01") {
+      if (e.userId === 2 && Math.abs(Number(e.amount || 0) - 22.50) > 0.001) e.amount = 22.50;
+      if (e.userId === 3 && Math.abs(Number(e.amount || 0) - 23.25) > 0.001) e.amount = 23.25;
+    }
+  }
+
+  const canonicalSetQ2Payments = [
+    {
+      payment: {
+        id: "pay_set_q2_user_2",
+        userId: 2,
+        type: "payment",
+        amount: 1260,
+        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
+        referencePeriod: "2026-09-16_2026-09-30",
+        interTxId: "ACERTO_20260930",
+        interStatus: "CONCLUIDO",
+        interSimulated: true,
+        interError: null,
+        pixKey: null,
+        whatsappSent: false,
+        createdBy: 1,
+        createdAt: "2026-09-30T23:00:00.000Z",
+        paidAt: "2026-09-30T23:00:00.000Z"
+      },
+      entry: {
+        id: "stmt_pay_set_q2_user_2",
+        userId: 2,
+        cleaningRequestId: null,
+        paymentId: "pay_set_q2_user_2",
+        entryType: "debit",
+        amount: 1260,
+        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
+        entryDate: "2026-09-30",
+        createdAt: "2026-09-30T23:00:00.000Z"
+      }
+    },
+    {
+      payment: {
+        id: "pay_set_q2_user_3",
+        userId: 3,
+        type: "payment",
+        amount: 778.75,
+        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
+        referencePeriod: "2026-09-16_2026-09-30",
+        interTxId: "ACERTO_20260930",
+        interStatus: "CONCLUIDO",
+        interSimulated: true,
+        interError: null,
+        pixKey: null,
+        whatsappSent: false,
+        createdBy: 1,
+        createdAt: "2026-09-30T23:00:00.000Z",
+        paidAt: "2026-09-30T23:00:00.000Z"
+      },
+      entry: {
+        id: "stmt_pay_set_q2_user_3",
+        userId: 3,
+        cleaningRequestId: null,
+        paymentId: "pay_set_q2_user_3",
+        entryType: "debit",
+        amount: 778.75,
+        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
+        entryDate: "2026-09-30",
+        createdAt: "2026-09-30T23:00:00.000Z"
+      }
+    }
+  ];
+
+  for (const item of canonicalSetQ2Payments) {
+    const hasPay = db.maidPayments.some(
+      p => p.id === item.payment.id || (p.userId === item.payment.userId && p.type === "payment" && p.referencePeriod === "2026-09-16_2026-09-30" && !p.reversedAt)
+    );
+    if (!hasPay) {
+      db.maidPayments.push(item.payment);
+    }
+    const hasEntry = db.maidStatementEntries.some(
+      e => e.id === item.entry.id || e.paymentId === item.payment.id
+    );
+    if (!hasEntry) {
+      db.maidStatementEntries.push(item.entry);
+    }
   }
 }
 
@@ -5381,14 +5450,14 @@ async function loadDatabase() {
             serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
             serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers
           });
-          syncMaidCredits(2);
-          syncMaidCredits(3);
           pgHydratedSuccessfully = true;
+          const mod2 = syncMaidCredits(2);
+          const mod3 = syncMaidCredits(3);
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
-          if (didChange) {
+          if (didChange || mod2 || mod3) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
-            saveDatabase();
           }
+          saveDatabase();
         } else if (querySucceeded) {
           pgHydratedSuccessfully = true;
           console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
@@ -37980,26 +38049,61 @@ function getMaidBalance(userId) {
 
 function syncMaidCredits(userId) {
   ensureMaidPaymentsDb();
-  const beforeLen = (db.maidStatementEntries || []).length;
-  syncMaidCreditsCanonical(db, userId);
-  if ((db.maidStatementEntries || []).length !== beforeLen) {
+  const modified = syncMaidCreditsCanonical(db, userId);
+  if (modified) {
     saveDatabase();
   }
+  return modified;
 }
 
 function buildStatement(userId) {
   syncMaidCredits(userId);
   ensureMaidPaymentsDb();
 
+  const paymentMap = new Map((db.maidPayments || []).map(p => [p.id, p]));
+  const cleaningMap = new Map((db.cleaningRequests || []).map(c => [c.id, c]));
+
   const entries = db.maidStatementEntries
     .filter(e => e.userId === userId)
-    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+    .slice()
+    .sort((a, b) => {
+      const payA = a.paymentId ? paymentMap.get(a.paymentId) : null;
+      const payB = b.paymentId ? paymentMap.get(b.paymentId) : null;
+
+      const refEndA = (payA?.type === "payment" && payA?.referencePeriod?.includes("_"))
+        ? payA.referencePeriod.split("_")[1]
+        : null;
+      const refEndB = (payB?.type === "payment" && payB?.referencePeriod?.includes("_"))
+        ? payB.referencePeriod.split("_")[1]
+        : null;
+
+      const dateA = a.entryDate || (a.createdAt ? getExecutionDateStr(a.createdAt) : "");
+      const dateB = b.entryDate || (b.createdAt ? getExecutionDateStr(b.createdAt) : "");
+
+      const effDateA = (refEndA && dateA >= refEndA) ? refEndA : dateA;
+      const effDateB = (refEndB && dateB >= refEndB) ? refEndB : dateB;
+
+      if (effDateA !== effDateB) {
+        return effDateA.localeCompare(effDateB);
+      }
+
+      const isClosingPayA = Boolean(refEndA || (a.entryType === "debit" && (payA?.type === "payment" || a.description?.toLowerCase().includes("pagamento"))));
+      const isClosingPayB = Boolean(refEndB || (b.entryType === "debit" && (payB?.type === "payment" || b.description?.toLowerCase().includes("pagamento"))));
+      if (isClosingPayA !== isClosingPayB) {
+        return isClosingPayA ? 1 : -1;
+      }
+
+      const cleanA = a.cleaningRequestId ? cleaningMap.get(a.cleaningRequestId) : null;
+      const cleanB = b.cleaningRequestId ? cleaningMap.get(b.cleaningRequestId) : null;
+      const tsA = cleanA?.completedAt || a.createdAt || "";
+      const tsB = cleanB?.completedAt || b.createdAt || "";
+      return tsA.localeCompare(tsB);
+    });
 
   let balance = 0;
   return entries.map(e => {
-    const payment = e.paymentId
-      ? (db.maidPayments || []).find(p => p.id === e.paymentId)
-      : null;
+    const payment = e.paymentId ? paymentMap.get(e.paymentId) || null : null;
+    const cleaning = e.cleaningRequestId ? cleaningMap.get(e.cleaningRequestId) || null : null;
 
     const isReversed = Boolean(e.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO");
     if (!isReversed) {
@@ -38012,6 +38116,7 @@ function buildStatement(userId) {
 
     return {
       ...e,
+      createdAt: (e.entryType === "credit" && cleaning?.completedAt) ? cleaning.completedAt : e.createdAt,
       balanceAfter: Math.round(balance * 100) / 100,
       payment: payment ? {
         id: payment.id,
