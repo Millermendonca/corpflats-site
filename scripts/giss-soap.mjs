@@ -2,8 +2,12 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import crypto from "crypto";
+import { fileURLToPath } from "url";
 import forge from "node-forge";
 import { SignedXml } from "xml-crypto";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 const HOST_HOMOLOG = "ws-homologacao-rtc.giss.com.br";
@@ -20,7 +24,12 @@ function getSoapHost() {
 
 // ─── Carrega certificado ──────────────────────────────────────────────────────
 export function loadCert() {
-  for (const envCandidate of [path.resolve(process.cwd(), ".env"), path.resolve("..", ".env")]) {
+  for (const envCandidate of [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(__dirname, "../../.env"),
+    path.resolve(__dirname, "../.env"),
+    path.resolve("..", "..", ".env")
+  ]) {
     try {
       if (fs.existsSync(envCandidate)) {
         const lines = fs.readFileSync(envCandidate, "utf-8").split(/\r?\n/);
@@ -42,14 +51,22 @@ export function loadCert() {
   }
   const password = (process.env.CERT_PFX_PASSWORD || process.env.CERT_PASS || process.env.CERT_PASSWORD || "").trim();
 
-
   let pfxBuf;
   const b64 = process.env.CERT_PFX_BASE64;
   if (b64 && b64.trim().length > 0) {
     pfxBuf = Buffer.from(b64.trim(), "base64");
   } else {
-    const certPath = path.resolve("storage/certs/certificado_corpflats_a1.pfx");
-    pfxBuf = fs.readFileSync(certPath);
+    const certCandidates = [
+      path.resolve(process.cwd(), "storage/certs/certificado_corpflats_a1.pfx"),
+      path.resolve(__dirname, "../../storage/certs/certificado_corpflats_a1.pfx"),
+      path.resolve(__dirname, "../storage/certs/certificado_corpflats_a1.pfx"),
+      path.resolve("storage/certs/certificado_corpflats_a1.pfx")
+    ];
+    const foundCert = certCandidates.find(p => fs.existsSync(p));
+    if (!foundCert) {
+      throw new Error("Certificado PFX não encontrado em storage/certs/certificado_corpflats_a1.pfx");
+    }
+    pfxBuf = fs.readFileSync(foundCert);
   }
 
   const p12Asn1 = forge.asn1.fromDer(pfxBuf.toString("binary"));
@@ -113,7 +130,7 @@ function signElement(xml, elementId, privKeyPem, certPem) {
 }
 
 // ─── Assina o documento inteiro (URI vazia) — exigido pelo GISS em consultas ──
-function signWholeDoc(xml, privKeyPem, certPem) {
+export function signWholeDoc(xml, privKeyPem, certPem) {
   const certClean = certPem
     .replace(/-----BEGIN CERTIFICATE-----/g, "")
     .replace(/-----END CERTIFICATE-----/g, "")
@@ -244,15 +261,15 @@ export function buildAndSignEnvio(rpsData, privKeyPem, certPem) {
   return signElement(loteComRpsAssinado, loteId, privKeyPem, certPem);
 }
 
-function buildCabecalho() {
+export function buildCabecalho() {
   return `<cabecalho xmlns="http://www.giss.com.br/cabecalho-v2_04.xsd" versao="2.04"><versaoDados>2.04</versaoDados></cabecalho>`;
 }
 
-function wrapSoap(action, cabec, dados) {
+export function wrapSoap(action, cabec, dados) {
   return `<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://nfse.abrasf.org.br"><soapenv:Header/><soapenv:Body><ns:${action}Request><nfseCabecMsg><![CDATA[${cabec}]]></nfseCabecMsg><nfseDadosMsg><![CDATA[${dados}]]></nfseDadosMsg></ns:${action}Request></soapenv:Body></soapenv:Envelope>`;
 }
 
-async function callSoap(soapAction, body, pfxBuf, password) {
+export async function callSoap(soapAction, body, pfxBuf, password) {
   const { host, path: urlPath } = getSoapHost();
 
   return new Promise((resolve, reject) => {
@@ -287,8 +304,8 @@ async function callSoap(soapAction, body, pfxBuf, password) {
   });
 }
 
-function extractOutputXml(rawResponse) {
-  const outputMatch = rawResponse.match(/<outputXML>([sS]*?)<\/outputXML>/);
+export function extractOutputXml(rawResponse) {
+  const outputMatch = rawResponse.match(/<outputXML>([\s\S]*?)<\/outputXML>/);
   return outputMatch
     ? outputMatch[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
     : rawResponse;

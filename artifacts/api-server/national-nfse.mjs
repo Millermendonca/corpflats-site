@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-for (const envCandidate of [path.resolve(__dirname, "../../.env"), path.resolve(process.cwd(), ".env")]) {
+for (const envCandidate of [path.resolve(__dirname, "../../.env"), path.resolve(__dirname, "../.env"), path.resolve(process.cwd(), ".env")]) {
   try {
     if (fs.existsSync(envCandidate)) {
       const lines = fs.readFileSync(envCandidate, "utf-8").split(/\r?\n/);

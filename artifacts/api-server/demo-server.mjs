@@ -5262,11 +5262,13 @@ async function loadDatabase() {
         } catch (_) {}
 
         let res = null;
+        let querySucceeded = false;
         let attempts = 0;
         const maxAttempts = 5;
         while (attempts < maxAttempts) {
           try {
             res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+            querySucceeded = true;
             break;
           } catch (qErr) {
             attempts++;
@@ -5377,9 +5379,12 @@ async function loadDatabase() {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
           }
-        } else {
+        } else if (querySucceeded) {
           pgHydratedSuccessfully = true;
           console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
+        } else {
+          pgHydratedSuccessfully = false;
+          console.error("[PostgreSQL] CRÍTICO: Todas as tentativas de leitura inicial de db_state falharam. Escrita em nuvem bloqueada preventivamente para evitar sobrescrita de dados.");
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha crítica ao sincronizar estado inicial:", err.message);
@@ -6974,15 +6979,19 @@ async function flushPgState() {
   } catch (e) {
     lastPersistInfo = { status: "error", timestamp: new Date().toISOString(), error: e.message };
     console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
+    if (!pendingPgStateJson) {
+      pendingPgStateJson = stateToSave;
+    }
+    pendingPgDirty = true;
   } finally {
     isPgSaving = false;
     if (pendingPgDirty || pendingPgStateJson) {
-      setTimeout(flushPgState, 500);
+      setTimeout(flushPgState, 1500);
     }
   }
 }
 
-// ── Pruning Engine — Limita coleções em memória para evitar OOM (512MB Render Free) ──
+// ── Pruning Engine — Limita coleções em memória para evitar OOM (2GB Render Container) ──
 function pruneDatabase() {
   const LIMITS = {
     whatsappHistory: 500,
@@ -7022,14 +7031,13 @@ function pruneDatabase() {
     );
   }
 
-  // Limpeza de reservas muito antigas (manter últimos 180 dias + ativas/futuras)
-  if (Array.isArray(db.reservations) && db.reservations.length > 800) {
-    const cutoffDate = getOffsetDateStr(-180);
+  // Preserva histórico completo de reservas confirmadas/concluídas para Sazonalidade SEBRAE (12+ meses) e fiscal.
+  // Apenas remove reservas canceladas/expiradas com mais de 730 dias caso a coleção ultrapasse 2500 itens.
+  if (Array.isArray(db.reservations) && db.reservations.length > 2500) {
+    const cutoffDate = getOffsetDateStr(-730);
     db.reservations = db.reservations.filter(r =>
       (r.checkoutDate && r.checkoutDate >= cutoffDate) ||
-      r.status === "confirmada" ||
-      r.status === "checkin" ||
-      r.status === "pendente"
+      (r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "CANCELLED" && r.status !== "expirada")
     );
   }
 
@@ -8743,6 +8751,7 @@ app.post("/api/auth/login", (req, res) => {
   const token = createAuthToken(userPayload);
   res.cookie(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 dias
@@ -10665,12 +10674,22 @@ function getRequestsForDate(dateStr, isNested = false) {
 }
 
 app.post("/api/admin/reset-cleaning-cache", (req, res) => {
+  const userAuth = getAuthUser(req);
+  const isLocalDev = process.env.NODE_ENV !== "production" && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1");
+  if ((!userAuth || userAuth.role !== "admin") && !isLocalDev && process.env.NODE_ENV !== "test") {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
   db.cleaningRequests = [];
   saveDatabase();
   res.json({ success: true, count: 0 });
 });
 
 app.post("/api/reservations/clear-all", (req, res) => {
+  const userAuth = getAuthUser(req);
+  const isLocalDev = process.env.NODE_ENV !== "production" && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1");
+  if ((!userAuth || userAuth.role !== "admin") && !isLocalDev && process.env.NODE_ENV !== "test") {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
   const count = (db.reservations || []).length;
   db.reservations = [];
   if (db.guestBreakfastOrders) db.guestBreakfastOrders = [];
@@ -11417,7 +11436,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
 
       if (status === "clean") {
-        const isAdmin = (userAuth ? userAuth.role === "admin" : true) || Boolean(bodyMarkedByAdmin);
+        const isAdmin = Boolean((userAuth && userAuth.role === "admin") || bodyMarkedByAdmin);
         if (isAdmin) {
           item.markedByAdmin = true;
         }
@@ -12218,7 +12237,7 @@ app.post("/api/service-orders", (req, res) => {
 
   const {
     title,
-    cleanFlatMode = "priority",
+    cleanFlatMode: rawCleanFlatMode,
     allowedRoomStatuses: rawAllowedStatuses,
     maxSimultaneousFlats = 2,
     maxFlatsPerDay = 4,
@@ -12269,6 +12288,10 @@ app.post("/api/service-orders", (req, res) => {
     ? rawAllowedStatuses.filter(s => VALID_ROOM_STATUSES.includes(s))
     : [...DEFAULT_ALLOWED_ROOM_STATUSES];
 
+  const cleanFlatMode = ["never", "priority", "always"].includes(rawCleanFlatMode)
+    ? rawCleanFlatMode
+    : (Array.isArray(rawAllowedStatuses) ? "always" : "priority");
+
   const newOrder = {
     id: `so_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     title: String(title).trim(),
@@ -12276,7 +12299,7 @@ app.post("/api/service-orders", (req, res) => {
     status: req.body.status || "active",
     createdAt: new Date().toISOString(),
     createdBy: userAuth.name || userAuth.username || "admin",
-    cleanFlatMode: ["never", "priority", "always"].includes(cleanFlatMode) ? cleanFlatMode : "priority",
+    cleanFlatMode,
     allowedRoomStatuses,
     maxSimultaneousFlats: Math.max(1, parseInt(maxSimultaneousFlats, 10) || 2),
     maxFlatsPerDay: Math.max(1, parseInt(maxFlatsPerDay, 10) || 4),
@@ -28334,9 +28357,13 @@ app.post("/api/nfse/emit", async (req, res) => {
 
   try {
     const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
-    const maxRps = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.numeroRps || i.numeroNfse || i.id || 0))) : 875;
+    const rpsCandidates = (db.invoices || [])
+      .map(i => Number(i.numeroRps || 0))
+      .filter(n => n > 0 && n < 10000000);
+    const maxRps = rpsCandidates.length > 0 ? Math.max(...rpsCandidates) : 876;
+    const timeBasedRps = Math.floor(Date.now() / 1000) % 900000 + 100000;
     const nextDpsNumber = maxId + 1;
-    const nextRpsNumber = Math.max(maxRps + 1, 875);
+    const nextRpsNumber = Math.max(maxRps + 1, timeBasedRps);
 
     let numeroNfse;
     let codigoVerificacao;
