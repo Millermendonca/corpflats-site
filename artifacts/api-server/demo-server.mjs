@@ -138,7 +138,7 @@ import {
   querySystemData,
   callGeminiAi
 } from "./whatsapp-ai-service.mjs";
-import { createWbpCallbackRouter } from "./wbp/callbacks.mjs";
+import { createWbpCallbackRouter, WbpBackgroundWorker } from "./wbp/callbacks.mjs";
 import { getIntegrationMode, isWbpEnabled, setIntegrationMode, WBP_MODES } from "./wbp/config.mjs";
 import { defaultStorage as wbpStorage } from "./wbp/storage.mjs";
 import {
@@ -161,6 +161,23 @@ import {
   getWbpRestrictionsState,
   resolveRestrictions
 } from "./wbp/ari-sync.mjs";
+import {
+  processIncomingOTA,
+  allocateFairShareFlat,
+  routeToQuarantine,
+  normalizeOtaBooking
+} from "./wbp/inbox.mjs";
+import {
+  generateReconciliationReport,
+  findBestManualMatch,
+  applySafeReconciliationLink
+} from "./wbp/reconciler.mjs";
+import {
+  getAlertsManager,
+  getWbpAlertSettings,
+  updateWbpAlertSettings
+} from "./wbp/alerts.mjs";
+import { WBPClient } from "./wbp/client.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -756,7 +773,21 @@ let db = {
 if (pgPool) {
   wbpStorage.pgPool = pgPool;
 }
-app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage }));
+const wbpAlertsManager = getAlertsManager();
+const wbpClient = new WBPClient({ db });
+const wbpWorker = new WbpBackgroundWorker({ db, storage: wbpStorage, client: wbpClient, alertsManager: wbpAlertsManager });
+
+// Wire persistent failure alerts from ARI Synchronizer to Alerts Manager
+const wbpAriSync = getAriSynchronizer(db, wbpClient, wbpStorage);
+wbpAriSync.onAlert = (payload) => {
+  if (payload.type === "persistent_failure") {
+    wbpAlertsManager.sendPersistentSyncFailureAlert(payload, db);
+  } else if (payload.type === "recovery") {
+    wbpAlertsManager.sendSyncRecoveryAlert(payload, db);
+  }
+};
+
+app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage, client: wbpClient, worker: wbpWorker, alertsManager: wbpAlertsManager, saveDatabase }));
 
 app.get("/api/wbp/mode", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -989,6 +1020,436 @@ app.post("/api/wbp/restrictions", (req, res) => {
     }
     saveDatabase("wbp_restrictions_update");
     res.json({ success: true, restrictions: state });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── WebBookingPro: Quarantine Management Endpoints (Feature 20) ───────────
+app.get("/api/wbp/quarantine", (req, res) => {
+  try {
+    if ((!Array.isArray(db.wbpQuarantine) || db.wbpQuarantine.length === 0) && process.env.DATA_FILE && fs.existsSync(process.env.DATA_FILE)) {
+      try {
+        const diskData = JSON.parse(fs.readFileSync(process.env.DATA_FILE, "utf8"));
+        if (Array.isArray(diskData.wbpQuarantine) && diskData.wbpQuarantine.length > 0) {
+          db.wbpQuarantine = diskData.wbpQuarantine;
+        }
+      } catch (_) {}
+    }
+
+    const quarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const { status, channel, reason } = req.query;
+
+    let filtered = quarantine;
+    if (status) {
+      filtered = filtered.filter(q => q.status === status);
+    }
+    if (channel) {
+      filtered = filtered.filter(q => String(q.channel).toLowerCase() === String(channel).toLowerCase());
+    }
+    if (reason) {
+      filtered = filtered.filter(q => q.reason === reason);
+    }
+
+    const pendingCount = quarantine.filter(q => q.status === "pending").length;
+    res.json({
+      success: true,
+      count: filtered.length,
+      pendingCount,
+      items: filtered
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/quarantine", (req, res) => {
+  try {
+    if (!Array.isArray(db.wbpQuarantine)) db.wbpQuarantine = [];
+    const item = req.body || {};
+    if (!item.id) item.id = `quar_${Date.now()}`;
+    if (!item.status) item.status = "pending";
+    db.wbpQuarantine.push(item);
+    saveDatabase("wbp_quarantine_created");
+    res.json({ success: true, item });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/wbp/quarantine/:id", (req, res) => {
+  try {
+    if ((!Array.isArray(db.wbpQuarantine) || !db.wbpQuarantine.some(q => q.id === req.params.id)) && process.env.DATA_FILE && fs.existsSync(process.env.DATA_FILE)) {
+      try {
+        const diskData = JSON.parse(fs.readFileSync(process.env.DATA_FILE, "utf8"));
+        if (Array.isArray(diskData.wbpQuarantine)) {
+          db.wbpQuarantine = diskData.wbpQuarantine;
+        }
+      } catch (_) {}
+    }
+
+    const quarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const item = quarantine.find(q => q.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item de quarentena não encontrado." });
+    }
+
+    // Include live availability analysis for context
+    let liveAvailability = null;
+    if (item.checkinDate && item.checkoutDate) {
+      try {
+        const availMap = calculateCanonicalAvailability(item.checkinDate, item.checkoutDate, { db });
+        liveAvailability = {
+          totalFlats: availMap.totalFlats,
+          minAvailable: availMap.minAvailable,
+          daily: availMap.daily
+        };
+      } catch (_) {}
+    }
+
+    res.json({
+      success: true,
+      item,
+      liveAvailability
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/quarantine/:id/resolve", (req, res) => {
+  try {
+    const quarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const item = quarantine.find(q => q.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item de quarentena não encontrado." });
+    }
+    if (item.status !== "pending") {
+      return res.status(400).json({ error: `Item já finalizado com status '${item.status}'.` });
+    }
+
+    const { action = "assign_flat", flatNumber, forceOverride, notes, pmsReservationId, user = "admin" } = req.body || {};
+
+    if (action === "assign_flat") {
+      if (!flatNumber) {
+        return res.status(400).json({ error: "flatNumber é obrigatório para alocação manual." });
+      }
+
+      // Check conflict on chosen flat
+      const conflictCheck = checkReservationConflicts({
+        flatNumber: String(flatNumber),
+        checkinDate: item.checkinDate,
+        checkoutDate: item.checkoutDate,
+        db
+      });
+
+      if (conflictCheck.hasConflict && !forceOverride) {
+        return res.status(400).json({
+          success: false,
+          conflict: true,
+          error: "Conflito detectado no flat selecionado. Utilize forceOverride=true para forçar a alocação.",
+          warnings: conflictCheck.warnings
+        });
+      }
+
+      // Find flat info
+      const flats = getCanonicalFlats(db);
+      const flatObj = flats.find(f => String(f.number) === String(flatNumber)) || { id: Number(flatNumber), number: String(flatNumber) };
+
+      if (!Array.isArray(db.reservations)) db.reservations = [];
+      const nextId = db.reservations.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
+      const code = `RES-${flatNumber}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const isPropertyCollect = item.paymentCollect === "Property";
+      const paymentStatus = isPropertyCollect ? "pendente" : "pago_total";
+      const paidAmount = isPropertyCollect ? 0 : Number(item.totalPrice || 0);
+
+      const newRes = {
+        id: nextId,
+        code,
+        flatId: flatObj.id,
+        flatNumber: String(flatNumber),
+        guestName: item.guestName,
+        guestEmail: item.guestEmail,
+        guestPhone: item.guestPhone,
+        checkinDate: item.checkinDate,
+        checkoutDate: item.checkoutDate,
+        guestCount: (item.adults || 1) + (item.children || 0),
+        adults: item.adults || 1,
+        children: item.children || 0,
+        totalAmount: item.totalPrice || 0,
+        dailyRate: item.nights > 0 ? Number(((item.totalPrice || 0) / item.nights).toFixed(2)) : (item.totalPrice || 0),
+        paidAmount,
+        paymentStatus,
+        paymentMethod: item.channel,
+        paymentCollect: item.paymentCollect,
+        collectAtCheckin: isPropertyCollect,
+        channel: item.channel,
+        externalOrderId: item.bookingId,
+        wbpBookingId: item.bookingId,
+        breakfastIncluded: Boolean(item.breakfastIncluded),
+        ratePlanId: item.ratePlanId || "sem_cafe",
+        status: "ativa",
+        pixTxId: null,
+        pixCopiaECola: null,
+        wbpSynced: true,
+        createdAt: new Date().toISOString(),
+        auditLogs: [
+          {
+            timestamp: new Date().toISOString(),
+            action: "QUARANTINE_MANUALLY_RESOLVED",
+            details: `Reserva liberada da quarentena pelo usuário ${user}. Alocado no Flat ${flatNumber}. Motivo original: ${item.reason}. ${notes ? `Notas: ${notes}` : ""}`
+          }
+        ]
+      };
+
+      if (isPropertyCollect) {
+        newRes.receptionAlert = `COBRAR NO CHECK-IN: R$ ${Number(item.totalPrice || 0).toFixed(2)}`;
+      }
+
+      db.reservations.push(newRes);
+
+      item.status = "resolved";
+      item.resolvedAt = new Date().toISOString();
+      item.resolvedBy = user;
+      item.resolutionAction = "manual_assigned";
+      item.resolutionNotes = notes || null;
+      item.assignedFlatNumber = String(flatNumber);
+      item.assignedFlatId = flatObj.id;
+      item.createdReservationId = newRes.id;
+      item.createdReservationCode = newRes.code;
+
+      saveDatabase("wbp_quarantine_resolved");
+
+      // Trigger incremental ARI sync for stay dates
+      try {
+        notifyPmsMutation(db, {
+          type: "reservation_created",
+          checkinDate: newRes.checkinDate,
+          checkoutDate: newRes.checkoutDate
+        });
+      } catch (_) {}
+
+      return res.json({
+        success: true,
+        resolved: true,
+        action: "manual_assigned",
+        reservation: newRes,
+        quarantineItem: item
+      });
+    }
+
+    if (action === "link_manual") {
+      if (!pmsReservationId) {
+        return res.status(400).json({ error: "pmsReservationId é obrigatório para vincular reserva manual." });
+      }
+      const existingRes = (db.reservations || []).find(r => r.id === Number(pmsReservationId) || r.code === String(pmsReservationId));
+      if (!existingRes) {
+        return res.status(404).json({ error: "Reserva manual não encontrada no PMS." });
+      }
+
+      applySafeReconciliationLink(existingRes, {
+        externalOrderId: item.bookingId,
+        wbpBookingId: item.bookingId,
+        paymentCollect: item.paymentCollect
+      }, { db });
+
+      item.status = "resolved";
+      item.resolvedAt = new Date().toISOString();
+      item.resolvedBy = user;
+      item.resolutionAction = "linked_manual";
+      item.resolutionNotes = notes || null;
+      item.createdReservationId = existingRes.id;
+      item.createdReservationCode = existingRes.code;
+
+      saveDatabase("wbp_quarantine_linked_manual");
+
+      return res.json({
+        success: true,
+        resolved: true,
+        action: "linked_manual",
+        reservation: existingRes,
+        quarantineItem: item
+      });
+    }
+
+    res.status(400).json({ error: `Ação desconhecida: ${action}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/quarantine/:id/reject", (req, res) => {
+  try {
+    const quarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const item = quarantine.find(q => q.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item de quarentena não encontrado." });
+    }
+
+    const { reason, notes, user = "admin" } = req.body || {};
+    item.status = "rejected";
+    item.resolvedAt = new Date().toISOString();
+    item.resolvedBy = user;
+    item.resolutionAction = "rejected_cancelled";
+    item.resolutionNotes = notes || reason || "Rejeitado pelo operador";
+
+    saveDatabase("wbp_quarantine_rejected");
+    res.json({ success: true, rejected: true, item });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/quarantine/:id/link", (req, res) => {
+  try {
+    const quarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const item = quarantine.find(q => q.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item de quarentena não encontrado." });
+    }
+    const { pmsReservationId, notes, user = "admin" } = req.body || {};
+    const existingRes = (db.reservations || []).find(r => r.id === Number(pmsReservationId) || r.code === String(pmsReservationId));
+    if (!existingRes) {
+      return res.status(404).json({ error: "Reserva manual não encontrada no PMS." });
+    }
+
+    applySafeReconciliationLink(existingRes, {
+      externalOrderId: item.bookingId,
+      wbpBookingId: item.bookingId,
+      paymentCollect: item.paymentCollect
+    }, { db });
+
+    item.status = "resolved";
+    item.resolvedAt = new Date().toISOString();
+    item.resolvedBy = user;
+    item.resolutionAction = "linked_manual";
+    item.resolutionNotes = notes || null;
+    item.createdReservationId = existingRes.id;
+    item.createdReservationCode = existingRes.code;
+
+    saveDatabase("wbp_quarantine_linked_manual");
+    res.json({ success: true, linked: true, reservation: existingRes, item });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── WebBookingPro: Reservation Reconciliation Endpoints (Feature 22) ───────────
+app.get("/api/wbp/reconciliation/report", (req, res) => {
+  try {
+    const otaBookings = (Array.isArray(db.wbpInbox) ? db.wbpInbox : [])
+      .map(i => i.normalized)
+      .filter(Boolean);
+
+    const report = generateReconciliationReport({ db, otaBookings });
+    res.json({ success: true, ...report });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/reconciliation/link-all-safe", (req, res) => {
+  try {
+    const otaBookings = (Array.isArray(db.wbpInbox) ? db.wbpInbox : [])
+      .map(i => i.normalized)
+      .filter(Boolean);
+
+    const report = generateReconciliationReport({ db, otaBookings });
+    let linkedCount = 0;
+
+    for (const match of report.matched) {
+      if (!match.isLinked) {
+        const pmsRes = (db.reservations || []).find(r => r.id === match.pmsReservationId);
+        if (pmsRes) {
+          applySafeReconciliationLink(pmsRes, {
+            externalOrderId: match.otaBookingId,
+            wbpBookingId: match.otaBookingId
+          }, { db });
+          linkedCount++;
+        }
+      }
+    }
+
+    saveDatabase("wbp_reconciliation_bulk_linked");
+    res.json({ success: true, linkedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/reconciliation/link-single", (req, res) => {
+  try {
+    const { pmsReservationId, otaBookingId, channel, paymentCollect } = req.body || {};
+    if (!pmsReservationId || !otaBookingId) {
+      return res.status(400).json({ error: "pmsReservationId e otaBookingId são obrigatórios." });
+    }
+
+    const pmsRes = (db.reservations || []).find(r => r.id === Number(pmsReservationId) || r.code === String(pmsReservationId));
+    if (!pmsRes) {
+      return res.status(404).json({ error: "Reserva manual não encontrada no PMS." });
+    }
+
+    applySafeReconciliationLink(pmsRes, {
+      externalOrderId: otaBookingId,
+      wbpBookingId: otaBookingId,
+      channel,
+      paymentCollect
+    }, { db });
+
+    saveDatabase("wbp_reconciliation_single_linked");
+    res.json({ success: true, reservation: pmsRes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── WebBookingPro: Alerts & Settings Endpoints (Feature 24) ────────────────────
+app.get("/api/wbp/alerts/settings", (req, res) => {
+  try {
+    const settings = getWbpAlertSettings(db);
+    res.json({ success: true, settings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/alerts/settings", (req, res) => {
+  try {
+    const updated = updateWbpAlertSettings(db, req.body || {});
+    saveDatabase("wbp_alerts_settings_update");
+    res.json({ success: true, settings: updated });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/alerts/trigger-daily-summary", async (req, res) => {
+  try {
+    const alertsManager = getAlertsManager();
+    const result = await alertsManager.dispatchDailySummaryAlert(db, { force: true });
+    saveDatabase("wbp_daily_summary_triggered");
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── WebBookingPro: OTA Inbox Endpoints (Feature 19) ────────────────────────────
+app.get("/api/wbp/inbox", (req, res) => {
+  try {
+    const inbox = Array.isArray(db.wbpInbox) ? db.wbpInbox : [];
+    res.json({ success: true, count: inbox.length, items: inbox });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/worker/poll", async (req, res) => {
+  try {
+    const result = await wbpWorker.runPollCycle();
+    saveDatabase("wbp_worker_poll");
+    res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -6405,7 +6866,7 @@ process.on("SIGINT", () => {
 });
 
 // ── Fail-Safe Audit Log Engine ───────────────────────────────────────────────
-const AUDIT_LOG_FILE = path.join(__dirname, "audit_logs.jsonl");
+const AUDIT_LOG_FILE = process.env.AUDIT_LOG_FILE || (process.env.NODE_ENV === "test" && process.env.DATA_FILE ? path.join(path.dirname(process.env.DATA_FILE), "audit_logs.jsonl") : path.join(__dirname, "audit_logs.jsonl"));
 
 async function logAuditEvent(arg1, arg2) {
   try {
@@ -14195,10 +14656,18 @@ app.post("/api/pms/reservations", async (req, res) => {
 
   const chanLower = String(channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+  const isPropertyCollect = Boolean(
+    req.body.paymentCollect === "Property" ||
+    paymentCollect === "Property" ||
+    req.body.collectAtCheckin === true ||
+    collectAtCheckin === true
+  );
   let resolvedPaidAmount = Number(paidAmount) || 0;
   let resolvedPaymentStatus = paymentStatus || "pendente";
-  if (isOta && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
+  if (isOta && !isPropertyCollect && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
     resolvedPaymentStatus = "pago_total";
+  } else if (isOta && isPropertyCollect) {
+    resolvedPaymentStatus = "pendente";
   }
 
   let resolvedPaymentMethod = paymentMethod;
@@ -14222,11 +14691,14 @@ app.post("/api/pms/reservations", async (req, res) => {
     })).filter(p => p.amount > 0 || p.method);
   }
 
-  if (isOta) {
+  if (isOta && !isPropertyCollect) {
     resolvedPaymentStatus = "pago_total";
     if (finalTotalAmount > 0) {
       resolvedPaidAmount = finalTotalAmount;
     }
+  } else if (isOta && isPropertyCollect) {
+    resolvedPaymentStatus = "pendente";
+    resolvedPaidAmount = Number(paidAmount) || 0;
   }
 
   if (normalizedPayments.length > 0) {
@@ -14495,6 +14967,11 @@ app.post("/api/pms/reservations", async (req, res) => {
     totalAmount: finalTotalAmount,
     paidAmount: resolvedPaidAmount,
     paymentStatus: resolvedPaymentStatus,
+    paymentCollect: req.body.paymentCollect || (isPropertyCollect ? "Property" : (isOta ? "Channel" : undefined)),
+    collectAtCheckin: Boolean(isPropertyCollect),
+    receptionAlert: isPropertyCollect ? `COBRAR NO CHECK-IN: R$ ${finalTotalAmount.toFixed(2)}` : (req.body.receptionAlert || undefined),
+    externalOrderId: req.body.externalOrderId || undefined,
+    wbpBookingId: req.body.wbpBookingId || undefined,
     payments: normalizedPayments,
     adults: numGuests,
     children: Number(children),

@@ -639,13 +639,19 @@ export class WbpAriSynchronizer {
 
     if (!this.maxWaitTimer) {
       this.maxWaitTimer = setTimeout(() => {
-        this.flushIncrementalSync();
+        this.flushIncrementalSync().catch(err => {
+          console.warn("[ARI Sync] Falha em flushIncrementalSync assíncrono:", err.message);
+        });
       }, this.maxWaitMs);
+      if (this.maxWaitTimer?.unref) this.maxWaitTimer.unref();
     }
 
     this.debounceTimer = setTimeout(() => {
-      this.flushIncrementalSync();
+      this.flushIncrementalSync().catch(err => {
+        console.warn("[ARI Sync] Falha em flushIncrementalSync assíncrono:", err.message);
+      });
     }, this.debounceMs);
+    if (this.debounceTimer?.unref) this.debounceTimer.unref();
 
     return {
       scheduled: true,
