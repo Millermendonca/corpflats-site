@@ -656,7 +656,7 @@ export default function ServiceOrders() {
         }))
         .filter((c) => c.name.length > 0 && c.cpf.length === 11);
 
-      const shouldClearWorker = Boolean(editingOrderId && !trimmedWorkerName && !cleanedWorkerCpf);
+      const shouldClearWorker = Boolean(editingOrderId && !trimmedWorkerName && !cleanedWorkerCpf && !cleanedWorkerPhone);
 
       const bodyPayload = {
         title: formTitle.trim(),

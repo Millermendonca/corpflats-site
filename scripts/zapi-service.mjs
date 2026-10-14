@@ -1536,10 +1536,11 @@ export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
     return true;
   }
 
+  const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+
   // 2. Camareiras e equipe interna: permitidas por padrão mesmo em modo de teste
   //    (para que seus resumos diários às 18:00 e alertas de limpeza continuem sendo disparados normalmente)
   if (config?.allowMaidsInTestMode !== false) {
-    const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
     if (activeDb && Array.isArray(activeDb.users)) {
       const isStaffOrMaid = activeDb.users.some(u => {
         if (u.active === false) return false;
@@ -1556,6 +1557,34 @@ export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
       if (isStaffOrMaid) {
         return true;
       }
+    }
+  }
+
+  // 3. Módulo de Prestadores de Serviço (serviceWorkers e serviceOrders): liberado para qualquer número cadastrado no módulo
+  if (activeDb) {
+    const matchesTarget = (rawPhone) => {
+      if (!rawPhone) return false;
+      const digits = String(rawPhone).replace(/\D/g, "");
+      if (!digits || digits.length < 8) return false;
+      return digits === targetDigits ||
+             (digits.endsWith(targetDigits) && targetDigits.length >= 8) ||
+             (targetDigits.endsWith(digits) && digits.length >= 8);
+    };
+
+    if (Array.isArray(activeDb.serviceWorkers)) {
+      const isServiceWorker = activeDb.serviceWorkers.some(w => matchesTarget(w?.mainWorker?.phone || w?.phone));
+      if (isServiceWorker) return true;
+    }
+
+    if (Array.isArray(activeDb.serviceOrders)) {
+      const isInServiceOrder = activeDb.serviceOrders.some(o => {
+        if (matchesTarget(o?.workerPhone)) return true;
+        if (Array.isArray(o?.notificationRecipients)) {
+          return o.notificationRecipients.some(r => r && r.enabled !== false && matchesTarget(r.phone));
+        }
+        return false;
+      });
+      if (isInServiceOrder) return true;
     }
   }
 
@@ -2675,7 +2704,9 @@ export async function sendZapiDocument(config, {
     bypassTestMode || 
     recipientRole === "camareira" || 
     recipientRole === "cleaner" || 
-    recipientRole === "staff"
+    recipientRole === "staff" ||
+    recipientRole === "service_worker" ||
+    recipientRole === "prestador"
   );
 
   // Trava de Segurança: Modo de Teste / Sandbox
@@ -2812,7 +2843,9 @@ export async function sendZapiMessage(config, {
     bypassTestMode || 
     recipientRole === "camareira" || 
     recipientRole === "cleaner" || 
-    recipientRole === "staff"
+    recipientRole === "staff" ||
+    recipientRole === "service_worker" ||
+    recipientRole === "prestador"
   );
 
   // Trava de Segurança: Modo de Teste / Sandbox
@@ -2833,7 +2866,9 @@ export async function sendZapiMessage(config, {
       phone: cleanPhone,
       document: fileBase64 || documentUrl,
       fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
-      caption: documentCaption || ""
+      caption: documentCaption || "",
+      bypassTestMode,
+      recipientRole
     });
   }
 
@@ -3050,7 +3085,9 @@ export async function sendZapiMessage(config, {
         phone: cleanPhone,
         document: fileBase64 || documentUrl,
         fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
-        caption: documentCaption || ""
+        caption: documentCaption || "",
+        bypassTestMode,
+        recipientRole
       });
       primaryResult.documentResult = docResult;
       primaryResult.hasDocument = true;
@@ -5670,7 +5707,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       sendMode,
       documentUrl: finalDocUrl,
       documentName: finalDocName,
-      documentCaption: hasDocTest ? documentCaption : undefined
+      documentCaption: hasDocTest ? documentCaption : undefined,
+      bypassTestMode: true
     });
 
     // Grava log do teste
@@ -5778,9 +5816,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const recipients = getReservationRecipients(reservation, db);
-    const targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both"
-    const requestedPhone = req.body.phone ? String(req.body.phone).trim() : null;
-    if (requestedPhone && recipients.guest) {
+    const targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "custom"
+    const requestedPhone = req.body.customPhone ? String(req.body.customPhone).trim() : (req.body.phone ? String(req.body.phone).trim() : null);
+    if (requestedPhone && recipients.guest && targetMode === "guest") {
       recipients.guest.phone = requestedPhone;
       recipients.guest.cleanDigits = requestedPhone.replace(/\D/g, "");
     }
@@ -5788,28 +5826,36 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const dispatches = [];
 
-    if (targetMode === "guest" || targetMode === "both") {
+    if (targetMode === "custom" && requestedPhone) {
       dispatches.push({
         type: "guest",
-        name: recipients.guest.name,
-        phone: requestedPhone || recipients.guest.phone || fallbackPhone
+        name: req.body.customName || recipients.guest.name,
+        phone: requestedPhone
       });
-    }
+    } else {
+      if (targetMode === "guest" || targetMode === "both") {
+        dispatches.push({
+          type: "guest",
+          name: recipients.guest.name,
+          phone: (targetMode === "guest" && requestedPhone) ? requestedPhone : (recipients.guest.phone || fallbackPhone)
+        });
+      }
 
-    if (targetMode === "requester" || targetMode === "both") {
-      if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
-        if (recipients.requester.phone) {
-          dispatches.push({
-            type: "requester",
-            name: recipients.requester.name,
-            phone: recipients.requester.phone
-          });
-        } else if (targetMode === "requester") {
-          dispatches.push({
-            type: "guest",
-            name: recipients.guest.name,
-            phone: requestedPhone || recipients.guest.phone || fallbackPhone
-          });
+      if (targetMode === "requester" || targetMode === "both") {
+        if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
+          if (recipients.requester.phone) {
+            dispatches.push({
+              type: "requester",
+              name: recipients.requester.name,
+              phone: (targetMode === "requester" && req.body.customPhone) ? String(req.body.customPhone).trim() : recipients.requester.phone
+            });
+          } else if (targetMode === "requester") {
+            dispatches.push({
+              type: "guest",
+              name: recipients.guest.name,
+              phone: requestedPhone || recipients.guest.phone || fallbackPhone
+            });
+          }
         }
       }
     }
@@ -5817,8 +5863,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (dispatches.length === 0) {
       dispatches.push({
         type: "guest",
-        name: recipients.guest.name,
-        phone: recipients.guest.phone || fallbackPhone
+        name: req.body.customName || recipients.guest.name,
+        phone: requestedPhone || recipients.guest.phone || fallbackPhone
       });
     }
 
@@ -5830,7 +5876,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!db.whatsappHistory) db.whatsappHistory = [];
 
     for (const d of dispatches) {
-      const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type, template);
+      const baseMsgText = (typeof req.body.customMessage === "string" && req.body.customMessage.trim())
+        ? req.body.customMessage
+        : template.message;
+      const renderedMessage = resolveWhatsAppTags(baseMsgText, reservation, db, baseUrl, d.type, template);
       const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type, template);
 
       // Disparo manual intencional pelo operador (PMS ou CRM): sempre bypassTestMode para enviar via Z-API
@@ -6764,7 +6813,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const sendOptions = {
       phone: cleanPhone,
       message: finalMessage,
-      buttons: Array.isArray(buttons) ? buttons : []
+      buttons: Array.isArray(buttons) ? buttons : [],
+      bypassTestMode: true
     };
 
     if (mediaType === "document" || fileName || (mediaUrl && mediaUrl.endsWith(".pdf"))) {
@@ -7983,7 +8033,7 @@ export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, c
 /**
  * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
  */
-export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null } = {}) {
+export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false } = {}) {
   const sendButtons = buttons || item.renderedButtons || [];
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
   let waResult = null;
@@ -8010,6 +8060,7 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
         title: item.title,
         footer: item.footer,
         buttons: sendButtons,
+        bypassTestMode: Boolean(bypassTestMode || method === "manual"),
         ...(shouldSendDoc ? { documentUrl: item.documentUrl, documentName: item.documentName } : {})
       });
     } finally {

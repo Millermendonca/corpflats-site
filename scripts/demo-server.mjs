@@ -9657,15 +9657,19 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
 
     const hasEvent = (evts, ev) => {
       const list = normalizeEvents(evts);
+      if (list.includes("all") || list.includes("todos")) return true;
       if (ev === "entry_request") return list.includes("entry_request") || list.includes("solicitacao_entrada") || list.includes("liberacao");
       if (ev === "start") return list.includes("start") || list.includes("inicio");
       if (ev === "finish") return list.includes("finish") || list.includes("fim") || list.includes("finalizacao");
-      if (ev === "delay" || ev === "overdue_alert") return list.includes("delay") || list.includes("atraso") || list.includes("previsao");
+      if (ev === "delay" || ev === "overdue_alert") {
+        return list.includes("delay") || list.includes("atraso") || list.includes("previsao") || list.includes("start") || list.includes("inicio") || list.includes("finish") || list.includes("fim") || list.includes("finalizacao");
+      }
       return false;
     };
 
     if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
       for (const rec of order.notificationRecipients) {
+        if (!rec || rec.enabled === false) continue;
         let shouldNotify = hasEvent(rec.events, action);
         // Se for notificação de liberação de entrada e o destinatário for da garagem, apenas envia se o prestador informou uso de garagem
         if (action === "entry_request" && (rec.role === "garage" || /garagem/i.test(rec.name))) {
@@ -9697,7 +9701,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       const cleanWp = workerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(workerPhone) : String(workerPhone).replace(/\D/g, "")) : null;
       if (cleanWp && typeof sendZapiMessage === "function") {
         const estFinishStr = flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--";
-        const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "http://localhost:3000";
+        const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.onrender.com";
         const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
         const workerPromptMsg = [
           `⚠️ *Aviso de Previsão de Serviço* — Flat *${flat.flatNumber}*`,
@@ -9708,7 +9712,21 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         sendZapiMessage(db.zapiConfig, {
           phone: cleanWp,
           message: workerPromptMsg,
-          bypassTestMode: true
+          bypassTestMode: true,
+          recipientRole: "service_worker"
+        }).then(waRes => {
+          if (!db.whatsappHistory) db.whatsappHistory = [];
+          db.whatsappHistory.push({
+            id: `svc_overdue_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            guestName: workerName || "Prestador",
+            guestPhone: cleanWp,
+            triggerEvent: "service_order_overdue_alert",
+            message: workerPromptMsg,
+            sentAt: new Date().toISOString(),
+            status: waRes?.success ? "sent" : "failed",
+            method: waRes?.simulated ? "simulated" : "zapi",
+            error: waRes?.error || null
+          });
         }).catch(err => console.warn(`[ServiceOrder] WhatsApp overdue prompt to worker ${cleanWp} failed:`, err.message));
       }
     }
@@ -9718,7 +9736,21 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         sendZapiMessage(db.zapiConfig, {
           phone,
           message,
-          bypassTestMode: true
+          bypassTestMode: true,
+          recipientRole: "service_worker"
+        }).then(waRes => {
+          if (!db.whatsappHistory) db.whatsappHistory = [];
+          db.whatsappHistory.push({
+            id: `svc_${action}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            guestName: `Ordem de Serviço (${order.title})`,
+            guestPhone: phone,
+            triggerEvent: `service_order_${action}`,
+            message,
+            sentAt: new Date().toISOString(),
+            status: waRes?.success ? "sent" : "failed",
+            method: waRes?.simulated ? "simulated" : "zapi",
+            error: waRes?.error || null
+          });
         }).catch(err => console.warn(`[ServiceOrder] WhatsApp to ${phone} failed:`, err.message));
       }
     }
@@ -9746,7 +9778,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         }
       };
 
-      const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "";
+      const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "";
       for (let i = 0; i < flat.photos.length; i++) {
         const rawUrl = flat.photos[i];
         const photoUrl = rawUrl && rawUrl.startsWith("http") ? rawUrl : (serverBaseUrl ? `${serverBaseUrl.replace(/\/+$/, "")}${rawUrl}` : rawUrl);
@@ -9828,9 +9860,10 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
   }
 }
 
-function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
+function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {}) {
   try {
-    if (!Array.isArray(db.serviceOrders) || !Array.isArray(db.serviceWorkers)) return [];
+    if (!Array.isArray(db.serviceOrders)) return [];
+    if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     const todayStr = getTodayStr();
     const nowIso = new Date().toISOString();
     const nowMs = Date.now();
@@ -9842,11 +9875,15 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
       if (targetOrderId && String(order.id) !== String(targetOrderId) && String(order.token) !== String(targetOrderId)) continue;
 
       const worker = db.serviceWorkers.find(
-        w => (w.token === order.token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf
+        w => (w.token === order.token || w.serviceOrderId === order.id)
       );
       const rawPhone = worker?.mainWorker?.phone || order.workerPhone || "";
       const cleanWp = rawPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawPhone) : String(rawPhone).replace(/\D/g, "")) : "";
-      if (!worker || !cleanWp || cleanWp.length < 10) continue;
+      if (!cleanWp || cleanWp.length < 10) continue;
+
+      const workerName = (worker?.mainWorker?.name || order.workerName || "Prestador").trim();
+      const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.onrender.com";
+      const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
 
       const flats = Array.isArray(order.flats) ? order.flats : [];
       const maxSimul = Number(order.maxSimultaneousFlats) || 2;
@@ -9903,7 +9940,7 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
 
         if (!flat.workerNotifiedAvailable) {
           const lastNotifiedMs = flat.workerNotifiedAvailableAt ? new Date(flat.workerNotifiedAvailableAt).getTime() : 0;
-          if (lastNotifiedMs && (nowMs - lastNotifiedMs) < 5 * 60 * 1000 && flat.workerLastNotifiedPhone === cleanWp) {
+          if (!options?.onWorkerRegistered && lastNotifiedMs && (nowMs - lastNotifiedMs) < 5 * 60 * 1000 && flat.workerLastNotifiedPhone === cleanWp) {
             flat.workerNotifiedAvailable = true;
             updated = true;
             continue;
@@ -9928,9 +9965,8 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
       }
 
       if (newlyAvailableFlats.length > 0) {
-        const workerName = (worker.mainWorker?.name || "Prestador").trim();
-        const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "http://localhost:3000";
-        const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
+        order.lastRegistrationWelcomePhone = cleanWp;
+        updated = true;
 
         const flatLines = newlyAvailableFlats.map(item => {
           const arrivalNote = item.hasCheckinToday ? ` · Entrada prevista: ${item.expectedArrival || "14:00"}` : "";
@@ -9978,8 +10014,72 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
           sendZapiMessage(db.zapiConfig, {
             phone: cleanWp,
             message: msgText,
-            bypassTestMode: true
+            bypassTestMode: true,
+            recipientRole: "service_worker"
+          }).then(waRes => {
+            if (!db.whatsappHistory) db.whatsappHistory = [];
+            db.whatsappHistory.push({
+              id: `svc_avail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              guestName: workerName,
+              guestPhone: cleanWp,
+              triggerEvent: "service_order_room_available",
+              message: msgText,
+              sentAt: new Date().toISOString(),
+              status: waRes?.success ? "sent" : "failed",
+              method: waRes?.simulated ? "simulated" : "zapi",
+              error: waRes?.error || null
+            });
           }).catch(err => console.warn(`[ServiceOrder] WhatsApp room available to worker ${cleanWp} failed:`, err.message));
+        }
+      } else if (options?.onWorkerRegistered && order.lastRegistrationWelcomePhone !== cleanWp) {
+        const pendingFlats = flats.filter(f => f.status === "pending");
+        if (pendingFlats.length > 0) {
+          order.lastRegistrationWelcomePhone = cleanWp;
+          updated = true;
+
+          const pendingNumbers = pendingFlats.map(f => `Flat ${f.flatNumber}`).join(", ");
+          const welcomeMsg = [
+            `🔧 *Ordem de Serviço Vinculada* — *${order.title}*`,
+            `Olá, *${workerName}*! Seu cadastro e WhatsApp foram vinculados com sucesso a esta Ordem de Serviço no *CorpFlats*.`,
+            ``,
+            `📋 *Apartamentos programados (${pendingFlats.length}):* ${pendingNumbers}`,
+            `⏳ Assim que um apartamento atingir o critério de liberação para execução, você receberá uma notificação automática aqui no WhatsApp.`,
+            ``,
+            `🔗 *Link do seu Portal de Serviço:*`,
+            portalUrl
+          ].join("\n");
+
+          notificationsSent.push({
+            orderId: order.id,
+            token: order.token,
+            workerPhone: cleanWp,
+            workerName,
+            flats: pendingFlats.map(f => f.flatNumber),
+            message: welcomeMsg,
+            type: "registration_welcome"
+          });
+
+          if (typeof sendZapiMessage === "function") {
+            sendZapiMessage(db.zapiConfig, {
+              phone: cleanWp,
+              message: welcomeMsg,
+              bypassTestMode: true,
+              recipientRole: "service_worker"
+            }).then(waRes => {
+              if (!db.whatsappHistory) db.whatsappHistory = [];
+              db.whatsappHistory.push({
+                id: `svc_reg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                guestName: workerName,
+                guestPhone: cleanWp,
+                triggerEvent: "service_order_worker_registered",
+                message: welcomeMsg,
+                sentAt: new Date().toISOString(),
+                status: waRes?.success ? "sent" : "failed",
+                method: waRes?.simulated ? "simulated" : "zapi",
+                error: waRes?.error || null
+              });
+            }).catch(err => console.warn(`[ServiceOrder] WhatsApp registration welcome to worker ${cleanWp} failed:`, err.message));
+          }
         }
       }
     }
@@ -12550,8 +12650,8 @@ app.get("/api/service-orders", (req, res) => {
     const worker = (db.serviceWorkers || []).find(w => w.token === o.token || w.serviceOrderId === o.id);
     return {
       ...o,
-      workerName: worker?.mainWorker?.name || null,
-      workerCpf: worker?.mainWorker?.cpf || null,
+      workerName: worker?.mainWorker?.name || o.workerName || null,
+      workerCpf: worker?.mainWorker?.cpf || o.workerCpf || null,
       workerPhone: worker?.mainWorker?.phone || o.workerPhone || null,
       workerCollaborators: Array.isArray(worker?.collaborators) ? worker.collaborators : [],
       workerVehicle: worker?.vehicle || null
@@ -12679,12 +12779,17 @@ app.post("/api/service-orders", (req, res) => {
     blockStartDate: blockStartDate || null,
     blockEndDate: blockEndDate || null,
     flats: formattedFlats,
+    workerName: String(req.body.workerName || req.body.mainWorker?.name || "").trim() || null,
+    workerCpf: String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "") || null,
     workerPhone: req.body.workerPhone || req.body.mainWorker?.phone || null
   };
 
   const preWorkerName = String(req.body.workerName || req.body.mainWorker?.name || "").trim();
   const preWorkerCpf = String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "");
   const preWorkerPhone = String(req.body.workerPhone || req.body.mainWorker?.phone || "").replace(/\D/g, "");
+  const cleanedPrePhone = preWorkerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(preWorkerPhone) : preWorkerPhone) : "";
+  newOrder.workerPhone = cleanedPrePhone || null;
+
   const rawPreCollabs = req.body.workerCollaborators || req.body.collaborators || [];
   const preCollaborators = Array.isArray(rawPreCollabs)
     ? rawPreCollabs.map(c => ({ name: String(c?.name || "").trim(), cpf: String(c?.cpf || "").replace(/\D/g, "") })).filter(c => c.name && c.cpf.length === 11)
@@ -12696,16 +12801,16 @@ app.post("/api/service-orders", (req, res) => {
     modelColor: String(rawPreVehicle.modelColor || "").trim()
   } : { needsGarage: false, plate: "", modelColor: "" };
 
-  if (preWorkerName && preWorkerCpf.length === 11) {
+  if (preWorkerName || cleanedPrePhone || preWorkerCpf) {
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     db.serviceWorkers.push({
       id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       serviceOrderId: newOrder.id,
       token: newOrder.token,
       mainWorker: {
-        name: preWorkerName,
+        name: preWorkerName || "Prestador",
         cpf: preWorkerCpf,
-        phone: preWorkerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(preWorkerPhone) : preWorkerPhone) : ""
+        phone: cleanedPrePhone
       },
       collaborators: preCollaborators,
       vehicle: preVehicle,
@@ -12718,7 +12823,7 @@ app.post("/api/service-orders", (req, res) => {
   syncServiceOrderRoomBlocks(newOrder);
   saveDatabase("create_service_order");
 
-  checkAndNotifyAvailableServiceFlats(newOrder.id);
+  checkAndNotifyAvailableServiceFlats(newOrder.id, { onWorkerRegistered: Boolean(cleanedPrePhone) });
 
   try {
     const todayStr = getTodayStr();
@@ -12753,8 +12858,8 @@ app.get("/api/service-orders/:id", (req, res) => {
   res.json({
     ...order,
     allowedRoomStatuses: getAllowedRoomStatuses(order),
-    workerName: worker?.mainWorker?.name || null,
-    workerCpf: worker?.mainWorker?.cpf || null,
+    workerName: worker?.mainWorker?.name || order.workerName || null,
+    workerCpf: worker?.mainWorker?.cpf || order.workerCpf || null,
     workerPhone: worker?.mainWorker?.phone || order.workerPhone || null,
     workerCollaborators: Array.isArray(worker?.collaborators) ? worker.collaborators : [],
     workerVehicle: worker?.vehicle || null
@@ -12790,9 +12895,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (body.maxFlatsPerDay !== undefined) order.maxFlatsPerDay = Math.max(1, parseInt(body.maxFlatsPerDay, 10) || 4);
   if (body.requirePhotos !== undefined) order.requirePhotos = Boolean(body.requirePhotos);
   if (body.estimatedDurationHours !== undefined) order.estimatedDurationHours = body.estimatedDurationHours ? Number(body.estimatedDurationHours) : null;
+  const previousOrderPhone = order.workerPhone || "";
   if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
   if (body.notificationRecipients !== undefined) order.notificationRecipients = Array.isArray(body.notificationRecipients) ? body.notificationRecipients : [];
-  if (body.workerPhone !== undefined) order.workerPhone = String(body.workerPhone || "").replace(/\D/g, "") || null;
+  if (body.workerPhone !== undefined) {
+    const rawWp = String(body.workerPhone || "").replace(/\D/g, "");
+    order.workerPhone = rawWp ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawWp) : rawWp) : null;
+  }
   if (body.blockFlats !== undefined || body.interdictFlats !== undefined) {
     const shouldBlock = Boolean(body.blockFlats ?? body.interdictFlats);
     order.blockFlats = shouldBlock;
@@ -12836,14 +12945,20 @@ app.patch("/api/service-orders/:id", (req, res) => {
     body.workerName !== undefined &&
     body.workerCpf !== undefined &&
     !String(body.workerName || "").trim() &&
-    !String(body.workerCpf || "").replace(/\D/g, "")
+    !String(body.workerCpf || "").replace(/\D/g, "") &&
+    !String(body.workerPhone ?? body.mainWorker?.phone ?? "").replace(/\D/g, "")
   );
+
+  let shouldTriggerWorkerRegistered = false;
 
   if (wantsToClearWorker) {
     if (Array.isArray(db.serviceWorkers)) {
       db.serviceWorkers = db.serviceWorkers.filter(w => w.token !== order.token && w.serviceOrderId !== order.id);
     }
+    order.workerName = null;
+    order.workerCpf = null;
     order.workerPhone = null;
+    order.lastRegistrationWelcomePhone = null;
     for (const f of (order.flats || [])) {
       if (f.status === "pending") {
         f.workerNotifiedAvailable = false;
@@ -12857,13 +12972,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
 
     const wName = body.workerName !== undefined || body.mainWorker?.name !== undefined
       ? String(body.workerName ?? body.mainWorker?.name ?? "").trim()
-      : (worker?.mainWorker?.name || "");
+      : (worker?.mainWorker?.name || order.workerName || "");
     const wCpf = body.workerCpf !== undefined || body.mainWorker?.cpf !== undefined
       ? String(body.workerCpf ?? body.mainWorker?.cpf ?? "").replace(/\D/g, "")
-      : (worker?.mainWorker?.cpf || "");
+      : (worker?.mainWorker?.cpf || order.workerCpf || "");
     const rawWPhone = body.workerPhone !== undefined || body.mainWorker?.phone !== undefined
       ? String(body.workerPhone ?? body.mainWorker?.phone ?? "").replace(/\D/g, "")
-      : (worker?.mainWorker?.phone || "");
+      : (worker?.mainWorker?.phone || previousOrderPhone || "");
     const wPhone = rawWPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawWPhone) : rawWPhone) : "";
 
     const rawCollabs = body.workerCollaborators !== undefined ? body.workerCollaborators : body.collaborators;
@@ -12885,10 +13000,10 @@ app.patch("/api/service-orders/:id", (req, res) => {
         }
       : (worker?.vehicle || { needsGarage: false, plate: "", modelColor: "" });
 
-    if (wName && wCpf.length === 11) {
-      const oldPhone = worker?.mainWorker?.phone || "";
+    if (wName || wPhone || wCpf) {
+      const oldPhone = worker?.mainWorker?.phone || previousOrderPhone || "";
       if (worker) {
-        worker.mainWorker = { name: wName, cpf: wCpf, phone: wPhone };
+        worker.mainWorker = { name: wName || "Prestador", cpf: wCpf, phone: wPhone };
         worker.collaborators = formattedCollabs;
         worker.vehicle = formattedVeh;
         worker.registeredAt = new Date().toISOString();
@@ -12897,20 +13012,26 @@ app.patch("/api/service-orders/:id", (req, res) => {
           id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           serviceOrderId: order.id,
           token: order.token,
-          mainWorker: { name: wName, cpf: wCpf, phone: wPhone },
+          mainWorker: { name: wName || "Prestador", cpf: wCpf, phone: wPhone },
           collaborators: formattedCollabs,
           vehicle: formattedVeh,
           registeredAt: new Date().toISOString()
         };
         db.serviceWorkers.push(worker);
       }
+      order.workerName = wName || null;
+      order.workerCpf = wCpf || null;
       order.workerPhone = wPhone || null;
       if (wPhone && wPhone !== oldPhone) {
+        shouldTriggerWorkerRegistered = true;
+        order.lastRegistrationWelcomePhone = null;
         for (const f of (order.flats || [])) {
           if (f.status === "pending") {
             f.workerNotifiedAvailable = false;
           }
         }
+      } else if (wPhone && order.lastRegistrationWelcomePhone !== wPhone) {
+        shouldTriggerWorkerRegistered = true;
       }
     } else if (worker && (rawCollabs !== undefined || rawVeh !== undefined)) {
       worker.collaborators = formattedCollabs;
@@ -12922,7 +13043,7 @@ app.patch("/api/service-orders/:id", (req, res) => {
   syncServiceOrderRoomBlocks(order);
   saveDatabase("update_service_order");
 
-  checkAndNotifyAvailableServiceFlats(order.id);
+  checkAndNotifyAvailableServiceFlats(order.id, { onWorkerRegistered: shouldTriggerWorkerRegistered });
 
   try {
     const todayStr = getTodayStr();
@@ -13249,9 +13370,13 @@ app.post("/api/service/public/:token/register", (req, res) => {
     db.serviceWorkers.push(worker);
   }
 
+  order.workerName = String(mainWorker.name).trim();
+  order.workerCpf = cleanCpf;
   order.workerPhone = finalPhone || null;
 
-  if (finalPhone && finalPhone !== previousPhone) {
+  const hasAlreadyBeenNotifiedForPhone = (order.flats || []).some(f => f.workerLastNotifiedPhone === finalPhone);
+  if (finalPhone && (finalPhone !== previousPhone || !hasAlreadyBeenNotifiedForPhone)) {
+    order.lastRegistrationWelcomePhone = null;
     for (const f of (order.flats || [])) {
       if (f.status === "pending") {
         f.workerNotifiedAvailable = false;
@@ -13261,8 +13386,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
 
   saveDatabase("register_service_worker");
 
-  // Dispara verificação imediata de apartamentos disponíveis para o WhatsApp do prestador
-  const availableNotifications = checkAndNotifyAvailableServiceFlats(order.id);
+  // Dispara verificação imediata de apartamentos disponíveis ou mensagem de boas-vindas/programação para o WhatsApp do prestador
+  const availableNotifications = checkAndNotifyAvailableServiceFlats(order.id, { onWorkerRegistered: Boolean(finalPhone) });
 
   res.json({ success: true, worker, availableNotifiedCount: availableNotifications.length });
 });
@@ -18603,7 +18728,8 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
         message: msgText,
         title: "Lembrete de Check-in Digital",
         footer: "CorpFlats • Recepção & Portaria",
-        buttons
+        buttons,
+        bypassTestMode: true
       });
     }
 
@@ -24815,7 +24941,8 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
       } else if (!sendResult.success) {
         sendResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
-          message: otpMessage
+          message: otpMessage,
+          bypassTestMode: true
         });
       }
     } catch (err) {
@@ -31671,7 +31798,8 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
   try {
     apiResult = await sendZapiMessage(db.zapiConfig, {
       phone: cleanPhone,
-      message: msgText
+      message: msgText,
+      bypassTestMode: true
     });
   } catch (err) {
     console.error("[Breakfast WhatsApp Dispatch Error]", err);

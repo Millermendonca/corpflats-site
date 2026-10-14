@@ -10,6 +10,7 @@ import {
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
+import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
 
@@ -76,6 +77,7 @@ export function ReservationHoverCard({
   // Mensagens Rápidas (Manuais) e Janelinha Flutuante de Prévia
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
   const [hoveredQuickMsg, setHoveredQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [confirmingQuickMsg, setConfirmingQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
   const [sendingMsgId, setSendingMsgId] = useState<string | null>(null)
   const cardContentRef = useRef<HTMLDivElement>(null)
   const [previewPlacement, setPreviewPlacement] = useState<"top" | "bottom" | "right" | "left">("right")
@@ -118,14 +120,10 @@ export function ReservationHoverCard({
     setHoveredQuickMsg(qm)
   }
 
-  const handleTriggerQuickMessage = async (e: React.MouseEvent, qm: WhatsAppQuickMessage) => {
+  const handleTriggerQuickMessage = (e: React.MouseEvent, qm: WhatsAppQuickMessage) => {
     e.stopPropagation()
-    setSendingMsgId(qm.id)
-    try {
-      await dispatchQuickMessage(qm, resItem, originUrl)
-    } finally {
-      setSendingMsgId(null)
-    }
+    setHoveredQuickMsg(null)
+    setConfirmingQuickMsg(qm)
   }
 
   // O card abre se estiver em hover no desktop OU ativado via toque no celular
@@ -241,6 +239,7 @@ export function ReservationHoverCard({
   }
 
   return (
+    <>
     <HoverCard 
       open={isCardOpen} 
       onOpenChange={(open) => {
@@ -850,5 +849,24 @@ export function ReservationHoverCard({
         </div>
       </HoverCardContent>
     </HoverCard>
+
+    <QuickMessageConfirmDialog
+      open={Boolean(confirmingQuickMsg)}
+      onOpenChange={(open) => {
+        if (!open) setConfirmingQuickMsg(null)
+      }}
+      quickMessage={confirmingQuickMsg}
+      resItem={resItem}
+      originUrl={originUrl}
+      onConfirm={async (qm, options) => {
+        setSendingMsgId(qm.id)
+        try {
+          await dispatchQuickMessage(qm, resItem, originUrl, options)
+        } finally {
+          setSendingMsgId(null)
+        }
+      }}
+    />
+    </>
   )
 }

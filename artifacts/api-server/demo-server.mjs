@@ -2050,6 +2050,33 @@ function sanitizeAndRecoverCleanings() {
       createdAt: "2026-09-01T06:13:30.314Z",
       updatedAt: "2026-09-01T18:43:20.067Z"
     },
+    {
+      id: 1,
+      flatId: 22,
+      flatNumber: "509",
+      requestDate: "2026-09-01",
+      effectiveDate: "2026-09-01",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Fabiano",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-01T18:40:49.412Z",
+      cleaningStartedAt: "2026-09-01T18:05:00.000Z",
+      completedAt: "2026-09-01T18:40:49.441Z",
+      durationMinutes: 35,
+      createdAt: "2026-09-01T18:40:49.412Z",
+      updatedAt: "2026-09-01T18:40:49.441Z"
+    },
     // 02/09/2026 - Cris (4 quartos)
     {
       id: 225,
@@ -2541,7 +2568,6 @@ function sanitizeAndRecoverCleanings() {
   const uniqueSeen = new Set();
   db.cleaningRequests = db.cleaningRequests.filter(r => {
     if (!r) return false;
-    if (r.id === 1 && (r.flatId === 22 || r.requestDate === "2026-09-01")) return false;
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     const key = isInst ? `${r.flatNumber || r.flatId}_${r.requestDate}_inst_${r.id}` : `${r.flatNumber || r.flatId}_${r.requestDate}_${r.status}`;
     if (uniqueSeen.has(key)) return false;
@@ -2556,101 +2582,6 @@ function sanitizeAndRecoverCleanings() {
     if (!db.cleaningRates.userRates) db.cleaningRates.userRates = {};
     if (db.cleaningRates.userRates["2"] === undefined) db.cleaningRates.userRates["2"] = 22.50;
     if (db.cleaningRates.userRates["3"] === undefined) db.cleaningRates.userRates["3"] = 23.25;
-  }
-
-  // 6. Reconciliação financeira canônica de Setembro (remoção de Flat 22 fantasma, ajuste de taxa e quitação da 2ª Quinzena de Setembro)
-  if (!Array.isArray(db.maidPayments)) db.maidPayments = [];
-  if (!Array.isArray(db.maidStatementEntries)) db.maidStatementEntries = [];
-
-  db.maidStatementEntries = db.maidStatementEntries.filter(e => {
-    if (!e) return false;
-    if (e.description === "Diária — Flat 22" || (e.entryType === "credit" && e.cleaningRequestId === 1)) return false;
-    return true;
-  });
-
-  for (const e of db.maidStatementEntries) {
-    if (e.entryType === "credit" && (e.entryDate || "") >= "2026-09-01") {
-      if (e.userId === 2 && Math.abs(Number(e.amount || 0) - 22.50) > 0.001) e.amount = 22.50;
-      if (e.userId === 3 && Math.abs(Number(e.amount || 0) - 23.25) > 0.001) e.amount = 23.25;
-    }
-  }
-
-  const canonicalSetQ2Payments = [
-    {
-      payment: {
-        id: "pay_set_q2_user_2",
-        userId: 2,
-        type: "payment",
-        amount: 1260,
-        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
-        referencePeriod: "2026-09-16_2026-09-30",
-        interTxId: "ACERTO_20260930",
-        interStatus: "CONCLUIDO",
-        interSimulated: true,
-        interError: null,
-        pixKey: null,
-        whatsappSent: false,
-        createdBy: 1,
-        createdAt: "2026-09-30T23:00:00.000Z",
-        paidAt: "2026-09-30T23:00:00.000Z"
-      },
-      entry: {
-        id: "stmt_pay_set_q2_user_2",
-        userId: 2,
-        cleaningRequestId: null,
-        paymentId: "pay_set_q2_user_2",
-        entryType: "debit",
-        amount: 1260,
-        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
-        entryDate: "2026-09-30",
-        createdAt: "2026-09-30T23:00:00.000Z"
-      }
-    },
-    {
-      payment: {
-        id: "pay_set_q2_user_3",
-        userId: 3,
-        type: "payment",
-        amount: 778.75,
-        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
-        referencePeriod: "2026-09-16_2026-09-30",
-        interTxId: "ACERTO_20260930",
-        interStatus: "CONCLUIDO",
-        interSimulated: true,
-        interError: null,
-        pixKey: null,
-        whatsappSent: false,
-        createdBy: 1,
-        createdAt: "2026-09-30T23:00:00.000Z",
-        paidAt: "2026-09-30T23:00:00.000Z"
-      },
-      entry: {
-        id: "stmt_pay_set_q2_user_3",
-        userId: 3,
-        cleaningRequestId: null,
-        paymentId: "pay_set_q2_user_3",
-        entryType: "debit",
-        amount: 778.75,
-        description: "Pagamento — 2ª Quinzena Setembro (16 a 30/09)",
-        entryDate: "2026-09-30",
-        createdAt: "2026-09-30T23:00:00.000Z"
-      }
-    }
-  ];
-
-  for (const item of canonicalSetQ2Payments) {
-    const hasPay = db.maidPayments.some(
-      p => p.id === item.payment.id || (p.userId === item.payment.userId && p.type === "payment" && p.referencePeriod === "2026-09-16_2026-09-30" && !p.reversedAt)
-    );
-    if (!hasPay) {
-      db.maidPayments.push(item.payment);
-    }
-    const hasEntry = db.maidStatementEntries.some(
-      e => e.id === item.entry.id || e.paymentId === item.payment.id
-    );
-    if (!hasEntry) {
-      db.maidStatementEntries.push(item.entry);
-    }
   }
 }
 
@@ -5450,14 +5381,14 @@ async function loadDatabase() {
             serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
             serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers
           });
+          syncMaidCredits(2);
+          syncMaidCredits(3);
           pgHydratedSuccessfully = true;
-          const mod2 = syncMaidCredits(2);
-          const mod3 = syncMaidCredits(3);
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
-          if (didChange || mod2 || mod3) {
+          if (didChange) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
+            saveDatabase();
           }
-          saveDatabase();
         } else if (querySucceeded) {
           pgHydratedSuccessfully = true;
           console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
@@ -9726,15 +9657,19 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
 
     const hasEvent = (evts, ev) => {
       const list = normalizeEvents(evts);
+      if (list.includes("all") || list.includes("todos")) return true;
       if (ev === "entry_request") return list.includes("entry_request") || list.includes("solicitacao_entrada") || list.includes("liberacao");
       if (ev === "start") return list.includes("start") || list.includes("inicio");
       if (ev === "finish") return list.includes("finish") || list.includes("fim") || list.includes("finalizacao");
-      if (ev === "delay" || ev === "overdue_alert") return list.includes("delay") || list.includes("atraso") || list.includes("previsao");
+      if (ev === "delay" || ev === "overdue_alert") {
+        return list.includes("delay") || list.includes("atraso") || list.includes("previsao") || list.includes("start") || list.includes("inicio") || list.includes("finish") || list.includes("fim") || list.includes("finalizacao");
+      }
       return false;
     };
 
     if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
       for (const rec of order.notificationRecipients) {
+        if (!rec || rec.enabled === false) continue;
         let shouldNotify = hasEvent(rec.events, action);
         // Se for notificação de liberação de entrada e o destinatário for da garagem, apenas envia se o prestador informou uso de garagem
         if (action === "entry_request" && (rec.role === "garage" || /garagem/i.test(rec.name))) {
@@ -9766,7 +9701,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       const cleanWp = workerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(workerPhone) : String(workerPhone).replace(/\D/g, "")) : null;
       if (cleanWp && typeof sendZapiMessage === "function") {
         const estFinishStr = flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--";
-        const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "http://localhost:3000";
+        const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.onrender.com";
         const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
         const workerPromptMsg = [
           `⚠️ *Aviso de Previsão de Serviço* — Flat *${flat.flatNumber}*`,
@@ -9777,7 +9712,21 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         sendZapiMessage(db.zapiConfig, {
           phone: cleanWp,
           message: workerPromptMsg,
-          bypassTestMode: true
+          bypassTestMode: true,
+          recipientRole: "service_worker"
+        }).then(waRes => {
+          if (!db.whatsappHistory) db.whatsappHistory = [];
+          db.whatsappHistory.push({
+            id: `svc_overdue_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            guestName: workerName || "Prestador",
+            guestPhone: cleanWp,
+            triggerEvent: "service_order_overdue_alert",
+            message: workerPromptMsg,
+            sentAt: new Date().toISOString(),
+            status: waRes?.success ? "sent" : "failed",
+            method: waRes?.simulated ? "simulated" : "zapi",
+            error: waRes?.error || null
+          });
         }).catch(err => console.warn(`[ServiceOrder] WhatsApp overdue prompt to worker ${cleanWp} failed:`, err.message));
       }
     }
@@ -9787,7 +9736,21 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         sendZapiMessage(db.zapiConfig, {
           phone,
           message,
-          bypassTestMode: true
+          bypassTestMode: true,
+          recipientRole: "service_worker"
+        }).then(waRes => {
+          if (!db.whatsappHistory) db.whatsappHistory = [];
+          db.whatsappHistory.push({
+            id: `svc_${action}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            guestName: `Ordem de Serviço (${order.title})`,
+            guestPhone: phone,
+            triggerEvent: `service_order_${action}`,
+            message,
+            sentAt: new Date().toISOString(),
+            status: waRes?.success ? "sent" : "failed",
+            method: waRes?.simulated ? "simulated" : "zapi",
+            error: waRes?.error || null
+          });
         }).catch(err => console.warn(`[ServiceOrder] WhatsApp to ${phone} failed:`, err.message));
       }
     }
@@ -9815,7 +9778,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         }
       };
 
-      const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "";
+      const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "";
       for (let i = 0; i < flat.photos.length; i++) {
         const rawUrl = flat.photos[i];
         const photoUrl = rawUrl && rawUrl.startsWith("http") ? rawUrl : (serverBaseUrl ? `${serverBaseUrl.replace(/\/+$/, "")}${rawUrl}` : rawUrl);
@@ -9897,9 +9860,10 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
   }
 }
 
-function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
+function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {}) {
   try {
-    if (!Array.isArray(db.serviceOrders) || !Array.isArray(db.serviceWorkers)) return [];
+    if (!Array.isArray(db.serviceOrders)) return [];
+    if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     const todayStr = getTodayStr();
     const nowIso = new Date().toISOString();
     const nowMs = Date.now();
@@ -9911,11 +9875,15 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
       if (targetOrderId && String(order.id) !== String(targetOrderId) && String(order.token) !== String(targetOrderId)) continue;
 
       const worker = db.serviceWorkers.find(
-        w => (w.token === order.token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf
+        w => (w.token === order.token || w.serviceOrderId === order.id)
       );
       const rawPhone = worker?.mainWorker?.phone || order.workerPhone || "";
       const cleanWp = rawPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawPhone) : String(rawPhone).replace(/\D/g, "")) : "";
-      if (!worker || !cleanWp || cleanWp.length < 10) continue;
+      if (!cleanWp || cleanWp.length < 10) continue;
+
+      const workerName = (worker?.mainWorker?.name || order.workerName || "Prestador").trim();
+      const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.onrender.com";
+      const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
 
       const flats = Array.isArray(order.flats) ? order.flats : [];
       const maxSimul = Number(order.maxSimultaneousFlats) || 2;
@@ -9972,7 +9940,7 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
 
         if (!flat.workerNotifiedAvailable) {
           const lastNotifiedMs = flat.workerNotifiedAvailableAt ? new Date(flat.workerNotifiedAvailableAt).getTime() : 0;
-          if (lastNotifiedMs && (nowMs - lastNotifiedMs) < 5 * 60 * 1000 && flat.workerLastNotifiedPhone === cleanWp) {
+          if (!options?.onWorkerRegistered && lastNotifiedMs && (nowMs - lastNotifiedMs) < 5 * 60 * 1000 && flat.workerLastNotifiedPhone === cleanWp) {
             flat.workerNotifiedAvailable = true;
             updated = true;
             continue;
@@ -9997,9 +9965,8 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
       }
 
       if (newlyAvailableFlats.length > 0) {
-        const workerName = (worker.mainWorker?.name || "Prestador").trim();
-        const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "http://localhost:3000";
-        const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
+        order.lastRegistrationWelcomePhone = cleanWp;
+        updated = true;
 
         const flatLines = newlyAvailableFlats.map(item => {
           const arrivalNote = item.hasCheckinToday ? ` · Entrada prevista: ${item.expectedArrival || "14:00"}` : "";
@@ -10047,8 +10014,72 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
           sendZapiMessage(db.zapiConfig, {
             phone: cleanWp,
             message: msgText,
-            bypassTestMode: true
+            bypassTestMode: true,
+            recipientRole: "service_worker"
+          }).then(waRes => {
+            if (!db.whatsappHistory) db.whatsappHistory = [];
+            db.whatsappHistory.push({
+              id: `svc_avail_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              guestName: workerName,
+              guestPhone: cleanWp,
+              triggerEvent: "service_order_room_available",
+              message: msgText,
+              sentAt: new Date().toISOString(),
+              status: waRes?.success ? "sent" : "failed",
+              method: waRes?.simulated ? "simulated" : "zapi",
+              error: waRes?.error || null
+            });
           }).catch(err => console.warn(`[ServiceOrder] WhatsApp room available to worker ${cleanWp} failed:`, err.message));
+        }
+      } else if (options?.onWorkerRegistered && order.lastRegistrationWelcomePhone !== cleanWp) {
+        const pendingFlats = flats.filter(f => f.status === "pending");
+        if (pendingFlats.length > 0) {
+          order.lastRegistrationWelcomePhone = cleanWp;
+          updated = true;
+
+          const pendingNumbers = pendingFlats.map(f => `Flat ${f.flatNumber}`).join(", ");
+          const welcomeMsg = [
+            `🔧 *Ordem de Serviço Vinculada* — *${order.title}*`,
+            `Olá, *${workerName}*! Seu cadastro e WhatsApp foram vinculados com sucesso a esta Ordem de Serviço no *CorpFlats*.`,
+            ``,
+            `📋 *Apartamentos programados (${pendingFlats.length}):* ${pendingNumbers}`,
+            `⏳ Assim que um apartamento atingir o critério de liberação para execução, você receberá uma notificação automática aqui no WhatsApp.`,
+            ``,
+            `🔗 *Link do seu Portal de Serviço:*`,
+            portalUrl
+          ].join("\n");
+
+          notificationsSent.push({
+            orderId: order.id,
+            token: order.token,
+            workerPhone: cleanWp,
+            workerName,
+            flats: pendingFlats.map(f => f.flatNumber),
+            message: welcomeMsg,
+            type: "registration_welcome"
+          });
+
+          if (typeof sendZapiMessage === "function") {
+            sendZapiMessage(db.zapiConfig, {
+              phone: cleanWp,
+              message: welcomeMsg,
+              bypassTestMode: true,
+              recipientRole: "service_worker"
+            }).then(waRes => {
+              if (!db.whatsappHistory) db.whatsappHistory = [];
+              db.whatsappHistory.push({
+                id: `svc_reg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                guestName: workerName,
+                guestPhone: cleanWp,
+                triggerEvent: "service_order_worker_registered",
+                message: welcomeMsg,
+                sentAt: new Date().toISOString(),
+                status: waRes?.success ? "sent" : "failed",
+                method: waRes?.simulated ? "simulated" : "zapi",
+                error: waRes?.error || null
+              });
+            }).catch(err => console.warn(`[ServiceOrder] WhatsApp registration welcome to worker ${cleanWp} failed:`, err.message));
+          }
         }
       }
     }
@@ -12619,8 +12650,8 @@ app.get("/api/service-orders", (req, res) => {
     const worker = (db.serviceWorkers || []).find(w => w.token === o.token || w.serviceOrderId === o.id);
     return {
       ...o,
-      workerName: worker?.mainWorker?.name || null,
-      workerCpf: worker?.mainWorker?.cpf || null,
+      workerName: worker?.mainWorker?.name || o.workerName || null,
+      workerCpf: worker?.mainWorker?.cpf || o.workerCpf || null,
       workerPhone: worker?.mainWorker?.phone || o.workerPhone || null,
       workerCollaborators: Array.isArray(worker?.collaborators) ? worker.collaborators : [],
       workerVehicle: worker?.vehicle || null
@@ -12748,12 +12779,17 @@ app.post("/api/service-orders", (req, res) => {
     blockStartDate: blockStartDate || null,
     blockEndDate: blockEndDate || null,
     flats: formattedFlats,
+    workerName: String(req.body.workerName || req.body.mainWorker?.name || "").trim() || null,
+    workerCpf: String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "") || null,
     workerPhone: req.body.workerPhone || req.body.mainWorker?.phone || null
   };
 
   const preWorkerName = String(req.body.workerName || req.body.mainWorker?.name || "").trim();
   const preWorkerCpf = String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "");
   const preWorkerPhone = String(req.body.workerPhone || req.body.mainWorker?.phone || "").replace(/\D/g, "");
+  const cleanedPrePhone = preWorkerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(preWorkerPhone) : preWorkerPhone) : "";
+  newOrder.workerPhone = cleanedPrePhone || null;
+
   const rawPreCollabs = req.body.workerCollaborators || req.body.collaborators || [];
   const preCollaborators = Array.isArray(rawPreCollabs)
     ? rawPreCollabs.map(c => ({ name: String(c?.name || "").trim(), cpf: String(c?.cpf || "").replace(/\D/g, "") })).filter(c => c.name && c.cpf.length === 11)
@@ -12765,16 +12801,16 @@ app.post("/api/service-orders", (req, res) => {
     modelColor: String(rawPreVehicle.modelColor || "").trim()
   } : { needsGarage: false, plate: "", modelColor: "" };
 
-  if (preWorkerName && preWorkerCpf.length === 11) {
+  if (preWorkerName || cleanedPrePhone || preWorkerCpf) {
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     db.serviceWorkers.push({
       id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       serviceOrderId: newOrder.id,
       token: newOrder.token,
       mainWorker: {
-        name: preWorkerName,
+        name: preWorkerName || "Prestador",
         cpf: preWorkerCpf,
-        phone: preWorkerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(preWorkerPhone) : preWorkerPhone) : ""
+        phone: cleanedPrePhone
       },
       collaborators: preCollaborators,
       vehicle: preVehicle,
@@ -12787,7 +12823,7 @@ app.post("/api/service-orders", (req, res) => {
   syncServiceOrderRoomBlocks(newOrder);
   saveDatabase("create_service_order");
 
-  checkAndNotifyAvailableServiceFlats(newOrder.id);
+  checkAndNotifyAvailableServiceFlats(newOrder.id, { onWorkerRegistered: Boolean(cleanedPrePhone) });
 
   try {
     const todayStr = getTodayStr();
@@ -12822,8 +12858,8 @@ app.get("/api/service-orders/:id", (req, res) => {
   res.json({
     ...order,
     allowedRoomStatuses: getAllowedRoomStatuses(order),
-    workerName: worker?.mainWorker?.name || null,
-    workerCpf: worker?.mainWorker?.cpf || null,
+    workerName: worker?.mainWorker?.name || order.workerName || null,
+    workerCpf: worker?.mainWorker?.cpf || order.workerCpf || null,
     workerPhone: worker?.mainWorker?.phone || order.workerPhone || null,
     workerCollaborators: Array.isArray(worker?.collaborators) ? worker.collaborators : [],
     workerVehicle: worker?.vehicle || null
@@ -12859,9 +12895,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (body.maxFlatsPerDay !== undefined) order.maxFlatsPerDay = Math.max(1, parseInt(body.maxFlatsPerDay, 10) || 4);
   if (body.requirePhotos !== undefined) order.requirePhotos = Boolean(body.requirePhotos);
   if (body.estimatedDurationHours !== undefined) order.estimatedDurationHours = body.estimatedDurationHours ? Number(body.estimatedDurationHours) : null;
+  const previousOrderPhone = order.workerPhone || "";
   if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
   if (body.notificationRecipients !== undefined) order.notificationRecipients = Array.isArray(body.notificationRecipients) ? body.notificationRecipients : [];
-  if (body.workerPhone !== undefined) order.workerPhone = String(body.workerPhone || "").replace(/\D/g, "") || null;
+  if (body.workerPhone !== undefined) {
+    const rawWp = String(body.workerPhone || "").replace(/\D/g, "");
+    order.workerPhone = rawWp ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawWp) : rawWp) : null;
+  }
   if (body.blockFlats !== undefined || body.interdictFlats !== undefined) {
     const shouldBlock = Boolean(body.blockFlats ?? body.interdictFlats);
     order.blockFlats = shouldBlock;
@@ -12905,14 +12945,20 @@ app.patch("/api/service-orders/:id", (req, res) => {
     body.workerName !== undefined &&
     body.workerCpf !== undefined &&
     !String(body.workerName || "").trim() &&
-    !String(body.workerCpf || "").replace(/\D/g, "")
+    !String(body.workerCpf || "").replace(/\D/g, "") &&
+    !String(body.workerPhone ?? body.mainWorker?.phone ?? "").replace(/\D/g, "")
   );
+
+  let shouldTriggerWorkerRegistered = false;
 
   if (wantsToClearWorker) {
     if (Array.isArray(db.serviceWorkers)) {
       db.serviceWorkers = db.serviceWorkers.filter(w => w.token !== order.token && w.serviceOrderId !== order.id);
     }
+    order.workerName = null;
+    order.workerCpf = null;
     order.workerPhone = null;
+    order.lastRegistrationWelcomePhone = null;
     for (const f of (order.flats || [])) {
       if (f.status === "pending") {
         f.workerNotifiedAvailable = false;
@@ -12926,13 +12972,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
 
     const wName = body.workerName !== undefined || body.mainWorker?.name !== undefined
       ? String(body.workerName ?? body.mainWorker?.name ?? "").trim()
-      : (worker?.mainWorker?.name || "");
+      : (worker?.mainWorker?.name || order.workerName || "");
     const wCpf = body.workerCpf !== undefined || body.mainWorker?.cpf !== undefined
       ? String(body.workerCpf ?? body.mainWorker?.cpf ?? "").replace(/\D/g, "")
-      : (worker?.mainWorker?.cpf || "");
+      : (worker?.mainWorker?.cpf || order.workerCpf || "");
     const rawWPhone = body.workerPhone !== undefined || body.mainWorker?.phone !== undefined
       ? String(body.workerPhone ?? body.mainWorker?.phone ?? "").replace(/\D/g, "")
-      : (worker?.mainWorker?.phone || "");
+      : (worker?.mainWorker?.phone || previousOrderPhone || "");
     const wPhone = rawWPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawWPhone) : rawWPhone) : "";
 
     const rawCollabs = body.workerCollaborators !== undefined ? body.workerCollaborators : body.collaborators;
@@ -12954,10 +13000,10 @@ app.patch("/api/service-orders/:id", (req, res) => {
         }
       : (worker?.vehicle || { needsGarage: false, plate: "", modelColor: "" });
 
-    if (wName && wCpf.length === 11) {
-      const oldPhone = worker?.mainWorker?.phone || "";
+    if (wName || wPhone || wCpf) {
+      const oldPhone = worker?.mainWorker?.phone || previousOrderPhone || "";
       if (worker) {
-        worker.mainWorker = { name: wName, cpf: wCpf, phone: wPhone };
+        worker.mainWorker = { name: wName || "Prestador", cpf: wCpf, phone: wPhone };
         worker.collaborators = formattedCollabs;
         worker.vehicle = formattedVeh;
         worker.registeredAt = new Date().toISOString();
@@ -12966,20 +13012,26 @@ app.patch("/api/service-orders/:id", (req, res) => {
           id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           serviceOrderId: order.id,
           token: order.token,
-          mainWorker: { name: wName, cpf: wCpf, phone: wPhone },
+          mainWorker: { name: wName || "Prestador", cpf: wCpf, phone: wPhone },
           collaborators: formattedCollabs,
           vehicle: formattedVeh,
           registeredAt: new Date().toISOString()
         };
         db.serviceWorkers.push(worker);
       }
+      order.workerName = wName || null;
+      order.workerCpf = wCpf || null;
       order.workerPhone = wPhone || null;
       if (wPhone && wPhone !== oldPhone) {
+        shouldTriggerWorkerRegistered = true;
+        order.lastRegistrationWelcomePhone = null;
         for (const f of (order.flats || [])) {
           if (f.status === "pending") {
             f.workerNotifiedAvailable = false;
           }
         }
+      } else if (wPhone && order.lastRegistrationWelcomePhone !== wPhone) {
+        shouldTriggerWorkerRegistered = true;
       }
     } else if (worker && (rawCollabs !== undefined || rawVeh !== undefined)) {
       worker.collaborators = formattedCollabs;
@@ -12991,7 +13043,7 @@ app.patch("/api/service-orders/:id", (req, res) => {
   syncServiceOrderRoomBlocks(order);
   saveDatabase("update_service_order");
 
-  checkAndNotifyAvailableServiceFlats(order.id);
+  checkAndNotifyAvailableServiceFlats(order.id, { onWorkerRegistered: shouldTriggerWorkerRegistered });
 
   try {
     const todayStr = getTodayStr();
@@ -13318,9 +13370,13 @@ app.post("/api/service/public/:token/register", (req, res) => {
     db.serviceWorkers.push(worker);
   }
 
+  order.workerName = String(mainWorker.name).trim();
+  order.workerCpf = cleanCpf;
   order.workerPhone = finalPhone || null;
 
-  if (finalPhone && finalPhone !== previousPhone) {
+  const hasAlreadyBeenNotifiedForPhone = (order.flats || []).some(f => f.workerLastNotifiedPhone === finalPhone);
+  if (finalPhone && (finalPhone !== previousPhone || !hasAlreadyBeenNotifiedForPhone)) {
+    order.lastRegistrationWelcomePhone = null;
     for (const f of (order.flats || [])) {
       if (f.status === "pending") {
         f.workerNotifiedAvailable = false;
@@ -13330,8 +13386,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
 
   saveDatabase("register_service_worker");
 
-  // Dispara verificação imediata de apartamentos disponíveis para o WhatsApp do prestador
-  const availableNotifications = checkAndNotifyAvailableServiceFlats(order.id);
+  // Dispara verificação imediata de apartamentos disponíveis ou mensagem de boas-vindas/programação para o WhatsApp do prestador
+  const availableNotifications = checkAndNotifyAvailableServiceFlats(order.id, { onWorkerRegistered: Boolean(finalPhone) });
 
   res.json({ success: true, worker, availableNotifiedCount: availableNotifications.length });
 });
@@ -18672,7 +18728,8 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
         message: msgText,
         title: "Lembrete de Check-in Digital",
         footer: "CorpFlats • Recepção & Portaria",
-        buttons
+        buttons,
+        bypassTestMode: true
       });
     }
 
@@ -24884,7 +24941,8 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
       } else if (!sendResult.success) {
         sendResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
-          message: otpMessage
+          message: otpMessage,
+          bypassTestMode: true
         });
       }
     } catch (err) {
@@ -31740,7 +31798,8 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
   try {
     apiResult = await sendZapiMessage(db.zapiConfig, {
       phone: cleanPhone,
-      message: msgText
+      message: msgText,
+      bypassTestMode: true
     });
   } catch (err) {
     console.error("[Breakfast WhatsApp Dispatch Error]", err);
@@ -38049,61 +38108,26 @@ function getMaidBalance(userId) {
 
 function syncMaidCredits(userId) {
   ensureMaidPaymentsDb();
-  const modified = syncMaidCreditsCanonical(db, userId);
-  if (modified) {
+  const beforeLen = (db.maidStatementEntries || []).length;
+  syncMaidCreditsCanonical(db, userId);
+  if ((db.maidStatementEntries || []).length !== beforeLen) {
     saveDatabase();
   }
-  return modified;
 }
 
 function buildStatement(userId) {
   syncMaidCredits(userId);
   ensureMaidPaymentsDb();
 
-  const paymentMap = new Map((db.maidPayments || []).map(p => [p.id, p]));
-  const cleaningMap = new Map((db.cleaningRequests || []).map(c => [c.id, c]));
-
   const entries = db.maidStatementEntries
     .filter(e => e.userId === userId)
-    .slice()
-    .sort((a, b) => {
-      const payA = a.paymentId ? paymentMap.get(a.paymentId) : null;
-      const payB = b.paymentId ? paymentMap.get(b.paymentId) : null;
-
-      const refEndA = (payA?.type === "payment" && payA?.referencePeriod?.includes("_"))
-        ? payA.referencePeriod.split("_")[1]
-        : null;
-      const refEndB = (payB?.type === "payment" && payB?.referencePeriod?.includes("_"))
-        ? payB.referencePeriod.split("_")[1]
-        : null;
-
-      const dateA = a.entryDate || (a.createdAt ? getExecutionDateStr(a.createdAt) : "");
-      const dateB = b.entryDate || (b.createdAt ? getExecutionDateStr(b.createdAt) : "");
-
-      const effDateA = (refEndA && dateA >= refEndA) ? refEndA : dateA;
-      const effDateB = (refEndB && dateB >= refEndB) ? refEndB : dateB;
-
-      if (effDateA !== effDateB) {
-        return effDateA.localeCompare(effDateB);
-      }
-
-      const isClosingPayA = Boolean(refEndA || (a.entryType === "debit" && (payA?.type === "payment" || a.description?.toLowerCase().includes("pagamento"))));
-      const isClosingPayB = Boolean(refEndB || (b.entryType === "debit" && (payB?.type === "payment" || b.description?.toLowerCase().includes("pagamento"))));
-      if (isClosingPayA !== isClosingPayB) {
-        return isClosingPayA ? 1 : -1;
-      }
-
-      const cleanA = a.cleaningRequestId ? cleaningMap.get(a.cleaningRequestId) : null;
-      const cleanB = b.cleaningRequestId ? cleaningMap.get(b.cleaningRequestId) : null;
-      const tsA = cleanA?.completedAt || a.createdAt || "";
-      const tsB = cleanB?.completedAt || b.createdAt || "";
-      return tsA.localeCompare(tsB);
-    });
+    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
 
   let balance = 0;
   return entries.map(e => {
-    const payment = e.paymentId ? paymentMap.get(e.paymentId) || null : null;
-    const cleaning = e.cleaningRequestId ? cleaningMap.get(e.cleaningRequestId) || null : null;
+    const payment = e.paymentId
+      ? (db.maidPayments || []).find(p => p.id === e.paymentId)
+      : null;
 
     const isReversed = Boolean(e.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO");
     if (!isReversed) {
@@ -38116,7 +38140,6 @@ function buildStatement(userId) {
 
     return {
       ...e,
-      createdAt: (e.entryType === "credit" && cleaning?.completedAt) ? cleaning.completedAt : e.createdAt,
       balanceAfter: Math.round(balance * 100) / 100,
       payment: payment ? {
         id: payment.id,

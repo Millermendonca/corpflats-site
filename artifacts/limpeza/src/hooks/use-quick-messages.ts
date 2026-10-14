@@ -631,9 +631,17 @@ export function useQuickMessages() {
     qm: WhatsAppQuickMessage, 
     resItem: any, 
     appOrigin?: string,
-    overrideTarget?: "guest" | "requester" | "both"
+    overrideOrOptions?: "guest" | "requester" | "both" | "custom" | {
+      overrideTarget?: "guest" | "requester" | "both" | "custom";
+      customPhone?: string;
+      customName?: string;
+      customMessage?: string;
+    }
   ): Promise<{ success: boolean; method: "zapi" | "wa_web"; fallback?: boolean }> => {
-    const targetMode = overrideTarget || qm.recipientTarget || "guest"
+    const opts = typeof overrideOrOptions === "string"
+      ? { overrideTarget: overrideOrOptions }
+      : (overrideOrOptions || {})
+    const targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
     const recipients = getReservationRecipients(resItem)
     const resCode = resItem.code || resItem.reservationCode || String(resItem.id || "")
 
@@ -645,10 +653,13 @@ export function useQuickMessages() {
       ? `55${recipients.requester.cleanDigits}` 
       : recipients.requester.cleanDigits
 
-    const effectiveTargetPhone = targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone
-    const renderedBody = renderQuickMessage(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
-    const fullWaText = buildFullWhatsAppTextMessage(renderedBody, qm.footer, qm.buttons, resItem, appOrigin)
-    const waWebUrl = effectiveTargetPhone ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullWaText)}` : null
+    const cleanCustomPhone = opts.customPhone ? opts.customPhone.replace(/\D/g, "") : ""
+    const formattedCustomPhone = cleanCustomPhone.length === 10 || cleanCustomPhone.length === 11
+      ? `55${cleanCustomPhone}`
+      : cleanCustomPhone
+
+    const effectiveTargetPhone = formattedCustomPhone
+      || (targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone)
 
     try {
       const res = await fetch("/api/whatsapp/dispatch-reservation", {
@@ -662,13 +673,16 @@ export function useQuickMessages() {
           reservation: resItem,
           template: qm,
           phone: effectiveTargetPhone,
+          customPhone: formattedCustomPhone || undefined,
+          customName: opts.customName || undefined,
+          customMessage: opts.customMessage || undefined,
           bypassTestMode: true
         })
       })
 
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
-        let recipientSummary = recipients.guest.name
+        let recipientSummary = opts.customName || recipients.guest.name
         if (targetMode === "both") {
           if (recipients.requester.isDifferentFromGuest && recipients.requester.phone) {
             recipientSummary = `Hóspede (${recipients.guest.firstName}) e Solicitante (${recipients.requester.firstName})`

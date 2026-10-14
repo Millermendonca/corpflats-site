@@ -41,6 +41,7 @@ import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
+import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
@@ -194,6 +195,7 @@ export default function PmsCalendar() {
   // Mensagens Rápidas (Manuais) do WhatsApp
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
   const [hoveredModalQuickMsg, setHoveredModalQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [confirmingModalQuickMsg, setConfirmingModalQuickMsg] = useState<{ qm: WhatsAppQuickMessage; effectiveRes: any } | null>(null)
   const [modalSendingMsgId, setModalSendingMsgId] = useState<string | null>(null)
 
   // Form fields
@@ -6357,27 +6359,23 @@ export default function PmsCalendar() {
                                   ? `${qm.title} (Envia para o Solicitante)` 
                                   : `${qm.title} (Envia para o Hóspede)`
                             }
-                            onClick={async () => {
-                              setModalSendingMsgId(qm.id);
-                              try {
-                                const effectiveRes = {
-                                  ...selectedRes,
-                                  flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
-                                  flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
-                                  guestName: formGuestName.trim() || selectedRes?.guestName,
-                                  guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
-                                  guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
-                                  checkinDate: formCheckin || selectedRes?.checkinDate,
-                                  checkoutDate: formCheckout || selectedRes?.checkoutDate,
-                                  checkinTime: formCheckinTime || selectedRes?.checkinTime,
-                                  checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
-                                  includeBreakfast: formIncludeBreakfast,
-                                  hasBreakfast: formIncludeBreakfast
-                                };
-                                await dispatchQuickMessage(qm, effectiveRes);
-                              } finally {
-                                setModalSendingMsgId(null);
-                              }
+                            onClick={() => {
+                              setHoveredModalQuickMsg(null);
+                              const effectiveRes = {
+                                ...selectedRes,
+                                flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
+                                flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
+                                guestName: formGuestName.trim() || selectedRes?.guestName,
+                                guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
+                                guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
+                                checkinDate: formCheckin || selectedRes?.checkinDate,
+                                checkoutDate: formCheckout || selectedRes?.checkoutDate,
+                                checkinTime: formCheckinTime || selectedRes?.checkinTime,
+                                checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
+                                includeBreakfast: formIncludeBreakfast,
+                                hasBreakfast: formIncludeBreakfast
+                              };
+                              setConfirmingModalQuickMsg({ qm, effectiveRes });
                             }}
                             className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
                           >
@@ -6401,6 +6399,28 @@ export default function PmsCalendar() {
                         );
                       })}
                     </div>
+
+                    <QuickMessageConfirmDialog
+                      open={Boolean(confirmingModalQuickMsg)}
+                      onOpenChange={(open) => {
+                        if (!open) setConfirmingModalQuickMsg(null);
+                      }}
+                      quickMessage={confirmingModalQuickMsg?.qm || null}
+                      resItem={confirmingModalQuickMsg?.effectiveRes || selectedRes}
+                      onConfirm={async (qm, options) => {
+                        setModalSendingMsgId(qm.id);
+                        try {
+                          await dispatchQuickMessage(
+                            qm,
+                            confirmingModalQuickMsg?.effectiveRes || selectedRes,
+                            undefined,
+                            options
+                          );
+                        } finally {
+                          setModalSendingMsgId(null);
+                        }
+                      }}
+                    />
                   </div>
                 )}
               </div>
