@@ -83,9 +83,9 @@ O sistema **Guest-Flow-Manager** (CorpFlats Soho Residence: 19 flats, Campos dos
 | M2 | Canonical Availability & SEBRAE Pricing Engine | F9, F10, F11, F12, F13 | M1 | DONE |
 | M3 | ARI Mapping & Synchronizer | F14, F15, F16 | M2 | DONE |
 | M4 | Reservation Processing, Quarantine, Reconciler & Alerts | F17, F18, F19, F20, F21, F22, F23, F24 | M1, M2, M3 | DONE |
-| M5 | Credit Card Vault, Provisional Adapters & UI / Manual | F25, F26, F27, F28, F29, F30, F31 | M4 | PLANNED |
-| E2E | E2E Testing Track (Tiers 1-4 & Tier 5) | F32, F33 | M1 (start parallel) | PLANNED |
-| FINAL | Final Acceptance & Adversarial Hardening | Pass 100% E2E tests + Tier 5 Hardening | M5, E2E | PLANNED |
+| M5 | Credit Card Vault, Provisional Adapters & UI / Manual | F25, F26, F27, F28, F29, F30, F31 | M4 | DONE |
+| E2E | E2E Testing Track (Tiers 1-4 & Tier 5) | F32, F33 | M1 (start parallel) | DONE |
+| FINAL | Final Acceptance & Adversarial Hardening | Pass 100% E2E tests + Tier 5 Hardening | M5, E2E | DONE |
 
 ---
 
