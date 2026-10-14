@@ -23,10 +23,13 @@ import {
 
 import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
+import { useToast } from "@/hooks/use-toast"
+import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
 
 export default function CrmGuests() {
   const [, setLocation] = useLocation()
   const { data: user, isLoading: loadingUser } = useGetMe()
+  const { toast } = useToast()
 
   const [activeTab, setActiveTab] = useState<"guests" | "companies">("guests")
   const [guests, setGuests] = useState<any[]>([])
@@ -541,35 +544,53 @@ export default function CrmGuests() {
   }
 
   // ── Central de WhatsApp com Templates Prontos ──────────────────────────────
-  const handleSendWhatsAppTemplate = (type: "welcome" | "room_ready" | "review" | "pix" | "invoice", guest: any) => {
+  const handleSendWhatsAppTemplate = async (type: "welcome" | "room_ready" | "review" | "pix" | "invoice", guest: any) => {
     if (!guest.phone) {
-      alert("Hóspede não possui telefone cadastrado.")
+      toast({
+        title: "Sem telefone cadastrado",
+        description: "Este hóspede não possui telefone cadastrado.",
+        variant: "destructive"
+      })
       return
     }
     const cleanPhone = guest.phone.replace(/\D/g, "")
     const phoneWithDDI = cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`
-    const firstName = (guest.fullName || guest.name || "Hóspede").split(" ")[0]
+    const fullName = guest.fullName || guest.name || "Hóspede"
+    const firstName = fullName.split(" ")[0]
 
     let msg = ""
+    let label = "Mensagem CRM"
     switch (type) {
       case "welcome":
         msg = `Olá, ${firstName}! Tudo bem? Seja muito bem-vindo ao CorpFlats. Para agilizar sua entrada na portaria, preencha seu pré-check-in rápido aqui: https://corpflats.onrender.com/pre-checkin`
+        label = "Boas-vindas + Pré-Check-in"
         break
       case "room_ready":
         msg = `Olá, ${firstName}! Boas notícias: o seu flat já está 100% limpo, higienizado e liberado para entrada antecipada. Tenha uma excelente estadia!`
+        label = "Flat Liberado"
         break
       case "review":
         msg = `Olá, ${firstName}! Agradecemos imensamente pela sua estadia no CorpFlats. Sua opinião é muito importante para nós. Poderia nos avaliar no Google com 5 estrelas? Leva apenas 30 segundos: https://g.page/r/corpflats/review`
+        label = "Avaliação Google"
         break
       case "pix":
         msg = `Olá, ${firstName}! Segue a chave PIX oficial do CorpFlats (CNPJ): 47.964.813/0001-65 (Rental Miller's LTDA). Assim que efetuar o pagamento, nos envie o comprovante por aqui. Obrigado!`
+        label = "Chave PIX Oficial"
         break
       case "invoice":
         msg = `Olá, ${firstName}! Sua Nota Fiscal de Serviço (NFS-e) relativa à sua hospedagem no CorpFlats foi emitida com sucesso pela Prefeitura de Campos. Qualquer dúvida estamos à disposição!`
+        label = "Aviso de NFS-e"
         break
     }
 
-    window.open(`https://api.whatsapp.com/send?phone=${phoneWithDDI}&text=${encodeURIComponent(msg)}`, "_blank")
+    await sendDirectZapiWithFallback({
+      phone: phoneWithDDI,
+      message: msg,
+      recipientName: fullName,
+      triggerEvent: `crm_${type}`,
+      label,
+      toast
+    })
   }
 
   // Exportar Base de Contatos em CSV
@@ -1120,14 +1141,22 @@ export default function CrmGuests() {
                   {activeGuest?.phone && (
                     <Button
                       size="sm"
-                      onClick={() => {
+                      onClick={async () => {
                         const cleanP = String(activeGuest.phone).replace(/\D/g, '').replace(/^55/, '');
-                        window.open(`https://wa.me/55${cleanP}?text=${encodeURIComponent(`Olá, ${activeGuest.fullName || activeGuest.name}! Falamos da CorpFlats.`)}`, '_blank');
+                        const fullName = activeGuest.fullName || activeGuest.name || "Hóspede";
+                        await sendDirectZapiWithFallback({
+                          phone: `55${cleanP}`,
+                          message: `Olá, ${fullName}! Falamos da CorpFlats.`,
+                          recipientName: fullName,
+                          triggerEvent: "crm_profile_greeting",
+                          label: "Saudação CRM",
+                          toast
+                        });
                       }}
                       className="h-9 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1.5 shadow-xs"
                     >
                       <MessageCircle className="w-4 h-4" />
-                      <span>WhatsApp</span>
+                      <span>WhatsApp (Z-API)</span>
                     </Button>
                   )}
                   {activeGuest?.fnhrCompleted && (

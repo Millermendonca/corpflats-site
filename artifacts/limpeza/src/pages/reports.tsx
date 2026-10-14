@@ -3,6 +3,7 @@ import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
 import { useToast } from "@/hooks/use-toast"
+import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -2523,7 +2524,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => {
+                      onClick={async () => {
                         const breakdown = advances > 0
                           ? `\n📈 *Produção Bruta:* R$ ${formatBRL(gross)} (${count} quartos)\n🎫 *Vales Concedidos:* − R$ ${formatBRL(advances)}\n`
                           : `\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n`
@@ -2531,12 +2532,19 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                         const msg = isSettled
                           ? `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS (QUITADO)*\n\nOlá, *${name}*!\nSegue o comprovante de fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}${breakdown}✅ *STATUS:* *QUITADO / PAGO EM ${paidDateFmt}*\n💰 *VALOR TOTAL PAGO:* *R$ ${valorQuitado}*\n✨ *SALDO PENDENTE:* *R$ 0,00*\n\nObrigado pela dedicação e excelente trabalho! ✨`
                           : `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS*\n\nOlá, *${name}*!\nSegue o resumo do seu fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}${breakdown}💰 *VALOR LÍQUIDO A RECEBER:* *R$ ${net}*\n\nObrigado pela dedicação e excelente trabalho! ✨`
-                        window.open("https://api.whatsapp.com/send?text=" + encodeURIComponent(msg), "_blank")
+                        await sendDirectZapiWithFallback({
+                          phone: activeCleanerReceipt.whatsapp || activeCleanerReceipt.phone || "",
+                          message: msg,
+                          recipientName: name,
+                          triggerEvent: "cleaner_receipt_dispatch",
+                          label: `Fechamento de Diárias (${name})`,
+                          toast
+                        })
                       }}
                       className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
                     >
                       <MessageSquare className="w-3.5 h-3.5" />
-                      <span>WhatsApp</span>
+                      <span>WhatsApp (Z-API)</span>
                     </Button>
                   )
                 })()}

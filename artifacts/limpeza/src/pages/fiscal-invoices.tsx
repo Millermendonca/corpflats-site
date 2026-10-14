@@ -42,7 +42,11 @@ interface ExtractedData {
   descricaoServico?: string
 }
 
+import { useToast } from "@/hooks/use-toast"
+import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+
 export default function FiscalInvoicesPage() {
+  const { toast } = useToast()
   // ── Aba Ativa ──────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<"chat" | "form" | "history" | "settings">("chat")
   
@@ -1627,13 +1631,20 @@ export default function FiscalInvoicesPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  onClick={() => {
-                                    const text = encodeURIComponent(`Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`);
+                                  onClick={async () => {
+                                    const message = `Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`;
                                     const phone = (inv.tomadorTelefone || "").replace(/\D/g, "");
-                                    window.open(phone ? `https://wa.me/55${phone}?text=${text}` : `https://wa.me/?text=${text}`, "_blank");
+                                    await sendDirectZapiWithFallback({
+                                      phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
+                                      message,
+                                      recipientName: inv.tomadorNome || "Tomador",
+                                      triggerEvent: "nfse_dispatch",
+                                      label: `NFS-e Nº ${inv.numeroNfse}`,
+                                      toast
+                                    });
                                   }}
                                   className="h-7.5 px-2 text-[11px] font-bold rounded-lg text-emerald-600 hover:bg-emerald-500/10"
-                                  title="Enviar no WhatsApp do Hóspede"
+                                  title="Enviar no WhatsApp do Hóspede (Z-API + Redundância Web)"
                                 >
                                   <MessageSquare className="w-3 h-3" />
                                 </Button>

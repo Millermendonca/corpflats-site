@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
 import { 
   Coffee, Clock, Home as HomeIcon, Users, CheckCircle2, 
   Package, MessageCircle, Plus, ChevronRight, RefreshCw, AlertTriangle, Trash2, ExternalLink,
@@ -114,13 +115,13 @@ export default function BreakfastProduction() {
   )
   const [savingReminderTemplate, setSavingReminderTemplate] = useState(false)
 
-  const handleSendReminder = (room: any) => {
+  const handleSendReminder = async (room: any) => {
     const guestName = room.guestName || "Hóspede"
     const flatNumber = room.flatNumber || ""
     const formattedDate = labelDate(currentDate)
     const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}&v=1`
 
-    let msg = reminderTemplate
+    const msg = reminderTemplate
       .replace(/\{nome\}/gi, guestName)
       .replace(/\{quarto\}/gi, flatNumber)
       .replace(/\{data\}/gi, formattedDate)
@@ -129,11 +130,23 @@ export default function BreakfastProduction() {
     const phone = (room.guestPhone || "").replace(/\D/g, "")
     if (!phone) {
       navigator.clipboard.writeText(msg)
-      alert(`O hóspede ${guestName} (Flat ${flatNumber}) não possui telefone com WhatsApp cadastrado. O texto de lembrete com o link foi copiado para a sua área de transferência!`)
+      toast({
+        title: "Link copiado (Hóspede sem telefone)",
+        description: `O hóspede ${guestName} (Flat ${flatNumber}) não possui telefone cadastrado. O texto com o link foi copiado!`
+      })
       return
     }
 
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank")
+    await sendDirectZapiWithFallback({
+      phone,
+      message: msg,
+      recipientName: guestName,
+      reservationCode: room.reservationCode || room.breakfastToken || undefined,
+      flatNumber: String(flatNumber),
+      triggerEvent: "breakfast_reminder",
+      label: `Lembrete de Café (Flat ${flatNumber})`,
+      toast
+    })
   }
 
   const handleCopyRoomLink = (room: any) => {
@@ -391,6 +404,13 @@ export default function BreakfastProduction() {
     const notifyKey = `${order.id}_${type}`
     setSendingNotify(prev => ({ ...prev, [notifyKey]: true }))
 
+    const firstName = (order.clientName || "Hóspede").split(" ")[0]
+    const defaultMsg = type === "in_production"
+      ? `Bom dia, ${firstName}! ☕🍳\n\nRecebemos seu pedido de café da manhã para o Apt ${order.roomNumber} e a nossa cozinha já iniciou o preparo!\n\nHorário agendado: ${order.deliveryTime || "08:00"}\n\nAvisaremos assim que estiver a caminho. ✨`
+      : `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e a caminho do seu quarto!\n\nHorário previsto: ${order.deliveryTime || "08:00"}\n\nTenha um excelente dia e bom apetite! ✨`
+    const cleanWa = phone.startsWith("55") ? phone : `55${phone}`
+    const localFallbackUrl = `https://wa.me/${cleanWa}?text=${encodeURIComponent(defaultMsg)}`
+
     try {
       const res = await fetch(`/api/breakfast/orders/${order.id}/whatsapp`, {
         method: "POST",
@@ -398,32 +418,31 @@ export default function BreakfastProduction() {
         body: JSON.stringify({ type }),
         credentials: "include"
       })
-      const json = await res.json()
+      const json = await res.json().catch(() => ({}))
 
-      if (res.ok && json.success) {
+      if (res.ok && json.success && !json.simulated) {
         toast({
           title: type === "in_production" ? "🍳 Pedido em Produção Avisado!" : "🚀 Café a Caminho Avisado!",
-          description: json.simulated
-            ? `[Simulação API] Mensagem enviada para ${order.clientName} (Apt ${order.roomNumber})!`
-            : `Mensagem enviada com sucesso via WhatsApp para ${order.clientName} (Apt ${order.roomNumber})!`
+          description: `Mensagem enviada via Z-API para ${order.clientName} (Apt ${order.roomNumber})!`
         })
         fetchOrders()
       } else {
+        const waTarget = json.whatsappUrl || localFallbackUrl
         toast({
-          variant: "destructive",
-          title: "Falha no envio da API",
-          description: json.error || "Não foi possível enviar a mensagem. Abrindo WhatsApp Web..."
+          title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+          description: json.simulated
+            ? "Z-API desconectada/em modo simulação — abrindo WhatsApp Web automaticamente."
+            : (json.error || "Z-API indisponível — abrindo WhatsApp Web automaticamente.")
         })
-        if (json.whatsappUrl) {
-          window.open(json.whatsappUrl, "_blank")
-        }
+        window.open(waTarget, "_blank")
+        fetchOrders()
       }
     } catch (err: any) {
       toast({
-        variant: "destructive",
-        title: "Falha de conexão",
-        description: err?.message || "Erro ao conectar com o servidor."
+        title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+        description: "Sem comunicação com o servidor Z-API — abrindo WhatsApp Web automaticamente."
       })
+      window.open(localFallbackUrl, "_blank")
     } finally {
       setSendingNotify(prev => ({ ...prev, [notifyKey]: false }))
     }

@@ -42,7 +42,7 @@ import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
@@ -5243,18 +5243,27 @@ export default function PmsCalendar() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => {
+                          onClick={async () => {
                             const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
                             const url = `${window.location.origin}/cafe?res=${resCode}`
                             const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
                             const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
                             const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                            const msg = encodeURIComponent(`Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`)
-                            window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
+                            const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                            await sendDirectZapiWithFallback({
+                              phone,
+                              message: msg,
+                              recipientName: guestName,
+                              reservationCode: String(resCode),
+                              flatNumber: String(flatNum),
+                              triggerEvent: "breakfast_link_manual",
+                              label: "Link do Café da Manhã",
+                              toast
+                            })
                           }}
                           className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
                         >
-                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp
+                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
                         </Button>
 
                         <div className="flex items-center gap-1.5">
@@ -8030,10 +8039,19 @@ export default function PmsCalendar() {
                 setTimeout(() => setCopiedLinkKey(null), 2500)
               }
 
-              const handleSendWa = (url: string, title: string) => {
+              const handleSendWa = async (url: string, title: string) => {
                 if (!waPhone) return
                 const msg = `Olá ${guestName}, aqui está o link de ${title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${url}`
-                window.open(`https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}`, "_blank")
+                await sendDirectZapiWithFallback({
+                  phone: waPhone,
+                  message: msg,
+                  recipientName: guestName,
+                  reservationCode: String(resCode),
+                  flatNumber: String(flatNum),
+                  triggerEvent: "stay_link_manual",
+                  label: `Link de ${title}`,
+                  toast
+                })
               }
 
               return (

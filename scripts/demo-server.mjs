@@ -20757,7 +20757,7 @@ function formatPhoneDisplay(phone) {
   return String(phone);
 }
 
-async function notifyLostItemGuest({ item, db, saveDatabase }) {
+async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = false }) {
   if (!item) return { success: false, reason: "invalid_item" };
 
   // 1. Identifica ou recupera o telefone do hóspede
@@ -20890,7 +20890,8 @@ async function notifyLostItemGuest({ item, db, saveDatabase }) {
         phone: cleanGuestPhone,
         message: msg,
         buttons,
-        recipientRole: "guest"
+        recipientRole: "guest",
+        bypassTestMode: Boolean(bypassTestMode)
       });
     }
   } catch (err) {
@@ -20938,8 +20939,13 @@ async function notifyLostItemGuest({ item, db, saveDatabase }) {
 
   if (saveDatabase) saveDatabase();
 
+  const cleanWaTarget = cleanGuestPhone.startsWith("55") ? cleanGuestPhone : `55${cleanGuestPhone}`;
+  const whatsappUrl = `https://wa.me/${cleanWaTarget}?text=${encodeURIComponent(msg)}`;
+
   return {
     success: waResult.success,
+    simulated: Boolean(waResult.simulated),
+    whatsappUrl,
     result: waResult,
     message: msg,
     recipient: cleanGuestPhone
@@ -21252,7 +21258,7 @@ app.patch("/api/lost-and-found/:id", async (req, res) => {
   saveDatabase();
 
   if (req.body.notifyGuest === true) {
-    await notifyLostItemGuest({ item, db, saveDatabase });
+    await notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode: true });
   }
 
   logAuditEvent({
@@ -21278,9 +21284,11 @@ app.post("/api/lost-and-found/:id/notify-guest", async (req, res) => {
   if (req.body?.maidPhone) item.maidPhone = req.body.maidPhone;
   if (req.body?.foundBy) item.foundBy = req.body.foundBy;
 
-  const result = await notifyLostItemGuest({ item, db, saveDatabase });
+  const result = await notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode: true });
   res.json({
     success: result.success,
+    simulated: Boolean(result.simulated),
+    whatsappUrl: result.whatsappUrl || null,
     item,
     details: result
   });
@@ -38581,6 +38589,9 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
   const balanceFormatted = balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const msg = `📊 *Extrato Financeiro • CorpFlats* 💼\n\nOlá, *${user.name || user.username}*!\n\n💰 *Saldo Atual:* ${balanceFormatted}\n\n📋 *Últimas movimentações:*\n\`\`\`\n${lines || "Nenhuma movimentação ainda."}\n\`\`\`\n\n_Legenda: (+) Crédito (diária), (-) Débito (pagamento/vale)_\n_Para extrato completo, acesse o app._ ✨`;
 
+  const cleanWaPhone = phone.startsWith("55") ? phone : `55${phone}`;
+  const whatsappUrl = `https://wa.me/${cleanWaPhone}?text=${encodeURIComponent(msg)}`;
+
   try {
     const sendResult = await sendZapiMessage(db.zapiConfig, {
       phone,
@@ -38590,12 +38601,14 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
     });
     res.json({
       success: sendResult.success,
-      simulated: sendResult.simulated,
+      simulated: Boolean(sendResult.simulated),
       phone,
+      whatsappUrl,
+      text: msg,
       message: sendResult.success ? "Extrato enviado com sucesso!" : "Falha no envio do extrato.",
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, whatsappUrl, phone, text: msg });
   }
 });
 

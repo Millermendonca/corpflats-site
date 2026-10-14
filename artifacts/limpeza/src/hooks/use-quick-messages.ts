@@ -661,6 +661,14 @@ export function useQuickMessages() {
     const effectiveTargetPhone = formattedCustomPhone
       || (targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone)
 
+    const baseRenderedBody = opts.customMessage?.trim()
+      ? opts.customMessage
+      : renderQuickMessageText(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
+    const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin)
+    const waWebUrl = effectiveTargetPhone
+      ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullFallbackText)}`
+      : `https://api.whatsapp.com/send?text=${encodeURIComponent(fullFallbackText)}`
+
     try {
       const res = await fetch("/api/whatsapp/dispatch-reservation", {
         method: "POST",
@@ -681,7 +689,9 @@ export function useQuickMessages() {
       })
 
       const data = await res.json().catch(() => ({}))
-      if (res.ok && data.success) {
+      const isSimulated = Boolean(data.simulated || (Array.isArray(data.results) && data.results.length > 0 && data.results.every((r: any) => r.simulated)))
+
+      if (res.ok && data.success && !isSimulated) {
         let recipientSummary = opts.customName || recipients.guest.name
         if (targetMode === "both") {
           if (recipients.requester.isDifferentFromGuest && recipients.requester.phone) {
@@ -699,23 +709,29 @@ export function useQuickMessages() {
         })
         return { success: true, method: "zapi" }
       } else {
-        const errorDetail = data.error || (data.results && data.results[0]?.error) || "Falha ao enviar mensagem pela Z-API."
-        console.warn("[dispatchQuickMessage] Falha no disparo Z-API:", errorDetail)
+        const errorDetail = isSimulated
+          ? "Z-API desconectada/em modo simulação"
+          : (data.error || (data.results && data.results[0]?.error) || "Z-API indisponível no momento")
+        console.warn("[dispatchQuickMessage] Acionando redundância WhatsApp Web:", errorDetail)
         toast({
-          title: "Falha no envio via Z-API",
-          description: errorDetail,
-          variant: "destructive"
+          title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+          description: `${errorDetail}. Abrindo WhatsApp Web automaticamente para concluir o envio.`
         })
-        return { success: false, method: "zapi" }
+        if (typeof window !== "undefined") {
+          window.open(waWebUrl, "_blank")
+        }
+        return { success: true, method: "wa_web", fallback: true }
       }
     } catch (err: any) {
-      console.error("[dispatchQuickMessage] Erro na requisição Z-API:", err)
+      console.error("[dispatchQuickMessage] Erro na requisição Z-API, acionando redundância WhatsApp Web:", err)
       toast({
-        title: "Erro de disparo Z-API",
-        description: err.message || "Erro de conexão ao comunicar com a central Z-API.",
-        variant: "destructive"
+        title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+        description: "Sem comunicação com a Z-API — abrindo WhatsApp Web automaticamente para concluir o envio."
       })
-      return { success: false, method: "zapi" }
+      if (typeof window !== "undefined") {
+        window.open(waWebUrl, "_blank")
+      }
+      return { success: true, method: "wa_web", fallback: true }
     }
   }
 
@@ -733,3 +749,89 @@ export function useQuickMessages() {
     dispatchQuickMessage
   }
 }
+
+export async function sendDirectZapiWithFallback(options: {
+  phone?: string | null;
+  message: string;
+  title?: string;
+  footer?: string;
+  buttons?: QuickMessageButton[];
+  recipientName?: string;
+  reservationCode?: string;
+  flatNumber?: string;
+  triggerEvent?: string;
+  toast?: (opts: { title: string; description?: string; variant?: "default" | "destructive" }) => void;
+  label?: string;
+}): Promise<{ success: boolean; method: "zapi" | "wa_web"; fallback?: boolean }> {
+  const rawDigits = (options.phone || "").replace(/\D/g, "")
+  const cleanPhone = rawDigits.length === 10 || rawDigits.length === 11
+    ? `55${rawDigits}`
+    : rawDigits
+
+  const waWebUrl = cleanPhone
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(options.message)}`
+    : `https://api.whatsapp.com/send?text=${encodeURIComponent(options.message)}`
+
+  if (!cleanPhone) {
+    options.toast?.({
+      title: "↪ Abrindo WhatsApp Web",
+      description: "Destinatário sem telefone cadastrado — escolha o contato no WhatsApp Web."
+    })
+    if (typeof window !== "undefined") {
+      window.open(waWebUrl, "_blank")
+    }
+    return { success: true, method: "wa_web", fallback: true }
+  }
+
+  try {
+    const res = await fetch("/api/whatsapp/send-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: cleanPhone,
+        message: options.message,
+        title: options.title,
+        footer: options.footer,
+        buttons: options.buttons,
+        recipientName: options.recipientName,
+        reservationCode: options.reservationCode,
+        flatNumber: options.flatNumber,
+        triggerEvent: options.triggerEvent || "manual_button_dispatch",
+        bypassTestMode: true
+      })
+    })
+    const data = await res.json().catch(() => ({}))
+    const isSimulated = Boolean(data.simulated || data.result?.simulated)
+    if (res.ok && data.success && !isSimulated) {
+      options.toast?.({
+        title: "✓ WhatsApp enviado via Z-API!",
+        description: options.label
+          ? `${options.label} enviado diretamente para ${options.recipientName || `+${cleanPhone}`}.`
+          : `Mensagem entregue diretamente via Z-API para ${options.recipientName || `+${cleanPhone}`}.`
+      })
+      return { success: true, method: "zapi" }
+    } else {
+      const reason = isSimulated
+        ? "Z-API desconectada/em modo simulação"
+        : (data.error || data.result?.error || "Z-API indisponível no momento")
+      options.toast?.({
+        title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+        description: `${reason}. Abrindo WhatsApp Web automaticamente para envio.`
+      })
+      if (typeof window !== "undefined") {
+        window.open(waWebUrl, "_blank")
+      }
+      return { success: true, method: "wa_web", fallback: true }
+    }
+  } catch (err: any) {
+    options.toast?.({
+      title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+      description: "Sem comunicação com a Z-API — abrindo WhatsApp Web automaticamente para envio."
+    })
+    if (typeof window !== "undefined") {
+      window.open(waWebUrl, "_blank")
+    }
+    return { success: true, method: "wa_web", fallback: true }
+  }
+}
+

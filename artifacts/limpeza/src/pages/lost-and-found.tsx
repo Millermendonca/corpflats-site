@@ -19,6 +19,7 @@ import {
 import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useGetMe } from "@workspace/api-client-react"
+import { useToast } from "@/hooks/use-toast"
 
 interface LostItem {
   id: number
@@ -49,6 +50,7 @@ interface LostItem {
 
 export default function LostAndFoundPage() {
   const { data: user } = useGetMe()
+  const { toast } = useToast()
   const isAdmin = user?.role === "admin"
   const [items, setItems] = useState<LostItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -156,7 +158,7 @@ export default function LostAndFoundPage() {
     }
   }
 
-  const handleNotifyGuest = async (itemId: number) => {
+  const handleNotifyGuest = async (itemId: number, fallbackWaUrl?: string | null) => {
     setNotifyingItemId(itemId)
     try {
       const res = await fetch(`/api/lost-and-found/${itemId}/notify-guest`, {
@@ -164,16 +166,47 @@ export default function LostAndFoundPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include"
       })
-      const data = await res.json()
-      if (res.ok && data.success) {
-        alert("Notificação enviada ao cliente com sucesso via WhatsApp!")
+      const data = await res.json().catch(() => ({}))
+      const isSimulated = Boolean(data.simulated || data.details?.simulated)
+      const waTarget = data.whatsappUrl || data.details?.whatsappUrl || fallbackWaUrl
+
+      if (res.ok && data.success && !isSimulated) {
+        toast({
+          title: "✓ Notificação enviada via Z-API!",
+          description: "Mensagem entregue diretamente no WhatsApp do hóspede."
+        })
+        fetchItems()
+      } else if (waTarget) {
+        toast({
+          title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+          description: isSimulated
+            ? "Z-API desconectada/em modo simulação — abrindo WhatsApp Web automaticamente."
+            : "Z-API indisponível — abrindo WhatsApp Web automaticamente para envio."
+        })
+        window.open(waTarget, "_blank")
         fetchItems()
       } else {
-        alert(data.error || data.details?.reason || "Não foi possível enviar a mensagem. Verifique se o hóspede tem telefone válido.")
+        toast({
+          variant: "destructive",
+          title: "Não foi possível enviar",
+          description: data.error || data.details?.reason || "Verifique se o hóspede possui telefone válido cadastrado."
+        })
         fetchItems()
       }
     } catch (err: any) {
-      alert(`Erro ao disparar notificação: ${err.message}`)
+      if (fallbackWaUrl) {
+        toast({
+          title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+          description: "Sem comunicação com a Z-API — abrindo WhatsApp Web automaticamente."
+        })
+        window.open(fallbackWaUrl, "_blank")
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Erro ao disparar notificação",
+          description: err.message
+        })
+      }
     } finally {
       setNotifyingItemId(null)
     }
@@ -809,7 +842,7 @@ export default function LostAndFoundPage() {
                             <span>Envio automático pendente</span>
                             <button
                               type="button"
-                              onClick={() => handleNotifyGuest(item.id)}
+                              onClick={() => handleNotifyGuest(item.id, whatsappUrl)}
                               disabled={notifyingItemId === item.id}
                               className="font-bold underline hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
                             >
@@ -824,28 +857,33 @@ export default function LostAndFoundPage() {
 
                         {item.status === "guardado" && (
                           <div className="flex flex-col sm:flex-row gap-1.5 pt-1">
+                            {item.lastGuestPhone && (
+                              <button
+                                type="button"
+                                onClick={() => handleNotifyGuest(item.id, whatsappUrl)}
+                                disabled={notifyingItemId === item.id}
+                                className="inline-flex items-center justify-center gap-1.5 flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all shadow-xs"
+                                title="Enviar notificação oficial via Z-API (com redundância automática para WhatsApp Web)"
+                              >
+                                {notifyingItemId === item.id ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                )}
+                                <span>{notifyingItemId === item.id ? "Enviando..." : (item.guestNotified ? "Reenviar WhatsApp (Z-API)" : "Avisar Hóspede (Z-API)")}</span>
+                              </button>
+                            )}
                             {whatsappUrl && (
                               <a
                                 href={whatsappUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="inline-flex items-center justify-center gap-1.5 flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all shadow-xs"
-                              >
-                                <MessageSquare className="w-3.5 h-3.5" />
-                                <span>Abrir WhatsApp</span>
-                              </a>
-                            )}
-                            {item.lastGuestPhone && (
-                              <button
-                                type="button"
-                                onClick={() => handleNotifyGuest(item.id)}
-                                disabled={notifyingItemId === item.id}
                                 className="inline-flex items-center justify-center gap-1 bg-muted hover:bg-muted/80 text-foreground font-bold text-xs py-2 px-2.5 rounded-xl border border-border transition-all"
-                                title="Reenviar notificação oficial via Z-API com contato da camareira"
+                                title="Abrir diretamente no WhatsApp Web"
                               >
-                                <RefreshCw className={`w-3 h-3 ${notifyingItemId === item.id ? "animate-spin" : ""}`} />
-                                <span>{notifyingItemId === item.id ? "..." : (item.guestNotified ? "Reenviar Z-API" : "Enviar Z-API")}</span>
-                              </button>
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Web</span>
+                              </a>
                             )}
                           </div>
                         )}

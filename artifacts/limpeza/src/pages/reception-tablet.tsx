@@ -16,10 +16,13 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
+import { useToast } from "@/hooks/use-toast"
+import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
 
 export default function ReceptionTablet() {
   const [, setLocation] = useLocation()
   const { data: settings } = useGetSettings()
+  const { toast } = useToast()
   const [copiedCheckinKey, setCopiedCheckinKey] = useState<string | null>(null)
   const [data, setData] = useState<{
     today: string
@@ -789,16 +792,24 @@ export default function ReceptionTablet() {
                                       <Button
                                         size="sm"
                                         variant="outline"
-                                        onClick={() => {
+                                        onClick={async () => {
                                           const preCheckinUrl = getCheckinUrl(item, g.index || gIdx + 1, window.location.origin, settings)
                                           const phone = (g.phone || item.guestPhone || "").replace(/\D/g, "")
-                                          const msg = encodeURIComponent(
-                                            `Olá, ${g.name || 'Hóspede'}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
-                                          )
-                                          window.open(phone ? `https://wa.me/55${phone}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
+                                          const guestLabelName = g.name || item.guestName || 'Hóspede'
+                                          const message = `Olá, ${guestLabelName}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
+                                          await sendDirectZapiWithFallback({
+                                            phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
+                                            message,
+                                            recipientName: guestLabelName,
+                                            reservationCode: item.code || String(item.id || ""),
+                                            flatNumber: String(item.flatNumber || ""),
+                                            triggerEvent: "reception_checkin_link",
+                                            label: `Link de Check-in (${guestLabelName})`,
+                                            toast
+                                          })
                                         }}
                                         className="h-6 w-6 p-0 bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300"
-                                        title="Enviar WhatsApp"
+                                        title="Enviar WhatsApp (Z-API + Redundância Web)"
                                       >
                                         <MessageCircle className="w-3 h-3 text-emerald-400" />
                                       </Button>

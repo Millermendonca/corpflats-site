@@ -187,7 +187,7 @@ export default function MaidStatementPage() {
     setTimeout(() => setCopiedPix(false), 2500)
   }
 
-  // Enviar extrato para WhatsApp
+  // Enviar extrato para WhatsApp (Z-API + Redundância Web)
   const handleSendWhatsApp = async () => {
     try {
       setSendingWa(true)
@@ -197,12 +197,20 @@ export default function MaidStatementPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: targetUserId }),
       })
-      const data = await res.json()
-      if (res.ok && (data.success || data.simulated)) {
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.success && !data.simulated) {
         toast({
-          title: "✓ Extrato Enviado com Sucesso!",
+          title: "✓ Extrato Enviado via Z-API!",
           description: `O resumo financeiro detalhado foi enviado para o WhatsApp cadastrado (${data.phone || ""}).`,
         })
+      } else if (data.whatsappUrl) {
+        toast({
+          title: "↪ Redirecionado para WhatsApp Web (Redundância)",
+          description: data.simulated
+            ? "Z-API desconectada/em modo simulação — abrindo WhatsApp Web automaticamente."
+            : "Z-API indisponível — abrindo WhatsApp Web automaticamente para envio do extrato.",
+        })
+        window.open(data.whatsappUrl, "_blank")
       } else {
         toast({
           title: "Falha no Envio",

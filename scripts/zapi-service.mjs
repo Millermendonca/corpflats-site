@@ -5674,10 +5674,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
     } else {
       const sampleResv = {
-        guestName: "Miller Mendonça",
+        guestName: req.body?.recipientName || "Miller Mendonça",
         guestPhone: phone,
-        code: "RES-113-0034",
-        flatNumber: "113",
+        code: req.body?.reservationCode || "RES-113-0034",
+        flatNumber: req.body?.flatNumber || "113",
         checkinDate: new Date().toISOString().substring(0, 10),
         checkoutDate: new Date(Date.now() + 86400000 * 2).toISOString().substring(0, 10),
         guestsCount: 2,
@@ -5711,13 +5711,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       bypassTestMode: true
     });
 
-    // Grava log do teste
+    const resolvedTrigger = req.body?.triggerEvent || "manual_button_dispatch";
+    const resolvedName = req.body?.recipientName || "Envio Direto";
+
+    // Grava log do disparo
     if (!db.whatsappHistory) db.whatsappHistory = [];
     db.whatsappHistory.push({
       id: `test_${Date.now()}`,
-      guestName: "Teste Manual",
+      guestName: resolvedName,
       guestPhone: phone,
-      triggerEvent: "test_dispatch",
+      reservationCode: req.body?.reservationCode || null,
+      triggerEvent: resolvedTrigger,
       message: finalMessage,
       buttons: finalButtons,
       documentUrl: finalDocUrl || null,
@@ -5738,7 +5742,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       mediaUrl: finalDocUrl || null,
       fileName: finalDocName || null,
       buttons: finalButtons,
-      triggerEvent: "test_dispatch",
+      triggerEvent: resolvedTrigger,
       status: result.success ? "read" : "failed",
       timestamp: new Date().toISOString(),
       messageId: result.messageId || `msg_test_${Date.now()}`
@@ -5945,14 +5949,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const anySuccess = results.some(r => r.success);
     const allSuccess = results.every(r => r.success);
+    const allSimulated = results.length > 0 && results.every(r => Boolean(r.simulated));
     const firstError = results.find(r => !r.success && r.error)?.error || null;
 
     res.json({
       success: anySuccess,
       allSuccess,
+      simulated: allSimulated,
       method: results[0]?.method || "manual",
       dispatchesCount: results.length,
-      recipients: results.map(r => ({ type: r.recipientType, name: r.recipientName, phone: r.phone, success: r.success })),
+      recipients: results.map(r => ({ type: r.recipientType, name: r.recipientName, phone: r.phone, success: r.success, simulated: Boolean(r.simulated) })),
       results,
       error: !anySuccess ? (firstError || "Não foi possível disparar mensagem via Z-API.") : null
     });
