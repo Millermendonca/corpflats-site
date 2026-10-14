@@ -1,4 +1,4 @@
-# BRIEFING — 2026-10-14T04:16:00Z
+# BRIEFING — 2026-10-14T04:41:00Z
 
 ## Mission
 Coordinate and monitor the complete bidirectional integration between PMS Guest-Flow-Manager and WebBookingPro channel manager, plus the SEBRAE pricing engine overhaul, via Project Orchestrator (orchestrator_1).
@@ -23,17 +23,17 @@ Coordinate and monitor the complete bidirectional integration between PMS Guest-
 - Strict targeted test execution only
 
 ## User Context
-- **Last user request**: R9 Manual refinement in `WbpHelpManualPage.tsx` (real screenshots in `artifacts/limpeza/public/manual/`, admin subtopics 1.1, 1.6 go-live checklist, 1.7 critical alerts & 08:00 summary, 1.8 provisional adapters, and full WBP error codes 1004, 1100, 1101) + previous backend vault safety directives.
+- **Last user request**: R9 Manual refinement in `WbpHelpManualPage.tsx` + backend vault safety directives (both fully implemented in commits `a832dc6` and `20e51ea`).
 - **Pending clarifications**: none
 - **Delivered results**:
   - M1: Operational Safety, Storage & Simulator (commit 13d5043)
   - M2: Canonical Availability & SEBRAE Pricing Engine (commit 6c33558)
   - M3: ARI Mapping, 7 Restrictions & Synchronizer (commit 1a141ba)
   - M4: Reservation Processing, Quarantine, Reconciler & Alerts (commit d8274d6)
-  - M5 (In progress): Credit Card Vault, Provisional Adapters, UI & Manual
+  - M5: Credit Card Vault, Provisional Adapters, UI & Manual (commits a832dc6 and 20e51ea, Gate 5 in progress)
 
 ## Project Status
-- **Phase**: in progress (Milestone 5)
+- **Phase**: Gate 5 Quality Verification in progress
 - **Route**: General (teamwork_preview_orchestrator)
 - **Active Orchestrator Dir**: .agents/teamwork/orchestrator_1
 - **Active Orchestrator ID**: 84d9f696-67d5-4529-bec4-c0232e9abea0
@@ -41,7 +41,7 @@ Coordinate and monitor the complete bidirectional integration between PMS Guest-
 - **Cron 2 (Liveness)**: active (task-18)
 
 ## Victory Audit Status
-- **Triggered**: no (Milestone 5 in progress)
+- **Triggered**: no (Gate 5 in progress, followed by Final Acceptance E2E Track)
 - **Verdict**: pending
 - **Retry count**: 0
 

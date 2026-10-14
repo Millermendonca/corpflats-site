@@ -98,13 +98,19 @@ Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBoo
 | explorer_m5_wbp_1 | teamwork_preview_explorer | M5 Exploration: Credit Card Vault & Security | completed | 25382c2c-fc65-4ce5-a3be-42f54f351269 |
 | explorer_m5_wbp_2 | teamwork_preview_explorer | M5 Exploration: Provisional Adapters & Backend | completed | 5ac16573-ec27-4624-bced-1a6955394565 |
 | explorer_m5_wbp_3 | teamwork_preview_explorer | M5 Exploration: Frontend UI & Help Manual | completed | abca2e86-bda4-4b91-935d-ef29266e417a |
-| worker_m5_backend | teamwork_preview_worker | M5 Backend: Vault, Crypto, Reauth, Purge & Provisional | in-progress | da528942-a8a0-40be-93bd-930f3e535028 |
-| worker_m5_frontend | teamwork_preview_worker | M5 Frontend: Pricing, OTA Inbox, Help Manual & Build | in-progress | 9db06c46-acb0-4df2-849c-3de07390a6f4 |
+| worker_m5_backend | teamwork_preview_worker | M5 Backend: Vault, Crypto, Reauth, Purge & Provisional | completed (commit 20e51ea) | da528942-a8a0-40be-93bd-930f3e535028 |
+| worker_m5_frontend | teamwork_preview_worker | M5 Frontend: Pricing, OTA Inbox, Help Manual & Build | completed (commit a832dc6) | 9db06c46-acb0-4df2-849c-3de07390a6f4 |
+| reviewer_m5_wbp_1 | teamwork_preview_reviewer | M5 Review: Vault Architecture, Security & Twin Parity | in-progress | 7959296e-3df2-4e88-aa84-903423251460 |
+| reviewer_m5_wbp_2 | teamwork_preview_reviewer | M5 Review: UI Fidelity, In-System Manual & Adapters | in-progress | e7caef9d-4a21-4bc0-94c0-b5bd03df1ac1 |
+| challenger_m5_wbp_1 | teamwork_preview_challenger | M5 Challenger: Vault Security, Reauth & Purge Stress | in-progress | bf1570cb-04ef-44b8-886b-5d388d5a6b80 |
+| challenger_m5_wbp_2 | teamwork_preview_challenger | M5 Challenger: Provisional Adapters & Safety Stress | in-progress | 490a3d9e-3595-4632-9aed-9fc2d0053e2c |
+| auditor_m5_wbp | teamwork_preview_auditor | M5 Forensic Integrity Audit | completed (CLEAN) | b4c6646f-7b4c-42c8-9c2d-5750066f2b1a |
+| worker_m5_fix | teamwork_preview_worker | M5 Remediation: Time-travel offset & UI auth facade removal | in-progress | fb23d31b-ee39-44bb-98e9-d82a261ff305 |
 
 ## Succession Status
 - Succession required: no (orchestrator is top-level dispatch agent)
-- Spawn count: 39
-- Pending subagents: da528942-a8a0-40be-93bd-930f3e535028, 9db06c46-acb0-4df2-849c-3de07390a6f4
+- Spawn count: 45
+- Pending subagents: fb23d31b-ee39-44bb-98e9-d82a261ff305
 - Predecessor: none
 - Successor: none
 

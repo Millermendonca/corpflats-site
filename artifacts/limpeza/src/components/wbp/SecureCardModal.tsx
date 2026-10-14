@@ -96,13 +96,17 @@ export const SecureCardModal: React.FC<SecureCardModalProps> = ({
         body: JSON.stringify({ password, reservationId, orderId }),
       });
 
-      let token = "";
-      if (reauthRes.ok) {
-        const reauthData = await reauthRes.json();
-        token = reauthData.token;
-      } else {
-        // If simulated or test fallback
-        token = "token-" + Math.random().toString(36).substring(2);
+      if (!reauthRes.ok) {
+        const err = await reauthRes.json().catch(() => ({}));
+        setErrorMsg(err.error || "Senha de administrador incorreta ou acesso não autorizado.");
+        return;
+      }
+
+      const reauthData = await reauthRes.json().catch(() => ({}));
+      const token = reauthData.token;
+      if (!token) {
+        setErrorMsg("Falha ao obter token de autorização.");
+        return;
       }
 
       // Step 2: Fetch decrypted details with single-use token
@@ -112,43 +116,31 @@ export const SecureCardModal: React.FC<SecureCardModalProps> = ({
         body: JSON.stringify({ token, reservationId, orderId }),
       });
 
-      if (viewRes.ok) {
-        const viewData = await viewRes.json();
-        setCardDetails(viewData.card || {
-          cardholderName: guestName.toUpperCase(),
-          cardBrand: cardBrand || "Visa",
-          cardNumber: `4532 8901 2345 ${cardLast4 || "4242"}`,
-          cardLast4: cardLast4 || "4242",
-          cardExpMonth: "12",
-          cardExpYear: "2028",
-          cvvNotice: "Não armazenado — descartado na recepção conforme norma PCI-DSS",
-        });
-      } else {
-        // Fallback card details conforming to zero-CVV
-        setCardDetails({
-          cardholderName: guestName.toUpperCase(),
-          cardBrand: cardBrand || "Visa",
-          cardNumber: `4532 8901 2345 ${cardLast4 || "4242"}`,
-          cardLast4: cardLast4 || "4242",
-          cardExpMonth: "12",
-          cardExpYear: "2028",
-          cvvNotice: "Não armazenado — descartado na recepção conforme norma PCI-DSS",
-        });
+      if (!viewRes.ok) {
+        const err = await viewRes.json().catch(() => ({}));
+        setErrorMsg(err.error || "Token de visualização inválido ou expirado.");
+        return;
       }
 
-      setStep("view");
-    } catch {
-      // Fallback
+      const viewData = await viewRes.json().catch(() => ({}));
+      if (!viewData.card) {
+        setErrorMsg("Dados de cartão não encontrados ou já expurgados.");
+        return;
+      }
+
       setCardDetails({
-        cardholderName: guestName.toUpperCase(),
-        cardBrand: cardBrand || "Visa",
-        cardNumber: `4532 8901 2345 ${cardLast4 || "4242"}`,
-        cardLast4: cardLast4 || "4242",
-        cardExpMonth: "12",
-        cardExpYear: "2028",
+        cardholderName: viewData.card.holderName || guestName.toUpperCase(),
+        cardBrand: viewData.card.brand || cardBrand || "Visa",
+        cardNumber: viewData.card.cardNumber || "",
+        cardLast4: viewData.card.last4 || cardLast4 || "",
+        cardExpMonth: viewData.card.expireMonth || "",
+        cardExpYear: viewData.card.expireYear || "",
         cvvNotice: "Não armazenado — descartado na recepção conforme norma PCI-DSS",
       });
+
       setStep("view");
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Erro de comunicação ao validar credenciais.");
     } finally {
       setIsLoading(false);
     }

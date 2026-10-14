@@ -95,6 +95,15 @@ export function addDays(dateStr, days) {
 }
 
 /**
+ * Resolves current timestamp in milliseconds, respecting the sandbox time-travel simulation offset.
+ *
+ * @returns {number}
+ */
+export function getEffectiveNow() {
+  return Date.now() + Number(global.__simulatedTimeOffsetMs || 0);
+}
+
+/**
  * CreditCardVault
  *
  * Implements Feature 25 (AES-256-GCM Encrypted Vault) & Feature 26 (Admin Reauth & Auto-Purge).
@@ -326,7 +335,7 @@ export class CreditCardVault {
       status: "active",
       encrypted,
       aad,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(getEffectiveNow()).toISOString(),
       purgedAt: null,
       purgeReason: null
     };
@@ -449,7 +458,7 @@ export class CreditCardVault {
   createReauthToken(username, reservationId = null) {
     const token = crypto.randomUUID();
     const expiresInSeconds = 300; // 5 minutes
-    const expiresAt = Date.now() + expiresInSeconds * 1000;
+    const expiresAt = getEffectiveNow() + expiresInSeconds * 1000;
 
     this._reauthTokens.set(token, {
       token,
@@ -481,7 +490,7 @@ export class CreditCardVault {
     if (!entry) return null;
 
     // Check expiration (strictly 5 minutes)
-    if (Date.now() > entry.expiresAt || entry.used) {
+    if (getEffectiveNow() > entry.expiresAt || entry.used) {
       this._reauthTokens.delete(token);
       return null;
     }
@@ -514,7 +523,7 @@ export class CreditCardVault {
 
     record.status = "purged";
     record.encrypted = null; // Permanently destroyed
-    record.purgedAt = new Date().toISOString();
+    record.purgedAt = new Date(getEffectiveNow()).toISOString();
     record.purgeReason = reason;
 
     if (db && Array.isArray(db.reservations)) {
@@ -544,10 +553,12 @@ export class CreditCardVault {
    * @returns {number} Count of purged cards
    */
   purgeExpiredCards(referenceDateOrOptions = null, db = null) {
+    const effectiveNow = getEffectiveNow();
+    const defaultDate = new Date(effectiveNow).toISOString().slice(0, 10);
     const today =
       (typeof referenceDateOrOptions === "string"
         ? referenceDateOrOptions
-        : referenceDateOrOptions?.currentDate) || new Date().toISOString().slice(0, 10);
+        : referenceDateOrOptions?.currentDate) || defaultDate;
 
     let purgedCount = 0;
 
@@ -556,7 +567,7 @@ export class CreditCardVault {
         if (today >= record.purgeAfterDate) {
           record.status = "purged";
           record.encrypted = null;
-          record.purgedAt = new Date().toISOString();
+          record.purgedAt = new Date(effectiveNow).toISOString();
           record.purgeReason = "7_days_post_checkout";
           purgedCount++;
 

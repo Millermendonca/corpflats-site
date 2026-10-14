@@ -1,5 +1,5 @@
 ## Current Status
-Last visited: 2026-10-14T04:30:15Z
+Last visited: 2026-10-14T05:10:15Z
 
 ## Iteration Status
 Current iteration: 5 / 32
@@ -16,10 +16,10 @@ Current iteration: 5 / 32
 - [x] Marco 4 (Processamento de Reservas, Quarentena, Conciliador & Alertas): Portão 4 PASS (commit d8274d6)
 - [/] Marco 5 (Cofre de Cartões, Adaptadores Provisórios, UI & Manual Operacional):
   - [x] Fase de Exploração: F25 a F31 concluída pelos Explorers 1, 2 e 3
-  - [/] Implementação Backend (`worker_m5_backend`) & Frontend (`worker_m5_frontend`)
-  - [ ] Build de Produção (`artifacts/limpeza/dist`) e Paridade Gêmea (SHA-256)
-  - [ ] Testes Pontuais (`m5-vault-ui.test.mjs`)
-  - [ ] Portão 5 (Reviewers, Challengers, Auditor)
+  - [x] Implementação Backend (`worker_m5_backend`, commit 20e51ea) & Frontend (`worker_m5_frontend`, commit a832dc6)
+  - [x] Portão 5 (Iteração 1): Auditor CLEAN, Reviewer 1 e Challenger 2 APPROVE; Reviewer 2 e Challenger 1 solicitaram correções pontuais
+  - [/] Remediação (`worker_m5_fix`): Time-travel offset no vault.mjs e remoção do fallback de auth no SecureCardModal.tsx
+  - [ ] Portão 5 Liberação (Clearance Reviewer, Challenger & Auditor)
 - [ ] Trilha Final: Suíte E2E 100% (Tiers 1–4) & Endurecimento Adversarial (Tier 5)
 
 

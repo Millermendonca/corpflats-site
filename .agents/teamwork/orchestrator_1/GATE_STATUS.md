@@ -32,8 +32,15 @@ Gate Result: **FAIL** (Reviewer 2 and Challenger 2 requested fixes: primitive fl
 | challenger_m4_clearance | teamwork_preview_challenger | APPROVE (25/25 challenger tests pass, 5/5 concurrency tests pass, collision & reconciler false-positives 100% resolved) | handoff.md |
 | auditor_m4_clearance | teamwork_preview_auditor | CLEAN (0 violations, card hygiene verified, 100% parity across 11 files, DB intact) | handoff.md |
 
-Gate Result: **PASS** (100% approval across all 3 clearance verification agents, Auditor CLEAN, database intact, all 5 defects remediated)
+## Gate — Milestone 5 (Iteration 1)
+| Agent | Role | Verdict | Source |
+|-------|------|---------|--------|
+| worker_m5_backend | teamwork_preview_worker | DONE (commit 20e51ea, 11/11 M5 tests pass, 100% parity across 13 twin pairs) | handoff.md |
+| worker_m5_frontend | teamwork_preview_worker | DONE (commit a832dc6, npm run build exit code 0) | handoff.md |
+| reviewer_m5_wbp_1 | teamwork_preview_reviewer | APPROVE (AES-256-GCM vault, in-memory CVV discard, 13 twin pairs SHA-256 identical) | handoff.md |
+| reviewer_m5_wbp_2 | teamwork_preview_reviewer | REQUEST_CHANGES (facade authentication fallback in SecureCardModal.tsx must be removed) | handoff.md |
+| challenger_m5_wbp_1 | teamwork_preview_challenger | REQUEST_CHANGES (token expiration must account for global.__simulatedTimeOffsetMs in vault.mjs) | handoff.md |
+| challenger_m5_wbp_2 | teamwork_preview_challenger | APPROVE (10/10 empirical tests pass, provisional default-disabled, SEBRAE math contract) | handoff.md |
+| auditor_m5_wbp | teamwork_preview_auditor | CLEAN (0 integrity violations, card hygiene verified, 13 twin pairs matched, DB intact) | handoff.md |
 
-
-
-
+Gate Result: **FAIL** (Reviewer 2 requested removal of facade fallback in SecureCardModal.tsx; Challenger 1 requested simulatedTimeOffsetMs integration in vault.mjs for token expiration)

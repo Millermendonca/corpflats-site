@@ -1590,7 +1590,7 @@ app.post("/api/wbp/vault/view", (req, res) => {
 app.post("/api/wbp/vault/purge", (req, res) => {
   try {
     const { currentDate, user = "admin" } = req.body || {};
-    const effectiveDate = currentDate || new Date().toISOString().slice(0, 10);
+    const effectiveDate = currentDate || getTodayStr();
     const purgedCount = wbpVault.purgeExpiredCards(effectiveDate, db);
 
     if (purgedCount > 0) {
