@@ -5010,6 +5010,27 @@ export function executeConversationalBookingStep({
         })
       : { success: false, available: false, flats: [] };
 
+    // Se o próprio hóspede já possui uma pré-reserva ativa segurando um flat para este período,
+    // garante que o flat reservado para ele próprio conste como disponível para atualização/confirmação!
+    if (convState.activePreReservation && Array.isArray(db?.flats)) {
+      const heldFlatObj = db.flats.find(f =>
+        String(f.id) === String(convState.activePreReservation.flatId) ||
+        String(f.number) === String(convState.activePreReservation.flatNumber)
+      );
+      if (heldFlatObj && Array.isArray(avail.flats)) {
+        const alreadyInList = avail.flats.some(f => String(f.id) === String(heldFlatObj.id) || String(f.number) === String(heldFlatObj.number));
+        if (!alreadyInList) {
+          avail.flats.unshift({
+            ...getFlatAmenitiesInfo(heldFlatObj),
+            baseRate: Number(db?.tariffSettings?.baseDailyRate || 237),
+            maxGuests: 2
+          });
+          avail.available = true;
+          avail.totalAvailable = avail.flats.length;
+        }
+      }
+    }
+
     if (canCheckAvailability && avail.success && (!avail.available || avail.flats.length === 0)) {
       return {
         handled: true,
@@ -5076,8 +5097,12 @@ export function executeConversationalBookingStep({
         const effectiveTotal = quoteChosen?.total || quoteRoomOnly?.total || (237 * convState.nights);
 
         if (convState.activePreReservation) {
-          // Atualiza pré-reserva ativa se o hóspede ajustou plano ou número de hóspedes
+          // Atualiza pré-reserva ativa se o hóspede ajustou plano, número de hóspedes ou flat preferido
           const existing = convState.activePreReservation;
+          if (selectedFlat && convState.preferredFlatNumber) {
+            existing.flatId = selectedFlat.id;
+            existing.flatNumber = String(selectedFlat.number);
+          }
           existing.guestsCount = convState.guests;
           existing.ratePlan = convState.ratePlan;
           existing.totalAmount = effectiveTotal;
