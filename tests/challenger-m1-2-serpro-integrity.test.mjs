@@ -502,6 +502,11 @@ describe("Suite 5: Live API Server Integration Verification", () => {
 
   before(async () => {
     fs.copyFileSync(prodDbPath, isolatedDbPath);
+    const isoData = JSON.parse(fs.readFileSync(isolatedDbPath, "utf8"));
+    if (isoData.zapiConfig) {
+      isoData.zapiConfig = { ...isoData.zapiConfig, token: "", clientToken: "" };
+      fs.writeFileSync(isolatedDbPath, JSON.stringify(isoData));
+    }
 
     serverProcess = spawn("node", ["artifacts/api-server/demo-server.mjs"], {
       env: {

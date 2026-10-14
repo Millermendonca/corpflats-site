@@ -59,6 +59,9 @@ describe('E2E Final Acceptance Suite: External Service Orders Lifecycle (R1 - R8
 
     if (!Array.isArray(parsedDb.serviceOrders)) parsedDb.serviceOrders = [];
     if (!Array.isArray(parsedDb.serviceWorkers)) parsedDb.serviceWorkers = [];
+    if (parsedDb.zapiConfig) {
+      parsedDb.zapiConfig = { ...parsedDb.zapiConfig, token: '', clientToken: '' };
+    }
     if (!Array.isArray(parsedDb.notifications)) parsedDb.notifications = [];
     if (!Array.isArray(parsedDb.auditLogs)) parsedDb.auditLogs = [];
 

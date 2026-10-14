@@ -72,6 +72,11 @@ describe('Challenger M1 Final: Empirical Verification of Start/Finish Notificati
 
   before(async () => {
     fs.copyFileSync(prodDbPath, isolatedDbPath);
+    const isoData = JSON.parse(fs.readFileSync(isolatedDbPath, 'utf8'));
+    if (isoData.zapiConfig) {
+      isoData.zapiConfig = { ...isoData.zapiConfig, token: '', clientToken: '' };
+      fs.writeFileSync(isolatedDbPath, JSON.stringify(isoData));
+    }
 
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
       env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },

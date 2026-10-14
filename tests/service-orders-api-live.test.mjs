@@ -31,6 +31,11 @@ describe('Live HTTP API Tests for External Service Orders', () => {
 
   before(async () => {
     fs.copyFileSync(prodDbPath, isolatedDbPath);
+    const isoData = JSON.parse(fs.readFileSync(isolatedDbPath, 'utf8'));
+    if (isoData.zapiConfig) {
+      isoData.zapiConfig = { ...isoData.zapiConfig, token: '', clientToken: '' };
+      fs.writeFileSync(isolatedDbPath, JSON.stringify(isoData));
+    }
 
     // Start server in background with custom PORT and isolated database
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {

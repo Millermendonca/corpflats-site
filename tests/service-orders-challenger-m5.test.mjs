@@ -43,6 +43,9 @@ describe('CHALLENGER M5: Empirical Stress-Test & Adversarial Challenge Suite (R1
 
     parsedDb.serviceOrders = [];
     parsedDb.serviceWorkers = [];
+    if (parsedDb.zapiConfig) {
+      parsedDb.zapiConfig = { ...parsedDb.zapiConfig, token: '', clientToken: '' };
+    }
     if (!Array.isArray(parsedDb.notifications)) parsedDb.notifications = [];
     if (!Array.isArray(parsedDb.auditLogs)) parsedDb.auditLogs = [];
 

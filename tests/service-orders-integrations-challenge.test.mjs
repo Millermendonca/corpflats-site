@@ -292,6 +292,11 @@ describe('CHALLENGER M4: R6 & R7 Integrations Empirical Challenge Suite', () => 
 
       // Create isolated copy of database.json for this challenge
       fs.copyFileSync(prodDbPath, challengeDbPath);
+      const isoData = JSON.parse(fs.readFileSync(challengeDbPath, 'utf8'));
+      if (isoData.zapiConfig) {
+        isoData.zapiConfig = { ...isoData.zapiConfig, token: '', clientToken: '' };
+        fs.writeFileSync(challengeDbPath, JSON.stringify(isoData));
+      }
 
       // Spawn live server on unique challenge port with dedicated isolated database
       serverChild = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
