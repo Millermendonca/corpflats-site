@@ -20,7 +20,28 @@ function getSoapHost() {
 
 // ─── Carrega certificado ──────────────────────────────────────────────────────
 export function loadCert() {
-  const password = (process.env.CERT_PFX_PASSWORD || "47964813").trim();
+  for (const envCandidate of [path.resolve(process.cwd(), ".env"), path.resolve("..", ".env")]) {
+    try {
+      if (fs.existsSync(envCandidate)) {
+        const lines = fs.readFileSync(envCandidate, "utf-8").split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const eqIdx = trimmed.indexOf("=");
+          if (eqIdx === -1) continue;
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1).replace(/\\n/g, "\n");
+          }
+          if (process.env[key] === undefined) process.env[key] = val;
+        }
+        break;
+      }
+    } catch {}
+  }
+  const password = (process.env.CERT_PFX_PASSWORD || process.env.CERT_PASS || process.env.CERT_PASSWORD || "").trim();
+
 
   let pfxBuf;
   const b64 = process.env.CERT_PFX_BASE64;

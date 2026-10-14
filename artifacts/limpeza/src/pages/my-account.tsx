@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { 
   User, Shield, Key, KeyRound, Fingerprint, Calendar, Car, Briefcase, 
   Trash2, Download, CheckCircle2, AlertTriangle, LogOut, ArrowRight, 
-  ExternalLink, Lock, Eye, EyeOff, Save, Check, Smartphone, Globe
+  ExternalLink, Lock, Eye, EyeOff, Save, Check, Smartphone, Globe, MapPin
 } from "lucide-react"
 import { 
   getCurrentSession, updateAccountProfile, changeAccountPassword, 
@@ -27,16 +27,29 @@ export default function MyAccount() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState("profile")
 
-  // Form States - Profile
+  // Form States - Profile (Personal & Demographic)
   const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
   const [phone, setPhone] = useState("")
+  const [docType, setDocType] = useState("CPF")
   const [document, setDocument] = useState("")
   const [birthDate, setBirthDate] = useState("")
+  const [gender, setGender] = useState("")
+  const [nationality, setNationality] = useState("Brasileira")
+  const [profession, setProfession] = useState("")
+
+  // Form States - Address
   const [cep, setCep] = useState("")
+  const [street, setStreet] = useState("")
+  const [streetNumber, setStreetNumber] = useState("")
+  const [complement, setComplement] = useState("")
+  const [neighborhood, setNeighborhood] = useState("")
   const [address, setAddress] = useState("")
   const [city, setCity] = useState("")
   const [state, setState] = useState("RJ")
   const [loadingCep, setLoadingCep] = useState(false)
+
+  // Form States - Vehicle & Corporate
   const [vehiclePlate, setVehiclePlate] = useState("")
   const [vehicleBrand, setVehicleBrand] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
@@ -44,6 +57,7 @@ export default function MyAccount() {
   const [companyCnpj, setCompanyCnpj] = useState("")
   const [companyName, setCompanyName] = useState("")
   const [companyEmail, setCompanyEmail] = useState("")
+  const [companyPhone, setCompanyPhone] = useState("")
   const [savingProfile, setSavingProfile] = useState(false)
 
   // Form States - Security
@@ -71,14 +85,12 @@ export default function MyAccount() {
       setLoading(true)
       const sessionUser = await getCurrentSession()
       if (!sessionUser) {
-        // Tenta fallback local
         const raw = localStorage.getItem("corpflats_guest_profile")
         if (raw) {
           const parsed = JSON.parse(raw)
           setUser(parsed)
           populateFields(parsed)
         } else {
-          // Redireciona para o site ou login
           setLocation("/reservar")
           return
         }
@@ -87,13 +99,29 @@ export default function MyAccount() {
         populateFields(sessionUser)
       }
 
-      // Carrega histórico de reservas
-      const email = sessionUser?.email || localStorage.getItem("corpflats_guest_email") || ""
-      if (email) {
-        const res = await fetch(`/api/guest-auth/me?email=${encodeURIComponent(email)}`)
-        if (res.ok) {
-          const data = await res.json()
-          setReservations(data.reservations || [])
+      // Carrega histórico de reservas via sessão autenticada
+      const legacyToken = localStorage.getItem("corpflats_guest_token") || ""
+      const headers: Record<string, string> = {}
+      if (legacyToken) {
+        headers["Authorization"] = `Bearer ${legacyToken}`
+      }
+      const bookingsRes = await fetch("/api/v2/auth/bookings", {
+        method: "GET",
+        credentials: "include",
+        headers
+      })
+      if (bookingsRes.ok) {
+        const bData = await bookingsRes.json()
+        setReservations(bData.bookings || bData.reservations || [])
+      } else {
+        const meRes = await fetch("/api/guest-auth/me", {
+          method: "GET",
+          credentials: "include",
+          headers
+        })
+        if (meRes.ok) {
+          const meData = await meRes.json()
+          setReservations(meData.reservations || [])
         }
       }
     } catch {
@@ -114,7 +142,8 @@ export default function MyAccount() {
   const maskPhone = (v: string) => {
     const clean = v.replace(/\D/g, "").slice(0, 11)
     if (clean.length <= 2) return clean
-    if (clean.length <= 7) return `(${clean.slice(0, 2)}) ${clean.slice(2)}`
+    if (clean.length <= 6) return `(${clean.slice(0, 2)}) ${clean.slice(2)}`
+    if (clean.length <= 10) return `(${clean.slice(0, 2)}) ${clean.slice(2, 6)}-${clean.slice(6)}`
     return `(${clean.slice(0, 2)}) ${clean.slice(2, 7)}-${clean.slice(7)}`
   }
 
@@ -124,18 +153,34 @@ export default function MyAccount() {
     return `${clean.slice(0, 5)}-${clean.slice(5)}`
   }
 
+  const maskCnpj = (v: string) => {
+    const clean = v.replace(/\D/g, "").slice(0, 14)
+    if (clean.length <= 2) return clean
+    if (clean.length <= 5) return `${clean.slice(0, 2)}.${clean.slice(2)}`
+    if (clean.length <= 8) return `${clean.slice(0, 2)}.${clean.slice(2, 5)}.${clean.slice(5)}`
+    if (clean.length <= 12) return `${clean.slice(0, 2)}.${clean.slice(2, 5)}.${clean.slice(5, 8)}/${clean.slice(8)}`
+    return `${clean.slice(0, 2)}.${clean.slice(2, 5)}.${clean.slice(5, 8)}/${clean.slice(8, 12)}-${clean.slice(12)}`
+  }
+
   const handleLookupCep = async (val: string) => {
+    const formatted = maskCep(val)
+    setCep(formatted)
     const clean = val.replace(/\D/g, "")
-    setCep(clean)
     if (clean.length === 8) {
       setLoadingCep(true)
       try {
         const res = await fetch(`/api/lookup-cep/${clean}`)
         if (res.ok) {
           const data = await res.json()
-          if (data.logradouro) setAddress(`${data.logradouro}, ${data.bairro || ''}`.trim())
-          if (data.cidade) setCity(data.cidade)
-          if (data.uf) setState(data.uf)
+          const st = data.logradouro || data.street || ""
+          const nb = data.bairro || data.neighborhood || ""
+          const ct = data.localidade || data.cidade || data.city || ""
+          const uf = data.uf || data.state || ""
+          if (st) setStreet(st)
+          if (nb) setNeighborhood(nb)
+          if (st || nb) setAddress([st, nb].filter(Boolean).join(", "))
+          if (ct) setCity(ct)
+          if (uf) setState(uf)
         }
       } catch {}
       finally {
@@ -146,18 +191,47 @@ export default function MyAccount() {
 
   const populateFields = (data: any) => {
     setName(data.name || "")
-    setPhone(data.phone || "")
-    setDocument(data.document || "")
+    setEmail(data.email || "")
+    setPhone(maskPhone(data.phone || ""))
+    const dType = data.docType || "CPF"
+    setDocType(dType)
+    setDocument(dType === "CPF" ? maskCpf(data.document || "") : (data.document || ""))
+    setBirthDate(data.birthDate || "")
+    setGender(data.gender || "")
+    setNationality(data.nationality || "Brasileira")
+    setProfession(data.profession || "")
+
+    setCep(maskCep(data.cep || ""))
+    setStreet(data.street || data.address || "")
+    setStreetNumber(data.streetNumber || data.number || "")
+    setComplement(data.complement || "")
+    setNeighborhood(data.neighborhood || "")
+    setAddress(data.address || data.street || "")
+    setCity(data.city || "")
+    setState(data.state || "RJ")
+
     if (data.vehicle) {
       setVehiclePlate(data.vehicle.plate || "")
       setVehicleBrand(data.vehicle.brand || "")
       setVehicleModel(data.vehicle.model || "")
       setVehicleColor(data.vehicle.color || "")
+    } else {
+      setVehiclePlate("")
+      setVehicleBrand("")
+      setVehicleModel("")
+      setVehicleColor("")
     }
+
     if (data.companyData) {
-      setCompanyCnpj(data.companyData.cnpj || "")
+      setCompanyCnpj(maskCnpj(data.companyData.cnpj || ""))
       setCompanyName(data.companyData.companyName || "")
       setCompanyEmail(data.companyData.companyEmail || "")
+      setCompanyPhone(maskPhone(data.companyData.companyPhone || ""))
+    } else {
+      setCompanyCnpj("")
+      setCompanyName("")
+      setCompanyEmail("")
+      setCompanyPhone("")
     }
   }
 
@@ -165,18 +239,62 @@ export default function MyAccount() {
     e.preventDefault()
     setSavingProfile(true)
     try {
-      const payload = {
-        name,
-        phone,
-        document,
-        vehicle: vehiclePlate ? { plate: vehiclePlate, brand: vehicleBrand, model: vehicleModel, color: vehicleColor } : null,
-        companyData: companyCnpj ? { cnpj: companyCnpj, companyName, companyEmail } : null
+      const composedAddress = [
+        street.trim(),
+        streetNumber.trim() ? `nº ${streetNumber.trim()}` : "",
+        complement.trim(),
+        neighborhood.trim()
+      ].filter(Boolean).join(", ") || address.trim()
+
+      const hasAnyVehicle = Boolean(vehiclePlate.trim() || vehicleBrand.trim() || vehicleModel.trim() || vehicleColor.trim())
+      const hasAnyCompany = Boolean(companyCnpj.trim() || companyName.trim() || companyEmail.trim() || companyPhone.trim())
+
+      const payload: any = {
+        name: name.trim(),
+        email: email.trim(),
+        newEmail: user?.email && email.trim().toLowerCase() !== user.email.toLowerCase() ? email.trim() : undefined,
+        phone: phone.trim(),
+        docType,
+        document: document.trim(),
+        birthDate,
+        gender,
+        nationality: nationality.trim() || "Brasileira",
+        profession: profession.trim(),
+        cep: cep.trim(),
+        street: street.trim() || composedAddress,
+        streetNumber: streetNumber.trim(),
+        number: streetNumber.trim(),
+        complement: complement.trim(),
+        neighborhood: neighborhood.trim(),
+        address: composedAddress,
+        city: city.trim(),
+        state: state.trim(),
+        vehicle: hasAnyVehicle
+          ? {
+              plate: vehiclePlate.trim().toUpperCase(),
+              brand: vehicleBrand.trim(),
+              model: vehicleModel.trim(),
+              color: vehicleColor.trim()
+            }
+          : null,
+        companyData: hasAnyCompany
+          ? {
+              cnpj: companyCnpj.trim(),
+              companyName: companyName.trim(),
+              companyEmail: companyEmail.trim(),
+              companyPhone: companyPhone.trim()
+            }
+          : null
       }
       const res = await updateAccountProfile(payload)
       if (res.success) {
+        if (res.user) {
+          setUser(res.user)
+          populateFields(res.user)
+        }
         toast({
           title: "Perfil atualizado com sucesso! ✨",
-          description: "Suas informações cadastrais foram salvas com segurança."
+          description: "Suas informações cadastrais foram sincronizadas com segurança."
         })
       } else {
         throw new Error(res.error || "Erro ao salvar perfil.")
@@ -427,51 +545,218 @@ export default function MyAccount() {
                   Dados Pessoais & Documentação
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Mantenha seus dados atualizados para agilizar o check-in automático e a liberação de portaria.
+                  Mantenha seus dados atualizados para agilizar o check-in automático, emissão de FNRH/NFS-e e liberação de portaria.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleSaveProfile} className="space-y-5">
+                <form onSubmit={handleSaveProfile} className="space-y-6">
+                  {/* Dados Pessoais Principais */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">Nome Completo</Label>
+                      <Label className="text-xs font-bold">Nome Completo *</Label>
                       <Input
                         value={name}
                         onChange={e => setName(e.target.value)}
                         placeholder="Seu nome completo"
                         className="rounded-xl h-9 text-xs"
+                        required
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">E-mail Cadastrado</Label>
+                      <Label className="text-xs font-bold">E-mail de Acesso & Contato *</Label>
                       <Input
-                        disabled
-                        value={user?.email || ""}
-                        className="rounded-xl h-9 text-xs bg-slate-50 dark:bg-slate-800 text-slate-500 font-mono"
+                        type="email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        placeholder="seu@email.com"
+                        className="rounded-xl h-9 text-xs font-mono"
+                        required
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">WhatsApp / Celular</Label>
+                      <Label className="text-xs font-bold">WhatsApp / Celular *</Label>
                       <Input
                         value={phone}
-                        onChange={e => setPhone(e.target.value)}
+                        onChange={e => setPhone(maskPhone(e.target.value))}
                         placeholder="(22) 99999-9999"
                         className="rounded-xl h-9 text-xs"
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">CPF / Documento</Label>
+                      <Label className="text-xs font-bold">Tipo de Documento</Label>
+                      <select
+                        value={docType}
+                        onChange={e => {
+                          const nextType = e.target.value
+                          setDocType(nextType)
+                          if (nextType === "CPF") {
+                            setDocument(maskCpf(document))
+                          }
+                        }}
+                        className="w-full rounded-xl h-9 text-xs px-3 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                      >
+                        <option value="CPF">CPF</option>
+                        <option value="RG">RG</option>
+                        <option value="Passaporte">Passaporte</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold">{docType === "CPF" ? "CPF *" : "Número do Documento *"}</Label>
                       <Input
                         value={document}
-                        onChange={e => setDocument(e.target.value)}
-                        placeholder="000.000.000-00"
+                        onChange={e => setDocument(docType === "CPF" ? maskCpf(e.target.value) : e.target.value)}
+                        placeholder={docType === "CPF" ? "000.000.000-00" : "Número do documento"}
                         className="rounded-xl h-9 text-xs font-mono"
                       />
+                    </div>
+                  </div>
+
+                  {/* Dados Demográficos (FNRH / CRM) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold">Data de Nascimento</Label>
+                      <Input
+                        type="date"
+                        value={birthDate}
+                        onChange={e => setBirthDate(e.target.value)}
+                        className="rounded-xl h-9 text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold">Gênero</Label>
+                      <select
+                        value={gender}
+                        onChange={e => setGender(e.target.value)}
+                        className="w-full rounded-xl h-9 text-xs px-3 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                      >
+                        <option value="">Selecione...</option>
+                        <option value="Masculino">Masculino</option>
+                        <option value="Feminino">Feminino</option>
+                        <option value="Outro">Outro</option>
+                        <option value="Prefiro não informar">Prefiro não informar</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold">Nacionalidade</Label>
+                      <Input
+                        value={nationality}
+                        onChange={e => setNationality(e.target.value)}
+                        placeholder="Brasileira"
+                        className="rounded-xl h-9 text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold">Profissão / Ocupação</Label>
+                      <Input
+                        value={profession}
+                        onChange={e => setProfession(e.target.value)}
+                        placeholder="Ex: Engenheiro, Médico..."
+                        className="rounded-xl h-9 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Seção de Endereço Completo com Busca de CEP */}
+                  <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-sky-600" />
+                        <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                          Endereço Residencial (FNRH & Nota Fiscal)
+                        </h4>
+                      </div>
+                      {loadingCep && (
+                        <span className="text-[11px] text-sky-600 font-semibold animate-pulse">
+                          Buscando CEP...
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">CEP</Label>
+                        <Input
+                          value={cep}
+                          onChange={e => handleLookupCep(e.target.value)}
+                          placeholder="00000-000"
+                          className="rounded-xl h-8 text-xs font-mono"
+                        />
+                      </div>
+
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label className="text-[11px] font-bold">Logradouro / Rua / Avenida</Label>
+                        <Input
+                          value={street}
+                          onChange={e => {
+                            setStreet(e.target.value)
+                            setAddress(e.target.value)
+                          }}
+                          placeholder="Rua, Avenida, Alameda..."
+                          className="rounded-xl h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Número</Label>
+                        <Input
+                          value={streetNumber}
+                          onChange={e => setStreetNumber(e.target.value)}
+                          placeholder="Ex: 120, S/N"
+                          className="rounded-xl h-8 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Complemento</Label>
+                        <Input
+                          value={complement}
+                          onChange={e => setComplement(e.target.value)}
+                          placeholder="Apto, Bloco, Casa..."
+                          className="rounded-xl h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Bairro</Label>
+                        <Input
+                          value={neighborhood}
+                          onChange={e => setNeighborhood(e.target.value)}
+                          placeholder="Seu bairro"
+                          className="rounded-xl h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Cidade</Label>
+                        <Input
+                          value={city}
+                          onChange={e => setCity(e.target.value)}
+                          placeholder="Sua cidade"
+                          className="rounded-xl h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">UF / Estado</Label>
+                        <Input
+                          value={state}
+                          onChange={e => setState(e.target.value.toUpperCase().slice(0, 2))}
+                          placeholder="RJ"
+                          maxLength={2}
+                          className="rounded-xl h-8 text-xs font-mono uppercase"
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -531,12 +816,12 @@ export default function MyAccount() {
                         Dados de Faturamento & Emissão de NFS-e (PJ)
                       </h4>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div className="space-y-1">
                         <Label className="text-[11px] font-bold">CNPJ da Empresa</Label>
                         <Input
                           value={companyCnpj}
-                          onChange={e => setCompanyCnpj(e.target.value)}
+                          onChange={e => setCompanyCnpj(maskCnpj(e.target.value))}
                           placeholder="00.000.000/0001-00"
                           className="rounded-xl h-8 text-xs font-mono"
                         />
@@ -556,6 +841,15 @@ export default function MyAccount() {
                           value={companyEmail}
                           onChange={e => setCompanyEmail(e.target.value)}
                           placeholder="financeiro@empresa.com"
+                          className="rounded-xl h-8 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Telefone Comercial / Financeiro</Label>
+                        <Input
+                          value={companyPhone}
+                          onChange={e => setCompanyPhone(maskPhone(e.target.value))}
+                          placeholder="(22) 99999-9999"
                           className="rounded-xl h-8 text-xs"
                         />
                       </div>

@@ -4,17 +4,28 @@
 
 export interface UserProfile {
   id: string | number
+  guestId?: number
+  guestCode?: string
   email: string
   name: string
   role?: string
   avatarUrl?: string
   phone?: string
+  docType?: string
   document?: string
   birthDate?: string
+  gender?: string
+  nationality?: string
+  profession?: string
+  cep?: string
   address?: string
+  street?: string
+  streetNumber?: string
+  number?: string
+  complement?: string
+  neighborhood?: string
   city?: string
   state?: string
-  cep?: string
   companyData?: {
     cnpj?: string
     companyName?: string
@@ -36,20 +47,37 @@ export interface UserProfile {
 export interface AuthResponse {
   success: boolean
   user?: UserProfile
+  token?: string
   message?: string
   error?: string
 }
 
 const API_BASE = "/api/v2/auth"
 
+function getAuthHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extraHeaders }
+  if (typeof window !== "undefined") {
+    try {
+      const token = localStorage.getItem("corpflats_guest_token")
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+      }
+    } catch {}
+  }
+  return headers
+}
+
 /**
  * Persiste sessão no armazenamento local para restauração síncrona instantânea
  */
-export function saveSessionLocally(user: UserProfile): void {
+export function saveSessionLocally(user: UserProfile, token?: string): void {
   if (typeof window === "undefined" || !user) return
   try {
     if (user.email) {
       localStorage.setItem("corpflats_guest_email", user.email)
+    }
+    if (token) {
+      localStorage.setItem("corpflats_guest_token", token)
     }
     localStorage.setItem("corpflats_guest_profile", JSON.stringify(user))
   } catch {}
@@ -68,39 +96,52 @@ export function clearLocalSession(): void {
 }
 
 /**
- * 1. Login com E-mail e Senha (Emite Cookie HttpOnly Seguro)
+ * 1. Login com E-mail, CPF ou Telefone/WhatsApp + Senha (Emite Cookie HttpOnly Seguro)
  */
-export async function loginWithEmail(email: string, password: string): Promise<AuthResponse> {
+export async function loginWithEmail(identifier: string, password: string): Promise<AuthResponse> {
   try {
     const res = await fetch(`${API_BASE}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ identifier, email: identifier, password })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Falha no login.")
     if (data.user) {
-      saveSessionLocally(data.user)
+      saveSessionLocally(data.user, data.token)
       cancelGoogleOneTap()
     }
-    return { success: true, user: data.user, message: data.message }
+    return { success: true, user: data.user, token: data.token, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro de conexão." }
   }
 }
 
 /**
- * 2. Cadastro de Nova Conta com Validação de E-mail e Senha
+ * 2. Cadastro de Nova Conta com Deduplicação Inteligente (CPF, E-mail, Telefone)
  */
 export async function registerAccount(payload: {
   name: string
   email: string
   password: string
   phone?: string
+  docType?: string
   document?: string
-  vehicle?: { plate?: string; model?: string; brand?: string; color?: string }
-  companyData?: { cnpj?: string; companyName?: string }
+  birthDate?: string
+  gender?: string
+  nationality?: string
+  profession?: string
+  cep?: string
+  address?: string
+  street?: string
+  streetNumber?: string
+  complement?: string
+  neighborhood?: string
+  city?: string
+  state?: string
+  vehicle?: { plate?: string; model?: string; brand?: string; color?: string } | null
+  companyData?: { cnpj?: string; companyName?: string; companyEmail?: string; companyPhone?: string } | null
 }): Promise<AuthResponse> {
   try {
     const res = await fetch(`${API_BASE}/register`, {
@@ -112,10 +153,10 @@ export async function registerAccount(payload: {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Erro ao criar conta.")
     if (data.user) {
-      saveSessionLocally(data.user)
+      saveSessionLocally(data.user, data.token)
       cancelGoogleOneTap()
     }
-    return { success: true, user: data.user, message: data.message }
+    return { success: true, user: data.user, token: data.token, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro ao conectar." }
   }
@@ -135,10 +176,10 @@ export async function loginWithGoogleCredential(credential: string): Promise<Aut
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Erro ao autenticar com o Google.")
     if (data.user) {
-      saveSessionLocally(data.user)
+      saveSessionLocally(data.user, data.token)
       cancelGoogleOneTap()
     }
-    return { success: true, user: data.user, message: data.message }
+    return { success: true, user: data.user, token: data.token, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro no Google Sign-In." }
   }
@@ -182,6 +223,7 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
                       headers: { "Content-Type": "application/json" },
                       credentials: "include",
                       body: JSON.stringify({
+                        accessToken: tokenResponse.access_token,
                         email: userInfo.email,
                         name: userInfo.name || userInfo.email.split("@")[0],
                         picture: userInfo.picture || "",
@@ -190,10 +232,10 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
                     })
                     const authData = await authRes.json()
                     if (authData.success && authData.user) {
-                      saveSessionLocally(authData.user)
+                      saveSessionLocally(authData.user, authData.token)
                       cancelGoogleOneTap()
                       onSuccess(authData.user)
-                      resolve({ success: true, user: authData.user })
+                      resolve({ success: true, user: authData.user, token: authData.token })
                       return
                     }
                   }
@@ -233,12 +275,13 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
 }
 
 /**
- * 4. Obter Sessão Ativa Atual (Consome Cookie HttpOnly com fallback local)
+ * 4. Obter Sessão Ativa Atual (Consome Cookie HttpOnly / Token Assinado)
  */
 export async function getCurrentSession(): Promise<UserProfile | null> {
   try {
     const res = await fetch(`${API_BASE}/me`, {
-      credentials: "include"
+      credentials: "include",
+      headers: getAuthHeaders()
     })
     if (res.ok) {
       const data = await res.json()
@@ -246,19 +289,22 @@ export async function getCurrentSession(): Promise<UserProfile | null> {
         saveSessionLocally(data.user)
         return data.user
       }
+    } else if (res.status === 401) {
+      clearLocalSession()
+      return null
     }
-  } catch {}
-
-  // Fallback: se rede falhar temporariamente mas há perfil salvo
-  try {
-    const raw = localStorage.getItem("corpflats_guest_profile")
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (parsed && (parsed.email || parsed.name)) {
-        return parsed
+  } catch {
+    // Fallback offline apenas se a rede falhar
+    try {
+      const raw = localStorage.getItem("corpflats_guest_profile")
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && (parsed.email || parsed.name)) {
+          return parsed
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   return null
 }
@@ -288,7 +334,7 @@ export async function requestPasswordReset(email: string): Promise<{ success: bo
     const res = await fetch(`${API_BASE}/forgot-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, identifier: email })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Erro ao solicitar recuperação.")
@@ -323,7 +369,7 @@ export async function changeAccountPassword(currentPassword: string, newPassword
   try {
     const res = await fetch(`${API_BASE}/change-password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify({ currentPassword, newPassword })
     })
@@ -338,11 +384,11 @@ export async function changeAccountPassword(currentPassword: string, newPassword
 /**
  * 9. Atualizar Dados do Perfil
  */
-export async function updateAccountProfile(payload: Partial<UserProfile>): Promise<AuthResponse> {
+export async function updateAccountProfile(payload: Partial<UserProfile> & { newEmail?: string; newPassword?: string }): Promise<AuthResponse> {
   try {
     const res = await fetch(`${API_BASE}/profile`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(payload)
     })
@@ -367,7 +413,10 @@ export async function registerPasskeyDevice(deviceName = "Dispositivo Biométric
 
   try {
     // 1. Obtém desafio do servidor
-    const optRes = await fetch(`${API_BASE}/passkeys/register-options`, { credentials: "include" })
+    const optRes = await fetch(`${API_BASE}/passkeys/register-options`, {
+      credentials: "include",
+      headers: getAuthHeaders()
+    })
     const options = await optRes.json()
     if (!optRes.ok) throw new Error(options.error || "Falha ao gerar desafio.")
 
@@ -398,12 +447,13 @@ export async function registerPasskeyDevice(deviceName = "Dispositivo Biométric
     // 3. Envia para o servidor verificar e salvar
     const verifyRes = await fetch(`${API_BASE}/passkeys/register-verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify({
         credentialId: credential.id,
         deviceName,
-        rawId: credential.id
+        rawId: credential.id,
+        challenge: options.challenge
       })
     })
     const verifyData = await verifyRes.json()
@@ -447,17 +497,18 @@ export async function loginWithPasskey(email?: string): Promise<AuthResponse> {
       credentials: "include",
       body: JSON.stringify({
         credentialId: assertion.id,
-        email: email || options.email
+        email: email || options.email,
+        challenge: options.challenge
       })
     })
 
     const data = await verifyRes.json()
     if (!verifyRes.ok) throw new Error(data.error || "Falha na verificação biométrica.")
     if (data.user) {
-      saveSessionLocally(data.user)
+      saveSessionLocally(data.user, data.token)
       cancelGoogleOneTap()
     }
-    return { success: true, user: data.user, message: data.message }
+    return { success: true, user: data.user, token: data.token, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro ao entrar com Passkey." }
   }

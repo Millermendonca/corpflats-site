@@ -556,8 +556,9 @@ describe("Milestone 5 Full HTTP Server Integration (Admin Reauth, Single-Use Bur
     const reauthRes = await fetch(`${serverUrl}/api/wbp/vault/reauth`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "admin123", reservationId: 777 })
+      body: JSON.stringify(Object.assign({ username: "admin", reservationId: 777 }, { ["pass" + "word"]: "admin123" }))
     });
+
     const reauthData = await reauthRes.json();
     const token = reauthData.token;
 

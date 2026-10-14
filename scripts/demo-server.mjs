@@ -197,6 +197,27 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+for (const envCandidate of [path.resolve(__dirname, "../../.env"), path.resolve(__dirname, "../.env"), path.resolve(process.cwd(), ".env")]) {
+  try {
+    if (fs.existsSync(envCandidate)) {
+      const envLines = fs.readFileSync(envCandidate, "utf-8").split(/\r?\n/);
+      for (const line of envLines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1).replace(/\\n/g, "\n");
+        }
+        if (process.env[key] === undefined) process.env[key] = val;
+      }
+      break;
+    }
+  } catch {}
+}
+
 // ── Universal Date Helpers (Top Level) ──────────────────────────────────────
 const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Sao_Paulo",
@@ -662,12 +683,13 @@ function ensureReceptionUser(database) {
   if (!database.users) database.users = defaultUsers;
   const found = database.users.find(u => u.username.toLowerCase() === "soho@promenade.com.br");
   if (!found) {
+    const defaultRecPass = process.env.RECEPTION_DEFAULT_PASSWORD || crypto.randomBytes(16).toString("hex");
     database.users.push({
       id: 4,
       username: "Soho@promenade.com.br",
       name: "Recepção Soho",
       role: "recepcao",
-      passwordHash: hashPassword("Soho@123"),
+      passwordHash: hashPassword(defaultRecPass),
       must_change_password: true,
       password_updated_at: new Date().toISOString()
     });
@@ -683,14 +705,27 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 }
 
 function verifyPassword(password, storedHash) {
-  if (!storedHash) return false;
+  if (!storedHash || typeof password !== "string" || typeof storedHash !== "string") return false;
   if (!storedHash.includes(":")) {
-    return password === storedHash; // legacy plain text fallback
+    if (process.env.NODE_ENV === "test") {
+      const a = crypto.createHash("sha256").update(password).digest();
+      const b = crypto.createHash("sha256").update(storedHash).digest();
+      return crypto.timingSafeEqual(a, b);
+    }
+    return false;
   }
   const [salt, key] = storedHash.split(":");
-  const testHash = crypto.scryptSync(password, salt, 32).toString("hex");
-  return key === testHash;
+  if (!salt || !key) return false;
+  try {
+    const testBuf = crypto.scryptSync(password, salt, 32);
+    const keyBuf = Buffer.from(key, "hex");
+    if (keyBuf.length !== testBuf.length) return false;
+    return crypto.timingSafeEqual(keyBuf, testBuf);
+  } catch {
+    return false;
+  }
 }
+
 
 function isPasswordExpired(user) {
   if (!user || !user.password_updated_at) return false;
@@ -5435,17 +5470,20 @@ async function loadDatabase() {
       db.siteConfig.branding.googleMapsUrl = "https://share.google/LHu3541d5lhkdvbL2";
     }
     if (!db.settings.mercadoPagoConfig || !db.settings.mercadoPagoConfig.accessToken) {
-      db.settings.mercadoPagoConfig = {
-        accessToken: "APP_USR-2731253548432791-081914-0cf47f75d865fb5ce9f5a1b95c744ca1-3628826676",
-        publicKey: "APP_USR-3c0fcec7-8a2f-436f-b471-dac950fd9933",
-        clientId: "2731253548432791",
-        clientSecret: "eMz5j4OOTMs9xeOqJmKqHdlBciL916B2",
-        isConfigured: true,
-        sandbox: false,
-        updatedAt: new Date().toISOString()
-      };
-      saveDatabase();
+      if (process.env.MERCADOPAGO_ACCESS_TOKEN) {
+        db.settings.mercadoPagoConfig = {
+          accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN,
+          publicKey: process.env.MERCADOPAGO_PUBLIC_KEY || "",
+          clientId: process.env.MERCADOPAGO_CLIENT_ID || "",
+          clientSecret: process.env.MERCADOPAGO_CLIENT_SECRET || "",
+          isConfigured: true,
+          sandbox: process.env.MERCADOPAGO_SANDBOX === "true",
+          updatedAt: new Date().toISOString()
+        };
+        saveDatabase();
+      }
     }
+
 
     if (!db.notifications) db.notifications = [];
     if (!db.lostAndFound) db.lostAndFound = [];
@@ -5598,7 +5636,21 @@ function normalizePhone(phone) {
   if (digits.startsWith("55") && digits.length >= 12) {
     digits = digits.substring(2);
   }
+  if (digits.startsWith("0") && (digits.length === 11 || digits.length === 12)) {
+    digits = digits.substring(1);
+  }
   return digits;
+}
+
+function phonesMatch(p1, p2) {
+  const a = normalizePhone(p1);
+  const b = normalizePhone(p2);
+  if (!a || !b || a.length < 8 || b.length < 8) return false;
+  if (a === b) return true;
+  if ((a.length === 10 || a.length === 11) && (b.length === 10 || b.length === 11)) {
+    if (a.slice(0, 2) === b.slice(0, 2) && a.slice(-8) === b.slice(-8)) return true;
+  }
+  return false;
 }
 
 function mergeGuestRecords(target, source) {
@@ -5608,6 +5660,7 @@ function mergeGuestRecords(target, source) {
   if (source.fullName && (!target.fullName || source.fullName.length > target.fullName.length)) target.fullName = source.fullName;
   if (source.name && (!target.name || source.name.length > target.name.length)) target.name = source.name;
 
+  if (!target.docType && source.docType) target.docType = source.docType;
   if (!target.document && (source.document || source.documentNumber || source.cpf || source.tomadorCpfCnpj)) {
     target.document = source.document || source.documentNumber || source.cpf || source.tomadorCpfCnpj;
   }
@@ -5621,16 +5674,25 @@ function mergeGuestRecords(target, source) {
   }
   if (!target.birthDate && source.birthDate) target.birthDate = source.birthDate;
   if (!target.gender && source.gender) target.gender = source.gender;
-  if (!target.address && (source.address || source.logradouro || source.endereco || source.tomadorEndereco)) {
-    const a = source.address || source.logradouro || source.endereco || source.tomadorEndereco;
+  if (!target.nationality && source.nationality) target.nationality = source.nationality;
+  if (!target.profession && source.profession) target.profession = source.profession;
+
+  if (!target.address && (source.address || source.street || source.logradouro || source.endereco || source.tomadorEndereco)) {
+    const a = source.address || source.street || source.logradouro || source.endereco || source.tomadorEndereco;
     target.address = a;
+    target.street = source.street || a;
     target.logradouro = a;
   }
-  if (!target.number && (source.number || source.numero || source.tomadorNumero)) {
-    const n = source.number || source.numero || source.tomadorNumero;
+  if (!target.street && (source.street || target.address)) {
+    target.street = source.street || target.address;
+  }
+  if (!target.number && (source.number || source.streetNumber || source.numero || source.tomadorNumero)) {
+    const n = source.number || source.streetNumber || source.numero || source.tomadorNumero;
     target.number = n;
+    target.streetNumber = n;
     target.numero = n;
   }
+  if (!target.streetNumber && target.number) target.streetNumber = target.number;
   if (!target.complement && (source.complement || source.complemento || source.tomadorComplemento)) {
     const c = source.complement || source.complemento || source.tomadorComplemento;
     target.complement = c;
@@ -5663,8 +5725,25 @@ function mergeGuestRecords(target, source) {
   if (!target.companyId && source.companyId) {
     target.companyId = source.companyId;
   }
-  if (!target.companyName && (source.companyName || source.corporateName)) {
-    target.companyName = source.companyName || source.corporateName;
+  if (!target.companyName && (source.companyName || source.corporateName || source.companyData?.companyName)) {
+    target.companyName = source.companyName || source.corporateName || source.companyData?.companyName;
+  }
+  if (source.companyData || source.companyCnpj || source.companyName || source.companyEmail || source.companyPhone) {
+    const existingComp = target.companyData || {};
+    const srcComp = source.companyData || {};
+    const mergedCnpj = existingComp.cnpj || srcComp.cnpj || source.companyCnpj || target.companyCnpj || "";
+    const mergedCompName = existingComp.companyName || srcComp.companyName || source.companyName || target.companyName || "";
+    const mergedCompEmail = existingComp.companyEmail || srcComp.companyEmail || source.companyEmail || target.companyEmail || "";
+    const mergedCompPhone = existingComp.companyPhone || srcComp.companyPhone || source.companyPhone || target.companyPhone || "";
+    if (mergedCnpj || mergedCompName || mergedCompEmail || mergedCompPhone) {
+      target.companyData = {
+        cnpj: mergedCnpj,
+        companyName: mergedCompName,
+        companyEmail: mergedCompEmail,
+        companyPhone: mergedCompPhone
+      };
+      if (!target.companyName && mergedCompName) target.companyName = mergedCompName;
+    }
   }
   if (source.autoEmitInvoice !== undefined && target.autoEmitInvoice === undefined) {
     target.autoEmitInvoice = Boolean(source.autoEmitInvoice);
@@ -5696,6 +5775,14 @@ function mergeGuestRecords(target, source) {
   }
   if (!target.vehicleColor && (source.vehicleColor || source.vehicle?.color)) {
     target.vehicleColor = source.vehicleColor || source.vehicle?.color;
+  }
+  if (target.vehiclePlate || source.vehicle?.plate) {
+    target.vehicle = {
+      plate: target.vehiclePlate || source.vehicle?.plate || "",
+      brand: target.vehicleBrand || source.vehicle?.brand || "",
+      model: target.vehicleModel || source.vehicle?.model || "",
+      color: target.vehicleColor || source.vehicle?.color || ""
+    };
   }
 
   // FNHR Flags
@@ -5748,20 +5835,41 @@ function reconcileAndMergeGuests(database) {
     const cEmail = (candidate.email || candidate.tomadorEmail || candidate.guestEmail || "").trim().toLowerCase();
     const cName = normalizeName(candidate.name || candidate.fullName || candidate.tomadorNome || candidate.guestName);
 
-    return list.find(g => {
-      const gDoc = normalizeDoc(g.document || g.documentNumber);
-      const gPhone = normalizePhone(g.phone || g.phoneNumber);
-      const gEmail = (g.email || "").trim().toLowerCase();
-      const gName = normalizeName(g.fullName || g.name);
+    // Prioridade 1: ID ou CPF/Documento
+    if (candidate.id || candidate.guestId || (cDoc && cDoc.length >= 8)) {
+      const byIdOrDoc = list.find(g => {
+        if (candidate.id && g.id && Number(candidate.id) === Number(g.id)) return true;
+        if (candidate.guestId && g.id && Number(candidate.guestId) === Number(g.id)) return true;
+        const gDoc = normalizeDoc(g.document || g.documentNumber);
+        if (cDoc && gDoc && cDoc === gDoc) return true;
+        return false;
+      });
+      if (byIdOrDoc) return byIdOrDoc;
+    }
 
-      if (candidate.id && g.id && Number(candidate.id) === Number(g.id)) return true;
-      if (candidate.guestId && g.id && Number(candidate.guestId) === Number(g.id)) return true;
-      if (cDoc && gDoc && cDoc === gDoc) return true;
-      if (cPhone && gPhone && cPhone.length >= 8 && cPhone === gPhone) return true;
-      if (cEmail && gEmail && cEmail.includes("@") && cEmail === gEmail) return true;
-      if (cName && gName && cName.length >= 5 && cName === gName) return true;
-      return false;
-    });
+    // Prioridade 2: E-mail
+    if (cEmail && cEmail.includes("@")) {
+      const byEmail = list.find(g => (g.email || "").trim().toLowerCase() === cEmail);
+      if (byEmail) return byEmail;
+    }
+
+    // Prioridade 3: Telefone normalizado
+    if (cPhone && cPhone.length >= 8) {
+      const byPhone = list.find(g => phonesMatch(g.phone || g.phoneNumber, cPhone));
+      if (byPhone) return byPhone;
+    }
+
+    // Prioridade 4: Nome completo (apenas quando não há conflito de documento)
+    if (cName && cName.length >= 5) {
+      return list.find(g => {
+        const gDoc = normalizeDoc(g.document || g.documentNumber);
+        if (cDoc && gDoc && cDoc !== gDoc) return false;
+        const gName = normalizeName(g.fullName || g.name);
+        return gName === cName;
+      });
+    }
+
+    return undefined;
   };
 
   // 1. Deduplica a base de hóspedes existente
@@ -5776,6 +5884,30 @@ function reconcileAndMergeGuests(database) {
     }
   }
 
+  // 1.5 Incorpora dados de db.guestAccounts (Minha Conta) na base deduplicada
+  if (Array.isArray(currentDb.guestAccounts)) {
+    for (const acc of currentDb.guestAccounts) {
+      if (isDeleted(acc)) continue;
+      let matched = findMatchingGuest(acc, deduplicated);
+      if (!matched && (acc.name || acc.email || acc.document || acc.phone)) {
+        const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+        matched = {
+          id: nextId,
+          guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
+          name: acc.name || (acc.email ? acc.email.split("@")[0] : "Hóspede"),
+          fullName: acc.name || (acc.email ? acc.email.split("@")[0] : "Hóspede"),
+          createdAt: acc.createdAt || new Date().toISOString()
+        };
+        deduplicated.push(matched);
+      }
+      if (matched) {
+        mergeGuestRecords(matched, acc);
+        acc.guestId = matched.id;
+        acc.guestCode = matched.guestCode;
+      }
+    }
+  }
+
   // 2. Processa todas as reservas (mestre e slots individuais)
   for (const r of currentDb.reservations) {
     const rGuestCand = {
@@ -5785,6 +5917,15 @@ function reconcileAndMergeGuests(database) {
       document: r.guestDocument || r.document,
       phone: r.guestPhone || r.phone,
       email: r.guestEmail || r.email,
+      address: r.guestAddress || r.address,
+      street: r.guestStreet || r.street,
+      streetNumber: r.guestStreetNumber || r.streetNumber,
+      complement: r.guestComplement || r.complement,
+      neighborhood: r.guestNeighborhood || r.neighborhood,
+      cep: r.guestCep || r.cep,
+      city: r.guestCity || r.city,
+      state: r.guestState || r.state,
+      companyData: r.companyData,
       photoUrl: r.selfieUrl || r.photoUrl,
       docPhotoUrl: r.docPhotoUrl || r.documentPhotoUrl,
       signatureUrl: r.signatureUrl,
@@ -5830,6 +5971,11 @@ function reconcileAndMergeGuests(database) {
           birthDate: rg.birthDate,
           gender: rg.gender,
           address: rg.address,
+          street: rg.street,
+          streetNumber: rg.streetNumber,
+          complement: rg.complement,
+          neighborhood: rg.neighborhood,
+          cep: rg.cep,
           city: rg.city,
           state: rg.state,
           photoUrl: rg.selfieUrl,
@@ -5922,7 +6068,47 @@ function reconcileAndMergeGuests(database) {
   }
 
   currentDb.guests = deduplicated;
+
+  // 5. Propaga enriquecimento de volta para db.guestAccounts
+  if (Array.isArray(currentDb.guestAccounts)) {
+    for (const acc of currentDb.guestAccounts) {
+      const matched = findMatchingGuest(acc, currentDb.guests);
+      if (matched) {
+        acc.guestId = matched.id;
+        acc.guestCode = matched.guestCode;
+        if (!acc.name && (matched.fullName || matched.name)) acc.name = matched.fullName || matched.name;
+        if (!acc.phone && matched.phone) acc.phone = matched.phone;
+        if (!acc.document && (matched.document || matched.documentNumber)) acc.document = matched.document || matched.documentNumber;
+        if (!acc.docType && matched.docType) acc.docType = matched.docType;
+        if (!acc.birthDate && matched.birthDate) acc.birthDate = matched.birthDate;
+        if (!acc.gender && matched.gender) acc.gender = matched.gender;
+        if (!acc.nationality && matched.nationality) acc.nationality = matched.nationality;
+        if (!acc.profession && matched.profession) acc.profession = matched.profession;
+        if (!acc.cep && matched.cep) acc.cep = matched.cep;
+        if (!acc.address && (matched.address || matched.logradouro)) acc.address = matched.address || matched.logradouro;
+        if (!acc.street && (matched.street || matched.logradouro || matched.address)) acc.street = matched.street || matched.logradouro || matched.address;
+        if (!acc.streetNumber && (matched.streetNumber || matched.number || matched.numero)) acc.streetNumber = matched.streetNumber || matched.number || matched.numero;
+        if (!acc.number && acc.streetNumber) acc.number = acc.streetNumber;
+        if (!acc.complement && (matched.complement || matched.complemento)) acc.complement = matched.complement || matched.complemento;
+        if (!acc.neighborhood && (matched.neighborhood || matched.bairro)) acc.neighborhood = matched.neighborhood || matched.bairro;
+        if (!acc.city && (matched.city || matched.cidade)) acc.city = matched.city || matched.cidade;
+        if (!acc.state && (matched.state || matched.uf)) acc.state = matched.state || matched.uf;
+        if (!acc.vehicle && matched.vehiclePlate) {
+          acc.vehicle = {
+            plate: matched.vehiclePlate,
+            brand: matched.vehicleBrand || "",
+            model: matched.vehicleModel || "",
+            color: matched.vehicleColor || ""
+          };
+        }
+        if (!acc.companyData && matched.companyData) {
+          acc.companyData = { ...matched.companyData };
+        }
+      }
+    }
+  }
 }
+
 
 function ensureGuestCodes() {
   reconcileAndMergeGuests(db);
@@ -7517,17 +7703,44 @@ initMaidAutomationEngine(app, () => db, saveDatabase);
 let checkinsList = [];
 let existingManualRequests = [];
 
-// ── Session Auth Helper (with Global Session Revocation Version) ─────────────
+// ── Session Auth Helper (with Global Session Revocation Version & HMAC-SHA256) ──
 const AUTH_COOKIE_NAME = "gfm_session_v2";
 const AUTH_SESSION_VERSION = 2;
+const AUTH_SECRET = process.env.AUTH_SECRET || process.env.JWT_SECRET || crypto.createHash("sha256").update(__dirname + "_corpflats_session_hmac_key").digest("hex");
+
+function createAuthToken(payload) {
+  const dataB64 = Buffer.from(JSON.stringify(payload), "utf-8").toString("base64url");
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(dataB64).digest("base64url");
+  return `${dataB64}.${sig}`;
+}
+
+function verifyAuthToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dotIdx = token.lastIndexOf(".");
+  if (dotIdx <= 0) return null;
+  const dataB64 = token.slice(0, dotIdx);
+  const sig = token.slice(dotIdx + 1);
+  if (!dataB64 || !sig) return null;
+  try {
+    const expectedSig = crypto.createHmac("sha256", AUTH_SECRET).update(dataB64).digest("base64url");
+    const sigBuf = Buffer.from(sig, "utf-8");
+    const expBuf = Buffer.from(expectedSig, "utf-8");
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    const raw = Buffer.from(dataB64, "base64url").toString("utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 function getAuthUser(req) {
   const token = req.cookies?.[AUTH_COOKIE_NAME] || req.headers?.["authorization"]?.replace("Bearer ", "");
   if (!token) return null;
   try {
-    const raw = Buffer.from(token, "base64").toString("utf-8");
-    const data = JSON.parse(raw);
-    if (data.v !== AUTH_SESSION_VERSION) return null; // Invalida qualquer sessão legada
+    const data = verifyAuthToken(token);
+    if (!data || data.v !== AUTH_SESSION_VERSION) return null; // Invalida qualquer sessão legada ou sem assinatura HMAC
     const found = db.users.find(u => u.id === data.id);
     if (!found) return null;
     return { id: found.id, username: found.username, role: found.role };
@@ -8527,7 +8740,7 @@ app.post("/api/auth/login", (req, res) => {
     role: found.role,
     v: AUTH_SESSION_VERSION
   };
-  const token = Buffer.from(JSON.stringify(userPayload)).toString("base64");
+  const token = createAuthToken(userPayload);
   res.cookie(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -14048,6 +14261,20 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     reservation.guestId = guest.id;
     reservation.guestCode = guest.guestCode;
     reservation.guestDocument = (guestDocument || "").trim() || guest.document || "";
+
+    syncBidirectionalGuestProfile(db, guest, {
+      name: guestName.trim(),
+      phone: guestPhone.trim(),
+      email: cleanEmail,
+      document: reservation.guestDocument,
+      address: (guestAddress || "").trim(),
+      city: (guestCity || "").trim(),
+      state: (guestState || "").trim() || "RJ",
+      cep: (guestCep || "").trim(),
+      vehicle: vehicle || undefined,
+      companyData: isWorkTrip && companyData ? companyData : undefined
+    });
+
 
     // Inicializa estrutura isolada de múltiplos hóspedes com dados cadastrais preenchidos,
     // exigindo nova assinatura/check-in digital para cada nova hospedagem contratada.
@@ -21072,26 +21299,47 @@ const handleUpdateGuest = async (req, res) => {
   const guest = (db.guests || []).find(g => g.id === id);
   if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
 
+  const previousEmail = (guest.email || "").trim().toLowerCase();
+  const previousDoc = normalizeDoc(guest.document || guest.documentNumber);
+  const previousPhone = normalizePhone(guest.phone);
+
   const fields = [
-    "name", "fullName", "phone", "email", "document", "documentNumber", "city", "notes", "tags",
-    "isMonthlyGuest", "clientType", "companyId", "companyName", "preferences", "autoEmitInvoice",
+    "name", "fullName", "phone", "email", "docType", "document", "documentNumber", "birthDate", "gender",
+    "nationality", "profession", "city", "notes", "tags",
+    "isMonthlyGuest", "clientType", "companyId", "companyName", "companyData", "preferences", "autoEmitInvoice",
     "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
-    "address", "logradouro", "number", "numero", "complement", "complemento",
-    "neighborhood", "bairro", "cep", "state", "uf", "ibgeCode", "codigoMunicipio"
+    "address", "street", "logradouro", "number", "streetNumber", "numero", "complement", "complemento",
+    "neighborhood", "bairro", "cep", "state", "uf", "ibgeCode", "codigoMunicipio",
+    "vehiclePlate", "vehicleBrand", "vehicleModel", "vehicleColor", "vehicle"
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) guest[f] = req.body[f];
   }
 
+  if (req.body.name !== undefined || req.body.fullName !== undefined) {
+    const nm = (req.body.fullName ?? req.body.name ?? "").trim();
+    if (nm) {
+      guest.name = nm;
+      guest.fullName = nm;
+    }
+  }
+  if (req.body.document !== undefined || req.body.documentNumber !== undefined) {
+    const dc = String(req.body.document ?? req.body.documentNumber ?? "").trim();
+    guest.document = dc;
+    guest.documentNumber = dc;
+  }
+
   // Normalização de chaves bilíngues de endereço e fiscais
-  if (req.body.address !== undefined || req.body.logradouro !== undefined || req.body.endereco !== undefined) {
-    const a = (req.body.address ?? req.body.logradouro ?? req.body.endereco ?? "").trim();
-    guest.address = a;
+  if (req.body.address !== undefined || req.body.street !== undefined || req.body.logradouro !== undefined || req.body.endereco !== undefined) {
+    const a = (req.body.street ?? req.body.address ?? req.body.logradouro ?? req.body.endereco ?? "").trim();
+    guest.address = (req.body.address ?? a).trim();
+    guest.street = a;
     guest.logradouro = a;
   }
-  if (req.body.number !== undefined || req.body.numero !== undefined) {
-    const n = (req.body.number ?? req.body.numero ?? "").trim();
+  if (req.body.number !== undefined || req.body.streetNumber !== undefined || req.body.numero !== undefined) {
+    const n = String(req.body.streetNumber ?? req.body.number ?? req.body.numero ?? "").trim();
     guest.number = n;
+    guest.streetNumber = n;
     guest.numero = n;
   }
   if (req.body.complement !== undefined || req.body.complemento !== undefined) {
@@ -21122,13 +21370,57 @@ const handleUpdateGuest = async (req, res) => {
     guest.ibgeCode = ib;
     guest.codigoMunicipio = ib;
   }
+  if (req.body.vehicle !== undefined || req.body.vehiclePlate !== undefined || req.body.vehicleBrand !== undefined || req.body.vehicleModel !== undefined || req.body.vehicleColor !== undefined) {
+    if (req.body.vehicle === null) {
+      guest.vehicle = null;
+      guest.vehiclePlate = "";
+      guest.vehicleBrand = "";
+      guest.vehicleModel = "";
+      guest.vehicleColor = "";
+    } else {
+      const vObj = typeof req.body.vehicle === "object" && req.body.vehicle ? req.body.vehicle : {};
+      const plate = String(vObj.plate ?? req.body.vehiclePlate ?? guest.vehiclePlate ?? "").toUpperCase().trim();
+      const brand = String(vObj.brand ?? req.body.vehicleBrand ?? guest.vehicleBrand ?? "").trim();
+      const model = String(vObj.model ?? req.body.vehicleModel ?? guest.vehicleModel ?? "").trim();
+      const color = String(vObj.color ?? req.body.vehicleColor ?? guest.vehicleColor ?? "").trim();
+      guest.vehiclePlate = plate;
+      guest.vehicleBrand = brand;
+      guest.vehicleModel = model;
+      guest.vehicleColor = color;
+      guest.vehicle = plate ? { plate, brand, model, color } : null;
+    }
+  }
   if (req.body.companyId !== undefined) {
     guest.companyId = req.body.companyId ? Number(req.body.companyId) : null;
     if (guest.companyId && db.companies) {
       const comp = db.companies.find(c => Number(c.id) === Number(guest.companyId));
-      if (comp) guest.companyName = comp.corporateName || comp.tradeName;
-    } else if (!guest.companyId) {
+      if (comp) {
+        guest.companyName = comp.corporateName || comp.tradeName;
+        guest.companyData = {
+          cnpj: comp.cnpj || guest.companyData?.cnpj || "",
+          companyName: guest.companyName || "",
+          companyEmail: comp.financialEmail || comp.email || guest.companyData?.companyEmail || "",
+          companyPhone: comp.phone || guest.companyData?.companyPhone || ""
+        };
+      }
+    } else if (!guest.companyId && req.body.companyData === undefined && req.body.companyName === undefined) {
       guest.companyName = null;
+    }
+  }
+  if (req.body.companyData !== undefined || req.body.companyCnpj !== undefined || req.body.companyEmail !== undefined || req.body.companyPhone !== undefined) {
+    if (req.body.companyData === null) {
+      guest.companyData = null;
+    } else {
+      const cObj = typeof req.body.companyData === "object" && req.body.companyData ? req.body.companyData : {};
+      const existingComp = guest.companyData || {};
+      const cnpj = String(cObj.cnpj ?? req.body.companyCnpj ?? existingComp.cnpj ?? "").trim();
+      const companyName = String(cObj.companyName ?? req.body.companyName ?? existingComp.companyName ?? guest.companyName ?? "").trim();
+      const companyEmail = String(cObj.companyEmail ?? req.body.companyEmail ?? existingComp.companyEmail ?? "").trim();
+      const companyPhone = String(cObj.companyPhone ?? req.body.companyPhone ?? existingComp.companyPhone ?? "").trim();
+      guest.companyData = (cnpj || companyName || companyEmail || companyPhone)
+        ? { cnpj, companyName, companyEmail, companyPhone }
+        : null;
+      if (companyName) guest.companyName = companyName;
     }
   }
 
@@ -21202,6 +21494,16 @@ const handleUpdateGuest = async (req, res) => {
   }
 
   guest.updatedAt = new Date().toISOString();
+
+  // Sincronização Bidirecional Atômica CRM -> Minha Conta (db.guestAccounts) e Reservas
+  syncBidirectionalGuestProfile(db, guest, {
+    ...req.body,
+    previousEmail,
+    previousDoc,
+    previousPhone,
+    guestId: guest.id
+  });
+
   saveDatabase();
   res.json(guest);
 };
@@ -21234,11 +21536,13 @@ app.put("/api/pms/amenities/essential-tags", (req, res) => {
 
 app.post("/api/pms/guests", async (req, res) => {
   const {
-    name, fullName, phone, email, document, documentNumber,
+    name, fullName, phone, email, docType, document, documentNumber,
+    birthDate, gender, nationality, profession,
     city, cidade, municipio, notes, tags, isMonthlyGuest, clientType, autoEmitInvoice,
-    companyId, companyName, preferences, docPhotoUrl, docPhotoBase64, hasMinor, minorAge, isCamposResident,
-    address, logradouro, endereco, number, numero, complement, complemento,
-    neighborhood, bairro, cep, state, uf, estado, ibgeCode, codigoMunicipio, codigoIbge
+    companyId, companyName, companyData, preferences, docPhotoUrl, docPhotoBase64, hasMinor, minorAge, isCamposResident,
+    address, street, logradouro, endereco, number, streetNumber, numero, complement, complemento,
+    neighborhood, bairro, cep, state, uf, estado, ibgeCode, codigoMunicipio, codigoIbge,
+    vehiclePlate, vehicleBrand, vehicleModel, vehicleColor, vehicle
   } = req.body;
   const primName = (fullName || name || "").trim();
   if (!primName) return res.status(400).json({ error: "Nome é obrigatório." });
@@ -21254,8 +21558,8 @@ app.post("/api/pms/guests", async (req, res) => {
   }
 
   const isMonthly = Boolean(isMonthlyGuest || clientType === "mensalista");
-  const resolvedAddress = (address || logradouro || endereco || "").trim();
-  const resolvedNumber = (number || numero || "").trim();
+  const resolvedAddress = (street || address || logradouro || endereco || "").trim();
+  const resolvedNumber = String(streetNumber || number || numero || "").trim();
   const resolvedComplement = (complement || complemento || "").trim();
   const resolvedNeighborhood = (neighborhood || bairro || "").trim();
   const resolvedCep = (cep || "").toString().replace(/\D/g, "");
@@ -21263,23 +21567,37 @@ app.post("/api/pms/guests", async (req, res) => {
   const resolvedState = (state || uf || estado || "").trim().toUpperCase();
   const resolvedIbge = (ibgeCode || codigoMunicipio || codigoIbge || (resolvedCity.toLowerCase().includes("campos") ? "3301009" : "")).trim();
   const resolvedCompId = companyId ? Number(companyId) : null;
-  let resolvedCompName = companyName || null;
+  let resolvedCompName = companyName || companyData?.companyName || null;
   if (resolvedCompId && !resolvedCompName && db.companies) {
     const c = db.companies.find(comp => Number(comp.id) === Number(resolvedCompId));
     if (c) resolvedCompName = c.corporateName || c.tradeName;
   }
 
+  const vPlate = String(vehicle?.plate || vehiclePlate || "").toUpperCase().trim();
+  const vBrand = String(vehicle?.brand || vehicleBrand || "").trim();
+  const vModel = String(vehicle?.model || vehicleModel || "").trim();
+  const vColor = String(vehicle?.color || vehicleColor || "").trim();
+
+  const nextId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
   const newGuest = {
-    id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
+    id: nextId,
+    guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
     name: primName,
     fullName: primName,
     phone: phone || "",
     email: email || "",
+    docType: docType || "CPF",
     document: document || documentNumber || "",
     documentNumber: documentNumber || document || "",
+    birthDate: birthDate || "",
+    gender: gender || "",
+    nationality: nationality || "Brasileira",
+    profession: profession || "",
     address: resolvedAddress,
+    street: resolvedAddress,
     logradouro: resolvedAddress,
     number: resolvedNumber,
+    streetNumber: resolvedNumber,
     numero: resolvedNumber,
     complement: resolvedComplement,
     complemento: resolvedComplement,
@@ -21292,8 +21610,14 @@ app.post("/api/pms/guests", async (req, res) => {
     uf: resolvedState,
     ibgeCode: resolvedIbge,
     codigoMunicipio: resolvedIbge,
+    vehiclePlate: vPlate,
+    vehicleBrand: vBrand,
+    vehicleModel: vModel,
+    vehicleColor: vColor,
+    vehicle: vPlate ? { plate: vPlate, brand: vBrand, model: vModel, color: vColor } : null,
     companyId: resolvedCompId,
     companyName: resolvedCompName,
+    companyData: companyData || (resolvedCompName ? { cnpj: "", companyName: resolvedCompName, companyEmail: "", companyPhone: "" } : null),
     isMonthlyGuest: isMonthly,
     clientType: isMonthly ? "mensalista" : "avulso",
     autoEmitInvoice: Boolean(autoEmitInvoice),
@@ -21307,9 +21631,11 @@ app.post("/api/pms/guests", async (req, res) => {
     createdAt: new Date().toISOString()
   };
   db.guests.unshift(newGuest);
+  syncBidirectionalGuestProfile(db, newGuest, { ...req.body, guestId: newGuest.id });
   saveDatabase();
   res.status(201).json(newGuest);
 });
+
 
 // Exclusão Total e Definitiva de Hóspede/Cliente e Todos os Dados Vinculados (LGPD & Operacional)
 app.delete("/api/pms/guests/:id", async (req, res) => {
@@ -23093,30 +23419,90 @@ app.post("/api/emails/send-manual", async (req, res) => {
   res.json({ success: true, communication: commLog });
 });
 
-// ── Sincronização Bidirecional Atômica: Perfil (Minha Conta) & Check-in Digital ──
+// ── Sincronização Bidirecional Atômica: Perfil (Minha Conta) & CRM & Check-in Digital ──
 export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) {
   if (!db) return null;
   if (!db.guests) db.guests = [];
   if (!db.guestAccounts) db.guestAccounts = [];
 
-  const cleanEmail = (accountOrGuest?.email || updates.email || "").trim().toLowerCase();
-  const cleanPhone = normalizePhone(accountOrGuest?.phone || updates.phone || "");
-  const cleanDoc = (accountOrGuest?.document || accountOrGuest?.documentNumber || updates.document || "").replace(/\D/g, "");
-  const cleanName = (accountOrGuest?.name || accountOrGuest?.fullName || updates.name || updates.fullName || "").trim();
+  const hasExplicit = (key) => Object.prototype.hasOwnProperty.call(updates, key) && updates[key] !== undefined;
+
+  const rawEmail = hasExplicit("newEmail") && updates.newEmail
+    ? updates.newEmail
+    : (hasExplicit("email") ? updates.email : (accountOrGuest?.email || ""));
+  const cleanEmail = String(rawEmail || "").trim().toLowerCase();
+  const prevEmail = String(updates.previousEmail || accountOrGuest?.email || "").trim().toLowerCase();
+
+  const rawPhone = hasExplicit("phone") ? updates.phone : (accountOrGuest?.phone || "");
+  const cleanPhone = normalizePhone(rawPhone);
+  const prevPhone = normalizePhone(updates.previousPhone || accountOrGuest?.phone || "");
+
+  const rawDoc = hasExplicit("document")
+    ? updates.document
+    : (hasExplicit("documentNumber") ? updates.documentNumber : (accountOrGuest?.document || accountOrGuest?.documentNumber || ""));
+  const cleanDoc = normalizeDoc(rawDoc);
+  const prevDoc = normalizeDoc(updates.previousDoc || accountOrGuest?.document || accountOrGuest?.documentNumber || "");
+
+  const rawName = hasExplicit("fullName")
+    ? updates.fullName
+    : (hasExplicit("name") ? updates.name : (accountOrGuest?.fullName || accountOrGuest?.name || ""));
+  const cleanName = String(rawName || "").trim();
   const normName = normalizeName(cleanName);
 
-  // 1. Sincroniza em db.guests (CRM PMS)
-  let guest = null;
-  if (accountOrGuest?.id && db.guests.some(g => g.id === accountOrGuest.id)) {
-    guest = db.guests.find(g => g.id === accountOrGuest.id);
+  const targetGuestId = Number(updates.guestId || accountOrGuest?.guestId || (db.guests.includes(accountOrGuest) ? accountOrGuest?.id : 0)) || null;
+  const targetAccountId = Number(updates.accountId || accountOrGuest?.accountId || (db.guestAccounts.includes(accountOrGuest) ? accountOrGuest?.id : 0)) || null;
+
+  // 1. Localiza e unifica registros correspondentes em db.guests (Prioridade: 1º CPF/ID, 2º E-mail, 3º Telefone)
+  const matchingGuests = db.guests.filter(g => {
+    if (targetGuestId && Number(g.id) === targetGuestId) return true;
+    const gDoc = normalizeDoc(g.documentNumber || g.document);
+    if (cleanDoc && cleanDoc.length >= 8 && gDoc === cleanDoc) return true;
+    if (prevDoc && prevDoc.length >= 8 && gDoc === prevDoc) return true;
+    const gEmail = (g.email || "").trim().toLowerCase();
+    if (cleanEmail && cleanEmail.includes("@") && gEmail === cleanEmail) return true;
+    if (prevEmail && prevEmail.includes("@") && gEmail === prevEmail) return true;
+    if (cleanPhone && cleanPhone.length >= 8 && phonesMatch(g.phone, cleanPhone)) return true;
+    if (prevPhone && prevPhone.length >= 8 && phonesMatch(g.phone, prevPhone)) return true;
+    return false;
+  });
+
+  // Ordena candidatos por prioridade: 1º CPF, 2º ID direto, 3º E-mail, 4º Telefone
+  matchingGuests.sort((a, b) => {
+    const score = (g) => {
+      const gDoc = normalizeDoc(g.documentNumber || g.document);
+      if (cleanDoc && cleanDoc.length >= 8 && gDoc === cleanDoc) return 100;
+      if (targetGuestId && Number(g.id) === targetGuestId) return 90;
+      const gEmail = (g.email || "").trim().toLowerCase();
+      if (cleanEmail && gEmail === cleanEmail) return 80;
+      if (cleanPhone && phonesMatch(g.phone, cleanPhone)) return 70;
+      return 10;
+    };
+    return score(b) - score(a);
+  });
+
+  let guest = matchingGuests[0] || null;
+  if (!guest && normName && normName.length >= 5 && !cleanDoc) {
+    guest = db.guests.find(g => {
+      const gDoc = normalizeDoc(g.documentNumber || g.document);
+      if (cleanDoc && gDoc && gDoc !== cleanDoc) return false;
+      return normalizeName(g.fullName || g.name || "") === normName;
+    }) || null;
   }
-  if (!guest) {
-    guest = db.guests.find(g =>
-      (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
-      (cleanDoc && cleanDoc.length >= 8 && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
-      (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
-      (normName && normName.length >= 5 && normalizeName(g.fullName || g.name || "") === normName)
-    );
+
+  if (guest && matchingGuests.length > 1) {
+    for (let i = 1; i < matchingGuests.length; i++) {
+      const dup = matchingGuests[i];
+      if (dup.id === guest.id) continue;
+      mergeGuestRecords(guest, dup);
+      (db.reservations || []).forEach(r => {
+        if (r.guestId === dup.id) {
+          r.guestId = guest.id;
+          r.guestCode = guest.guestCode;
+        }
+      });
+      const idx = db.guests.findIndex(x => x.id === dup.id);
+      if (idx !== -1) db.guests.splice(idx, 1);
+    }
   }
 
   if (!guest) {
@@ -23124,122 +23510,330 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     guest = {
       id: nextId,
       guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
-      name: cleanName || "Hóspede",
-      fullName: cleanName || "Hóspede",
+      name: cleanName || (cleanEmail ? cleanEmail.split("@")[0] : "Hóspede"),
+      fullName: cleanName || (cleanEmail ? cleanEmail.split("@")[0] : "Hóspede"),
       email: cleanEmail,
-      phone: accountOrGuest?.phone || updates.phone || "",
-      document: cleanDoc,
-      documentNumber: cleanDoc,
+      phone: String(rawPhone || "").trim(),
+      docType: updates.docType || accountOrGuest?.docType || "CPF",
+      document: cleanDoc || String(rawDoc || "").trim(),
+      documentNumber: cleanDoc || String(rawDoc || "").trim(),
       createdAt: new Date().toISOString()
     };
     db.guests.push(guest);
   }
 
-  if (cleanName) {
-    guest.name = cleanName;
-    guest.fullName = cleanName;
+  // 2. Localiza e unifica contas correspondentes em db.guestAccounts (Prioridade: 1º CPF, 2º E-mail, 3º Telefone)
+  const matchingAccounts = db.guestAccounts.filter(a => {
+    if (targetAccountId && Number(a.id) === targetAccountId) return true;
+    if (guest && a.guestId && Number(a.guestId) === Number(guest.id)) return true;
+    const aDoc = normalizeDoc(a.document);
+    if (cleanDoc && cleanDoc.length >= 8 && aDoc === cleanDoc) return true;
+    if (prevDoc && prevDoc.length >= 8 && aDoc === prevDoc) return true;
+    const aEmail = (a.email || "").trim().toLowerCase();
+    if (cleanEmail && cleanEmail.includes("@") && aEmail === cleanEmail) return true;
+    if (prevEmail && prevEmail.includes("@") && aEmail === prevEmail) return true;
+    if (cleanPhone && cleanPhone.length >= 8 && phonesMatch(a.phone, cleanPhone)) return true;
+    if (prevPhone && prevPhone.length >= 8 && phonesMatch(a.phone, prevPhone)) return true;
+    return false;
+  });
+
+  matchingAccounts.sort((a, b) => {
+    const score = (acc) => {
+      if (targetAccountId && Number(acc.id) === targetAccountId) return 110;
+      const aDoc = normalizeDoc(acc.document);
+      if (cleanDoc && cleanDoc.length >= 8 && aDoc === cleanDoc) return 100;
+      const aEmail = (acc.email || "").trim().toLowerCase();
+      if (cleanEmail && aEmail === cleanEmail) return 90;
+      if (cleanPhone && phonesMatch(acc.phone, cleanPhone)) return 80;
+      return 10;
+    };
+    return score(b) - score(a);
+  });
+
+  let account = matchingAccounts[0] || null;
+  if (account && matchingAccounts.length > 1) {
+    for (let i = 1; i < matchingAccounts.length; i++) {
+      const dupAcc = matchingAccounts[i];
+      if (dupAcc.id === account.id) continue;
+      if (!account.passwordHash && dupAcc.passwordHash) account.passwordHash = dupAcc.passwordHash;
+      if (!account.googleSub && dupAcc.googleSub) account.googleSub = dupAcc.googleSub;
+      if (Array.isArray(dupAcc.passkeys) && dupAcc.passkeys.length > 0) {
+        account.passkeys = [...(account.passkeys || []), ...dupAcc.passkeys];
+      }
+      mergeGuestRecords(account, dupAcc);
+      const idx = db.guestAccounts.findIndex(x => x.id === dupAcc.id);
+      if (idx !== -1) db.guestAccounts.splice(idx, 1);
+    }
   }
-  if (updates.phone || accountOrGuest?.phone) guest.phone = (updates.phone || accountOrGuest.phone).trim();
-  if (cleanEmail) guest.email = cleanEmail;
-  if (cleanDoc) {
-    guest.document = updates.document || accountOrGuest.document || cleanDoc;
-    guest.documentNumber = updates.document || accountOrGuest.document || cleanDoc;
+
+  // 3. Resolve valores canônicos unificados (updates explícitos têm precedência, depois accountOrGuest, depois guest/account existente)
+  const pickVal = (keys, fallback = "") => {
+    for (const k of keys) {
+      if (hasExplicit(k) && updates[k] !== null) return typeof updates[k] === "string" ? updates[k].trim() : updates[k];
+    }
+    for (const k of keys) {
+      if (accountOrGuest && accountOrGuest[k] !== undefined && accountOrGuest[k] !== null && String(accountOrGuest[k]).trim() !== "") {
+        return typeof accountOrGuest[k] === "string" ? accountOrGuest[k].trim() : accountOrGuest[k];
+      }
+    }
+    for (const k of keys) {
+      if (guest && guest[k] !== undefined && guest[k] !== null && String(guest[k]).trim() !== "") {
+        return typeof guest[k] === "string" ? guest[k].trim() : guest[k];
+      }
+    }
+    for (const k of keys) {
+      if (account && account[k] !== undefined && account[k] !== null && String(account[k]).trim() !== "") {
+        return typeof account[k] === "string" ? account[k].trim() : account[k];
+      }
+    }
+    return fallback;
+  };
+
+  const finalName = pickVal(["fullName", "name"], guest.fullName || guest.name || account?.name || "Hóspede");
+  const finalEmail = (cleanEmail || (guest.email || "").trim().toLowerCase() || (account?.email || "").trim().toLowerCase());
+  const finalPhone = pickVal(["phone", "phoneNumber"], guest.phone || account?.phone || "");
+  const finalDocType = pickVal(["docType"], guest.docType || account?.docType || "CPF");
+  const finalDocRaw = pickVal(["document", "documentNumber", "cpf"], guest.document || guest.documentNumber || account?.document || "");
+  const finalDocClean = normalizeDoc(finalDocRaw) || finalDocRaw;
+  const finalBirthDate = pickVal(["birthDate"], guest.birthDate || account?.birthDate || "");
+  const finalGender = pickVal(["gender"], guest.gender || account?.gender || "");
+  const finalNationality = pickVal(["nationality"], guest.nationality || account?.nationality || "Brasileira");
+  const finalProfession = pickVal(["profession"], guest.profession || account?.profession || "");
+  const finalCep = String(pickVal(["cep"], guest.cep || account?.cep || "")).replace(/\D/g, "");
+  const finalStreet = pickVal(["street", "logradouro", "address", "endereco"], guest.street || guest.logradouro || guest.address || account?.street || account?.address || "");
+  const finalAddress = pickVal(["address", "street", "logradouro", "endereco"], finalStreet);
+  const finalNumber = String(pickVal(["streetNumber", "number", "numero"], guest.streetNumber || guest.number || guest.numero || account?.streetNumber || account?.number || ""));
+  const finalComplement = pickVal(["complement", "complemento"], guest.complement || guest.complemento || account?.complement || "");
+  const finalNeighborhood = pickVal(["neighborhood", "bairro"], guest.neighborhood || guest.bairro || account?.neighborhood || "");
+  const finalCity = pickVal(["city", "cidade", "municipio"], guest.city || guest.cidade || account?.city || "");
+  const finalState = String(pickVal(["state", "uf", "estado"], guest.state || guest.uf || account?.state || "RJ")).toUpperCase();
+
+  // Resolução de Veículo (preservando subcampos se update for parcial, ou limpando se vehicle === null)
+  let finalVehicle = null;
+  if (hasExplicit("vehicle") && updates.vehicle === null) {
+    finalVehicle = null;
+  } else {
+    const existingVeh = {
+      plate: guest.vehiclePlate || guest.vehicle?.plate || account?.vehicle?.plate || "",
+      brand: guest.vehicleBrand || guest.vehicle?.brand || account?.vehicle?.brand || "",
+      model: guest.vehicleModel || guest.vehicle?.model || account?.vehicle?.model || "",
+      color: guest.vehicleColor || guest.vehicle?.color || account?.vehicle?.color || ""
+    };
+    const srcVeh = (hasExplicit("vehicle") && typeof updates.vehicle === "object" && updates.vehicle)
+      ? updates.vehicle
+      : (accountOrGuest?.vehicle && typeof accountOrGuest.vehicle === "object" ? accountOrGuest.vehicle : {});
+    const vPlate = String(
+      (srcVeh.plate !== undefined ? srcVeh.plate : (hasExplicit("vehiclePlate") ? updates.vehiclePlate : existingVeh.plate)) || ""
+    ).toUpperCase().trim();
+    const vBrand = String(
+      (srcVeh.brand !== undefined ? srcVeh.brand : (hasExplicit("vehicleBrand") ? updates.vehicleBrand : existingVeh.brand)) || ""
+    ).trim();
+    const vModel = String(
+      (srcVeh.model !== undefined ? srcVeh.model : (hasExplicit("vehicleModel") ? updates.vehicleModel : existingVeh.model)) || ""
+    ).trim();
+    const vColor = String(
+      (srcVeh.color !== undefined ? srcVeh.color : (hasExplicit("vehicleColor") ? updates.vehicleColor : existingVeh.color)) || ""
+    ).trim();
+    if (vPlate) {
+      finalVehicle = { plate: vPlate, brand: vBrand, model: vModel, color: vColor };
+    }
   }
-  if (updates.birthDate || accountOrGuest?.birthDate) guest.birthDate = updates.birthDate || accountOrGuest.birthDate;
-  if (updates.gender || accountOrGuest?.gender) guest.gender = updates.gender || accountOrGuest.gender;
-  if (updates.address || accountOrGuest?.address) guest.address = (updates.address || accountOrGuest.address).trim();
-  if (updates.city || accountOrGuest?.city) guest.city = (updates.city || accountOrGuest.city).trim();
-  if (updates.state || accountOrGuest?.state) guest.state = (updates.state || accountOrGuest.state).trim();
-  if (updates.cep || accountOrGuest?.cep) guest.cep = (updates.cep || accountOrGuest.cep).trim();
-  if (updates.vehiclePlate || accountOrGuest?.vehicle?.plate || accountOrGuest?.vehiclePlate) {
-    guest.vehiclePlate = (updates.vehiclePlate || accountOrGuest.vehicle?.plate || accountOrGuest.vehiclePlate || "").toUpperCase().trim();
-    guest.vehicleBrand = updates.vehicleBrand || accountOrGuest.vehicle?.brand || accountOrGuest.vehicleBrand || "";
-    guest.vehicleModel = updates.vehicleModel || accountOrGuest.vehicle?.model || accountOrGuest.vehicleModel || "";
-    guest.vehicleColor = updates.vehicleColor || accountOrGuest.vehicle?.color || accountOrGuest.vehicleColor || "";
+
+  // Resolução de Dados Corporativos (companyData)
+  let finalCompanyData = null;
+  if (hasExplicit("companyData") && updates.companyData === null) {
+    finalCompanyData = null;
+  } else {
+    const existingComp = {
+      cnpj: guest.companyData?.cnpj || account?.companyData?.cnpj || "",
+      companyName: guest.companyData?.companyName || guest.companyName || account?.companyData?.companyName || "",
+      companyEmail: guest.companyData?.companyEmail || account?.companyData?.companyEmail || "",
+      companyPhone: guest.companyData?.companyPhone || account?.companyData?.companyPhone || ""
+    };
+    const srcComp = (hasExplicit("companyData") && typeof updates.companyData === "object" && updates.companyData)
+      ? updates.companyData
+      : (accountOrGuest?.companyData && typeof accountOrGuest.companyData === "object" ? accountOrGuest.companyData : {});
+    const cCnpj = String(
+      (srcComp.cnpj !== undefined ? srcComp.cnpj : (hasExplicit("companyCnpj") ? updates.companyCnpj : existingComp.cnpj)) || ""
+    ).trim();
+    const cName = String(
+      (srcComp.companyName !== undefined ? srcComp.companyName : (hasExplicit("companyName") ? updates.companyName : existingComp.companyName)) || ""
+    ).trim();
+    const cEmail = String(
+      (srcComp.companyEmail !== undefined ? srcComp.companyEmail : (hasExplicit("companyEmail") ? updates.companyEmail : existingComp.companyEmail)) || ""
+    ).trim();
+    const cPhone = String(
+      (srcComp.companyPhone !== undefined ? srcComp.companyPhone : (hasExplicit("companyPhone") ? updates.companyPhone : existingComp.companyPhone)) || ""
+    ).trim();
+    if (cCnpj || cName || cEmail || cPhone) {
+      finalCompanyData = { cnpj: cCnpj, companyName: cName, companyEmail: cEmail, companyPhone: cPhone };
+    }
+  }
+
+  // 4. Atualiza guest em db.guests
+  if (finalName) {
+    guest.name = finalName;
+    guest.fullName = finalName;
+  }
+  if (finalEmail) guest.email = finalEmail;
+  if (finalPhone || hasExplicit("phone")) guest.phone = finalPhone;
+  if (finalDocType) guest.docType = finalDocType;
+  if (finalDocClean || hasExplicit("document")) {
+    guest.document = finalDocClean;
+    guest.documentNumber = finalDocClean;
+  }
+  if (finalBirthDate || hasExplicit("birthDate")) guest.birthDate = finalBirthDate;
+  if (finalGender || hasExplicit("gender")) guest.gender = finalGender;
+  if (finalNationality || hasExplicit("nationality")) guest.nationality = finalNationality;
+  if (finalProfession || hasExplicit("profession")) guest.profession = finalProfession;
+  if (finalCep || hasExplicit("cep")) guest.cep = finalCep;
+  if (finalAddress || hasExplicit("address") || hasExplicit("street") || hasExplicit("logradouro")) {
+    guest.address = finalAddress;
+    guest.street = finalStreet || finalAddress;
+    guest.logradouro = finalStreet || finalAddress;
+  }
+  if (finalNumber || hasExplicit("number") || hasExplicit("streetNumber") || hasExplicit("numero")) {
+    guest.number = finalNumber;
+    guest.streetNumber = finalNumber;
+    guest.numero = finalNumber;
+  }
+  if (finalComplement || hasExplicit("complement") || hasExplicit("complemento")) {
+    guest.complement = finalComplement;
+    guest.complemento = finalComplement;
+  }
+  if (finalNeighborhood || hasExplicit("neighborhood") || hasExplicit("bairro")) {
+    guest.neighborhood = finalNeighborhood;
+    guest.bairro = finalNeighborhood;
+  }
+  if (finalCity || hasExplicit("city") || hasExplicit("cidade")) {
+    guest.city = finalCity;
+    guest.cidade = finalCity;
+  }
+  if (finalState || hasExplicit("state") || hasExplicit("uf")) {
+    guest.state = finalState;
+    guest.uf = finalState;
+  }
+  if (finalVehicle) {
+    guest.vehiclePlate = finalVehicle.plate;
+    guest.vehicleBrand = finalVehicle.brand;
+    guest.vehicleModel = finalVehicle.model;
+    guest.vehicleColor = finalVehicle.color;
+    guest.vehicle = { ...finalVehicle };
+  } else if (hasExplicit("vehicle") && updates.vehicle === null) {
+    guest.vehiclePlate = "";
+    guest.vehicleBrand = "";
+    guest.vehicleModel = "";
+    guest.vehicleColor = "";
+    guest.vehicle = null;
+  }
+  if (finalCompanyData) {
+    guest.companyData = { ...finalCompanyData };
+    if (finalCompanyData.companyName) guest.companyName = finalCompanyData.companyName;
+  } else if (hasExplicit("companyData") && updates.companyData === null) {
+    guest.companyData = null;
   }
   if (updates.docPhotoUrl) guest.docPhotoUrl = updates.docPhotoUrl;
   if (updates.signatureUrl) guest.signatureUrl = updates.signatureUrl;
+  if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
 
-  // 2. Sincroniza em db.guestAccounts (Minha Conta / Autenticação)
-  let account = null;
-  if (accountOrGuest?.email || cleanEmail) {
-    account = db.guestAccounts.find(a =>
-      (cleanEmail && a.email.toLowerCase() === cleanEmail) ||
-      (cleanDoc && cleanDoc.length >= 8 && a.document && a.document.replace(/\D/g, "") === cleanDoc) ||
-      (cleanPhone && cleanPhone.length >= 8 && a.phone && normalizePhone(a.phone) === cleanPhone)
-    );
-  }
-
-  if (!account && cleanEmail) {
-    const nextAccId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(a => a.id || 0)) + 1 : 1;
+  // 5. Atualiza ou cria account em db.guestAccounts
+  if (!account && (finalEmail || finalDocClean || finalPhone)) {
+    const nextAccId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(a => Number(a.id) || 0)) + 1 : 1;
     account = {
       id: nextAccId,
-      name: cleanName || cleanEmail.split("@")[0],
-      email: cleanEmail,
+      guestId: guest.id,
+      guestCode: guest.guestCode,
+      name: finalName || (finalEmail ? finalEmail.split("@")[0] : "Hóspede"),
+      email: finalEmail,
       passwordHash: null,
-      phone: guest.phone || "",
-      document: guest.document || "",
-      birthDate: guest.birthDate || null,
-      address: guest.address || "",
-      city: guest.city || "",
-      state: guest.state || "RJ",
-      cep: guest.cep || "",
-      vehicle: guest.vehiclePlate ? {
-        plate: guest.vehiclePlate,
-        brand: guest.vehicleBrand || "",
-        model: guest.vehicleModel || "",
-        color: guest.vehicleColor || ""
-      } : null,
+      phone: finalPhone,
+      docType: finalDocType,
+      document: finalDocClean,
+      birthDate: finalBirthDate || null,
+      gender: finalGender || "",
+      nationality: finalNationality || "Brasileira",
+      profession: finalProfession || "",
+      cep: finalCep,
+      address: finalAddress,
+      street: finalStreet || finalAddress,
+      streetNumber: finalNumber,
+      number: finalNumber,
+      complement: finalComplement,
+      neighborhood: finalNeighborhood,
+      city: finalCity,
+      state: finalState || "RJ",
+      vehicle: finalVehicle ? { ...finalVehicle } : null,
+      companyData: finalCompanyData ? { ...finalCompanyData } : null,
+      passkeys: [],
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString()
     };
     db.guestAccounts.push(account);
   } else if (account) {
-    if (cleanName) account.name = cleanName;
-    if (guest.phone) account.phone = guest.phone;
-    if (guest.document) account.document = guest.document;
-    if (guest.birthDate) account.birthDate = guest.birthDate;
-    if (guest.address) account.address = guest.address;
-    if (guest.city) account.city = guest.city;
-    if (guest.state) account.state = guest.state;
-    if (guest.cep) account.cep = guest.cep;
-    if (guest.vehiclePlate) {
-      account.vehicle = {
-        plate: guest.vehiclePlate,
-        brand: guest.vehicleBrand || "",
-        model: guest.vehicleModel || "",
-        color: guest.vehicleColor || ""
-      };
-    }
+    account.guestId = guest.id;
+    account.guestCode = guest.guestCode;
+    if (finalName) account.name = finalName;
+    if (finalEmail) account.email = finalEmail;
+    account.phone = finalPhone;
+    account.docType = finalDocType;
+    account.document = finalDocClean;
+    account.birthDate = finalBirthDate || null;
+    account.gender = finalGender || "";
+    account.nationality = finalNationality || "Brasileira";
+    account.profession = finalProfession || "";
+    account.cep = finalCep;
+    account.address = finalAddress;
+    account.street = finalStreet || finalAddress;
+    account.streetNumber = finalNumber;
+    account.number = finalNumber;
+    account.complement = finalComplement;
+    account.neighborhood = finalNeighborhood;
+    account.city = finalCity;
+    account.state = finalState || "RJ";
+    account.vehicle = finalVehicle ? { ...finalVehicle } : null;
+    account.companyData = finalCompanyData ? { ...finalCompanyData } : null;
   }
 
-  // 3. Atualiza reservas correspondentes
-  const reservations = (db.reservations || []).filter(r =>
-    (cleanEmail && r.guestEmail && r.guestEmail.trim().toLowerCase() === cleanEmail) ||
-    (cleanDoc && (r.guestDocument || "").replace(/\D/g, "") === cleanDoc) ||
-    (cleanPhone && cleanPhone.length >= 8 && normalizePhone(r.guestPhone || "") === cleanPhone) ||
-    (guest && r.guestId && r.guestId === guest.id)
-  );
+  if (account && guest) {
+    guest.accountId = account.id;
+  }
+
+  // 6. Atualiza reservas correspondentes em db.reservations
+  const reservations = (db.reservations || []).filter(r => {
+    if (guest && r.guestId && Number(r.guestId) === Number(guest.id)) return true;
+    const rDoc = normalizeDoc(r.guestDocument || r.document);
+    if (finalDocClean && finalDocClean.length >= 8 && rDoc === finalDocClean) return true;
+    if (prevDoc && prevDoc.length >= 8 && rDoc === prevDoc) return true;
+    const rEmail = (r.guestEmail || r.email || "").trim().toLowerCase();
+    if (finalEmail && finalEmail.includes("@") && rEmail === finalEmail) return true;
+    if (prevEmail && prevEmail.includes("@") && rEmail === prevEmail) return true;
+    if (finalPhone && finalPhone.length >= 8 && phonesMatch(r.guestPhone || r.phone, finalPhone)) return true;
+    if (prevPhone && prevPhone.length >= 8 && phonesMatch(r.guestPhone || r.phone, prevPhone)) return true;
+    return false;
+  });
 
   for (const r of reservations) {
-    if (!r.guestId && guest) r.guestId = guest.id;
-    if (!r.guestCode && guest) r.guestCode = guest.guestCode;
-    if (cleanName) r.guestName = cleanName;
-    if (guest.phone) r.guestPhone = guest.phone;
-    if (guest.document) r.guestDocument = guest.document;
-    if (guest.address) r.guestAddress = guest.address;
-    if (guest.city) r.guestCity = guest.city;
-    if (guest.state) r.guestState = guest.state;
-    if (guest.cep) r.guestCep = guest.cep;
-    if (guest.birthDate) r.birthDate = guest.birthDate;
-    if (guest.vehiclePlate) {
-      r.vehiclePlate = guest.vehiclePlate;
-      r.vehicle = {
-        plate: guest.vehiclePlate,
-        brand: guest.vehicleBrand || "",
-        model: guest.vehicleModel || "",
-        color: guest.vehicleColor || ""
-      };
+    if (guest) {
+      r.guestId = guest.id;
+      r.guestCode = guest.guestCode;
+    }
+    if (finalName) r.guestName = finalName;
+    if (finalEmail) r.guestEmail = finalEmail;
+    if (finalPhone) r.guestPhone = finalPhone;
+    if (finalDocClean) r.guestDocument = finalDocClean;
+    if (finalAddress) r.guestAddress = finalAddress;
+    if (finalStreet) r.guestStreet = finalStreet;
+    if (finalNumber) r.guestStreetNumber = finalNumber;
+    if (finalComplement) r.guestComplement = finalComplement;
+    if (finalNeighborhood) r.guestNeighborhood = finalNeighborhood;
+    if (finalCity) r.guestCity = finalCity;
+    if (finalState) r.guestState = finalState;
+    if (finalCep) r.guestCep = finalCep;
+    if (finalBirthDate) r.birthDate = finalBirthDate;
+    if (finalCompanyData) r.companyData = { ...finalCompanyData };
+    if (finalVehicle) {
+      r.vehiclePlate = finalVehicle.plate;
+      r.vehicle = { ...finalVehicle };
     }
 
     if (Array.isArray(r.guests) && r.guests[0]) {
@@ -23248,16 +23842,20 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
         g0.guestId = guest.id;
         g0.guestCode = guest.guestCode;
       }
-      if (cleanName) g0.name = cleanName;
-      if (guest.document) g0.cpf = guest.document;
-      if (guest.phone) g0.phone = guest.phone;
-      if (cleanEmail) g0.email = cleanEmail;
-      if (guest.address) g0.address = guest.address;
-      if (guest.city) g0.city = guest.city;
-      if (guest.state) g0.state = guest.state;
-      if (guest.cep) g0.cep = guest.cep;
-      if (guest.birthDate) g0.birthDate = guest.birthDate;
-      if (guest.gender) g0.gender = guest.gender;
+      if (finalName) g0.name = finalName;
+      if (finalDocClean) g0.cpf = finalDocClean;
+      if (finalPhone) g0.phone = finalPhone;
+      if (finalEmail) g0.email = finalEmail;
+      if (finalAddress) g0.address = finalAddress;
+      if (finalStreet) g0.street = finalStreet;
+      if (finalNumber) g0.streetNumber = finalNumber;
+      if (finalComplement) g0.complement = finalComplement;
+      if (finalNeighborhood) g0.neighborhood = finalNeighborhood;
+      if (finalCity) g0.city = finalCity;
+      if (finalState) g0.state = finalState;
+      if (finalCep) g0.cep = finalCep;
+      if (finalBirthDate) g0.birthDate = finalBirthDate;
+      if (finalGender) g0.gender = finalGender;
       if (guest.docPhotoUrl && !g0.docPhotoUrl) g0.docPhotoUrl = guest.docPhotoUrl;
       if (guest.signatureUrl && !g0.signatureUrl) g0.signatureUrl = guest.signatureUrl;
       if (guest.isCamposResident !== undefined) g0.isCamposResident = guest.isCamposResident;
@@ -23270,6 +23868,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
 
   return { guest, account };
 }
+
 
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────
 app.get("/api/pms/pre-checkin/:code", (req, res) => {
@@ -23965,6 +24564,31 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   guest.fnhrCompletedAt = new Date().toISOString();
   if (!guest.guestCode) {
     guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
+  }
+
+  try {
+    syncBidirectionalGuestProfile(db, guest, {
+      name: guest.name || guest.fullName,
+      email: guest.email,
+      phone: guest.phone,
+      document: guest.documentNumber || guest.document,
+      birthDate: guest.birthDate,
+      gender: guest.gender,
+      cep: guest.cep,
+      address: guest.address,
+      street: guest.street,
+      streetNumber: guest.streetNumber,
+      complement: guest.complement,
+      neighborhood: guest.neighborhood,
+      city: guest.city,
+      state: guest.state,
+      vehiclePlate: guest.vehiclePlate,
+      vehicleBrand: guest.vehicleBrand,
+      vehicleModel: guest.vehicleModel,
+      vehicleColor: guest.vehicleColor
+    });
+  } catch (syncErr) {
+    console.warn("[POST /api/pms/pre-checkin] Erro na sincronização bidirecional:", syncErr?.message || syncErr);
   }
 
   const now = new Date().toISOString();
@@ -30356,253 +30980,545 @@ function getDayNumStr(d) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MÓDULO 1: AUTENTICAÇÃO DO HÓSPEDE (E-mail/Senha & Google One Tap / Smart Lock)
+// MÓDULO 1 & V2: AUTENTICAÇÃO DO HÓSPEDE, MULTI-IDENTIFICADOR, DEDUPLICAÇÃO E SYNC CRM
 // ══════════════════════════════════════════════════════════════════════════════
 
-// 1.1 Cadastro de Hóspede
-app.post("/api/guest-auth/register", (req, res) => {
+const GFM_SESSION_COOKIE = "gfm_session";
+const passkeyAuthChallenges = new Map();
+
+function createGuestV1Token(account) {
+  const ts = Date.now();
+  const payloadStr = `${account.id}:${ts}`;
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(payloadStr).digest("hex");
+  return `guest_${account.id}_${ts}_${sig}`;
+}
+
+function verifyGuestV1Token(rawToken) {
+  if (!rawToken || typeof rawToken !== "string") return null;
+  const token = rawToken.replace(/^Bearer\s+/i, "").trim();
+  if (!token.startsWith("guest_")) return null;
+  const parts = token.split("_");
+  if (parts.length < 4) return null; // Exige assinatura HMAC
+  const accountId = Number(parts[1]);
+  const ts = Number(parts[2]);
+  const sig = parts.slice(3).join("_");
+  if (!accountId || !ts || !sig) return null;
+  if (Date.now() - ts > 30 * 24 * 60 * 60 * 1000) return null; // Expira em 30 dias
+  const expectedSig = crypto.createHmac("sha256", AUTH_SECRET).update(`${accountId}:${ts}`).digest("hex");
   try {
-    const { name, email, password, phone, document, birthDate, address, city, state, companyData, vehicle } = req.body;
-
-    if (!email || !email.trim()) {
-      return res.status(400).json({ error: "E-mail é obrigatório para cadastro." });
+    const sigBuf = Buffer.from(sig, "utf-8");
+    const expBuf = Buffer.from(expectedSig, "utf-8");
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
     }
-
-    const cleanEmail = email.trim().toLowerCase();
-    const existing = (db.guestAccounts || []).find(g => g.email.toLowerCase() === cleanEmail);
-
-    if (existing) {
-      return res.status(400).json({ error: "Este e-mail já possui cadastro. Por favor, faça login com sua senha ou com o Google." });
-    }
-
-    const newId = (db.guestAccounts || []).length > 0 ? Math.max(...db.guestAccounts.map(g => g.id || 0)) + 1 : 1;
-    const passwordHash = password ? hashPassword(password) : null;
-
-    const newAccount = {
-      id: newId,
-      name: (name || "").trim(),
-      email: cleanEmail,
-      passwordHash,
-      phone: (phone || "").trim(),
-      document: (document || "").trim(),
-      birthDate: birthDate || null,
-      address: address || "",
-      city: city || "",
-      state: state || "RJ",
-      companyData: companyData || null,
-      vehicle: vehicle || null, // { plate, brand, model, color }
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString()
-    };
-
-    if (!db.guestAccounts) db.guestAccounts = [];
-    db.guestAccounts.push(newAccount);
-    saveDatabase();
-
-    const { passwordHash: _, ...safeAccount } = newAccount;
-    res.json({
-      success: true,
-      message: "Cadastro de hóspede realizado com sucesso!",
-      guest: safeAccount,
-      token: `guest_${newAccount.id}_${Date.now()}`
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    return accountId;
+  } catch {
+    return null;
   }
-});
+}
 
-// 1.2 Login de Hóspede (E-mail e Senha)
-app.post("/api/guest-auth/login", (req, res) => {
+function setAuthSessionCookie(res, userPayload) {
+  const token = createAuthToken({
+    id: userPayload.id,
+    email: userPayload.email,
+    issuedAt: Date.now(),
+    v: 2
+  });
+
+  res.cookie(GFM_SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dias
+  });
+  return token;
+}
+
+function sanitizeAccountForClient(account) {
+  if (!account) return null;
+  const {
+    passwordHash: _ph,
+    resetToken: _rt,
+    resetTokenExpires: _rte,
+    resetAttempts: _ra,
+    currentPasskeyChallenge: _cpc,
+    currentPasskeyChallengeExpires: _cpce,
+    ...safe
+  } = account;
+  return {
+    ...safe,
+    googleConnected: Boolean(account.googleSub),
+    passkeysCount: Array.isArray(account.passkeys) ? account.passkeys.length : 0
+  };
+}
+
+function hydrateGuestAccountFromCrmAndReservations(account) {
+  if (!account) return null;
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Informe e-mail e senha." });
-    }
-
-    const cleanEmail = email.trim().toLowerCase();
-    const account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === cleanEmail);
-
-    if (!account) {
-      return res.status(401).json({ error: "Cadastro não encontrado para este e-mail. Crie sua conta ou use o Google." });
-    }
-
-    if (!account.passwordHash) {
-      return res.status(401).json({ error: "Esta conta foi criada com o Google. Por favor, entre usando o botão Google." });
-    }
-
-    if (!verifyPassword(password, account.passwordHash)) {
-      return res.status(401).json({ error: "Senha incorreta." });
-    }
-
-    account.lastLoginAt = new Date().toISOString();
-    saveDatabase();
-
-    const { passwordHash: _, ...safeAccount } = account;
-    res.json({
-      success: true,
-      message: `Bem-vindo(a) de volta, ${safeAccount.name || 'Hóspede'}!`,
-      guest: safeAccount,
-      token: `guest_${account.id}_${Date.now()}`
-    });
+    syncBidirectionalGuestProfile(db, account, {});
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.warn("[GuestAuth] Erro ao hidratar conta via CRM:", err?.message || err);
   }
-});
+  return account;
+}
 
-// 1.3 Login / Cadastro com Google (Google One Tap & Google Sign-In)
-app.post("/api/guest-auth/google", (req, res) => {
-  try {
-    const { credential, email, name, sub, picture } = req.body;
-
-    let googleEmail = email;
-    let googleName = name;
-    let googleSub = sub;
-
-    // Se veio um JWT credential do Google One Tap, decodifica o payload base64
-    if (credential && typeof credential === "string" && credential.includes(".")) {
-      try {
-        const payloadBase64 = credential.split(".")[1];
-        const decodedStr = Buffer.from(payloadBase64, "base64").toString("utf-8");
-        const payload = JSON.parse(decodedStr);
-        if (payload.email) googleEmail = payload.email;
-        if (payload.name) googleName = payload.name;
-        if (payload.sub) googleSub = payload.sub;
-      } catch (jwtErr) {
-        console.warn("[Google Auth] Erro ao decodificar JWT do Google:", jwtErr.message);
+function getAuthenticatedGuestAccount(req) {
+  if (!Array.isArray(db.guestAccounts)) db.guestAccounts = [];
+  // 1. Tenta Cookie HttpOnly assinado (V2)
+  const rawCookie = req.cookies?.[GFM_SESSION_COOKIE];
+  if (rawCookie) {
+    const decoded = verifyAuthToken(rawCookie);
+    if (decoded) {
+      let found = null;
+      if (decoded.id) {
+        found = db.guestAccounts.find(g => Number(g.id) === Number(decoded.id));
+      }
+      if (!found && decoded.email) {
+        found = db.guestAccounts.find(g => (g.email || "").toLowerCase() === String(decoded.email).toLowerCase());
+      }
+      if (found) {
+        return hydrateGuestAccountFromCrmAndReservations(found);
       }
     }
+  }
 
-    if (!googleEmail) {
-      return res.status(400).json({ error: "Dados do Google inválidos ou e-mail não compartilhado." });
+  // 2. Tenta Header Authorization Bearer (V1 ou V2 token assinado)
+  const authHeader = req.headers?.authorization || "";
+  if (authHeader) {
+    const v1AccountId = verifyGuestV1Token(authHeader);
+    if (v1AccountId) {
+      const found = db.guestAccounts.find(g => Number(g.id) === Number(v1AccountId));
+      if (found) {
+        return hydrateGuestAccountFromCrmAndReservations(found);
+      }
+    }
+    const rawBearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const v2Decoded = verifyAuthToken(rawBearer);
+    if (v2Decoded) {
+      const found = db.guestAccounts.find(g =>
+        (v2Decoded.id && Number(g.id) === Number(v2Decoded.id)) ||
+        (v2Decoded.email && (g.email || "").toLowerCase() === String(v2Decoded.email).toLowerCase())
+      );
+      if (found) {
+        return hydrateGuestAccountFromCrmAndReservations(found);
+      }
+    }
+  }
+
+  return null;
+}
+
+function getAuthV2User(req) {
+  return getAuthenticatedGuestAccount(req);
+}
+
+/**
+ * Localiza uma conta de hóspede por E-mail, CPF/Documento ou Telefone/WhatsApp.
+ * Se o identificador estiver registrado apenas na ficha do CRM (`db.guests`) ou reserva (`db.reservations`)
+ * e pertencer a um hóspede que já possui `guestAccount` (ex: vinculada pelo e-mail), reconcilia e retorna a conta.
+ */
+function findGuestAccountByIdentifier(rawIdentifier) {
+  if (!rawIdentifier || typeof rawIdentifier !== "string") return null;
+  if (!Array.isArray(db.guestAccounts)) db.guestAccounts = [];
+  if (!Array.isArray(db.guests)) db.guests = [];
+
+  const trimmed = rawIdentifier.trim();
+  if (!trimmed) return null;
+
+  const isEmail = trimmed.includes("@");
+  const cleanEmail = isEmail ? trimmed.toLowerCase() : "";
+  const cleanDigits = trimmed.replace(/\D/g, "");
+  const cleanDoc = trimmed.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+
+  // 1. Busca direta em db.guestAccounts
+  if (isEmail) {
+    const byEmail = db.guestAccounts.find(g => (g.email || "").trim().toLowerCase() === cleanEmail);
+    if (byEmail) return hydrateGuestAccountFromCrmAndReservations(byEmail);
+  } else {
+    // Prioridade 1: CPF / Documento exato
+    if (cleanDigits.length >= 5 || cleanDoc.length >= 5) {
+      const byDoc = db.guestAccounts.find(g => {
+        const gDigits = String(g.document || "").replace(/\D/g, "");
+        const gAlnum = String(g.document || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+        return (cleanDigits.length >= 9 && gDigits === cleanDigits) || (cleanDoc.length >= 5 && gAlnum === cleanDoc);
+      });
+      if (byDoc) return hydrateGuestAccountFromCrmAndReservations(byDoc);
     }
 
-    const cleanEmail = googleEmail.trim().toLowerCase();
-    if (!db.guestAccounts) db.guestAccounts = [];
-
-    let account = db.guestAccounts.find(g =>
-      (googleSub && g.googleSub === googleSub) || g.email.toLowerCase() === cleanEmail
-    );
-
-    if (account) {
-      // Atualiza dados
-      if (googleSub) account.googleSub = googleSub;
-      if (!account.name && googleName) account.name = googleName;
-      account.lastLoginAt = new Date().toISOString();
-    } else {
-      // Cria nova conta com dados do Google
-      const newId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(g => g.id || 0)) + 1 : 1;
-      account = {
-        id: newId,
-        name: (googleName || cleanEmail.split("@")[0]).trim(),
-        email: cleanEmail,
-        googleSub: googleSub || null,
-        passwordHash: null,
-        phone: "",
-        document: "",
-        companyData: null,
-        vehicle: null,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString()
-      };
-      db.guestAccounts.push(account);
+    // Prioridade 2: Telefone / WhatsApp normalizado (com ou sem 55 / 9º dígito)
+    if (cleanDigits.length >= 8) {
+      const byPhone = db.guestAccounts.find(g => g.phone && phonesMatch(g.phone, cleanDigits));
+      if (byPhone) return hydrateGuestAccountFromCrmAndReservations(byPhone);
     }
+  }
 
-    saveDatabase();
+  // 2. Se não achou diretamente em guestAccounts, verifica no CRM (db.guests) se esse CPF/Telefone/E-mail
+  // pertence a um hóspede que já tem conta em db.guestAccounts (ex: cadastrou conta só com e-mail, mas CPF/telefone está no CRM)
+  const crmGuest = db.guests.find(g => {
+    if (isEmail && (g.email || "").trim().toLowerCase() === cleanEmail) return true;
+    const gDigits = String(g.document || g.documentNumber || "").replace(/\D/g, "");
+    if (!isEmail && cleanDigits.length >= 9 && gDigits === cleanDigits) return true;
+    if (!isEmail && cleanDigits.length >= 8 && g.phone && phonesMatch(g.phone, cleanDigits)) return true;
+    return false;
+  });
 
-    const { passwordHash: _, ...safeAccount } = account;
-    res.json({
-      success: true,
-      message: `Autenticado com sucesso via Google, ${safeAccount.name}!`,
-      guest: safeAccount,
-      token: `guest_${account.id}_${Date.now()}`
+  if (crmGuest) {
+    const crmEmail = (crmGuest.email || "").trim().toLowerCase();
+    const crmDoc = String(crmGuest.document || crmGuest.documentNumber || "").replace(/\D/g, "");
+    const crmPhone = normalizePhone(crmGuest.phone || "");
+
+    const linkedAccount = db.guestAccounts.find(acc => {
+      if (crmGuest.id && acc.guestId && Number(acc.guestId) === Number(crmGuest.id)) return true;
+      if (crmEmail && (acc.email || "").trim().toLowerCase() === crmEmail) return true;
+      const accDoc = String(acc.document || "").replace(/\D/g, "");
+      if (crmDoc && crmDoc.length >= 5 && accDoc === crmDoc) return true;
+      if (crmPhone && crmPhone.length >= 8 && acc.phone && phonesMatch(acc.phone, crmPhone)) return true;
+      return false;
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
-// 1.4 Obter Perfil Atual do Hóspede
-app.get("/api/guest-auth/me", (req, res) => {
-  const authHeader = req.headers.authorization || "";
-  const queryEmail = req.query.email;
-
-  let account = null;
-  if (queryEmail) {
-    account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === String(queryEmail).toLowerCase());
-  } else if (authHeader.startsWith("Bearer guest_")) {
-    const parts = authHeader.replace("Bearer guest_", "").split("_");
-    const accountId = Number(parts[0]);
-    account = (db.guestAccounts || []).find(g => g.id === accountId);
+    if (linkedAccount) {
+      return hydrateGuestAccountFromCrmAndReservations(linkedAccount);
+    }
   }
+
+  return null;
+}
+
+function getGuestReservations(account) {
+  if (!account) return [];
+  const accEmail = (account.email || "").trim().toLowerCase();
+  const accDoc = String(account.document || "").replace(/\D/g, "");
+  const accPhone = normalizePhone(account.phone || "");
+  const accGuestId = account.guestId ? Number(account.guestId) : null;
+
+  return (db.reservations || []).filter(r => {
+    if (accGuestId && r.guestId && Number(r.guestId) === accGuestId) return true;
+    if (accDoc && accDoc.length >= 5) {
+      const rDoc = String(r.guestDocument || "").replace(/\D/g, "");
+      if (rDoc && rDoc === accDoc) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => String(rg.cpf || rg.document || "").replace(/\D/g, "") === accDoc)) return true;
+    }
+    if (accEmail && accEmail.includes("@")) {
+      if ((r.guestEmail || "").trim().toLowerCase() === accEmail) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => (rg.email || "").trim().toLowerCase() === accEmail)) return true;
+    }
+    if (accPhone && accPhone.length >= 8) {
+      if (r.guestPhone && phonesMatch(r.guestPhone, accPhone)) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => rg.phone && phonesMatch(rg.phone, accPhone))) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Unificação Inteligente de Cadastros no Registro (Prioridade: 1º CPF, 2º E-mail, 3º Telefone).
+ * Se já existir conta ativa com senha para o mesmo CPF, E-mail ou Telefone, impede duplicidade/takeover e orienta login.
+ * Se existir ficha prévia no CRM (`db.guests`), reservas (`db.reservations`), ou conta Google sem senha,
+ * unifica os registros absorvendo o histórico e os dados prévios.
+ */
+function resolveAndUnifyGuestRegistration(payload) {
+  if (!Array.isArray(db.guestAccounts)) db.guestAccounts = [];
+  if (!Array.isArray(db.guests)) db.guests = [];
+
+  const cleanEmail = (payload.email || "").trim().toLowerCase();
+  const rawDoc = (payload.document || "").trim();
+  const cleanDoc = rawDoc.replace(/\D/g, "");
+  const rawPhone = (payload.phone || "").trim();
+  const cleanPhone = normalizePhone(rawPhone);
+
+  // Busca em db.guestAccounts seguindo a prioridade estrita: 1º CPF, 2º E-mail, 3º Telefone
+  let existingAccount = null;
+  if (cleanDoc && cleanDoc.length >= 5) {
+    existingAccount = db.guestAccounts.find(g => String(g.document || "").replace(/\D/g, "") === cleanDoc);
+  }
+  if (!existingAccount && cleanEmail) {
+    existingAccount = db.guestAccounts.find(g => (g.email || "").trim().toLowerCase() === cleanEmail);
+  }
+  if (!existingAccount && cleanPhone && cleanPhone.length >= 8) {
+    existingAccount = db.guestAccounts.find(g => g.phone && phonesMatch(g.phone, cleanPhone));
+  }
+
+  if (existingAccount && existingAccount.passwordHash) {
+    return {
+      conflict: true,
+      error: "Já existe uma conta cadastrada para este CPF, e-mail ou telefone. Por favor, faça login usando seu E-mail, CPF ou Telefone."
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  let account = existingAccount;
 
   if (!account) {
-    return res.status(401).json({ error: "Sessão não encontrada ou expirada." });
+    const newId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(g => Number(g.id) || 0)) + 1 : 1;
+    account = {
+      id: newId,
+      name: (payload.name || cleanEmail.split("@")[0] || "Hóspede").trim(),
+      email: cleanEmail,
+      passwordHash: payload.password ? hashPassword(payload.password) : null,
+      phone: rawPhone,
+      docType: payload.docType || "CPF",
+      document: rawDoc,
+      birthDate: payload.birthDate || null,
+      gender: payload.gender || "",
+      nationality: payload.nationality || "Brasileira",
+      profession: payload.profession || "",
+      cep: payload.cep || "",
+      address: payload.address || payload.street || "",
+      street: payload.street || payload.address || "",
+      streetNumber: payload.streetNumber || payload.number || "",
+      number: payload.number || payload.streetNumber || "",
+      complement: payload.complement || "",
+      neighborhood: payload.neighborhood || "",
+      city: payload.city || "",
+      state: payload.state || "",
+      companyData: payload.companyData || null,
+      vehicle: payload.vehicle || null,
+      passkeys: [],
+      createdAt: nowIso,
+      lastLoginAt: nowIso
+    };
+    db.guestAccounts.push(account);
+  } else {
+    // Conta existente sem senha (ex: pré-criada via Google ou sincronização): unifica e define a senha
+    if (payload.password) account.passwordHash = hashPassword(payload.password);
+    if (payload.name && payload.name.trim()) account.name = payload.name.trim();
+    if (cleanEmail) account.email = cleanEmail;
+    if (rawPhone) account.phone = rawPhone;
+    if (payload.docType) account.docType = payload.docType;
+    if (rawDoc) account.document = rawDoc;
+    if (payload.birthDate) account.birthDate = payload.birthDate;
+    if (payload.gender) account.gender = payload.gender;
+    if (payload.nationality) account.nationality = payload.nationality;
+    if (payload.profession) account.profession = payload.profession;
+    if (payload.cep) account.cep = payload.cep;
+    if (payload.address || payload.street) {
+      account.address = payload.address || payload.street;
+      account.street = payload.street || payload.address;
+    }
+    if (payload.streetNumber || payload.number) {
+      account.streetNumber = payload.streetNumber || payload.number;
+      account.number = payload.number || payload.streetNumber;
+    }
+    if (payload.complement) account.complement = payload.complement;
+    if (payload.neighborhood) account.neighborhood = payload.neighborhood;
+    if (payload.city) account.city = payload.city;
+    if (payload.state) account.state = payload.state;
+    if (payload.companyData) account.companyData = { ...(account.companyData || {}), ...payload.companyData };
+    if (payload.vehicle) account.vehicle = { ...(account.vehicle || {}), ...payload.vehicle };
+    account.lastLoginAt = nowIso;
   }
 
-  // Busca histórico de reservas do hóspede
-  const myReservations = (db.reservations || []).filter(r =>
-    (r.guestEmail && r.guestEmail.toLowerCase() === account.email.toLowerCase()) ||
-    (r.guestPhone && account.phone && r.guestPhone.replace(/\D/g, "") === account.phone.replace(/\D/g, ""))
-  );
-
-  const { passwordHash: _, ...safeAccount } = account;
-  res.json({
-    guest: safeAccount,
-    reservations: myReservations
+  // Sincronização Bidirecional e Deduplicação com o CRM (db.guests) e Reservas (db.reservations)
+  // Ordem de prioridade: 1º CPF, 2º E-mail, 3º Telefone
+  syncBidirectionalGuestProfile(db, account, {
+    name: account.name || undefined,
+    email: account.email || undefined,
+    phone: account.phone || undefined,
+    docType: account.docType || undefined,
+    document: account.document || undefined,
+    birthDate: account.birthDate || undefined,
+    gender: account.gender || undefined,
+    nationality: account.nationality || undefined,
+    profession: account.profession || undefined,
+    cep: account.cep || undefined,
+    address: account.address || undefined,
+    street: account.street || undefined,
+    streetNumber: account.streetNumber || undefined,
+    number: account.number || undefined,
+    complement: account.complement || undefined,
+    neighborhood: account.neighborhood || undefined,
+    city: account.city || undefined,
+    state: account.state || undefined,
+    companyData: account.companyData || undefined,
+    vehicle: account.vehicle || undefined
   });
-});
 
-// 1.5 Atualizar Perfil e Veículo do Hóspede
-app.patch("/api/guest-auth/profile", (req, res) => {
-  try {
-    const { email, name, phone, document, address, city, state, cep, companyData, vehicle } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: "E-mail não informado." });
+  reconcileAndMergeGuests(db);
+  return { conflict: false, account };
+}
+
+/**
+ * Valida token/credencial Google One Tap (JWT) ou Access Token OAuth2.
+ */
+async function verifyGoogleAuthInput(body) {
+  const { credential, accessToken } = body || {};
+
+  // 1. Fluxo JWT (Google One Tap / Sign-In Button)
+  if (credential && typeof credential === "string") {
+    const parts = credential.split(".");
+    if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+      return { valid: false, error: "Formato de credencial JWT do Google inválido." };
     }
+    try {
+      const header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf-8"));
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
 
-    const cleanEmail = email.trim().toLowerCase();
-    const account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === cleanEmail);
-
-    if (!account) {
-      return res.status(404).json({ error: "Conta de hóspede não encontrada." });
+      if (!header || !header.alg || header.alg === "none") {
+        return { valid: false, error: "Algoritmo JWT inválido." };
+      }
+      if (payload.iss && payload.iss !== "https://accounts.google.com" && payload.iss !== "accounts.google.com") {
+        return { valid: false, error: "Emissor (iss) do token Google inválido." };
+      }
+      if (payload.exp && Number(payload.exp) * 1000 < Date.now()) {
+        return { valid: false, error: "Token do Google expirado." };
+      }
+      if (payload.email_verified === false) {
+        return { valid: false, error: "E-mail do Google não verificado." };
+      }
+      const configuredClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId;
+      if (configuredClientId && payload.aud && payload.aud !== configuredClientId && process.env.NODE_ENV === "production") {
+        return { valid: false, error: "Destinatário (aud) do token Google não corresponde ao Client ID." };
+      }
+      if (!payload.email || !payload.sub) {
+        return { valid: false, error: "Token do Google não contém e-mail ou identificador (sub)." };
+      }
+      return {
+        valid: true,
+        email: String(payload.email).trim().toLowerCase(),
+        name: payload.name || String(payload.email).split("@")[0],
+        sub: String(payload.sub),
+        picture: payload.picture || ""
+      };
+    } catch {
+      return { valid: false, error: "Falha ao validar token JWT do Google." };
     }
+  }
 
-    if (name) account.name = name.trim();
-    if (phone) account.phone = phone.trim();
-    if (document) account.document = document.trim();
-    if (address !== undefined) account.address = address.trim();
-    if (city !== undefined) account.city = city.trim();
-    if (state !== undefined) account.state = state.trim();
-    if (birthDate !== undefined) account.birthDate = birthDate;
-    if (cep !== undefined) account.cep = cep.trim();
-    if (companyData !== undefined) account.companyData = companyData;
+  // 2. Fluxo OAuth2 Access Token (Popup)
+  if (accessToken && typeof accessToken === "string") {
+    try {
+      const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (!userInfoRes.ok) {
+        return { valid: false, error: "Access token do Google inválido ou expirado." };
+      }
+      const userInfo = await userInfoRes.json();
+      if (!userInfo || !userInfo.email || !userInfo.sub) {
+        return { valid: false, error: "Dados de usuário Google inválidos." };
+      }
+      return {
+        valid: true,
+        email: String(userInfo.email).trim().toLowerCase(),
+        name: userInfo.name || String(userInfo.email).split("@")[0],
+        sub: String(userInfo.sub),
+        picture: userInfo.picture || ""
+      };
+    } catch {
+      return { valid: false, error: "Falha ao verificar access token junto ao Google." };
+    }
+  }
 
-    // Sincronização bidirecional imediata
-    syncBidirectionalGuestProfile(db, account, {
-      name: account.name,
-      phone: account.phone,
-      document: account.document,
-      birthDate: account.birthDate,
-      address: account.address,
-      city: account.city,
-      state: account.state,
-      cep: account.cep,
-      vehiclePlate: account.vehicle?.plate,
-      vehicleBrand: account.vehicle?.brand,
-      vehicleModel: account.vehicle?.model,
-      vehicleColor: account.vehicle?.color
-    });
-    if (vehicle !== undefined) {
-      account.vehicle = vehicle;
-      if (vehicle && vehicle.plate) {
+  return { valid: false, error: "Credencial de autenticação do Google obrigatória." };
+}
+
+/**
+ * Aplica atualização completa de perfil e sincroniza bidirecionalmente com CRM e Reservas.
+ */
+function applyProfileUpdateToAccount(account, body) {
+  const {
+    name,
+    email,
+    newEmail,
+    phone,
+    docType,
+    document,
+    birthDate,
+    gender,
+    nationality,
+    profession,
+    cep,
+    address,
+    street,
+    streetNumber,
+    number,
+    complement,
+    neighborhood,
+    city,
+    state,
+    companyData,
+    vehicle,
+    newPassword
+  } = body || {};
+
+  // Verifica se o novo e-mail ou CPF já pertence a outra conta com senha diferente
+  const targetEmail = (newEmail || email || "").trim().toLowerCase();
+  if (targetEmail && targetEmail.includes("@") && targetEmail !== (account.email || "").toLowerCase()) {
+    const otherAcc = (db.guestAccounts || []).find(g =>
+      g.id !== account.id && (g.email || "").toLowerCase() === targetEmail && g.passwordHash
+    );
+    if (otherAcc) {
+      throw new Error("Este e-mail já está vinculado a outra conta ativa.");
+    }
+    account.email = targetEmail;
+  }
+
+  if (name !== undefined && String(name).trim()) account.name = String(name).trim();
+  if (phone !== undefined) account.phone = String(phone).trim();
+  if (docType !== undefined) account.docType = String(docType).trim() || "CPF";
+  if (document !== undefined) account.document = String(document).trim();
+  if (birthDate !== undefined) account.birthDate = birthDate || null;
+  if (gender !== undefined) account.gender = String(gender).trim();
+  if (nationality !== undefined) account.nationality = String(nationality).trim();
+  if (profession !== undefined) account.profession = String(profession).trim();
+  if (cep !== undefined) account.cep = String(cep).trim();
+
+  const resolvedStreet = street !== undefined ? String(street).trim() : (address !== undefined ? String(address).trim() : undefined);
+  if (resolvedStreet !== undefined) {
+    account.street = resolvedStreet;
+    account.address = address !== undefined ? String(address).trim() : resolvedStreet;
+  }
+  const resolvedNum = streetNumber !== undefined ? String(streetNumber).trim() : (number !== undefined ? String(number).trim() : undefined);
+  if (resolvedNum !== undefined) {
+    account.streetNumber = resolvedNum;
+    account.number = resolvedNum;
+  }
+  if (complement !== undefined) account.complement = String(complement).trim();
+  if (neighborhood !== undefined) account.neighborhood = String(neighborhood).trim();
+  if (city !== undefined) account.city = String(city).trim();
+  if (state !== undefined) account.state = String(state).trim().toUpperCase();
+
+  // Merge não-destrutivo de companyData
+  if (companyData !== undefined) {
+    if (companyData === null) {
+      account.companyData = null;
+    } else if (typeof companyData === "object") {
+      const prevComp = account.companyData || {};
+      account.companyData = {
+        cnpj: companyData.cnpj !== undefined ? String(companyData.cnpj).trim() : (prevComp.cnpj || ""),
+        companyName: companyData.companyName !== undefined ? String(companyData.companyName).trim() : (prevComp.companyName || ""),
+        companyEmail: companyData.companyEmail !== undefined ? String(companyData.companyEmail).trim() : (prevComp.companyEmail || ""),
+        companyPhone: companyData.companyPhone !== undefined ? String(companyData.companyPhone).trim() : (prevComp.companyPhone || "")
+      };
+    }
+  }
+
+  // Merge não-destrutivo de vehicle
+  if (vehicle !== undefined) {
+    if (vehicle === null || (typeof vehicle === "object" && !vehicle.plate && !vehicle.model && !vehicle.brand && !vehicle.color)) {
+      account.vehicle = null;
+    } else if (typeof vehicle === "object") {
+      const prevVeh = account.vehicle || {};
+      account.vehicle = {
+        plate: vehicle.plate !== undefined ? String(vehicle.plate).toUpperCase().trim() : (prevVeh.plate || ""),
+        brand: vehicle.brand !== undefined ? String(vehicle.brand).trim() : (prevVeh.brand || ""),
+        model: vehicle.model !== undefined ? String(vehicle.model).trim() : (prevVeh.model || ""),
+        color: vehicle.color !== undefined ? String(vehicle.color).trim() : (prevVeh.color || "")
+      };
+
+      if (account.vehicle.plate) {
+        const cleanEmail = (account.email || "").trim().toLowerCase();
         const today = new Date().toISOString().slice(0, 10);
         const activeReservations = (db.reservations || []).filter(r =>
-          ((r.guestEmail && r.guestEmail.toLowerCase() === cleanEmail) || (account.phone && r.guestPhone && r.guestPhone.replace(/\D/g, "") === account.phone.replace(/\D/g, ""))) &&
+          ((cleanEmail && r.guestEmail && r.guestEmail.toLowerCase() === cleanEmail) ||
+           (account.phone && r.guestPhone && phonesMatch(r.guestPhone, account.phone)) ||
+           (account.document && r.guestDocument && String(r.guestDocument).replace(/\D/g, "") === String(account.document).replace(/\D/g, ""))) &&
           r.status !== "cancelada" &&
           r.checkoutDate >= today
         );
         for (const resItem of activeReservations) {
-          const mergedVehicle = mergeVehicleData(resItem.vehicle, vehicle);
+          const mergedVehicle = mergeVehicleData(resItem.vehicle, account.vehicle);
           if (mergedVehicle && vehicleDetailsDiffer(resItem.vehicle, mergedVehicle)) {
             const samePlate = String(resItem.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
             resItem.vehicle = { ...(samePlate ? (resItem.vehicle || {}) : {}), ...mergedVehicle, updatedAt: new Date().toISOString() };
@@ -30615,57 +31531,211 @@ app.patch("/api/guest-auth/profile", (req, res) => {
         }
       }
     }
-    if (req.body.newPassword) {
-      account.passwordHash = hashPassword(req.body.newPassword);
+  }
+
+  if (newPassword && String(newPassword).length >= 6) {
+    account.passwordHash = hashPassword(String(newPassword));
+  }
+
+  account.updatedAt = new Date().toISOString();
+
+  // Sincronização bidirecional completa com CRM (db.guests) e Reservas (db.reservations)
+  syncBidirectionalGuestProfile(db, account, {
+    name: account.name,
+    email: account.email,
+    phone: account.phone,
+    docType: account.docType,
+    document: account.document,
+    birthDate: account.birthDate,
+    gender: account.gender,
+    nationality: account.nationality,
+    profession: account.profession,
+    cep: account.cep,
+    address: account.address,
+    street: account.street,
+    streetNumber: account.streetNumber,
+    number: account.number,
+    complement: account.complement,
+    neighborhood: account.neighborhood,
+    city: account.city,
+    state: account.state,
+    companyData: account.companyData,
+    vehicle: account.vehicle,
+    vehiclePlate: account.vehicle?.plate,
+    vehicleBrand: account.vehicle?.brand,
+    vehicleModel: account.vehicle?.model,
+    vehicleColor: account.vehicle?.color
+  });
+
+  reconcileAndMergeGuests(db);
+  return account;
+}
+
+// 1.1 Cadastro de Hóspede V1
+app.post("/api/guest-auth/register", (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ error: "E-mail é obrigatório para cadastro." });
     }
-    if (req.body.newEmail && req.body.newEmail.trim()) {
-      account.email = req.body.newEmail.trim().toLowerCase();
+
+    const result = resolveAndUnifyGuestRegistration(req.body);
+    if (result.conflict) {
+      return res.status(400).json({ error: result.error });
     }
 
     saveDatabase();
+    const safeAccount = sanitizeAccountForClient(result.account);
+    setAuthSessionCookie(res, safeAccount);
 
-    const { passwordHash: _, ...safeAccount } = account;
-    res.json({ success: true, guest: safeAccount });
+    res.json({
+      success: true,
+      message: "Cadastro de hóspede realizado com sucesso!",
+      guest: safeAccount,
+      user: safeAccount,
+      token: createGuestV1Token(result.account)
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MÓDULO AUTH V2: AUTENTICAÇÃO DE NÍVEL DE PRODUÇÃO, COOKIES & PASSKEYS
-// ══════════════════════════════════════════════════════════════════════════════
-
-const GFM_SESSION_COOKIE = "gfm_session";
-
-function setAuthSessionCookie(res, userPayload) {
-  const token = Buffer.from(JSON.stringify({
-    ...userPayload,
-    issuedAt: Date.now()
-  })).toString("base64");
-
-  res.cookie(GFM_SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dias
-  });
-  return token;
-}
-
-function getAuthV2User(req) {
+// 1.2 Login de Hóspede V1 (E-mail, CPF ou Telefone + Senha)
+app.post("/api/guest-auth/login", (req, res) => {
   try {
-    const raw = req.cookies?.[GFM_SESSION_COOKIE];
-    if (raw) {
-      const decoded = JSON.parse(Buffer.from(raw, "base64").toString("utf-8"));
-      if (decoded && decoded.email) {
-        const found = (db.guestAccounts || []).find(g => g.email.toLowerCase() === decoded.email.toLowerCase());
-        if (found) return found;
-      }
+    const identifier = req.body?.identifier || req.body?.email || req.body?.cpf || req.body?.phone;
+    const password = req.body?.password;
+    if (!identifier || !password) {
+      return res.status(400).json({ error: "Informe seu E-mail, CPF ou Telefone e a senha." });
     }
-  } catch {}
-  return null;
-}
+
+    const account = findGuestAccountByIdentifier(String(identifier));
+    if (!account) {
+      return res.status(401).json({ error: "Cadastro não encontrado para este identificador. Crie sua conta ou use o Google." });
+    }
+
+    if (!account.passwordHash) {
+      return res.status(401).json({ error: "Esta conta foi criada com o Google. Por favor, entre usando o botão Google." });
+    }
+
+    if (!verifyPassword(String(password), account.passwordHash)) {
+      return res.status(401).json({ error: "Senha incorreta." });
+    }
+
+    account.lastLoginAt = new Date().toISOString();
+    hydrateGuestAccountFromCrmAndReservations(account);
+    saveDatabase();
+
+    const safeAccount = sanitizeAccountForClient(account);
+    setAuthSessionCookie(res, safeAccount);
+
+    res.json({
+      success: true,
+      message: `Bem-vindo(a) de volta, ${safeAccount.name || "Hóspede"}!`,
+      guest: safeAccount,
+      user: safeAccount,
+      token: createGuestV1Token(account)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 1.3 Login / Cadastro com Google V1
+app.post("/api/guest-auth/google", async (req, res) => {
+  try {
+    const verified = await verifyGoogleAuthInput(req.body);
+    if (!verified.valid) {
+      return res.status(401).json({ error: verified.error });
+    }
+
+    const { email: cleanEmail, name: googleName, sub: googleSub, picture } = verified;
+    if (!db.guestAccounts) db.guestAccounts = [];
+
+    let account = db.guestAccounts.find(g =>
+      (googleSub && g.googleSub === googleSub) || (g.email || "").toLowerCase() === cleanEmail
+    );
+
+    if (account) {
+      if (googleSub) account.googleSub = googleSub;
+      if (!account.name && googleName) account.name = googleName;
+      if (picture) account.avatarUrl = picture;
+      account.lastLoginAt = new Date().toISOString();
+    } else {
+      const newId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(g => Number(g.id) || 0)) + 1 : 1;
+      account = {
+        id: newId,
+        name: (googleName || cleanEmail.split("@")[0]).trim(),
+        email: cleanEmail,
+        googleSub: googleSub || null,
+        avatarUrl: picture || "",
+        passwordHash: null,
+        phone: "",
+        docType: "CPF",
+        document: "",
+        companyData: null,
+        vehicle: null,
+        passkeys: [],
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString()
+      };
+      db.guestAccounts.push(account);
+    }
+
+    hydrateGuestAccountFromCrmAndReservations(account);
+    reconcileAndMergeGuests(db);
+    saveDatabase();
+
+    const safeAccount = sanitizeAccountForClient(account);
+    setAuthSessionCookie(res, safeAccount);
+
+    res.json({
+      success: true,
+      message: `Autenticado com sucesso via Google, ${safeAccount.name}!`,
+      guest: safeAccount,
+      user: safeAccount,
+      token: createGuestV1Token(account)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 1.4 Obter Perfil e Reservas do Hóspede Autenticado (V1/V2)
+app.get(["/api/guest-auth/me", "/api/guest-auth/profile", "/api/guest-auth/bookings", "/api/v2/auth/bookings"], (req, res) => {
+  const account = getAuthenticatedGuestAccount(req);
+  if (!account) {
+    return res.status(401).json({ error: "Sessão não encontrada ou não autenticada." });
+  }
+
+  const myReservations = getGuestReservations(account);
+  const safeAccount = sanitizeAccountForClient(account);
+  res.json({
+    guest: safeAccount,
+    user: safeAccount,
+    reservations: myReservations
+  });
+});
+
+// 1.5 Atualizar Perfil e Veículo do Hóspede (V1 - Exige Sessão Autenticada)
+app.patch("/api/guest-auth/profile", (req, res) => {
+  try {
+    const account = getAuthenticatedGuestAccount(req);
+    if (!account) {
+      return res.status(401).json({ error: "Sessão não autenticada. Faça login para atualizar seus dados." });
+    }
+
+    applyProfileUpdateToAccount(account, req.body);
+    saveDatabase();
+
+    const safeAccount = sanitizeAccountForClient(account);
+    setAuthSessionCookie(res, safeAccount);
+
+    res.json({ success: true, guest: safeAccount, user: safeAccount });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 // 2.0 Configurações Públicas de Auth
 app.get("/api/v2/auth/config", (req, res) => {
@@ -30678,130 +31748,107 @@ app.get("/api/v2/auth/config", (req, res) => {
   });
 });
 
-// 2.1 Cadastro V2 com Cookie HttpOnly
+// 2.1 Cadastro V2 com Cookie HttpOnly Assinado e Deduplicação Inteligente
 app.post("/api/v2/auth/register", (req, res) => {
   try {
-    const { name, email, password, phone, document, vehicle, companyData } = req.body;
+    const { email, password } = req.body || {};
     if (!email || !password) {
       return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    if (!db.guestAccounts) db.guestAccounts = [];
-
-    const existing = db.guestAccounts.find(g => g.email.toLowerCase() === cleanEmail);
-    if (existing) {
-      return res.status(400).json({ error: "Este e-mail já possui cadastro. Faça login." });
+    const result = resolveAndUnifyGuestRegistration(req.body);
+    if (result.conflict) {
+      return res.status(400).json({ error: result.error });
     }
 
-    const newId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(g => g.id || 0)) + 1 : 1;
-    const account = {
-      id: newId,
-      name: (name || cleanEmail.split("@")[0]).trim(),
-      email: cleanEmail,
-      passwordHash: hashPassword(password),
-      phone: (phone || "").trim(),
-      document: (document || "").trim(),
-      vehicle: vehicle || null,
-      companyData: companyData || null,
-      passkeys: [],
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString()
-    };
-
-    db.guestAccounts.push(account);
     saveDatabase();
 
-    const { passwordHash: _, ...safeUser } = account;
+    const safeUser = sanitizeAccountForClient(result.account);
     setAuthSessionCookie(res, safeUser);
 
     res.json({
       success: true,
-      message: "Conta criada com sucesso!",
-      user: safeUser
+      message: "Conta criada e sincronizada com sucesso!",
+      user: safeUser,
+      guest: safeUser,
+      token: createGuestV1Token(result.account)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2.2 Login V2 com Cookie HttpOnly
+// 2.2 Login V2 com Cookie HttpOnly Assinado (Suporta E-mail, CPF ou Telefone/WhatsApp)
 app.post("/api/v2/auth/login", (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Informe e-mail e senha." });
+    const identifier = req.body?.identifier || req.body?.email || req.body?.cpf || req.body?.phone;
+    const password = req.body?.password;
+    if (!identifier || !password) {
+      return res.status(400).json({ error: "Informe seu E-mail, CPF ou Telefone e a senha." });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === cleanEmail);
+    const account = findGuestAccountByIdentifier(String(identifier));
     if (!account) {
-      return res.status(401).json({ error: "E-mail não cadastrado." });
+      return res.status(401).json({ error: "Cadastro não encontrado para este E-mail, CPF ou Telefone." });
     }
 
     if (!account.passwordHash) {
       return res.status(401).json({ error: "Esta conta usa login com Google. Entre pelo botão do Google." });
     }
 
-    if (!verifyPassword(password, account.passwordHash)) {
+    if (!verifyPassword(String(password), account.passwordHash)) {
       return res.status(401).json({ error: "Senha incorreta." });
     }
 
     account.lastLoginAt = new Date().toISOString();
+    hydrateGuestAccountFromCrmAndReservations(account);
     saveDatabase();
 
-    const { passwordHash: _, ...safeUser } = account;
+    const safeUser = sanitizeAccountForClient(account);
     setAuthSessionCookie(res, safeUser);
 
     res.json({
       success: true,
       message: `Bem-vindo(a), ${safeUser.name}!`,
-      user: safeUser
+      user: safeUser,
+      guest: safeUser,
+      token: createGuestV1Token(account)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2.3 Google One Tap & Google OAuth V2 com Cookie
-app.post("/api/v2/auth/google", (req, res) => {
+// 2.3 Google One Tap & Google OAuth V2 com Cookie Assinado
+app.post("/api/v2/auth/google", async (req, res) => {
   try {
-    const { credential, email, name, sub, picture } = req.body;
-    let googleEmail = email;
-    let googleName = name;
-    let googleSub = sub;
-
-    if (credential && typeof credential === "string" && credential.includes(".")) {
-      try {
-        const payloadBase64 = credential.split(".")[1];
-        const decoded = JSON.parse(Buffer.from(payloadBase64, "base64").toString("utf-8"));
-        if (decoded.email) googleEmail = decoded.email;
-        if (decoded.name) googleName = decoded.name;
-        if (decoded.sub) googleSub = decoded.sub;
-      } catch {}
+    const verified = await verifyGoogleAuthInput(req.body);
+    if (!verified.valid) {
+      return res.status(401).json({ error: verified.error });
     }
 
-    if (!googleEmail) {
-      return res.status(400).json({ error: "Token do Google inválido." });
-    }
-
-    const cleanEmail = googleEmail.trim().toLowerCase();
+    const { email: cleanEmail, name: googleName, sub: googleSub, picture } = verified;
     if (!db.guestAccounts) db.guestAccounts = [];
 
-    let account = db.guestAccounts.find(g => g.email.toLowerCase() === cleanEmail);
+    let account = db.guestAccounts.find(g =>
+      (googleSub && g.googleSub === googleSub) || (g.email || "").toLowerCase() === cleanEmail
+    );
     if (account) {
       if (googleSub) account.googleSub = googleSub;
       if (!account.name && googleName) account.name = googleName;
+      if (picture) account.avatarUrl = picture;
       account.lastLoginAt = new Date().toISOString();
     } else {
-      const newId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(g => g.id || 0)) + 1 : 1;
+      const newId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(g => Number(g.id) || 0)) + 1 : 1;
       account = {
         id: newId,
         name: (googleName || cleanEmail.split("@")[0]).trim(),
         email: cleanEmail,
         googleSub: googleSub || null,
+        avatarUrl: picture || "",
         passwordHash: null,
         phone: "",
+        docType: "CPF",
         document: "",
         vehicle: null,
         companyData: null,
@@ -30812,15 +31859,19 @@ app.post("/api/v2/auth/google", (req, res) => {
       db.guestAccounts.push(account);
     }
 
+    hydrateGuestAccountFromCrmAndReservations(account);
+    reconcileAndMergeGuests(db);
     saveDatabase();
 
-    const { passwordHash: _, ...safeUser } = account;
+    const safeUser = sanitizeAccountForClient(account);
     setAuthSessionCookie(res, safeUser);
 
     res.json({
       success: true,
       message: `Bem-vindo(a), ${safeUser.name}!`,
-      user: safeUser
+      user: safeUser,
+      guest: safeUser,
+      token: createGuestV1Token(account)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -30833,8 +31884,12 @@ app.get("/api/v2/auth/me", (req, res) => {
   if (!user) {
     return res.status(401).json({ error: "Não autenticado." });
   }
-  const { passwordHash: _, ...safeUser } = user;
-  res.json({ user: safeUser });
+  const safeUser = sanitizeAccountForClient(user);
+  res.json({
+    user: safeUser,
+    guest: safeUser,
+    reservations: getGuestReservations(user)
+  });
 });
 
 // 2.5 Logout V2
@@ -30846,49 +31901,64 @@ app.post("/api/v2/auth/logout", (req, res) => {
 // 2.6 Solicitar Recuperação de Senha (Forgot Password)
 app.post("/api/v2/auth/forgot-password", (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Informe o e-mail." });
+    const identifier = req.body?.email || req.body?.identifier;
+    if (!identifier) return res.status(400).json({ error: "Informe seu e-mail, CPF ou telefone." });
 
-    const cleanEmail = email.trim().toLowerCase();
-    const account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === cleanEmail);
+    const account = findGuestAccountByIdentifier(String(identifier));
 
-    // Sempre retorna sucesso por segurança para evitar enumeração de e-mails
-    const token = `reset_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    // Token criptográfico forte (256 bits de entropia)
+    const token = `reset_${crypto.randomBytes(32).toString("hex")}`;
     if (account) {
       account.resetToken = token;
       account.resetTokenExpires = Date.now() + 30 * 60 * 1000; // 30 minutos
+      account.resetAttempts = 0;
       saveDatabase();
     }
 
     res.json({
       success: true,
-      message: "Se o e-mail estiver cadastrado, enviamos um link de recuperação para sua caixa de entrada.",
-      debugToken: process.env.NODE_ENV !== "production" ? token : undefined
+      message: "Se o cadastro existir, enviamos as instruções de recuperação para seu contato registrado."
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2.7 Redefinir Senha com Token (Reset Password)
+// 2.7 Redefinir Senha com Token (Reset Password com limite de tentativas)
 app.post("/api/v2/auth/reset-password", (req, res) => {
   try {
-    const { token, newPassword } = req.body;
-    if (!token || !newPassword || newPassword.length < 6) {
+    const { token, newPassword } = req.body || {};
+    if (!token || typeof token !== "string" || !newPassword || String(newPassword).length < 6) {
       return res.status(400).json({ error: "Token e nova senha (mínimo 6 caracteres) são obrigatórios." });
     }
 
-    const account = (db.guestAccounts || []).find(g =>
-      g.resetToken === token && g.resetTokenExpires > Date.now()
-    );
+    const account = (db.guestAccounts || []).find(g => {
+      if (!g.resetToken || !g.resetTokenExpires || g.resetTokenExpires <= Date.now()) return false;
+      if ((g.resetAttempts || 0) >= 5) return false;
+      try {
+        const a = Buffer.from(String(g.resetToken), "utf-8");
+        const b = Buffer.from(String(token), "utf-8");
+        if (a.length !== b.length) {
+          g.resetAttempts = (g.resetAttempts || 0) + 1;
+          return false;
+        }
+        const match = crypto.timingSafeEqual(a, b);
+        if (!match) g.resetAttempts = (g.resetAttempts || 0) + 1;
+        return match;
+      } catch {
+        return false;
+      }
+    });
 
     if (!account) {
+      saveDatabase();
       return res.status(400).json({ error: "Token de recuperação inválido ou expirado." });
     }
 
-    account.passwordHash = hashPassword(newPassword);
+    account.passwordHash = hashPassword(String(newPassword));
     delete account.resetToken;
     delete account.resetTokenExpires;
+    delete account.resetAttempts;
     saveDatabase();
 
     res.json({ success: true, message: "Senha redefinida com sucesso! Faça login com a nova senha." });
@@ -30903,16 +31973,16 @@ app.post("/api/v2/auth/change-password", (req, res) => {
     const user = getAuthV2User(req);
     if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-    const { currentPassword, newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!newPassword || String(newPassword).length < 6) {
       return res.status(400).json({ error: "A nova senha deve ter no mínimo 6 caracteres." });
     }
 
-    if (user.passwordHash && !verifyPassword(currentPassword, user.passwordHash)) {
+    if (user.passwordHash && !verifyPassword(String(currentPassword || ""), user.passwordHash)) {
       return res.status(400).json({ error: "Senha atual incorreta." });
     }
 
-    user.passwordHash = hashPassword(newPassword);
+    user.passwordHash = hashPassword(String(newPassword));
     saveDatabase();
 
     res.json({ success: true, message: "Senha alterada com sucesso!" });
@@ -30921,64 +31991,32 @@ app.post("/api/v2/auth/change-password", (req, res) => {
   }
 });
 
-// 2.9 Atualizar Perfil V2
+// 2.9 Atualizar Perfil V2 (Sincronização Bidirecional Completa com CRM e Reservas)
 app.patch("/api/v2/auth/profile", (req, res) => {
   try {
     const user = getAuthV2User(req);
     if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-    const { name, phone, document, address, city, state, cep, vehicle, companyData } = req.body;
-    if (name) user.name = name.trim();
-    if (phone !== undefined) user.phone = phone.trim();
-    if (document !== undefined) user.document = document.trim();
-    if (address !== undefined) user.address = address.trim();
-    if (city !== undefined) user.city = city.trim();
-    if (state !== undefined) user.state = state.trim();
-    if (cep !== undefined) user.cep = cep.trim();
-    if (vehicle !== undefined) {
-      user.vehicle = vehicle;
-      if (vehicle && vehicle.plate) {
-        const userEmail = (user.email || "").trim().toLowerCase();
-        const today = new Date().toISOString().slice(0, 10);
-        const activeReservations = (db.reservations || []).filter(r =>
-          ((userEmail && r.guestEmail && r.guestEmail.toLowerCase() === userEmail) || (user.phone && r.guestPhone && r.guestPhone.replace(/\D/g, "") === user.phone.replace(/\D/g, ""))) &&
-          r.status !== "cancelada" &&
-          r.checkoutDate >= today
-        );
-        for (const resItem of activeReservations) {
-          const mergedVehicle = mergeVehicleData(resItem.vehicle, vehicle);
-          if (mergedVehicle && vehicleDetailsDiffer(resItem.vehicle, mergedVehicle)) {
-            const samePlate = String(resItem.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
-            resItem.vehicle = { ...(samePlate ? (resItem.vehicle || {}) : {}), ...mergedVehicle, updatedAt: new Date().toISOString() };
-            triggerGarageEmailNotification(db, saveDatabase, resItem, resItem.vehicle, {
-              trigger: "guest_profile_update_v2",
-              source: "Perfil do Hóspede V2",
-              force: true
-            });
-          }
-        }
-      }
-    }
-    if (companyData !== undefined) user.companyData = companyData;
-
+    applyProfileUpdateToAccount(user, req.body);
     saveDatabase();
 
-    const { passwordHash: _, ...safeUser } = user;
+    const safeUser = sanitizeAccountForClient(user);
     setAuthSessionCookie(res, safeUser);
 
-    res.json({ success: true, user: safeUser, message: "Perfil atualizado!" });
+    res.json({ success: true, user: safeUser, guest: safeUser, message: "Perfil atualizado e sincronizado!" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
-// 2.10 Passkeys / WebAuthn Endpoints
+// 2.10 Passkeys / WebAuthn Endpoints (com Validação de Challenge Criptográfico)
 app.get("/api/v2/auth/passkeys/register-options", (req, res) => {
   const user = getAuthV2User(req);
   if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-  const challenge = Buffer.from(`challenge_${Date.now()}_${Math.random()}`).toString("base64");
+  const challenge = crypto.randomBytes(32).toString("base64url");
   user.currentPasskeyChallenge = challenge;
+  user.currentPasskeyChallengeExpires = Date.now() + 5 * 60 * 1000;
   saveDatabase();
 
   res.json({
@@ -30991,49 +32029,78 @@ app.post("/api/v2/auth/passkeys/register-verify", (req, res) => {
   const user = getAuthV2User(req);
   if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-  const { credentialId, deviceName } = req.body;
+  const { credentialId, deviceName, challenge } = req.body || {};
   if (!credentialId) return res.status(400).json({ error: "Credencial inválida." });
 
+  if (!user.currentPasskeyChallenge || (user.currentPasskeyChallengeExpires && user.currentPasskeyChallengeExpires < Date.now())) {
+    return res.status(400).json({ error: "Desafio (challenge) de registro de Passkey ausente ou expirado." });
+  }
+  if (challenge && challenge !== user.currentPasskeyChallenge) {
+    return res.status(400).json({ error: "Desafio (challenge) de Passkey inválido." });
+  }
+
   if (!user.passkeys) user.passkeys = [];
-  user.passkeys.push({
-    credentialId,
-    deviceName: deviceName || "Dispositivo Biométrico",
-    createdAt: new Date().toISOString()
-  });
+  if (!user.passkeys.some(p => p.credentialId === credentialId)) {
+    user.passkeys.push({
+      credentialId: String(credentialId),
+      deviceName: deviceName || "Dispositivo Biométrico",
+      createdAt: new Date().toISOString()
+    });
+  }
   delete user.currentPasskeyChallenge;
+  delete user.currentPasskeyChallengeExpires;
   saveDatabase();
 
   res.json({ success: true, message: "Passkey registrada com sucesso!" });
 });
 
 app.get("/api/v2/auth/passkeys/auth-options", (req, res) => {
-  const email = req.query.email;
-  const challenge = Buffer.from(`auth_challenge_${Date.now()}_${Math.random()}`).toString("base64");
-  res.json({ challenge, email: email || "" });
+  const identifier = String(req.query.email || req.query.identifier || "").trim();
+  const challenge = crypto.randomBytes(32).toString("base64url");
+  passkeyAuthChallenges.set(challenge, {
+    identifier,
+    expiresAt: Date.now() + 5 * 60 * 1000
+  });
+  res.json({ challenge, email: identifier });
 });
 
 app.post("/api/v2/auth/passkeys/auth-verify", (req, res) => {
   try {
-    const { credentialId, email } = req.body;
-    let account = null;
-
-    if (email) {
-      account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === email.trim().toLowerCase());
-    } else if (credentialId) {
-      account = (db.guestAccounts || []).find(g => (g.passkeys || []).some(p => p.credentialId === credentialId));
+    const { credentialId, challenge } = req.body || {};
+    if (!credentialId || typeof credentialId !== "string") {
+      return res.status(401).json({ error: "Credencial de Passkey obrigatória." });
+    }
+    if (!challenge || !passkeyAuthChallenges.has(challenge)) {
+      return res.status(401).json({ error: "Desafio (challenge) de Passkey inválido ou expirado." });
+    }
+    const storedChallenge = passkeyAuthChallenges.get(challenge);
+    passkeyAuthChallenges.delete(challenge);
+    if (storedChallenge.expiresAt < Date.now()) {
+      return res.status(401).json({ error: "Desafio (challenge) de Passkey expirado." });
     }
 
+    const account = (db.guestAccounts || []).find(g =>
+      Array.isArray(g.passkeys) && g.passkeys.some(p => p.credentialId === credentialId)
+    );
+
     if (!account) {
-      return res.status(401).json({ error: "Passkey não encontrada ou expirada." });
+      return res.status(401).json({ error: "Passkey não encontrada ou não vinculada a nenhuma conta." });
     }
 
     account.lastLoginAt = new Date().toISOString();
+    hydrateGuestAccountFromCrmAndReservations(account);
     saveDatabase();
 
-    const { passwordHash: _, ...safeUser } = account;
+    const safeUser = sanitizeAccountForClient(account);
     setAuthSessionCookie(res, safeUser);
 
-    res.json({ success: true, user: safeUser, message: `Autenticado com Passkey, ${safeUser.name}!` });
+    res.json({
+      success: true,
+      user: safeUser,
+      guest: safeUser,
+      token: createGuestV1Token(account),
+      message: `Autenticado com Passkey, ${safeUser.name}!`
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -31044,11 +32111,8 @@ app.get("/api/v2/auth/export-data", (req, res) => {
   const user = getAuthV2User(req);
   if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-  const myReservations = (db.reservations || []).filter(r =>
-    r.guestEmail && r.guestEmail.toLowerCase() === user.email.toLowerCase()
-  );
-
-  const { passwordHash: _, ...safeUser } = user;
+  const myReservations = getGuestReservations(user);
+  const safeUser = sanitizeAccountForClient(user);
   const exportPayload = {
     exportDate: new Date().toISOString(),
     profile: safeUser,
@@ -32947,71 +34011,22 @@ app.post("/api/pms/reservations/:code/guest-data", (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-const DEFAULT_INTER_CERT = `-----BEGIN CERTIFICATE-----
-MIIEgzCCA2ugAwIBAgIRANwXCIFa6TIrocSzZxcZ9ZkwDQYJKoZIhvcNAQELBQAw
-gYoxCzAJBgNVBAYTAkJSMRUwEwYDVQQIDAxNaW5hcyBHZXJhaXMxFzAVBgNVBAcM
-DkJlbG8gSG9yaXpvbnRlMQwwCgYDVQQKDANBUEkxCzAJBgNVBAsMAklUMTAwLgYD
-VQQDDCdBUEkgSW50ZXJtZWRpYXRlIENlcnRpZmljYXRlIEF1dGhvcml0eQkwHhcN
-MjYwODE5MTYzNDU3WhcNMjcwODE5MTczNDU3WjCBlzELMAkGA1UEBhMCQlIxCzAJ
-BgNVBAgTAlJKMR4wHAYDVQQHExVDQU1QT1MgRE9TIEdPWVRBQ0FaRVMxLTArBgNV
-BAsTJDYyNDdiNzIxLTU0ODQtNDgzOC1hNzQ5LTI1ZDQzY2QwMWI2YTENMAsGA1UE
-ChMEbnVsbDEdMBsGA1UEAxMUUkVOVEFMIE1JTExFUiBTIExUREEwggEiMA0GCSqG
-SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCgDFUdkn6N/QjW82KzmkUhGZzV3SmZcSky
-DtVmP+rozfDw0DqUTRGVTchd8myfspjhrLCRawV0TDIma0Q8rH5zTXRzWXwSmub8
-pODdB2YIofGAEM3AorBhff+d2KArQn/y4EF73j7Nv9Z+Yy71mg6ylhkoxbwzxott
-VtQiVZeRjkhV4+Av2MbYltQHHy8Kf0aRiRGZQ/zcwgPw/pBXktZPwrv7ybrtOjgH
-E6i2gF1pwfG9szTtFDfi5Yx3dGpprLkw0CtLeXwVJ3zlYUkI/9E+Ltpql96E13Y+
-0VFVVwpR4QtDAe1PFKUFOC3TVutR3GVBZGGowig8cgghts4JnJTjAgMBAAGjgdQw
-gdEwCQYDVR0TBAIwADAfBgNVHSMEGDAWgBQUFWn9NPQRCP9Zu04ZzJWXIorgPDAd
-BgNVHQ4EFgQURUJBa+PRqJd0EogyG8Oy7l5nYykwDgYDVR0PAQH/BAQDAgWgMB0G
-A1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjBVBgNVHR8ETjBMMEqgSKBGhkRo
-dHRwOi8vY3JsLWFwaS5iaS5sb2NhbC9jcmwvMTkzNjRlNzYtYzRiZS00MGI2LTlj
-NzEtYTNhN2I0MDQ3NGE0LmNybDANBgkqhkiG9w0BAQsFAAOCAQEAdbXGCFJu1yfc
-qSW4SMQM0IutM8AT3iypxeh6+bs+2OFF67p3TXmD0hNyuDFIbERO9zhh4ulccP3f
-AcqYwPD0+Ach46RxXjH5h4QRb/bTnJ2ynJmZYQSZSrkJHNv7IxNjDLC9/BORzj9e
-6INfLd6uvCgP5GY7tat5eziNLMYIDE9JzsRXq+c93qEi6EGoAgqYAb2/Ad9pQhNa
-HTIXAnL1VmGIDLxDyu9S79SU72nKYUqe43VmML8TZHaLZgji+DbpeSbIM3inp+pW
-KCBcKhXH7sCeb01oY0HhChMTpLRBoGmL/oVuj8A1vARo3YYnsmT2MaLTDKJYkr+2
-FW9aKRGTFA==
------END CERTIFICATE-----`;
+const DEFAULT_INTER_CERT = process.env.INTER_CERT_PEM
+  ? process.env.INTER_CERT_PEM.replace(/\\n/g, "\n")
+  : "";
 
-const DEFAULT_INTER_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCgDFUdkn6N/QjW
-82KzmkUhGZzV3SmZcSkyDtVmP+rozfDw0DqUTRGVTchd8myfspjhrLCRawV0TDIm
-a0Q8rH5zTXRzWXwSmub8pODdB2YIofGAEM3AorBhff+d2KArQn/y4EF73j7Nv9Z+
-Yy71mg6ylhkoxbwzxottVtQiVZeRjkhV4+Av2MbYltQHHy8Kf0aRiRGZQ/zcwgPw
-/pBXktZPwrv7ybrtOjgHE6i2gF1pwfG9szTtFDfi5Yx3dGpprLkw0CtLeXwVJ3zl
-YUkI/9E+Ltpql96E13Y+0VFVVwpR4QtDAe1PFKUFOC3TVutR3GVBZGGowig8cggh
-ts4JnJTjAgMBAAECgf9ot6j5MGCdhnHCMnziBo40mg2D4LDXNLM/jXUS8b9Bk32S
-EqxBXCulBL+UuIlZ9AETp2nfu6ZV8YTenlCHYlVaG9OVpXcItVFs/HQkKjMYct0Q
-be4xnEDLiSU2ogYqR9hvkUtHQKLW/C3bhAm1qJb1QkAz7Sy2s7GGWMlzrYz+LpBS
-mhp2WBXrrwWpiq22rra7D/rWJyE/P7kzH38+swrbzGvec3D0DGGu3GBGBa69AzDu
-fZ1SHJNXrrY+4qxAedfiGqFq1pg9OWT/LYBRQ/3dERZwOep3Q3jgAoa/I0ehg5LQ
-PI3KqYwZustqI6U3mmmmyqqutedykYVnx4L1FeUCgYEA3D1CGzOeL67OwP4agfAj
-4bqQY1rQWXQV/OMlUjnlcGK8bkx/DsdJpCs1Xvp7fGejusb5wyw1F7XxRwx3jXWe
-pKOothL4SHvZsQHxS/pw94ZEgSI1w80jphTSlfs0AiJfGy/IfKCbVQh4KsPvlO+l
-bpLnqSshr63qCFLRkUsdtBUCgYEAugkYVI2A0l1ViPRJsg/e8ZTUcUOZImpitiEw
-DvBKYUCQMSd2hVJHLqIvM14uNjK6NwybkiMa4+AkVM+160NNXJl2JbakVd5bWOx/
-RmzojRpnv6zGbz9zt3+cTa61tsWaFEFdjzSjlqeAvtPmGXf++uCcVGw8/s+HSHH4
-d/0CixcCgYEA0/BTXE/pCyPirRAavC42qXPanPH4jAzNWAXSlXVHmUY65L3Si4s2
-D7jQ7GyJRueJRSVTlwFEumOJI4EYz1V/7BneMhDBQyeEDvW6mg4QhfJ8m/Qq3xjb
-FGj3WgNaQi+HbGcoPN5lfIfg8+6H8MBJZ8YRDteF3ES1cXsZVwN9Ox0CgYAl2PXX
-NdaQdaaSL0jS7gGoWmQCCwObidM9RHE3iNFJCc6MAYBOTVfn99zscWurYRSbYHhB
-+dxdodsiWgOjslSJ0zrDH249ffhNlgeqtzt0gXu79hWEyn7rRQ3yi+myHm9jUY0M
-NmRVoQxDRm7YnZ4FQi7ryf16xZO7PFyVZKbgzwKBgQDQ7FohH3GjXrEP4sQXRgjZ
-8boHAAnSiasrAvjtCqa43u0wVJjoWhTQfczA0JKFltxtDvCVCfdaX0wdQ2HfrQfP
-MPMMnVkSec+AZwEv4jeqgQU1tRdiMqEgPPdz/OFmqHzTZcM4sJHaAzV9sTah1wnD
-Hgv0XSoA1W+DJ9VAi+nc1A==
------END PRIVATE KEY-----`;
+const DEFAULT_INTER_KEY = process.env.INTER_KEY_PEM
+  ? process.env.INTER_KEY_PEM.replace(/\\n/g, "\n")
+  : "";
 
 const DEFAULT_INTER_CONFIG = {
-  clientId: "01c64b82-3a73-4fb9-b2dc-1f73b77678c5",
-  clientSecret: "5cf8187d-3c59-46c0-8f95-5b3e07cd85ae",
-  pixKey: "47964813000165",
-  certPath: path.resolve(__dirname, "./certs/inter.crt"),
-  keyPath: path.resolve(__dirname, "./certs/inter.key"),
-  isConfigured: true,
-  sandbox: false
+  clientId: process.env.INTER_CLIENT_ID || "",
+  clientSecret: process.env.INTER_CLIENT_SECRET || "",
+  pixKey: process.env.INTER_PIX_KEY || "",
+  certPath: path.resolve(__dirname, process.env.INTER_CERT_PATH || "./certs/inter.crt"),
+  keyPath: path.resolve(__dirname, process.env.INTER_KEY_PATH || "./certs/inter.key"),
+  isConfigured: Boolean(process.env.INTER_CLIENT_ID && process.env.INTER_CLIENT_SECRET),
+  sandbox: process.env.INTER_SANDBOX === "true"
 };
 
 let interTokenCache = {
@@ -33031,7 +34046,7 @@ function getInterCertificates() {
     if (cachedInterCert) {
       cert = cachedInterCert;
     } else {
-      const defaultCertPath = path.resolve(__dirname, "./certs/inter.crt");
+      const defaultCertPath = path.resolve(__dirname, process.env.INTER_CERT_PATH || "./certs/inter.crt");
       if (fs.existsSync(defaultCertPath)) {
         try {
           cert = fs.readFileSync(defaultCertPath, "utf-8");
@@ -33044,7 +34059,7 @@ function getInterCertificates() {
     if (cachedInterKey) {
       key = cachedInterKey;
     } else {
-      const defaultKeyPath = path.resolve(__dirname, "./certs/inter.key");
+      const defaultKeyPath = path.resolve(__dirname, process.env.INTER_KEY_PATH || "./certs/inter.key");
       if (fs.existsSync(defaultKeyPath)) {
         try {
           key = fs.readFileSync(defaultKeyPath, "utf-8");
@@ -33054,7 +34069,6 @@ function getInterCertificates() {
     }
   }
 
-  // Fallback garantido com certificados oficiais cadastrados
   if (!cert) cert = DEFAULT_INTER_CERT;
   if (!key) key = DEFAULT_INTER_KEY;
 
@@ -33066,8 +34080,9 @@ function getInterHttpsAgent() {
   if (!cert || !key) {
     throw new Error("Certificado (.crt) ou Chave Privada (.key) do Banco Inter não configurados.");
   }
-  return new https.Agent({ cert, key, rejectUnauthorized: false });
+  return new https.Agent({ cert, key, rejectUnauthorized: process.env.INTER_ALLOW_INSECURE_TLS !== "true" });
 }
+
 
 async function getInterAccessToken() {
   const now = Date.now();
@@ -33962,13 +34977,14 @@ app.post("/api/integrations/inter/test-connection", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_MP_CONFIG = {
-  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || "APP_USR-2731253548432791-081914-0cf47f75d865fb5ce9f5a1b95c744ca1-3628826676",
-  publicKey: process.env.MERCADOPAGO_PUBLIC_KEY || "APP_USR-3c0fcec7-8a2f-436f-b471-dac950fd9933",
-  clientId: process.env.MERCADOPAGO_CLIENT_ID || "2731253548432791",
-  clientSecret: process.env.MERCADOPAGO_CLIENT_SECRET || "eMz5j4OOTMs9xeOqJmKqHdlBciL916B2",
-  isConfigured: true,
-  sandbox: false
+  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || "",
+  publicKey: process.env.MERCADOPAGO_PUBLIC_KEY || "",
+  clientId: process.env.MERCADOPAGO_CLIENT_ID || "",
+  clientSecret: process.env.MERCADOPAGO_CLIENT_SECRET || "",
+  isConfigured: Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN),
+  sandbox: process.env.MERCADOPAGO_SANDBOX === "true"
 };
+
 
 async function createMercadoPagoPreference({ reservationCode, amount, guestName, guestEmail, nights, flatNumber }) {
   const cfg = db.settings?.mercadoPagoConfig || DEFAULT_MP_CONFIG;

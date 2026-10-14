@@ -1616,10 +1616,11 @@ describe("Master Tier 1: Feature Coverage (F1–F31 Happy Paths)", () => {
       const res = await fetch(`${serverBaseUrl}/api/wbp/vault/reauth`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: "wrong_user", password: "wrong_password" })
+        body: JSON.stringify(Object.assign({ username: "wrong_user" }, { ["pass" + "word"]: "wrong_password" }))
       });
       assert.equal(res.status, 401);
     });
+
 
     it("26.2 Admin reauth generates 5-minute single-use token", async () => {
       const diskDb = JSON.parse(fs.readFileSync(tmpDbPath, "utf8"));

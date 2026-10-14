@@ -8,8 +8,29 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+for (const envCandidate of [path.resolve(__dirname, "../.env"), path.resolve(process.cwd(), ".env")]) {
+  try {
+    if (fs.existsSync(envCandidate)) {
+      const lines = fs.readFileSync(envCandidate, "utf-8").split(/\r?\n/);
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1).replace(/\\n/g, "\n");
+        }
+        if (process.env[key] === undefined) process.env[key] = val;
+      }
+      break;
+    }
+  } catch {}
+}
 
-const CERT_PASS = process.env.CERT_PASS || "47964813";
+const CERT_PASS = process.env.CERT_PASS || process.env.CERT_PFX_PASSWORD || "";
+
 
 
 export function getBrasiliaTimeString(minutesAgo = 3) {

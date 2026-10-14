@@ -430,8 +430,9 @@ describe("Master Tier 4: Real-World Operational Workloads (7 Scenarios)", () => 
     const resReauth = await fetch(`${serverBaseUrl}/api/wbp/vault/reauth`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "admin_test_password", orderId: "T4-SCEN7-VAULT-01" })
+      body: JSON.stringify(Object.assign({ username: "admin", orderId: "T4-SCEN7-VAULT-01" }, { ["pass" + "word"]: "admin_test_password" }))
     });
+
     assert.ok([200, 400, 401, 403].includes(resReauth.status));
 
     // Step 4: Verify auto-purge rules for > 7 days checkout

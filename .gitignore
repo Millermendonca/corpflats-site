@@ -72,3 +72,27 @@ data/*challenge*.json
 data/*isolated*.json
 data/e2e-final-test-database.json
 data/test-*.json
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Certificates & Private Keys
+*.pfx
+*.p12
+*.pem
+*.crt
+*.key
+artifacts/api-server/certs/
+storage/certs/
+
+# Database Backups & Audit Logs (contain PII/tokens)
+data/backups/
+data/backups/*.json
+artifacts/api-server/audit_logs.jsonl
+**/audit_logs.jsonl
+
+# Agent scratch/teamwork reports
+.agents/teamwork/
+

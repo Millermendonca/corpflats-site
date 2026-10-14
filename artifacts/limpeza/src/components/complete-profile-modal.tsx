@@ -85,8 +85,22 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
         name: name.trim() || user?.name,
         phone: phone.trim(),
         document: document.trim(),
-        vehicle: hasVehicle && vehiclePlate ? { plate: vehiclePlate.toUpperCase().trim(), model: vehicleModel.trim() } : null,
-        companyData: isWorkTrip && companyCnpj ? { cnpj: companyCnpj.trim(), companyName: companyName.trim() } : null
+        vehicle: hasVehicle && vehiclePlate
+          ? {
+              ...(user?.vehicle || {}),
+              plate: vehiclePlate.toUpperCase().trim(),
+              model: vehicleModel.trim()
+            }
+          : null,
+        ...(isWorkTrip && companyCnpj
+          ? {
+              companyData: {
+                ...(user?.companyData || {}),
+                cnpj: companyCnpj.trim(),
+                companyName: companyName.trim()
+              }
+            }
+          : {})
       }
 
       const res = await updateAccountProfile(payload)

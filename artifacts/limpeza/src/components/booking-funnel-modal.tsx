@@ -591,8 +591,26 @@ export function BookingFunnelModal({
           city: guestCity.trim(),
           state: guestState.trim(),
           cep: guestCep.trim(),
-          vehicle: hasVehicle && vehiclePlate ? { plate: vehiclePlate.toUpperCase().trim(), model: vehicleModel.trim() } : null,
-          companyData: isWorkTrip && companyCnpj ? { cnpj: companyCnpj.trim(), companyName: companyName.trim() } : null
+          ...(hasVehicle && vehiclePlate
+            ? {
+                vehicle: {
+                  ...(guestAccount?.vehicle || {}),
+                  plate: vehiclePlate.toUpperCase().trim(),
+                  model: vehicleModel.trim()
+                }
+              }
+            : {}),
+          ...(isWorkTrip && companyCnpj
+            ? {
+                companyData: {
+                  ...(guestAccount?.companyData || {}),
+                  cnpj: companyCnpj.trim(),
+                  companyName: companyName.trim(),
+                  ...(companyEmail.trim() ? { companyEmail: companyEmail.trim() } : {}),
+                  ...(companyPhone.trim() ? { companyPhone: companyPhone.trim() } : {})
+                }
+              }
+            : {})
         }).then(res => {
           if (res?.success && res.user) {
             saveSessionLocally(res.user)
@@ -655,8 +673,22 @@ export function BookingFunnelModal({
         pixDiscountAmount: paymentMethod === "pix" ? pixDiscountAmount : 0,
         discountAmount: currentTotalDiscount,
         isWorkTrip,
-        companyData: isWorkTrip ? { cnpj: companyCnpj, companyName, companyEmail, companyPhone } : null,
-        vehicle: hasVehicle ? { plate: vehiclePlate, model: vehicleModel } : null
+        companyData: isWorkTrip
+          ? {
+              ...(guestAccount?.companyData || {}),
+              cnpj: companyCnpj,
+              companyName,
+              companyEmail: companyEmail || guestAccount?.companyData?.companyEmail || "",
+              companyPhone: companyPhone || guestAccount?.companyData?.companyPhone || ""
+            }
+          : null,
+        vehicle: hasVehicle
+          ? {
+              ...(guestAccount?.vehicle || {}),
+              plate: vehiclePlate,
+              model: vehicleModel
+            }
+          : null
       }
 
       const res = await fetch("/api/reservations/direct-booking", {

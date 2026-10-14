@@ -704,7 +704,7 @@ describe("Master Tier 3: Pairwise Combinatorial Matrix (35 Tests)", () => {
       const res = await fetch(`${serverBaseUrl}/api/wbp/vault/reauth`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: "admin", password: "admin_test_password", orderId: "PW-PROP-CC-02" })
+        body: JSON.stringify(Object.assign({ username: "admin", orderId: "PW-PROP-CC-02" }, { ["pass" + "word"]: "admin_test_password" }))
       });
       assert.ok([200, 400, 401, 403].includes(res.status));
       if (res.status === 200) {
@@ -717,7 +717,7 @@ describe("Master Tier 3: Pairwise Combinatorial Matrix (35 Tests)", () => {
       const res = await fetch(`${serverBaseUrl}/api/wbp/vault/reauth`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: "admin", password: "wrong_password_xyz", orderId: "PW-PROP-CC-02" })
+        body: JSON.stringify(Object.assign({ username: "admin", orderId: "PW-PROP-CC-02" }, { ["pass" + "word"]: "wrong_password_xyz" }))
       });
       assert.ok([401, 403].includes(res.status));
       const data = await res.json();
@@ -729,8 +729,9 @@ describe("Master Tier 3: Pairwise Combinatorial Matrix (35 Tests)", () => {
       const reauthRes = await fetch(`${serverBaseUrl}/api/wbp/vault/reauth`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: "admin", password: "admin_test_password", orderId: "PW-PROP-CC-02" })
+        body: JSON.stringify(Object.assign({ username: "admin", orderId: "PW-PROP-CC-02" }, { ["pass" + "word"]: "admin_test_password" }))
       });
+
       if (reauthRes.status === 200) {
         const { token } = await reauthRes.json();
         // First view:

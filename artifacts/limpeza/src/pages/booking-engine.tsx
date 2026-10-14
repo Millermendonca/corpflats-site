@@ -308,16 +308,17 @@ export default function BookingEngine() {
       const res = await fetch("/api/guest-auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: authEmail, password: authPassword })
+        credentials: "include",
+        body: JSON.stringify({ identifier: authEmail, email: authEmail, password: authPassword })
       })
       const data = await res.json()
       if (res.ok && data.guest) {
         applyGuestData(data.guest)
-        localStorage.setItem("corpflats_guest_token", data.token)
-        localStorage.setItem("corpflats_guest_email", data.guest.email)
+        if (data.token) localStorage.setItem("corpflats_guest_token", data.token)
+        if (data.guest.email) localStorage.setItem("corpflats_guest_email", data.guest.email)
         setAuthModalOpen(false)
       } else {
-        setAuthError(data.error || "E-mail ou senha inválidos.")
+        setAuthError(data.error || "Credenciais inválidas.")
       }
     } catch (err: any) {
       setAuthError("Erro ao conectar com o servidor.")
@@ -334,6 +335,7 @@ export default function BookingEngine() {
       const res = await fetch("/api/guest-auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           name: authName,
           email: authEmail,
@@ -346,8 +348,8 @@ export default function BookingEngine() {
       const data = await res.json()
       if (res.ok && data.guest) {
         applyGuestData(data.guest)
-        localStorage.setItem("corpflats_guest_token", data.token)
-        localStorage.setItem("corpflats_guest_email", data.guest.email)
+        if (data.token) localStorage.setItem("corpflats_guest_token", data.token)
+        if (data.guest.email) localStorage.setItem("corpflats_guest_email", data.guest.email)
         setAuthModalOpen(false)
       } else {
         setAuthError(data.error || "Erro ao cadastrar conta.")
@@ -384,15 +386,36 @@ export default function BookingEngine() {
         name: profileNameInput,
         phone: profilePhoneInput,
         document: profileDocInput,
-        vehicle: profilePlateInput ? { plate: profilePlateInput, model: profileModelInput, brand: "", color: "" } : null,
-        companyData: profileCnpjInput ? { cnpj: profileCnpjInput, companyName: profileCompanyInput } : null,
+        vehicle: profilePlateInput
+          ? {
+              ...(guestAccount?.vehicle || {}),
+              plate: profilePlateInput,
+              model: profileModelInput,
+              brand: guestAccount?.vehicle?.brand || vehicleBrand || "",
+              color: guestAccount?.vehicle?.color || vehicleColor || ""
+            }
+          : null,
+        companyData: profileCnpjInput
+          ? {
+              ...(guestAccount?.companyData || {}),
+              cnpj: profileCnpjInput,
+              companyName: profileCompanyInput,
+              companyEmail: guestAccount?.companyData?.companyEmail || companyEmail || "",
+              companyPhone: guestAccount?.companyData?.companyPhone || companyPhone || ""
+            }
+          : null,
         newEmail: profileEmailInput !== emailToUse ? profileEmailInput : undefined,
         newPassword: profileNewPassword || undefined
       }
 
+      const savedToken = localStorage.getItem("corpflats_guest_token") || ""
+      const headers: Record<string, string> = { "Content-Type": "application/json" }
+      if (savedToken) headers["Authorization"] = `Bearer ${savedToken}`
+
       const res = await fetch("/api/guest-auth/profile", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers,
+        credentials: "include",
         body: JSON.stringify(payload)
       })
       const json = await res.json()
@@ -481,11 +504,14 @@ export default function BookingEngine() {
         return
       }
 
-      // 2. Fallback legado por email salvo
-      const savedEmail = localStorage.getItem("corpflats_guest_email")
-      if (savedEmail) {
+      // 2. Fallback legado por token salvo
+      const savedToken = localStorage.getItem("corpflats_guest_token")
+      if (savedToken) {
         try {
-          const res = await fetch(`/api/guest-auth/profile?email=${encodeURIComponent(savedEmail)}`)
+          const res = await fetch("/api/guest-auth/profile", {
+            credentials: "include",
+            headers: { Authorization: `Bearer ${savedToken}` }
+          })
           if (res.ok) {
             const d = await res.json()
             if (d.guest) {

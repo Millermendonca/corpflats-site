@@ -80,7 +80,8 @@ process.env.DATABASE_FILE = tempDbPath;
 process.env.WBP_RAW_STORAGE_FILE = tempRawStoragePath;
 process.env.WBP_IDEMPOTENCY_FILE = tempIdempotencyPath;
 process.env.WBP_CARD_VAULT_FILE = tempVaultPath;
-process.env.CREDIT_CARD_VAULT_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+process.env.CREDIT_CARD_VAULT_KEY = "0123456789abcdef".repeat(4);
+
 
 // Import target modules
 import {

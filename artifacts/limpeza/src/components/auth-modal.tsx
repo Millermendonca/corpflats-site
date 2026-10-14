@@ -41,6 +41,22 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
   const [forgotEmail, setForgotEmail] = useState("")
   const [forgotSuccess, setForgotSuccess] = useState(false)
 
+  const formatCpfMask = (val: string) => {
+    const d = val.replace(/\D/g, "").slice(0, 11)
+    if (d.length <= 3) return d
+    if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+    if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
+    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9, 11)}`
+  }
+
+  const formatPhoneMask = (val: string) => {
+    const d = val.replace(/\D/g, "").slice(0, 11)
+    if (d.length <= 2) return d
+    if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`
+    if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`
+  }
+
   // Reseta mensagens de erro quando o modal abre
   useEffect(() => {
     if (open) {
@@ -75,7 +91,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
     setLoading(true)
     setErrorMsg("")
     try {
-      const res = await loginWithEmail(loginEmail, loginPassword)
+      const res = await loginWithEmail(loginEmail.trim(), loginPassword)
       if (res.success && res.user) {
         toast({
           title: `Bem-vindo(a), ${res.user.name}!`,
@@ -84,7 +100,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
         if (onSuccess) onSuccess(res.user)
         onOpenChange(false)
       } else {
-        setErrorMsg(res.error || "E-mail ou senha inválidos.")
+        setErrorMsg(res.error || "Credenciais inválidas.")
       }
     } catch {
       setErrorMsg("Erro de conexão com o servidor.")
@@ -99,16 +115,17 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
     setErrorMsg("")
     try {
       const res = await registerAccount({
-        name: regName,
-        email: regEmail,
+        name: regName.trim(),
+        email: regEmail.trim(),
         password: regPassword,
-        phone: regPhone,
-        document: regDocument
+        phone: regPhone.trim(),
+        docType: "CPF",
+        document: regDocument.trim()
       })
       if (res.success && res.user) {
         toast({
           title: "Conta criada com sucesso! 🎉",
-          description: "Você já está conectado."
+          description: "Seus dados e reservas foram vinculados automaticamente."
         })
         if (onSuccess) onSuccess(res.user)
         onOpenChange(false)
@@ -174,10 +191,10 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
           </DialogTitle>
           <DialogDescription className="text-xs text-slate-500">
             {activeTab === "login" 
-              ? "Entre para gerenciar reservas, liberação de garagem e dados cadastrais." 
+              ? "Entre com seu E-mail, CPF ou WhatsApp para gerenciar reservas, garagem e dados cadastrais." 
               : activeTab === "register" 
-              ? "Cadastre-se para check-in instantâneo e descontos exclusivos." 
-              : "Informe seu e-mail para receber as instruções de recuperação."}
+              ? "Cadastre-se para unificar seu histórico de reservas, check-in rápido e descontos exclusivos." 
+              : "Informe seu e-mail, CPF ou telefone para receber as instruções de recuperação."}
           </DialogDescription>
         </DialogHeader>
 
@@ -233,19 +250,19 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
 
             <div className="relative flex py-1 items-center">
               <div className="grow border-t border-slate-200 dark:border-slate-800"></div>
-              <span className="shrink mx-3 text-[10px] text-slate-400 font-bold uppercase tracking-wider">ou com e-mail</span>
+              <span className="shrink mx-3 text-[10px] text-slate-400 font-bold uppercase tracking-wider">ou com e-mail, CPF ou telefone</span>
               <div className="grow border-t border-slate-200 dark:border-slate-800"></div>
             </div>
 
             <form onSubmit={handleLoginSubmit} className="space-y-3">
               <div className="space-y-1">
-                <Label className="text-[11px] font-bold">E-mail</Label>
+                <Label className="text-[11px] font-bold">E-mail, CPF ou Telefone (WhatsApp)</Label>
                 <Input
-                  type="email"
+                  type="text"
                   required
                   value={loginEmail}
                   onChange={e => setLoginEmail(e.target.value)}
-                  placeholder="seu@email.com"
+                  placeholder="seu@email.com, 000.000.000-00 ou (22) 99999-9999"
                   className="rounded-xl h-9 text-xs"
                 />
               </div>
@@ -313,7 +330,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
                   required
                   value={regName}
                   onChange={e => setRegName(e.target.value)}
-                  placeholder="Seu nome"
+                  placeholder="Seu nome completo"
                   className="rounded-xl h-8 text-xs"
                 />
               </div>
@@ -332,22 +349,23 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
+                  <Label className="text-[11px] font-bold">CPF *</Label>
+                  <Input
+                    required
+                    value={regDocument}
+                    onChange={e => setRegDocument(formatCpfMask(e.target.value))}
+                    placeholder="000.000.000-00"
+                    className="rounded-xl h-8 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
                   <Label className="text-[11px] font-bold">WhatsApp *</Label>
                   <Input
                     required
                     value={regPhone}
-                    onChange={e => setRegPhone(e.target.value)}
+                    onChange={e => setRegPhone(formatPhoneMask(e.target.value))}
                     placeholder="(22) 99999-9999"
                     className="rounded-xl h-8 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-[11px] font-bold">CPF</Label>
-                  <Input
-                    value={regDocument}
-                    onChange={e => setRegDocument(e.target.value)}
-                    placeholder="000.000.000-00"
-                    className="rounded-xl h-8 text-xs font-mono"
                   />
                 </div>
               </div>
@@ -357,6 +375,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
                 <Input
                   type="password"
                   required
+                  minLength={6}
                   value={regPassword}
                   onChange={e => setRegPassword(e.target.value)}
                   placeholder="••••••••"
