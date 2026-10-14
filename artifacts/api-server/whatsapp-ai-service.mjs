@@ -5622,12 +5622,18 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
     : `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
+  const userOnlyPrompt = customPrompt
+    ? prompt
+    : `[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+
   for (const { ver, model } of candidateModels) {
     try {
+      const useNativeSysInst = ver === "v1beta" && Boolean(systemInstruction);
       const bodyPayload = {
+        ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
         contents: [
           ...formattedHistory,
-          { role: "user", parts: [{ text: fullPrompt }] }
+          { role: "user", parts: [{ text: useNativeSysInst ? userOnlyPrompt : fullPrompt }] }
         ],
         generationConfig: {
           temperature: 0.4,
@@ -6165,7 +6171,7 @@ export function generateIntelligentFaqDraft(questionText, db = null, category = 
     return "O flat é entregue completamente limpo e higienizado antes do seu check-in. Limpezas extras durante a estadia podem ser solicitadas com a nossa equipe mediante taxa de serviço. 🧹✨";
   }
   if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar/i.test(lower)) {
-    return "Estamos localizados na Av. Jornalista Roberto Marinho, Edifício Soho, em Macaé/RJ, em localização privilegiada e de fácil acesso! 📍🏨";
+    return "Estamos localizados na Rua Baronesa da Lagoa Dourada, 144 (esquina com Av. Pelinca) — Edifício Soho, Parque Tamandaré, Campos dos Goytacazes/RJ, CEP 28035-212! 📍🏨";
   }
   if (/fumar|cigarro|narguile|tabaco/i.test(lower)) {
     return "Por lei e pelo regulamento do condomínio, é estritamente proibido fumar no interior dos flats e nas áreas comuns fechadas. 🚭";

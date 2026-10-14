@@ -231,11 +231,12 @@ export default function GuestPreCheckin() {
   const [otpError, setOtpError] = useState<string | null>(null)
   const [otpSuccessMessage, setOtpSuccessMessage] = useState<string | null>(null)
 
-  // Veículo para Garagem
+  // Veículo para Garagem & Previsão de Chegada (ETA)
   const [vehiclePlate, setVehiclePlate] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
   const [vehicleBrand, setVehicleBrand] = useState("")
   const [vehicleColor, setVehicleColor] = useState("")
+  const [estimatedArrivalTime, setEstimatedArrivalTime] = useState("")
 
   // Cálculo de idade e detecção de menor de idade (ECA Art. 82)
   const calculatedAge = useMemo(() => {
@@ -631,6 +632,9 @@ export default function GuestPreCheckin() {
 
     const transportVal = currentG?.transportMethod || (isTitular ? (guest.transportMethod || res.transportMethod || "") : "")
     setTransportMethod(transportVal || "")
+
+    const etaVal = currentG?.estimatedArrivalTime || res.estimatedArrivalTime || ""
+    setEstimatedArrivalTime(etaVal || "")
 
     const originCityVal = currentG?.originCity || (isTitular ? (guest.originCity || res.originCity || "") : "")
     setOriginCity(originCityVal || "")
@@ -1163,7 +1167,8 @@ export default function GuestPreCheckin() {
           vehiclePlate: cleanPlate,
           vehicleBrand: cleanBrand,
           vehicleModel: cleanModel,
-          vehicleColor: cleanColor
+          vehicleColor: cleanColor,
+          estimatedArrivalTime: estimatedArrivalTime || undefined
         })
       })
 
@@ -2792,7 +2797,7 @@ export default function GuestPreCheckin() {
                     Por exigência do Ministério do Turismo, informe os dados específicos desta viagem para emissão da FNRH:
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1">
                       <Label className="text-xs font-bold text-slate-700">Motivo da Viagem *</Label>
                       <Select value={travelReason} onValueChange={setTravelReason}>
@@ -2823,6 +2828,23 @@ export default function GuestPreCheckin() {
                           <SelectItem value="Ônibus">🚌 Ônibus</SelectItem>
                           <SelectItem value="Aplicativo / Táxi">🚕 Aplicativo / Táxi</SelectItem>
                           <SelectItem value="Outro">Outro</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold text-slate-700">Previsão de Chegada (ETA)</Label>
+                      <Select value={estimatedArrivalTime} onValueChange={setEstimatedArrivalTime}>
+                        <SelectTrigger className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-sky-500">
+                          <SelectValue placeholder="Horário previsto (opcional)" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
+                          <SelectItem value="14:00">🕑 14:00 (Horário padrão de check-in)</SelectItem>
+                          <SelectItem value="15:00">🕒 15:00 às 16:00</SelectItem>
+                          <SelectItem value="16:00">🕓 16:00 às 18:00</SelectItem>
+                          <SelectItem value="18:00">🕕 18:00 às 20:00</SelectItem>
+                          <SelectItem value="20:00">🕗 20:00 às 22:00</SelectItem>
+                          <SelectItem value="22:00">🕙 Após 22:00 (Madrugada)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

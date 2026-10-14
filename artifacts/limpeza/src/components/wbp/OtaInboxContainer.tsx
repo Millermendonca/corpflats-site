@@ -196,7 +196,7 @@ export const OtaInboxContainer: React.FC = () => {
       const inboxRes = await fetch("/api/wbp/inbox");
       if (inboxRes.ok) {
         const inboxData = await inboxRes.json();
-        if (Array.isArray(inboxData) && inboxData.length > 0) {
+        if (Array.isArray(inboxData)) {
           setItems(inboxData);
           const qCount = inboxData.filter(i => i.status === "quarantine").length;
           setTelemetry(prev => ({ ...prev, pendingQuarantineCount: qCount }));

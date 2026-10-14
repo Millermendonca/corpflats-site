@@ -6122,6 +6122,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post("/api/whatsapp/webhook/received", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
+    const expectedSecret = process.env.ZAPI_WEBHOOK_SECRET || db.zapiConfig?.webhookSecret;
+    if (expectedSecret) {
+      const providedToken = req.headers["client-token"] || req.headers["x-webhook-secret"] || req.query?.secret || "";
+      if (providedToken !== expectedSecret) {
+        console.warn("[Z-API Webhook] Requisição bloqueada: Client-Token/Secret inválido.");
+        return res.status(401).json({ error: "Unauthorized webhook request." });
+      }
+    }
     console.log("[Z-API Webhook] Mensagem recebida:", JSON.stringify(req.body));
 
     // Auditoria dos últimos 30 webhooks brutos recebidos da Z-API

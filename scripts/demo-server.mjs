@@ -31321,13 +31321,20 @@ function findGuestAccountByIdentifier(rawIdentifier) {
 
 function getGuestReservations(account) {
   if (!account) return [];
+  const accId = account.id ? Number(account.id) : null;
   const accEmail = (account.email || "").trim().toLowerCase();
   const accDoc = String(account.document || "").replace(/\D/g, "");
   const accPhone = normalizePhone(account.phone || "");
   const accGuestId = account.guestId ? Number(account.guestId) : null;
+  const accGuestCode = String(account.guestCode || "").trim().toUpperCase();
 
   return (db.reservations || []).filter(r => {
+    if (accId && r.userId && Number(r.userId) === accId) return true;
     if (accGuestId && r.guestId && Number(r.guestId) === accGuestId) return true;
+    if (accGuestCode) {
+      if (String(r.guestCode || "").trim().toUpperCase() === accGuestCode) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => String(rg.guestCode || "").trim().toUpperCase() === accGuestCode)) return true;
+    }
     if (accDoc && accDoc.length >= 5) {
       const rDoc = String(r.guestDocument || "").replace(/\D/g, "");
       if (rDoc && rDoc === accDoc) return true;
@@ -31373,7 +31380,16 @@ function resolveAndUnifyGuestRegistration(payload) {
     existingAccount = db.guestAccounts.find(g => g.phone && phonesMatch(g.phone, cleanPhone));
   }
 
-  if (existingAccount && existingAccount.passwordHash) {
+  const hasPasskeys = Boolean(existingAccount && Array.isArray(existingAccount.passkeys) && existingAccount.passkeys.length > 0);
+  const hasDifferentGoogleEmail = Boolean(
+    existingAccount &&
+    existingAccount.googleSub &&
+    cleanEmail &&
+    (existingAccount.email || "").trim().toLowerCase() &&
+    (existingAccount.email || "").trim().toLowerCase() !== cleanEmail
+  );
+
+  if (existingAccount && (existingAccount.passwordHash || hasPasskeys || hasDifferentGoogleEmail)) {
     return {
       conflict: true,
       error: "Já existe uma conta cadastrada para este CPF, e-mail ou telefone. Por favor, faça login usando seu E-mail, CPF ou Telefone."
@@ -31414,7 +31430,7 @@ function resolveAndUnifyGuestRegistration(payload) {
     };
     db.guestAccounts.push(account);
   } else {
-    // Conta existente sem senha (ex: pré-criada via Google ou sincronização): unifica e define a senha
+    // Conta existente sem senha (ex: pré-criada via Google com mesmo e-mail ou sincronização do CRM): unifica e define a senha
     if (payload.password) account.passwordHash = hashPassword(payload.password);
     if (payload.name && payload.name.trim()) account.name = payload.name.trim();
     if (cleanEmail) account.email = cleanEmail;
@@ -31473,12 +31489,12 @@ function resolveAndUnifyGuestRegistration(payload) {
 }
 
 /**
- * Valida token/credencial Google One Tap (JWT) ou Access Token OAuth2.
+ * Valida token/credencial Google One Tap (JWT) ou Access Token OAuth2 junto aos endpoints oficiais do Google.
  */
 async function verifyGoogleAuthInput(body) {
   const { credential, accessToken } = body || {};
 
-  // 1. Fluxo JWT (Google One Tap / Sign-In Button)
+  // 1. Fluxo JWT (Google One Tap / Sign-In Button) - Validação estrutural + assinatura via Google tokeninfo
   if (credential && typeof credential === "string") {
     const parts = credential.split(".");
     if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
@@ -31497,22 +31513,38 @@ async function verifyGoogleAuthInput(body) {
       if (payload.exp && Number(payload.exp) * 1000 < Date.now()) {
         return { valid: false, error: "Token do Google expirado." };
       }
-      if (payload.email_verified === false) {
+      if (payload.email_verified === false || payload.email_verified === "false") {
         return { valid: false, error: "E-mail do Google não verificado." };
-      }
-      const configuredClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId;
-      if (configuredClientId && payload.aud && payload.aud !== configuredClientId && process.env.NODE_ENV === "production") {
-        return { valid: false, error: "Destinatário (aud) do token Google não corresponde ao Client ID." };
       }
       if (!payload.email || !payload.sub) {
         return { valid: false, error: "Token do Google não contém e-mail ou identificador (sub)." };
       }
+
+      // Verifica assinatura criptográfica e validade do id_token junto ao Google
+      const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+      if (!tokenInfoRes.ok) {
+        return { valid: false, error: "Assinatura ou credencial JWT do Google inválida." };
+      }
+      const tokenInfo = await tokenInfoRes.json();
+      if (!tokenInfo || !tokenInfo.email || !tokenInfo.sub) {
+        return { valid: false, error: "Resposta de validação do Google incompleta." };
+      }
+      if (tokenInfo.iss !== "https://accounts.google.com" && tokenInfo.iss !== "accounts.google.com") {
+        return { valid: false, error: "Emissor (iss) do token Google inválido." };
+      }
+      if (tokenInfo.email_verified === false || tokenInfo.email_verified === "false") {
+        return { valid: false, error: "E-mail do Google não verificado." };
+      }
+      const configuredClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId;
+      if (configuredClientId && tokenInfo.aud && tokenInfo.aud !== configuredClientId) {
+        return { valid: false, error: "Destinatário (aud) do token Google não corresponde ao Client ID." };
+      }
       return {
         valid: true,
-        email: String(payload.email).trim().toLowerCase(),
-        name: payload.name || String(payload.email).split("@")[0],
-        sub: String(payload.sub),
-        picture: payload.picture || ""
+        email: String(tokenInfo.email).trim().toLowerCase(),
+        name: tokenInfo.name || payload.name || String(tokenInfo.email).split("@")[0],
+        sub: String(tokenInfo.sub),
+        picture: tokenInfo.picture || payload.picture || ""
       };
     } catch {
       return { valid: false, error: "Falha ao validar token JWT do Google." };
@@ -31576,11 +31608,37 @@ function applyProfileUpdateToAccount(account, body) {
     newPassword
   } = body || {};
 
-  // Verifica se o novo e-mail ou CPF já pertence a outra conta com senha diferente
+  // Captura estado anterior antes de mutar account para reconciliação e detecção de limpeza explícita
+  const previousEmail = (account.email || "").trim().toLowerCase();
+  const previousPhone = normalizePhone(account.phone || "");
+  const previousDoc = normalizeDoc(account.document || "");
+  const hadVal = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+  const prevHad = {
+    phone: hadVal(account.phone),
+    document: hadVal(account.document),
+    birthDate: hadVal(account.birthDate),
+    gender: hadVal(account.gender),
+    nationality: hadVal(account.nationality) && account.nationality !== "Brasileira",
+    profession: hadVal(account.profession),
+    cep: hadVal(account.cep),
+    street: hadVal(account.street || account.address),
+    number: hadVal(account.streetNumber || account.number),
+    complement: hadVal(account.complement),
+    neighborhood: hadVal(account.neighborhood),
+    city: hadVal(account.city),
+    state: hadVal(account.state) && (hadVal(account.city) || hadVal(account.street) || account.state !== "RJ"),
+    companyData: Boolean(account.companyData && (account.companyData.cnpj || account.companyData.companyName || account.companyData.companyEmail || account.companyData.companyPhone)),
+    vehicle: Boolean(account.vehicle && account.vehicle.plate)
+  };
+
+  const hasActiveCredentials = (acc) =>
+    Boolean(acc.passwordHash || acc.googleSub || (Array.isArray(acc.passkeys) && acc.passkeys.length > 0));
+
+  // Verifica se o novo e-mail já pertence a outra conta credenciada
   const targetEmail = (newEmail || email || "").trim().toLowerCase();
-  if (targetEmail && targetEmail.includes("@") && targetEmail !== (account.email || "").toLowerCase()) {
+  if (targetEmail && targetEmail.includes("@") && targetEmail !== previousEmail) {
     const otherAcc = (db.guestAccounts || []).find(g =>
-      g.id !== account.id && (g.email || "").toLowerCase() === targetEmail && g.passwordHash
+      g.id !== account.id && (g.email || "").trim().toLowerCase() === targetEmail && hasActiveCredentials(g)
     );
     if (otherAcc) {
       throw new Error("Este e-mail já está vinculado a outra conta ativa.");
@@ -31588,50 +31646,150 @@ function applyProfileUpdateToAccount(account, body) {
     account.email = targetEmail;
   }
 
-  if (name !== undefined && String(name).trim()) account.name = String(name).trim();
-  if (phone !== undefined) account.phone = String(phone).trim();
-  if (docType !== undefined) account.docType = String(docType).trim() || "CPF";
-  if (document !== undefined) account.document = String(document).trim();
-  if (birthDate !== undefined) account.birthDate = birthDate || null;
-  if (gender !== undefined) account.gender = String(gender).trim();
-  if (nationality !== undefined) account.nationality = String(nationality).trim();
-  if (profession !== undefined) account.profession = String(profession).trim();
-  if (cep !== undefined) account.cep = String(cep).trim();
+  // Verifica se o novo CPF/documento já pertence a outra conta credenciada (impede Account Takeover)
+  if (document !== undefined) {
+    const cleanTargetDoc = normalizeDoc(document);
+    if (cleanTargetDoc && cleanTargetDoc.length >= 5 && cleanTargetDoc !== previousDoc) {
+      const otherDocAcc = (db.guestAccounts || []).find(g =>
+        g.id !== account.id && normalizeDoc(g.document) === cleanTargetDoc && hasActiveCredentials(g)
+      );
+      if (otherDocAcc) {
+        throw new Error("Este CPF/documento já está vinculado a outra conta ativa.");
+      }
+    }
+  }
+
+  const syncUpdates = {
+    previousEmail,
+    previousPhone,
+    previousDoc
+  };
+
+  const applyScalar = (key, rawVal, hadBefore, transform = (x) => String(x).trim()) => {
+    if (rawVal === undefined) return;
+    const val = rawVal === null ? "" : transform(rawVal);
+    if (val !== "") {
+      account[key] = val;
+      syncUpdates[key] = val;
+    } else if (hadBefore) {
+      account[key] = key === "birthDate" ? null : "";
+      syncUpdates[key] = "";
+    }
+  };
+
+  if (name !== undefined && String(name).trim()) {
+    account.name = String(name).trim();
+    syncUpdates.name = account.name;
+  }
+  if (targetEmail && targetEmail.includes("@")) {
+    syncUpdates.email = account.email;
+  }
+  applyScalar("phone", phone, prevHad.phone);
+  if (docType !== undefined && String(docType).trim()) {
+    account.docType = String(docType).trim();
+    syncUpdates.docType = account.docType;
+  }
+  applyScalar("document", document, prevHad.document);
+  if (birthDate !== undefined) {
+    const bd = birthDate ? String(birthDate).trim() : "";
+    if (bd) {
+      account.birthDate = bd;
+      syncUpdates.birthDate = bd;
+    } else if (prevHad.birthDate) {
+      account.birthDate = null;
+      syncUpdates.birthDate = "";
+    }
+  }
+  applyScalar("gender", gender, prevHad.gender);
+  if (nationality !== undefined) {
+    const nat = String(nationality || "").trim();
+    if (nat && (nat !== "Brasileira" || prevHad.nationality)) {
+      account.nationality = nat;
+      syncUpdates.nationality = nat;
+    } else if (!nat && prevHad.nationality) {
+      account.nationality = "";
+      syncUpdates.nationality = "";
+    }
+  }
+  applyScalar("profession", profession, prevHad.profession);
+  applyScalar("cep", cep, prevHad.cep);
 
   const resolvedStreet = street !== undefined ? String(street).trim() : (address !== undefined ? String(address).trim() : undefined);
   if (resolvedStreet !== undefined) {
-    account.street = resolvedStreet;
-    account.address = address !== undefined ? String(address).trim() : resolvedStreet;
+    const resolvedAddr = address !== undefined ? String(address).trim() : resolvedStreet;
+    if (resolvedStreet || resolvedAddr) {
+      account.street = resolvedStreet || resolvedAddr;
+      account.address = resolvedAddr || resolvedStreet;
+      syncUpdates.street = account.street;
+      syncUpdates.address = account.address;
+    } else if (prevHad.street) {
+      account.street = "";
+      account.address = "";
+      syncUpdates.street = "";
+      syncUpdates.address = "";
+    }
   }
   const resolvedNum = streetNumber !== undefined ? String(streetNumber).trim() : (number !== undefined ? String(number).trim() : undefined);
   if (resolvedNum !== undefined) {
-    account.streetNumber = resolvedNum;
-    account.number = resolvedNum;
+    if (resolvedNum) {
+      account.streetNumber = resolvedNum;
+      account.number = resolvedNum;
+      syncUpdates.streetNumber = resolvedNum;
+      syncUpdates.number = resolvedNum;
+    } else if (prevHad.number) {
+      account.streetNumber = "";
+      account.number = "";
+      syncUpdates.streetNumber = "";
+      syncUpdates.number = "";
+    }
   }
-  if (complement !== undefined) account.complement = String(complement).trim();
-  if (neighborhood !== undefined) account.neighborhood = String(neighborhood).trim();
-  if (city !== undefined) account.city = String(city).trim();
-  if (state !== undefined) account.state = String(state).trim().toUpperCase();
+  applyScalar("complement", complement, prevHad.complement);
+  applyScalar("neighborhood", neighborhood, prevHad.neighborhood);
+  applyScalar("city", city, prevHad.city);
+  if (state !== undefined) {
+    const st = String(state || "").trim().toUpperCase();
+    if (st && (st !== "RJ" || account.city || account.street || prevHad.state)) {
+      account.state = st;
+      syncUpdates.state = st;
+    } else if (!st && prevHad.state) {
+      account.state = "";
+      syncUpdates.state = "";
+    }
+  }
 
   // Merge não-destrutivo de companyData
   if (companyData !== undefined) {
     if (companyData === null) {
-      account.companyData = null;
+      if (prevHad.companyData) {
+        account.companyData = null;
+        syncUpdates.companyData = null;
+      }
     } else if (typeof companyData === "object") {
       const prevComp = account.companyData || {};
-      account.companyData = {
+      const nextComp = {
         cnpj: companyData.cnpj !== undefined ? String(companyData.cnpj).trim() : (prevComp.cnpj || ""),
         companyName: companyData.companyName !== undefined ? String(companyData.companyName).trim() : (prevComp.companyName || ""),
         companyEmail: companyData.companyEmail !== undefined ? String(companyData.companyEmail).trim() : (prevComp.companyEmail || ""),
         companyPhone: companyData.companyPhone !== undefined ? String(companyData.companyPhone).trim() : (prevComp.companyPhone || "")
       };
+      if (nextComp.cnpj || nextComp.companyName || nextComp.companyEmail || nextComp.companyPhone) {
+        account.companyData = nextComp;
+        syncUpdates.companyData = nextComp;
+      } else if (prevHad.companyData) {
+        account.companyData = null;
+        syncUpdates.companyData = null;
+      }
     }
   }
 
   // Merge não-destrutivo de vehicle
   if (vehicle !== undefined) {
-    if (vehicle === null || (typeof vehicle === "object" && !vehicle.plate && !vehicle.model && !vehicle.brand && !vehicle.color)) {
-      account.vehicle = null;
+    const isClearedVeh = vehicle === null || (typeof vehicle === "object" && !vehicle.plate && !vehicle.model && !vehicle.brand && !vehicle.color);
+    if (isClearedVeh) {
+      if (prevHad.vehicle) {
+        account.vehicle = null;
+        syncUpdates.vehicle = null;
+      }
     } else if (typeof vehicle === "object") {
       const prevVeh = account.vehicle || {};
       account.vehicle = {
@@ -31640,6 +31798,11 @@ function applyProfileUpdateToAccount(account, body) {
         model: vehicle.model !== undefined ? String(vehicle.model).trim() : (prevVeh.model || ""),
         color: vehicle.color !== undefined ? String(vehicle.color).trim() : (prevVeh.color || "")
       };
+      syncUpdates.vehicle = account.vehicle;
+      syncUpdates.vehiclePlate = account.vehicle.plate;
+      syncUpdates.vehicleBrand = account.vehicle.brand;
+      syncUpdates.vehicleModel = account.vehicle.model;
+      syncUpdates.vehicleColor = account.vehicle.color;
 
       if (account.vehicle.plate) {
         const cleanEmail = (account.email || "").trim().toLowerCase();
@@ -31674,32 +31837,7 @@ function applyProfileUpdateToAccount(account, body) {
   account.updatedAt = new Date().toISOString();
 
   // Sincronização bidirecional completa com CRM (db.guests) e Reservas (db.reservations)
-  syncBidirectionalGuestProfile(db, account, {
-    name: account.name,
-    email: account.email,
-    phone: account.phone,
-    docType: account.docType,
-    document: account.document,
-    birthDate: account.birthDate,
-    gender: account.gender,
-    nationality: account.nationality,
-    profession: account.profession,
-    cep: account.cep,
-    address: account.address,
-    street: account.street,
-    streetNumber: account.streetNumber,
-    number: account.number,
-    complement: account.complement,
-    neighborhood: account.neighborhood,
-    city: account.city,
-    state: account.state,
-    companyData: account.companyData,
-    vehicle: account.vehicle,
-    vehiclePlate: account.vehicle?.plate,
-    vehicleBrand: account.vehicle?.brand,
-    vehicleModel: account.vehicle?.model,
-    vehicleColor: account.vehicle?.color
-  });
+  syncBidirectionalGuestProfile(db, account, syncUpdates);
 
   reconcileAndMergeGuests(db);
   return account;
@@ -31847,7 +31985,8 @@ app.get(["/api/guest-auth/me", "/api/guest-auth/profile", "/api/guest-auth/booki
   res.json({
     guest: safeAccount,
     user: safeAccount,
-    reservations: myReservations
+    reservations: myReservations,
+    bookings: myReservations
   });
 });
 

@@ -22,7 +22,7 @@ const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.re
 // respawna de forma transparente limitando o heap a 1536MB para margem de segurança de 512MB contra OOM.
 const currentHeapLimitMB = Math.round(v8.getHeapStatistics().heap_size_limit / (1024 * 1024));
 if (isDirectRun && !process.env.__CONTAINER_OPT__ && currentHeapLimitMB > 1600 && process.env.NODE_ENV !== "test") {
-  const child = spawn(process.execPath, ["--max-old-space-size=1536", ...process.argv.slice(1)], {
+  const child = spawn(process.execPath, ["--max-old-space-size=1536", "--expose-gc", ...process.argv.slice(1)], {
     stdio: "inherit",
     env: { ...process.env, __CONTAINER_OPT__: "1" }
   });

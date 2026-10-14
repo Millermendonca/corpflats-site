@@ -2988,7 +2988,7 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              {Boolean(accessCode && isPaid && (!data.isCheckinToday || isPastOrExact14h || isFlatClean)) && (
+              {Boolean(accessCode && isPaid && ((data.isCheckinToday && (isPastOrExact14h || isFlatClean)) || reservation.status === "in_house" || reservation.status === "checkin")) && (
                 <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
