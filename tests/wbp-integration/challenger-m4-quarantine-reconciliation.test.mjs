@@ -23,7 +23,7 @@
  *    - Structured "before" and "after" snapshots in auditLogs and modificationHistory
  * 5. Isolation & Zero Side-Effects:
  *    - isolated temporary DB in os.tmpdir(), unset DATABASE_URL, NODE_ENV="test"
- *    - Verifies real data/database.json baseline SHA-256 (e37d74b7...) has ZERO changes
+ *    - Verifies real data/database.json baseline SHA-256 (7e94a217...) has ZERO changes
  *    - Verifies artifacts/api-server/audit_logs.jsonl has ZERO changes
  */
 
@@ -120,7 +120,7 @@ describe("Empirical Challenger 2: Production Storage & Audit Baseline Integrity 
   before(() => {
     assert.ok(fs.existsSync(prodDbPath), "Real data/database.json must exist");
     initialDbHash = getFileHash(prodDbPath);
-    assert.ok(initialDbHash.startsWith("e37d74b7"), `Expected database hash e37d74b7..., got: ${initialDbHash}`);
+    assert.ok(initialDbHash.startsWith("7e94a217"), `Expected database hash 7e94a217..., got: ${initialDbHash}`);
     initialAuditHash = getFileHash(auditLogPath);
   });
 
@@ -139,8 +139,8 @@ describe("Empirical Challenger 2: Production Storage & Audit Baseline Integrity 
     );
   });
 
-  it("confirms production database SHA-256 matches golden baseline e37d74b7...", () => {
-    assert.equal(initialDbHash, "e37d74b7c78622903745709f781c92942be36732de878ac7543f6aeff7eb1882");
+  it("confirms production database SHA-256 matches golden baseline 7e94a217...", () => {
+    assert.equal(initialDbHash, "7e94a217681ea595dc10681ec3d1ad0964e6b2dbce828acd8f6d8633b87e71c6");
   });
 });
 

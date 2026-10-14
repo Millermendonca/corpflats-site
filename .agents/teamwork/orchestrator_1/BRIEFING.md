@@ -28,10 +28,10 @@ Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBoo
   5. Milestone 2 Implementation & Gate [done]
   6. Milestone 3 (ARI Synchronizer) [done]
   7. Milestone 4 (Reservations, Quarantine & Alerts) [done]
-  8. Milestone 5 (Card Vault, Provisional & UI) [in-progress]
-  9. Final Acceptance & Adversarial Hardening [pending]
-- **Current phase**: Marco 5 Exploration Loop
-- **Current focus**: Despacho de 3 Explorers em paralelo para mapeamento técnico de F25 a F31
+  8. Milestone 5 (Card Vault, Provisional & UI) [done]
+  9. Final Acceptance & Adversarial Hardening [in-progress]
+- **Current phase**: Final Milestone (Tiers 1-4 E2E Test Suite Pass & Tier 5 Adversarial Coverage Hardening)
+- **Current focus**: Execução e validação 100% dos Tiers 1–4 de testes E2E e endurecimento adversarial Tier 5
 
 ## 🔒 Key Constraints
 - NUNCA editar ou criar código-fonte diretamente (DISPATCH-ONLY).
@@ -45,16 +45,24 @@ Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBoo
 - Preservar rigorosamente `data/database.json` real e a integridade de `audit_logs.jsonl`.
 - Documentação deste projeto isolada em `docs/integracoes/webbookingpro/` para não sobrescrever projetos anteriores na raiz.
 - Veto binário inegociável do Forensic Auditor em caso de violação de integridade.
+- COEXISTÊNCIA WORKSPACE: NUNCA rodar git checkout/restore/clean globais (outra conversa opera em giss-soap.mjs / national-nfse.mjs). Fazer git add estritamente de arquivos WBP. Auditores avaliam escopo WBP sem reprovar por arquivos da tarefa paralela.
 
 ## Current Parent
 - Conversation ID: 2588b79e-8f82-479c-ac3d-60f14235136b
-- Updated: 2026-10-14T02:42:05Z
+- Updated: 2026-10-14T10:20:15Z
 
 ## Key Decisions Made
 - Marco 1 APROVADO (Portão 1 PASS, commit 13d5043).
 - Marco 2 APROVADO (Portão 2 PASS, commit 6c33558).
 - Marco 3 APROVADO (Portão 3 PASS, commit 1a141ba, 100% de aprovação por Reviewers, Challengers e Auditor CLEAN).
-- Marco 4: Diretrizes de isolamento de teste (`AUDIT_LOG_FILE`), higienização de `audit_logs.jsonl`, remoção de `isPastCheckinTimeToday`, `notifyPmsMutation` sem guarda de teste e timers com `.unref()` transmitidas ao `worker_m4_wbp`.
+- Marco 4 APROVADO (Portão 4 PASS, commit d8274d6).
+- Marco 5 APROVADO (Portão 5 PASS, commit 96fa6fa, 100% aprovação de Reviewer, Challenger e Auditor CLEAN).
+- Trilha E2E: Tiers 1 a 4 100% concluídos e certificados (352/352 testes passados, commit cd0ec6a pushed).
+- Fase 2 Tier 5: 52 testes adversariais executados com 100% de aprovação por ambos os Challengers (commit 3fccfc3 pushed).
+- Total Geral do Projeto: 404 / 404 testes aprovados com código de saída 0.
+- Liberação do Portão Final: Clearance Reviewer (APPROVE).
+- Auditoria de Vitória: Victory Forensic Auditor (CLEAN, 7/7 quesitos aprovados com 0 violações).
+- Coexistência de workspace respeitada integralmente: zero alterações em arquivos da NFS-e.
 
 ## Team Roster
 | Agent | Type | Work Item | Status | Conv ID |
@@ -100,23 +108,32 @@ Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBoo
 | explorer_m5_wbp_3 | teamwork_preview_explorer | M5 Exploration: Frontend UI & Help Manual | completed | abca2e86-bda4-4b91-935d-ef29266e417a |
 | worker_m5_backend | teamwork_preview_worker | M5 Backend: Vault, Crypto, Reauth, Purge & Provisional | completed (commit 20e51ea) | da528942-a8a0-40be-93bd-930f3e535028 |
 | worker_m5_frontend | teamwork_preview_worker | M5 Frontend: Pricing, OTA Inbox, Help Manual & Build | completed (commit a832dc6) | 9db06c46-acb0-4df2-849c-3de07390a6f4 |
-| reviewer_m5_wbp_1 | teamwork_preview_reviewer | M5 Review: Vault Architecture, Security & Twin Parity | in-progress | 7959296e-3df2-4e88-aa84-903423251460 |
-| reviewer_m5_wbp_2 | teamwork_preview_reviewer | M5 Review: UI Fidelity, In-System Manual & Adapters | in-progress | e7caef9d-4a21-4bc0-94c0-b5bd03df1ac1 |
-| challenger_m5_wbp_1 | teamwork_preview_challenger | M5 Challenger: Vault Security, Reauth & Purge Stress | in-progress | bf1570cb-04ef-44b8-886b-5d388d5a6b80 |
-| challenger_m5_wbp_2 | teamwork_preview_challenger | M5 Challenger: Provisional Adapters & Safety Stress | in-progress | 490a3d9e-3595-4632-9aed-9fc2d0053e2c |
+| reviewer_m5_wbp_1 | teamwork_preview_reviewer | M5 Review: Vault Architecture, Security & Twin Parity | completed (APPROVE) | 7959296e-3df2-4e88-aa84-903423251460 |
+| reviewer_m5_wbp_2 | teamwork_preview_reviewer | M5 Review: UI Fidelity, In-System Manual & Adapters | completed (REQUEST_CHANGES) | e7caef9d-4a21-4bc0-94c0-b5bd03df1ac1 |
+| challenger_m5_wbp_1 | teamwork_preview_challenger | M5 Challenger: Vault Security, Reauth & Purge Stress | completed (REQUEST_CHANGES) | bf1570cb-04ef-44b8-886b-5d388d5a6b80 |
+| challenger_m5_wbp_2 | teamwork_preview_challenger | M5 Challenger: Provisional Adapters & Safety Stress | completed (APPROVE) | 490a3d9e-3595-4632-9aed-9fc2d0053e2c |
 | auditor_m5_wbp | teamwork_preview_auditor | M5 Forensic Integrity Audit | completed (CLEAN) | b4c6646f-7b4c-42c8-9c2d-5750066f2b1a |
-| worker_m5_fix | teamwork_preview_worker | M5 Remediation: Time-travel offset & UI auth facade removal | in-progress | fb23d31b-ee39-44bb-98e9-d82a261ff305 |
+| worker_m5_fix | teamwork_preview_worker | M5 Remediation: Time-travel offset & UI auth facade removal | completed (commit 96fa6fa) | fb23d31b-ee39-44bb-98e9-d82a261ff305 |
+| reviewer_m5_clearance | teamwork_preview_reviewer | M5 Clearance Review: Verification of 2 remediations | completed (APPROVE) | 50694777-250e-4a8b-bac1-cbf795955623 |
+| challenger_m5_clearance | teamwork_preview_challenger | M5 Clearance Challenger: Empirical verification of token expiration | completed (APPROVE) | a2dd95e8-b07d-49b4-a563-a11bd59de525 |
+| auditor_m5_clearance | teamwork_preview_auditor | M5 Clearance Forensic Audit: Commit 96fa6fa integrity | completed (CLEAN) | 4657ce10-7167-44f8-abbc-b17b2f91b244 |
+| test_writer_e2e_final | teamwork_preview_test_writer | Author & publish complete E2E test suite (Tiers 1-4) & TEST_READY.md | completed (commit cd0ec6a) | 6fd4a623-f542-41ce-83f7-76ceed48e5da |
+| challenger_tier5_wbp_1 | teamwork_preview_challenger | Tier 5 Adversarial Hardening: ARI, Availability & Pricing Stress | completed (APPROVE, 22/22 tests) | 3ff11dda-3acb-4254-9fea-2f0df144b9f0 |
+| challenger_tier5_wbp_2 | teamwork_preview_challenger | Tier 5 Adversarial Hardening: Webhooks, Inbox, Reconciler & Vault Stress | completed (APPROVE, 30/30 tests) | 4c546d0b-efe4-4f2c-b02a-5184b394272c |
+| worker_tier5_finalize | teamwork_preview_worker | Finalize Tier 5 tests, update TEST_READY.md & push commit | completed (commit 3fccfc3) | 3b001322-2c45-48b6-99ea-d8aa6cff5586 |
+| reviewer_tier5_clearance | teamwork_preview_reviewer | Tier 5 Clearance Review: Adversarial test coverage & twin parity | completed (APPROVE, 52/52 tests) | d8730e66-080e-44ab-bdfd-71a350337374 |
+| auditor_tier5_victory | teamwork_preview_auditor | Victory Forensic Audit: Full WBP integration integrity & zero-cheating | completed (CLEAN, 7/7 checks) | b7b0eefa-4c52-4a34-aea0-dc8c8e1eb747 |
 
 ## Succession Status
 - Succession required: no (orchestrator is top-level dispatch agent)
-- Spawn count: 45
-- Pending subagents: fb23d31b-ee39-44bb-98e9-d82a261ff305
+- Spawn count: 54
+- Pending subagents: none
 - Predecessor: none
 - Successor: none
 
 ## Active Timers
 - Heartbeat cron: 84d9f696-67d5-4529-bec4-c0232e9abea0/task-649 (cron */10 * * * *)
-- Safety timer: none
+- Safety timer: none (all tasks and clearance verification 100% completed)
 
 ## Artifact Index
 - c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative User Request

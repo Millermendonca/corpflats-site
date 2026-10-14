@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-14T04:41:00Z
+# BRIEFING — 2026-10-14T09:38:00Z
 
 ## Mission
-Coordinate and monitor the complete bidirectional integration between PMS Guest-Flow-Manager and WebBookingPro channel manager, plus the SEBRAE pricing engine overhaul, via Project Orchestrator (orchestrator_1).
+Audit, test, fix, and enhance the entire NFS-e module (Municipal GissOnline & National ADN) in Guest-Flow-Manager, achieving end-to-end compatibility with CRM 360° and automated WhatsApp fiscal collection/sanitization/enrichment without repetitive questions.
 
 ## 🔒 My Identity
 - Archetype: sentinel
@@ -10,6 +10,9 @@ Coordinate and monitor the complete bidirectional integration between PMS Guest-
 - Victory Auditor: 9e6da7f8-68ed-421b-a182-55627571e821 (completed, retired)
 - Active Orchestrator (WBP): 84d9f696-67d5-4529-bec4-c0232e9abea0
 - Parent Caller: 70356aec-b041-4a86-8517-6963f7cb2aa9
+- Parent Caller (NFS-e & CRM): 8e16fbb7-d63f-4851-8018-96f97606570f
+- Orchestrator (NFS-e & CRM): [TBD]
+- Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
@@ -21,32 +24,32 @@ Coordinate and monitor the complete bidirectional integration between PMS Guest-
 - Zero data loss and zero production disruption for CorpFlats Soho Residence
 - Fail-closed security: zero plaintext PAN/CVV, 5-min single-use admin token
 - Strict targeted test execution only
+- NFS-e municipal (GissOnline) and national (ADN) bug fix and end-to-end CRM 360° compatibility
+- WhatsApp fiscal collection, sanitization, enrichment (CNPJ/CEP) and linking with zero repetitive questions for company-linked guests
+- Strict test scope: ONLY run tests/nfse-crm-whatsapp-flow.test.mjs
+- Twin-server SHA-256 parity between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs
+- Build verification: npm run build in artifacts/limpeza
 
 ## User Context
-- **Last user request**: R9 Manual refinement in `WbpHelpManualPage.tsx` + backend vault safety directives (both fully implemented in commits `a832dc6` and `20e51ea`).
+- **Last user request**: Audit, test, fix, and enhance the NFS-e module (Municipal GissOnline and National ADN), integrating with CRM 360° and WhatsApp automation.
 - **Pending clarifications**: none
 - **Delivered results**:
-  - M1: Operational Safety, Storage & Simulator (commit 13d5043)
-  - M2: Canonical Availability & SEBRAE Pricing Engine (commit 6c33558)
-  - M3: ARI Mapping, 7 Restrictions & Synchronizer (commit 1a141ba)
-  - M4: Reservation Processing, Quarantine, Reconciler & Alerts (commit d8274d6)
-  - M5: Credit Card Vault, Provisional Adapters, UI & Manual (commits a832dc6 and 20e51ea, Gate 5 in progress)
+  - Previous WBP Integration track completed.
+  - NFS-e & CRM 360° & WhatsApp track starting.
 
 ## Project Status
-- **Phase**: Gate 5 Quality Verification in progress
+- **Phase**: in progress
 - **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_1
-- **Active Orchestrator ID**: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- **Cron 1 (Reporting)**: active (task-16)
-- **Cron 2 (Liveness)**: active (task-18)
+- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_9
+- **Active Orchestrator ID**: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- **Cron 1 (Reporting)**: active (task-28)
+- **Cron 2 (Liveness)**: active (task-30)
 
 ## Victory Audit Status
-- **Triggered**: no (Gate 5 in progress, followed by Final Acceptance E2E Track)
+- **Triggered**: no
 - **Verdict**: pending
 - **Retry count**: 0
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative user request
-- docs/integracoes/webbookingpro/PROJECT.md — Architecture & Milestones
-- docs/integracoes/webbookingpro/TEST_INFRA.md — E2E Master Test Infrastructure
-- orchestrator_1/progress.md — Active orchestrator progress log
+- .agents/teamwork/orchestrator_9/progress.md — Active orchestrator progress log

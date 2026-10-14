@@ -1,63 +1,66 @@
-## 2026-10-13T22:20:02Z
+# Task Assignment: Worker M1 (NFS-e Backend Engine Fixes & Unified Emission)
+Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
+Role: teamwork_preview_worker
 
-You are the Milestone 1 Implementation Worker for the Guest-Flow-Manager WebBookingPro Integration.
-Your dedicated working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1`
+## Escopo e Instruções
+Você deve implementar as correções e aperfeiçoamentos de M1 (Features F1 a F5) conforme identificado pelos Survey Explorers 1, 2 e 3:
 
-DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
+1. **Correção do Bug de Variáveis Indefinidas em `POST /api/nfse/emit` (`demo-server.mjs`)**:
+   - Eliminar o `ReferenceError: numNfseReal is not defined` / `codVerifReal is not defined`.
+   - Utilizar `emissionResult.numeroNfse || emissionResult.numeroNota` e `emissionResult.codigoVerificacao`.
+   - Em `giss-soap.mjs`, certificar que o retorno de `emitirNfseGissReal` mapeie `numeroNfse: numeroNota` e `codigoVerificacao`.
 
-Read these authoritative documents before starting:
-1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
-2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
-3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\spec_miner_wbp\handoff.md` and `analysis.md`
-5. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_codebase\handoff.md` and `analysis.md`
+2. **Suporte Completo aos Motores Dual (GISS Municipal e Padrão Nacional ADN)**:
+   - Na rota `POST /api/nfse/emit`:
+     - Respeitar o motor solicitado no body (`sistemaEmissor`, ex: `"giss_prefeitura"` ou `"padrao_nacional"`) ou fallback para `db.nfseConfig.padrao`.
+     - Se `padrao_nacional`: invocar `processNationalInvoiceEmission(db, invoiceData, options)`.
+     - Se `giss_prefeitura`: invocar `emitirNfseGissReal(invoiceData, cert, options)`.
+     - Manter fallback resiliente caso o WebService externo esteja indisponível ou em ambiente de teste (`NODE_ENV === "test"`).
 
-Your Scope (Milestone 1: Operational Safety, Storage & WBP Simulator):
-1. Git Setup:
-   - Check current git branch. Create and switch to branch `feature/wbp-integration` from `main`.
-   - Preserve the 11 uncommitted audit log lines in `artifacts/api-server/audit_logs.jsonl` (and project files).
-   - Perform `git push -u origin feature/wbp-integration` on every commit. Never commit to `main`.
-2. Memory Limit:
-   - In `render.yaml`, `package.json`, and `server.mjs`, update the max-old-space-size to `--max-old-space-size=1536` to leverage the paid ~2 GB Render container with 512 MB safety margin.
-3. Durable Raw Storage:
-   - Implement `storage.mjs` in `artifacts/api-server/wbp/storage.mjs` and mirror byte-to-byte in `scripts/wbp/storage.mjs`.
-   - Stores raw payloads before processing in a durable insert-only mechanism outside PostgreSQL `system_store` JSONB blob and completely immune to `pruneDatabase`. In tests/local mode without Postgres, stores in dedicated durable JSONL (`data/wbp_raw_payloads.jsonl` or isolated test path).
-   - Implement idempotency tracking table/map to ensure identical payloads (or OrderId) delivered multiple times produce exactly 1 processed record.
-   - Support resuming unprocessed raw payloads upon process restart.
-4. Operational General Switch:
-   - Add general switch configuration `wbp_integration_mode` with values `off` (default), `observe`, `auto`.
-   - When `off`: system is 100% inert. 0 outbound requests to WBP, 0 timers/polling active, callbacks return HTTP 200 `{ ErrorCode: 1031, Error: "Integration disabled" }` without saving bookings.
-5. WBP Client:
-   - Implement `client.mjs` in `artifacts/api-server/wbp/client.mjs` and mirror byte-to-byte in `scripts/wbp/client.mjs`.
-   - Implements outbound endpoints: HealthCheck, SetupProperty, GetRoomTypes, GetRatePlans, ARIUpdate, GetBookingList, GetBookingId, AckBooking.
-   - Uses UUID v4 `guid` per request, attaches required auth fields, handles timeouts, retries, and errors (1001, 1002, 1102).
-6. Local WBP Simulator:
-   - Implement `e2e/wbp-simulator/server.mjs` (Express/HTTP server).
-   - Validates requests against OpenAPI schemas from `wbpAPI.yaml` (with tolerant mode for errata E1-E10).
-   - Supports injection API: inject new, modified, cancelled bookings.
-   - Supports programmable failure modes: error codes 1001, 1002, 1102, timeouts.
-   - Handles form-urlencoded `NotifyBooking`.
-7. Twin Files Parity:
-   - Ensure byte-for-byte SHA-256 parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`, and between all corresponding files in `artifacts/api-server/wbp/` and `scripts/wbp/`.
-8. Targeted Test:
-   - Create `tests/wbp-integration/m1-safety-simulator.test.mjs` running under `node --test` with isolated port and `DATABASE_URL` removed.
-   - Test: switch `off` leaves simulator calls at 0, no timers.
-   - Test: 5x callback + 3x polling concurrent delivery produces exactly 1 record.
-   - Test: unprocessed raw payload is picked up on restart.
-   - Test: raw payload survives pruneDatabase.
-   - Test: simulator validates against OpenAPI schemas and injects errors 1001/1002/1102 and timeouts.
-   - Execute ONLY this targeted test command. NEVER run global test suites!
+3. **Repasse e Persistência Integral de Dados de Endereço do Tomador**:
+   - Na rota `POST /api/nfse/emit`, desestruturar: `tomadorEndereco`, `tomadorNumero`, `tomadorComplemento`, `tomadorBairro`, `tomadorCep`, `tomadorCidade`, `tomadorUf`, `tomadorCodigoMunicipio`, `tomadorEmail`, `tomadorTelefone`.
+   - Repassar esses dados completos aos motores (`giss-soap.mjs` e `national-nfse.mjs`).
+   - Persistir esses campos integralmente no objeto `newInvoice` salvo em `db.invoices`.
 
-Your write ownership:
-`render.yaml`, `package.json`, `server.mjs`, `artifacts/api-server/wbp/*`, `scripts/wbp/*`, `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `e2e/wbp-simulator/*`, `tests/wbp-integration/m1-safety-simulator.test.mjs`.
+4. **Auto-Emissão Inteligente no Check-out e Fila Fiscal**:
+   - Em `app.post("/api/pms/reservations/:id/checkout")`:
+     - Quando `shouldAutoEmit` for verdadeiro, verificar se a reserva ou o hóspede possui empresa vinculada (`r.companyId || guest?.companyId`).
+     - Se houver empresa vinculada em `db.companies`: o Tomador da NFS-e DEVE receber os dados da Empresa PJ (CNPJ, Razão Social / Nome, Endereço completo, CEP, Cidade, UF, Código IBGE, E-mail financeiro, Telefone).
+     - A discriminação do serviço deve detalhar os dados do hóspede e da estadia: Nome do Hóspede, Apartamento/Flat, datas de Check-in e Check-out, diárias e valor (utilizando o formatador com template `formatarDescricaoComTemplate`).
 
-Write your findings and test execution proof in `progress.md` and complete handoff to `handoff.md` in your working directory. Send a completion message to orchestrator.
+5. **Aperfeiçoamento do Chat Fiscal (`POST /api/invoices/chat` e `chat-service.mjs`)**:
+   - Quando dados de PJ (CNPJ de 14 dígitos) forem informados no chat, cadastrar/atualizar em `db.companies` (e não apenas como hóspede em `db.guests`), preenchendo todos os dados cadastrais e de endereço obtidos no enriquecimento (`lookupCnpj`).
+   - Validar dígitos verificadores via Módulo 11 (`isValidCpf` / `isValidCnpj`).
+   - Permitir lookup de CEP direto quando um CEP avulso for informado.
 
-## 2026-10-13T22:23:19Z
-**Context**: Milestone 1 Implementation - Preservação de Documentação e Branch.
-**Content**: ATENÇÃO: Diretrizes mandatórias do usuário:
-1. Estamos e devemos permanecer exclusivamente na branch `feature/wbp-integration`. NUNCA commitar ou fazer push na `main`. Sempre confirmar `git branch --show-current` antes de commitar.
-2. Não sobrescrever arquivos de projetos anteriores na raiz (`PROJECT.md`, `TEST_INFRA.md`, etc.). O `PROJECT.md` desta integração está isolado em `docs/integracoes/webbookingpro/PROJECT.md`.
-3. As 11 linhas não commitadas de `artifacts/api-server/audit_logs.jsonl` DEVEM ser preservadas e incluídas no primeiro commit da branch.
-**Action**: Siga com a implementação de M1 respeitando essas regras.
+6. **Paridade Twin-Server**:
+   - Manter paridade estrita byte a byte (100% SHA-256) entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+   - Garantir que `scripts/` possua os arquivos `giss-soap.mjs`, `national-nfse.mjs`, `chat-service.mjs`, `lookup.mjs` sincronizados.
+
+MANDATORY INTEGRITY WARNING:
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
+
+Ao concluir, atualize seu `progress.md`, gere `handoff.md` e envie mensagem para o orquestrador.
+
+
+## 2026-10-14T10:00:05Z
+Você é o Worker M1 (NFS-e Backend Engine Fixes & Unified Emission).
+Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
+
+Leia atentamente:
+1. Requisitos oficiais: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\DISPATCH.md
+3. O relatório detalhado de auditoria de Explorer 1: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\handoff.md
+4. O plano de arquitetura: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_9\PROJECT.md
+
+Arquivos sob sua responsabilidade exclusiva de escrita para M1:
+- `artifacts/api-server/demo-server.mjs`
+- `artifacts/api-server/giss-soap.mjs`
+- `artifacts/api-server/national-nfse.mjs`
+- `artifacts/api-server/chat-service.mjs`
+- Sincronização espelho idêntica em `scripts/` (`scripts/demo-server.mjs`, `scripts/giss-soap.mjs`, `scripts/national-nfse.mjs`, `scripts/chat-service.mjs`, `scripts/lookup.mjs`).
+
+MANDATORY INTEGRITY WARNING:
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
+
+Ao concluir todas as implementações e verificar a paridade twin-server, crie seu `progress.md`, escreva seu `handoff.md` no seu diretório de trabalho e envie mensagem ao orquestrador.

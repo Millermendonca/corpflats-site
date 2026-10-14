@@ -1,49 +1,42 @@
-# BRIEFING — 2026-10-11T13:10:00Z
+# BRIEFING — 2026-10-14T09:56:00Z
 
 ## Mission
-Investigate frontend architecture, Guest Portal, and UI flows for reservation modification/extension, payment preview and payment flows, check-in re-signature workflows, and frontend build system.
+Investigate and map CRM 360° backend data models & endpoints (companies, guests, reservations) and UI components (`crm-guests.tsx` and `fiscal-invoices.tsx`), identifying missing fiscal/address fields, CRM selector capabilities, borrower auto-population (Company PJ vs Guest PF toggle), and URL parameter passing.
 
 ## 🔒 My Identity
-- Archetype: explorer
-- Roles: investigator, frontend explorer
+- Archetype: teamwork_preview_explorer
+- Roles: explorer, analyst, investigator
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2
-- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
-- Milestone: survey
+- Original parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- Milestone: Survey Explorer 2 (CRM 360° Models & Fiscal Invoices UI)
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
-- Analyze frontend architecture in `artifacts/limpeza/src`
-- Produce comprehensive survey report `survey_report.md` and `handoff.md`
-- Communicate results back to parent orchestrator via `send_message`
+- Never execute global tests (`tests/*.test.mjs`) or broad sweeps
+- Adhere strictly to project guidelines (AGENTS.md, PROJECT.md)
+- Report findings in `handoff.md` and notify parent via `send_message`
 
 ## Current Parent
-- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
-- Updated: 2026-10-11T13:10:00Z
+- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- Updated: 2026-10-14T09:56:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `ORIGINAL_REQUEST.md` (authoritative multi-step reservation modification request)
-  - `artifacts/limpeza/src/pages/guest-portal.tsx` (Guest Portal, reservation cards, payments, modification dialog)
-  - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx` (check-in wizard, canvas signature pad, re-signature banner)
-  - `artifacts/limpeza/src/pages/reception-tablet.tsx` (reception tablet, `/api/reception/today` polling, entry blockage on unverified check-in)
-  - `artifacts/limpeza/src/pages/garage-dashboard.tsx` (garage daily sheet and plate authorizations)
-  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` (endpoints, payments, FNRH PDF generation, parity)
-  - `artifacts/limpeza/package.json` & Vite build tooling
+  - `artifacts/api-server/demo-server.mjs`: `db.companies`, `/api/companies`, `db.guests`, `/api/pms/guests`, `db.reservations`, `/api/pms/reservations`, `POST /api/nfse/emit`, `reconcileAndMergeGuests`.
+  - `artifacts/limpeza/src/pages/crm-guests.tsx`: Company Modal (`companyModalOpen`), Guest Modal (`guestModalOpen`), `handleSaveCompany`, `handleSaveGuest`.
+  - `artifacts/limpeza/src/pages/fiscal-invoices.tsx`: Combobox selector, `handleSelectGuest`, `handleEmitInvoice`, URL search params reading.
 - **Key findings**:
-  - Current modification modal in `guest-portal.tsx` calls `POST /api/pms/guest-portal/:code/modify` directly, updating dates without requiring prior payment settlement.
-  - Step 1 (Preview with calendar availability check and cost breakdown) and Step 2 (PIX/Card checkout with polling before committing dates) must be introduced.
-  - Re-signature workflow: `needsReSignature` invalidates prior FNRH when dates/flat change. Banner in `guest-portal.tsx` must link to `/pre-checkin/:code?resign=1`, which preserves guest data and focuses on Step 3 canvas signing.
-  - Submitting new signature generates signed FNRH PDF with SHA-256 hash, dispatches email to reception, and clears `needsReSignature`, unblocking portaria entry.
-  - Vite build (`npm run build` in `artifacts/limpeza`) passes cleanly with exit code 0 (`✓ built in 45.37s`).
-  - Server parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` is 100% byte-for-byte identical (SHA-256 verified).
-- **Unexplored areas**: None remaining for survey scope.
+  - `POST /api/companies` drops `cep`, `address`, `number`, `neighborhood`, `city`, `state`, `ibgeCode`.
+  - `POST /api/pms/guests` and `handleUpdateGuest` whitelist drops `cep`, `address`, `number`, `neighborhood`, `state`, `ibgeCode`.
+  - `POST /api/nfse/emit` has a `ReferenceError` on undefined `numNfseReal` and `codVerifReal` and does not persist tomador address.
+  - `crm-guests.tsx` modals miss address inputs for both Companies and Guests.
+  - `fiscal-invoices.tsx` only searches guests, ignores `companyId` for tomador, lacks quick toggle (PJ vs PF), and misses query parameters beyond `doc` and `nome`.
+- **Unexplored areas**: None within the assigned scope. All 4 objectives investigated.
 
 ## Key Decisions Made
-- Concluded investigation of frontend architecture and documented detailed recommendations in `survey_report.md` and `handoff.md`.
+- Comprehensive report structure drafted according to the 5-component handoff protocol.
+- Detailed proposals with exact file paths, line numbers, and before/after code snippets prepared for implementer.
 
 ## Artifact Index
-- DISPATCH.md — Task dispatch log
-- BRIEFING.md — Persistent working memory
-- progress.md — Liveness heartbeat
-- survey_report.md — Detailed survey findings
-- handoff.md — 5-component handoff report
+- `progress.md` — Liveness heartbeat and milestone tracking
+- `handoff.md` — Final structured report with 5 components

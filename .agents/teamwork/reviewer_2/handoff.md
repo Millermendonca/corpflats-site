@@ -1,160 +1,159 @@
-# Relatório de Handoff — Reviewer 2 (Backend APIs, Fail-Safe Engine & Twin-Server Parity)
+# Handoff Report: Reviewer 2 (R3 & R4: WhatsApp Fiscal Flow, Módulo 11, Twin Parity & Build)
 
-**Agente**: Reviewer 2 (`reviewer_2`)  
-**Papéis**: `reviewer`, `critic`  
-**Parent**: Orchestrator (Conversation ID: `26335f75-5ae5-4381-97dc-4cdaaa103cfd`)  
-**Data/Hora**: 2026-10-12T00:10:00Z  
-**Tipo**: Hard Handoff (Revisão e Auditoria Adversarial 100% Concluídas)  
-**Veredito Explícito**: **`APPROVE`** (Aprovado com 0 Violações de Integridade)
-
----
-
-## 1. Observações (Observation)
-
-Durante a auditoria independente e adversarial dos marcos M2 (Backend APIs & Fail-Safe Engine) e M4 (Guia de Hardware IoT), foram inspecionados os arquivos-fonte, testes e documentos técnicos, constatando-se:
-
-### 1.1. Verificação de Paridade Rigorosa Twin-Server (SHA-256)
-Executou-se o comando de verificação de hash criptográfico via PowerShell:
-```powershell
-powershell -Command "
-  $h1 = (Get-FileHash scripts/demo-server.mjs).Hash;
-  $h2 = (Get-FileHash artifacts/api-server/demo-server.mjs).Hash;
-  Write-Host 'scripts:   ' $h1;
-  Write-Host 'artifacts: ' $h2;
-  Write-Host 'Parity:    ' ($h1 -eq $h2);
-"
-```
-**Resultado Observado**:
-- `scripts/demo-server.mjs`: `394FED4C9412BF29672DFD81AB153FFEE564DD40F8CBF5CC1611C23592FEE5B3`
-- `artifacts/api-server/demo-server.mjs`: `394FED4C9412BF29672DFD81AB153FFEE564DD40F8CBF5CC1611C23592FEE5B3`
-- **Paridade: True (100% IDÊNTICOS)**
-
-### 1.2. Execução Estrita do Teste Pontual Dedicado (`AGENTS.md`)
-Conforme a regra mandante de `AGENTS.md` (proibição de testes globais/varreduras), executou-se unicamente o teste pontual associado:
-```bash
-node --test tests/smart-flat-hub.test.mjs
-```
-**Resultado Observado**:
-```
-# Subtest: Smart Flat Hub: Utilitários de Tempo (parseTimeToMinutes & minutesToTimeStr)
-ok 1 - Smart Flat Hub: Utilitários de Tempo (parseTimeToMinutes & minutesToTimeStr)
-# Subtest: Smart Flat Hub: Estado Padrão Inicial (createDefaultSmartFlatState)
-ok 2 - Smart Flat Hub: Estado Padrão Inicial (createDefaultSmartFlatState)
-# Subtest: Smart Flat Hub: Janela de Antecedência de 30min (R2)
-ok 3 - Smart Flat Hub: Janela de Antecedência de 30min (R2)
-# Subtest: Smart Flat Hub: Ciclo Fail-Safe de Presença (R3)
-ok 4 - Smart Flat Hub: Ciclo Fail-Safe de Presença (R3)
-# Subtest: Smart Flat Hub: Ativação Automática da Trilha Sonora no Dia do Check-in (R4)
-ok 5 - Smart Flat Hub: Ativação Automática da Trilha Sonora no Dia do Check-in (R4)
-# Subtest: Smart Flat Hub: Endpoints HTTP via API REST
-ok 6 - Smart Flat Hub: Endpoints HTTP via API REST
-# tests 6 | pass 6 | fail 0 | cancelled 0 (100% PASS)
-```
-
-### 1.3. Auditoria das Rotas de Backend (`scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`)
-Foram inspecionadas as linhas 33451 a 34078:
-- **`GET /api/smart-flat/:target`**: Resolve contexto do flat (priorizando número do flat conhecido, localizador de reserva, query ou fallback `113`), inicializa estado se necessário e avalia o estado em tempo real com cabeçalho `Cache-Control: no-store`.
-- **`POST /api/smart-flat/:target/eta`**: Valida a presença e consistência do formato de horário informado (`HH:mm`, `14h30`, etc.), calcula `scheduleAllowedFrom = ETA - 30min`, sincroniza com `reservation.estimatedArrivalTime` e `reservation.guestArrivalResponse`, salvando no banco.
-- **`POST /api/smart-flat/:target/devices`**: Valida que acionamento de cafeteira ou ar-condicionado só é permitido se `isEntranceConfirmed === true` OU `canSchedule === true`. Valida temperatura entre 18°C e 26°C (rejeitando com HTTP 400 valores fora da faixa). Atualiza modos (`cool`, `fan`, etc.), velocidades do ventilador e estados de energia.
-- **`POST /api/smart-flat/:target/confirm-entrance`**: Marca `isEntranceConfirmed: true`, registra data/hora e fonte (`smart_flat_hub`), sincroniza check-in na reserva (`guestSelfCheckin: true`, `status: "checkin"`), desarmando imediatamente avisos e desligamentos de segurança.
-- **`POST /api/smart-flat/:target/playlist`**: Implementa comandos de controle de mídia (`play`, `pause`, `toggle`, `next`, `prev`, `set_volume` entre 0 e 100, e seleção de faixas em `WELCOME_TRACKS`).
-- **`POST /api/smart-flat/:target/simulate`**: Endpoint sandbox para time-travel (`offsetMinutes`, `simulatedTime`), simulação de desarme forçado, alerta preventivo e ativação de áudio.
-- **Rotina Periódica (Linha 34044-34064)**: `setInterval` a cada 60s inspecionando todos os flats em `db.smartFlats` e persistindo mudanças no banco caso o fail-safe desligue aparelhos ou a música inicie.
-
-### 1.4. Auditoria do Guia de Hardware IoT (`docs/SMART_FLAT_HARDWARE_GUIDE.md`)
-Inspecionado o documento de 290 linhas contendo 8 seções detalhadas:
-- **Frota**: 19 apartamentos do Edifício Soho Residence Service (113 a 1304) explicitamente listados.
-- **Cálculo Elétrico e Normativo (NBR 14136)**: Demonstração analítica de que cafeteiras de 1.200W a 1.500W em 127V demandam 11,81A, resultando em sobrecarga perigosa de 118% em tomadas de 10A, justificando a exigência compulsória de tomadas 16A com proteção térmica (>75°C) e sobrecorrente (>16,5A).
-- **Inching & Power-On State**: Especificação do estado pós-queda de energia (`Power-On State: OFF`) e gravação em flash de contagem regressiva local de 30min (`countdown: 1800s`) no relé Tuya para garantir corte físico mesmo sem internet.
-- **Smart IR Blaster com Sensor TH**: Especificação de 38kHz com sensor embutido de Temperatura e Umidade para fechamento de malha de telemetria de resfriamento.
-- **Smart Speakers (Amazon Echo Pop e Echo Dot 5ª Geração com Relógio)**: Protocolo de privacidade hoteleira com botão mudo físico com anel vermelho, desativação de compras por voz e drop-in desabilitado.
-- **Interruptores Touch 4x2**: Híbridos (com e sem neutro com capacitor de bypass).
-- **Projeto de Rede & VLAN**: VLAN 30 dedicada (`CorpFlats-IoT`, 2.4 GHz, largura de canal 20MHz, canais fixos 1, 6 e 11, WPA2-PSK AES e AP Isolation mandatório).
-- **BOM e Orçamento para 19 Flats**: R$ 9.971,00 no cenário Echo Pop (R$ 525,00/flat) e R$ 12.821,00 no cenário Echo Dot (R$ 675,00/flat).
-
-### 1.5. Build de Produção do Frontend
-Executou-se `npm --prefix artifacts/limpeza run build`, concluído com código 0 em 38.32s, gerando `dist/public` sem nenhum erro TypeScript.
+**Agent:** Reviewer 2 (`teamwork_preview_reviewer`, roles: `reviewer`, `critic`)  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2`  
+**Parent Agent:** `orchestrator_9` (`3d03f136-f013-4588-99e3-f22e17cc1ae4`)  
+**Date:** 2026-10-14  
+**Handoff Type:** Hard  
+**Verdict:** **APPROVE**  
 
 ---
 
-## 2. Cadeia Lógica (Logic Chain)
+## 1. Observation
 
-1. **Ausência de Violações de Integridade**:
-   - A inspeção do código revelou que não existem respostas em mock hardcoded para testes (ex: `if (flat === '113') return true`). Toda a validação temporal em `evaluateSmartFlatState` utiliza aritmética de minutos, comparando dinamicamente `currentMinutes` com `(etaMinutes - 30 + 1440) % 1440` e `etaMinutes + 30`.
-   - O teste `tests/smart-flat-hub.test.mjs` utiliza um servidor HTTP real em porta efêmera (`port: 0`) e efetua requisições de rede completas com `fetch`, testando inclusive respostas 400 em temperaturas inválidas (15°C).
+### O1. Dedicated Test Suite Execution (`AGENTS.md`)
+- Executed exclusively the dedicated test file without batch runs or global wildcard scans:
+  ```powershell
+  node --test tests/nfse-crm-whatsapp-flow.test.mjs
+  ```
+- Verbatim tool output:
+  ```
+  ok 1 - CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite
+    ---
+    duration_ms: 3177.3246
+    type: 'suite'
+    ...
+  1..1
+  # tests 24
+  # suites 11
+  # pass 24
+  # fail 0
+  # cancelled 0
+  # skipped 0
+  # todo 0
+  # duration_ms 3652.2759
+  ```
+- 24 out of 24 test cases passed with 0 failures, 0 cancellations, and 0 skipped tests.
 
-2. **Garantia de Não Exposição a Hóspedes em Produção (R1)**:
-   - A rota de Smart Flat Hub foi encapsulada em `artifacts/limpeza/src/App.tsx` em rotas dedicadas de sandbox (`/preview/smart-flat/:code`, `/preview/smart-flat`, `/admin/smart-flat-preview/:code`, `/admin/smart-flat-preview`) e via query parameter `?preview=smart_flat` no `GuestPortalWrapper`.
-   - A página de produção real dos hóspedes (`artifacts/limpeza/src/pages/guest-portal.tsx`) permaneceu 100% limpa, sem qualquer botão, card ou texto alusivo ao Smart Flat Hub, atendendo estritamente ao critério de privacidade e projeto futuro.
+### O2. Verification of Cryptographic Twin-Server Parity (100% SHA-256)
+- Audited all 7 twin files between `artifacts/api-server/` and `scripts/`:
+  - `demo-server.mjs`: `bf6361fc217b2a7b` (MATCH)
+  - `giss-soap.mjs`: `183b16f6c65c78d1` (MATCH)
+  - `national-nfse.mjs`: `7d81d3c345cbc911` (MATCH)
+  - `chat-service.mjs`: `07a19fdf55d2bc49` (MATCH)
+  - `lookup.mjs`: `7ddf9b78be3dfabc` (MATCH)
+  - `whatsapp-ai-service.mjs`: `1169d5f190f86f75` (MATCH)
+  - `zapi-service.mjs`: `cecd601d07773525` (MATCH)
 
-3. **Robustez do Ciclo Fail-Safe de Presença (R3)**:
-   - Aparelhos permanecem sob constante monitoramento em duas camadas: tanto na avaliação síncrona sob demanda em qualquer chamada GET/POST quanto na rotina assíncrona periódica do servidor (`setInterval` a cada 60s).
-   - O intervalo $[\text{ETA}, \text{ETA} + 30\text{min}[$ assegura a exibição do aviso preventivo: *"Você já chegou? Não esqueça de informar sua entrada aqui."*
-   - O ponto $t \ge \text{ETA} + 30\text{min}$ desliga compulsoriamente os aparelhos registrando a razão oficial de segurança e economia de energia.
-   - A confirmação de entrada (`isEntranceConfirmed`) desativa imediatamente todos os alarmes e permite uso contínuo irrestrito.
+### O3. Verification of Production Frontend Build
+- Executed `npm --prefix artifacts/limpeza run build`:
+  ```
+  vite v7.3.6 building client environment for production...
+  ✓ 3391 modules transformed.
+  rendering chunks...
+  dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+  dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+  dist/public/assets/index.css                      421.17 kB │ gzip:  50.99 kB
+  dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+  dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+  dist/public/assets/index.js                     3,702.57 kB │ gzip: 882.55 kB
+  ✓ built in 31.72s
+  ```
+- Command exited with code 0.
+
+### O4. Implementation Inspection: WhatsApp Fiscal Automation (`artifacts/api-server/whatsapp-ai-service.mjs`)
+- **Fiscal Intent Interception** (`isFiscalIntentMessage`, lines 6284–6314):
+  - Matches compound terms (`nota fiscal`, `nfs-e`, `recibo fiscal`, `dados pra nota`).
+  - Matches action verbs (`preciso`, `quero`, `favor`, `emitir`, `solicitar`) + nouns (`nota`, `nf`, `nfe`, `recibo`, `fatura`).
+  - Matches noun + context (`fiscal`, `cnpj`, `cpf`, `empresa`, `estadia`).
+- **No-Repeat for CRM-Linked Company** (`handleWhatsAppFiscalFlow`, lines 6939–6987):
+  - Resolves company from reservation or guest (`findContactAndReservation`).
+  - If `linkedCompany && isValidCnpj(linkedCompany.cnpj)`: confirms corporate name and formatted CNPJ (`formatCnpj`), activates `autoEmitInvoice = true` on reservation and guest, pre-fills `invoiceDetails` with all fiscal address fields, clears `awaitingFiscalData = false`, and dispatches message without prompting for data again.
+- **Onboarding for Unlinked Contacts** (lines 6989–7012):
+  - If not linked, sets `conv.awaitingFiscalData = true`, sends warm bilingual prompt distinguishing **PJ** (CNPJ + e-mail financeiro) and **PF** (Nome Completo, CPF, Endereço com CEP, E-mail).
+- **Módulo 11 Validation & Friendly Alert** (`lookup.mjs` lines 36–78, `whatsapp-ai-service.mjs` lines 6612–6619 and 6795–6803):
+  - Checks exact length (11 for CPF, 14 for CNPJ).
+  - Rejects repeated digit sequences (`^(\d)\1{10}$` and `^(\d)\1{13}$`).
+  - Computes exact check digits via official weights.
+  - On invalid check digits: sends friendly alert asking for review without polluting `db.companies` or `db.guests`, preserving `awaitingFiscalData = true`.
+- **Sanitization & Enrichment** (`lookup.mjs` lines 8–24, 83–97, 126–358):
+  - `toTitleCase` converts words to Title Case while preserving corporate acronyms (`LTDA`, `S/A`, `SA`, `ME`, `EPP`, `EIRELI`, `SS`, `PJ`, `PF`, state abbreviations) and lowercase prepositions (`de`, `da`, `do`, `dos`, `das`, `e`, `em`, `para`, `com`, `por`).
+  - `cleanPhone` strips `+55`/`55` for 12/13 digits, keeping DDD + number (10/11 digits).
+  - `cleanCep` normalizes to 8 digits with padding.
+  - `lookupCnpj` checks local CRM cache (`db.companies`), queries BrasilAPI, and extracts corporate name, trade name, full address, and email.
+  - `lookupCep` checks local CRM cache, queries ViaCEP with fallback to BrasilAPI.
+
+### O5. Production Database Protection (`data/database.json`)
+- Verified that `data/database.json` SHA-256 hash and mtime remained completely untouched before and after all test executions.
 
 ---
 
-## 3. Desafios Adversariais & Ressalvas (Critic Challenges & Caveats)
+## 2. Logic Chain
 
-Como Crítico Adversarial, foram identificados os seguintes cenários extremos e recomendações de mitigação preventiva:
-
-### Desafio 1 (Baixo Risco / Caso de Borda): Transição da Meia-Noite no Relógio de 24 Horas
-- **Cenário**: Se um hóspede informar um horário de chegada tardio logo após a meia-noite (ex: `ETA = 00:15`), `etaMinutes` é `15`. A fórmula `(15 - 30 + 1440) % 1440` resulta em `1425` (23:45 do dia anterior). Se a hora atual for `00:05` (5 minutos do dia corrente), a checagem `currentMinutes < allowedFromMinutes` (`5 < 1425`) avalia como verdadeira, bloqueando o agendamento mesmo estando a 10 minutos da chegada.
-- **Mitigação Recomendada**: Em futuras iterações com chegadas na madrugada (entre 00:00 e 02:00), incorporar a data do check-in ou tratar descontinuidade de rollover cíclico de 1440 minutos quando `etaMinutes < 60` e `allowedFromMinutes > 1300`.
-- **Impacto Atual**: Mínimo, visto que na hotelaria do Soho o check-in tem início às 14:00 e o horário de chegada informado situa-se majoritariamente entre 14:00 e 23:00.
-
-### Desafio 2 (Segurança de Ambiente): Isolamento do Endpoint `/simulate`
-- **Cenário**: O endpoint `POST /api/smart-flat/:target/simulate` altera a variável de processo `global.__simulatedTimeOffsetMs`.
-- **Mitigação Recomendada**: Assegurar que em ambiente de produção público (Render) essa rota só seja executável por usuários autenticados com perfil `staff` ou `admin`.
+1. **Premise 1 (From O1)**: Running `node --test tests/nfse-crm-whatsapp-flow.test.mjs` executed 24 end-to-end tests spanning dual-engine emission, CRM persistence, WhatsApp no-repeat flow, onboarding, Módulo 11 validation, sanitization, and database isolation. All 24 tests passed without failure.
+2. **Premise 2 (From O2)**: Cryptographic SHA-256 hashes between `artifacts/api-server/` and `scripts/` are 100% identical across all 7 twin files, satisfying R4 twin-server parity.
+3. **Premise 3 (From O3)**: Production frontend build compiled cleanly in 31.72s with exit code 0, satisfying R4 build requirements.
+4. **Premise 4 (From O4)**: Direct source code inspection confirmed genuine algorithmic implementation of Módulo 11, regex intent parsing, local/remote enrichment, and bidirectional CRM binding without shortcuts or facade mocks.
+5. **Premise 5 (From O5)**: The live production database was not touched during testing, satisfying operational safety rules.
+6. **Inference**: Requirements R3 and R4 are fully implemented, verified, robust against adversarial cases, and ready for production deployment.
 
 ---
 
-## 4. Conclusão e Veredito (Conclusion)
+## 3. Caveats
 
-A implementação do **Smart Flat Hub Backend (M2)** e o **Guia de Hardware IoT (M4)** atingem os mais altos padrões de conformidade técnica, segurança operacional e rigor arquitetural:
-1. **Paridade Criptográfica Twin-Server**: 100% idêntica entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
-2. **Ciclo de Vida Fail-Safe e Antecedência**: Janela de 30min antes do ETA e desligamento forçado aos 30min pós-ETA rigorosamente validados.
-3. **Música de Boas-Vindas**: Ativação automática no dia de check-in a partir das 14:00 validada.
-4. **Isolamento de Produção**: 0 impacto visual para hóspedes reais no portal em produção.
-5. **Guia de Hardware**: Completo para 19 flats, com especificações NBR 14136 16A, Tuya inching, IR Blaster TH, Echo Pop e planilha orçamentária.
-6. **Integridade de Código**: 0 violações, 0 trapaças, testes pontuais 100% aprovados e build limpo com código 0.
-
-**Veredito Final**: **`APPROVE`**
+- **No Caveats**: All 24 tests run genuinely against live ephemeral servers and isolated databases in `os.tmpdir()`. No mocked facades or hardcoded bypasses were detected.
 
 ---
 
-## 5. Método de Verificação Independente (Verification Method)
+## 4. Conclusion
 
-Para verificação autônoma e reprodução por qualquer agente ou desenvolvedor:
+- **Verdict: APPROVE**
+- The R3 (WhatsApp Fiscal Assistant, CRM Integration, Módulo 11, Enrichment) and R4 (Twin Mirror Parity, Production Build, Pontual Testing) requirements are fully met with high code quality and zero integrity violations.
 
-1. **Verificação de Paridade SHA-256**:
+---
+
+## 5. Verification Method
+
+To independently verify this verdict:
+
+1. **Run Dedicated Punctual Test Suite**:
    ```powershell
-   powershell -Command "
-     $h1 = (Get-FileHash scripts/demo-server.mjs).Hash;
-     $h2 = (Get-FileHash artifacts/api-server/demo-server.mjs).Hash;
-     Write-Host 'scripts:   ' $h1;
-     Write-Host 'artifacts: ' $h2;
-     Write-Host 'Parity:    ' ($h1 -eq $h2);
-     if ($h1 -ne $h2) { exit 1 } else { exit 0 }
-   "
+   node --test tests/nfse-crm-whatsapp-flow.test.mjs
    ```
-   *Critério de aprovação*: `Parity: True` e exit code 0.
+   *Expected:* 24 passed, 0 failed, duration ~3.5s.
 
-2. **Execução do Teste Pontual Dedicado**:
-   ```bash
-   node --test tests/smart-flat-hub.test.mjs
+2. **Verify Twin Parity (100% SHA-256)**:
+   ```powershell
+   node -e "const c=require('crypto'),f=require('fs');['demo-server.mjs','giss-soap.mjs','national-nfse.mjs','chat-service.mjs','lookup.mjs','whatsapp-ai-service.mjs','zapi-service.mjs'].forEach(x=>{const h1=c.createHash('sha256').update(f.readFileSync('artifacts/api-server/'+x)).digest('hex');const h2=c.createHash('sha256').update(f.readFileSync('scripts/'+x)).digest('hex');console.log(x,h1===h2?'MATCH':'MISMATCH');});"
    ```
-   *Critério de aprovação*: 6 testes executados, 6 aprovados, 0 falhas (`# pass 6`).
+   *Expected:* All 7 files output `MATCH`.
 
-3. **Build de Frontend**:
-   ```bash
+3. **Verify Production Frontend Build**:
+   ```powershell
    npm --prefix artifacts/limpeza run build
    ```
-   *Critério de aprovação*: Exit code 0, 0 erros TypeScript.
+   *Expected:* Exit code 0, generated assets in `artifacts/limpeza/dist/public/`.
 
-4. **Inspeção do Guia de Hardware**:
-   ```bash
-   view_file AbsolutePath="c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/docs/SMART_FLAT_HARDWARE_GUIDE.md"
+4. **Verify Database Non-Interference**:
+   ```powershell
+   git status -s data/database.json
    ```
-   *Critério de aprovação*: Presença das 8 seções técnicas, detalhamento elétrico 16A, parâmetros Tuya `countdown: 1800` / `Power-On State: OFF`, e BOM de 19 flats.
+   *Expected:* Clean (no output).
+
+---
+
+## Adversarial Stress Test Findings
+
+| Test Case | Category | Input | Expected | Observed | Status |
+|---|---|---|---|---|---|
+| All 0s CPF | Módulo 11 | `00000000000` | Rejected (`false`) | Rejected (`false`) | PASS |
+| All 1s CPF | Módulo 11 | `11111111111` | Rejected (`false`) | Rejected (`false`) | PASS |
+| All 0s CNPJ | Módulo 11 | `00000000000000` | Rejected (`false`) | Rejected (`false`) | PASS |
+| Invalid Check Digits | Módulo 11 | `47.964.813/0001-99` | Rejected (`false`) + Warning | Rejected (`false`) + Warning | PASS |
+| Valid CNPJ | Módulo 11 | `02.709.449/0001-59` | Approved (`true`) | Approved (`true`) | PASS |
+| Corporate Acronyms | Sanitization | `PETROBRAS S/A - COMERCIO E SERVICOS LTDA ME` | Uppercase `S/A`, `LTDA`, `ME` | Uppercase `S/A`, `LTDA`, `ME` | PASS |
+| Preposition at Start | Sanitization | `de souza participacoes eireli` | Capitalized `De` at index 0 | Capitalized `De` at index 0 | PASS |
+| False Positive Intent | Intent Parsing | "tenho uma nota de 100 reais para pagar" | Ignored (`false`) | Ignored (`false`) | PASS |
+| False Positive Intent | Intent Parsing | "tomei nota do que voce falou" | Ignored (`false`) | Ignored (`false`) | PASS |
+| True Positive Intent | Intent Parsing | "preciso de nota fiscal da estadia" | Intercepted (`true`) | Intercepted (`true`) | PASS |
+| True Positive Intent | Intent Parsing | "nota fiscal no cnpj" | Intercepted (`true`) | Intercepted (`true`) | PASS |

@@ -1,53 +1,44 @@
-# BRIEFING — 2026-10-11T03:09:00Z
+# BRIEFING — 2026-10-14T10:50:56Z
 
 ## Mission
-Implementar a interface de usuário administrativa (Frontend Admin UI - R5) do Milestone M3 do CorpFlats, cobrindo os switches de automação IA do WhatsApp com indicador tri-modal e a gestão multi-canal de tarifas com matriz dinâmica e modal de lote, garantindo 100% de integridade, build bem-sucedido e testes verdes.
+Implementar o fluxo completo do Assistente Fiscal do WhatsApp & Enriquecimento Automático (Milestone M3: Features F12 a F17) no Guest-Flow-Manager (CorpFlats), interceptando pedidos de NFS-e, identificando vínculos no CRM sem repetição de perguntas para clientes com empresa vinculada, realizando onboarding fiscal com sanitização, validação Módulo 11, enriquecimento automático (CNPJ e CEP), atualização do CRM e confirmação no WhatsApp, com estrita paridade twin-server e sintaxe validada.
 
 ## 🔒 My Identity
 - Archetype: worker
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M3 (Frontend Admin UI - R5)
+- Original parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- Milestone: M3 (WhatsApp Fiscal Assistant Flow & Automated Enrichment)
 
 ## 🔒 Key Constraints
 - DO NOT CHEAT. All implementations must be genuine. Real state and behavior only.
-- Strict file ownership:
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-  - `artifacts/limpeza/src/pages/tarifas.tsx`
-  - `artifacts/limpeza/dist/`
-- Build frontend via `npm run build` in `artifacts/limpeza` (must exit 0 and produce dist/public).
-- Execute backend tests: `tariff-engine.test.mjs`, `bot-actions-api.test.mjs`, `whatsapp-ai-agent.test.mjs`.
-- Always `git commit` and `git push origin main` per AGENTS.md.
+- Strict file ownership for Worker M3:
+  - `artifacts/api-server/whatsapp-ai-service.mjs` <-> `scripts/whatsapp-ai-service.mjs`
+  - `artifacts/api-server/zapi-service.mjs` <-> `scripts/zapi-service.mjs`
+  - `artifacts/api-server/lookup.mjs` <-> `scripts/lookup.mjs`
+- 100% SHA-256 byte-for-byte twin parity between `artifacts/api-server/` and `scripts/`.
+- STRICT test execution rule from AGENTS.md: NUNCA rodar testes globais (`tests/*.test.mjs`), varreduras ou outros módulos. Apenas `node --check` para sintaxe ou teste estritamente pontual autorizado.
+- Preservar integridade e dados reais; sem poluir CRM com documentos inválidos.
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T03:09:00Z
+- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- Updated: 2026-10-14T10:50:56Z
 
 ## Task Summary
 - **What was built**:
-  1. `artifacts/limpeza/src/pages/whatsapp-automation.tsx`:
-     - 4º card no banner superior com o Indicador Tri-modal de Status em tempo real ("Bot Desativado" / "Modo Respondedor Ativo" / "Modo Autônomo com Ações").
-     - Highlight Card da Chave Mestra Global (`apiActionsEnabled`) com switch destacado, banner explicativo e feedback visual via toast.
-     - Matriz Visual de Permissões Granulares com os 5 switches individuais (`checkAvailability`, `calculateQuote`, `generatePayment`, `createPreReservation`, `commitReservation`) com suspensão visual quando a chave mestra estiver desligada.
-     - Seção recolhível de Parâmetros Avançados para tempo de hold (`preReservationHoldMinutes`) e mensagem padrão de transbordo (`handoverMessage`).
-     - Integração com `GET /api/bot-actions/settings` no `useEffect` inicial e salvamento instantâneo via `POST /api/bot-actions/settings`.
-  2. `artifacts/limpeza/src/pages/tarifas.tsx`:
-     - Reestruturação em 2 abas (`Tabs`): "Mapa de Tarifas Diárias" e "Parâmetros Base & Adicionais".
-     - Aba 1: Toolbar multi-canal (Direto 0%, Booking +18%, Airbnb +15%), alternância Mensal/Semanal, navegação temporal, legenda visual e botão "Edição em Lote (Bulk)".
-     - Matriz flats x dias com coluna fixa de apartamentos, linha Geral e flats individuais, exibição formatada de diária e badges para overrides.
-     - Modal de ajuste individual com valor, motivo e botão "Voltar ao SEBRAE" (`DELETE /api/tariffs/overrides/:id`).
-     - Modal de Edição em Lote (Bulk Update) com intervalo de datas, dias da semana, flats, canais, ajuste fixo ou percentual com preview em tempo real, acionando `POST /api/tariffs/bulk-update`.
-     - Aba 2: Card Motor SEBRAE auto vs manual fixo, diária base e markup de fim de semana (%), canais de distribuição (Booking +18%, Airbnb +15%, Direto 0%), preservação de planos de diárias (com e sem café), taxas de limpeza, colchonete extra, camas twin, política pet friendly, descontos direto e PIX.
-     - Salvamento unificado sincronizando `POST /api/tariffs/settings` e `PUT /api/site-content`.
-  3. Build do frontend executado com sucesso gerando bundle de produção em `artifacts/limpeza/dist/public`.
-  4. 33/33 testes de backend validados com 100% de aprovação.
-  5. Git commit e `git push origin main` executados com sucesso (commit `199f5a5`).
+  1. F12: Interceptação robusta de intenção fiscal no WhatsApp (`isFiscalIntentMessage`) combinando verbos de ação e substantivos fiscais e cruzando remetente (`cleanTarget`/telefone) com `db.reservations` (titular `guestPhone`, `phone`, e solicitante terceiro `requesterInfo.phone`, `requesterInfo.whatsapp`) e `db.guests`.
+  2. F13: Fluxo sem repetição de perguntas para clientes com empresa já vinculada (`companyId` e CNPJ válido em `db.companies`). Resposta calorosa confirmando Razão Social e CNPJ formatado, ativando `autoEmitInvoice=true` no hóspede e reserva, preparando rascunho `r.invoiceDetails`.
+  3. F14: Fluxo de onboarding fiscal para clientes sem empresa vinculada, mensagem didática explicando PJ (CNPJ + e-mail) vs PF (Nome, CPF, Endereço/CEP, E-mail) e setando `conv.awaitingFiscalData = true`.
+  4. F15: Validação matemática Módulo 11 (`isValidCpf`, `isValidCnpj`), mensagem gentil de correção se inválido sem poluir CRM; sanitização com `toTitleCase` (preservando siglas corporativas e preposições), `cleanPhone`, `cleanCep`, e-mail lowercase.
+  5. F16: Enriquecimento automático de CNPJ (local `db.companies` + BrasilAPI) e CEP (ViaCEP / BrasilAPI) completando Razão Social, Fantasia e endereço completo com código IBGE.
+  6. F17: Criação/atualização e vínculo no CRM (`db.companies`, `db.guests`, `db.reservations`), ativação de `autoEmitInvoice=true`, pre-fill de `invoiceDetails`, resposta no WhatsApp confirmando e limpeza de `awaitingFiscalData`.
+  7. Espelhamento idêntico em `scripts/` com 100% SHA-256 twin parity e verificação com `node --check` em todos os 6 arquivos.
 
 ## Key Decisions Made
-- Matriz de flats renderiza `Geral (Todos)` na primeira linha com acesso a overrides globais e linhas individuais para cada flat cadastrado no PMS.
-- Quando a chave mestra de ações da IA está desligada, a matriz dos 5 interruptores individuais recebe `opacity-60 pointer-events-none` com banner de alerta educativo.
-- A sincronização na aba de parâmetros realiza chamadas concorrentes com `Promise.all` para persistir atomicamente tanto no Tariff Engine quanto no CMS do site (`siteConfig`).
+- `lookup.mjs`: Centralização de todas as validações (Módulo 11 CPF/CNPJ), sanitizações (`toTitleCase`, `cleanPhone`, `cleanCep`) e formatações (`formatCnpj`, `formatCpf`, `formatCep`) com fallback inteligente local no CRM e timeouts seguros para ViaCEP e BrasilAPI.
+- `zapi-service.mjs`: Extensão de `getReservationPhones` para incluir `r.requesterInfo?.phone`, `r.requesterInfo?.whatsapp` e `r.requesterPhone`, garantindo que secretárias e solicitantes terceiros encontrem a reserva e a empresa vinculada.
+- `zapi-service.mjs`: `await processAiInboundMessage(...)` no webhook de mensagem recebida para execução determinística e não-assíncrona nos testes e na produção.
+- `whatsapp-ai-service.mjs`: Interceptação antecipada em `handleWhatsAppFiscalFlow` no início de `processAiInboundMessage` com criação garantida do registro `conv` em `db.whatsappConversations` para manter o estado `awaitingFiscalData`.
 
 ## Artifact Index
 - `DISPATCH.md` — assignment from orchestrator
@@ -57,16 +48,19 @@ Implementar a interface de usuário administrativa (Frontend Admin UI - R5) do M
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx` (Adicionados 4º card tri-modal, highlight card master switch, 5 chaves granulares e parâmetros de hold/transbordo)
-  - `artifacts/limpeza/src/pages/tarifas.tsx` (Arquitetura em 2 abas, matriz dinâmica de tarifas diárias multi-canal, modais individual e lote, motor SEBRAE)
-  - `artifacts/limpeza/dist/public/` (Recompilado bundle de produção)
-- **Build status**: PASS (exit code 0, 20.87s)
+  - `artifacts/api-server/lookup.mjs` (Validações Módulo 11, sanitização, formatação e lookup enriquecido)
+  - `scripts/lookup.mjs` (Cópia idêntica byte-a-byte com paridade SHA-256)
+  - `artifacts/api-server/whatsapp-ai-service.mjs` (Fluxo fiscal completo F12-F17, extrações, `handleWhatsAppFiscalFlow`, heurística e hook)
+  - `scripts/whatsapp-ai-service.mjs` (Cópia idêntica byte-a-byte com paridade SHA-256)
+  - `artifacts/api-server/zapi-service.mjs` (Suporte a requesterInfo em telefones de reserva, re-exportações fiscais e await no webhook)
+  - `scripts/zapi-service.mjs` (Cópia idêntica byte-a-byte com paridade SHA-256)
+- **Build status**: PASS (`node --check` exit code 0 em todos os 6 arquivos)
 - **Pending issues**: none
 
 ## Quality Status
-- **Build/test result**: PASS (33/33 testes verdes em `tests/tariff-engine.test.mjs`, `tests/bot-actions-api.test.mjs`, `tests/whatsapp-ai-agent.test.mjs`)
+- **Build/test result**: PASS (`node --check` exit code 0; 9/9 asserções de verificação pontual aprovadas)
 - **Lint status**: clean
-- **Tests added/modified**: Cobertura completa de backend mantida intacta
+- **Tests added/modified**: Testes pontuais de validação em memória executados com sucesso
 
 ## Loaded Skills
 - None required.

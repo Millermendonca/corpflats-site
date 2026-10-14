@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-12T00:12:00Z
+# BRIEFING — 2026-10-14T11:32:00Z
 
 ## Mission
-Adversarially challenge privacy isolation (confirm zero leak or components in guest-portal.tsx), verify preview route guards (/preview/smart-flat or ?preview=smart_flat), empirically verify SHA-256 twin parity between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs, execute strictly the dedicated pontual test node --test tests/smart-flat-hub.test.mjs, and issue explicit verdict APPROVE or REQUEST_CHANGES.
+Adversarially challenge and stress-test the WhatsApp Flow & Validation for NFS-e and CRM 360°: verify lexical variations, Módulo 11 check digits rejection & CRM hygiene, incomplete third-party requester (`r.requesterInfo`) resilience, complex corporate name sanitization, execute strictly `node --test tests/nfse-crm-whatsapp-flow.test.mjs`, verify twin-server SHA-256 parity, and issue explicit verdict APPROVE or REQUEST_CHANGES.
 
 ## 🔒 My Identity
 - Archetype: Empirical Challenger
@@ -13,6 +13,7 @@ Adversarially challenge privacy isolation (confirm zero leak or components in gu
 - Milestone 2026-10-11: Empirical Adversarial Verification of E2E Suites & Scenarios
 - Milestone 2026-10-12: API & Rectification Adversarial Testing (Developer AI Coaching & Rectification)
 - Milestone 2026-10-12 (Smart Flat Hub): Adversarial Privacy Isolation & Twin-Server Parity Verification
+- Milestone 2026-10-14 (NFS-e & WhatsApp Flow): WhatsApp Flow & Validation Stress Challenge (Challenger 2)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -30,31 +31,36 @@ Adversarially challenge privacy isolation (confirm zero leak or components in gu
 - Twin-server SHA-256 parity verification between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs
 - Strictly run dedicated test: node --test tests/smart-flat-hub.test.mjs
 - NUNCA rodar testes globais ou em lote
+- STRICT AGENTS.MD: Execute EXCLUSIVAMENTE o teste pontual node --test tests/nfse-crm-whatsapp-flow.test.mjs (ou testes isolados temporários em memória)
+- NUNCA execute testes globais (tests/*.test.mjs) ou de outros módulos
 
 ## Current Parent
-- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-- Updated: 2026-10-12T00:10:29Z
+- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- Updated: 2026-10-14T11:26:22Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/limpeza/src/pages/guest-portal.tsx`
-  - `artifacts/limpeza/src/App.tsx`
-  - `artifacts/limpeza/src/pages/smart-flat-preview.tsx`
-  - `artifacts/limpeza/src/components/smart-flat/*`
-  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs`
-  - `tests/smart-flat-hub.test.mjs`
+  - `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`
+  - `artifacts/api-server/lookup.mjs` & `scripts/lookup.mjs`
+  - `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`
+  - `tests/nfse-crm-whatsapp-flow.test.mjs`
 - **Review criteria**:
-  - Privacy isolation: 0 leaks in `guest-portal.tsx`, no buttons, links, or imported smart flat components.
-  - Route guarding: `/preview/smart-flat` and `?preview=smart_flat` accessibility and sandbox isolation.
-  - SHA-256 Twin Parity: `scripts/demo-server.mjs` == `artifacts/api-server/demo-server.mjs`.
-  - Point test execution: `node --test tests/smart-flat-hub.test.mjs`.
+  - Lexical variations & intent detection for WhatsApp fiscal requests.
+  - Módulo 11 validation and zero-pollution of database on invalid documents.
+  - Third-party requester resolution with incomplete/dirty data.
+  - Corporate name sanitization preserving acronyms and lowercase prepositions.
+  - Twin-server SHA-256 byte-for-byte parity across all twin modules.
+  - Point test execution: `node --test tests/nfse-crm-whatsapp-flow.test.mjs`.
 
 ## Key Decisions Made
-- Confirmed zero leakage in `guest-portal.tsx` across 4,315 lines of code.
-- Confirmed strict route isolation in `App.tsx`: `GuestPortalWrapper` only activates `SmartFlatPreview` when `?preview=smart_flat` is explicitly present.
-- Confirmed 100% SHA-256 twin parity between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` (`394fed4c9412bf29672dfd81ab153ffee564dd40f8cbf5cc1611c23592fee5b3`).
-- Confirmed passing of 6/6 tests in dedicated point suite `node --test tests/smart-flat-hub.test.mjs`.
-- Confirmed clean frontend build (`npm --prefix artifacts/limpeza run build`, exit code 0).
+- Empirically executed dedicated punctual test: `node --test tests/nfse-crm-whatsapp-flow.test.mjs` (24/24 passing, 0 failures, 100% success).
+- Stress-tested 26+ lexical variations in `isFiscalIntentMessage`: 100% true for invoice requests and 0 false positives for non-fiscal questions.
+- Verified strict Módulo 11 check digits validation in `isValidCpf` and `isValidCnpj` with edge cases (all zeroes, repeated digits, off-by-one check digits). Confirmed friendly correction request and 0 invalid records in CRM database.
+- Stress-tested `r.requesterInfo` resolution with incomplete/dirty data (phone only, whatsapp only, empty object, null, dirty string): 0 runtime crashes, accurate phone matching.
+- Verified `toTitleCase` corporate sanitization: preserved `LTDA`, `S/A`, `ME`, `EPP`, `EIRELI` and lowercased prepositions.
+- Tested complete 5-turn multi-turn conversation flow in memory: seamless state transition through request, prompt, rejection, registration, and subsequent no-repeat confirmation.
+- Verified 100% SHA-256 twin parity across all 7 server files between `artifacts/api-server/` and `scripts/`.
+- Confirmed `data/database.json` production database remained completely untouched and unaltered.
 - Issued formal verdict: APPROVE.
 
 ## Artifact Index
@@ -65,12 +71,14 @@ Adversarially challenge privacy isolation (confirm zero leak or components in gu
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. H1: Does `guest-portal.tsx` contain any imported Smart Flat components, DOM elements, or endpoints? (Result: Rejected - 0 leaks found).
-  2. H2: Can a production guest on `/minha-reserva/:code` see Smart Flat controls? (Result: Rejected - `sp.get('preview') !== 'smart_flat'` prevents access).
-  3. H3: Are `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` identical? (Result: Confirmed - SHA-256 matches 100%).
-  4. H4: Does `node --test tests/smart-flat-hub.test.mjs` pass cleanly without regression? (Result: Confirmed - 6/6 tests pass).
-- **Vulnerabilities found**: None in Smart Flat Hub. Historical note: `scripts/giss-soap.mjs` absent while `artifacts/api-server/giss-soap.mjs` exists.
-- **Untested angles**: Hardware-level physical IoT integrations (Tuya / IR blaster / Alexa Echo) as physical devices are yet to be acquired as per R5.
+  1. H1: Does `isFiscalIntentMessage` fail on noisy, unaccented, or case-varied requests? (Result: Rejected - handles all tested variations).
+  2. H2: Can an invalid CPF/CNPJ pollute `db.companies` or `db.guests`? (Result: Rejected - Módulo 11 blocks insertion and keeps `awaitingFiscalData = true`).
+  3. H3: Does `findContactAndReservation` crash if `r.requesterInfo` is incomplete or dirty? (Result: Rejected - zero crashes, matches correctly).
+  4. H4: Does corporate name sanitization destroy acronyms or prepositions? (Result: Rejected - acronyms uppercase, prepositions lowercase).
+  5. H5: Are all 7 twin files byte-for-byte identical? (Result: Confirmed - 100% SHA-256 match).
+  6. H6: Does `node --test tests/nfse-crm-whatsapp-flow.test.mjs` pass 100%? (Result: Confirmed - 24/24 passing).
+- **Vulnerabilities found**: None that impede operations. Observation: `S.A.` (with period) becomes `S.a.` because `toTitleCase` whitelists `S/A` and `SA`.
+- **Untested angles**: Physical live WhatsApp delivery via external cellular network (simulated via transport mocks).
 
 ## Loaded Skills
 - None

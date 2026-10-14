@@ -42,7 +42,12 @@ import {
   generateFaqResponseSuggestions,
   generateIntelligentFaqDraft,
   distillGuidelineFromOperatorResponse,
-  getGreetingSalutation
+  getGreetingSalutation,
+  handleWhatsAppFiscalFlow,
+  isFiscalIntentMessage,
+  findContactAndReservation,
+  extractCnpj,
+  extractCpf
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -69,7 +74,12 @@ export {
   generateFaqResponseSuggestions,
   generateIntelligentFaqDraft,
   distillGuidelineFromOperatorResponse,
-  getGreetingSalutation
+  getGreetingSalutation,
+  handleWhatsAppFiscalFlow,
+  isFiscalIntentMessage,
+  findContactAndReservation,
+  extractCnpj,
+  extractCpf
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
@@ -4422,6 +4432,9 @@ export function getReservationPhones(r, db) {
   if (r.whatsapp) phones.add(String(r.whatsapp));
   if (r.contactPhone) phones.add(String(r.contactPhone));
   if (r.guestWhatsapp) phones.add(String(r.guestWhatsapp));
+  if (r.requesterInfo?.phone) phones.add(String(r.requesterInfo.phone));
+  if (r.requesterInfo?.whatsapp) phones.add(String(r.requesterInfo.whatsapp));
+  if (r.requesterPhone) phones.add(String(r.requesterPhone));
 
   if (Array.isArray(r.guests)) {
     for (const g of r.guests) {
@@ -6349,22 +6362,25 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
     }
 
-    // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano)
+    // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano / Assistente Fiscal)
+    let aiProcessResult = null;
     if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
-      processAiInboundMessage({
-        db,
-        incomingInfo,
-        cleanTarget,
-        saveDatabase,
-        createNotification,
-        sendZapiMessage,
-        appendMessageFn: appendMessageToConversation
-      }).catch(aiErr => {
+      try {
+        aiProcessResult = await processAiInboundMessage({
+          db,
+          incomingInfo,
+          cleanTarget,
+          saveDatabase,
+          createNotification,
+          sendZapiMessage,
+          appendMessageFn: appendMessageToConversation
+        });
+      } catch (aiErr) {
         console.warn("[WhatsApp AI Processing Error]:", aiErr.message);
-      });
+      }
     }
 
-    res.status(200).json({ success: true, result, chatUpdated: Boolean(updatedConv) });
+    res.status(200).json({ success: true, result, aiProcessResult, chatUpdated: Boolean(updatedConv) });
   });
 
   // 18. Webhook Z-API: WhatsApp Desconectado (/api/whatsapp/webhook/disconnected)

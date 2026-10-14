@@ -1,4 +1,5 @@
 import { lookupCep, lookupCnpj } from "./lookup.mjs";
+import { isValidCpf, isValidCnpj } from "./national-nfse.mjs";
 
 export function onlyDigits(str = "") {
   return String(str || "").replace(/\D/g, "");
@@ -162,24 +163,53 @@ export async function processChatConversation({
 
   // Avalia todas as mensagens do histórico para extrair dados acumulados
   for (const text of [fullConversationText, lastUserMessage]) {
-    // 1. Extração de CPF / CNPJ
-    const cnpjMatch = text.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/);
+    // 1. Extração de CPF / CNPJ com validação Módulo 11
+    const cnpjMatch = text.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/) || text.match(/\b\d{14}\b/);
     const cpfMatch = text.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/) || text.match(/\b\d{11}\b/);
 
     if (cnpjMatch) {
-      data.tomadorCpfCnpj = onlyDigits(cnpjMatch[0]);
-      try {
-        const cnpjInfo = await lookupCnpj(data.tomadorCpfCnpj);
-        if (cnpjInfo.razaoSocial && !data.tomadorNome) data.tomadorNome = cnpjInfo.razaoSocial;
-        if (cnpjInfo.logradouro) data.tomadorEndereco = cnpjInfo.logradouro;
-        if (cnpjInfo.numero) data.tomadorNumero = cnpjInfo.numero;
-        if (cnpjInfo.bairro) data.tomadorBairro = cnpjInfo.bairro;
-        if (cnpjInfo.cep) data.tomadorCep = onlyDigits(cnpjInfo.cep);
-        if (cnpjInfo.email && !data.tomadorEmail) data.tomadorEmail = cnpjInfo.email;
-        if (cnpjInfo.telefone && !data.tomadorTelefone) data.tomadorTelefone = onlyDigits(cnpjInfo.telefone);
-      } catch {}
+      const candidate = onlyDigits(cnpjMatch[0]);
+      if (isValidCnpj(candidate)) {
+        data.tomadorCpfCnpj = candidate;
+        try {
+          const cnpjInfo = await lookupCnpj(data.tomadorCpfCnpj);
+          if (cnpjInfo.razaoSocial && !data.tomadorNome) data.tomadorNome = cnpjInfo.razaoSocial;
+          if (cnpjInfo.nomeFantasia) data.tomadorNomeFantasia = cnpjInfo.nomeFantasia;
+          if (cnpjInfo.logradouro) data.tomadorEndereco = cnpjInfo.logradouro;
+          if (cnpjInfo.numero) data.tomadorNumero = cnpjInfo.numero;
+          if (cnpjInfo.bairro) data.tomadorBairro = cnpjInfo.bairro;
+          if (cnpjInfo.cep) data.tomadorCep = onlyDigits(cnpjInfo.cep);
+          if (cnpjInfo.uf) data.tomadorUf = cnpjInfo.uf;
+          if (cnpjInfo.codigoMunicipio) data.tomadorCodigoMunicipio = cnpjInfo.codigoMunicipio;
+          if (cnpjInfo.email && !data.tomadorEmail) data.tomadorEmail = cnpjInfo.email;
+          if (cnpjInfo.telefone && !data.tomadorTelefone) data.tomadorTelefone = onlyDigits(cnpjInfo.telefone);
+        } catch {}
+      } else {
+        data.invalidDoc = candidate;
+      }
     } else if (cpfMatch) {
-      data.tomadorCpfCnpj = onlyDigits(cpfMatch[0]);
+      const candidate = onlyDigits(cpfMatch[0]);
+      if (isValidCpf(candidate)) {
+        data.tomadorCpfCnpj = candidate;
+      } else {
+        data.invalidDoc = candidate;
+      }
+    }
+
+    // Extração de CEP avulso
+    const cepMatch = text.match(/\b\d{5}-?\d{3}\b/) || text.match(/(?:cep)\s*:?\s*(\d{8}|\d{5}-\d{3})/i);
+    if (cepMatch) {
+      const candidateCep = onlyDigits(cepMatch[1] || cepMatch[0]);
+      if (candidateCep.length === 8 && candidateCep !== data.tomadorCep) {
+        try {
+          const cepInfo = await lookupCep(candidateCep);
+          data.tomadorCep = candidateCep;
+          if (cepInfo.logradouro) data.tomadorEndereco = cepInfo.logradouro;
+          if (cepInfo.bairro) data.tomadorBairro = cepInfo.bairro;
+          if (cepInfo.uf) data.tomadorUf = cepInfo.uf;
+          if (cepInfo.codigoMunicipio) data.tomadorCodigoMunicipio = cepInfo.codigoMunicipio;
+        } catch {}
+      }
     }
 
     // 2. Extração de Valor com o parser inteligente
@@ -243,7 +273,9 @@ export async function processChatConversation({
   const ready = hasNome && hasDoc && hasValor;
 
   let reply = "";
-  if (ready) {
+  if (data.invalidDoc && !data.tomadorCpfCnpj) {
+    reply = `⚠️ O documento informado (${data.invalidDoc}) contém dígitos verificadores inválidos pelo algoritmo da Receita Federal (Módulo 11). Por favor, confira o número e tente novamente.`;
+  } else if (ready) {
     const formattedValor = Number(data.valorServico).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
     const formattedDoc = formatCpfCnpj(data.tomadorCpfCnpj);
     const flatInfo = data.flatNumber ? ` • Flat ${data.flatNumber}` : "";

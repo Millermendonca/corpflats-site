@@ -1,18 +1,19 @@
-# Progress Log - Reviewer 2 (Smart Flat Hub)
+# Progress Log - Reviewer 2 (R3 & R4 NFS-e & WhatsApp Flow Review)
 
-Last visited: 2026-10-12T00:10:00Z
+Last visited: 2026-10-14T11:36:00Z
 
 ## Current Task
 Review complete. Verdict issued: APPROVE.
 
 ## Steps
-- [x] Received dispatch and loaded context (ORIGINAL_REQUEST.md, PROJECT.md, AGENTS.md, worker_backend_iot_1/handoff.md).
-- [x] Initialized BRIEFING.md and DISPATCH.md.
-- [x] Inspected `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` for Smart Flat Hub implementation.
-- [x] Verified SHA-256 twin-server parity between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` (100% Identical).
-- [x] Inspected `docs/SMART_FLAT_HARDWARE_GUIDE.md` for full requirements coverage (19 flats, 16A plugs, IR blasters, Echo, touch switches, VLAN 30, BOM).
-- [x] Inspected and ran dedicated pontual test `tests/smart-flat-hub.test.mjs` (6/6 tests passing, 0 failures).
-- [x] Verified clean production frontend build (`built in 38.32s`, exit code 0).
-- [x] Checked for integrity violations (none found) and identified adversarial edge cases (midnight rollover).
+- [x] Received dispatch and loaded context (ORIGINAL_REQUEST.md, orchestrator_9/PROJECT.md, test_writer_m4/handoff.md, AGENTS.md).
+- [x] Initialized DISPATCH.md, BRIEFING.md, and progress.md.
+- [x] Inspected source code of `artifacts/api-server/whatsapp-ai-service.mjs`, `zapi-service.mjs`, `lookup.mjs`, and `chat-service.mjs`.
+- [x] Inspected source code of `tests/nfse-crm-whatsapp-flow.test.mjs` for integrity violations (hardcoded values, mock facades, test skipping).
+- [x] Executed strictly the dedicated test suite: `node --test tests/nfse-crm-whatsapp-flow.test.mjs` (24/24 passed in ~3.6s).
+- [x] Verified 100% SHA-256 twin-server parity across all 7 twin files between `artifacts/api-server/` and `scripts/`.
+- [x] Executed and verified production frontend build (`npm --prefix artifacts/limpeza run build`, exit code 0, 31.72s).
+- [x] Performed adversarial stress-testing (Módulo 11 edge cases, intent classification true/false positives, sanitization of acronyms and prepositions).
+- [x] Verified zero integrity violations and production database untouched.
 - [x] Produced `handoff.md` with explicit verdict `APPROVE`.
-- [x] Messaging the orchestrator.
+- [ ] Notifying orchestrator via `send_message`.

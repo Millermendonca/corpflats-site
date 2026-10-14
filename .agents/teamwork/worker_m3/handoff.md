@@ -1,137 +1,222 @@
-# Handoff Report: Milestone M3 — Frontend Admin UI (R5)
+# Handoff Report: WhatsApp Fiscal Assistant Flow & Automated Enrichment (Milestone M3)
 
-**Author**: Worker M3 (`worker_m3`)  
-**Target Recipient**: Orchestrator (`3364a657-c855-42a7-a46e-a5463bc245b7`)  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3`  
-**Date**: 2026-10-11T03:09:30Z  
+**Agent:** Worker M3 (Implementer / QA / Specialist)  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3`  
+**Date:** 2026-10-14  
+**Handoff Type:** Hard (Milestone M3 Complete)
 
 ---
 
 ## 1. Observation
 
-### 1.1 Modificações Executadas em `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-- **Tipos & Metadados**:
-  - Declaradas as interfaces `BotActionsSettings`, `BotActionKey` e `BotActionMeta`.
-  - Definida a constante `BOT_ACTIONS_METADATA` cobrindo as 5 ações do sistema:
-    1. `checkAvailability` (`GET /api/bot-actions/availability` - "Consultar Disponibilidade" / PMS Query)
-    2. `calculateQuote` (`POST /api/bot-actions/quote` - "Calcular Orçamento & Tarifas" / Tariff Engine)
-    3. `generatePayment` (`POST /api/bot-actions/payment-link` - "Gerar Pagamento PIX" / PIX BACEN)
-    4. `createPreReservation` (`POST /api/bot-actions/pre-reserve` - "Criar Pré-Reserva (Hold Provisório)" / Hold PMS)
-    5. `commitReservation` (`POST /api/bot-actions/commit-reservation` - "Efetivar Reserva Confirmada" / PMS Lock)
-- **Estado & Handlers**:
-  - Criado o estado `botActionsSettings` com default `apiActionsEnabled: true`, todas as 5 ações ativas, `preReservationHoldMinutes: 30` e `handoverMessage`.
-  - Adicionada função `fetchBotActionsSettings()` integrada ao `useEffect` inicial para carregamento de `GET /api/bot-actions/settings`.
-  - Implementado `handleToggleMasterBotActions(enabled)` com atualização otimista, chamada `POST /api/bot-actions/settings` e toast feedback.
-  - Implementado `handleToggleGranularAction(key, enabled)` com persistência imediata e reversão em caso de erro.
-  - Implementado `handleSaveBotActionsParams()` para salvar tempo de hold e mensagem de transbordo.
-- **Lógica Tri-Modal**:
-  - Função `getBotOperationalMode()` avaliando com precisão os 3 estados em tempo real:
-    1. **Bot Desativado** (vermelho): quando `!statusInfo?.connected || !aiConfig.enabled`.
-    2. **Modo Respondedor Ativo** (âmbar): quando o bot está online, mas `botActionsSettings.apiActionsEnabled === false` (Sofia atua como FAQ sem tools PMS).
-    3. **Modo Autônomo com Ações** (verde esmeralda pulsante): quando `apiActionsEnabled === true`, exibindo a contagem `${activeCount}/5 ações ativas`.
-- **Interface Visual**:
-  - Banner superior expandido para 4 cards (`grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`), adicionando o card do Modo Operacional Tri-modal.
-  - Inserido o Highlight Card com borda gradiente (`border-emerald-500/40` ou `border-amber-500/40`) para a Chave Mestra Global.
-  - Inserido banner explicativo dinâmico do estado atual do bot.
-  - Inserida a Matriz Visual de Permissões Granulares com os 5 cards de ações executivas, com suspensão visual (`opacity-60 pointer-events-none`) e banner de alerta quando a chave mestra estiver desligada.
-  - Inserida seção expansível de Parâmetros Avançados para hold provisório no PMS e mensagem de transbordo amigável.
+Direct observations from source inspection, code implementations and tool outputs:
 
-### 1.2 Modificações Executadas em `artifacts/limpeza/src/pages/tarifas.tsx`
-- **Reestruturação Arquitetural**:
-  - Página reorganizada em 2 abas (`Tabs`):
-    - **Aba 1: "Mapa de Tarifas Diárias"** (`value="calendar"`)
-    - **Aba 2: "Parâmetros Base & Adicionais"** (`value="parameters"`)
-- **Aba 1 (Mapa de Tarifas Diárias)**:
-  - **Toolbar Multi-Canal**: Seletor de canal (🌐 Direto 0%, 🏨 Booking.com +18%, 🏠 Airbnb +15%), alternância entre visualização Mensal e Semanal, controles de navegação temporal (Mês anterior, YYYY-MM atual, Próximo mês, Semana anterior e próxima), legenda visual (SEBRAE Auto, Custom Override, FDS +15%) e botão destacado "Edição em Lote (Bulk)".
-  - **Grade Matriz Flats x Dias**: Tabela responsiva com rolagem horizontal e primeira coluna fixa (`Apartamento`).
-    - Linha 1: `⭐ Geral (Todos os Flats)` exibindo os valores base diários e badges `Custom` para overrides.
-    - Linhas 2 a N: Listagem individual de todos os flats cadastrados no PMS (`Flat 113`, etc.), calculando overrides específicos e diárias vigentes.
-    - Células interativas com visual diferenciado para fins de semana e overrides, abrindo o modal de edição ao clicar.
-  - **Modal de Ajuste Individual**:
-    - Permite digitar o novo valor da diária (R$) e a justificativa para um dia específico de um flat ou geral.
-    - Se a célula possuir override existente, renderiza o botão "Voltar ao SEBRAE", que aciona `DELETE /api/tariffs/overrides/:id` e restaura o cálculo automático.
-    - Salva via `POST /api/tariffs/bulk-update` com feedback via toast.
-  - **Modal de Edição em Lote (Bulk Update)**:
-    - Seleção de intervalo de datas (`startDate` a `endDate`).
-    - Filtro de dias da semana (atalhos "Todos", "Sex/Sáb", "Dom-Qui" e 7 botões individuais).
-    - Seleção de flats ("Todos os Flats" ou "Flats Específicos" com badges clicáveis).
-    - Seleção de canais ("Todos os Canais" ou canais específicos: Direto, Booking, Airbnb).
-    - Tipo de ajuste: "Valor Fixo (R$)" ou "Acréscimo Percentual (%)" com **preview em tempo real** (ex: `R$ 237 + 15% = R$ 273`).
-    - Motivo do lote e submissão via `POST /api/tariffs/bulk-update`.
-- **Aba 2 (Parâmetros Base & Adicionais)**:
-  - **Card do Motor de Precificação Base**: Alternância entre `mode: "auto"` (⚡ SEBRAE Automático) e `mode: "manual"` (✏️ Manual Fixo), input de diária base (desabilitado em auto) e markup de fim de semana (%).
-  - **Card de Comissões e Repasse por Canal**: Booking.com (+18%), Airbnb (+15%), Venda Direta (Desconto direto e PIX).
-  - **Card de Planos de Diárias (Rate Plans)**: Diária com café (isento ou taxa de limpeza, valor e frequência) e diária sem café.
-  - **Card de Taxas de Serviços Adicionais & Políticas**: Colchonete 3º hóspede (corte 12h), 2 camas solteiro twin (corte 12h) e taxa pet friendly (cães até 15kg).
-  - **Ação Unificada**: Botão "Restaurar Padrões" e botão "Salvar Todos os Parâmetros" que sincroniza concorrentemente `POST /api/tariffs/settings` e `PUT /api/site-content` via `Promise.all`.
+### O1. Interception and Intent Detection
+- Prior to M3, `artifacts/api-server/whatsapp-ai-service.mjs` line 3198 classified fiscal keywords (`nota fiscal`, `nf`, `recibo fiscal`, etc.) as an unhandled demand (`emissao_nota_fiscal` with `reason: "capability_missing"`), and `generateHeuristicResponse` had zero handling for fiscal inquiries.
+- In `whatsapp-ai-service.mjs`, implemented `isFiscalIntentMessage(text)` with comprehensive action verb (`preciso`, `quero`, `gostaria`, `favor`, `solicito`, `solicitar`, `emitir`, `emite`, `emissao`, `mandar`, `enviar`, `gerar`, `fazer`) and fiscal noun (`nota`, `nf`, `nfe`, `nfse`, `nfs-e`, `recibo`, `fatura`) pattern matching, insensitive to case and accents.
+- Implemented `extractCnpj(text)` (supporting formatted `XX.XXX.XXX/XXXX-XX`, tagged `cnpj: ...`, and raw 14-digit strings) and `extractCpf(text)` (supporting formatted `XXX.XXX.XXX-XX`, tagged `cpf: ...`, and 11-digit strings validating under Módulo 11).
 
-### 1.3 Compilação do Frontend e Testes do Backend
-- `npm --prefix artifacts/limpeza run build`:
-  - Código de saída `0` (SUCESSO) em 20.87s.
-  - Bundles gerados em `artifacts/limpeza/dist/public/` (`index.html`, `index.css`, `index.js`, etc.).
-- Bateria de testes de backend:
-  - `node --test tests/tariff-engine.test.mjs` (8/8 testes passando)
-  - `node --test tests/bot-actions-api.test.mjs` (5/5 testes passando)
-  - `node --test tests/whatsapp-ai-agent.test.mjs` (20/20 testes passando)
-  - Total: 33/33 testes verdes (100% de aprovação).
+### O2. Reservation and Sender Matching
+- In `artifacts/api-server/zapi-service.mjs` (`getReservationPhones`, lines 4425–4435), updated phone candidate collection to include `r.requesterInfo?.phone`, `r.requesterInfo?.whatsapp` and `r.requesterPhone`, enabling third-party requesters (such as corporate secretaries booking on behalf of guests) to match reservations and corporate links.
+- In `whatsapp-ai-service.mjs`, `findContactAndReservation(db, cleanTarget)` resolves matching active/recent reservations across `r.guestPhone`, `r.phone`, `r.whatsapp`, `r.contactPhone`, `r.guestWhatsapp`, and `r.requesterInfo`.
 
-### 1.4 Controle de Versão (Git)
-- Commit: `199f5a5` ("feat(admin-ui): implement M3 WhatsApp AI switches and multi-channel tariff matrix").
-- Push: `git push origin main` executado com sucesso para `https://github.com/Millermendonca/corpflats-site.git`.
+### O3. No-Repeat Flow for Linked Companies (R3.2 - F13)
+- When a contact or their active/recent reservation possesses a linked company (`companyId` with valid CNPJ in `db.companies`):
+  - The system immediately replies on WhatsApp confirming the registered corporate name (`Razão Social` / `corporateName`) and formatted CNPJ (`formatCnpj`, e.g. `12.345.678/0001-90`).
+  - Sets `autoEmitInvoice = true` on the reservation and guest.
+  - Links `r.companyId = company.id` and pre-fills `r.invoiceDetails` with all corporate address and tax data for immediate draft preparation on the fiscal invoice screen (`/notas`) or at check-out.
+  - No data is requested from the user again.
+
+### O4. Fiscal Onboarding for Unlinked Contacts (R3.3 - F14)
+- When a contact requests an invoice and does not possess a linked company:
+  - An onboarding message is dispatched on WhatsApp explaining the options:
+    * **Empresa / Pessoa Jurídica (PJ)**: requesting CNPJ and financial email.
+    * **Pessoa Física (PF)**: requesting Full Name, CPF, Address with CEP, and Email.
+  - The conversation state is marked with `conv.awaitingFiscalData = true`.
+
+### O5. Validation, Sanitization & Automated Enrichment (F15 & F16)
+- Implemented Módulo 11 algorithms in `lookup.mjs`: `isValidCnpj(cnpj)` and `isValidCpf(cpf)`.
+- If an invalid CPF or CNPJ is provided, a gentle warning is returned asking the user to check their digits, keeping `conv.awaitingFiscalData = true` and preventing CRM pollution.
+- Sanitization utilities in `lookup.mjs`:
+  - `toTitleCase(str)`: converts to Title Case while strictly preserving corporate acronyms (`LTDA`, `S/A`, `SA`, `ME`, `EPP`, `EIRELI`, `SS`, `PJ`, `PF`, `RJ`, `SP`, etc.) and lowercasing prepositions (`de`, `da`, `do`, `dos`, `das`, `e`, `em`, `para`, `com`, `por`).
+  - `cleanPhone(phone)`: strips DDI 55 if length is 12 or 13, retaining DDD + number.
+  - `cleanCep(cep)`: cleans to 8 digits.
+  - E-mail addresses are trimmed and lowercased.
+- Automated Enrichment:
+  - `lookupCnpj(cnpj, db)`: checks local `db.companies` first; if not found, queries BrasilAPI with timeout and fallback.
+  - `lookupCep(cep, db)`: queries ViaCEP with fallback to BrasilAPI with timeout and fallback.
+
+### O6. CRM Binding and WhatsApp Confirmation (F17)
+- PJ Submission: creates/updates `db.companies` with corporateName, tradeName, cnpj, financialEmail, phone, and complete address (`logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `ibgeCode`, `cep`). Binds `companyId` and `companyName` to `db.guests` and `db.reservations`, sets `autoEmitInvoice = true`, pre-fills `invoiceDetails`, and clears `conv.awaitingFiscalData = false`.
+- PF Submission: creates/updates `db.guests` with full name, CPF, email, and address; activates `autoEmitInvoice = true` on the reservation, pre-fills `invoiceDetails`, and clears `conv.awaitingFiscalData = false`.
+
+### O7. Twin Parity and Syntax Verification
+- SHA-256 byte-for-byte parity is 100% identical between `artifacts/api-server/` and `scripts/`:
+  - `artifacts/api-server/whatsapp-ai-service.mjs` <-> `scripts/whatsapp-ai-service.mjs`: `1169D5F190F86F75824E65FA582AA23A43E58FBAC0E3555885C4CC98D73BD130`
+  - `artifacts/api-server/zapi-service.mjs` <-> `scripts/zapi-service.mjs`: `CECD601D077735256E36AC264FB17A9F3EC0C2D8B7C5F13C61ACEB20F0BB4E44`
+  - `artifacts/api-server/lookup.mjs` <-> `scripts/lookup.mjs`: `7DDF9B78BE3DFABC0A12C90C9343C94E7CEE9F9E4234B50727D8F604014C6951`
+- `node --check` executed on all 6 files exited with code 0 (zero syntax errors).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Requisito R5 / Dispatch**: O Milestone M3 exigia a materialização no frontend de todos os controles construídos em M1 e M2.
-2. **Integração WhatsApp AI Switches**:
-   - Conectou a UI ao endpoint canônico `/api/bot-actions/settings` tanto em leitura (no montante inicial do componente) quanto em escrita instantânea com optimistic update.
-   - O Indicador Tri-modal reflete com exatidão a tríade `statusInfo.connected` (Z-API online), `aiConfig.enabled` (Sofia ativada) e `botActionsSettings.apiActionsEnabled` (permissão para executar actions).
-   - A matriz granular permite ao gestor suspender temporariamente qualquer uma das 5 ferramentas sem afetar o atendimento geral da IA.
-3. **Integração Multi-Canal e Matriz de Tarifas**:
-   - A reestruturação de `tarifas.tsx` em duas abas resolveu a necessidade de ter uma visão operacional de calendário diário sem quebrar as configurações comerciais detalhadas pré-existentes do site oficial.
-   - A matriz de dias x flats permite monitorar e alterar a sazonalidade, aplicando markups específicos de OTAs (+18% na Booking para cobrir comissões e +15% no Airbnb).
-   - O modal de edição em lote acelera a precificação de períodos inteiros (feriados, pacotes de fim de ano).
-   - O botão "Voltar ao SEBRAE" garante reversibilidade imediata via rota `DELETE /api/tariffs/overrides/:id`.
-4. **Build & Zero Regressão**:
-   - O build do Vite foi validado gerando os artefatos finais em `dist/public`.
-   - Nenhuma linha de backend foi alterada, garantindo total conformidade com a paridade twin-server e integridade do repositório.
+1. **Inbound Webhook Interception (from O1 & O2):**
+   When `POST /api/whatsapp/webhook/received` receives an inbound message from a client, it invokes `processAiInboundMessage`. In `whatsapp-ai-service.mjs`, `handleWhatsAppFiscalFlow` is executed immediately after conversation resolution. If `isFiscalIntentMessage(text)` is true OR `conv.awaitingFiscalData === true`, the fiscal flow intercepts the message.
+2. **Contact & Requester Phone Resolution (from O2):**
+   `findContactAndReservation` scans `db.reservations` and `db.guests`, supporting both the primary guest's phone and third-party requester information (`r.requesterInfo?.phone`, `r.requesterInfo?.whatsapp`). It classifies whether an active or recent reservation exists and whether a valid company (`linkedCompany`) is already bound.
+3. **Branching: Linked Company vs Onboarding (from O3 & O4):**
+   - If the client already has a valid company link in CRM and did not submit a different document, the system does not ask for data again: it responds confirming the existing corporate name and formatted CNPJ, marks `autoEmitInvoice = true`, and pre-fills `r.invoiceDetails`.
+   - If unlinked and no document was sent, it dispatches an instructional prompt asking whether the invoice should be issued for PJ or PF, setting `conv.awaitingFiscalData = true`.
+4. **Validation & Correction Guard (from O5):**
+   If a document is sent (either in the initial request or as a reply), Módulo 11 algorithms (`isValidCnpj` / `isValidCpf`) validate the check digits. Any invalid document triggers a polite correction notice without persisting bad data to `db.companies` or `db.guests`.
+5. **Enrichment, Sanitization & CRM Persistence (from O5 & O6):**
+   When a valid document is provided, `lookupCnpj` (local CRM first, then BrasilAPI) and `lookupCep` enrich address, corporate names, and IBGE municipal codes. Data is sanitized with `toTitleCase` (preserving corporate acronyms and prepositions), `cleanPhone`, `cleanCep`, and lowercased emails. The entity is saved in `db.companies` / `db.guests`, bound to `matchedReservation`, `autoEmitInvoice` is set to `true`, `invoiceDetails` is pre-filled, `awaitingFiscalData` is cleared, and confirmation is dispatched on WhatsApp.
+6. **Execution Integrity & Parity (from O7):**
+   Both `artifacts/api-server/` and `scripts/` maintain identical SHA-256 hashes and validate under `node --check`.
 
 ---
 
 ## 3. Caveats
 
-- **Z-API Status Latency**: Caso a instância da Z-API esteja temporariamente iniciando ou sem rede, o status do card tri-modal exibirá "Bot Desativado" até que a conexão seja restabelecida ou a verificação responda com sucesso.
-- **Resolução de Overrides na Tabela**: Se múltiplos overrides existirem para a mesma data (por exemplo, um override geral e um override específico do flat), a UI e o backend priorizam corretamente o override do flat individual.
+1. **External API Network Availability:** In production, `lookupCnpj` queries BrasilAPI and `lookupCep` queries ViaCEP. In offline or test environments, network timeouts are guarded by 3.5s/4s timers and fall back gracefully to local CRM data or safe fallbacks without throwing uncaught exceptions.
+2. **Ambiguity between Phone and CPF:** An unformatted 11-digit string is only parsed as a CPF if it passes `isValidCpf` (Modulo 11) and does not match the sender's own phone number, preventing accidental overwrites.
+3. **No Caveats Beyond Above:** No further caveats.
 
 ---
 
 ## 4. Conclusion
 
-O Milestone M3 (Frontend Admin UI - R5) está **100% implementado, testado e em produção na branch `main`**.
-Todas as especificações técnicas, blueprints dos Explorers e critérios do ORIGINAL_REQUEST foram atendidos com genuinidade estrita, código limpo, tipagem correta e sem mocks artificiais.
+All requirements and acceptance criteria for Milestone M3 (Features F12 through F17) have been fully and genuinely implemented:
+- Inbound fiscal intent interception with regex insensitive to case and accents.
+- Zero repetition of questions for clients already bound to a company in CRM.
+- Complete onboarding flow for unlinked clients with conversational state management.
+- Mathematical Modulo 11 validation for CPFs and CNPJs with gentle correction warnings.
+- Automated enrichment via local CRM, BrasilAPI, and ViaCEP.
+- Automatic CRM persistence, reservation linking, `autoEmitInvoice` activation, and `invoiceDetails` pre-filling.
+- 100% SHA-256 byte-for-byte twin-server parity and zero-syntax-error validation.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar de forma independente e empírica as entregas deste Milestone:
+To independently verify the implementation:
 
-1. **Testes Automatizados do Backend**:
-   ```powershell
-   node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs tests/whatsapp-ai-agent.test.mjs
-   ```
-   *Resultado esperado*: 33 testes passam com 0 falhas.
+### V1. Syntax & Parity Verification
+```powershell
+# 1. Verify syntax
+node --check artifacts/api-server/whatsapp-ai-service.mjs scripts/whatsapp-ai-service.mjs artifacts/api-server/zapi-service.mjs scripts/zapi-service.mjs artifacts/api-server/lookup.mjs scripts/lookup.mjs
 
-2. **Compilação do Frontend**:
-   ```powershell
-   npm --prefix artifacts/limpeza run build
-   ```
-   *Resultado esperado*: Sai com código 0 gerando `artifacts/limpeza/dist/public/index.js` e `index.css`.
+# 2. Verify identical SHA-256 hashes
+powershell -Command "Get-FileHash 'artifacts/api-server/whatsapp-ai-service.mjs', 'scripts/whatsapp-ai-service.mjs', 'artifacts/api-server/zapi-service.mjs', 'scripts/zapi-service.mjs', 'artifacts/api-server/lookup.mjs', 'scripts/lookup.mjs' | Select-Object Hash, Path"
+```
 
-3. **Verificação do Repositório Git**:
-   ```powershell
-   git status
-   git log -1 --stat
-   ```
-   *Resultado esperado*: Commit `199f5a5` sincronizado com `origin/main`.
+### V2. Standalone In-Memory Functional Test
+Execute the comprehensive 9-point scenario suite (no database pollution, runs in memory):
+```powershell
+node -e "
+import('./artifacts/api-server/whatsapp-ai-service.mjs').then(async (m) => {
+  const assert = (await import('assert')).default;
+
+  // 1. isFiscalIntentMessage
+  assert.strictEqual(m.isFiscalIntentMessage('preciso de nota fiscal'), true);
+  assert.strictEqual(m.isFiscalIntentMessage('Favor emitir a NF da estadia'), true);
+  assert.strictEqual(m.isFiscalIntentMessage('qual a senha do wifi?'), false);
+
+  // 2. Módulo 11 validation
+  assert.strictEqual(m.isValidCnpj('47.964.813/0001-65'), true);
+  assert.strictEqual(m.isValidCnpj('47964813000166'), false);
+  assert.strictEqual(m.isValidCpf('11144477735'), true);
+  assert.strictEqual(m.isValidCpf('11144477700'), false);
+
+  // 3. Flow with existing company (no repeat questions)
+  const mockDb1 = {
+    companies: [{ id: 'comp_1', corporateName: 'CorpFlats Tech LTDA', cnpj: '47964813000165' }],
+    guests: [{ id: 'g_1', name: 'Carlos Teste', phone: '2299887766', companyId: 'comp_1' }],
+    reservations: [{ id: 'res_1', guestPhone: '2299887766', companyId: 'comp_1', status: 'ativa' }],
+    whatsappConversations: []
+  };
+  const res1 = await m.handleWhatsAppFiscalFlow({
+    db: mockDb1,
+    cleanTarget: '552299887766',
+    messageText: 'Olá, preciso de nota fiscal',
+    senderName: 'Carlos',
+    conv: null,
+    sendZapiMessage: async () => ({ success: true }),
+    appendMessageFn: () => {}
+  });
+  assert.strictEqual(res1.action, 'confirmed_existing_company');
+  assert.strictEqual(mockDb1.reservations[0].autoEmitInvoice, true);
+  assert.match(res1.replyText, /CorpFlats Tech LTDA/);
+
+  // 4. Flow without company (onboarding prompt)
+  const mockDb2 = {
+    companies: [],
+    guests: [{ id: 'g_2', name: 'Mariana Teste', phone: '2299112233' }],
+    reservations: [{ id: 'res_2', guestPhone: '2299112233', status: 'ativa' }],
+    whatsappConversations: []
+  };
+  const res2 = await m.handleWhatsAppFiscalFlow({
+    db: mockDb2,
+    cleanTarget: '552299112233',
+    messageText: 'Gostaria de nota fiscal',
+    senderName: 'Mariana',
+    conv: null,
+    sendZapiMessage: async () => ({ success: true }),
+    appendMessageFn: () => {}
+  });
+  assert.strictEqual(res2.action, 'requested_fiscal_data');
+
+  // 5. Invalid CNPJ
+  const conv2 = mockDb2.whatsappConversations[0];
+  const res3 = await m.handleWhatsAppFiscalFlow({
+    db: mockDb2,
+    cleanTarget: '552299112233',
+    messageText: 'CNPJ: 47.964.813/0001-99',
+    conv: conv2,
+    sendZapiMessage: async () => ({ success: true }),
+    appendMessageFn: () => {}
+  });
+  assert.strictEqual(res3.action, 'invalid_cnpj');
+  assert.strictEqual(mockDb2.companies.length, 0);
+
+  // 6. Valid CNPJ
+  const res4 = await m.handleWhatsAppFiscalFlow({
+    db: mockDb2,
+    cleanTarget: '552299112233',
+    messageText: 'CNPJ: 47.964.813/0001-65, email financeiro@corpflats.com',
+    conv: conv2,
+    sendZapiMessage: async () => ({ success: true }),
+    appendMessageFn: () => {}
+  });
+  assert.strictEqual(res4.action, 'registered_pj');
+  assert.strictEqual(mockDb2.companies[0].cnpj, '47964813000165');
+  assert.strictEqual(mockDb2.reservations[0].autoEmitInvoice, true);
+
+  // 7. Third-party requester matching
+  const mockDb3 = {
+    companies: [{ id: 'comp_3', corporateName: 'Empresa do Solicitante LTDA', cnpj: '47964813000165' }],
+    reservations: [{
+      id: 'res_3',
+      guestPhone: '22990001111',
+      requesterInfo: { name: 'Secretária Carla', phone: '22988887777' },
+      companyId: 'comp_3',
+      status: 'ativa'
+    }],
+    whatsappConversations: []
+  };
+  const res5 = await m.handleWhatsAppFiscalFlow({
+    db: mockDb3,
+    cleanTarget: '5522988887777',
+    messageText: 'Favor emitir a NF da estadia',
+    conv: null,
+    sendZapiMessage: async () => ({ success: true }),
+    appendMessageFn: () => {}
+  });
+  assert.strictEqual(res5.action, 'confirmed_existing_company');
+  assert.strictEqual(mockDb3.reservations[0].autoEmitInvoice, true);
+
+  console.log('ALL VERIFICATIONS PASSED SUCCESSFULLY!');
+});
+"
+```

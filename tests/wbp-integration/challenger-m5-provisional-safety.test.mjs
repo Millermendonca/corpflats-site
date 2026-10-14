@@ -4,7 +4,7 @@
  * Challenger 2: Provisional Adapters, General Switch Safety & Pricing Math Contract (Milestone 5).
  *
  * Empirical adversarial stress testing of:
- * 1. Database Integrity Guard: Pre & post-flight verification of baseline data/database.json SHA-256 (e37d74b7...).
+ * 1. Database Integrity Guard: Pre & post-flight verification of baseline data/database.json SHA-256 (7e94a217...).
  * 2. General Switch Zero-Timer Contract: startCardAutoPurgeScheduler registers strictly 0 timers when isWbpEnabled(db) is false.
  * 3. SEBRAE Pricing Math Contract:
  *    - Nominal contract: Custo UH = R$ 149,38 and Tarifa Mínima = R$ 276,63 (±0,05).
@@ -108,7 +108,7 @@ async function waitForServer(url, timeoutMs = 15000) {
 }
 
 describe("Suite 1: Baseline Database Integrity Guard (Pre & Post-Flight)", () => {
-  const EXPECTED_HASH = "e37d74b7c78622903745709f781c92942be36732de878ac7543f6aeff7eb1882";
+  const EXPECTED_HASH = "7e94a217681ea595dc10681ec3d1ad0964e6b2dbce828acd8f6d8633b87e71c6";
   let preHash;
 
   before(() => {

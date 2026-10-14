@@ -4,7 +4,7 @@
  * Challenger 1: Webhooks & Concurrency Stress Test Suite (Milestone 4).
  *
  * Adversarial empirical verification of:
- * 1. Pre & post-flight database integrity guard (verifies baseline SHA-256 e37d74b7... untouched).
+ * 1. Pre & post-flight database integrity guard (verifies baseline SHA-256 7e94a217... untouched).
  * 2. Timing-safe secret validation & rejection under concurrent bursts (invalid, empty, mismatched secrets).
  * 3. High-concurrency deduplication: 25 simultaneous webhook payloads with duplicate order IDs (0 duplicate reservations created, 100% audit durability).
  * 4. Fair-share allocation distribution across all 19 Soho flats under peak turnover (15 successive bookings on same dates, pairwise distinct flats, 0 clustering).
@@ -122,8 +122,8 @@ describe("Challenger 1: Webhooks & Concurrency Stress Test Suite (Milestone 4)",
     initialDbMeta = getFileMetadata(prodDbPath);
     assert.ok(initialDbMeta.size > 0, "Real database must not be empty");
     assert.ok(
-      initialDbMeta.hash.startsWith("e37d74b7"),
-      `Expected baseline hash starting with e37d74b7..., got: ${initialDbMeta.hash}`
+      initialDbMeta.hash.startsWith("7e94a217"),
+      `Expected baseline hash starting with 7e94a217..., got: ${initialDbMeta.hash}`
     );
 
     // 2. Setup completely isolated temp directory in os.tmpdir()

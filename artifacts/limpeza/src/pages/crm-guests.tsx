@@ -52,7 +52,15 @@ export default function CrmGuests() {
   const [formPhone, setFormPhone] = useState("")
   const [formEmail, setFormEmail] = useState("")
   const [formDocument, setFormDocument] = useState("")
-  const [formCity, setFormCity] = useState("")
+  const [formCity, setFormCity] = useState("Campos dos Goytacazes")
+  const [formState, setFormState] = useState("RJ")
+  const [formCep, setFormCep] = useState("")
+  const [formAddress, setFormAddress] = useState("")
+  const [formNumber, setFormNumber] = useState("")
+  const [formComplement, setFormComplement] = useState("")
+  const [formNeighborhood, setFormNeighborhood] = useState("")
+  const [formIbgeCode, setFormIbgeCode] = useState("3301009")
+  const [loadingGuestCep, setLoadingGuestCep] = useState(false)
   const [formCompanyId, setFormCompanyId] = useState("")
   const [formNotes, setFormNotes] = useState("")
   const [formPreferences, setFormPreferences] = useState({
@@ -171,7 +179,12 @@ export default function CrmGuests() {
   const [compTradeName, setCompTradeName] = useState("")
   const [compCep, setCompCep] = useState("")
   const [compAddress, setCompAddress] = useState("")
-  const [compCity, setCompCity] = useState("")
+  const [compNumber, setCompNumber] = useState("")
+  const [compComplement, setCompComplement] = useState("")
+  const [compNeighborhood, setCompNeighborhood] = useState("")
+  const [compCity, setCompCity] = useState("Campos dos Goytacazes")
+  const [compState, setCompState] = useState("RJ")
+  const [compIbgeCode, setCompIbgeCode] = useState("3301009")
   const [compStateReg, setCompStateReg] = useState("")
   const [compMunReg, setCompMunReg] = useState("")
   const [compFinancialEmail, setCompFinancialEmail] = useState("")
@@ -180,6 +193,7 @@ export default function CrmGuests() {
   const [compBillingTerms, setCompBillingTerms] = useState("30 dias")
   const [compNotes, setCompNotes] = useState("")
   const [loadingCnpj, setLoadingCnpj] = useState(false)
+  const [loadingCompanyCep, setLoadingCompanyCep] = useState(false)
   const [savingCompany, setSavingCompany] = useState(false)
 
   const fetchGuests = async () => {
@@ -226,6 +240,48 @@ export default function CrmGuests() {
     }
   }
 
+  const handleLookupCompanyCep = async (cepVal: string) => {
+    const clean = cepVal.replace(/\D/g, "")
+    if (clean.length === 8) {
+      setLoadingCompanyCep(true)
+      try {
+        const res = await fetch(`/api/invoices/lookup-cep/${clean}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.logradouro) setCompAddress(data.logradouro)
+          if (data.bairro) setCompNeighborhood(data.bairro)
+          if (data.cidade || data.localidade || data.municipio) setCompCity(data.cidade || data.localidade || data.municipio)
+          if (data.uf) setCompState(data.uf)
+          if (data.ibge || data.ibgeCode || data.codigoMunicipio) setCompIbgeCode(data.ibge || data.ibgeCode || data.codigoMunicipio)
+        }
+      } catch {}
+      finally {
+        setLoadingCompanyCep(false)
+      }
+    }
+  }
+
+  const handleLookupGuestCep = async (cepVal: string) => {
+    const clean = cepVal.replace(/\D/g, "")
+    if (clean.length === 8) {
+      setLoadingGuestCep(true)
+      try {
+        const res = await fetch(`/api/invoices/lookup-cep/${clean}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.logradouro) setFormAddress(data.logradouro)
+          if (data.bairro) setFormNeighborhood(data.bairro)
+          if (data.cidade || data.localidade || data.municipio) setFormCity(data.cidade || data.localidade || data.municipio)
+          if (data.uf) setFormState(data.uf)
+          if (data.ibge || data.ibgeCode || data.codigoMunicipio) setFormIbgeCode(data.ibge || data.ibgeCode || data.codigoMunicipio)
+        }
+      } catch {}
+      finally {
+        setLoadingGuestCep(false)
+      }
+    }
+  }
+
   const handleLookupCnpj = async (val: string) => {
     const clean = val.replace(/\D/g, "")
     if (clean.length === 14) {
@@ -239,8 +295,13 @@ export default function CrmGuests() {
           if (data.email) setCompFinancialEmail(data.email)
           if (data.telefone) setCompPhone(data.telefone)
           if (data.cep) setCompCep(data.cep)
-          if (data.logradouro) setCompAddress(`${data.logradouro}, ${data.bairro || ''}`.trim())
-          if (data.cidade && data.uf) setCompCity(`${data.cidade}/${data.uf}`)
+          if (data.logradouro) setCompAddress(data.logradouro)
+          if (data.numero) setCompNumber(data.numero)
+          if (data.complemento) setCompComplement(data.complemento)
+          if (data.bairro) setCompNeighborhood(data.bairro)
+          if (data.cidade || data.municipio) setCompCity(data.cidade || data.municipio)
+          if (data.uf) setCompState(data.uf)
+          if (data.ibgeCode || data.codigoMunicipio || data.codigoIbge) setCompIbgeCode(data.ibgeCode || data.codigoMunicipio || data.codigoIbge)
         }
       } catch {}
       finally {
@@ -255,7 +316,14 @@ export default function CrmGuests() {
     setFormPhone("")
     setFormEmail("")
     setFormDocument("")
-    setFormCity("")
+    setFormCity("Campos dos Goytacazes")
+    setFormState("RJ")
+    setFormCep("")
+    setFormAddress("")
+    setFormNumber("")
+    setFormComplement("")
+    setFormNeighborhood("")
+    setFormIbgeCode("3301009")
     setFormCompanyId("")
     setFormDocPhotoUrl("")
     setFormDocFileName("")
@@ -278,7 +346,14 @@ export default function CrmGuests() {
     setFormPhone(g.phone || "")
     setFormEmail(g.email || "")
     setFormDocument(g.documentNumber || g.document || "")
-    setFormCity(g.city || "")
+    setFormCity(g.city || g.cidade || "Campos dos Goytacazes")
+    setFormState(g.state || g.uf || "RJ")
+    setFormCep(g.cep || "")
+    setFormAddress(g.address || g.logradouro || "")
+    setFormNumber(g.number || g.numero || "")
+    setFormComplement(g.complement || g.complemento || "")
+    setFormNeighborhood(g.neighborhood || g.bairro || "")
+    setFormIbgeCode(g.ibgeCode || g.codigoMunicipio || "3301009")
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
     setFormDocPhotoUrl(g.docPhotoUrl || "")
     setFormDocFileName(g.docPhotoUrl ? "documento_anexado" : "")
@@ -309,12 +384,26 @@ export default function CrmGuests() {
         documentNumber: formDocument.trim(),
         document: formDocument.trim(),
         city: formCity.trim(),
+        cidade: formCity.trim(),
         companyId: formCompanyId ? Number(formCompanyId) : null,
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
         autoEmitInvoice: Boolean(formAutoInvoice),
         notes: formNotes.trim(),
-        preferences: formPreferences
+        preferences: formPreferences,
+        cep: formCep.trim().replace(/\D/g, ""),
+        address: formAddress.trim(),
+        logradouro: formAddress.trim(),
+        number: formNumber.trim(),
+        numero: formNumber.trim(),
+        complement: formComplement.trim(),
+        complemento: formComplement.trim(),
+        neighborhood: formNeighborhood.trim(),
+        bairro: formNeighborhood.trim(),
+        state: formState.trim().toUpperCase(),
+        uf: formState.trim().toUpperCase(),
+        ibgeCode: formIbgeCode.trim() || "3301009",
+        codigoMunicipio: formIbgeCode.trim() || "3301009"
       }
 
       if (formDocPhotoUrl) {
@@ -358,21 +447,37 @@ export default function CrmGuests() {
     setCompContactPerson("")
     setCompBillingTerms("30 dias")
     setCompNotes("")
+    setCompCep("")
+    setCompAddress("")
+    setCompNumber("")
+    setCompComplement("")
+    setCompNeighborhood("")
+    setCompCity("Campos dos Goytacazes")
+    setCompState("RJ")
+    setCompIbgeCode("3301009")
     setCompanyModalOpen(true)
   }
 
   const handleEditCompany = (c: any) => {
     setEditingCompany(c)
-    setCompCorporateName(c.corporateName || "")
-    setCompTradeName(c.tradeName || "")
+    setCompCorporateName(c.corporateName || c.razaoSocial || "")
+    setCompTradeName(c.tradeName || c.nomeFantasia || "")
     setCompCnpj(c.cnpj || "")
-    setCompStateReg(c.stateRegistration || "")
-    setCompMunReg(c.municipalRegistration || "")
-    setCompFinancialEmail(c.financialEmail || "")
-    setCompPhone(c.phone || "")
-    setCompContactPerson(c.contactPerson || "")
-    setCompBillingTerms(c.billingTerms || "30 dias")
-    setCompNotes(c.notes || "")
+    setCompStateReg(c.stateRegistration || c.inscricaoEstadual || "")
+    setCompMunReg(c.municipalRegistration || c.inscricaoMunicipal || "")
+    setCompFinancialEmail(c.financialEmail || c.emailFinanceiro || "")
+    setCompPhone(c.phone || c.telefone || "")
+    setCompContactPerson(c.contactPerson || c.contato || "")
+    setCompBillingTerms(c.billingTerms || c.condicaoFaturamento || "30 dias")
+    setCompNotes(c.notes || c.observacoes || "")
+    setCompCep(c.cep || "")
+    setCompAddress(c.address || c.logradouro || c.endereco || "")
+    setCompNumber(c.number || c.numero || "")
+    setCompComplement(c.complement || c.complemento || "")
+    setCompNeighborhood(c.neighborhood || c.bairro || "")
+    setCompCity(c.city || c.cidade || c.municipio || "Campos dos Goytacazes")
+    setCompState(c.state || c.uf || c.estado || "RJ")
+    setCompIbgeCode(c.ibgeCode || c.codigoMunicipio || c.codigoIbge || "3301009")
     setCompanyModalOpen(true)
   }
 
@@ -384,7 +489,9 @@ export default function CrmGuests() {
     try {
       const payload = {
         corporateName: compCorporateName.trim(),
+        razaoSocial: compCorporateName.trim(),
         tradeName: compTradeName.trim() || compCorporateName.trim(),
+        nomeFantasia: compTradeName.trim() || compCorporateName.trim(),
         cnpj: compCnpj.trim(),
         stateRegistration: compStateReg.trim(),
         municipalRegistration: compMunReg.trim(),
@@ -392,7 +499,22 @@ export default function CrmGuests() {
         phone: compPhone.trim(),
         contactPerson: compContactPerson.trim(),
         billingTerms: compBillingTerms.trim(),
-        notes: compNotes.trim()
+        notes: compNotes.trim(),
+        cep: compCep.trim().replace(/\D/g, ""),
+        address: compAddress.trim(),
+        logradouro: compAddress.trim(),
+        number: compNumber.trim(),
+        numero: compNumber.trim(),
+        complement: compComplement.trim(),
+        complemento: compComplement.trim(),
+        neighborhood: compNeighborhood.trim(),
+        bairro: compNeighborhood.trim(),
+        city: compCity.trim(),
+        cidade: compCity.trim(),
+        state: compState.trim().toUpperCase(),
+        uf: compState.trim().toUpperCase(),
+        ibgeCode: compIbgeCode.trim() || "3301009",
+        codigoMunicipio: compIbgeCode.trim() || "3301009"
       }
 
       if (editingCompany) {
@@ -890,15 +1012,27 @@ export default function CrmGuests() {
                           </td>
 
                           <td className="p-3.5 text-right">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleEditCompany(c)}
-                              className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 text-primary hover:bg-primary/10"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                              <span>Editar</span>
-                            </Button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setLocation(`/notas?doc=${encodeURIComponent(c.cnpj || "")}&nome=${encodeURIComponent(c.corporateName || c.tradeName || "")}&companyId=${c.id}`)}
+                                title="Emitir Nota Fiscal (NFS-e) para esta empresa"
+                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Emitir NFS-e</span>
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleEditCompany(c)}
+                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 text-primary hover:bg-primary/10"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                <span>Editar</span>
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1479,23 +1613,78 @@ export default function CrmGuests() {
                   <Input type="email" value={formEmail} onChange={e => setFormEmail(e.target.value)} className="h-9 text-xs rounded-xl" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="font-bold">Cidade / UF</Label>
-                  <Input value={formCity} onChange={e => setFormCity(e.target.value)} className="h-9 text-xs rounded-xl" />
+                  <Label className="font-bold">Empresa Parceira (Opcional)</Label>
+                  <select 
+                    value={formCompanyId} 
+                    onChange={e => setFormCompanyId(e.target.value)}
+                    className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs"
+                  >
+                    <option value="">Nenhuma (Pessoa Física Avulsa)</option>
+                    {companies.map(c => (
+                      <option key={c.id} value={String(c.id)}>{c.tradeName || c.corporateName}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <Label className="font-bold">Empresa Parceira (Opcional)</Label>
-                <select 
-                  value={formCompanyId} 
-                  onChange={e => setFormCompanyId(e.target.value)}
-                  className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs"
-                >
-                  <option value="">Nenhuma (Pessoa Física Avulsa)</option>
-                  {companies.map(c => (
-                    <option key={c.id} value={String(c.id)}>{c.tradeName || c.corporateName}</option>
-                  ))}
-                </select>
+              {/* Endereço Residencial / Fiscal */}
+              <div className="p-3 bg-muted/20 border border-border rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold flex items-center gap-1.5 text-xs text-foreground">
+                    <MapPin className="w-3.5 h-3.5 text-primary" />
+                    <span>Endereço Residencial / Fiscal</span>
+                  </Label>
+                  {loadingGuestCep && <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">CEP</Label>
+                    <Input 
+                      value={formCep} 
+                      onChange={e => {
+                        setFormCep(e.target.value)
+                        handleLookupGuestCep(e.target.value)
+                      }} 
+                      placeholder="00000-000" 
+                      className="h-8.5 text-xs rounded-xl font-mono" 
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Logradouro / Rua</Label>
+                    <Input value={formAddress} onChange={e => setFormAddress(e.target.value)} placeholder="Rua / Av..." className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Número</Label>
+                    <Input value={formNumber} onChange={e => setFormNumber(e.target.value)} placeholder="Nº" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Complemento</Label>
+                    <Input value={formComplement} onChange={e => setFormComplement(e.target.value)} placeholder="Apto, Bloco..." className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Bairro</Label>
+                    <Input value={formNeighborhood} onChange={e => setFormNeighborhood(e.target.value)} placeholder="Bairro" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Cidade</Label>
+                    <Input value={formCity} onChange={e => setFormCity(e.target.value)} placeholder="Cidade" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">UF</Label>
+                    <Input value={formState} onChange={e => setFormState(e.target.value.toUpperCase())} maxLength={2} placeholder="UF" className="h-8.5 text-xs rounded-xl uppercase font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Cód. IBGE</Label>
+                    <Input value={formIbgeCode} onChange={e => setFormIbgeCode(e.target.value)} placeholder="3301009" className="h-8.5 text-xs rounded-xl font-mono" />
+                  </div>
+                </div>
               </div>
 
 
@@ -1606,30 +1795,36 @@ export default function CrmGuests() {
 
         {/* ── MODAL CADASTRO/EDIÇÃO DE EMPRESA ── */}
         <Dialog open={companyModalOpen} onOpenChange={setCompanyModalOpen}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl max-h-[90vh] overflow-y-auto p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-indigo-600" />
                 <span>{editingCompany ? "Editar Empresa" : "Nova Empresa Parceira (PJ)"}</span>
               </DialogTitle>
-              <DialogDescription className="text-xs">Faturamento corporativo e cadastro B2B</DialogDescription>
+              <DialogDescription className="text-xs">Faturamento corporativo, dados cadastrais e endereço fiscal B2B</DialogDescription>
             </DialogHeader>
 
             <form onSubmit={handleSaveCompany} className="space-y-3 pt-2 text-xs">
-              <div className="space-y-1">
-                <Label className="font-bold">CNPJ *</Label>
-                <div className="flex gap-1.5">
-                  <Input 
-                    value={compCnpj} 
-                    onChange={e => {
-                      setCompCnpj(e.target.value)
-                      handleLookupCnpj(e.target.value)
-                    }} 
-                    required 
-                    placeholder="00.000.000/0000-00"
-                    className="h-9 text-xs rounded-xl font-mono" 
-                  />
-                  {loadingCnpj && <RefreshCw className="w-4 h-4 animate-spin text-primary self-center" />}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="font-bold">CNPJ *</Label>
+                  <div className="flex gap-1.5">
+                    <Input 
+                      value={compCnpj} 
+                      onChange={e => {
+                        setCompCnpj(e.target.value)
+                        handleLookupCnpj(e.target.value)
+                      }} 
+                      required 
+                      placeholder="00.000.000/0000-00"
+                      className="h-9 text-xs rounded-xl font-mono" 
+                    />
+                    {loadingCnpj && <RefreshCw className="w-4 h-4 animate-spin text-primary self-center" />}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Telefone / WhatsApp</Label>
+                  <Input value={compPhone} onChange={e => setCompPhone(e.target.value)} placeholder="(00) 0000-0000" className="h-9 text-xs rounded-xl" />
                 </div>
               </div>
 
@@ -1638,20 +1833,102 @@ export default function CrmGuests() {
                 <Input value={compCorporateName} onChange={e => setCompCorporateName(e.target.value)} required className="h-9 text-xs rounded-xl" />
               </div>
 
-              <div className="space-y-1">
-                <Label className="font-bold">Nome Fantasia</Label>
-                <Input value={compTradeName} onChange={e => setCompTradeName(e.target.value)} className="h-9 text-xs rounded-xl" />
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="font-bold">Nome Fantasia</Label>
+                  <Input value={compTradeName} onChange={e => setCompTradeName(e.target.value)} className="h-9 text-xs rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Contato / Responsável</Label>
+                  <Input value={compContactPerson} onChange={e => setCompContactPerson(e.target.value)} placeholder="Ex: Gestor de RH" className="h-9 text-xs rounded-xl" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="font-bold">Inscrição Estadual (IE)</Label>
+                  <Input value={compStateReg} onChange={e => setCompStateReg(e.target.value)} placeholder="Isento / Nº" className="h-9 text-xs rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Inscrição Municipal (IM)</Label>
+                  <Input value={compMunReg} onChange={e => setCompMunReg(e.target.value)} placeholder="Nº de Inscrição" className="h-9 text-xs rounded-xl" />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="font-bold">E-mail Financeiro</Label>
-                  <Input value={compFinancialEmail} onChange={e => setCompFinancialEmail(e.target.value)} className="h-9 text-xs rounded-xl" />
+                  <Input value={compFinancialEmail} onChange={e => setCompFinancialEmail(e.target.value)} placeholder="financeiro@empresa.com" className="h-9 text-xs rounded-xl" />
                 </div>
                 <div className="space-y-1">
                   <Label className="font-bold">Condição de Faturamento</Label>
                   <Input value={compBillingTerms} onChange={e => setCompBillingTerms(e.target.value)} placeholder="Ex: 30 dias" className="h-9 text-xs rounded-xl" />
                 </div>
+              </div>
+
+              {/* Endereço Fiscal da Empresa */}
+              <div className="p-3 bg-muted/20 border border-border rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold flex items-center gap-1.5 text-xs text-foreground">
+                    <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Endereço Fiscal para NFS-e</span>
+                  </Label>
+                  {loadingCompanyCep && <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">CEP</Label>
+                    <Input 
+                      value={compCep} 
+                      onChange={e => {
+                        setCompCep(e.target.value)
+                        handleLookupCompanyCep(e.target.value)
+                      }} 
+                      placeholder="00000-000" 
+                      className="h-8.5 text-xs rounded-xl font-mono" 
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Logradouro / Endereço</Label>
+                    <Input value={compAddress} onChange={e => setCompAddress(e.target.value)} placeholder="Av. / Rua..." className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Número</Label>
+                    <Input value={compNumber} onChange={e => setCompNumber(e.target.value)} placeholder="Nº" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Complemento</Label>
+                    <Input value={compComplement} onChange={e => setCompComplement(e.target.value)} placeholder="Sala, Andar..." className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Bairro</Label>
+                    <Input value={compNeighborhood} onChange={e => setCompNeighborhood(e.target.value)} placeholder="Bairro" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Cidade</Label>
+                    <Input value={compCity} onChange={e => setCompCity(e.target.value)} placeholder="Cidade" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">UF</Label>
+                    <Input value={compState} onChange={e => setCompState(e.target.value.toUpperCase())} maxLength={2} placeholder="UF" className="h-8.5 text-xs rounded-xl uppercase font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Cód. IBGE</Label>
+                    <Input value={compIbgeCode} onChange={e => setCompIbgeCode(e.target.value)} placeholder="3301009" className="h-8.5 text-xs rounded-xl font-mono" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="font-bold">Observações Internas</Label>
+                <Textarea value={compNotes} onChange={e => setCompNotes(e.target.value)} rows={2} className="text-xs rounded-xl" placeholder="Anotações de faturamento..." />
               </div>
 
               <DialogFooter className="gap-2 pt-2">

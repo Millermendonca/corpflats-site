@@ -409,3 +409,92 @@ DIRETIVAS DE REFINAMENTO DO MANUAL OPERACIONAL EM `WbpHelpManualPage.tsx` (Crit�
    - **1.7. Configuração de Alertas Críticos e Resumo Diário (08:00):** documentação do badge de notificação no sistema, alertas de WhatsApp/e-mail para a gerência nos 4 eventos críticos (reserva em quarentena, overbooking, falha de envio de ARI > 15 min, preço retido pela trava de variação), resumo diário às 08:00 (recebidas, canceladas, pendentes) e checkboxes de opt-in/opt-out por canal e evento.
    - **1.8. Mensagens e Avaliações (Adaptador Provisório):** explicitar que `GetMessages`/`SendMessage` e `GetReviews`/`RespondReview` estão isolados em adaptador provisório, desligados por padrão até a homologação da especificação final pela WebBookingPro.
    - **Seção 2 (Códigos de Erro):** adicionar também os códigos de erro `1004` (Invalid rate plan / room mapping) e `1100` / `1101` (Invalid date range / past date) de `docs/wbp/README.md` para cobrir todos os códigos `FAULT.OTA.*` documentados.
+
+
+## Follow-up — 2026-10-14T06:18:30Z
+
+URGENT Live Inspection of `tests/wbp-integration/e2e-tier2-boundaries.test.mjs`:
+I inspected `e2e-tier2-boundaries.test.mjs` and `git status -s` and found the exact bugs causing `e2e-tier2-boundaries.test.mjs` issues and stray files:
+
+1. **Missing `DATA_FILE` and isolated file env vars in `e2e-tier2-boundaries.test.mjs` (lines 106–118):**
+   - `e2e-tier2-boundaries.test.mjs` passed `DATABASE_PATH: tempDbPath` instead of `DATA_FILE: tempDbPath`! And it omitted `WBP_RAW_STORAGE_FILE`, `WBP_IDEMPOTENCY_FILE`, and `WBP_CARD_VAULT_FILE` in `spawnEnv` (and in the parent process env), which caused `data/wbp_idempotency.json` and `data/wbp_raw_payloads.jsonl` to be created in the workspace `data/` folder!
+   - Fix in `e2e-tier2-boundaries.test.mjs` (and ensure Tiers 3 & 4 do the same, matching `e2e-tier1-features.test.mjs` lines 146–160):
+     - Set `DATA_FILE: tempDbPath`, `DATABASE_FILE: tempDbPath`, `WBP_RAW_STORAGE_FILE: path.join(tmpDir, "wbp_raw_payloads.jsonl")`, `WBP_IDEMPOTENCY_FILE: path.join(tmpDir, "wbp_idempotency.json")`, and `WBP_CARD_VAULT_FILE: path.join(tmpDir, "wbp_card_vault.json")` in BOTH `process.env` and `spawnEnv`!
+   - Also delete the stray untracked files `data/wbp_idempotency.json` and `data/wbp_raw_payloads.jsonl`, and run `git checkout -- artifacts/api-server/audit_logs.jsonl` (and `git checkout -- data/database.json` if ever touched) so the workspace stays 100% clean!
+
+2. **Wrong file paths in `e2e-tier2-boundaries.test.mjs` Section F30 (lines 1605–1635):**
+   - Lines 1606, 1612, 1625, 1631 check `artifacts/limpeza/src/pages/WbpHelpManualPage.tsx`, which does not exist at that path! The manual component is at `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx` (and the page wrapper is at `artifacts/limpeza/src/pages/wbp-manual.tsx`).
+   - Line 1621 checks `files.length >= 6` in `artifacts/limpeza/public/manual`, whereas `artifacts/limpeza/public/manual` contains the 3 real screenshot `.jpg` files (`precificacao-sebrae.jpg`, `previsualizacao-publicar.jpg`, `caixa-entrada-ota.jpg` -> `files.length >= 3`).
+   - Line 1515–1516 checks `data.enableMessages` / `data.enableReviews` on `GET /api/wbp/provisional/settings`, whereas the endpoint returns `data.provisionalMessagesEnabled` and `data.provisionalReviewsEnabled` (check `e2e-tier1-features.test.mjs` / `m5-vault-ui.test.mjs` for exact field names).
+
+Please pass these exact fixes to `test_writer_e2e_final` immediately so Tier 2, Tier 3, and Tier 4 pass cleanly on the first run!
+
+
+## 2026-10-14T09:37:25Z
+
+Auditar, testar, corrigir e aperfeiçoar todo o módulo de emissão de Nota Fiscal (NFS-e Municipal GissOnline e Padrão Nacional ADN) no Guest-Flow-Manager (CorpFlats), compatibilizando-o de ponta a ponta com o CRM 360° (Hóspedes, Solicitantes Terceiros e Empresas PJ) e automatizando no WhatsApp a solicitação, recepção, sanitização, enriquecimento (CNPJ/CEP) e vínculo de dados fiscais no CRM sem repetição de perguntas para clientes já vinculados a empresas.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Auditoria, Correção e Aperfeiçoamento da Emissão de NFS-e
+- Corrigir o bug de variáveis indefinidas (`numNfseReal` / `codVerifReal`) em `POST /api/nfse/emit` e garantir que tanto o motor municipal (`giss_prefeitura` via `giss-soap.mjs`) quanto o motor nacional (`padrao_nacional` via `national-nfse.mjs`) funcionem sem falhas, repassando integralmente todos os dados do tomador (CPF/CNPJ, Nome/Razão Social, Logradouro, Número, Bairro, CEP, Município/Código IBGE, UF, E-mail e Telefone), valores, alíquota, CNAE, item de serviço e discriminação formatada pelo template.
+- Aperfeiçoar a auto-emissão e o rascunho/pré-preenchimento fiscal (incluindo no check-out e nas filas de notas pendentes) para que usem os dados reais de faturamento vinculados no CRM (priorizando a Empresa PJ vinculada quando houver `companyId`, e mantendo os dados do hóspede e da estadia na discriminação do serviço).
+- Garantir que o Chat Assistente Fiscal (`POST /api/invoices/chat` e `chat-service.mjs`) também higienize, enriqueça (via lookup de CNPJ e CEP) e cadastre/atualize tanto Hóspedes (PF) quanto Empresas (PJ) no CRM (`db.guests` e `db.companies`).
+
+### R2. Compatibilização Bidirecional CRM 360° (Hóspedes, Solicitantes & Empresas) ↔ Nota Fiscal
+- Persistir e editar todos os campos fiscais e de endereço tanto no cadastro de Empresas (`db.companies` e modal de empresa em `crm-guests.tsx`: CNPJ, Razão Social, Nome Fantasia, Inscrição Estadual/Municipal, CEP, Logradouro/Endereço, Número, Bairro, Cidade, UF, Código IBGE, E-mail Financeiro, Telefone e Contato) quanto no cadastro de Hóspedes (`db.guests` e modal de hóspede em `crm-guests.tsx`: CPF/CNPJ, Nome Completo, CEP, Endereço, Número, Bairro, Cidade, UF, E-mail, Telefone, `companyId` e `autoEmitInvoice`).
+- Na tela de Notas Fiscais (`fiscal-invoices.tsx`), atualizar o seletor do CRM e a importação via URL/parâmetros para:
+  1. Permitir buscar e selecionar **Hóspedes (PF)**, **Empresas (PJ)** e **Reservas ativas/recentes**.
+  2. Quando um Hóspede selecionado possuir uma **Empresa vinculada no CRM (`companyId`)**, preencher automaticamente os dados da **Empresa** como **Tomador da NFS-e** (CNPJ, Razão Social, Endereço completo, CEP, Cidade/UF, E-mail financeiro e Telefone), mantendo o nome do Hóspede, Flat, Check-in, Check-out e Diárias na **Discriminação do Serviço**, e exibindo uma opção rápida na interface para alternar o Tomador entre a *Empresa Vinculada (PJ)* e o *Próprio Hóspede (PF)* caso o operador deseje.
+  3. Preencher automaticamente o valor do serviço, número do flat, datas de check-in/check-out e quantidade de diárias a partir da reserva ativa ou mais recente do hóspede/empresa quando disponível.
+
+### R3. Automação de Solicitação, Sanitização e Vínculo de Nota Fiscal via WhatsApp
+- Toda vez que uma pessoa (Hóspede titular ou Solicitante Terceiro da reserva) solicitar Nota Fiscal no WhatsApp (ex: "preciso de nota fiscal", "emite NF", "nota fiscal no CNPJ", "quero nota"):
+  1. **Verificação de Vínculo no CRM**: Cruzar o telefone do remetente (e a reserva ativa/recente associada como titular ou `requesterInfo`) com `db.guests` e `db.companies`.
+  2. **Caso JÁ esteja vinculada no CRM a dados de Empresa (`companyId` com CNPJ válido)**: **NÃO solicitar novamente os dados!** Responder imediatamente no WhatsApp confirmando que os dados da empresa já constam no cadastro (exibindo Razão Social e CNPJ formatado), vincular automaticamente a empresa e ativar `autoEmitInvoice = true` no hóspede e na reserva ativa/recente, além de deixar a solicitação/rascunho fiscal pré-preenchido e pronto para emissão na tela de Notas Fiscais (ou check-out).
+  3. **Caso NÃO esteja vinculada a uma Empresa no CRM**: Enviar imediatamente uma mensagem clara e acolhedora no WhatsApp solicitando os dados para emissão da Nota Fiscal — perguntando se será para **Empresa / Pessoa Jurídica** (bastando informar o CNPJ e e-mail financeiro) ou **Pessoa Física** (Nome Completo, CPF, Endereço com CEP e E-mail) — e marcando o estado da conversa/contato como aguardando dados fiscais.
+- Quando a pessoa responder no WhatsApp enviando os dados (na mesma mensagem do pedido ou nas mensagens seguintes):
+  1. **Sanitização e Validação**: Higienizar CPF/CNPJ (apenas dígitos, validação matemática Módulo 11), Nome/Razão Social (`toTitleCase` preservando siglas corporativas LTDA, S/A, ME, EPP e preposições), Telefone (`cleanPhone`), CEP (`cleanCep` 8 dígitos) e E-mail (lowercase). Se o CPF ou CNPJ enviado for matematicamente inválido, avisar gentilmente no WhatsApp pedindo a conferência do número.
+  2. **Enriquecimento Automático**: Se for CNPJ (14 dígitos válidos), consultar automaticamente `lookupCnpj` (CRM local / BrasilAPI / Receita) para obter Razão Social, Nome Fantasia, Logradouro, Número, Bairro, CEP, Município/UF, Telefone e E-mail; se houver CEP, consultar `lookupCep` (ViaCEP / BrasilAPI) para completar o endereço.
+  3. **Inserção/Atualização e Vínculo no CRM**:
+     - Se for **PJ (CNPJ)**: criar ou atualizar a empresa em `db.companies` com todos os dados sanitizados, vincular `companyId` e `companyName` no cadastro da pessoa em `db.guests` (criando o registro em `db.guests` caso ainda não exista) e na reserva ativa/recente (`db.reservations`), ativar `autoEmitInvoice = true`, e responder no WhatsApp confirmando o cadastro/vínculo da empresa (Razão Social e CNPJ) para a emissão da NF.
+     - Se for **PF (CPF)**: criar ou atualizar o cadastro em `db.guests` e na reserva ativa/recente com CPF, Nome Completo, Endereço completo/CEP e E-mail sanitizados, ativar `autoEmitInvoice = true`, e responder no WhatsApp confirmando os dados recebidos para emissão da NF.
+
+### R4. Regras Estritas de Repositório, Paridade Twin-Server, Build e Testes Pontuais
+- Manter paridade byte-a-byte (100% SHA-256) entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
+- Rodar `npm run build` em `artifacts/limpeza` para atualizar `artifacts/limpeza/dist/`.
+- **Escopo estrito de testes (`AGENTS.md`)**: NUNCA executar varreduras globais (`tests/*.test.mjs`) nem testes de outros módulos. Criar e executar EXCLUSIVAMENTE o teste pontual dedicado a esta demanda (`tests/nfse-crm-whatsapp-flow.test.mjs`).
+- Realizar `git commit` e `git push` ao concluir.
+
+## Acceptance Criteria
+
+### Emissão de NFS-e e Endpoints Fiscais
+- [ ] `POST /api/nfse/emit` emite com sucesso sem `ReferenceError` e persiste todos os campos de endereço e identificação do tomador (PF ou PJ) na nota gerada, retornando `status: 201`, `numeroNfse`, `codigoVerificacao` e `danfseUrl`.
+- [ ] Quando uma nota é emitida ou pré-preenchida para reserva/hóspede vinculado a empresa (`companyId`), o Tomador recebe os dados da Empresa PJ e a discriminação preserva os dados do hóspede e da estadia.
+
+### Integração CRM 360° ↔ Nota Fiscal
+- [ ] Criar e editar uma Empresa (`POST /api/companies` e `PATCH /api/companies/:id`) e pela UI (`crm-guests.tsx`) salva e carrega corretamente CNPJ, Razão Social, Nome Fantasia, CEP, Endereço/Logradouro, Número, Bairro, Cidade, UF e E-mail Financeiro.
+- [ ] Na tela `fiscal-invoices.tsx`, selecionar um hóspede que possui `companyId` preenche automaticamente os campos do Tomador com a Empresa vinculada (CNPJ, Razão Social, Endereço/CEP, E-mail, Telefone), preenche os dados da estadia (Flat, Check-in, Check-out, Diárias, Valor) quando houver reserva, e oferece alternância rápida entre Tomador PJ (Empresa) e Tomador PF (Hóspede).
+- [ ] O seletor do CRM em `fiscal-invoices.tsx` permite pesquisar e selecionar tanto Hóspedes quanto Empresas cadastradas.
+
+### Fluxo WhatsApp → Sanitização → CRM
+- [ ] Quando um contato (Hóspede ou Solicitante Terceiro) **sem** empresa vinculada no CRM pede Nota Fiscal no WhatsApp, o sistema envia automaticamente a mensagem solicitando os dados de Empresa (CNPJ + e-mail) ou Pessoa Física (Nome, CPF, Endereço/CEP, E-mail).
+- [ ] Quando o contato responde no WhatsApp com dados de CNPJ (ou CPF + dados PF), os dados são validados, sanitizados (`toTitleCase`, `onlyDigits`, `cleanCep`, `cleanPhone`, enriquecimento de CNPJ/CEP), salvos/atualizados em `db.companies` e `db.guests`, vinculados ao `companyId` do contato e à sua reserva (`autoEmitInvoice = true`), e confirmados na resposta do WhatsApp.
+- [ ] Quando um contato que **já possui** empresa vinculada no CRM (`companyId`) solicita Nota Fiscal no WhatsApp, o sistema **não** solicita os dados novamente: responde confirmando a Razão Social e o CNPJ já vinculados no CRM e marca a reserva/hóspede com `autoEmitInvoice = true` e empresa vinculada.
+- [ ] Se o contato enviar um CPF ou CNPJ com dígitos verificadores inválidos durante a coleta fiscal no WhatsApp, o sistema detecta a invalidade e solicita a correção sem poluir o CRM com documento inválido.
+
+### Build, Paridade e Verificação Pontual
+- [ ] `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` possuem hash SHA-256 idêntico.
+- [ ] `npm --prefix artifacts/limpeza run build` compila com código de saída 0.
+- [ ] O arquivo de teste pontual `tests/nfse-crm-whatsapp-flow.test.mjs` passa 100% dos testes cobrindo emissão NFS-e, vínculo CRM ↔ NF, coleta/sanitização no WhatsApp e não-repetição de solicitação para clientes com empresa vinculada.
+
+## 2026-10-14T10:09:35Z — Diretriz de Coexistência no Workspace
+
+AVISO IMPORTANTE DE COEXISTÊNCIA NO WORKSPACE:
+O usuário iniciou outra conversa paralela no mesmo diretório (`orchestrator_9`, trabalhando em `artifacts/api-server/giss-soap.mjs`, `artifacts/api-server/national-nfse.mjs` e `.agents/teamwork/orchestrator_9/` para NFS-e).
+Portanto:
+1. **NUNCA** descarte nem reverta alterações de `giss-soap.mjs`, `national-nfse.mjs` ou `.agents/teamwork/orchestrator_9/`.
+2. Ao despachar o `victory_auditor`, instrua-o explicitamente a auditar o escopo da integração WebBookingPro (`wbp/`, `scripts/wbp/`, `demo-server.mjs`, `tests/wbp-integration/`, `artifacts/limpeza/`, `docs/wbp/`, `docs/integracoes/webbookingpro/`) e a **ignorar** modificações não-relacionadas em andamento da tarefa paralela de NFS-e (`giss-soap.mjs`, `national-nfse.mjs`, `orchestrator_9`, `worker_m1` da outra sessão).

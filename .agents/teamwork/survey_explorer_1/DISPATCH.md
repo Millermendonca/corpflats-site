@@ -1,19 +1,28 @@
-## 2026-10-11T12:57:22Z
-You are Survey Explorer 1 for the CorpFlats Guest-Flow-Manager project.
+# Task Assignment: Survey Explorer 1 (NFS-e Engine & Emission Audit)
+Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1
+Role: teamwork_preview_explorer
 
-Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1
-Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read the section starting at 2026-10-11T12:53:32Z)
+Focus:
+1. Audit and map all code related to NFS-e emission in `scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `giss-soap.mjs`, `national-nfse.mjs`, and `chat-service.mjs`.
+2. Locate the undefined variable bug (`numNfseReal` / `codVerifReal`) in `POST /api/nfse/emit`.
+3. Investigate municipal engine (`giss_prefeitura`) vs national engine (`padrao_nacional`), inspecting all tomador fields passed, XML building, SOAP requests, fallback handling, template formatting, CNAE, item de serviço, and response structure.
+4. Examine auto-emission at check-out and pending invoice queue, checking how CRM company/guest billing data is currently fetched or ignored.
+5. Inspect `POST /api/invoices/chat` and `chat-service.mjs`.
+6. Write your comprehensive report in `handoff.md` within your working directory.
 
-Investigate the backend architecture, reservation models, and payment mechanisms:
-1. Read ORIGINAL_REQUEST.md completely.
-2. Investigate backend architecture, reservation models, calendar availability algorithms, and modification endpoints in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
-3. Investigate current payment flows: PIX (dynamic/static, QR code, Copia e Cola, polling verification), Mercado Pago credit card checkout, and how payments are recorded in `reservation.payments`.
-4. Analyze how reservations are updated, how dates/flats changes are committed, and how data is persisted in `data/database.json`.
-5. Identify technical gaps for `/modify-preview` endpoint (cost calculation, daily rate, extra nights, 24-hour refund policy, conflict detection).
-6. Detail the mechanism for two-step reservation modification with pending payment: how to hold tentative changes without modifying actual reservation dates until payment is verified.
-7. Document all required API endpoints, schemas, validation rules, and error codes.
 
-Write your complete findings in `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\survey_report.md`.
-Write a standard handoff report in `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\handoff.md`.
-Update `progress.md` with your progress and timestamps.
-When finished, send a completion message back to the orchestrator.
+## 2026-10-14T09:41:46Z
+Você é o Survey Explorer 1 (NFS-e Engine & Emission Audit).
+Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1
+Leia atentamente:
+1. O arquivo oficial de requisitos: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\DISPATCH.md
+
+Seus objetivos de investigação:
+1. Investigar todo o código de emissão de NFS-e no backend (`scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `giss-soap.mjs`, `national-nfse.mjs`, `chat-service.mjs`, `fiscal-service.mjs` ou serviços correlatos).
+2. Localizar e analisar o bug de variáveis indefinidas (`numNfseReal` / `codVerifReal`) na rota `POST /api/nfse/emit`.
+3. Mapear o funcionamento do motor municipal (`giss_prefeitura`) e nacional (`padrao_nacional`), campos do tomador passados (CPF/CNPJ, Razão Social, Logradouro, Número, Bairro, CEP, Município, Código IBGE, UF, E-mail, Telefone), montagem de XML/SOAP, status de retorno, templates de discriminação, alíquotas, CNAE, itens de serviço.
+4. Mapear como a auto-emissão (no check-out ou tarefas em lote) e o pré-preenchimento de notas buscam ou ignoram dados do CRM (empresa vinculada vs hóspede).
+5. Mapear o Chat Assistente Fiscal (`POST /api/invoices/chat` e `chat-service.mjs`) e seus métodos de higienização/enriquecimento de dados.
+
+Crie seu `progress.md` com status e entregue seu relatório detalhado com evidências e caminhos de arquivo em `handoff.md` no seu diretório de trabalho. Ao concluir, avise o orquestrador via `send_message`.

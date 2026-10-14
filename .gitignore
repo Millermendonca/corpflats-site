@@ -53,6 +53,7 @@ artifacts/api-server/secure_uploads/*
 !artifacts/api-server/secure_uploads/**/.gitkeep
 artifacts/api-server/uploads/fnrh_documents/*
 !artifacts/api-server/uploads/fnrh_documents/**/.gitkeep
+storage/invoices_vault/
 
 # Temporary scratch
 scratch/

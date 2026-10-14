@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-12T00:10:00Z
+# BRIEFING — 2026-10-14T11:35:00Z
 
 ## Mission
-Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub Backend implementation (`scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`), fail-safe lifecycle, 30min antecedence window, twin-server SHA-256 parity, and IoT hardware guide (`docs/SMART_FLAT_HARDWARE_GUIDE.md`). Run strictly the pontual test `tests/smart-flat-hub.test.mjs`. Issue definitive verdict (APPROVE / REQUEST_CHANGES).
+Independent and adversarial review of Requirements R3 & R4: WhatsApp Fiscal Automation Flow (`whatsapp-ai-service.mjs`, `zapi-service.mjs`), conditional no-repeat logic for CRM-linked companies, onboarding for unlinked contacts, Módulo 11 mathematical validation for CPF/CNPJ, text sanitization and CNPJ/CEP enrichment, twin-server SHA-256 byte-parity, production build, and execution of dedicated test `tests/nfse-crm-whatsapp-flow.test.mjs`.
 
 ## 🔒 My Identity
 - Archetype: reviewer
@@ -16,6 +16,8 @@ Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub B
 - Current Role: Reviewer 2 (Frontend Reviewer) for Follow-up Developer AI Coaching & Message Rectification
 - Smart Flat Hub Parent: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
 - Smart Flat Hub Role: Reviewer 2 (Backend APIs, Fail-Safe Engine, IoT Hardware Guide & Twin-Server Parity)
+- NFS-e Parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- NFS-e Role: Reviewer 2 (R3 & R4: WhatsApp Fiscal Assistant, Módulo 11, Twin Parity, Build & Test Verification)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -27,27 +29,34 @@ Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub B
 - STRICT AGENTS.MD: NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs)
 - Build de Produção: execute npm --prefix artifacts/limpeza run build e verifique saída em artifacts/limpeza/dist/
 - Smart Flat Hub Test: Executar ESTRITAMENTE o teste pontual dedicado `node --test tests/smart-flat-hub.test.mjs`
+- NFS-e Dedicated Test: Executar EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs`
+- É ESTRITAMENTE PROIBIDO executar testes globais (tests/*.test.mjs) ou outros módulos
 
 ## Current Parent
-- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-- Updated: 2026-10-12T00:10:00Z
+- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
+- Updated: 2026-10-14T11:35:00Z
 
 ## Review Scope
-- **Files to review**:
-  - `scripts/demo-server.mjs` (Smart Flat Hub backend APIs, fail-safe lifecycle, 30min antecedence window, playlist auto-trigger)
-  - `artifacts/api-server/demo-server.mjs` (Twin server file)
-  - `docs/SMART_FLAT_HARDWARE_GUIDE.md` (IoT hardware specifications, electrical safety calculations, networking, Tuya inching, BOM for 19 flats)
-  - `tests/smart-flat-hub.test.mjs` (Dedicated pontual test suite)
-- **Interface contracts**: `ORIGINAL_REQUEST.md` (Follow-up 2026-10-11T23:35:41Z), `worker_backend_iot_1/handoff.md`
-- **Review criteria**: Correctness, Completeness, Quality, Adversarial Robustness, Integrity Violations Check, Twin-Server SHA-256 Parity
+- **Files reviewed**:
+  - `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`
+  - `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`
+  - `artifacts/api-server/lookup.mjs` & `scripts/lookup.mjs`
+  - `artifacts/api-server/chat-service.mjs` & `scripts/chat-service.mjs`
+  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`
+  - `artifacts/api-server/giss-soap.mjs` & `scripts/giss-soap.mjs`
+  - `artifacts/api-server/national-nfse.mjs` & `scripts/national-nfse.mjs`
+  - `tests/nfse-crm-whatsapp-flow.test.mjs`
+  - `artifacts/limpeza/dist/`
+- **Interface contracts**: `ORIGINAL_REQUEST.md`, `orchestrator_9/PROJECT.md`
+- **Review criteria**: Correctness, Completeness, Quality, Adversarial Robustness, Integrity Violations Check, Twin-Server SHA-256 Parity, Build Health
 
 ## Key Decisions Made
-- Concluded exhaustive independent audit of Smart Flat Hub Backend and IoT Hardware Guide.
-- Verified 100% cryptographic SHA-256 parity between twin servers (`394FED4C9412BF29672DFD81AB153FFEE564DD40F8CBF5CC1611C23592FEE5B3`).
-- Ran pontual test suite `node --test tests/smart-flat-hub.test.mjs` with 6/6 tests passing (100%).
-- Verified clean production frontend build (`built in 38.32s`, exit code 0).
-- Confirmed zero exposure of Smart Flat Hub features to production guests in `guest-portal.tsx`.
-- Formulated adversarial findings regarding midnight rollover and sandbox `/simulate` endpoint.
+- Executed dedicated test `node --test tests/nfse-crm-whatsapp-flow.test.mjs` with 24/24 passing (100%).
+- Verified 100% SHA-256 cryptographic parity across all 7 twin files between `artifacts/api-server/` and `scripts/`.
+- Verified production build `npm --prefix artifacts/limpeza run build` (exit code 0, 31.72s).
+- Ran adversarial stress tests for Módulo 11 (identical digits, lengths, invalid check digits) and regex intent classification (true/false positives).
+- Zero integrity violations detected (no hardcoded mocks, no facade shortcuts).
+- Verified production database `data/database.json` remained untouched.
 - Issued definitive verdict: APPROVE.
 
 ## Artifact Index
@@ -58,19 +67,23 @@ Conduct an independent, rigorous, and adversarial review of the Smart Flat Hub B
 
 ## Review Checklist
 - **Items reviewed**:
-  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` (/api/smart-flat/* endpoints, timeContext, failSafe)
-  - `docs/SMART_FLAT_HARDWARE_GUIDE.md` (19 flats, 16A plugs, IR blasters, Echo Pop, VLAN 30, BOM)
-  - `tests/smart-flat-hub.test.mjs` (6 unit & HTTP integration tests)
-  - Twin-Server SHA-256 Parity (Verified True)
-  - Production build in `artifacts/limpeza` (Exit code 0)
+  - R3 WhatsApp Fiscal Automation Flow: PASS
+  - Conditional No-Repeat Logic for Linked Companies: PASS
+  - Onboarding for Unlinked Contacts (awaitingFiscalData): PASS
+  - Módulo 11 Mathematical Validation & Friendly Alerts: PASS
+  - Text Sanitization (toTitleCase, cleanPhone, cleanCep) & CNPJ/CEP Enrichment: PASS
+  - CRM Binding, Reservation Auto-Emit & Confirmation Message: PASS
+  - R4 Twin Parity (7 files): PASS (100% SHA-256 match)
+  - R4 Production Build: PASS (built in 31.72s)
+  - Dedicated Test Suite: PASS (24/24 pass)
 - **Verdict**: APPROVE
-- **Unverified claims**: 0 remaining unverified claims
+- **Unverified claims**: 0
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Tested invalid time inputs (e.g. `25:00`, `null`, `""`, strings) -> returns null / 400.
-  - Tested invalid temperatures (e.g. 15°C, 27°C) -> rejected with 400.
-  - Tested antecedence window boundaries (13:00 vs 13:29 vs 13:30) -> blocked until 13:30 for 14:00 ETA.
-  - Tested fail-safe warning window [ETA, ETA + 30min[ and auto shutoff at ETA + 30min -> exactly matches specifications.
-  - Tested entrance confirmation disarming fail-safe -> verified disarmed.
-  - Tested midnight rollover -> identified as future advisory improvement.
+  - All identical digits CPF/CNPJ (e.g. 000.000.000-00, 11.111.111/1111-11) -> correctly rejected by Módulo 11.
+  - Invalid check digits -> friendly warning dispatched, zero invalid records in CRM, state kept as awaitingFiscalData.
+  - False positive fiscal intents (e.g. "nota de 100 reais", "wifi", "diaria com cafe") -> correctly ignored.
+  - Preposition at beginning of company name ("de souza...") -> capitalized as "De" at index 0.
+  - Corporate acronyms (LTDA, S/A, ME, EPP, EIRELI) -> preserved in uppercase.
+- **Vulnerabilities found**: 0 blocking issues.

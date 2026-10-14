@@ -34,7 +34,7 @@ interface ExtractedData {
   tomadorCodigoMunicipio?: string
   tomadorUf?: string
   tomadorCep?: string
-  valorServico?: string
+  valorServico?: string | number
   checkIn?: string
   checkOut?: string
   quantidadeDiarias?: number
@@ -54,11 +54,18 @@ export default function FiscalInvoicesPage() {
   const [loadingInvoices, setLoadingInvoices] = useState(true)
   const [searchFilter, setSearchFilter] = useState("")
 
-  // ── Clientes do CRM e Combobox Pesquisável ──────────────────────────────────
+  // ── CRM Multi-Entidade (Hóspedes PF, Empresas PJ e Reservas) ───────────────
   const [guests, setGuests] = useState<any[]>([])
+  const [companies, setCompanies] = useState<any[]>([])
+  const [reservations, setReservations] = useState<any[]>([])
   const [guestSearchQuery, setGuestSearchQuery] = useState("")
   const [guestDropdownOpen, setGuestDropdownOpen] = useState(false)
+  const [selectedEntity, setSelectedEntity] = useState<any | null>(null)
   const [selectedGuest, setSelectedGuest] = useState<any | null>(null)
+  const [linkedCompany, setLinkedCompany] = useState<any | null>(null)
+  const [linkedGuest, setLinkedGuest] = useState<any | null>(null)
+  const [linkedReservation, setLinkedReservation] = useState<any | null>(null)
+  const [tomadorMode, setTomadorMode] = useState<"pj" | "pf">("pf")
   const guestComboboxRef = useRef<HTMLDivElement>(null)
 
   // ── Configurações Fiscais e Template de Tags ────────────────────────────────
@@ -132,6 +139,28 @@ export default function FiscalInvoicesPage() {
     }
   }
 
+  const fetchCompanies = async () => {
+    try {
+      const res = await fetch("/api/companies", { credentials: "include" })
+      const data = await res.json()
+      if (Array.isArray(data)) setCompanies(data)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const fetchReservations = async () => {
+    try {
+      const res = await fetch("/api/pms/calendar?startDate=2026-01-01&endDate=2027-12-31", { credentials: "include" })
+      const data = await res.json()
+      if (data && Array.isArray(data.reservations)) {
+        setReservations(data.reservations)
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   const fetchFiscalSettings = async () => {
     try {
       const res = await fetch("/api/nfse/settings", { credentials: "include" })
@@ -145,30 +174,359 @@ export default function FiscalInvoicesPage() {
   useEffect(() => {
     fetchInvoices()
     fetchGuests()
+    fetchCompanies()
+    fetchReservations()
     fetchFiscalSettings()
+  }, [])
 
-    // Leitura de parâmetros de hóspede vindos do CRM
-    const urlParams = new URLSearchParams(window.location.search)
-    const docParam = urlParams.get("doc")
-    const nomeParam = urlParams.get("nome")
-    if (docParam || nomeParam) {
-      const cleanDoc = (docParam || "").replace(/\D/g, "")
+  // ── Helper de Discriminação de Serviços ─────────────────────────────────────
+  const buildCorporateDescription = (guestName: string, flat?: string, checkin?: string, checkout?: string, diarias?: number) => {
+    let desc = `Nota fiscal de prestação de serviços de hospedagem corporativa referente ao colaborador ${guestName}`
+    if (flat) desc += `, no Flat ${flat}`
+    desc += ".\nLocal: CorpFlats Macaé / Campos dos Goytacazes."
+    desc += "\nAv. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ, CEP 28035-000"
+    if (diarias) desc += `\nQuantidade de diárias: ${diarias}`
+    if (checkin) desc += `\nCheck-in: ${checkin}`
+    if (checkout) desc += `\nCheck-out: ${checkout}`
+    return desc
+  }
+
+  const buildStandardDescription = (guestName: string, flat?: string, checkin?: string, checkout?: string, diarias?: number) => {
+    let desc = `Nota relativa à hospedagem de ${guestName}`
+    if (flat) desc += `, no Flat ${flat}`
+    desc += ".\nLocal: CorpFlats."
+    desc += "\nAv. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ, CEP 28035-000"
+    if (diarias) desc += `\nQuantidade de diárias: ${diarias}`
+    if (checkin) desc += `\nCheck-in: ${checkin}`
+    if (checkout) desc += `\nCheck-out: ${checkout}`
+    return desc
+  }
+
+  // ── Aplicar Empresa (PJ) como Tomadora ─────────────────────────────────────
+  const applyTomadorPJ = (comp: any, guestInfo?: any, stayInfo?: any) => {
+    setTomadorMode("pj")
+    const compDoc = (comp.cnpj || "").replace(/\D/g, "")
+    const compName = comp.corporateName || comp.tradeName || comp.razaoSocial || comp.name || "Empresa"
+    const compEmail = comp.financialEmail || comp.email || ""
+    const compTel = (comp.phone || "").replace(/\D/g, "")
+    const compEnd = comp.address || comp.logradouro || comp.endereco || "Av. Pelinca, 100"
+    const compNum = comp.number || comp.numero || "100"
+    const compBairro = comp.neighborhood || comp.bairro || "Pelinca"
+    const compCep = (comp.cep || "28035000").replace(/\D/g, "")
+    const compIbge = comp.ibgeCode || comp.codigoMunicipio || "3301009"
+    const compUf = comp.state || comp.uf || "RJ"
+
+    const guestName = guestInfo?.fullName || guestInfo?.name || ""
+    const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
+    const checkin = stayInfo?.checkIn || extractedData.checkIn || formCheckin
+    const checkout = stayInfo?.checkOut || extractedData.checkOut || formCheckout
+    const diarias = stayInfo?.quantidadeDiarias || extractedData.quantidadeDiarias || formDiarias
+    const valor = stayInfo?.valorServico || extractedData.valorServico || formValor
+
+    const desc = guestName 
+      ? buildCorporateDescription(guestName, flat, checkin, checkout, diarias)
+      : `Nota fiscal de prestação de serviços de hospedagem corporativa.\nLocal: CorpFlats.\nAv. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ, CEP 28035-000`
+
+    setExtractedData(prev => ({
+      ...prev,
+      tomadorNome: compName,
+      tomadorCpfCnpj: compDoc,
+      tomadorEmail: compEmail,
+      tomadorTelefone: compTel,
+      tomadorEndereco: compEnd,
+      tomadorNumero: compNum,
+      tomadorBairro: compBairro,
+      tomadorCep: compCep,
+      tomadorCodigoMunicipio: compIbge,
+      tomadorUf: compUf,
+      descricaoServico: desc,
+      ...(stayInfo || {})
+    }))
+
+    setFormTomadorNome(compName)
+    setFormTomadorDoc(compDoc)
+    setFormTomadorEmail(compEmail)
+    setFormTomadorTelefone(compTel)
+    setFormTomadorEndereco(compEnd)
+    setFormTomadorNumero(compNum)
+    setFormTomadorBairro(compBairro)
+    setFormTomadorCep(compCep)
+    setFormDescricao(desc)
+    if (flat) setFormFlatNumber(flat)
+    if (checkin) setFormCheckin(checkin)
+    if (checkout) setFormCheckout(checkout)
+    if (diarias) setFormDiarias(diarias)
+    if (valor) setFormValor(String(valor))
+
+    if (compName && compDoc && valor) {
+      setIsReadyToEmit(true)
+    }
+  }
+
+  // ── Aplicar Hóspede (PF) como Tomador ───────────────────────────────────────
+  const applyTomadorPF = (guest: any, stayInfo?: any) => {
+    setTomadorMode("pf")
+    const guestDoc = (guest.documentNumber || guest.document || "").replace(/\D/g, "")
+    const guestName = guest.fullName || guest.name || "Hóspede"
+    const guestEmail = guest.email || ""
+    const guestTel = (guest.phone || "").replace(/\D/g, "")
+    const guestEnd = guest.address || guest.logradouro || guest.endereco || "Av. Pelinca, 100"
+    const guestNum = guest.number || guest.numero || "100"
+    const guestBairro = guest.neighborhood || guest.bairro || "Pelinca"
+    const guestCep = (guest.cep || "28035000").replace(/\D/g, "")
+    const guestIbge = guest.ibgeCode || guest.codigoMunicipio || "3301009"
+    const guestUf = guest.state || guest.uf || "RJ"
+
+    const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
+    const checkin = stayInfo?.checkIn || extractedData.checkIn || formCheckin
+    const checkout = stayInfo?.checkOut || extractedData.checkOut || formCheckout
+    const diarias = stayInfo?.quantidadeDiarias || extractedData.quantidadeDiarias || formDiarias
+    const valor = stayInfo?.valorServico || extractedData.valorServico || formValor
+
+    const desc = buildStandardDescription(guestName, flat, checkin, checkout, diarias)
+
+    setExtractedData(prev => ({
+      ...prev,
+      tomadorNome: guestName,
+      tomadorCpfCnpj: guestDoc,
+      tomadorEmail: guestEmail,
+      tomadorTelefone: guestTel,
+      tomadorEndereco: guestEnd,
+      tomadorNumero: guestNum,
+      tomadorBairro: guestBairro,
+      tomadorCep: guestCep,
+      tomadorCodigoMunicipio: guestIbge,
+      tomadorUf: guestUf,
+      descricaoServico: desc,
+      ...(stayInfo || {})
+    }))
+
+    setFormTomadorNome(guestName)
+    setFormTomadorDoc(guestDoc)
+    setFormTomadorEmail(guestEmail)
+    setFormTomadorTelefone(guestTel)
+    setFormTomadorEndereco(guestEnd)
+    setFormTomadorNumero(guestNum)
+    setFormTomadorBairro(guestBairro)
+    setFormTomadorCep(guestCep)
+    setFormDescricao(desc)
+    if (flat) setFormFlatNumber(flat)
+    if (checkin) setFormCheckin(checkin)
+    if (checkout) setFormCheckout(checkout)
+    if (diarias) setFormDiarias(diarias)
+    if (valor) setFormValor(String(valor))
+
+    if (guestName && guestDoc && valor) {
+      setIsReadyToEmit(true)
+    }
+  }
+
+  // ── Alternar Tomador entre PJ e PF (F10) ────────────────────────────────────
+  const handleToggleTomadorMode = () => {
+    if (tomadorMode === "pj") {
+      const guest = linkedGuest || selectedGuest
+      if (guest) {
+        applyTomadorPF(guest, extractedData)
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Tomador alternado para Pessoa Física: **${guest.fullName || guest.name}** (CPF: ${guest.documentNumber || 'Não informado'}). 👤\n\nTodos os detalhes da estadia, flat e valores foram preservados!`
+          }
+        ])
+      } else {
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: "Não há dados de hóspede PF vinculados para alternar." }
+        ])
+      }
+    } else {
+      if (linkedCompany) {
+        applyTomadorPJ(linkedCompany, linkedGuest || selectedGuest, extractedData)
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Tomador alternado para Pessoa Jurídica: **${linkedCompany.corporateName || linkedCompany.name}** (CNPJ: ${linkedCompany.cnpj}). 🏢\n\nO colaborador **${(linkedGuest || selectedGuest)?.fullName || ''}** foi mantido na discriminação da nota!`
+          }
+        ])
+      } else {
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: "Não há empresa corporativa PJ vinculada a este hóspede para alternar." }
+        ])
+      }
+    }
+  }
+
+  // ── Preencher Dados de Estadia a partir de Reserva ─────────────────────────
+  const populateStayFromReservation = (res: any) => {
+    const flat = String(res.flatNumber || "")
+    const checkin = res.checkinDate ? String(res.checkinDate).substring(0, 10) : ""
+    const checkout = res.checkoutDate ? String(res.checkoutDate).substring(0, 10) : ""
+    const valor = String(res.totalAmount || res.price || res.totalPrice || "")
+    let diarias = 1
+    if (checkin && checkout) {
+      const t1 = new Date(checkin).getTime()
+      const t2 = new Date(checkout).getTime()
+      if (t2 > t1) {
+        diarias = Math.max(1, Math.round((t2 - t1) / (1000 * 60 * 60 * 24)))
+      }
+    }
+
+    const foundGuest = guests.find(g => 
+      (res.guestId && String(g.id) === String(res.guestId)) ||
+      (res.guestName && (g.fullName || g.name || "").toLowerCase() === String(res.guestName).toLowerCase())
+    ) || (res.guestName ? { fullName: res.guestName, email: res.guestEmail, phone: res.guestPhone } : null)
+
+    const stayInfo = {
+      flatNumber: flat,
+      checkIn: checkin,
+      checkOut: checkout,
+      quantidadeDiarias: diarias,
+      valorServico: valor
+    }
+
+    if (foundGuest) {
+      setLinkedGuest(foundGuest)
+      setSelectedGuest(foundGuest)
+
+      const linkedComp = foundGuest.companyId 
+        ? companies.find(c => String(c.id) === String(foundGuest.companyId))
+        : null
+
+      if (linkedComp) {
+        setLinkedCompany(linkedComp)
+        applyTomadorPJ(linkedComp, foundGuest, stayInfo)
+      } else {
+        setLinkedCompany(null)
+        applyTomadorPF(foundGuest, stayInfo)
+      }
+    } else {
       setExtractedData(prev => ({
         ...prev,
-        tomadorNome: nomeParam || prev.tomadorNome,
-        tomadorCpfCnpj: cleanDoc || prev.tomadorCpfCnpj
+        ...stayInfo
       }))
-      setFormTomadorNome(nomeParam || "")
-      setFormTomadorDoc(cleanDoc || "")
+      setFormFlatNumber(flat)
+      if (checkin) setFormCheckin(checkin)
+      if (checkout) setFormCheckout(checkout)
+      setFormDiarias(diarias)
+      if (valor) setFormValor(valor)
+    }
+
+    setMessages(prev => [
+      ...prev,
+      {
+        role: "assistant",
+        content: `Reserva carregada com sucesso! Flat **${flat}** • **${res.guestName || 'Hóspede'}**\n📅 Período: **${checkin}** a **${checkout}** (${diarias} diárias)\n💰 Valor: **R$ ${Number(valor || 0).toFixed(2)}**\n\nTodos os campos foram preenchidos para emissão!`
+      }
+    ])
+  }
+
+  // ── Leitura de Parâmetros de URL do CRM / Reservas (F11) ───────────────────
+  const urlParamsProcessed = useRef(false)
+  useEffect(() => {
+    if (urlParamsProcessed.current) return
+    const urlParams = new URLSearchParams(window.location.search)
+    if (!urlParams.toString()) return
+
+    const docParam = urlParams.get("doc") || urlParams.get("cpf") || urlParams.get("cnpj")
+    const nomeParam = urlParams.get("nome")
+    const flatParam = urlParams.get("flat") || urlParams.get("flatNumber")
+    const checkinParam = urlParams.get("checkin") || urlParams.get("checkIn")
+    const checkoutParam = urlParams.get("checkout") || urlParams.get("checkOut")
+    const valorParam = urlParams.get("valor") || urlParams.get("valorServico")
+    const diariasParam = urlParams.get("diarias") || urlParams.get("quantidadeDiarias")
+    const resCodeParam = urlParams.get("resCode") || urlParams.get("reserva") || urlParams.get("resId")
+    const companyIdParam = urlParams.get("companyId")
+    const guestIdParam = urlParams.get("guestId")
+
+    // Espera dados chegarem caso haja id específico nos parâmetros
+    if ((companyIdParam && companies.length === 0) || (guestIdParam && guests.length === 0)) {
+      return
+    }
+
+    if (docParam || nomeParam || flatParam || checkinParam || checkoutParam || valorParam || diariasParam || resCodeParam || companyIdParam || guestIdParam) {
+      urlParamsProcessed.current = true
+
+      const cleanDoc = (docParam || "").replace(/\D/g, "")
+      const diariasNum = diariasParam ? Number(diariasParam) : (
+        checkinParam && checkoutParam 
+          ? Math.max(1, Math.round((new Date(checkoutParam).getTime() - new Date(checkinParam).getTime()) / (1000 * 60 * 60 * 24)))
+          : 1
+      )
+
+      if (flatParam) setFormFlatNumber(flatParam)
+      if (checkinParam) setFormCheckin(checkinParam)
+      if (checkoutParam) setFormCheckout(checkoutParam)
+      if (diariasParam) setFormDiarias(diariasNum)
+      if (valorParam) setFormValor(valorParam)
+      if (nomeParam) setFormTomadorNome(nomeParam)
+      if (cleanDoc) setFormTomadorDoc(cleanDoc)
+
+      let matchedCompany: any = null
+      if (companyIdParam && companies.length > 0) {
+        matchedCompany = companies.find(c => String(c.id) === String(companyIdParam))
+      }
+
+      let matchedGuest: any = null
+      if (guestIdParam && guests.length > 0) {
+        matchedGuest = guests.find(g => String(g.id) === String(guestIdParam))
+        if (matchedGuest && matchedGuest.companyId && !matchedCompany && companies.length > 0) {
+          matchedCompany = companies.find(c => String(c.id) === String(matchedGuest.companyId))
+        }
+      }
+
+      if (!matchedCompany && cleanDoc.length === 14 && companies.length > 0) {
+        matchedCompany = companies.find(c => (c.cnpj || "").replace(/\D/g, "") === cleanDoc)
+      }
+
+      let matchedRes: any = null
+      if (resCodeParam && reservations.length > 0) {
+        matchedRes = reservations.find(r => String(r.code) === resCodeParam || String(r.id) === resCodeParam)
+      }
+
+      const isPj = Boolean(matchedCompany) || cleanDoc.length === 14
+      if (matchedCompany) setLinkedCompany(matchedCompany)
+      if (matchedGuest) {
+        setLinkedGuest(matchedGuest)
+        setSelectedGuest(matchedGuest)
+      }
+      setTomadorMode(isPj ? "pj" : "pf")
+
+      const stayInfo = {
+        flatNumber: flatParam || (matchedRes ? String(matchedRes.flatNumber) : undefined),
+        checkIn: checkinParam || (matchedRes ? String(matchedRes.checkinDate) : undefined),
+        checkOut: checkoutParam || (matchedRes ? String(matchedRes.checkoutDate) : undefined),
+        quantidadeDiarias: diariasNum,
+        valorServico: valorParam || (matchedRes ? String(matchedRes.totalAmount) : undefined)
+      }
+
+      if (matchedCompany) {
+        applyTomadorPJ(matchedCompany, matchedGuest || (nomeParam ? { fullName: nomeParam } : null), stayInfo)
+      } else if (matchedGuest) {
+        applyTomadorPF(matchedGuest, stayInfo)
+      } else {
+        setExtractedData(prev => ({
+          ...prev,
+          tomadorNome: nomeParam || prev.tomadorNome,
+          tomadorCpfCnpj: cleanDoc || prev.tomadorCpfCnpj,
+          ...stayInfo
+        }))
+      }
+
+      const ready = Boolean((nomeParam || matchedCompany || matchedGuest) && (cleanDoc || matchedCompany?.cnpj || matchedGuest?.documentNumber) && (valorParam || matchedRes?.totalAmount))
+      setIsReadyToEmit(ready)
+
       setMessages(prev => [
         ...prev,
         {
           role: "assistant",
-          content: `Hóspede importado do CRM: **${nomeParam || 'Cliente'}** (${cleanDoc || 'Sem CPF'}). 👤\n\nAgora é só me passar o valor da hospedagem e o número do apartamento para emitirmos a NFS-e!`
+          content: `Dados importados via URL/CRM com sucesso!\n${nomeParam || matchedCompany?.corporateName || matchedCompany?.name || matchedGuest?.fullName ? `• **${nomeParam || matchedCompany?.corporateName || matchedCompany?.name || matchedGuest?.fullName}** (${cleanDoc || matchedCompany?.cnpj || matchedGuest?.documentNumber || 'Sem documento'})\n` : ""}${flatParam || matchedRes?.flatNumber ? `• Flat **${flatParam || matchedRes?.flatNumber}**\n` : ""}${checkinParam ? `• Período: **${checkinParam}** a **${checkoutParam || '—'}** (${diariasNum} diárias)\n` : ""}${valorParam ? `• Valor: **R$ ${Number(valorParam).toFixed(2)}**\n` : ""}\n${isPj ? "🏢 Tomador configurado como Pessoa Jurídica (Empresa)." : "👤 Tomador configurado como Pessoa Física (Hóspede)."}`
         }
       ])
     }
-  }, [])
+  }, [companies, guests, reservations])
 
   // Fechar dropdown de hóspedes ao clicar fora
   useEffect(() => {
@@ -191,53 +549,143 @@ export default function FiscalInvoicesPage() {
     }
   }, [messages, chatLoading])
 
-  // ── Filtro do Combobox de Hóspedes ──────────────────────────────────────────
-  const filteredGuests = useMemo(() => {
-    if (!guestSearchQuery.trim()) return guests.slice(0, 30)
-    const q = guestSearchQuery.toLowerCase()
-    return guests.filter(g => 
-      (g.fullName || "").toLowerCase().includes(q) ||
-      (g.documentNumber || "").replace(/\D/g, "").includes(q.replace(/\D/g, "")) ||
-      (g.email || "").toLowerCase().includes(q)
-    )
-  }, [guests, guestSearchQuery])
+  // ── Filtro do Combobox Multi-Entidade (F9) ──────────────────────────────────
+  interface CrmSearchItem {
+    id: string
+    type: "company" | "guest" | "reservation"
+    title: string
+    subtitle: string
+    badge: string
+    raw: any
+  }
 
-  const handleSelectGuest = (g: any) => {
-    setSelectedGuest(g)
+  const filteredCrmItems = useMemo<CrmSearchItem[]>(() => {
+    const q = guestSearchQuery.trim().toLowerCase()
+    const qDigits = guestSearchQuery.replace(/\D/g, "")
+
+    // 1. Empresas (PJ)
+    const matchingCompanies = companies.filter(c => {
+      if (!q) return true
+      const nameMatch = (c.corporateName || c.tradeName || c.razaoSocial || c.name || "").toLowerCase().includes(q)
+      const cnpjMatch = qDigits ? (c.cnpj || "").replace(/\D/g, "").includes(qDigits) : false
+      const emailMatch = (c.financialEmail || c.email || "").toLowerCase().includes(q)
+      return nameMatch || cnpjMatch || emailMatch
+    }).slice(0, q ? 10 : 5).map(c => ({
+      id: `comp-${c.id}`,
+      type: "company" as const,
+      title: c.corporateName || c.tradeName || c.razaoSocial || c.name,
+      subtitle: `CNPJ: ${c.cnpj || "Sem CNPJ"}${c.financialEmail || c.email ? ` • ${c.financialEmail || c.email}` : ""}`,
+      badge: "🏢 PJ",
+      raw: c
+    }))
+
+    // 2. Hóspedes (PF)
+    const matchingGuests = guests.filter(g => {
+      if (!q) return true
+      const nameMatch = (g.fullName || g.name || "").toLowerCase().includes(q)
+      const docMatch = qDigits ? (g.documentNumber || g.document || "").replace(/\D/g, "").includes(qDigits) : false
+      const emailMatch = (g.email || "").toLowerCase().includes(q)
+      return nameMatch || docMatch || emailMatch
+    }).slice(0, q ? 15 : 10).map(g => ({
+      id: `guest-${g.id}`,
+      type: "guest" as const,
+      title: g.fullName || g.name,
+      subtitle: `${g.documentNumber ? `CPF: ${g.documentNumber}` : "Sem documento"}${g.companyName ? ` • 🏢 ${g.companyName}` : ""}${g.email ? ` • ${g.email}` : ""}`,
+      badge: g.companyId ? "👤 PF (Corp)" : "👤 PF",
+      raw: g
+    }))
+
+    // 3. Reservas Ativas / Recentes
+    const matchingReservations = reservations.filter(r => {
+      if (!q) return true
+      const guestMatch = (r.guestName || "").toLowerCase().includes(q)
+      const flatMatch = String(r.flatNumber || "").toLowerCase().includes(q)
+      const codeMatch = (r.code || "").toLowerCase().includes(q)
+      return guestMatch || flatMatch || codeMatch
+    }).slice(0, q ? 10 : 5).map(r => ({
+      id: `res-${r.id || r.code}`,
+      type: "reservation" as const,
+      title: `Flat ${r.flatNumber} • ${r.guestName}`,
+      subtitle: `${r.checkinDate || ""} a ${r.checkoutDate || ""}${r.totalAmount ? ` • R$ ${Number(r.totalAmount).toFixed(2)}` : ""}`,
+      badge: "📅 Reserva",
+      raw: r
+    }))
+
+    return [...matchingCompanies, ...matchingGuests, ...matchingReservations]
+  }, [companies, guests, reservations, guestSearchQuery])
+
+  const handleSelectEntity = (item: CrmSearchItem) => {
+    setSelectedEntity(item)
     setGuestDropdownOpen(false)
-    setGuestSearchQuery(g.fullName || "")
+    setGuestSearchQuery(item.title)
 
-    const cleanDoc = (g.documentNumber || "").replace(/\D/g, "")
-    
-    // Atualiza estado do Chat
-    const updatedChatData: ExtractedData = {
-      ...extractedData,
-      tomadorNome: g.fullName,
-      tomadorCpfCnpj: cleanDoc,
-      tomadorEmail: g.email || "",
-      tomadorTelefone: g.phone ? g.phone.replace(/\D/g, "") : "",
-      tomadorEndereco: "Av. Pelinca, 100",
-      tomadorCep: "28035000"
-    }
-    setExtractedData(updatedChatData)
+    if (item.type === "company") {
+      const comp = item.raw
+      setLinkedCompany(comp)
+      applyTomadorPJ(comp, linkedGuest || selectedGuest, extractedData)
+      setMessages(prev => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Empresa selecionada como Tomadora: **${comp.corporateName || comp.tradeName || comp.name}** (CNPJ: ${comp.cnpj || 'Sem CNPJ'}). 🏢\n\nAgora informe o valor e os dados da hospedagem para emitirmos a NFS-e!`
+        }
+      ])
+    } else if (item.type === "guest") {
+      const g = item.raw
+      setSelectedGuest(g)
+      setLinkedGuest(g)
 
-    // Atualiza estado do Formulário
-    setFormTomadorNome(g.fullName)
-    setFormTomadorDoc(cleanDoc)
-    setFormTomadorEmail(g.email || "")
-    setFormTomadorTelefone(g.phone || "")
+      const linkedComp = g.companyId 
+        ? companies.find(c => String(c.id) === String(g.companyId))
+        : null
 
-    setMessages(prev => [
-      ...prev,
-      {
-        role: "assistant",
-        content: `Cliente selecionado: **${g.fullName}** (${cleanDoc || 'Sem CPF'}). 👤\n\nAgora é só me passar o valor da hospedagem, diárias ou flat!`
+      if (linkedComp) {
+        setLinkedCompany(linkedComp)
+        applyTomadorPJ(linkedComp, g, extractedData)
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Hóspede corporativo selecionado: **${g.fullName}**! 🏢\n\nA empresa parceira **${linkedComp.corporateName || linkedComp.name}** (CNPJ: ${linkedComp.cnpj}) foi definida automaticamente como Tomadora.\n\n💡 Você pode alternar para Pessoa Física (${g.fullName}) no botão de alternância PJ/PF acima.`
+          }
+        ])
+      } else {
+        setLinkedCompany(null)
+        applyTomadorPF(g, extractedData)
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Hóspede selecionado: **${g.fullName}** (${g.documentNumber ? `Doc: ${g.documentNumber}` : 'Sem documento'}). 👤\n\nAgora é só me passar o valor da hospedagem, diárias ou número do flat!`
+          }
+        ])
       }
-    ])
 
-    if (updatedChatData.tomadorNome && updatedChatData.tomadorCpfCnpj && updatedChatData.valorServico) {
-      setIsReadyToEmit(true)
+      // Tenta associar reserva deste hóspede
+      const guestRes = reservations.find(r => 
+        (g.id && r.guestId && String(r.guestId) === String(g.id)) ||
+        (r.guestName && (g.fullName || "").toLowerCase() === r.guestName.toLowerCase())
+      )
+      if (guestRes) {
+        populateStayFromReservation(guestRes)
+      }
+    } else if (item.type === "reservation") {
+      const res = item.raw
+      setLinkedReservation(res)
+      populateStayFromReservation(res)
     }
+  }
+
+  // Compatibilidade com chamadas legadas
+  const handleSelectGuest = (g: any) => {
+    handleSelectEntity({
+      id: `guest-${g.id}`,
+      type: "guest",
+      title: g.fullName || g.name,
+      subtitle: g.documentNumber || "",
+      badge: "👤 PF",
+      raw: g
+    })
   }
 
   // ── Envio de Mensagem no Chat Fiscal ─────────────────────────────────────────
@@ -535,6 +983,49 @@ export default function FiscalInvoicesPage() {
                 </div>
               </div>
             )}
+            {/* Banner de Alternância Rápida PJ/PF (F10) */}
+            {linkedCompany && (
+              <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-primary/10 border border-indigo-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black shrink-0 ${
+                    tomadorMode === "pj" ? "bg-indigo-600 text-white" : "bg-emerald-600 text-white"
+                  }`}>
+                    {tomadorMode === "pj" ? <Building2 className="w-5 h-5" /> : <User className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Tomador Atual:</span>
+                      <Badge className={tomadorMode === "pj" ? "bg-indigo-600 text-white text-[10px]" : "bg-emerald-600 text-white text-[10px]"}>
+                        {tomadorMode === "pj" ? "🏢 Pessoa Jurídica (Empresa)" : "👤 Pessoa Física (Hóspede)"}
+                      </Badge>
+                    </div>
+                    <h4 className="font-black text-sm text-foreground mt-0.5">
+                      {tomadorMode === "pj" 
+                        ? (linkedCompany.corporateName || linkedCompany.tradeName || linkedCompany.name)
+                        : (linkedGuest?.fullName || selectedGuest?.fullName || extractedData.tomadorNome || "Hóspede PF")}
+                    </h4>
+                    <p className="text-[11px] text-muted-foreground">
+                      {tomadorMode === "pj" ? (
+                        <>CNPJ: <strong className="font-mono">{linkedCompany.cnpj}</strong> {linkedGuest && <>• Colaborador Hóspede: <strong>{linkedGuest.fullName}</strong></>}</>
+                      ) : (
+                        <>CPF: <strong className="font-mono">{linkedGuest?.documentNumber || extractedData.tomadorCpfCnpj || "—"}</strong> • Empresa Vinculada: <strong>{linkedCompany.corporateName || linkedCompany.name}</strong></>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleToggleTomadorMode}
+                  className="h-9 px-3.5 rounded-2xl font-black text-xs gap-2 border-indigo-500/40 hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 shrink-0 shadow-xs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>{tomadorMode === "pj" ? "Alternar para Hóspede (PF)" : "Alternar para Empresa (PJ)"}</span>
+                </Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               {/* Lado Esquerdo: Chat Conversacional */}
               <div className="lg:col-span-7 space-y-3">
@@ -546,16 +1037,16 @@ export default function FiscalInvoicesPage() {
                       </div>
                       <div>
                         <CardTitle className="text-sm font-black text-foreground">Assistente Fiscal IA</CardTitle>
-                        <CardDescription className="text-[11px]">Extração automática e auto-cadastro no CRM</CardDescription>
+                        <CardDescription className="text-[11px]">Extração automática e CRM 360° integrado</CardDescription>
                       </div>
                     </div>
 
-                    {/* Combobox Pesquisável de Hóspedes */}
-                    <div className="relative w-full sm:w-64" ref={guestComboboxRef}>
+                    {/* Combobox Pesquisável Multi-Entidade: Hóspede, Empresa ou Reserva (F9) */}
+                    <div className="relative w-full sm:w-72" ref={guestComboboxRef}>
                       <div className="relative">
                         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                         <Input 
-                          placeholder="Buscar hóspede/CPF..."
+                          placeholder="Buscar PF, PJ ou Reserva..."
                           value={guestSearchQuery}
                           onChange={e => {
                             setGuestSearchQuery(e.target.value)
@@ -569,6 +1060,10 @@ export default function FiscalInvoicesPage() {
                             onClick={() => {
                               setGuestSearchQuery("")
                               setSelectedGuest(null)
+                              setSelectedEntity(null)
+                              setLinkedCompany(null)
+                              setLinkedGuest(null)
+                              setLinkedReservation(null)
                               setExtractedData({})
                               setIsReadyToEmit(false)
                             }}
@@ -579,23 +1074,35 @@ export default function FiscalInvoicesPage() {
                         )}
                       </div>
 
-                      {/* Dropdown Flutuante de Hóspedes */}
+                      {/* Dropdown Flutuante Multi-Entidade */}
                       {guestDropdownOpen && (
-                        <div className="absolute top-10 left-0 right-0 z-50 bg-popover border border-border rounded-2xl shadow-xl max-h-60 overflow-y-auto p-1 text-xs space-y-0.5">
-                          {filteredGuests.length === 0 ? (
-                            <div className="p-3 text-center text-muted-foreground">Nenhum hóspede encontrado</div>
+                        <div className="absolute top-10 left-0 right-0 z-50 bg-popover border border-border rounded-2xl shadow-xl max-h-64 overflow-y-auto p-1 text-xs space-y-0.5">
+                          {filteredCrmItems.length === 0 ? (
+                            <div className="p-3 text-center text-muted-foreground">Nenhuma entidade ou reserva encontrada</div>
                           ) : (
-                            filteredGuests.map(g => (
+                            filteredCrmItems.map(item => (
                               <button
-                                key={g.id}
+                                key={item.id}
                                 type="button"
-                                onClick={() => handleSelectGuest(g)}
-                                className="w-full text-left p-2 rounded-xl hover:bg-muted/80 transition-colors flex flex-col"
+                                onClick={() => handleSelectEntity(item)}
+                                className="w-full text-left p-2 rounded-xl hover:bg-muted/80 transition-colors flex items-start justify-between gap-2 border border-transparent hover:border-border/50"
                               >
-                                <span className="font-bold text-foreground">{g.fullName}</span>
-                                <span className="text-[10px] text-muted-foreground font-mono">
-                                  {g.documentNumber ? `Doc: ${g.documentNumber}` : "Sem documento"} {g.email ? `• ${g.email}` : ""}
-                                </span>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="font-bold text-foreground truncate">{item.title}</span>
+                                  <span className="text-[10px] text-muted-foreground font-mono truncate">
+                                    {item.subtitle}
+                                  </span>
+                                </div>
+                                <Badge 
+                                  variant="outline" 
+                                  className={`text-[9px] px-1.5 py-0.5 shrink-0 rounded-lg font-semibold ${
+                                    item.type === "company" ? "border-indigo-500/40 text-indigo-700 dark:text-indigo-300 bg-indigo-500/10" :
+                                    item.type === "reservation" ? "border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-500/10" :
+                                    "border-emerald-500/40 text-emerald-700 dark:text-emerald-300 bg-emerald-500/10"
+                                  }`}
+                                >
+                                  {item.badge}
+                                </Badge>
                               </button>
                             ))
                           )}
@@ -752,6 +1259,49 @@ export default function FiscalInvoicesPage() {
               ABA 2: EMISSOR TRADICIONAL (FORMULÁRIO ESTRUTURADO COMPLETO)
              ══════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="form" className="space-y-4 m-0">
+            {/* Banner de Alternância Rápida PJ/PF (F10) */}
+            {linkedCompany && (
+              <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-primary/10 border border-indigo-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black shrink-0 ${
+                    tomadorMode === "pj" ? "bg-indigo-600 text-white" : "bg-emerald-600 text-white"
+                  }`}>
+                    {tomadorMode === "pj" ? <Building2 className="w-5 h-5" /> : <User className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Tomador Atual:</span>
+                      <Badge className={tomadorMode === "pj" ? "bg-indigo-600 text-white text-[10px]" : "bg-emerald-600 text-white text-[10px]"}>
+                        {tomadorMode === "pj" ? "🏢 Pessoa Jurídica (Empresa)" : "👤 Pessoa Física (Hóspede)"}
+                      </Badge>
+                    </div>
+                    <h4 className="font-black text-sm text-foreground mt-0.5">
+                      {tomadorMode === "pj" 
+                        ? (linkedCompany.corporateName || linkedCompany.tradeName || linkedCompany.name)
+                        : (linkedGuest?.fullName || selectedGuest?.fullName || formTomadorNome || "Hóspede PF")}
+                    </h4>
+                    <p className="text-[11px] text-muted-foreground">
+                      {tomadorMode === "pj" ? (
+                        <>CNPJ: <strong className="font-mono">{linkedCompany.cnpj}</strong> {linkedGuest && <>• Colaborador Hóspede: <strong>{linkedGuest.fullName}</strong></>}</>
+                      ) : (
+                        <>CPF: <strong className="font-mono">{linkedGuest?.documentNumber || formTomadorDoc || "—"}</strong> • Empresa Vinculada: <strong>{linkedCompany.corporateName || linkedCompany.name}</strong></>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleToggleTomadorMode}
+                  className="h-9 px-3.5 rounded-2xl font-black text-xs gap-2 border-indigo-500/40 hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 shrink-0 shadow-xs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>{tomadorMode === "pj" ? "Alternar para Hóspede (PF)" : "Alternar para Empresa (PJ)"}</span>
+                </Button>
+              </div>
+            )}
+
             <Card className="rounded-3xl border border-border shadow-md">
               <CardHeader className="p-5 border-b border-border">
                 <CardTitle className="text-base font-black text-foreground flex items-center gap-2">

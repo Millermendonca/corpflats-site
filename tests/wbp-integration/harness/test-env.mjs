@@ -13,6 +13,7 @@
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WbpSimulatorHarness } from "./wbp-simulator-harness.mjs";
@@ -87,7 +88,7 @@ export async function startIsolatedWbpEnvironment(options = {}) {
   // 1. Prepare temporary isolated database
   const prodDbPath = path.join(rootDir, "data/database.json");
   const randSuffix = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const tempDbPath = path.join(rootDir, `data/test-wbp-env-${randSuffix}.json`);
+  const tempDbPath = options.tempDbPath || path.join(os.tmpdir(), `test-wbp-env-${randSuffix}.json`);
 
   let baseData = {};
   if (fs.existsSync(prodDbPath)) {

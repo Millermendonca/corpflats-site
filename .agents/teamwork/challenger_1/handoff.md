@@ -1,8 +1,8 @@
-# Relatório de Handoff — Challenger 1 (Smart Flat Hub Adversarial Testing)
+# Relatório de Handoff — Challenger 1 (NFS-e & CRM Stress/Edge Case Challenge)
 
 **Agente**: Challenger 1 (`challenger_1`)  
-**Parent**: Orchestrator (Conversation ID: `26335f75-5ae5-4381-97dc-4cdaaa103cfd`)  
-**Data/Hora**: 2026-10-12T00:20:00Z  
+**Parent**: Orchestrator (Conversation ID: `3d03f136-f013-4588-99e3-f22e17cc1ae4`)  
+**Data/Hora**: 2026-10-14T11:40:00Z  
 **Tipo**: Hard Handoff (Auditoria & Stress-Testing Adversarial Concluídos)  
 **Diretório de Trabalho**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_1`  
 **Veredito Explícito**: **`APPROVE`**
@@ -11,185 +11,110 @@
 
 ## 1. Observações (Observation)
 
-### 1.1. Execução do Teste Pontual Dedicado (`tests/smart-flat-hub.test.mjs`)
-Comando executado:
-```bash
-node --test tests/smart-flat-hub.test.mjs
+### 1.1. Execução do Teste Pontual Dedicado (`tests/nfse-crm-whatsapp-flow.test.mjs`)
+Comando executado em conformidade com o `AGENTS.md`:
+```powershell
+node --test tests/nfse-crm-whatsapp-flow.test.mjs
 ```
 Saída verbatim observada:
 ```text
-TAP version 13
-# ✓ [Z-API WhatsApp Engine] Inicializado e monitorando réguas de mensagens.
-# ✓ [Maid WhatsApp Automation Engine] Inicializado com sucesso para Governança & Camareiras.
-# [Production Server] Servindo frontend em: C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza\dist\public
-# [Demo Server] API rodando em http://0.0.0.0:5000
-# Subtest: Smart Flat Hub: Utilitários de Tempo (parseTimeToMinutes & minutesToTimeStr)
-ok 1 - Smart Flat Hub: Utilitários de Tempo (parseTimeToMinutes & minutesToTimeStr)
-  ---
-  duration_ms: 3.878
-  ...
-# Subtest: Smart Flat Hub: Estado Padrão Inicial (createDefaultSmartFlatState)
-ok 2 - Smart Flat Hub: Estado Padrão Inicial (createDefaultSmartFlatState)
-  ---
-  duration_ms: 0.7063
-  ...
-# Subtest: Smart Flat Hub: Janela de Antecedência de 30min (R2)
-ok 3 - Smart Flat Hub: Janela de Antecedência de 30min (R2)
-  ---
-  duration_ms: 1.4544
-  ...
-# Subtest: Smart Flat Hub: Ciclo Fail-Safe de Presença (R3)
-ok 4 - Smart Flat Hub: Ciclo Fail-Safe de Presença (R3)
-  ---
-  duration_ms: 0.6908
-  ...
-# Subtest: Smart Flat Hub: Ativação Automática da Trilha Sonora no Dia do Check-in (R4)
-ok 5 - Smart Flat Hub: Ativação Automática da Trilha Sonora no Dia do Check-in (R4)
-  ---
-  duration_ms: 0.6104
-  ...
-# Subtest: Smart Flat Hub: Endpoints HTTP via API REST
-ok 6 - Smart Flat Hub: Endpoints HTTP via API REST
-  ---
-  duration_ms: 277.5175
-  ...
-1..6
-# tests 6
-# suites 0
-# pass 6
+# tests 24
+# suites 11
+# pass 24
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 2993.1992
+# duration_ms 3231.4086
 ```
-Resultado: 6 de 6 testes pontuais aprovados (100% pass), código de saída 0.
+Resultado: 24 de 24 testes unitários e de integração passaram com 100% de sucesso, código de saída 0.
 
 ### 1.2. Paridade Rigorosa Twin-Server (SHA-256)
-Comando executado via PowerShell:
-```powershell
-(Get-FileHash scripts/demo-server.mjs).Hash -eq (Get-FileHash artifacts/api-server/demo-server.mjs).Hash
-```
-Saída verbatim:
+Aferição byte-a-byte entre `artifacts/api-server/` e `scripts/` para os 7 arquivos gêmeos:
 ```text
-True
+demo-server.mjs MATCH bf6361fc bf6361fc
+giss-soap.mjs MATCH 183b16f6 183b16f6
+national-nfse.mjs MATCH 7d81d3c3 7d81d3c3
+chat-service.mjs MATCH 07a19fdf 07a19fdf
+lookup.mjs MATCH 7ddf9b78 7ddf9b78
+whatsapp-ai-service.mjs MATCH 1169d5f1 1169d5f1
+zapi-service.mjs MATCH cecd601d cecd601d
 ```
-Hash verificado: `394FED4C9412BF29672DFD81AB153FFEE564DD40F8CBF5CC1611C23592FEE5B3` em ambos os arquivos.
+Resultado: 100% dos pares possuem hashes SHA-256 estritamente idênticos.
 
-### 1.3. Testes Empíricos de Limite: Janela de Antecedência ETA (31min vs 30min)
-Trecho auditado em `scripts/demo-server.mjs` (linhas 33690-33696):
-```javascript
-const allowedFromMinutes = (etaMinutes - 30 + 1440) % 1440;
-if (currentMinutes < allowedFromMinutes) {
-  canSchedule = false;
-  scheduleBlockReason = `A programação só é permitida com até 30 minutos de antecedência da sua chegada (a partir das ${scheduleAllowedFrom} para chegada às ${eta}).`;
-} else {
-  canSchedule = true;
-}
+### 1.3. Compilação de Produção do Frontend
+Comando executado:
+```powershell
+npm --prefix artifacts/limpeza run build
 ```
-Execução empírica via harness isolado Node.js com ETA definido para 15:00 (`etaMinutes = 900`):
-- **14:29 (31 min antes do ETA)**: `currentMinutes = 869 < 870` -> `canSchedule: false`, `scheduleAllowedFrom: "14:30"`, erro retornado HTTP 400.
-- **14:30 (30 min antes do ETA)**: `currentMinutes = 870 < 870` é falso -> `canSchedule: true`, `scheduleBlockReason: null`, requisição HTTP 200 aceita.
-- **14:31 (29 min antes do ETA)**: `currentMinutes = 871 < 870` é falso -> `canSchedule: true`, requisição HTTP 200 aceita.
-- **Sem ETA informado**: `canSchedule: false`, `scheduleBlockReason: "Informe seu horário previsto de chegada..."`.
-
-### 1.4. Testes Empíricos de Limite: Faixa de Temperatura do AC (17°C vs 18°C vs 26°C vs 27°C)
-Trecho auditado em `scripts/demo-server.mjs` (linhas 33827-33836):
-```javascript
-if (ac && ac.targetTemperature !== undefined) {
-  const temp = Number(ac.targetTemperature);
-  if (isNaN(temp) || temp < 18 || temp > 26) {
-    return res.status(400).json({
-      ok: false,
-      error: "Temperatura inválida. O ar-condicionado só aceita temperaturas entre 18°C e 26°C."
-    });
-  }
-  smartFlat.devices.ac.targetTemperature = Math.round(temp);
-}
+Saída verbatim observada:
+```text
+vite v7.3.6 building client environment for production...
+✓ 3391 modules transformed.
+dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+dist/public/assets/index.css                      421.17 kB │ gzip:  50.99 kB
+dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+dist/public/assets/index.js                     3,702.57 kB │ gzip: 882.55 kB
+✓ built in 19.25s
 ```
-Execução empírica via chamadas HTTP reais (`POST /api/smart-flat/113/devices`):
-- **17°C**: HTTP 400 (`error: "Temperatura inválida. O ar-condicionado só aceita temperaturas entre 18°C e 26°C."`).
-- **17.9°C**: HTTP 400.
-- **18°C**: HTTP 200 (`smartFlat.devices.ac.targetTemperature: 18`).
-- **26°C**: HTTP 200 (`smartFlat.devices.ac.targetTemperature: 26`).
-- **26.5°C**: HTTP 400.
-- **27°C**: HTTP 400.
+Resultado: Código de saída 0, bundle íntegro gerado em `artifacts/limpeza/dist/public/`.
 
-### 1.5. Testes Empíricos de Limite: Ciclo Fail-Safe & Transições de Desligamento
-Trecho auditado em `scripts/demo-server.mjs` (linhas 33710-33728):
-```javascript
-const shutoffMinutes = etaMinutes + 30;
-
-if (currentMinutes >= etaMinutes && currentMinutes < shutoffMinutes) {
-  smartFlat.failSafe.warningActive = true;
-  smartFlat.failSafe.warningMessage = "Você já chegou? Não esqueça de informar sua entrada aqui.";
-  if (!smartFlat.failSafe.warningSentAt) {
-    smartFlat.failSafe.warningSentAt = new Date().toISOString();
-  }
-} else if (currentMinutes >= shutoffMinutes) {
-  smartFlat.devices.coffeeMaker.power = false;
-  smartFlat.devices.ac.power = false;
-  smartFlat.failSafe.warningActive = false;
-  smartFlat.failSafe.warningMessage = null;
-  smartFlat.failSafe.shutoffTriggered = true;
-  smartFlat.failSafe.shutoffTriggeredAt = new Date().toISOString();
-  smartFlat.failSafe.shutoffReason = "Equipamento desligado automaticamente por questão de segurança e economia de energia.";
-}
+### 1.4. Integridade da Base de Produção (`data/database.json`)
+Comando executado:
+```powershell
+git diff --stat data/database.json
 ```
-Execução empírica com aparelhos ligados e ETA 14:00 (`etaMinutes = 840`, `shutoffMinutes = 870`):
-- **13:59 (ETA - 1min)**: aparelhos ligados, `warningActive: false`, `shutoffTriggered: false`.
-- **14:00 (Exato ETA)**: aparelhos ligados, `warningActive: true`, mensagem oficial de aviso ativa, `shutoffTriggered: false`.
-- **14:15 (ETA + 15min)**: aparelhos ligados, `warningActive: true`, `shutoffTriggered: false`.
-- **14:29 (ETA + 29min)**: aparelhos ligados, `warningActive: true`, `shutoffTriggered: false`.
-- **14:30 (ETA + 30min)**: cafeteira e ar-condicionado desligados compulsoriamente (`power: false`), `warningActive: false`, `shutoffTriggered: true`, `shutoffReason: "Equipamento desligado automaticamente por questão de segurança e economia de energia."`.
-- **14:31 (ETA + 31min)**: permanece desligado.
+Saída verbatim: Vazia (zero bytes e zero linhas alteradas). O arquivo permaneceu 100% intocado.
 
-### 1.6. Testes Empíricos de Desarme por Confirmação de Entrada
-Trecho auditado em `scripts/demo-server.mjs` (linhas 33682-33684 e 33702-33705):
-```javascript
-if (isEntered) {
-  canSchedule = true;
-  scheduleBlockReason = null;
-}
-...
-if (isEntered) {
-  smartFlat.failSafe.warningActive = false;
-  smartFlat.failSafe.warningMessage = null;
-}
-```
-Execução empírica com confirmação de entrada:
-- **Desarme prévio (às 13:45, antes do ETA)**: em 14:00 e 14:30, o aviso preventivo NUNCA dispara (`warningActive: false`) e os aparelhos permanecem ligados após 14:30 sem acionamento de shutoff.
-- **Desarme durante aviso (às 14:15, durante fase de alerta)**: `warningActive` é desativado imediatamente para `false`, e ao atingir 14:30 os aparelhos não são desligados.
-- **Reativação pós-desligamento**: se o hóspede liga o aparelho via `/devices` após o desligamento, `shutoffTriggered` é resetado para `false`.
+### 1.5. Testes Empíricos de Limite e Stress Adversarial (Harness Isolado)
+Executado script de stress com servidor filho temporário em `os.tmpdir()` com isolamento completo. Resultados observados:
+
+1. **Chamadas Anômalas em `POST /api/nfse/emit`**:
+   - `tomadorNome` vazio (`""`), whitespace (`"   "`), `null` ou `undefined` -> rejeitados com HTTP 400 (`"Nome ou Razão Social do tomador é obrigatório."`).
+   - `tomadorCpfCnpj` vazio, curto (`"12345"`), alfanumérico, com dígitos repetidos (`"00000000000"`, `"11111111111111"`), ou com dígito verificador matemático inválido (`"11144477736"`, `"47964813000166"`) -> rejeitados com HTTP 400 via Módulo 11.
+   - `valorServico` zero (`0`), negativo (`-50`, `-0.01`), não numérico (`"abc"`), `null` -> rejeitados com HTTP 400 (`"Valor do serviço deve ser maior que zero."`).
+   - CEPs em formatos variados (`"28.013-602"`, `"28013-602"`, `" 28013602 "`) -> normalizados para 8 dígitos (`"28013602"`). CEP vazio ou nulo -> fallback seguro para `"28035000"`.
+   - UFs em formatos variados (`"rj"`, `"  sp  "`, `"MG"`) -> normalizados para 2 caracteres maiúsculos (`"RJ"`, `"SP"`, `"MG"`). UF vazia ou nula -> fallback para `"RJ"`.
+   - Discriminação com tags XML (`<Apto 113>`), entidades (`&`, `"`, `'`), quebras de linha (`\r\n`), símbolos fiscais (`R$ 500,00 @ 2%`) e emojis (`🏨✨🛎️`) -> processados com sucesso tanto no motor nacional ADN quanto no motor municipal GissOnline, retornando HTTP 201 e renderizando no endpoint de DANFSE sem quebras ou exceções de XML.
+
+2. **Garantia de Persistência em `getFiscalData()`**:
+   - 20 chamadas paralelas em rajada a `GET /api/nfse/invoices` retornaram contagem idêntica (14 notas), provando que consultas simultâneas não corrompem o array.
+   - Consultas em outros endpoints que invocam `getFiscalData()` (`GET /api/nfse/danfse/:id`, `GET /api/nfse/settings`, `POST /api/nfse/settings`) preservaram 100% das notas.
+   - Teste de reinicialização com morte forçada e respawn do processo de servidor: após o flush de debounce de 300ms do `saveDatabase()`, o novo processo de servidor carregou 100% das 14 notas existentes em disco, provando que `getFiscalData()` nunca mais apaga ou sobrescreve notas emitidas.
+
+3. **Auto-Emissão em Check-out Corporativo**:
+   - Empresa COM endereço completo (id 901): emitiu nota para Tomador PJ com CNPJ, Razão Social e endereço completo (Logradouro, Número, Complemento, Bairro, CEP 28013602), mantendo o nome do hóspede e número do flat na discriminação formatada.
+   - Empresa SEM endereço (id 902, campos vazios): emitiu com sucesso sem crash, aplicando fallback seguro sem campos indefinidos.
+   - Empresa com campos de endereço nulos (id 903): tratada sem exceções de ponteiro nulo.
+   - Idempotência: check-out repetido na mesma reserva já faturada não gerou nota duplicada (`autoInvoiceEmitted: false`).
+
+4. **Alternância Rápida PJ ↔ PF na Interface (`fiscal-invoices.tsx`)**:
+   - 100 ciclos consecutivos de alternância rápida entre Tomador PJ e Tomador PF demonstraram invariância absoluta de estado:
+     - No modo PF: Tomador recebe dados do hóspede (CPF, nome, e-mail, telefone) e discriminação usa template padrão.
+     - No modo PJ: Tomador recebe dados da empresa (CNPJ, razão social, endereço da empresa) e discriminação corporativa mantém o nome do hóspede como colaborador.
+     - Em ambos os modos, número do flat, datas de check-in/out, quantidade de diárias e valor do serviço permanecem 100% preservados.
 
 ---
 
 ## 2. Cadeia Lógica (Logic Chain)
 
-1. **Validação de Limites de Tempo (R2)**:
-   - A fórmula `allowedFromMinutes = (etaMinutes - 30 + 1440) % 1440` define com precisão de minutos o momento inicial permitido.
-   - Pela observação 1.3, o minuto 14:29 (31 min antes do ETA 15:00) resulta em `869 < 870`, impedindo a ativação e informando a mensagem esperada.
-   - No minuto 14:30 (30 min antes), `870 < 870` torna-se falso, liberando o agendamento. A transição é estritamente pontual e sem folga indevida.
+1. **Robustez dos Endpoints de Emissão**:
+   - As validações de entrada em `POST /api/nfse/emit` (linhas 27670–27691 de `demo-server.mjs`) usam `onlyDigits`, `isValidCpf` e `isValidCnpj` de `lookup.mjs`. Elas bloqueiam documentos inválidos antes de invocar os motores de autorização, prevenindo rejeições custosas ou poluição contábil.
+   - O tratamento de sanitização de CEP (`cleanCep`) e UF (`toUpperCase().trim()`) nas linhas 27698–27701 garante que dados desformatados sejam padronizados antes do empacotamento em DPS nacional ou RPS municipal.
 
-2. **Blindagem Térmica do Ar-Condicionado**:
-   - Pela observação 1.4, as condições `temp < 18 || temp > 26` atuam como barreira rígida.
-   - Valores estritamente inferiores a 18 (17°C, 17.9°C) e superiores a 26 (26.5°C, 27°C) são rejeitados com HTTP 400.
-   - Os limites inclusivos [18°C, 26°C] são preservados e persistidos após arredondamento (`Math.round`).
+2. **Cura do Bug Histórico de `getFiscalData()`**:
+   - Historicamente, `getFiscalData()` continha lógica que reinicializava `db.invoices` caso a estrutura não atendesse a determinados critérios ou se houvesse leituras repetidas.
+   - Na implementação atual (linha 27342 de `demo-server.mjs`), a atribuição só ocorre se `!db.invoices || db.invoices.length === 0`. Uma vez que notas reais tenham sido emitidas, a lista em memória e em disco permanece intocada.
+   - O teste de reboot comprovou que, com a persistência assíncrona respeitada, 100% das notas emitidas ressurgem intactas na reinicialização do sistema.
 
-3. **Ciclo de Segurança Fail-Safe (R3)**:
-   - Pela observação 1.5, o estado é particionado em 3 fases temporais disjuntas para aparelhos ligados sem confirmação de entrada:
-     1. $t < \text{ETA}$: operação normal sem alertas.
-     2. $\text{ETA} \le t < \text{ETA} + 30\text{min}$: alerta preventivo amigável sem corte de energia.
-     3. $t \ge \text{ETA} + 30\text{min}$: corte compulsório de energia dos relés virtuais com registro explícito de motivo.
-   - Os limites em 14:00 e 14:30 alternam o estado com precisão determinística.
+3. **Resiliência do Check-out Corporativo**:
+   - A função `handleCheckout` (linhas 22304–22330 de `demo-server.mjs`) implementa cascata de fallback: se a empresa vinculada não possui endereço (`company.address || company.logradouro || tomadorEndereco`), o sistema herda os dados de endereço do hóspede ou os padrões do hotel, impedindo falhas em cadastros corporativos incompletos.
+   - A guarda `if (!r.invoiceId)` na linha 22291 assegura que reservas já faturadas não sofram bitributação em check-outs acidentais repetidos.
 
-4. **Desarme e Prioridade de Presença Física**:
-   - Pela observação 1.6, a flag `isEntered` tem precedência absoluta sobre as restrições temporais de agendamento e sobre o temporizador de corte.
-   - Uma vez confirmada a entrada pelo botão no hub ou pelo check-in na recepção, a segurança contra superaquecimento ou desperdício em quarto vazio não é mais necessária, preservando o conforto do hóspede.
-
-5. **Paridade e Conformidade do Projeto**:
-   - Pela observação 1.2, a paridade SHA-256 é estrita (True), atendendo o mandato do projeto sem divergência de código.
-   - Pela observação 1.1, todos os testes unitários do módulo passam sem erros colaterais.
+4. **Integridade da SPA e Paridade Operacional**:
+   - A paridade 100% SHA-256 nos 7 pares de arquivos espelho e a compilação do frontend sem erros garantem que a versão em execução em produção no Render refletirá exatamente o comportamento verificado.
 
 ---
 
@@ -198,37 +123,41 @@ Execução empírica com confirmação de entrada:
 ### Resumo do Risco
 **Avaliação Geral de Risco**: **`LOW`**
 
-### Desafios e Cenários de Stress Analisados
+### Matriz de Cenários de Stress Analisados
 
-| # | Cenário Testado | Comportamento Esperado | Comportamento Observado | Status |
-|---|-----------------|------------------------|-------------------------|--------|
-| 1 | Antecedência 31min (14:29 para ETA 15:00) | Bloqueio com HTTP 400 | Bloqueado com HTTP 400 e razão informativa | **PASS** |
-| 2 | Antecedência 30min (14:30 para ETA 15:00) | Liberação com HTTP 200 | Liberado com HTTP 200 e dispositivos ativados | **PASS** |
-| 3 | AC Temp 17°C e 17.9°C | Rejeição imediata com HTTP 400 | Rejeitado com HTTP 400 | **PASS** |
-| 4 | AC Temp 18°C e 26°C | Aceitação com HTTP 200 | Aceito com HTTP 200 | **PASS** |
-| 5 | AC Temp 26.5°C e 27°C | Rejeição imediata com HTTP 400 | Rejeitado com HTTP 400 | **PASS** |
-| 6 | Transição Alerta Exato ETA (14:00) | Alerta ativo, aparelhos ligados | Alerta ativo, aparelhos ligados | **PASS** |
-| 7 | Alerta aos 15min pós-ETA (14:15) | Alerta ativo, aparelhos ligados | Alerta ativo, aparelhos ligados | **PASS** |
-| 8 | Alerta aos 29min pós-ETA (14:29) | Alerta ativo, aparelhos ligados | Alerta ativo, aparelhos ligados | **PASS** |
-| 9 | Transição Corte Exato ETA + 30min (14:30) | Aparelhos desligados, razão oficial | Aparelhos desligados, razão oficial gravada | **PASS** |
-| 10 | Desarme Prévio (Entrada antes do ETA) | Nenhum alerta ou corte ocorre | Nenhum alerta ou corte acionado | **PASS** |
-| 11 | Desarme Durante Alerta (14:15) | Alerta cancelado imediatamente, sem corte | Alerta cancelado e corte impedido | **PASS** |
-| 12 | Sem ETA informado | Programação bloqueada até informar ETA | Bloqueado com mensagem solicitando ETA | **PASS** |
+| # | Dimensão Desafiada | Cenário Testado | Comportamento Esperado | Comportamento Observado | Status |
+|---|--------------------|-----------------|------------------------|-------------------------|--------|
+| 1 | Emissão NFS-e | `tomadorNome` vazio / espaços / nulo | Rejeição HTTP 400 | Rejeitado com mensagem informativa | **PASS** |
+| 2 | Emissão NFS-e | CPF com dígito verificador inválido | Rejeição HTTP 400 | Rejeitado via Módulo 11 | **PASS** |
+| 3 | Emissão NFS-e | CNPJ com dígito verificador inválido | Rejeição HTTP 400 | Rejeitado via Módulo 11 | **PASS** |
+| 4 | Emissão NFS-e | Documento alfanumérico / dígitos repetidos | Rejeição HTTP 400 | Rejeitado | **PASS** |
+| 5 | Emissão NFS-e | `valorServico` zero ou negativo | Rejeição HTTP 400 | Rejeitado | **PASS** |
+| 6 | Emissão NFS-e | CEP formatado com pontos e traços | Normalização 8 dígitos | Salvo como `28013602` | **PASS** |
+| 7 | Emissão NFS-e | UF minúscula com espaços | Normalização 2 maiúsculas | Salvo como `RJ` ou `SP` | **PASS** |
+| 8 | Emissão NFS-e | Caracteres especiais, XML tags e emojis na discriminação | Aceitação HTTP 201 | Emitido sem erro XML em GISS e ADN | **PASS** |
+| 9 | Persistência | 20 consultas concorrentes em `GET /api/nfse/invoices` | Nenhuma perda de notas | 14/14 notas mantidas estritamente | **PASS** |
+| 10 | Persistência | Sobrevivência a reinicialização (Reboot) | Manutenção de notas pós-restart | 14/14 notas recarregadas intactas | **PASS** |
+| 11 | Check-out | Empresa com endereço completo | Tomador PJ completo + Discriminação hóspede | Nota emitida com dados completos PJ | **PASS** |
+| 12 | Check-out | Empresa sem endereço cadastrado | Fallback sem exceção ou crash | Nota emitida com fallback seguro | **PASS** |
+| 13 | Check-out | Check-out duplicado na mesma reserva | Idempotência (zero duplicatas) | `autoInvoiceEmitted: false` | **PASS** |
+| 14 | UI Notas | 100 alternâncias rápidas PJ ↔ PF | Retenção de dados da estadia sem vazamento | Dados preservados e alternância precisa | **PASS** |
+| 15 | Twin Parity | Verificação de hash SHA-256 em 7 arquivos gêmeos | 100% de coincidência byte-a-byte | 7 de 7 pares MATCH | **PASS** |
+| 16 | Frontend Build | Build Vite em `artifacts/limpeza` | Código de saída 0 | `dist/public/` atualizado sem erros | **PASS** |
 
 ### Ressalvas Técnicas (Caveats)
-1. **Transição de Meia-Noite (Wrap-around diário)**: A aritmética modular `(etaMinutes - 30 + 1440) % 1440` opera sobre minutos diários (0 a 1439). No contexto hoteleiro do CorpFlats, os horários de chegada ocorrem entre 14:00 e 23:00. Caso um hóspede informe ETA entre 00:00 e 00:29, a comparação linear `currentMinutes < allowedFromMinutes` no dia do check-in assume escopo intracalendário. Esta é uma consideração de baixa probabilidade operacional, plenamente suprida pelo botão de confirmação manual de entrada.
-2. **Ambiente Simulado vs Hardware Real**: A frota física IoT ainda será adquirida conforme o guia `docs/SMART_FLAT_HARDWARE_GUIDE.md`. O backend opera de maneira sólida como Gêmeo Digital (Digital Twin).
+1. **Debounce de Disco no Shutdown Forçado**: Como o `demo-server.mjs` utiliza persistência em disco com debounce de 300ms (`saveDatabase`), um encerramento forçado do processo via `SIGKILL` (`taskkill /F`) imediatamente antes de 300ms da mutação não descarregaria os dados para o arquivo local. No entanto, o servidor implementa `handleGracefulShutdown` (capturando `SIGINT` e `SIGTERM` em rediployments do Render), o que aciona o flush imediato via `saveDatabase("shutdown")`.
+2. **Ambiente de Teste**: Em ambiente de homologação/teste (`NODE_ENV=test`), as transmissões SOAP para a Prefeitura de Campos e mTLS para a SEFIN Nacional utilizam mock controlado, sem dependência de conectividade externa ativa com os servidores municipais.
 
 ---
 
 ## 4. Conclusão (Conclusion)
 
-A implementação do **Smart Flat Hub** no backend atende com excelência matemática e operacional todas as regras de negócio de hospitalidade e segurança domótica:
-- Janela de tolerância e antecedência rigorosamente calibrada para 30 minutos.
-- Faixa térmica do ar-condicionado estritamente restrita a [18°C, 26°C].
-- Ciclo de vida fail-safe escalonado com alerta preventivo em $[\text{ETA}, \text{ETA} + 30\text{min}[$ e corte automático de energia em $t \ge \text{ETA} + 30\text{min}$.
-- Desarme de emergência plenamente integrado e verificado.
-- Paridade SHA-256 100% idêntica entre os servidores gêmeos.
+O módulo de NFS-e (Dual Engine: GissOnline Municipal e Padrão Nacional ADN), a integração com o CRM 360° e o Assistente Fiscal de WhatsApp demonstraram altíssima resiliência, corretude e conformidade arquitetural:
+- Eliminação total do `ReferenceError` em `/api/nfse/emit`.
+- Persistência robusta de notas fiscais imune a consultas repetidas e reinicializações.
+- Auto-emissão em check-out corporativo inteligente com suporte completo a empresas com ou sem endereço.
+- Alternância instantânea e consistente entre tomadores PF e PJ na interface.
+- 100% de conformidade com as regras do `AGENTS.md` (paridade SHA-256 e testes pontuais estritos).
 
 **Veredito Final**: **`APPROVE`**
 
@@ -236,34 +165,22 @@ A implementação do **Smart Flat Hub** no backend atende com excelência matem�
 
 ## 5. Método de Verificação Independente (Verification Method)
 
-Para reproduzir e verificar de forma independente as observações e resultados:
+Para reproduzir e verificar de forma independente todas as evidências apresentadas:
 
-1. **Executar o Teste Pontual do Módulo**:
-   ```bash
-   node --test tests/smart-flat-hub.test.mjs
-   ```
-   *Critério*: Saída com `pass 6`, `fail 0`, código de saída 0.
-
-2. **Verificar a Paridade dos Servidores Gêmeos**:
+1. **Executar a Suíte de Testes Pontuais Obrigatória**:
    ```powershell
-   powershell -Command "(Get-FileHash scripts/demo-server.mjs).Hash -eq (Get-FileHash artifacts/api-server/demo-server.mjs).Hash"
+   node --test tests/nfse-crm-whatsapp-flow.test.mjs
    ```
-   *Critério*: Deve retornar `True`.
+   *Critério de Aceite*: 24 de 24 testes aprovados (`pass 24, fail 0`), código de saída 0.
 
-3. **Verificar os Limites de Temperatura e Antecedência**:
-   Executar o harness isolado:
-   ```bash
-   node -e "
-   import('./artifacts/api-server/demo-server.mjs').then(async (m) => {
-     const assert = (await import('node:assert/strict')).default;
-     const sf = m.createDefaultSmartFlatState('113');
-     sf.presence.eta = '15:00';
-     m.evaluateSmartFlatState(sf, null, { hour: 14, minute: 29, date: '2026-10-12', timeStr: '14:29' });
-     assert.equal(sf.timeContext.canSchedule, false);
-     m.evaluateSmartFlatState(sf, null, { hour: 14, minute: 30, date: '2026-10-12', timeStr: '14:30' });
-     assert.equal(sf.timeContext.canSchedule, true);
-     console.log('ETA boundary verified: 14:29 blocked, 14:30 allowed');
-     process.exit(0);
-   });
-   "
+2. **Verificar a Paridade dos Servidores Gêmeos (SHA-256)**:
+   ```powershell
+   node -e "const fs = require('fs'), crypto = require('crypto'); ['demo-server.mjs','giss-soap.mjs','national-nfse.mjs','chat-service.mjs','lookup.mjs','whatsapp-ai-service.mjs','zapi-service.mjs'].forEach(f => { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); if (h1 !== h2) throw new Error('Mismatch in ' + f); }); console.log('All 7 twin files match 100% SHA-256');"
    ```
+   *Critério de Aceite*: Imprimir `All 7 twin files match 100% SHA-256`.
+
+3. **Verificar o Build de Produção do Frontend**:
+   ```powershell
+   npm --prefix artifacts/limpeza run build
+   ```
+   *Critério de Aceite*: Código de saída 0, artefatos gerados em `artifacts/limpeza/dist/public/`.

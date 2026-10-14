@@ -1,218 +1,215 @@
-# Survey Report: Re-Signature, Automated Notifications, Operational Panels Synchronization & Testing Infrastructure
+# Survey Report 3: WhatsApp Fiscal Assistant Flow, Validation & Testing Architecture
 
-**Author**: Survey Explorer 3  
-**Date**: 2026-10-11T13:15:00Z  
-**Project**: CorpFlats Guest-Flow-Manager  
-**Scope**: In-depth architecture survey covering:
-1. Check-in signing & document generation mechanisms (PDF/HTML, signature storage, reception delivery).
-2. Automated communications (Z-API WhatsApp messaging, email dispatch, personalized re-signature links).
-3. Real-time operational panels (Reception, Garage, Housekeeping schedule, and operational schedulers).
-4. Testing infrastructure in `tests/` (runners, fixtures, mocks, and coverage gaps for modification, payment settlement, re-signature, and panels).
+**Date:** 2026-10-14  
+**Author:** Survey Explorer 3  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3`  
+**Target Project:** Guest-Flow-Manager (CorpFlats)
 
 ---
 
 ## Executive Summary
 
-CorpFlats Guest-Flow-Manager implements a production PMS and Guest Experience suite. While foundational pieces for check-in digital signature, PDFKit document generation, forensic hash calculation, and reception email delivery are solidly built in `scripts/fnrh-pdf-service.mjs`, `scripts/mail-service.mjs`, and `scripts/demo-server.mjs`, the **reservation modification lifecycle** currently has critical integrity and synchronization gaps:
-1. **Self-service modifications (`/api/pms/guest-portal/:code/modify`) update dates immediately without prior simulation (`/modify-preview`) and without verifying payment settlement when stay duration increases (`additionalAmountToPay > 0`)**.
-2. **Date or flat changes in the guest portal do not trigger `needsReSignature = true`**, leaving invalidated old signatures or stale PDFs attached to the modified reservation.
-3. **Automated re-signature dispatch (WhatsApp and Email) is not triggered upon modification**, preventing the guest from receiving the direct link to review and sign their updated declaration.
-4. **The Guest Portal (`guest-portal.tsx`) lacks the re-signature requirement banner and signing interface**, even though `guest-pre-checkin.tsx` already contains the necessary signature renewal logic.
-5. **Operational panels rely on in-memory polling without WebSocket/SSE**, but while the Reception tablet polls every 15s and Live Operations polls every 5s, the Garage dashboard does not auto-poll (mount-only).
+This investigation audits and maps the end-to-end architecture for the WhatsApp Fiscal Assistant, CRM 360° linkage (`db.guests`, `db.companies`), validation/sanitization/enrichment pipelines, NFS-e emission engine parity, and testing infrastructure.
+
+Key architectural discoveries:
+1. **WhatsApp Inbound Handling & Bot Architecture:** Messages enter via Z-API webhooks (`POST /api/whatsapp/webhook/received` in `artifacts/api-server/zapi-service.mjs`, lines 6108–6368), are persisted in `db.whatsappConversations`, and forwarded to `processAiInboundMessage` (`whatsapp-ai-service.mjs`, line 6237). In `classifyUnmetDemand` (line 3198), requests matching `/\b(?:nota\s*fiscal|nf|nfe|fatura|recibo\s*fiscal|comprovante\s*fiscal|cnpj\s*(?:na\s*nota)?)\b/i` are currently classified as `capability_missing` ("emissao_nota_fiscal"), leaving a clear gap where the automated assistant flow must be wired.
+2. **CRM 360° & Sender Resolution:** `buildGuestContext` resolves senders by phone against `db.reservations` and `db.guests`. To fully satisfy R3, the resolution must also cross-reference `r.requesterInfo?.phone` (third-party bookers/requesters) and check `guest.companyId` / `r.companyId` against `db.companies`.
+3. **Conditional Flow Logic (No Repeated Questions):** If the contact is already linked to a company in `db.companies` with a valid CNPJ, the assistant must NOT ask for fiscal data again; it immediately replies confirming the company details (Razão Social & formatted CNPJ), sets `autoEmitInvoice = true`, and links the reservation. If not linked, it sends a welcoming prompt detailing PJ vs PF requirements and enters an awaiting state (`awaitingFiscalData`).
+4. **Validation, Sanitization & Enrichment Engine:** Algorithmic validation (Modulo 11) for CPF and CNPJ is implemented in `national-nfse.mjs` (`isValidCpf`, `isValidCnpj`), along with `cleanPhone`, `cleanCep`, and `toTitleCase`. Enrichment is provided by `lookup.mjs` (`lookupCnpj`, `lookupCep`). We map the strategy to check the local CRM first before calling BrasilAPI/ViaCEP to guarantee speed and offline test resilience.
+5. **NFS-e Emission Bug & Twin Parity:** `POST /api/nfse/emit` in `demo-server.mjs` (lines 27467–27473) contains an immediate runtime bug: returning undeclared variables `numNfseReal` and `codVerifReal` (`ReferenceError`), and hardcodes municipal emission without persisting tomador address fields. Furthermore, `scripts/` is missing `national-nfse.mjs`, `chat-service.mjs`, `lookup.mjs`, and `giss-soap.mjs`, which must be synchronized for byte-for-byte twin parity.
+6. **Testing Architecture (`AGENTS.md`):** Global tests and directory scans are strictly prohibited. The dedicated test file `tests/nfse-crm-whatsapp-flow.test.mjs` must run in isolation on a dedicated port using a temporary database in `os.tmpdir()`, verifying 100% of the acceptance criteria.
 
 ---
 
-## 1. Check-in Signing & Document Generation Mechanisms
+## 1. WhatsApp Inbound Routing & Bot Pipeline
 
-### 1.1 Document Generation Engine (`scripts/fnrh-pdf-service.mjs` & `artifacts/api-server/fnrh-pdf-service.mjs`)
-- **Library**: `pdfkit` (v0.20.2) combined with `qrcode` (v1.5.4) and Node's native `crypto`.
-- **Primary Function**: `generateFnrhPdf({ reservation, guestData, signatureBase64, signerIp, signerUserAgent, appOrigin, whatsapp2faVerified, whatsappPhone, whatsappOtpVerifiedAt })`.
-- **Layout & Visual Design**:
-  - Official header: "CORP FLATS HOSPEDAGEM LTDA" (CNPJ: 47.964.813/0001-65 | Cadastur: 19.034.812/0001-90 | Edifício Soho Residence Service).
-  - Title: "FICHA DE HOSPEDAGEM (CHECK-IN DIGITAL) • CORPFLATS".
-  - Section 1: "1. DADOS DA HOSPEDAGEM" (Flat number, check-in date/time, check-out date/time, guest count, registered vehicle plate & model).
-  - Section 2: "2. DADOS CADASTRAIS DO HÓSPEDE" (Full name, document CPF/Passport, birth date, gender, full address, travel reason, transport method, origin & destination).
-  - Section 3: "3. DECLARAÇÃO, TERMOS E CONDIÇÕES GERAIS" (Acceptance of house rules, pool/gym regulations, checkout policy).
-  - Section 4: "4. ASSINATURA ELETRÔNICA DO HÓSPEDE" (Embedded PNG/JPEG buffer of the handwritten canvas signature, along with forensic metadata).
-  - Forensic Trail:
-    - Signed UTC timestamp (ISO 8601) and Brasília local time.
-    - Signer IP address (`x-forwarded-for` or remote address) and User-Agent.
-    - WhatsApp 2FA verification badge (Z-API OTP verification timestamp and masked phone).
-    - Legal compliance statement citing Art. 10, § 2º of MP nº 2.200-2/2001 and Federal Law nº 14.063/2020.
-    - Dynamic QR Code pointing to verification URL (`${appOrigin}/verificar-ficha/${documentUuid}`).
-    - **Canonical SHA-256 Hash**: Hash calculated from canonical JSON containing `documentUuid`, `reservationCode`, `guestCpf`, `guestName`, `signedAt`, `signerIp`, `signerUserAgent`, `whatsapp2faVerified`.
-    - **Final File SHA-256 Hash**: SHA-256 computed directly from the generated `.pdf` binary on disk.
-- **On-the-Fly Rebuild**:
-  - `rebuildFnrhPdfOnTheFly({ reservation, guest, guestData, auditTrail, appOrigin, db })`: Allows instantaneous re-compilation of lost PDF files after container restarts in ephemeral storage environments like Render.
+### 1.1 Webhook Entry Points in `zapi-service.mjs`
+- Primary route: `POST /api/whatsapp/webhook/received` (Line 6109)
+- Fallback route: `POST /api/whatsapp/webhook` (Line 6401)
+- Data ingestion:
+  ```javascript
+  const incomingInfo = extractIncomingMessageInfo(req.body);
+  const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
+  ```
+- Conversation record update:
+  - Calls `appendMessageToConversation(db, { phone: cleanTarget, ... })`
+  - Stores message in `db.whatsappConversations`
+- Downstream triggers:
+  - If group: `handleConciergeGroupMessage` (line 6225)
+  - Sentiment & NPS: `processInboundSentimentAndNps` (line 6237)
+  - Early arrival prediction: `parseArrivalFromWhatsAppText` (line 6294)
+  - AI Assistant processing: `processAiInboundMessage` (line 6354)
 
-### 1.2 Signature & Document Storage
-- **Local File System**: Saved to `secure_uploads/fnrh_documents/` with format:  
-  `Ficha_Checkin_${reservationId}_${cleanCpf}_${timestamp}.pdf`.
-- **Cloud Storage**: Asynchronous upload to Cloudflare R2 via `storage-service.mjs` (`uploadImageToStorage`), setting `r2Url` / `fnrhR2Url`.
-- **In-Memory & Database State (`data/database.json`)**:
-  - Reservation properties: `fnrhDocumentUuid`, `fnrhPdfUrl`, `fnrhDownloadUrl`, `fnrhSha256Hash`, `fnrhVerifyUrl`, `fnrhSignedAt`, `fnrhAuditTrail`, `fnrhFileName`, `fnrhFilePath`, `r2Url`.
-  - Guest records (`r.guests[i]` and `db.guests`): `targetGuest.hasCompletedCheckin = true`, `targetGuest.status = "CHECKED_IN"`, `targetGuest.fnrhDocumentUuid`, `targetGuest.signatureUrl`.
-  - Secure Access Tokens: `generateSignedFnrhToken(documentUuid, 60 * 24 * 30)` HMAC-SHA256 token used in `/api/pms/fnrh/:documentUuid/view?token=...` and `/download?token=...` to protect against unauthorized document enumeration.
-  - Audit Trail Table: Stored in `db.fnrhAuditDocuments` and logged in `db.fnrhInternalAuditLogs` via `logFnrhInternalAudit()`.
-
-### 1.3 Reception Document Delivery Flow
-- **Email Service (`scripts/mail-service.mjs`)**:
-  - Template: `renderCheckinConfirmedEmail({ reservation, flat, settings })`.
-  - Recipient: `flat.receptionEmail || db.settings.receptionEmail || "millerpessanha@gmail.com"`, with CC to `garageEmail`.
-  - Attachments resolution: `resolveReservationAttachments({ reservation, guest, db })`:
-    - Attaches `FNRH_<code/id>_<guestName>.pdf` (file from disk or Base64 buffer).
-    - Attaches guest ID document photo `Documento_<name>.<ext>`.
-    - Attaches co-guest documents if multi-guest booking.
-  - Dispatch Timing Rules:
-    - **Today or Past Check-in (`isReservationForTodayOrPast(r)`)**: Dispatched immediately upon check-in completion via `sendEmailAsync()`.
-    - **Future Check-in (`isReservationForFuture(r)`)**: Suppressed at signing time. The PDF remains saved on disk and database, and delivery is deferred to the 07:00 morning routine on the check-in day (`r.checkinDate`).
+### 1.2 Intent Detection Gap in `whatsapp-ai-service.mjs`
+In `whatsapp-ai-service.mjs`, inbound messages reach `classifyUnmetDemand` (lines 3013–3230). Line 3198 specifies:
+```javascript
+if (/\b(?:nota\s*fiscal|nf|nfe|fatura|recibo\s*fiscal|comprovante\s*fiscal|cnpj\s*(?:na\s*nota)?)\b/i.test(lower)) {
+  return {
+    category: "emissao_nota_fiscal",
+    demandTitle: UNMET_DEMAND_CATEGORIES.emissao_nota_fiscal.title,
+    reason: "capability_missing",
+    actionTarget: null,
+    suggestedFeature: UNMET_DEMAND_CATEGORIES.emissao_nota_fiscal.defaultSuggested
+  };
+}
+```
+Because the capability was flagged as missing, the AI previously routed this to human handover or an unmet demand record.
 
 ---
 
-## 2. Automated Communications: WhatsApp, Email & Re-Signature Links
+## 2. Sender Phone Resolution & CRM 360° Linkage
 
-### 2.1 WhatsApp Messaging Infrastructure (`scripts/zapi-service.mjs`)
-- **Integration**: Z-API gateway with endpoints for instance status, text messages (`sendZapiMessage`), and action buttons (`sendZapiButtonList` / `sendZapiOtpButton`).
-- **Template System (`defaultTemplates`)**:
-  - `tpl_reservation_updated`: Trigger `reservation_updated`. Sent when changes occur.
-    - Includes summary: `{{resumo_alteracoes}}`.
-    - Action buttons:
-      - `📝 Assinar Ficha Atualizada` (`{{link_checkin_digital}}`)
-      - `🏨 Ver Detalhes da Reserva` (`{{link_portal_hospede}}`)
-      - `📞 Falar com Atendimento` (`{{telefone_hotel}}`)
-  - `tpl_additional_daily_pending`: Trigger `additional_daily_pending`. Sent when stay extension or pending balance is detected.
-  - `tpl_pre_checkin_reminder`: Trigger `pre_checkin_reminder`. Sent before arrival with check-in link.
-  - `tpl_checkin_day_instructions`: Sent on check-in day at 07:00 with building address and access instructions.
-- **Dynamic Tag Resolution (`resolveWhatsAppTags`)**:
-  - Replaces `{{link_checkin_digital}}` via `getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db)`.
-  - Replaces `{{link_portal_hospede}}` with `${appOrigin}/minha-reserva/${resCode}`.
-  - Generates static PIX code `{{codigo_pix_copia_cola}}` when balance is pending.
-- **Email Mirroring (`mail-service.mjs:renderWhatsAppMirrorEmail`)**:
-  - When WhatsApp messages with action buttons or links are dispatched, the system formats and mirrors an HTML copy to the guest's email.
+### 2.1 Sender Identification Algorithm
+To resolve the sender comprehensively:
+1. **Phone Normalization:**
+   `const cleanPhone = cleanWhatsAppPhone(incomingPhone);` (strips DDI 55, retains 10 or 11 digits).
+2. **Reservation Matching (`db.reservations`):**
+   - Check primary guest phone: `r.guestPhone`, `r.phone`, `r.guests?.[0]?.phone`.
+   - Check third-party requester phone: `r.requesterInfo?.phone` (when booked by a company secretary or third party).
+   - Priority matching order:
+     a. Active in-house today: `checkinDate <= todayStr && checkoutDate >= todayStr`
+     b. Future confirmed reservation: `checkinDate >= todayStr` (nearest check-in)
+     c. Past recent reservation: `checkoutDate < todayStr` (most recent check-out)
+3. **Guest Matching (`db.guests`):**
+   - Check by `cleanPhone` against `g.phone` or `g.whatsapp`.
+   - Or by `r.guestId === g.id`.
+4. **Company Linkage Check (`db.companies`):**
+   - Check `guest.companyId` or `r.companyId`.
+   - If present, locate company: `const comp = db.companies.find(c => Number(c.id) === Number(companyId));`
+   - Verify that `comp && comp.cnpj && onlyDigits(comp.cnpj).length === 14`.
 
-### 2.2 Re-Signature Link Generation Architecture
-- **URL Structure**:
-  - Check-in declaration URL: `${appOrigin}/pre-checkin/${reservation.code}?guest=${guestIndex}`.
-  - If signed via 2-hour compliant session token: includes `?token=${signatureToken}`.
-  - Guest Portal direct review URL: `${appOrigin}/minha-reserva/${reservation.code}`.
-- **State in `guest-pre-checkin.tsx`**:
-  - Pre-checkin recognizes `isReSignatureNeeded = Boolean(res.needsReSignature || currentG?.needsReSignature)`.
-  - It clears the signature buffer (`sig = null`) and flags `fnhrDone = false`.
-  - It displays the alert banner: *"Reserva Atualizada • Nova Assinatura Necessária: {reservation.reSignatureReason}"*.
-  - It preserves 100% of guest personal fields (CPF, address, phone, photos) so the guest only reviews changes and provides the new signature.
-- **Gaps in Re-Signature Workflow**:
-  - **No automated message dispatch on self-service modification**: When `/api/pms/guest-portal/:code/modify` executes, it neither sets `needsReSignature = true` nor invokes `triggerImmediateWhatsApp` or `sendEmailAsync` with the re-signing link.
-  - **In admin PMS edit (`PUT /api/pms/reservations/:id`)**: The server correctly sets `r.needsReSignature = true` (lines 13731-13753), but dispatches generic `reservation_updated` without prioritizing the explicit re-signature call-to-action link.
+### 2.2 Branching Flow Specification
 
----
-
-## 3. Real-Time Operational Panels & Operations Synchronization
-
-### 3.1 Reception Panel (`reception-tablet.tsx` / `/portaria`)
-- **Backend Route**: `GET /api/reception/today` (lines 17163-17402 of `demo-server.mjs`).
-- **Sync Mechanism**: **HTTP Polling every 15 seconds** (`setInterval(fetchToday, 15000)`).
-- **Data Model**:
-  - Computed live from `db.reservations` in memory:
-    - `arrivals`: Reservations with check-in today (or partial check-in pending).
-    - `inHouse`: Current active stays (`in_house` or active date window).
-    - `departures`: Expected check-outs today.
-    - `completedToday`: Checked-in units.
-  - Re-signature awareness:
-    - Lines 17248 & 17399: `hasCompletedCheckin: Boolean(r.fnhrCompleted && !r.needsReSignature)`.
-    - `hasPreCheckin: Boolean((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone)`.
-    - If `r.needsReSignature` is true, the arrival card displays the pre-checkin as pending/unauthorized until the guest signs the updated form.
-
-### 3.2 Garage Panel (`garage-dashboard.tsx` / `/garagem`)
-- **Backend Route**: `GET /api/pms/garage/daily-sheet` (lines 27291-27316 of `demo-server.mjs`).
-- **Sync Mechanism**: **Mount-only fetch + manual refresh button**. No background polling timer is configured in `garage-dashboard.tsx`.
-- **Data Model**:
-  - Filters all active reservations: `r.checkinDate <= todayStr && r.checkoutDate >= todayStr`.
-  - Maps registered vehicle: plate, brand, model, color, guest name, flat number, stay dates.
-  - Automatic email dispatch: `triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle)` triggered on check-in or vehicle updates for today's stays.
-
-### 3.3 Housekeeping Schedule (`db.cleaningRequests` & PMS Calendar)
-- **Sync Logic on Modification**:
-  - When checkout date or flat changes:
-    - Moves dirty checkout cleaning card to new checkout date (`oldReq.requestDate = r.checkoutDate`).
-    - Cleans up stale cleaning instructions on old flat/dates.
-    - Synchronizes bed preferences (twin beds / extra mattress) to the arrival day card.
-
-### 3.4 Operational Schedulers
-1. **07:00 Morning Reception & Garage Dispatch**:
-   - Loop runs every 5 minutes (`setInterval(..., 300000)` in `demo-server.mjs:30665`).
-   - At `hour >= 7`, finds all arrivals for `todayStr` with `morningEmailSentDate !== todayStr`.
-   - Generates and dispatches `renderCheckinConfirmedEmail` with FNRH PDF attachments to reception and garage.
-   - Cleared on date modification: When check-in is moved to a future date, `morningEmailSentDate`, `morningEmailSentAt`, and `receptionNotifiedAt` are deleted so the routine will fire on the new arrival day.
-2. **Breakfast Order Routine**:
-   - Stored in `db.breakfastOrders`.
-   - When dates change: orders with dates outside the new stay window are marked `cancelled` with `cancelReason`.
-   - When flat changes: all associated breakfast orders are reassigned to the new room number.
-3. **WhatsApp Queue Scheduler**:
-   - Runs every 60 seconds (`scheduleUpcomingReservationTriggers`).
-   - Computes `scheduledFor` based on stay dates.
-   - **Caveat**: If a reservation was already processed, existing queue items may retain stale timestamps unless re-evaluated upon date modification.
+```
+                                [Inbound WhatsApp Message]
+                                             │
+                       Does message request NF OR is conv awaiting fiscal data?
+                                             │
+                         ┌───────────────────┴───────────────────┐
+                         ▼ YES                                   ▼ NO
+          Does contact have linked Company PJ?          Continue standard AI /
+             (companyId with valid CNPJ)                 heuristic processing
+                         │
+          ┌──────────────┴──────────────┐
+          ▼ YES                         ▼ NO
+  [BRANCH A: Linked Company]     [BRANCH B: Not Linked]
+  - Do NOT ask again!            - Send structured prompt:
+  - Reply with Razão Social        🏢 PJ: CNPJ + Financial Email
+    and formatted CNPJ             👤 PF: Name, CPF, Address/CEP, Email
+  - Set autoEmitInvoice = true   - Set conv.awaitingFiscalData = true
+  - Link reservation & draft NF  - Await reply
+```
 
 ---
 
-## 4. Test Infrastructure Analysis (`tests/`)
+## 3. Data Ingestion, Validation, Sanitization & Enrichment
 
-### 4.1 Test Runner & Environment
-- **Runner**: Node.js built-in test runner (`node --test`).
-- **Execution Command**: `node --test tests/<filename>.test.mjs`.
-- **Framework**: Native `node:test` (`describe`, `it`, `before`, `after`) and `node:assert/strict`.
-- **Current Suite Size**: 65 test files covering tariffs, bot actions, SERPRO FNRH, reception emails, service orders, and WhatsApp agents.
+### 3.1 Reception of User Fiscal Data
+When the user sends data (either immediately with the request or when `conv.awaitingFiscalData === true`):
 
-### 4.2 Fixture & Mock Patterns
-- **Server Isolation**:
-  - Tests like `tests/tariff-engine.test.mjs` and `tests/bot-actions-api.test.mjs` spawn an isolated server process on dynamic ports (e.g. 3995) using `spawn("node", ["artifacts/api-server/demo-server.mjs"])`.
-  - Database isolation: Clones `data/database.json` to a unique temp file `data/test-*-<timestamp>.json` and passes `DATA_FILE` / `DATABASE_FILE` via environment variables.
-  - Teardown: Kills the spawned process tree via `taskkill /F /T /PID ${pid}` and deletes the temp JSON file.
-- **Twin-Server Parity Mandate**:
-  - Standard test assertion in multiple test files (e.g. `tests/reception-email-document-attachments.test.mjs`):
-    `assert.strictEqual(fs.readFileSync(file1).equals(fs.readFileSync(file2)), true)`
-    Verifies that `artifacts/api-server/` and `scripts/` remain 100% byte-for-byte identical.
-
-### 4.3 Test Coverage Gaps for New Requirements
-| Requirement Area | Existing Coverage | Gap Identified |
-|---|---|---|
-| **R1. Simulation (`/modify-preview`)** | None | No test file tests pre-commit availability validation, extra nights calculation, or refund preview. |
-| **R2. Payment Settlement Guardrail** | None | No test verifies that `/modify` rejects or halts date updates when `additionalAmountToPay > 0` before PIX/Card settlement. |
-| **R3. Mandatory Re-Signature** | Partial (unit check in `fnrh-pdf-multi-guest-resilience.test.mjs`) | No test verifies that `/modify` flags `needsReSignature = true`, invalidates previous FNRH, and triggers re-signature notifications. |
-| **R3. Automated Re-Signing Link Dispatch** | None | No test checks dispatch of WhatsApp/email containing the direct pre-checkin re-signing link upon modification. |
-| **R4. Panel & Scheduler Synchronization** | Partial (`reception-email-document-attachments.test.mjs`) | No test verifies reception tablet arrival status update from `CHECKED_IN` to `Aguardando Assinatura` after date change, nor garage sync. |
+1. **Document Classification (PJ vs PF):**
+   - Extract contiguous digits or formatted document:
+     - `/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/` or 14 digits -> **CNPJ (PJ)**
+     - `/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/` or 11 digits -> **CPF (PF)**
+2. **Modulo 11 Verification:**
+   - For CNPJ: `isValidCnpj(cleanDoc)` from `national-nfse.mjs`.
+     - If mathematically invalid: reply asking for correction without corrupting CRM.
+   - For CPF: `isValidCpf(cleanDoc)` from `national-nfse.mjs`.
+     - Validates check digits; prevents misinterpreting 11-digit phone numbers as CPFs.
+3. **Automatic Enrichment (`lookup.mjs`):**
+   - For CNPJ:
+     - Local CRM check first: `db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc)`.
+     - Fallback: `lookupCnpj(cleanDoc)` via BrasilAPI / Receita.
+     - Retrieves: `razaoSocial`, `nomeFantasia`, `logradouro`, `numero`, `bairro`, `cep`, `codigoMunicipio`, `uf`, `email`, `telefone`.
+   - For CEP:
+     - `lookupCep(cleanCep)` via ViaCEP / BrasilAPI to populate street, neighborhood, city, and IBGE code.
+4. **Sanitization Rules:**
+   - **`toTitleCase(name)`**: Converts to title case while preserving:
+     - Corporate suffixes: `LTDA`, `S/A`, `SA`, `ME`, `EPP`, `EIRELI`, `SS`
+     - State abbreviations: `RJ`, `SP`, `MG`, etc.
+     - Lowercase prepositions: `de`, `da`, `do`, `dos`, `das`, `e`, `em`, `para`, `com`, `por` (except first word).
+   - **`cleanPhone(phone)`**: Strips DDI `55` if length 12/13, strips non-digits.
+   - **`cleanCep(cep)`**: Normalizes to 8 digits.
+   - **`email`**: Trimmed and lowercased.
+5. **CRM Persistence:**
+   - **PJ:**
+     - Create or update company in `db.companies` with full address and tax fields.
+     - Link `companyId` and `companyName` to `guest` (`db.guests`) and `reservation` (`db.reservations`).
+     - Set `autoEmitInvoice = true`.
+     - Clear `awaitingFiscalData`.
+     - Reply confirming corporate linkage on WhatsApp.
+   - **PF:**
+     - Create or update `db.guests` with CPF, full name, address/CEP, email, phone.
+     - Set `autoEmitInvoice = true` on guest and reservation.
+     - Clear `awaitingFiscalData`.
+     - Reply confirming personal fiscal data on WhatsApp.
 
 ---
 
-## 5. Architectural Findings & Key Recommendations
+## 4. NFS-e Engine & CRM Endpoints Audit
 
-### Finding 1: Two Distinct Modification Paths Exist
-- **Path A: Admin PMS Edit** (`PUT /api/pms/reservations/:id`, lines 13710-14440):
-  - Correctly detects `isDatesOrFlatChanged`.
-  - Sets `r.needsReSignature = true`, resets `r.fnhrCompleted = false`, clears PDF metadata.
-  - However, does NOT dispatch the automated WhatsApp/email message with the direct re-signature link.
-- **Path B: Guest Self-Service Modify** (`POST /api/pms/guest-portal/:code/modify`, lines 15456-15716):
-  - Directly commits new dates to `r.checkinDate` and `r.checkoutDate` without payment verification.
-  - Does NOT set `needsReSignature = true`.
-  - Does NOT generate a simulation preview.
+### 4.1 Bug in `POST /api/nfse/emit` (`artifacts/api-server/demo-server.mjs`)
+Lines 27467–27473:
+```javascript
+    res.status(201).json({
+      success: true,
+      invoice: newInvoice,
+      numeroNfse: numNfseReal,       // BUG: numNfseReal is undefined!
+      numeroNota: numNfseReal,       // BUG: ReferenceError!
+      codigoVerificacao: codVerifReal, // BUG: codVerifReal is undefined!
+      danfseUrl: `/api/nfse/danfse/${numNfseReal}`,
+      linkPrefeitura: newInvoice.linkPrefeitura,
+      qrCodeUrl: newInvoice.qrCodeUrl,
+      message: `Nota Fiscal Nº ${numNfseReal} emitida com sucesso pelo GissOnline Municipal!`
+    });
+```
+Furthermore:
+- `emitirNfseGissReal` returns `{ ok: true, numeroNota, codigoVerificacao, ... }`. Line 27415 sets `numeroNfse: emissionResult.numeroNfse`, which evaluates to `undefined`!
+- The endpoint must correctly resolve `numeroNfse` as `newInvoice.numeroNfse = emissionResult.numeroNota || emissionResult.numeroNfse`.
+- Both `giss_prefeitura` and `padrao_nacional` must be supported.
+- Full address fields (`tomadorEndereco`, `tomadorNumero`, `tomadorBairro`, `tomadorCep`, `tomadorCodigoMunicipio`, `tomadorUf`) must be accepted and persisted in `newInvoice`.
 
-### Finding 2: Simulation Endpoint (`/modify-preview`) is Missing
-- The guest portal currently has a simple `<Dialog>` that submits directly to `/modify`.
-- A dedicated endpoint `POST /api/pms/guest-portal/:code/modify-preview` is required to:
-  1. Check flat availability against active reservations.
-  2. Compute night difference and daily rates.
-  3. Calculate `additionalAmountToPay` and `refundAmount` (applying the 24h cutoff).
-  4. Return financial breakdown and payment necessity flags.
+### 4.2 Incomplete Company Endpoints in `demo-server.mjs`
+`POST /api/companies` (lines 28705–28750) and `PATCH /api/companies/:id` (lines 28752–28769) currently do not accept or persist address fields:
+`address / logradouro`, `number`, `neighborhood / bairro`, `cep`, `city`, `uf`, `ibgeCode`.
+These fields must be added to both endpoints and reflected in `crm-guests.tsx`.
 
-### Finding 3: Payment Verification Guardrail Before Modification
-- When `additionalAmountToPay > 0`, the reservation dates must remain unchanged.
-- A temporary modification pending state or payment intent (e.g. PIX QR Code / Mercado Pago preference for the difference) must be returned.
-- Upon verified payment (via Inter Extrato or Mercado Pago webhook/poll), the dates are updated, a payment record is inserted into `r.payments`, and re-signature is triggered.
+### 4.3 UI Enhancements in `fiscal-invoices.tsx`
+1. Fetch and merge companies from `/api/companies` alongside guests from `/api/pms/guests` in the search dropdown.
+2. When a guest with `companyId` is selected:
+   - Automatically prefill tomador with the linked company PJ data.
+   - Maintain guest name, flat, and dates in the service discrimination (`descricaoServico`).
+   - Provide an instant toggle button between **Empresa Vinculada (PJ)** and **Hóspede (PF)**.
+3. Automatically load active or recent reservation details (flat number, check-in, check-out, diárias, valor total).
 
-### Finding 4: Re-Signature Integration in Guest Portal Frontend
-- `artifacts/limpeza/src/pages/guest-portal.tsx` must be updated with:
-  1. Prominent warning banner when `reservation.needsReSignature === true`.
-  2. Action button `"Reassinar Ficha de Check-in"` linking to `/pre-checkin/${reservation.code}`.
-  3. Multi-step modification dialog with simulation preview and payment integration before confirmation.
+---
 
-### Finding 5: Real-Time Panel Polling Synchronization
-- While the Reception tablet polls every 15s (`fetchToday`), `garage-dashboard.tsx` has no background polling interval. Adding a 15s or 30s polling interval to `garage-dashboard.tsx` will ensure garage attendants immediately see modified dates and license plates.
+## 5. Testing Architecture, Twin Parity & Build Process
+
+### 5.1 Rules in `AGENTS.md`
+- **Strict Testing Scope:** NEVER run `tests/*.test.mjs` in batch or scan all tests. Run exclusively `tests/nfse-crm-whatsapp-flow.test.mjs`.
+- **No Notification Silencing:** Never disable notifications in production code with `if (process.env.NODE_ENV !== "test")`.
+- **Git Push by Default:** Always push after commits.
+- **Build Verification:** Execute `npm --prefix artifacts/limpeza run build` and commit `dist/`.
+
+### 5.2 Twin-Server Parity Requirement
+Files in `artifacts/api-server/` must have exact SHA-256 matches in `scripts/`.
+Currently, `scripts/` lacks:
+- `chat-service.mjs`
+- `national-nfse.mjs`
+- `giss-soap.mjs`
+- `lookup.mjs`
+These must be copied to `scripts/` to ensure full parity and prevent startup crashes when executing from `scripts/`.
+
+### 5.3 Test Suite Structure: `tests/nfse-crm-whatsapp-flow.test.mjs`
+The test file must follow the repository's standard isolated pattern:
+- Spawn isolated test process on port `3998`.
+- Temporary isolated database file in `os.tmpdir()` (`tempDbPath`).
+- Verify production `data/database.json` SHA-256 and mtime before and after test execution.
+- Assert 100% of acceptance criteria:
+  1. `POST /api/nfse/emit` succeeds with status 201, returning `numeroNfse`, `codigoVerificacao`, `danfseUrl`.
+  2. Company creation/update with address fields via `/api/companies`.
+  3. WhatsApp request from unlinked contact triggers structured prompt and sets state.
+  4. WhatsApp response with invalid Modulo 11 check digits returns gentle error without CRM pollution.
+  5. WhatsApp response with valid CNPJ performs enrichment, creates/updates company & guest, links reservation, sets `autoEmitInvoice=true`, and sends confirmation.
+  6. WhatsApp request from already linked contact confirms company data without re-asking.

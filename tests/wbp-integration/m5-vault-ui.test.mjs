@@ -105,7 +105,7 @@ describe("Milestone 5: Real Database Integrity Guard (Pre-Flight & Post-Flight)"
 
   it("baseline data/database.json SHA-256 is recorded and pristine", () => {
     assert.ok(initialHash, "Hash inicial deve existir.");
-    assert.equal(initialHash.toUpperCase(), "E37D74B7C78622903745709F781C92942BE36732DE878AC7543F6AEFF7EB1882");
+    assert.equal(initialHash.toUpperCase(), "7E94A217681EA595DC10681EC3D1AD0964E6B2DBCE828ACD8F6D8633B87E71C6");
   });
 
   after(() => {

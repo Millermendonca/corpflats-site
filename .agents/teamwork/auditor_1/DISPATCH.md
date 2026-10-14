@@ -1,41 +1,49 @@
-# Task Assignment: Forensic Auditor (auditor_1)
+# Task Assignment: Forensic Auditor (Integrity Verification)
+Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
+Role: teamwork_preview_auditor
 
-## Mission
-Perform an independent, forensic audit of the Smart Flat Hub codebase for integrity, authenticity, and compliance with all constraints:
-1. Verify Authenticity (ZERO CHEATING):
-   - Confirm that implementations are genuine and NOT dummy facades or hardcoded mock-only return values for tests.
-   - Confirm that logic genuinely computes ETA windows, temperature limits (18-26°C), fail-safe shutoff, and playlist triggers.
-2. Verify Privacy Isolation (R1):
-   - Confirm that `guest-portal.tsx` has NOT been modified to include smart flat controls for real guests in production.
-   - Confirm that preview routes `/preview/smart-flat` are isolated.
-3. Verify Twin-Server Parity Mandate:
-   - Compute SHA-256 hashes of `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` and confirm identical hashes.
-4. Verify AGENTS.md Compliance:
-   - Verify that no global test suites were executed or scripted.
-   - Verify that frontend build completed cleanly.
-   - Verify git commit status and push.
-5. Execute strictly the dedicated pontual test:
-   - `node --test tests/smart-flat-hub.test.mjs`
+## Escopo
+Realizar auditoria forense de integridade estrita (Zero Tolerance for Cheating):
+1. **Verificação de Código e Ausência de Facades/Hardcodes**:
+   - Verificar se as rotas de emissão (`/api/nfse/emit`), check-out, CRM (`/api/companies`, `/api/pms/guests`) e WhatsApp (`handleWhatsAppFiscalFlow`) implementam lógica real e autêntica.
+   - Verificar se não há respostas hardcoded ou atalhos para passar em testes específicos.
+2. **Validação de Algoritmos**:
+   - Verificar a implementação do algoritmo Módulo 11 em `national-nfse.mjs` e `lookup.mjs`.
+   - Verificar a implementação do gerador de Chave de Acesso Nacional de 50 dígitos em `national-nfse.mjs`.
+   - Verificar a montagem de XML SOAP em `giss-soap.mjs`.
+3. **Paridade Twin-Server SHA-256**:
+   - Calcular e comparar o hash SHA-256 de todos os 7 pares de arquivos gêmeos entre `artifacts/api-server/` e `scripts/`:
+     * `demo-server.mjs`
+     * `giss-soap.mjs`
+     * `national-nfse.mjs`
+     * `chat-service.mjs`
+     * `lookup.mjs`
+     * `whatsapp-ai-service.mjs`
+     * `zapi-service.mjs`
+4. **Integridade da Base de Produção**:
+   - Verificar se o arquivo `data/database.json` permaneceu íntegro e não foi corrompido ou poluído por dados de teste.
+5. **Execução de Testes**:
+   - Execute EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs`.
+   - NUNCA execute testes globais (`tests/*.test.mjs`).
 
-Read:
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-
-Output your report to: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md` with explicit verdict `CLEAN` or `INTEGRITY VIOLATION`.
+Entregue seu relatório em `handoff.md` com veredito binário explícito: `CLEAN` ou `INTEGRITY VIOLATION`.
 
 
-## 2026-10-12T00:05:14Z
-From: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-Priority: MESSAGE_PRIORITY_HIGH
-Content:
-You are Forensic Auditor (auditor_1) for Smart Flat Hub.
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
-Read instructions in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\DISPATCH.md
-Read the user request in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-Read the project master plan in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
-Also read AGENTS.md in project root.
+## 2026-10-14T11:26:22Z
+Você é o Forensic Auditor (Integrity Verification).
+Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
 
-Perform an independent forensic integrity audit. Verify no hardcoded test facades, authentic logic, zero guest leaks in production, 100% SHA-256 twin parity, clean frontend build, and run strictly the dedicated pontual test (node --test tests/smart-flat-hub.test.mjs).
-Write your report and explicit verdict (CLEAN or INTEGRITY VIOLATION) to: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md.
-Message the orchestrator when finished.
+Leia atentamente:
+1. Requisitos oficiais: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\DISPATCH.md
+3. O plano de arquitetura: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_9\PROJECT.md
+
+Realize auditoria forense completa em busca de atalhos, facades, respostas hardcoded ou violações de integridade.
+Verifique a paridade estrita SHA-256 entre os 7 arquivos gêmeos de artifacts/api-server/ e scripts/.
+Verifique a integridade do arquivo data/database.json.
+
+REGRA CRÍTICA DE EXECUÇÃO (AGENTS.md):
+- Execute EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs`.
+- É ESTRITAMENTE PROIBIDO executar testes globais (`tests/*.test.mjs`).
+
+Escreva seu relatório em `handoff.md` contendo seu veredito binário explícito: CLEAN ou INTEGRITY VIOLATION. Ao concluir, avise o orquestrador via send_message.

@@ -1,18 +1,25 @@
-## 2026-10-11T12:57:22Z
-You are Survey Explorer 2 for the CorpFlats Guest-Flow-Manager project.
+# Task Assignment: Survey Explorer 2 (CRM 360° Models & Fiscal Invoices UI)
+Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2
+Role: teamwork_preview_explorer
 
-Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2
-Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read the section starting at 2026-10-11T12:53:32Z)
+Focus:
+1. Audit and map CRM data structures and endpoints for Companies (`db.companies`, `/api/companies`) and Guests (`db.guests`, `/api/guests`), as well as reservations (`db.reservations`).
+2. Inspect `artifacts/limpeza/src/pages/crm-guests.tsx` and company modal/guest modal: check what fields exist, what fields are missing for full fiscal/address compliance (CNPJ, Razão Social, Nome Fantasia, IE/IM, CEP, Logradouro, Número, Bairro, Cidade, UF, Código IBGE, E-mail Financeiro, Telefone, Contato, companyId, autoEmitInvoice).
+3. Inspect `artifacts/limpeza/src/pages/fiscal-invoices.tsx` (and related components): check current CRM search/selector, prefilling logic, how Tomador is populated, and how to implement quick toggle between Linked Company (PJ) and Guest (PF).
+4. Verify how parameters from URL or reservation link (flat, check-in, check-out, diárias, valor) are passed into the invoice form.
+5. Write your comprehensive report in `handoff.md` within your working directory.
 
-Investigate the frontend architecture, Guest Portal, and UI flows:
-1. Read ORIGINAL_REQUEST.md completely.
-2. Investigate existing frontend architecture in `artifacts/limpeza/src` (Guest Portal components, reservation views, check-in forms/signing canvases, modal dialogs, reception panel, garage panel, housekeeping views).
-3. Locate where guests view their reservation, and where modification / date changes or extensions currently happen (or where the UI flow should be embedded).
-4. Analyze how Step 1 (Preview with availability badge, cost breakdown, action button) and Step 2 (Payment options: PIX with QR code / Copia e Cola and polling, Credit Card checkout) should be presented in the Guest Portal UI.
-5. Analyze the check-in re-signature banner, signature pad canvas, and guest portal re-signature workflow when dates or flat change.
-6. Check frontend build system (`npm run build` in `artifacts/limpeza`, dependencies, TypeScript types).
+## 2026-10-14T09:41:47Z
+Você é o Survey Explorer 2 (CRM 360° Models & Fiscal Invoices UI).
+Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2
+Leia atentamente:
+1. O arquivo oficial de requisitos: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2\DISPATCH.md
 
-Write your complete findings in `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2\survey_report.md`.
-Write a standard handoff report in `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2\handoff.md`.
-Update `progress.md` with your progress and timestamps.
-When finished, send a completion message back to the orchestrator.
+Seus objetivos de investigação:
+1. Investigar a modelagem e endpoints do CRM no backend: `db.companies`, `/api/companies`, `db.guests`, `/api/guests`, `db.reservations`, `/api/pms/reservations`.
+2. Investigar a UI do CRM em `artifacts/limpeza/src/pages/crm-guests.tsx` e modais associados: verificar quais campos fiscais e de endereço existem e quais faltam para Empresas (CNPJ, Razão Social, Nome Fantasia, IE, IM, CEP, Logradouro/Endereço, Número, Bairro, Cidade, UF, Código IBGE, E-mail Financeiro, Telefone, Contato) e Hóspedes (CPF/CNPJ, Nome Completo, CEP, Endereço, Número, Bairro, Cidade, UF, E-mail, Telefone, `companyId`, `autoEmitInvoice`).
+3. Investigar a UI de Notas Fiscais em `artifacts/limpeza/src/pages/fiscal-invoices.tsx` (e componentes associados): verificar como funciona o seletor atual do CRM, como busca reservas/hóspedes, como preenche o Tomador, como implementar a busca tanto de Hóspedes quanto de Empresas, e a alternância rápida de Tomador entre a Empresa Vinculada (PJ) e o Hóspede (PF).
+4. Mapear a passagem de parâmetros via URL/rotas para a tela de notas fiscais (ex.: flat, datas, valor, hóspede).
+
+Crie seu `progress.md` com status e entregue seu relatório detalhado com evidências e caminhos de arquivo em `handoff.md` no seu diretório de trabalho. Ao concluir, avise o orquestrador via `send_message`.

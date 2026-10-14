@@ -1,46 +1,33 @@
-# Task Assignment: Challenger 2 (Adversarial Privacy & Twin Parity Verification)
+# Task Assignment: Challenger 2 (WhatsApp Flow & Validation Stress Challenge)
+Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2
+Role: teamwork_preview_challenger
 
-## Mission
-Adversarially challenge privacy isolation and system integrity:
-1. Challenge Privacy Isolation (R1):
-   - Search `artifacts/limpeza/src/pages/guest-portal.tsx` for any leaking Smart Flat components, buttons, or direct links. Confirm that real production guests have ZERO exposure to smart flat controls.
-   - Verify that the preview route is strictly guarded and only accessible under `/preview/smart-flat` or explicit `?preview=smart_flat`.
-2. Challenge Twin-Server Parity (R4 in original request / twin parity mandate):
-   - Empirically compute and compare SHA-256 hashes of `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
-   - Confirm whether they match 100%.
-3. Run strictly the dedicated test: `node --test tests/smart-flat-hub.test.mjs`.
-4. Conform to AGENTS.md: NUNCA rodar testes globais ou em lote (tests/*.test.mjs).
+## Escopo
+Desafiar empiricamente a robustez e correção da automação do WhatsApp e validações:
+- Testar variações lexicais, maiúsculas/minúsculas, acentos e ruídos em pedidos de nota fiscal no WhatsApp ("Gostaria da minha NFS-e", "Manda nota fiscal no CNPJ", "quero recibo").
+- Testar que CPFs e CNPJs com dígitos verificadores inválidos (Módulo 11) são estritamente rejeitados com aviso gentil e não poluem o banco de dados.
+- Testar que a resolução de solicitantes terceiros (`r.requesterInfo`) não quebra se o objeto estiver incompleto (ex: sem whatsapp, só com telefone).
+- Testar sanitização com nomes complexos de empresas ("BANCO DO BRASIL S/A", "PETROLEO BRASILEIRO S.A. - PETROBRAS", "COMERCIO E INDUSTRIA DE ALIMENTOS LTDA ME").
 
-Read:
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
+Execução de Testes:
+- Execute EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs` (ou testes isolados temporários em memória).
+- NUNCA execute testes globais (`tests/*.test.mjs`).
 
-Output your report to: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\handoff.md` with explicit verdict `APPROVE` or `REQUEST_CHANGES`.
+Entregue seu relatório em `handoff.md` com veredito explícito: `APPROVE` ou `REQUEST_CHANGES`.
 
-## 2026-10-12T00:05:14Z
-From: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-Content: You are Challenger 2 (challenger_2) for Smart Flat Hub.
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2
-Read instructions in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\DISPATCH.md
-Read the user request in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-Read the project master plan in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
-Also read AGENTS.md in project root.
+## 2026-10-14T11:26:22Z
+[Message from 3d03f136-f013-4588-99e3-f22e17cc1ae4]
+Você é o Challenger 2 (WhatsApp Flow & Validation Stress Challenge).
+Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2
 
-Adversarially challenge privacy isolation (confirm zero leak or components in guest-portal.tsx) and verify SHA-256 twin parity between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs.
-Run strictly the dedicated pontual test (node --test tests/smart-flat-hub.test.mjs).
-Write your report and explicit verdict (APPROVE or REQUEST_CHANGES) to: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\handoff.md.
-Message the orchestrator when finished.
+Leia atentamente:
+1. Requisitos oficiais: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\DISPATCH.md
+3. O plano de arquitetura: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_9\PROJECT.md
+4. Relatório do test writer: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\test_writer_m4\handoff.md
 
+REGRA CRÍTICA DE EXECUÇÃO (AGENTS.md):
+- Execute EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs` (ou testes isolados temporários em memória).
+- É ESTRITAMENTE PROIBIDO executar testes globais (`tests/*.test.mjs`) ou outros módulos.
 
-## 2026-10-12T00:06:11Z
-Por favor, realize a sua tarefa de Challenger 2 para o Milestone 3 da missão atual do orchestrator_7: testar adversariamente o endpoint POST /api/whatsapp/chat/:phone/correct-message, o CRUD de diretrizes (/api/whatsapp/developer-guidelines), a persistência de regras e a reflexão em tempo real no atendimento a hóspedes. Execute exclusivamente o teste pontual node --test tests/developer-ai-coaching.test.mjs e emita seu veredito em handoff.md.
-
-## 2026-10-12T00:10:29Z
-From: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-Content: **Context**: Smart Flat Hub Privacy & Parity Verification (Challenger 2)
-**Content**: Please ensure your mission is for Smart Flat Hub:
-1. Verify Privacy Isolation: confirm zero leak or components in artifacts/limpeza/src/pages/guest-portal.tsx, and preview is isolated under /preview/smart-flat or ?preview=smart_flat.
-2. Verify SHA-256 twin parity between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs.
-3. Run strictly node --test tests/smart-flat-hub.test.mjs.
-Ignore any prior messages about whatsapp-chat or developer-ai-coaching.
-**Action**: Execute these checks and write your explicit verdict (APPROVE / REQUEST_CHANGES) to handoff.md.
+Escreva seu relatório em `handoff.md` contendo seu veredito explícito: APPROVE ou REQUEST_CHANGES. Ao concluir, avise o orquestrador via send_message.
