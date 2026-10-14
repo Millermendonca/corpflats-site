@@ -7785,6 +7785,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           continue;
         }
 
+        // Revalidação de segurança: se o template desautorizou este canal após o agendamento
+        const tpl = (db.whatsappTemplates || []).find(t => t.id === item.templateId);
+        const itemChannel = item.channel || resv?.channel || resv?.source;
+        if (tpl && itemChannel && !isTemplateAllowedForChannel(tpl, itemChannel)) {
+          console.log(`[Auto-WhatsApp] Cancelando disparo agendado de ${item.guestName}: canal '${itemChannel}' desativado no template '${tpl.title}'`);
+          item.status = "cancelled";
+          item.error = `Canal '${itemChannel}' desativado nas regras do template`;
+          item.updatedAt = nowIso;
+          saveDatabase();
+          continue;
+        }
+
         let queueButtons = item.renderedButtons || [];
         const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
         if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {

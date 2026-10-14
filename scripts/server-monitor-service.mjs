@@ -353,7 +353,7 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
       technicalEvidence: {
         rssMB,
         heapUsedMB: heapUsed,
-        heapLimitMB,
+        heapLimitMB: heapLimit,
         containerMemUsedMB: currentSnapshot.memory.containerMemUsedMB,
         containerMemLimitMB: currentSnapshot.memory.containerMemLimitMB
       },
