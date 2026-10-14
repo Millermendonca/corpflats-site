@@ -88,11 +88,16 @@ artifacts/api-server/certs/
 storage/certs/
 
 # Database Backups & Audit Logs (contain PII/tokens)
+.demo-db.json
+*.demo-db.json*
+*.bak
+backups/
+data/*.json
 data/backups/
 data/backups/*.json
 artifacts/api-server/audit_logs.jsonl
 **/audit_logs.jsonl
+AUDITORIA_360_PLANO_DIRETOR.md
 
 # Agent scratch/teamwork reports
 .agents/teamwork/
-

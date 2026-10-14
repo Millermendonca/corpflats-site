@@ -85,13 +85,17 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
         name: name.trim() || user?.name,
         phone: phone.trim(),
         document: document.trim(),
-        vehicle: hasVehicle && vehiclePlate
+        ...(hasVehicle && vehiclePlate
           ? {
-              ...(user?.vehicle || {}),
-              plate: vehiclePlate.toUpperCase().trim(),
-              model: vehicleModel.trim()
+              vehicle: {
+                ...(user?.vehicle || {}),
+                plate: vehiclePlate.toUpperCase().trim(),
+                model: vehicleModel.trim()
+              }
             }
-          : null,
+          : user?.vehicle?.plate
+            ? { vehicle: null }
+            : {}),
         ...(isWorkTrip && companyCnpj
           ? {
               companyData: {

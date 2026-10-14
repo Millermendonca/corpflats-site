@@ -364,7 +364,7 @@ export default function CrmGuests() {
       bedType: g.preferences?.bedType || "casal",
       floorPreference: g.preferences?.floorPreference || "alto",
       hasPet: Boolean(g.preferences?.hasPet || g.hasPet),
-      vehiclePlate: g.preferences?.vehiclePlate || "",
+      vehiclePlate: g.vehiclePlate || g.vehicle?.plate || g.preferences?.vehiclePlate || "",
       breakfastNotes: g.preferences?.breakfastNotes || ""
     })
     setGuestModalOpen(true)
@@ -391,6 +391,7 @@ export default function CrmGuests() {
         autoEmitInvoice: Boolean(formAutoInvoice),
         notes: formNotes.trim(),
         preferences: formPreferences,
+        vehiclePlate: (formPreferences.vehiclePlate || "").trim().toUpperCase(),
         cep: formCep.trim().replace(/\D/g, ""),
         address: formAddress.trim(),
         logradouro: formAddress.trim(),
