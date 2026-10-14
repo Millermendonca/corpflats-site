@@ -43,7 +43,7 @@ interface ExtractedData {
 }
 
 import { useToast } from "@/hooks/use-toast"
-import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 
 export default function FiscalInvoicesPage() {
   const { toast } = useToast()
@@ -1631,20 +1631,27 @@ export default function FiscalInvoicesPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  onClick={async () => {
-                                    const message = `Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`;
-                                    const phone = (inv.tomadorTelefone || "").replace(/\D/g, "");
-                                    await sendDirectZapiWithFallback({
-                                      phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
-                                      message,
-                                      recipientName: inv.tomadorNome || "Tomador",
-                                      triggerEvent: "nfse_dispatch",
-                                      label: `NFS-e Nº ${inv.numeroNfse}`,
-                                      toast
-                                    });
-                                  }}
+                                  {...bindZapiClickOrHoldWaWeb({
+                                    toast,
+                                    onClickZapi: async () => {
+                                      const message = `Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`;
+                                      const phone = (inv.tomadorTelefone || "").replace(/\D/g, "");
+                                      await sendDirectZapiWithFallback({
+                                        phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
+                                        message,
+                                        recipientName: inv.tomadorNome || "Tomador",
+                                        triggerEvent: "nfse_dispatch",
+                                        label: `NFS-e Nº ${inv.numeroNfse}`,
+                                        toast
+                                      });
+                                    },
+                                    getWaUrl: () => {
+                                      const message = `Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`;
+                                      return buildDirectWaWebUrl(inv.tomadorTelefone, message);
+                                    }
+                                  })}
                                   className="h-7.5 px-2 text-[11px] font-bold rounded-lg text-emerald-600 hover:bg-emerald-500/10"
-                                  title="Enviar no WhatsApp do Hóspede (Z-API + Redundância Web)"
+                                  title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                                 >
                                   <MessageSquare className="w-3 h-3" />
                                 </Button>

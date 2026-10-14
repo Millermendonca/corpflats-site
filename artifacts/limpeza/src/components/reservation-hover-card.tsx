@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl } from "@/hooks/use-quick-messages"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
@@ -381,7 +381,7 @@ export function ReservationHoverCard({
                   )}
                 </span>
                 <span className="text-emerald-400 font-bold flex items-center gap-1 shrink-0">
-                  ⚡ Clique para disparar
+                  ⚡ Clique: Z-API • Segure 2s: WhatsApp Web
                 </span>
               </div>
               {hoveredQuickMsg.recipientTarget === "both" && !recipients.requester.isDifferentFromGuest && (
@@ -668,15 +668,19 @@ export function ReservationHoverCard({
                     key={qm.id}
                     type="button"
                     disabled={isSending}
-                    onClick={(e) => handleTriggerQuickMessage(e, qm)}
+                    {...bindZapiClickOrHoldWaWeb({
+                      onClickZapi: (e) => handleTriggerQuickMessage(e, qm),
+                      getWaUrl: () => buildQuickMessageWaWebUrl(qm, resItem, originUrl),
+                      toast
+                    })}
                     onMouseEnter={() => handleQuickMsgHover(qm)}
                     onMouseLeave={() => handleQuickMsgHover(null)}
                     title={
                       target === "both" 
-                        ? `${qm.title} (Envia para Hóspede e Solicitante)` 
+                        ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
                         : target === "requester" 
-                          ? `${qm.title} (Envia para o Solicitante)` 
-                          : `${qm.title} (Envia para o Hóspede)`
+                          ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
+                          : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
                     }
                     className="h-6 px-2 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 active:scale-95 transition-all shadow-2xs cursor-pointer group/btn"
                   >

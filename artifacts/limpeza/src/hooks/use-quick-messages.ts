@@ -663,7 +663,7 @@ export function useQuickMessages() {
 
     const baseRenderedBody = opts.customMessage?.trim()
       ? opts.customMessage
-      : renderQuickMessageText(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
+      : renderQuickMessage(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
     const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin)
     const waWebUrl = effectiveTargetPhone
       ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullFallbackText)}`
@@ -834,4 +834,176 @@ export async function sendDirectZapiWithFallback(options: {
     return { success: true, method: "wa_web", fallback: true }
   }
 }
+
+export function buildDirectWaWebUrl(phone?: string | null, message: string = ""): string {
+  const rawDigits = (phone || "").replace(/\D/g, "")
+  const cleanPhone = rawDigits.length === 10 || rawDigits.length === 11
+    ? `55${rawDigits}`
+    : rawDigits
+  return cleanPhone
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
+    : `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`
+}
+
+export function buildQuickMessageWaWebUrl(
+  qm: WhatsAppQuickMessage,
+  resItem: any,
+  appOrigin?: string,
+  overrideOrOptions?: "guest" | "requester" | "both" | "custom" | {
+    overrideTarget?: "guest" | "requester" | "both" | "custom";
+    customPhone?: string;
+    customName?: string;
+    customMessage?: string;
+  }
+): string {
+  const opts = typeof overrideOrOptions === "string"
+    ? { overrideTarget: overrideOrOptions }
+    : (overrideOrOptions || {})
+  const targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
+  const recipients = getReservationRecipients(resItem)
+
+  const guestPhone = recipients.guest.cleanDigits.length === 10 || recipients.guest.cleanDigits.length === 11
+    ? `55${recipients.guest.cleanDigits}`
+    : recipients.guest.cleanDigits
+  const requesterPhone = recipients.requester.cleanDigits.length === 10 || recipients.requester.cleanDigits.length === 11
+    ? `55${recipients.requester.cleanDigits}`
+    : recipients.requester.cleanDigits
+
+  const cleanCustomPhone = opts.customPhone ? opts.customPhone.replace(/\D/g, "") : ""
+  const formattedCustomPhone = cleanCustomPhone.length === 10 || cleanCustomPhone.length === 11
+    ? `55${cleanCustomPhone}`
+    : cleanCustomPhone
+
+  const effectiveTargetPhone = formattedCustomPhone
+    || (targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone)
+
+  const baseRenderedBody = opts.customMessage?.trim()
+    ? opts.customMessage
+    : renderQuickMessage(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
+  const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin)
+
+  return effectiveTargetPhone
+    ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullFallbackText)}`
+    : `https://api.whatsapp.com/send?text=${encodeURIComponent(fullFallbackText)}`
+}
+
+export function bindZapiClickOrHoldWaWeb(options: {
+  onClickZapi: (e: any) => void;
+  getWaUrl?: () => string | null | undefined;
+  onHoldWaWeb?: () => void;
+  holdDurationMs?: number;
+  stopPropagation?: boolean;
+  toast?: (opts: { title: string; description?: string; variant?: "default" | "destructive" }) => void;
+}) {
+  const holdMs = options.holdDurationMs ?? 2000
+
+  const resetVisuals = (el: any) => {
+    if (!el || !el.style) return
+    el.style.transition = ""
+    el.style.transform = ""
+    el.style.boxShadow = ""
+  }
+
+  const clearHoldTimer = (el: any) => {
+    if (el && el.__waHoldTimer) {
+      clearTimeout(el.__waHoldTimer)
+      el.__waHoldTimer = null
+    }
+    resetVisuals(el)
+  }
+
+  return {
+    onPointerDown: (e: any) => {
+      if (e.button !== undefined && e.button !== 0) return
+      if (options.stopPropagation !== false) {
+        e.stopPropagation()
+      }
+      const el = e.currentTarget as any
+      if (!el || el.disabled) return
+
+      clearHoldTimer(el)
+      el.__waHoldTriggered = false
+      el.__waPendingUrl = null
+
+      if (el.style) {
+        el.style.transition = `transform ${holdMs}ms linear, box-shadow ${holdMs}ms ease`
+        el.style.transform = "scale(0.95)"
+        el.style.boxShadow = "0 0 0 3px rgba(16, 185, 129, 0.65)"
+      }
+
+      el.__waHoldTimer = setTimeout(() => {
+        el.__waHoldTimer = null
+        el.__waHoldTriggered = true
+        resetVisuals(el)
+
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          try {
+            navigator.vibrate(60)
+          } catch {}
+        }
+
+        options.toast?.({
+          title: "🌐 Abrindo WhatsApp Web (Segurado 2s)",
+          description: "Atalho de 2 segundos ativado — redirecionando para o WhatsApp Web."
+        })
+
+        if (options.onHoldWaWeb) {
+          options.onHoldWaWeb()
+          return
+        }
+
+        const url = options.getWaUrl?.()
+        if (url && typeof window !== "undefined") {
+          const win = window.open(url, "_blank")
+          if (!win) {
+            el.__waPendingUrl = url
+          }
+        }
+      }, holdMs)
+    },
+    onPointerUp: (e: any) => {
+      if (options.stopPropagation !== false) {
+        e.stopPropagation()
+      }
+      const el = e.currentTarget as any
+      clearHoldTimer(el)
+      if (el && el.__waPendingUrl && typeof window !== "undefined") {
+        const url = el.__waPendingUrl
+        el.__waPendingUrl = null
+        window.open(url, "_blank")
+      }
+    },
+    onPointerLeave: (e: any) => {
+      clearHoldTimer(e.currentTarget)
+    },
+    onPointerCancel: (e: any) => {
+      clearHoldTimer(e.currentTarget)
+    },
+    onContextMenu: (e: any) => {
+      const el = e.currentTarget as any
+      if (el && (el.__waHoldTimer || el.__waHoldTriggered)) {
+        e.preventDefault()
+      }
+    },
+    onClick: (e: any) => {
+      if (options.stopPropagation !== false) {
+        e.stopPropagation()
+      }
+      const el = e.currentTarget as any
+      clearHoldTimer(el)
+      if (el && el.__waHoldTriggered) {
+        e.preventDefault()
+        el.__waHoldTriggered = false
+        if (el.__waPendingUrl && typeof window !== "undefined") {
+          const url = el.__waPendingUrl
+          el.__waPendingUrl = null
+          window.open(url, "_blank")
+        }
+        return
+      }
+      options.onClickZapi(e)
+    }
+  }
+}
+
 

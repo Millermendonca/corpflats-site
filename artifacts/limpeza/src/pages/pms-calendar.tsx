@@ -42,7 +42,7 @@ import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
@@ -5243,24 +5243,37 @@ export default function PmsCalendar() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={async () => {
-                            const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                            const url = `${window.location.origin}/cafe?res=${resCode}`
-                            const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
-                            const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                            const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                            const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                            await sendDirectZapiWithFallback({
-                              phone,
-                              message: msg,
-                              recipientName: guestName,
-                              reservationCode: String(resCode),
-                              flatNumber: String(flatNum),
-                              triggerEvent: "breakfast_link_manual",
-                              label: "Link do Café da Manhã",
-                              toast
-                            })
-                          }}
+                          {...bindZapiClickOrHoldWaWeb({
+                            onClickZapi: async () => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                              await sendDirectZapiWithFallback({
+                                phone,
+                                message: msg,
+                                recipientName: guestName,
+                                reservationCode: String(resCode),
+                                flatNumber: String(flatNum),
+                                triggerEvent: "breakfast_link_manual",
+                                label: "Link do Café da Manhã",
+                                toast
+                              })
+                            },
+                            getWaUrl: () => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              const phone = formGuestPhone || selectedRes?.guestPhone || ""
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                              return buildDirectWaWebUrl(phone, msg)
+                            },
+                            toast
+                          })}
+                          title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
                           className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
                         >
                           <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
@@ -6310,7 +6323,7 @@ export default function PmsCalendar() {
                                 </>
                               )}
                             </span>
-                            <span className="text-emerald-400 font-bold shrink-0">⚡ Clique para disparar</span>
+                            <span className="text-emerald-400 font-bold shrink-0">⚡ Clique: Z-API • Segure 2s: WhatsApp Web</span>
                           </div>
                           <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
                         </div>
@@ -6320,7 +6333,7 @@ export default function PmsCalendar() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
                         <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                        Disparar WhatsApp (Z-API com Botões)
+                        Disparar WhatsApp (Clique: Z-API • Segure 2s: Web)
                       </span>
                       <div className="flex items-center gap-2">
                         {(formGuestPhone || selectedRes.guestPhone) && (
@@ -6352,6 +6365,20 @@ export default function PmsCalendar() {
                       {activeQuickMessages.map(qm => {
                         const isSending = modalSendingMsgId === qm.id;
                         const target = qm.recipientTarget || "guest";
+                        const buildEffectiveRes = () => ({
+                          ...selectedRes,
+                          flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
+                          flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
+                          guestName: formGuestName.trim() || selectedRes?.guestName,
+                          guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
+                          guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
+                          checkinDate: formCheckin || selectedRes?.checkinDate,
+                          checkoutDate: formCheckout || selectedRes?.checkoutDate,
+                          checkinTime: formCheckinTime || selectedRes?.checkinTime,
+                          checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
+                          includeBreakfast: formIncludeBreakfast,
+                          hasBreakfast: formIncludeBreakfast
+                        });
                         return (
                           <Button
                             key={qm.id}
@@ -6363,29 +6390,24 @@ export default function PmsCalendar() {
                             onMouseLeave={() => setHoveredModalQuickMsg(null)}
                             title={
                               target === "both" 
-                                ? `${qm.title} (Envia para Hóspede e Solicitante)` 
+                                ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
                                 : target === "requester" 
-                                  ? `${qm.title} (Envia para o Solicitante)` 
-                                  : `${qm.title} (Envia para o Hóspede)`
+                                  ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
+                                  : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
                             }
-                            onClick={() => {
-                              setHoveredModalQuickMsg(null);
-                              const effectiveRes = {
-                                ...selectedRes,
-                                flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
-                                flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
-                                guestName: formGuestName.trim() || selectedRes?.guestName,
-                                guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
-                                guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
-                                checkinDate: formCheckin || selectedRes?.checkinDate,
-                                checkoutDate: formCheckout || selectedRes?.checkoutDate,
-                                checkinTime: formCheckinTime || selectedRes?.checkinTime,
-                                checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
-                                includeBreakfast: formIncludeBreakfast,
-                                hasBreakfast: formIncludeBreakfast
-                              };
-                              setConfirmingModalQuickMsg({ qm, effectiveRes });
-                            }}
+                            {...bindZapiClickOrHoldWaWeb({
+                              onClickZapi: () => {
+                                setHoveredModalQuickMsg(null);
+                                const effectiveRes = buildEffectiveRes();
+                                setConfirmingModalQuickMsg({ qm, effectiveRes });
+                              },
+                              getWaUrl: () => {
+                                setHoveredModalQuickMsg(null);
+                                const effectiveRes = buildEffectiveRes();
+                                return buildQuickMessageWaWebUrl(qm, effectiveRes);
+                              },
+                              toast
+                            })}
                             className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
                           >
                             {isSending ? (
@@ -7495,7 +7517,12 @@ export default function PmsCalendar() {
                                       type="button"
                                       size="sm"
                                       disabled={dispatchingActionId === q.id}
-                                      onClick={() => handleSendWhatsAppNow(q.id)}
+                                      {...bindZapiClickOrHoldWaWeb({
+                                        onClickZapi: () => handleSendWhatsAppNow(q.id),
+                                        getWaUrl: () => buildDirectWaWebUrl(q.guestPhone || selectedRes?.guestPhone, q.renderedMessage || q.message || ""),
+                                        toast
+                                      })}
+                                      title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
                                       className="h-7 text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs"
                                     >
                                       {dispatchingActionId === q.id ? (
@@ -8168,9 +8195,16 @@ export default function PmsCalendar() {
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handleSendWa(item.url, item.title)}
+                                  {...bindZapiClickOrHoldWaWeb({
+                                    onClickZapi: () => handleSendWa(item.url, item.title),
+                                    getWaUrl: () => {
+                                      const msg = `Olá ${guestName}, aqui está o link de ${item.title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${item.url}`
+                                      return buildDirectWaWebUrl(waPhone, msg)
+                                    },
+                                    toast
+                                  })}
                                   className="h-7 w-7 p-0 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600"
-                                  title="Enviar este link pelo WhatsApp"
+                                  title="Clique: enviar pelo WhatsApp (Z-API) • Segure 2s: abrir no WhatsApp Web"
                                 >
                                   <MessageCircle className="w-3.5 h-3.5" />
                                 </Button>

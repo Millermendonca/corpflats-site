@@ -11,7 +11,7 @@ import {
   Clock
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 
 export default function GarageDashboard() {
   const { toast } = useToast()
@@ -327,20 +327,27 @@ export default function GarageDashboard() {
                           </span>
                           <button
                             type="button"
-                            onClick={async () => {
-                              const msg = `Olá, ${v.guestName}! Tudo bem? Falamos da CorpFlats sobre a vaga de garagem do seu veículo ${v.plate} para o Apt ${v.flatNumber}.`
-                              await sendDirectZapiWithFallback({
-                                phone: `55${phoneClean}`,
-                                message: msg,
-                                recipientName: v.guestName || "Hóspede",
-                                flatNumber: String(v.flatNumber || ""),
-                                triggerEvent: "garage_contact",
-                                label: `Aviso Garagem (${v.plate})`,
-                                toast
-                              })
-                            }}
+                            {...bindZapiClickOrHoldWaWeb({
+                              toast,
+                              onClickZapi: async () => {
+                                const msg = `Olá, ${v.guestName}! Tudo bem? Falamos da CorpFlats sobre a vaga de garagem do seu veículo ${v.plate} para o Apt ${v.flatNumber}.`
+                                await sendDirectZapiWithFallback({
+                                  phone: `55${phoneClean}`,
+                                  message: msg,
+                                  recipientName: v.guestName || "Hóspede",
+                                  flatNumber: String(v.flatNumber || ""),
+                                  triggerEvent: "garage_contact",
+                                  label: `Aviso Garagem (${v.plate})`,
+                                  toast
+                                })
+                              },
+                              getWaUrl: () => buildDirectWaWebUrl(
+                                phoneClean,
+                                `Olá, ${v.guestName}! Tudo bem? Falamos da CorpFlats sobre a vaga de garagem do seu veículo ${v.plate} para o Apt ${v.flatNumber}.`
+                              )
+                            })}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 text-[11px] font-bold transition-colors shrink-0 ml-2 cursor-pointer"
-                            title="Enviar via Z-API (com redundância automática para WhatsApp Web)"
+                            title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                           >
                             <MessageCircle className="w-3 h-3 text-emerald-400" />
                             <span>WhatsApp (Z-API)</span>
@@ -376,20 +383,27 @@ export default function GarageDashboard() {
                     {v.phone && (
                       <button
                         type="button"
-                        onClick={async () => {
-                          const msg = `Olá, ${v.guestName}! Tudo bem? Falamos da CorpFlats sobre a vaga de garagem do seu veículo ${v.plate} para o Apt ${v.flatNumber}.`
-                          await sendDirectZapiWithFallback({
-                            phone: `55${phoneClean}`,
-                            message: msg,
-                            recipientName: v.guestName || "Hóspede",
-                            flatNumber: String(v.flatNumber || ""),
-                            triggerEvent: "garage_contact",
-                            label: `Aviso Garagem (${v.plate})`,
-                            toast
-                          })
-                        }}
+                        {...bindZapiClickOrHoldWaWeb({
+                          toast,
+                          onClickZapi: async () => {
+                            const msg = `Olá, ${v.guestName}! Tudo bem? Falamos da CorpFlats sobre a vaga de garagem do seu veículo ${v.plate} para o Apt ${v.flatNumber}.`
+                            await sendDirectZapiWithFallback({
+                              phone: `55${phoneClean}`,
+                              message: msg,
+                              recipientName: v.guestName || "Hóspede",
+                              flatNumber: String(v.flatNumber || ""),
+                              triggerEvent: "garage_contact",
+                              label: `Aviso Garagem (${v.plate})`,
+                              toast
+                            })
+                          },
+                          getWaUrl: () => buildDirectWaWebUrl(
+                            phoneClean,
+                            `Olá, ${v.guestName}! Tudo bem? Falamos da CorpFlats sobre a vaga de garagem do seu veículo ${v.plate} para o Apt ${v.flatNumber}.`
+                          )
+                        })}
                         className="inline-flex items-center justify-center gap-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold h-8.5 transition-colors shadow-sm cursor-pointer"
-                        title="Enviar via Z-API (com redundância automática para WhatsApp Web)"
+                        title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
                         <span>Chamar (Z-API)</span>

@@ -25,7 +25,10 @@ import {
   WhatsAppQuickMessage,
   renderQuickMessage,
   getReservationRecipients,
+  bindZapiClickOrHoldWaWeb,
+  buildQuickMessageWaWebUrl,
 } from "@/hooks/use-quick-messages"
+import { useToast } from "@/hooks/use-toast"
 
 interface QuickMessageConfirmDialogProps {
   open: boolean
@@ -52,6 +55,7 @@ export function QuickMessageConfirmDialog({
   originUrl,
   onConfirm,
 }: QuickMessageConfirmDialogProps) {
+  const { toast } = useToast()
   const [selectedTargetKey, setSelectedTargetKey] = useState<string>("guest")
   const [isEditingText, setIsEditingText] = useState(false)
   const [editedMessage, setEditedMessage] = useState("")
@@ -387,8 +391,13 @@ export function QuickMessageConfirmDialog({
         </div>
 
         <DialogFooter className="px-5 py-3.5 bg-slate-50 dark:bg-slate-950/60 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2">
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[210px]" title={currentPhoneDisplay}>
-            Para: <strong className="text-slate-700 dark:text-slate-200">{currentPhoneDisplay}</strong>
+          <div className="min-w-0 flex flex-col gap-0.5 max-w-[220px]">
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate" title={currentPhoneDisplay}>
+              Para: <strong className="text-slate-700 dark:text-slate-200">{currentPhoneDisplay}</strong>
+            </div>
+            <div className="text-[9.5px] font-semibold text-emerald-700 dark:text-emerald-400 truncate">
+              ⚡ Clique: Z-API • Segure 2s: WhatsApp Web
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Button
@@ -407,7 +416,35 @@ export function QuickMessageConfirmDialog({
               type="button"
               size="sm"
               disabled={isSending}
-              onClick={handleConfirmClick}
+              {...bindZapiClickOrHoldWaWeb({
+                onClickZapi: handleConfirmClick,
+                onHoldWaWeb: () => {
+                  const customMsg =
+                    isEditingText && editedMessage.trim() && editedMessage.trim() !== renderedPreview.trim()
+                      ? editedMessage
+                      : undefined
+                  const opts = selectedCompanion
+                    ? {
+                        overrideTarget: "custom" as const,
+                        customPhone: selectedCompanion.phone,
+                        customName: selectedCompanion.name,
+                        customMessage: customMsg,
+                      }
+                    : {
+                        overrideTarget: (["guest", "requester", "both"].includes(selectedTargetKey)
+                          ? selectedTargetKey
+                          : "guest") as "guest" | "requester" | "both",
+                        customMessage: customMsg,
+                      }
+                  const url = buildQuickMessageWaWebUrl(quickMessage, resItem, originUrl, opts)
+                  if (typeof window !== "undefined") {
+                    window.open(url, "_blank")
+                  }
+                  onOpenChange(false)
+                },
+                toast,
+              })}
+              title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 shadow-sm cursor-pointer"
             >
               {isSending ? (

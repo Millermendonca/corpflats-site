@@ -24,7 +24,7 @@ import {
 import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
 import { useToast } from "@/hooks/use-toast"
-import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 
 export default function CrmGuests() {
   const [, setLocation] = useLocation()
@@ -544,18 +544,10 @@ export default function CrmGuests() {
   }
 
   // ── Central de WhatsApp com Templates Prontos ──────────────────────────────
-  const handleSendWhatsAppTemplate = async (type: "welcome" | "room_ready" | "review" | "pix" | "invoice", guest: any) => {
-    if (!guest.phone) {
-      toast({
-        title: "Sem telefone cadastrado",
-        description: "Este hóspede não possui telefone cadastrado.",
-        variant: "destructive"
-      })
-      return
-    }
-    const cleanPhone = guest.phone.replace(/\D/g, "")
-    const phoneWithDDI = cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`
-    const fullName = guest.fullName || guest.name || "Hóspede"
+  const buildCrmTemplateData = (type: "welcome" | "room_ready" | "review" | "pix" | "invoice", guest: any) => {
+    const cleanPhone = (guest?.phone || "").replace(/\D/g, "")
+    const phoneWithDDI = cleanPhone ? (cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`) : ""
+    const fullName = guest?.fullName || guest?.name || "Hóspede"
     const firstName = fullName.split(" ")[0]
 
     let msg = ""
@@ -582,6 +574,19 @@ export default function CrmGuests() {
         label = "Aviso de NFS-e"
         break
     }
+    return { phoneWithDDI, fullName, msg, label }
+  }
+
+  const handleSendWhatsAppTemplate = async (type: "welcome" | "room_ready" | "review" | "pix" | "invoice", guest: any) => {
+    if (!guest?.phone) {
+      toast({
+        title: "Sem telefone cadastrado",
+        description: "Este hóspede não possui telefone cadastrado.",
+        variant: "destructive"
+      })
+      return
+    }
+    const { phoneWithDDI, fullName, msg, label } = buildCrmTemplateData(type, guest)
 
     await sendDirectZapiWithFallback({
       phone: phoneWithDDI,
@@ -1141,18 +1146,26 @@ export default function CrmGuests() {
                   {activeGuest?.phone && (
                     <Button
                       size="sm"
-                      onClick={async () => {
-                        const cleanP = String(activeGuest.phone).replace(/\D/g, '').replace(/^55/, '');
-                        const fullName = activeGuest.fullName || activeGuest.name || "Hóspede";
-                        await sendDirectZapiWithFallback({
-                          phone: `55${cleanP}`,
-                          message: `Olá, ${fullName}! Falamos da CorpFlats.`,
-                          recipientName: fullName,
-                          triggerEvent: "crm_profile_greeting",
-                          label: "Saudação CRM",
-                          toast
-                        });
-                      }}
+                      {...bindZapiClickOrHoldWaWeb({
+                        toast,
+                        onClickZapi: async () => {
+                          const cleanP = String(activeGuest.phone).replace(/\D/g, '').replace(/^55/, '');
+                          const fullName = activeGuest.fullName || activeGuest.name || "Hóspede";
+                          await sendDirectZapiWithFallback({
+                            phone: `55${cleanP}`,
+                            message: `Olá, ${fullName}! Falamos da CorpFlats.`,
+                            recipientName: fullName,
+                            triggerEvent: "crm_profile_greeting",
+                            label: "Saudação CRM",
+                            toast
+                          });
+                        },
+                        getWaUrl: () => {
+                          const fullName = activeGuest.fullName || activeGuest.name || "Hóspede";
+                          return buildDirectWaWebUrl(activeGuest.phone, `Olá, ${fullName}! Falamos da CorpFlats.`);
+                        }
+                      })}
+                      title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                       className="h-9 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1.5 shadow-xs"
                     >
                       <MessageCircle className="w-4 h-4" />
@@ -1480,34 +1493,71 @@ export default function CrmGuests() {
 
                 {/* Central de Templates WhatsApp */}
                 <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5">
-                  <div className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
-                    <MessageCircle className="w-4 h-4" /> Disparar Mensagem Rápida no WhatsApp
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                      <MessageCircle className="w-4 h-4" /> Disparar Mensagem Rápida no WhatsApp
+                    </div>
+                    <span className="text-[10px] font-semibold text-emerald-700/80 dark:text-emerald-300/80">
+                      ⚡ Clique: Z-API • Segure 2s: WhatsApp Web
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     <Button 
                       size="sm" 
-                      onClick={() => handleSendWhatsAppTemplate("welcome", activeGuest)}
+                      {...bindZapiClickOrHoldWaWeb({
+                        toast,
+                        onClickZapi: () => handleSendWhatsAppTemplate("welcome", activeGuest),
+                        getWaUrl: () => {
+                          const { phoneWithDDI, msg } = buildCrmTemplateData("welcome", activeGuest)
+                          return buildDirectWaWebUrl(phoneWithDDI, msg)
+                        }
+                      })}
+                      title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                       className="h-8 text-[11px] font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
                     >
                       👋 Boas-vindas & Pré-Checkin
                     </Button>
                     <Button 
                       size="sm" 
-                      onClick={() => handleSendWhatsAppTemplate("room_ready", activeGuest)}
+                      {...bindZapiClickOrHoldWaWeb({
+                        toast,
+                        onClickZapi: () => handleSendWhatsAppTemplate("room_ready", activeGuest),
+                        getWaUrl: () => {
+                          const { phoneWithDDI, msg } = buildCrmTemplateData("room_ready", activeGuest)
+                          return buildDirectWaWebUrl(phoneWithDDI, msg)
+                        }
+                      })}
+                      title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                       className="h-8 text-[11px] font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
                     >
                       ✨ Quarto Liberado
                     </Button>
                     <Button 
                       size="sm" 
-                      onClick={() => handleSendWhatsAppTemplate("review", activeGuest)}
+                      {...bindZapiClickOrHoldWaWeb({
+                        toast,
+                        onClickZapi: () => handleSendWhatsAppTemplate("review", activeGuest),
+                        getWaUrl: () => {
+                          const { phoneWithDDI, msg } = buildCrmTemplateData("review", activeGuest)
+                          return buildDirectWaWebUrl(phoneWithDDI, msg)
+                        }
+                      })}
+                      title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                       className="h-8 text-[11px] font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
                     >
                       ⭐ Pedir Avaliação Google
                     </Button>
                     <Button 
                       size="sm" 
-                      onClick={() => handleSendWhatsAppTemplate("pix", activeGuest)}
+                      {...bindZapiClickOrHoldWaWeb({
+                        toast,
+                        onClickZapi: () => handleSendWhatsAppTemplate("pix", activeGuest),
+                        getWaUrl: () => {
+                          const { phoneWithDDI, msg } = buildCrmTemplateData("pix", activeGuest)
+                          return buildDirectWaWebUrl(phoneWithDDI, msg)
+                        }
+                      })}
+                      title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                       className="h-8 text-[11px] font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
                     >
                       ⚡ Enviar Chave PIX

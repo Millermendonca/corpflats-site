@@ -17,7 +17,7 @@ import { ptBR } from "date-fns/locale"
 import { useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
 import { useToast } from "@/hooks/use-toast"
-import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 
 export default function ReceptionTablet() {
   const [, setLocation] = useLocation()
@@ -792,24 +792,33 @@ export default function ReceptionTablet() {
                                       <Button
                                         size="sm"
                                         variant="outline"
-                                        onClick={async () => {
-                                          const preCheckinUrl = getCheckinUrl(item, g.index || gIdx + 1, window.location.origin, settings)
-                                          const phone = (g.phone || item.guestPhone || "").replace(/\D/g, "")
-                                          const guestLabelName = g.name || item.guestName || 'Hóspede'
-                                          const message = `Olá, ${guestLabelName}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
-                                          await sendDirectZapiWithFallback({
-                                            phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
-                                            message,
-                                            recipientName: guestLabelName,
-                                            reservationCode: item.code || String(item.id || ""),
-                                            flatNumber: String(item.flatNumber || ""),
-                                            triggerEvent: "reception_checkin_link",
-                                            label: `Link de Check-in (${guestLabelName})`,
-                                            toast
-                                          })
-                                        }}
+                                        {...bindZapiClickOrHoldWaWeb({
+                                          toast,
+                                          onClickZapi: async () => {
+                                            const preCheckinUrl = getCheckinUrl(item, g.index || gIdx + 1, window.location.origin, settings)
+                                            const phone = (g.phone || item.guestPhone || "").replace(/\D/g, "")
+                                            const guestLabelName = g.name || item.guestName || 'Hóspede'
+                                            const message = `Olá, ${guestLabelName}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
+                                            await sendDirectZapiWithFallback({
+                                              phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
+                                              message,
+                                              recipientName: guestLabelName,
+                                              reservationCode: item.code || String(item.id || ""),
+                                              flatNumber: String(item.flatNumber || ""),
+                                              triggerEvent: "reception_checkin_link",
+                                              label: `Link de Check-in (${guestLabelName})`,
+                                              toast
+                                            })
+                                          },
+                                          getWaUrl: () => {
+                                            const preCheckinUrl = getCheckinUrl(item, g.index || gIdx + 1, window.location.origin, settings)
+                                            const guestLabelName = g.name || item.guestName || 'Hóspede'
+                                            const message = `Olá, ${guestLabelName}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
+                                            return buildDirectWaWebUrl(g.phone || item.guestPhone, message)
+                                          }
+                                        })}
                                         className="h-6 w-6 p-0 bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300"
-                                        title="Enviar WhatsApp (Z-API + Redundância Web)"
+                                        title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                                       >
                                         <MessageCircle className="w-3 h-3 text-emerald-400" />
                                       </Button>

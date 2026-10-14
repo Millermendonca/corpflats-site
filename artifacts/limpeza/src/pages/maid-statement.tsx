@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { Shell } from "@/components/layout"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
+import { bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import {
   Wallet,
   ArrowUpRight,
@@ -495,8 +496,23 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
               
               {/* Botão de Enviar WhatsApp (Aparece para camareira e também para o admin) */}
               <Button
-                onClick={handleSendWhatsApp}
+                {...bindZapiClickOrHoldWaWeb({
+                  toast,
+                  onClickZapi: handleSendWhatsApp,
+                  getWaUrl: () => {
+                    const selectedCleaner = cleanersList.find(c => String(c.id) === String(selectedCleanerId))
+                    const phone = (statementData as any)?.phone || (statementData as any)?.whatsapp || selectedCleaner?.whatsapp || selectedCleaner?.phone || (user as any)?.whatsapp || (user as any)?.phone || ""
+                    const name = statementData?.userName || selectedCleaner?.name || user?.name || "Camareira"
+                    const lastEntries = (statementData?.statement || []).slice(0, 8).map(e => {
+                      const sign = e.entryType === "credit" ? "+" : "−"
+                      return `• ${formatDate(e.entryDate)}: ${sign} R$ ${Number(e.amount || 0).toFixed(2)} (${e.description})`
+                    }).join("\n")
+                    const msg = `💰 *EXTRATO DE DIÁRIAS • CORPFLATS*\n\nOlá, *${name}*!\nSegue o resumo atualizado do seu extrato financeiro:\n\n💵 *Saldo Disponível:* *R$ ${balance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}*\n📈 *Total Produzido:* + R$ ${totalEarned.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (${creditEntries.length} quartos)\n📉 *Pagos / Vales:* − R$ ${totalWithdrawn.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}${lastEntries ? `\n\n📋 *Últimos Lançamentos:*\n${lastEntries}` : ""}\n\nObrigado pelo excelente trabalho! ✨`
+                    return buildDirectWaWebUrl(phone, msg)
+                  }
+                })}
                 disabled={sendingWa}
+                title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                 className="h-11 sm:h-12 rounded-2xl font-black text-xs gap-2 bg-[#25d366] hover:bg-[#20bd5a] text-white shadow-md shadow-black/20 transition-transform active:scale-[0.98] flex-1"
               >
                 <Send className="w-4 h-4 shrink-0" />

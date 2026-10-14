@@ -20,6 +20,7 @@ import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
+import { bindZapiClickOrHoldWaWeb } from "@/hooks/use-quick-messages"
 
 interface LostItem {
   id: number
@@ -842,8 +843,13 @@ export default function LostAndFoundPage() {
                             <span>Envio automático pendente</span>
                             <button
                               type="button"
-                              onClick={() => handleNotifyGuest(item.id, whatsappUrl)}
+                              {...bindZapiClickOrHoldWaWeb({
+                                toast,
+                                onClickZapi: () => handleNotifyGuest(item.id, whatsappUrl),
+                                getWaUrl: () => whatsappUrl
+                              })}
                               disabled={notifyingItemId === item.id}
+                              title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                               className="font-bold underline hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
                             >
                               {notifyingItemId === item.id ? "Enviando..." : "Disparar agora"}
@@ -860,10 +866,14 @@ export default function LostAndFoundPage() {
                             {item.lastGuestPhone && (
                               <button
                                 type="button"
-                                onClick={() => handleNotifyGuest(item.id, whatsappUrl)}
+                                {...bindZapiClickOrHoldWaWeb({
+                                  toast,
+                                                                  onClickZapi: () => handleNotifyGuest(item.id, whatsappUrl),
+                                  getWaUrl: () => whatsappUrl
+                                })}
                                 disabled={notifyingItemId === item.id}
                                 className="inline-flex items-center justify-center gap-1.5 flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all shadow-xs"
-                                title="Enviar notificação oficial via Z-API (com redundância automática para WhatsApp Web)"
+                                title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                               >
                                 {notifyingItemId === item.id ? (
                                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />

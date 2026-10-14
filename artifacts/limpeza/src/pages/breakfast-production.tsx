@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { sendDirectZapiWithFallback } from "@/hooks/use-quick-messages"
+import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { 
   Coffee, Clock, Home as HomeIcon, Users, CheckCircle2, 
   Package, MessageCircle, Plus, ChevronRight, RefreshCw, AlertTriangle, Trash2, ExternalLink,
@@ -115,17 +115,30 @@ export default function BreakfastProduction() {
   )
   const [savingReminderTemplate, setSavingReminderTemplate] = useState(false)
 
-  const handleSendReminder = async (room: any) => {
+  const buildReminderMessage = (room: any) => {
     const guestName = room.guestName || "Hóspede"
     const flatNumber = room.flatNumber || ""
     const formattedDate = labelDate(currentDate)
     const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}&v=1`
 
-    const msg = reminderTemplate
+    return reminderTemplate
       .replace(/\{nome\}/gi, guestName)
       .replace(/\{quarto\}/gi, flatNumber)
       .replace(/\{data\}/gi, formattedDate)
       .replace(/\{link\}/gi, link)
+  }
+
+  const buildOrderNotifyMessage = (order: any, type: "in_production" | "on_the_way") => {
+    const firstName = (order.clientName || "Hóspede").split(" ")[0]
+    return type === "in_production"
+      ? `Bom dia, ${firstName}! ☕🍳\n\nRecebemos seu pedido de café da manhã para o Apt ${order.roomNumber} e a nossa cozinha já iniciou o preparo!\n\nHorário agendado: ${order.deliveryTime || "08:00"}\n\nAvisaremos assim que estiver a caminho. ✨`
+      : `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e a caminho do seu quarto!\n\nHorário previsto: ${order.deliveryTime || "08:00"}\n\nTenha um excelente dia e bom apetite! ✨`
+  }
+
+  const handleSendReminder = async (room: any) => {
+    const guestName = room.guestName || "Hóspede"
+    const flatNumber = room.flatNumber || ""
+    const msg = buildReminderMessage(room)
 
     const phone = (room.guestPhone || "").replace(/\D/g, "")
     if (!phone) {
@@ -916,7 +929,12 @@ export default function BreakfastProduction() {
                           <Button
                             type="button"
                             size="sm"
-                            onClick={() => handleSendReminder(room)}
+                            {...bindZapiClickOrHoldWaWeb({
+                              toast,
+                              onClickZapi: () => handleSendReminder(room),
+                              getWaUrl: () => buildDirectWaWebUrl(room.guestPhone, buildReminderMessage(room))
+                            })}
+                            title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
                             className="flex-1 h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
                           >
                             <MessageCircle className="w-3.5 h-3.5" />
@@ -1313,13 +1331,17 @@ export default function BreakfastProduction() {
                                       variant="outline" 
                                       size="sm" 
                                       disabled={!order.phone || Boolean(sendingNotify[`${order.id}_in_production`])}
-                                      onClick={() => handleNotifyGuest(order, "in_production")}
+                                      {...bindZapiClickOrHoldWaWeb({
+                                        toast,
+                                        onClickZapi: () => handleNotifyGuest(order, "in_production"),
+                                        getWaUrl: () => buildDirectWaWebUrl(order.phone, buildOrderNotifyMessage(order, "in_production"))
+                                      })}
                                       className={`h-8 text-xs font-bold gap-1.5 transition-all ${
                                         order.inProductionNotifiedAt 
                                           ? "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300 hover:bg-amber-500/20"
                                           : "border-amber-400 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
                                       }`}
-                                      title={!order.phone ? "Hóspede sem telefone cadastrado" : "Disparar mensagem via API informando que o café está sendo preparado"}
+                                      title={!order.phone ? "Hóspede sem telefone cadastrado" : "Clique: Z-API | Segure 2s: WhatsApp Web"}
                                     >
                                       {sendingNotify[`${order.id}_in_production`] ? (
                                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1341,13 +1363,17 @@ export default function BreakfastProduction() {
                                       variant="outline" 
                                       size="sm" 
                                       disabled={!order.phone || Boolean(sendingNotify[`${order.id}_on_the_way`])}
-                                      onClick={() => handleNotifyGuest(order, "on_the_way")}
+                                      {...bindZapiClickOrHoldWaWeb({
+                                        toast,
+                                        onClickZapi: () => handleNotifyGuest(order, "on_the_way"),
+                                        getWaUrl: () => buildDirectWaWebUrl(order.phone, buildOrderNotifyMessage(order, "on_the_way"))
+                                      })}
                                       className={`h-8 text-xs font-bold gap-1.5 transition-all ${
                                         order.onTheWayNotifiedAt 
                                           ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/20"
                                           : "border-emerald-400 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
                                       }`}
-                                      title={!order.phone ? "Hóspede sem telefone cadastrado" : "Disparar mensagem via API informando que o café está pronto e a caminho"}
+                                      title={!order.phone ? "Hóspede sem telefone cadastrado" : "Clique: Z-API | Segure 2s: WhatsApp Web"}
                                     >
                                       {sendingNotify[`${order.id}_on_the_way`] ? (
                                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
