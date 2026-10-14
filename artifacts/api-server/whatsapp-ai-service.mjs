@@ -2315,15 +2315,15 @@ function handleCalculateQuote(db, args = {}) {
   };
 }
 
-async function handleCreatePreReservation(db, args = {}) {
+function createPreReservationSync(db, args = {}) {
   const inDate = args.checkIn || args.checkin;
   const outDate = args.checkOut || args.checkout;
   const guestName = args.guestName;
   const guestPhone = args.guestPhone || "";
   const flatId = args.flatId;
-  const total = Number(args.total || 0);
   const channel = args.channel || "whatsapp";
   const guests = Math.max(1, Number(args.guests || args.guestsCount || 1));
+  const ratePlan = args.ratePlan || "room_only";
 
   if (!inDate || !outDate || !guestName || !flatId) {
     return {
@@ -2356,6 +2356,21 @@ async function handleCreatePreReservation(db, args = {}) {
     };
   }
 
+  let total = Number(args.total || 0);
+  if (!(total > 0)) {
+    const autoQuote = handleCalculateQuote(db, {
+      checkIn: inDate,
+      checkOut: outDate,
+      guests,
+      flatId: flat.id,
+      channel: channel === "whatsapp" ? "direct" : channel,
+      ratePlan
+    });
+    if (autoQuote && autoQuote.success && autoQuote.total > 0) {
+      total = autoQuote.total;
+    }
+  }
+
   const botSettings = getBotActionsSettings(db);
   const holdMinutes = botSettings.preReservationHoldMinutes || 30;
   const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
@@ -2374,15 +2389,6 @@ async function handleCreatePreReservation(db, args = {}) {
     txid: cleanTxId
   });
 
-  let qrCodeBase64 = "";
-  try {
-    const qrcodeMod = await import("qrcode").catch(() => null);
-    const QRCode = qrcodeMod?.default || qrcodeMod;
-    if (QRCode && typeof QRCode.toDataURL === "function") {
-      qrCodeBase64 = await QRCode.toDataURL(pixPayload);
-    }
-  } catch (_) {}
-
   const newReservation = {
     id: nextId,
     code,
@@ -2395,6 +2401,7 @@ async function handleCreatePreReservation(db, args = {}) {
     checkinDate: inDate,
     checkoutDate: outDate,
     channel,
+    ratePlan,
     status: "pre_reserva",
     paymentStatus: "pendente",
     totalAmount: total,
@@ -2422,9 +2429,28 @@ async function handleCreatePreReservation(db, args = {}) {
     status: "pre_reserva",
     expiresAt: newReservation.expiresAt,
     pixCopiaECola: pixPayload,
-    qrCodeBase64,
+    qrCodeBase64: "",
     holdMinutes
   };
+}
+
+async function handleCreatePreReservation(db, args = {}) {
+  const syncResult = createPreReservationSync(db, args);
+  if (!syncResult.success) {
+    return syncResult;
+  }
+
+  let qrCodeBase64 = "";
+  try {
+    const qrcodeMod = await import("qrcode").catch(() => null);
+    const QRCode = qrcodeMod?.default || qrcodeMod;
+    if (QRCode && typeof QRCode.toDataURL === "function") {
+      qrCodeBase64 = await QRCode.toDataURL(syncResult.pixCopiaECola);
+    }
+  } catch (_) {}
+
+  syncResult.qrCodeBase64 = qrCodeBase64;
+  return syncResult;
 }
 
 async function handleGeneratePayment(db, args = {}) {
@@ -2693,23 +2719,49 @@ export function handleGetFlatStatus(db, args = {}) {
   }
 
   const todayStr = getBrasiliaDateParts().todayStr;
-  let cleaningStatus = "desconhecido";
-  let isRoomReady = false;
+  let cleaningStatus = "clean";
+  let isRoomReady = true;
 
   const cleanReq = (db?.cleaningRequests || []).find(c =>
     (String(c.flatNumber) === String(flat.number) || String(c.flatId) === String(flat.id)) &&
     (c.requestDate === todayStr || c.effectiveDate === todayStr)
   );
 
+  const hasPendingCheckoutToday = (db?.reservations || []).some(r =>
+    (String(r.flatNumber) === String(flat.number) || String(r.flatId) === String(flat.id)) &&
+    r.checkoutDate === todayStr &&
+    r.status !== "cancelada" && r.status !== "expirada" &&
+    r.status !== "checkout" && r.status !== "checked_out" && r.status !== "finalizada"
+  );
+
+  const allPastOrTodayCleanings = (db?.cleaningRequests || [])
+    .filter(c =>
+      (String(c.flatNumber) === String(flat.number) || String(c.flatId) === String(flat.id)) &&
+      String(c.requestDate || "") <= todayStr
+    )
+    .sort((a, b) => String(b.requestDate || "").localeCompare(String(a.requestDate || "")) || (b.id - a.id));
+  const lastCleaning = allPastOrTodayCleanings[0] || null;
+
   if (cleanReq) {
-    cleaningStatus = cleanReq.status || "pendente";
-    isRoomReady = cleanReq.status === "clean" || cleanReq.completedAt != null;
-  } else if (flat.status === "clean") {
+    if (cleanReq.status === "clean" || cleanReq.completedAt != null) {
+      cleaningStatus = "clean";
+      isRoomReady = true;
+    } else if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
+      cleaningStatus = "cleaning_now";
+      isRoomReady = false;
+    } else {
+      cleaningStatus = cleanReq.status || "dirty";
+      isRoomReady = false;
+    }
+  } else if (hasPendingCheckoutToday) {
+    cleaningStatus = "dirty";
+    isRoomReady = false;
+  } else if (lastCleaning && (lastCleaning.status === "cleaning_now" || lastCleaning.status === "in_progress")) {
+    cleaningStatus = "cleaning_now";
+    isRoomReady = false;
+  } else {
     cleaningStatus = "clean";
     isRoomReady = true;
-  } else {
-    cleaningStatus = flat.status || "dirty";
-    isRoomReady = flat.status === "clean";
   }
 
   const activeReservation = (db?.reservations || []).find(r =>
@@ -4456,6 +4508,16 @@ export function hasRecentlySentPricingQuote(history = []) {
     if (!m || !m.fromMe || !m.text) return false;
     const t = String(m.text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
+    // Não confundir confirmação de disponibilidade de datas específicas ou pré-reserva gerada com o banner genérico de tarifas
+    if (
+      t.includes("verifiquei a disponibilidade para as datas informadas") ||
+      t.includes("orcamento total para o periodo") ||
+      t.includes("resumo da pre-reserva") ||
+      t.includes("pix copia e cola")
+    ) {
+      return false;
+    }
+
     // 1. Padrões textuais do banner oficial
     if (
       t.includes("no canal direto da corpflats") ||
@@ -4555,10 +4617,635 @@ export function areMessagesSubstantiallyIdentical(textA, textB) {
   return false;
 }
 
+const PT_MONTH_MAP = {
+  janeiro: 1, jan: 1,
+  fevereiro: 2, fev: 2,
+  marco: 3, mar: 3,
+  abril: 4, abr: 4,
+  maio: 5, mai: 5,
+  junho: 6, jun: 6,
+  julho: 7, jul: 7,
+  agosto: 8, ago: 8,
+  setembro: 9, set: 9,
+  outubro: 10, out: 10,
+  novembro: 11, nov: 11,
+  dezembro: 12, dez: 12
+};
+
+function getTodayBrasiliaIso() {
+  return new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+}
+
+function resolveParsedDateRange(inDay, inMonth, inYearRaw, outDay, outMonthRaw, outYearRaw, referenceDateStr = null) {
+  const refStr = referenceDateStr || getTodayBrasiliaIso();
+  const [refY, refM, refD] = refStr.split("-").map(Number);
+  const refDateUtc = new Date(Date.UTC(refY || 2026, (refM || 1) - 1, refD || 1, 12, 0, 0));
+
+  const normYear = (y) => {
+    if (!y) return null;
+    const n = Number(y);
+    if (isNaN(n)) return null;
+    return n < 100 ? 2000 + n : n;
+  };
+
+  const dIn = Number(inDay);
+  const mIn = Number(inMonth);
+  const dOut = Number(outDay);
+  let mOut = Number(outMonthRaw || mIn);
+
+  if (!dIn || !mIn || !dOut || !mOut || mIn < 1 || mIn > 12 || mOut < 1 || mOut > 12 || dIn < 1 || dIn > 31 || dOut < 1 || dOut > 31) {
+    return null;
+  }
+
+  let yIn = normYear(inYearRaw) || normYear(outYearRaw) || refY || 2026;
+  let start = new Date(Date.UTC(yIn, mIn - 1, dIn, 12, 0, 0));
+  if (start.getUTCMonth() !== mIn - 1 || start.getUTCDate() !== dIn) return null;
+
+  if (!inYearRaw && !outYearRaw && (refDateUtc.getTime() - start.getTime()) > 3 * 86400000) {
+    yIn += 1;
+    start = new Date(Date.UTC(yIn, mIn - 1, dIn, 12, 0, 0));
+    if (start.getUTCMonth() !== mIn - 1 || start.getUTCDate() !== dIn) return null;
+  }
+
+  let yOut = normYear(outYearRaw) || yIn;
+  if (!outMonthRaw && dOut < dIn) {
+    mOut = mIn === 12 ? 1 : mIn + 1;
+  }
+  if (!outYearRaw && (mOut < mIn || (mOut === mIn && dOut <= dIn))) {
+    yOut = yIn + 1;
+  }
+
+  const end = new Date(Date.UTC(yOut, mOut - 1, dOut, 12, 0, 0));
+  if (end.getUTCMonth() !== mOut - 1 || end.getUTCDate() !== dOut) return null;
+  if (end <= start) return null;
+
+  const nights = Math.round((end.getTime() - start.getTime()) / 86400000);
+  if (nights < 1 || nights > 90) return null;
+
+  const checkIn = start.toISOString().slice(0, 10);
+  const checkOut = end.toISOString().slice(0, 10);
+  const displayCheckIn = `${String(dIn).padStart(2, "0")}/${String(mIn).padStart(2, "0")}`;
+  const displayCheckOut = `${String(dOut).padStart(2, "0")}/${String(mOut).padStart(2, "0")}`;
+
+  return {
+    checkIn,
+    checkOut,
+    nights,
+    displayCheckIn,
+    displayCheckOut
+  };
+}
+
+/**
+ * Extrai intervalo real de datas de check-in e check-out a partir de texto natural em português
+ */
+export function parseNaturalDatesFromText(text = "", referenceDateStr = null) {
+  if (!text || typeof text !== "string") return null;
+  const norm = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  // 1. Formato ISO: YYYY-MM-DD a YYYY-MM-DD
+  const isoMatch = norm.match(/\b(20\d{2})-(\d{2})-(\d{2})\s*(?:a|ate|ao|\-|e(?:\s+saida)?)\s*(20\d{2})-(\d{2})-(\d{2})\b/i);
+  if (isoMatch) {
+    const res = resolveParsedDateRange(isoMatch[3], isoMatch[2], isoMatch[1], isoMatch[6], isoMatch[5], isoMatch[4], referenceDateStr);
+    if (res) return res;
+  }
+
+  // 2. Formato DD/MM[/YYYY] a DD/MM[/YYYY]
+  const slashRange = norm.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s*(?:a|ate|ao|\-|e(?:\s+saida)?(?:\s+dia)?|,?\s*saida(?:\s+dia)?|,?\s*check-?out(?:\s+dia)?)\s*(?:o\s+dia\s+|dia\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
+  if (slashRange) {
+    const res = resolveParsedDateRange(slashRange[1], slashRange[2], slashRange[3], slashRange[4], slashRange[5], slashRange[6], referenceDateStr);
+    if (res) return res;
+  }
+
+  // 3. Formato "de DD a DD/MM[/YYYY]" ou "do dia DD ao dia DD/MM"
+  const dayToSlash = norm.match(/\b(?:de|do\s+dia|dia|entre)\s+(\d{1,2})\s*(?:a|ate|ao|\-|e)\s*(?:o\s+dia\s+|dia\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
+  if (dayToSlash) {
+    const res = resolveParsedDateRange(dayToSlash[1], dayToSlash[3], dayToSlash[4], dayToSlash[2], dayToSlash[3], dayToSlash[4], referenceDateStr);
+    if (res) return res;
+  }
+
+  // 4. Formato com nome do mês: "do dia 10 ao dia 15 de novembro", "10 de novembro a 15 de novembro"
+  const monthRange = norm.match(/\b(?:de\s+|do\s+dia\s+|dia\s+)?(\d{1,2})(?:\s+de\s+([a-z]{3,9}))?\s*(?:a|ate|ao|\-|e(?:\s+saida)?(?:\s+dia)?)\s*(?:o\s+dia\s+|dia\s+)?(\d{1,2})\s+de\s+([a-z]{3,9})(?:\s+de\s+(\d{4}))?\b/i);
+  if (monthRange) {
+    const outM = PT_MONTH_MAP[monthRange[4]];
+    const inM = monthRange[2] ? PT_MONTH_MAP[monthRange[2]] : outM;
+    if (inM && outM) {
+      const res = resolveParsedDateRange(monthRange[1], inM, monthRange[5], monthRange[3], outM, monthRange[5], referenceDateStr);
+      if (res) return res;
+    }
+  }
+
+  // 5. Data inicial + número de diárias/noites: "10/11 por 3 diárias" ou "10 de novembro por 2 noites"
+  const slashPlusNights = norm.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b.*?\b(\d{1,2})\s*(?:diarias?|noites?)\b/i);
+  if (slashPlusNights) {
+    const dIn = Number(slashPlusNights[1]);
+    const mIn = Number(slashPlusNights[2]);
+    const nightsCount = Number(slashPlusNights[4]);
+    const refStr = referenceDateStr || getTodayBrasiliaIso();
+    const [refY] = refStr.split("-").map(Number);
+    const yIn = slashPlusNights[3] ? (Number(slashPlusNights[3]) < 100 ? 2000 + Number(slashPlusNights[3]) : Number(slashPlusNights[3])) : (refY || 2026);
+    const start = new Date(Date.UTC(yIn, mIn - 1, dIn, 12, 0, 0));
+    if (!isNaN(start.getTime()) && nightsCount >= 1 && nightsCount <= 90) {
+      const end = new Date(start.getTime() + nightsCount * 86400000);
+      return resolveParsedDateRange(dIn, mIn, yIn, end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(), referenceDateStr);
+    }
+  }
+
+  const monthPlusNights = norm.match(/\b(\d{1,2})\s+de\s+([a-z]{3,9})(?:\s+de\s+(\d{4}))?\b.*?\b(\d{1,2})\s*(?:diarias?|noites?)\b/i);
+  if (monthPlusNights && PT_MONTH_MAP[monthPlusNights[2]]) {
+    const dIn = Number(monthPlusNights[1]);
+    const mIn = PT_MONTH_MAP[monthPlusNights[2]];
+    const nightsCount = Number(monthPlusNights[4]);
+    const refStr = referenceDateStr || getTodayBrasiliaIso();
+    const [refY] = refStr.split("-").map(Number);
+    const yIn = monthPlusNights[3] ? Number(monthPlusNights[3]) : (refY || 2026);
+    const start = new Date(Date.UTC(yIn, mIn - 1, dIn, 12, 0, 0));
+    if (!isNaN(start.getTime()) && nightsCount >= 1 && nightsCount <= 90) {
+      const end = new Date(start.getTime() + nightsCount * 86400000);
+      return resolveParsedDateRange(dIn, mIn, yIn, end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(), referenceDateStr);
+    }
+  }
+
+  // 6. Datas relativas ("hoje até amanhã", "amanhã por 2 diárias", etc.)
+  if (/\b(?:hoje|amanha)\b/i.test(norm) && /\b(?:ate\s+amanha|para\s+amanha|depois\s+de\s+amanha|\d+\s*(?:diarias?|noites?))\b/i.test(norm)) {
+    const refStr = referenceDateStr || getTodayBrasiliaIso();
+    const [refY, refM, refD] = refStr.split("-").map(Number);
+    const baseUtc = new Date(Date.UTC(refY || 2026, (refM || 1) - 1, refD || 1, 12, 0, 0));
+    const startsTomorrow = /\b(?:a\s+partir\s+de\s+amanha|entrada\s+amanha|check-?in\s+amanha|^amanha)\b/i.test(norm);
+    const start = new Date(baseUtc.getTime() + (startsTomorrow ? 86400000 : 0));
+    const nightsMatch = norm.match(/\b(\d{1,2})\s*(?:diarias?|noites?)\b/i);
+    const nightsCount = nightsMatch ? Math.max(1, Number(nightsMatch[1])) : 1;
+    const end = new Date(start.getTime() + nightsCount * 86400000);
+    return resolveParsedDateRange(
+      start.getUTCDate(), start.getUTCMonth() + 1, start.getUTCFullYear(),
+      end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(),
+      referenceDateStr
+    );
+  }
+
+  return null;
+}
+
+function extractGuestsFromSingleText(text = "") {
+  if (!text || typeof text !== "string") return null;
+  const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/\b(?:3|tres)\s*(?:pessoas?|hospedes?|adultos?)\b/i.test(norm)) return 3;
+  if (/\b(?:2|duas|dois)\s*(?:pessoas?|hospedes?|adultos?)\b|\bcasal\b/i.test(norm)) return 2;
+  if (/\b(?:1|uma|um)\s*(?:pessoa|hospede|adulto)\b|\bindividual\b|\bsolteir[ao]\b|\bsozinho\b|\bsozinha\b/i.test(norm)) return 1;
+  const numMatch = norm.match(/\b([4-9])\s*(?:pessoas?|hospedes?|adultos?)\b/i);
+  if (numMatch) return Number(numMatch[1]);
+  return null;
+}
+
+function extractBreakfastFromSingleText(text = "") {
+  if (!text || typeof text !== "string") return null;
+  const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/\b(?:sem\s+cafe|so\s+o\s+quarto|somente\s+quarto|apenas\s+quarto)\b/i.test(norm)) return "without_breakfast";
+  if (/\b(?:com\s+cafe|incluso\s+cafe|incluindo\s+cafe|cafe\s+incluso)\b/i.test(norm)) return "with_breakfast";
+  return null;
+}
+
+/**
+ * Constrói o estado acumulado da conversa multi-turn (datas, hóspedes, plano de café, comodidades e pré-reserva ativa)
+ */
+export function extractConversationState(messageText = "", history = [], guestContext = {}, db = null) {
+  const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
+    ? history
+    : (guestContext?.history && Array.isArray(guestContext.history) && guestContext.history.length > 0
+        ? guestContext.history
+        : ((db?.whatsappConversations || []).find(c => {
+            const p = cleanWhatsAppPhone(c.phone);
+            const target = cleanWhatsAppPhone(guestContext?.phone);
+            return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+          })?.messages || []));
+
+  const refDateStr = guestContext?.todayStr || getTodayBrasiliaIso();
+  const recentHistory = effectiveHistory.slice(-10);
+
+  // Evita duplicar a mensagem atual se já estiver no fim do histórico
+  const lastItem = recentHistory[recentHistory.length - 1];
+  const historyWithoutCurrent = (lastItem && !lastItem.fromMe && String(lastItem.text || "").trim() === String(messageText || "").trim())
+    ? recentHistory.slice(0, -1)
+    : recentHistory;
+
+  const userTurns = [
+    ...historyWithoutCurrent.filter(m => m && !m.fromMe && m.text).map(m => String(m.text)),
+    ...(messageText ? [String(messageText)] : [])
+  ];
+
+  let parsedDates = null;
+  let guests = 1;
+  let guestsExplicit = false;
+  let breakfastPreference = null; // "with_breakfast" | "without_breakfast" | null
+  let preferredFlatNumber = null;
+  const amenityPreferences = {};
+  let priorUserWantedToBook = false;
+
+  for (const uText of historyWithoutCurrent.filter(m => m && !m.fromMe && m.text).map(m => String(m.text))) {
+    if (isReservationBookingRequest(uText)) {
+      priorUserWantedToBook = true;
+    }
+  }
+
+  for (const uText of userTurns) {
+    const d = parseNaturalDatesFromText(uText, refDateStr);
+    if (d) parsedDates = d;
+
+    const g = extractGuestsFromSingleText(uText);
+    if (g != null) {
+      guests = g;
+      guestsExplicit = true;
+    }
+
+    const bf = extractBreakfastFromSingleText(uText);
+    if (bf) {
+      breakfastPreference = bf;
+    }
+
+    const flatMatch = uText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{3,4})\b/i);
+    if (flatMatch) {
+      preferredFlatNumber = flatMatch[1];
+    }
+
+    if (/\bsplit\b/i.test(uText)) amenityPreferences.split = true;
+    if (/\b(?:cama\s+de\s+casal|cama\s+casal|cama\s+inteira)\b/i.test(uText)) amenityPreferences.bedType = "casal";
+    if (/\b(?:duas\s+camas|2\s+camas|solteiro)\b/i.test(uText)) amenityPreferences.bedType = "solteiro";
+    if (/\bmicro[- ]?ondas\b/i.test(uText)) amenityPreferences.hasMicrowave = true;
+  }
+
+  const currentDates = parseNaturalDatesFromText(messageText, refDateStr);
+  const currentGuests = extractGuestsFromSingleText(messageText);
+  const currentBreakfast = extractBreakfastFromSingleText(messageText);
+  const currentMessageIsBooking = isReservationBookingRequest(messageText);
+
+  const lastBotMsg = getLastBotMessage(historyWithoutCurrent);
+  const pricingAlreadyPresented = hasRecentlySentPricingQuote(historyWithoutCurrent);
+  const dateQuoteAlreadyPresented = historyWithoutCurrent.some(m =>
+    m && m.fromMe && m.text && (
+      /ger(?:e|ar)\s+(?:a\s+)?(?:sua\s+)?pr[eé]-reserva/i.test(m.text) ||
+      /deseja\s+que\s+eu\s+j[aá]\s+gere/i.test(m.text) ||
+      /garantir\s+(?:o\s+flat|a\s+unidade)/i.test(m.text)
+    )
+  );
+
+  const isAffirmativeConfirmation = /^(?:sim|quero|pode\s*(?:ser|fazer|fechar|confirmar|gerar|reservar)?|confirma(?:r)?|fechado|combinado|perfeito|ok\s*,?\s*pode|por\s+favor|isso(?:\s+mesmo)?|vamos\s+fechar)(?:\s*,?\s*(?:com\s+caf[eé]|sem\s+caf[eé]|por\s+favor))?[.!?\s]*$/i.test(
+    String(messageText || "").trim()
+  );
+
+  const wantsToBook = Boolean(
+    currentMessageIsBooking ||
+    priorUserWantedToBook ||
+    (dateQuoteAlreadyPresented && (isAffirmativeConfirmation || Boolean(currentBreakfast)))
+  );
+
+  const lastBotAskedDates = Boolean(lastBotMsg && (
+    /datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(lastBotMsg.text) ||
+    /qual\s+per[ií]odo/i.test(lastBotMsg.text) ||
+    /quantas\s+pessoas/i.test(lastBotMsg.text) ||
+    /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBotMsg.text)
+  ));
+
+  const askedForDatesCount = historyWithoutCurrent.filter(m =>
+    m && m.fromMe && m.text && !hasRecentlySentPricingQuote([m]) &&
+    (/datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(m.text) || /per[ií]odo\s+desejado/i.test(m.text))
+  ).length;
+
+  // Procura pré-reserva ativa existente para o telefone do hóspede
+  const cleanPhone = cleanWhatsAppPhone(guestContext?.phone || "");
+  const nowMs = Date.now();
+  const activePreReservation = (db?.reservations || []).find(r => {
+    if (r.status !== "pre_reserva") return false;
+    if (r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+    if (!cleanPhone || !rPhone || (!rPhone.endsWith(cleanPhone.slice(-8)) && !cleanPhone.endsWith(rPhone.slice(-8)))) return false;
+    if (parsedDates && (r.checkinDate !== parsedDates.checkIn || r.checkoutDate !== parsedDates.checkOut)) return false;
+    return true;
+  }) || null;
+
+  const ratePlan = breakfastPreference === "with_breakfast" ? "with_breakfast" : "room_only";
+
+  return {
+    hasDates: Boolean(parsedDates),
+    currentMessageHasDates: Boolean(currentDates),
+    checkIn: parsedDates?.checkIn || null,
+    checkOut: parsedDates?.checkOut || null,
+    nights: parsedDates?.nights || 0,
+    displayCheckIn: parsedDates?.displayCheckIn || null,
+    displayCheckOut: parsedDates?.displayCheckOut || null,
+    guests,
+    guestsExplicit,
+    currentMessageHasGuests: currentGuests != null,
+    breakfastPreference,
+    currentMessageHasBreakfast: currentBreakfast != null,
+    ratePlan,
+    preferredFlatNumber,
+    amenityPreferences,
+    wantsToBook,
+    currentMessageIsBooking,
+    priorUserWantedToBook,
+    pricingAlreadyPresented,
+    dateQuoteAlreadyPresented,
+    lastBotAskedDates,
+    askedForDatesCount,
+    activePreReservation
+  };
+}
+
+/**
+ * Orquestrador Conversacional Integrado às Ferramentas do PMS:
+ * Executa em tempo real checkAvailability, calculateQuote e createPreReservation (com PIX)
+ * conforme o estado acumulado da conversa multi-turn.
+ */
+export function executeConversationalBookingStep({
+  messageText = "",
+  history = [],
+  guestContext = {},
+  db = null,
+  aiConfig = DEFAULT_AI_CONFIG
+}) {
+  const convState = extractConversationState(messageText, history, guestContext, db);
+  const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
+  const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
+  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  const botSettings = getBotActionsSettings(db);
+  const canAutoReserve = botSettings.apiActionsEnabled !== false && (
+    botSettings.allowedActions.createPreReservation !== false ||
+    botSettings.allowedActions.commitReservation !== false
+  );
+  const canCheckAvailability = botSettings.apiActionsEnabled !== false && botSettings.allowedActions.checkAvailability !== false;
+  const canCalculateQuote = botSettings.apiActionsEnabled !== false && botSettings.allowedActions.calculateQuote !== false;
+
+  // 1. Se ações automáticas de reserva estão desativadas e o usuário quer reservar
+  if (!canAutoReserve && (convState.wantsToBook || convState.currentMessageIsBooking)) {
+    if (convState.hasDates) {
+      return {
+        handled: true,
+        action: "handover_disabled_with_dates",
+        requiresHandover: true,
+        convState,
+        replyText: ret(`Olá${name}! Perfeito, anotei sua solicitação de reserva para as datas informadas (*${convState.displayCheckIn} a ${convState.displayCheckOut}*)! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seus dados e um atendente continuará o seu atendimento por aqui em instantes para confirmar sua estadia! 🛎️`)
+      };
+    }
+    return {
+      handled: true,
+      action: "handover_disabled_no_dates",
+      requiresHandover: true,
+      convState,
+      replyText: ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`)
+    };
+  }
+
+  // 2. Se já possuímos datas válidas (na mensagem atual ou acumuladas do histórico da conversa)
+  if (convState.hasDates && db) {
+    const avail = canCheckAvailability
+      ? handleCheckAvailability(db, {
+          checkIn: convState.checkIn,
+          checkOut: convState.checkOut,
+          guests: convState.guests
+        })
+      : { success: false, available: false, flats: [] };
+
+    if (canCheckAvailability && avail.success && (!avail.available || avail.flats.length === 0)) {
+      return {
+        handled: true,
+        action: "no_availability",
+        requiresHandover: false,
+        convState,
+        availability: avail,
+        replyText: ret(`Olá${name}! Verifiquei agora em nosso sistema para as datas informadas (*${convState.displayCheckIn} a ${convState.displayCheckOut}*, para *${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}*) e, no momento, todas as nossas unidades estão ocupadas nesse período. 😔\n\nVocê teria flexibilidade para consultar outras datas próximas? Se desejar, basta me informar outro período que verifico imediatamente! 🏨✨`)
+      };
+    }
+
+    if (avail.available && avail.flats.length > 0) {
+      // Seleciona o flat ideal de acordo com a preferência do hóspede ou comodidades
+      let selectedFlat = avail.flats[0];
+      if (convState.preferredFlatNumber) {
+        const matchByNum = avail.flats.find(f => String(f.number) === String(convState.preferredFlatNumber) || String(f.id) === String(convState.preferredFlatNumber));
+        if (matchByNum) selectedFlat = matchByNum;
+      } else if (Object.keys(convState.amenityPreferences).length > 0) {
+        const matchByAmenity = avail.flats.find(f => {
+          if (convState.amenityPreferences.split && f.airConditionerType !== "split") return false;
+          if (convState.amenityPreferences.bedType && f.bedType !== convState.amenityPreferences.bedType) return false;
+          if (convState.amenityPreferences.hasMicrowave && !f.hasMicrowave) return false;
+          return true;
+        });
+        if (matchByAmenity) selectedFlat = matchByAmenity;
+      }
+
+      const quoteChosen = canCalculateQuote
+        ? handleCalculateQuote(db, {
+            checkIn: convState.checkIn,
+            checkOut: convState.checkOut,
+            guests: convState.guests,
+            flatId: selectedFlat.id,
+            channel: "direct",
+            ratePlan: convState.ratePlan
+          })
+        : null;
+
+      const quoteRoomOnly = canCalculateQuote
+        ? handleCalculateQuote(db, {
+            checkIn: convState.checkIn,
+            checkOut: convState.checkOut,
+            guests: convState.guests,
+            flatId: selectedFlat.id,
+            channel: "direct",
+            ratePlan: "room_only"
+          })
+        : null;
+
+      const quoteWithBf = canCalculateQuote
+        ? handleCalculateQuote(db, {
+            checkIn: convState.checkIn,
+            checkOut: convState.checkOut,
+            guests: convState.guests,
+            flatId: selectedFlat.id,
+            channel: "direct",
+            ratePlan: "with_breakfast"
+          })
+        : null;
+
+      // 2.A: Hóspede solicitou/confirmou a reserva -> Cria ou atualiza a Pré-Reserva real no PMS com PIX!
+      if (convState.wantsToBook && canAutoReserve && botSettings.allowedActions.createPreReservation !== false) {
+        let preRes = null;
+        const effectiveTotal = quoteChosen?.total || quoteRoomOnly?.total || (237 * convState.nights);
+
+        if (convState.activePreReservation) {
+          // Atualiza pré-reserva ativa se o hóspede ajustou plano ou número de hóspedes
+          const existing = convState.activePreReservation;
+          existing.guestsCount = convState.guests;
+          existing.ratePlan = convState.ratePlan;
+          existing.totalAmount = effectiveTotal;
+          const cleanTxId = String(existing.code || "CF000").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+          existing.pixCopiaECola = generateStaticPixPayload({
+            pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
+            amount: effectiveTotal,
+            merchantName: "CORPFLATS LTDA",
+            merchantCity: "CAMPOS DOS GOYTACAZES",
+            txid: cleanTxId
+          });
+          preRes = {
+            success: true,
+            reservationId: existing.id,
+            code: existing.code,
+            flatId: existing.flatId,
+            flatNumber: existing.flatNumber,
+            checkIn: existing.checkinDate,
+            checkOut: existing.checkoutDate,
+            guestName: existing.guestName,
+            total: existing.totalAmount,
+            status: existing.status,
+            expiresAt: existing.expiresAt,
+            pixCopiaECola: existing.pixCopiaECola,
+            holdMinutes: botSettings.preReservationHoldMinutes || 30
+          };
+        } else {
+          preRes = createPreReservationSync(db, {
+            flatId: selectedFlat.id,
+            checkIn: convState.checkIn,
+            checkOut: convState.checkOut,
+            guestName: guestContext?.guestName || "Hóspede WhatsApp",
+            guestPhone: guestContext?.phone || "",
+            guests: convState.guests,
+            ratePlan: convState.ratePlan,
+            channel: "whatsapp",
+            total: effectiveTotal
+          });
+        }
+
+        if (preRes && preRes.success) {
+          const planLabel = convState.ratePlan === "with_breakfast"
+            ? "Com café da manhã no quarto (isenção de taxa de limpeza)"
+            : `Sem café${quoteChosen?.cleaningFee ? ` (inclui R$ ${quoteChosen.cleaningFee},00 de taxa única de limpeza)` : ""}`;
+          const totalFormatted = Number(preRes.total || effectiveTotal).toFixed(2).replace(".", ",");
+
+          return {
+            handled: true,
+            action: "pre_reservation_created",
+            requiresHandover: false,
+            convState,
+            availability: avail,
+            quote: quoteChosen,
+            preReservation: preRes,
+            replyText: ret(
+              `Perfeito${name}! Verifiquei a disponibilidade para as datas informadas (*${convState.displayCheckIn} a ${convState.displayCheckOut}* — *${convState.nights} ${convState.nights === 1 ? "diária" : "diárias"}*) e já gerei a sua pré-reserva no sistema! 🏨✨\n\n` +
+              `📋 *Resumo da Pré-Reserva:*\n` +
+              `• *Código:* ${preRes.code}\n` +
+              `• *Unidade:* Flat ${preRes.flatNumber}\n` +
+              `• *Período:* ${convState.displayCheckIn} a ${convState.displayCheckOut} (${convState.nights} ${convState.nights === 1 ? "noite" : "noites"})\n` +
+              `• *Hóspedes:* ${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}\n` +
+              `• *Plano:* ${planLabel}\n` +
+              `• *Valor Total:* *R$ ${totalFormatted}*\n\n` +
+              `⏳ A unidade fica reservada para você por *${preRes.holdMinutes || 30} minutos*. Para confirmar definitivamente, basta realizar o pagamento via *PIX Copia e Cola* abaixo:\n\n` +
+              `\`${preRes.pixCopiaECola}\`\n\n` +
+              `Caso prefira alterar entre a opção com ou sem café da manhã no quarto, é só me avisar por aqui! 🥐☕`
+            )
+          };
+        }
+      }
+
+      // 2.B: Hóspede informou datas para consulta de disponibilidade / orçamento (sem ter pedido fechamento ainda)
+      const flatNumbersList = avail.flats.slice(0, 6).map(f => f.number).join(", ");
+      const totalRoomOnlyStr = Number(quoteRoomOnly?.total || (237 * convState.nights + 70)).toFixed(2).replace(".", ",");
+      const totalWithBfStr = Number(quoteWithBf?.total || ((237 + 35) * convState.nights)).toFixed(2).replace(".", ",");
+      const cleaningStr = Number(quoteRoomOnly?.cleaningFee ?? 70).toFixed(2).replace(".", ",");
+
+      return {
+        handled: true,
+        action: "availability_and_quote_presented",
+        requiresHandover: false,
+        convState,
+        availability: avail,
+        quote: quoteChosen || quoteRoomOnly,
+        replyText: ret(
+          `Perfeito${name}! Verifiquei a disponibilidade para as datas informadas (*${convState.displayCheckIn} a ${convState.displayCheckOut}* — *${convState.nights} ${convState.nights === 1 ? "diária" : "diárias"}* para *${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}*) e temos unidades disponíveis no Soho Residence (*Flats ${flatNumbersList}*)! 🏨✨\n\n` +
+          `💰 *Orçamento total para o período:*\n` +
+          `• *Opção sem café:* *R$ ${totalRoomOnlyStr}* (já incluindo a taxa única de limpeza de R$ ${cleaningStr})\n` +
+          `• *Opção com café da manhã no quarto:* *R$ ${totalWithBfStr}* (com *isenção total da taxa de limpeza*!) 🥐☕\n\n` +
+          `Deseja que eu já gere a sua pré-reserva com o código PIX para garantir o flat? Basta me confirmar se prefere com ou sem café da manhã!`
+        )
+      };
+    }
+
+    // Fallback caso não haja flats cadastrados no db de teste
+    return {
+      handled: true,
+      action: "dates_acknowledged",
+      requiresHandover: false,
+      convState,
+      replyText: ret(`Perfeito${name}! Anotei sua solicitação de reserva para as datas informadas (*${convState.displayCheckIn} a ${convState.displayCheckOut}*) 🏨✨. Já estou verificando a disponibilidade dos nossos flats no Soho Residence para você! Caso queira com ou sem café da manhã no quarto, me avise por aqui! 🥐☕`)
+    };
+  }
+
+  // 3. Ainda não temos as datas de check-in e check-out: reconhece o que já sabemos da conversa e pede apenas o que falta!
+  if (convState.breakfastPreference && convState.guestsExplicit) {
+    const guestDesc = convState.guests === 2 ? "para 2 pessoas (casal)" : `para ${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}`;
+    if (convState.breakfastPreference === "with_breakfast") {
+      return {
+        handled: true,
+        action: "ask_dates_known_guests_and_breakfast",
+        requiresHandover: false,
+        convState,
+        replyText: ret(`Excelente escolha${name}! Anotei ${guestDesc} na opção com café da manhã no quarto (com isenção da taxa de limpeza) 🥐☕. Para eu consultar a disponibilidade dos flats e gerar a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out)? 🏨✨`)
+      };
+    }
+    return {
+      handled: true,
+      action: "ask_dates_known_guests_and_breakfast",
+      requiresHandover: false,
+      convState,
+      replyText: ret(`Perfeito${name}! Anotei ${guestDesc} na opção sem café da manhã 🏨✨. Para eu consultar a disponibilidade dos flats e gerar a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out)?`)
+    };
+  }
+
+  if (convState.currentMessageHasBreakfast || (convState.breakfastPreference && !convState.currentMessageIsBooking)) {
+    if (convState.breakfastPreference === "with_breakfast") {
+      return {
+        handled: true,
+        action: "ask_dates_known_breakfast",
+        requiresHandover: false,
+        convState,
+        replyText: ret(`Excelente escolha${name}! A opção com café da manhã inclui a deliciosa bandeja no quarto e isenção da taxa de limpeza 🥐☕. Para eu consultar a disponibilidade dos flats e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`)
+      };
+    }
+    return {
+      handled: true,
+      action: "ask_dates_known_breakfast",
+      requiresHandover: false,
+      convState,
+      replyText: ret(`Perfeito${name}! Anotei a opção sem café da manhã 🏨✨. Para eu consultar a disponibilidade dos flats e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia?`)
+    };
+  }
+
+  if (convState.guestsExplicit) {
+    const guestDesc = convState.guests === 2 ? "para 2 pessoas (casal)" : `para ${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}`;
+    return {
+      handled: true,
+      action: "ask_dates_known_guests",
+      requiresHandover: false,
+      convState,
+      replyText: ret(`Perfeito${name}! Anotei ${guestDesc} 🏨✨. Para eu verificar os flats disponíveis e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out)?`)
+    };
+  }
+
+  return {
+    handled: true,
+    action: "ask_dates_and_guests",
+    requiresHandover: false,
+    convState,
+    replyText: ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`)
+  };
+}
+
 /**
  * Proteção Anti-Loop de Mensagens Idênticas (Anti-Repetition Guard)
  * Garante que a Sofia NUNCA envie uma resposta substancialmente idêntica à última resposta enviada
- * para o mesmo contato, refinando a mensagem de acordo com a intenção do usuário.
+ * para o mesmo contato, refinando a mensagem de acordo com o estado da conversa e as ferramentas do PMS.
  */
 export function applyAntiRepetitionGuard({
   candidateText = "",
@@ -4582,17 +5269,14 @@ export function applyAntiRepetitionGuard({
   const toneSettings = db?.whatsappAiSettings?.toneSettings || null;
   const ret = (msg) => applyToneFormatting(msg, toneSettings);
 
+  const convState = extractConversationState(queryText, history, guestContext, db);
   const queryAnalysis = analysis || analyzeGuestQuery(queryText, guestContext, db);
-  const isBooking = queryAnalysis.type === "RESERVATION_REQUEST" || isReservationBookingRequest(queryText);
+  const isBooking = convState.wantsToBook || queryAnalysis.type === "RESERVATION_REQUEST" || isReservationBookingRequest(queryText);
   const botSettings = getBotActionsSettings(db);
   const canAutoReserve = botSettings.apiActionsEnabled !== false && (
     botSettings.allowedActions.createPreReservation !== false ||
     botSettings.allowedActions.commitReservation !== false
   );
-
-  const hasDates = Boolean(queryAnalysis.hasDates) ||
-                   /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
-                   /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(queryText);
 
   const isLastBotQuote = hasRecentlySentPricingQuote([lastBotMsg]);
   const lastBotAskedDates = !isLastBotQuote && Boolean(
@@ -4604,7 +5288,7 @@ export function applyAntiRepetitionGuard({
 
   let resultText = candidateText;
 
-  // Caso 1: Usuário solicitando reserva
+  // Caso 1: Usuário em fluxo de reserva
   if (isBooking) {
     if (!canAutoReserve) {
       if (lastBotMsg.text.includes("realização de novas reservas diretas está sendo concluída") || lastBotMsg.text.includes("equipe da recepção")) {
@@ -4612,21 +5296,27 @@ export function applyAntiRepetitionGuard({
       } else {
         resultText = ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
       }
-    } else if (!hasDates) {
+    } else if (!convState.hasDates) {
       if (lastBotAskedDates) {
         resultText = ret(`Olá${name}! Eu realmente quero te ajudar com a sua reserva! 😊 Só preciso que você me passe o período desejado (dia de entrada e saída) e quantas pessoas serão, pois sem essas informações eu não consigo consultar os flats disponíveis nem emitir a reserva para você! 🏨✨`);
       } else {
-        resultText = ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
+        const stepResult = executeConversationalBookingStep({ messageText: queryText, history, guestContext, db });
+        resultText = stepResult.replyText;
       }
     } else {
-      resultText = ret(`Perfeito${name}! Já anotei o seu período e estou verificando a disponibilidade dos flats com todo carinho para confirmarmos sua estadia! 🏨✨`);
+      // Possui datas: executa as ferramentas reais do sistema para avançar a conversa!
+      const stepResult = executeConversationalBookingStep({ messageText: queryText, history, guestContext, db });
+      resultText = stepResult.replyText;
     }
   } else {
     // Caso 2: Resposta duplicada de cotação / diárias
     const isQuoteCandidate = hasRecentlySentPricingQuote([{ fromMe: true, text: candidateText }]) ||
       /no canal direto da corpflats|nossas diárias para flats executivos|qual período você pretende se hospedar/i.test(candidateText);
     if (isQuoteCandidate) {
-      if (lastBotAskedDates) {
+      if (convState.hasDates && db) {
+        const stepResult = executeConversationalBookingStep({ messageText: queryText, history, guestContext, db });
+        resultText = stepResult.replyText;
+      } else if (lastBotAskedDates) {
         resultText = ret(`Olá${name}! Como te passei os valores logo acima, me informe as datas de entrada e saída e o número de pessoas para que eu possa verificar a disponibilidade e reservar o flat para você! 🏨✨`);
       } else {
         resultText = ret(`Olá${name}! Como passei os valores das diárias logo acima ✨, para eu verificar a disponibilidade exata dos nossos flats e passarmos para a sua reserva, você poderia me informar as datas de check-in e check-out desejadas e para quantas pessoas será a estadia? 🏨`);
@@ -4707,6 +5397,28 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
   const text = String(rawText || "").trim();
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
+  const hist = (guestContext?.history && Array.isArray(guestContext.history))
+    ? guestContext.history
+    : ((db?.whatsappConversations || []).find(c => {
+        const p = cleanWhatsAppPhone(c.phone);
+        const target = cleanWhatsAppPhone(guestContext?.phone);
+        return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+      })?.messages || []);
+
+  const convState = extractConversationState(text, hist, guestContext || {}, db);
+
+  // Se a Sofia acabou de apresentar o orçamento de datas específicas e perguntou se pode gerar a pré-reserva,
+  // confirmações curtas ("sim", "quero", "pode fazer", "com café", etc.) são solicitações de reserva!
+  if (convState.hasDates && convState.dateQuoteAlreadyPresented && convState.wantsToBook) {
+    return {
+      type: "RESERVATION_REQUEST",
+      primaryTopic: "solicitacao_reserva",
+      rawText: text,
+      hasDates: true,
+      mentionsGuests: convState.guestsExplicit
+    };
+  }
+
   // 1. Saudação Pura
   const GREETING_WORDS = "(?:oi|ola|opa|ei|hello|hi|bom\\s+dia|boa\\s+tarde|boa\\s+noite)";
   const COURTESY_WORDS = "(?:tudo\\s+bem|tudo\\s+bom|como\\s+vai|como\\s+esta|beleza|tudo\\s+certo)";
@@ -4728,18 +5440,13 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     return {
       type: "RESERVATION_REQUEST",
       primaryTopic: "solicitacao_reserva",
-      rawText: text
+      rawText: text,
+      hasDates: convState.hasDates,
+      mentionsGuests: convState.guestsExplicit
     };
   }
 
   // 1.6 Resposta com Datas, Hóspedes ou Preferências em Fluxo de Reserva
-  const hist = (guestContext?.history && Array.isArray(guestContext.history))
-    ? guestContext.history
-    : ((db?.whatsappConversations || []).find(c => {
-        const p = cleanWhatsAppPhone(c.phone);
-        const target = cleanWhatsAppPhone(guestContext?.phone);
-        return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
-      })?.messages || []);
   const lastBot = getLastBotMessage(hist);
   const quoteRecentlySent = hasRecentlySentPricingQuote(hist);
   const botAskedDates = Boolean(lastBot && (
@@ -4748,17 +5455,20 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     /quantas\s+pessoas/i.test(lastBot.text) ||
     /verifico\s+a\s+disponibilidade/i.test(lastBot.text) ||
     /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBot.text) ||
+    /ger(?:e|ar)\s+(?:a\s+)?(?:sua\s+)?pr[eé]-reserva/i.test(lastBot.text) ||
     quoteRecentlySent
   ));
 
-  const hasDateIndicator = /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(lower) ||
+  const hasDateIndicator = convState.currentMessageHasDates ||
+                           /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(lower) ||
                            /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(lower);
-  const mentionsGuests = /\b(?:\d+|um|uma|dois|duas|tr[eê]s)\s+(?:pessoas?|h[oó]spedes?|adultos?)|casal|individual|solteir[ao]\b/i.test(lower);
+  const mentionsGuests = convState.currentMessageHasGuests ||
+                         /\b(?:\d+|um|uma|dois|duas|tr[eê]s)\s+(?:pessoas?|h[oó]spedes?|adultos?)|casal|individual|solteir[ao]\b/i.test(lower);
   const mentionsBreakfastChoice = /^(?:quero\s+|vou\s+querer\s+|prefiro\s+|pode\s+ser\s+)?(?:com|sem)\s+caf[eé](?:\s+da\s+manh[aã])?(?:\s+no\s+quarto)?(?:\s+por\s+favor)?$/i.test(lower) ||
                                   /\b(?:com|sem)\s+caf[eé]\s+da\s+manh[aã]\b/i.test(lower);
 
-  if (botAskedDates || quoteRecentlySent) {
-    if (hasDateIndicator && (mentionsGuests || /\b(?:dia|dias|de|a|at[eé]|chegada|sa[ií]da|check[- ]?in|check[- ]?out)\b/i.test(lower))) {
+  if (botAskedDates || quoteRecentlySent || convState.wantsToBook) {
+    if (hasDateIndicator && (convState.currentMessageHasDates || mentionsGuests || /\b(?:dia|dias|de|a|at[eé]|chegada|sa[ií]da|check[- ]?in|check[- ]?out)\b/i.test(lower))) {
       return {
         type: "RESERVATION_REQUEST",
         primaryTopic: "solicitacao_reserva",
@@ -4772,7 +5482,7 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
         type: "RESERVATION_REQUEST",
         primaryTopic: "solicitacao_reserva",
         rawText: text,
-        hasDates: false,
+        hasDates: convState.hasDates,
         breakfastChoice: /com\s+caf/i.test(lower) ? "com_cafe" : "sem_cafe"
       };
     }
@@ -4781,7 +5491,7 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
         type: "RESERVATION_REQUEST",
         primaryTopic: "solicitacao_reserva",
         rawText: text,
-        hasDates: false,
+        hasDates: convState.hasDates,
         mentionsGuests: true
       };
     }
@@ -4914,7 +5624,8 @@ export function validateAndRefineResponse({
             return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
           })?.messages || []));
 
-  const analysis = analyzeGuestQuery(queryText, guestContext, db);
+  const convState = extractConversationState(queryText, effectiveHistory, guestContext, db);
+  const analysis = analyzeGuestQuery(queryText, { ...(guestContext || {}), history: effectiveHistory }, db);
   let replyText = candidateText;
   let unmetDemand = null;
   let missingDataOrCapability = false;
@@ -4930,11 +5641,24 @@ export function validateAndRefineResponse({
     const isHandoverMessage = /transferindo|pausad[ao]s|manuten[cç][aã]o|atendimento\s+humano|equipe\s+humana/i.test(replyText);
     const hasPriceIndicator = /\b(?:r\$|\d+,\d{2}|\d+\s*reais)\b/i.test(replyText);
     const hasOnlyBreakfastLogistics = /servido\s+em\s+bandeja|das\s+05:00|portal\s+\/cafe|agendamento\s+at[eé]\s+a\s+v[eé]spera/i.test(replyText) && !hasPriceIndicator;
-    const candidateIsFullQuote = hasRecentlySentPricingQuote([{ fromMe: true, text: replyText }]) ||
-      /no canal direto da corpflats|nossas diárias para flats executivos/i.test(replyText);
+    const candidateHasSpecificDateQuote = Boolean(convState.currentMessageHasDates && (/datas\s+informadas/i.test(replyText) || (convState.displayCheckIn && replyText.includes(convState.displayCheckIn))));
+    const candidateIsFullQuote = !candidateHasSpecificDateQuote && (
+      hasRecentlySentPricingQuote([{ fromMe: true, text: replyText }]) ||
+      /no canal direto da corpflats|nossas diárias para flats executivos/i.test(replyText)
+    );
 
-    // Se já enviou cotação recentemente, NUNCA permite reenvio do banner grande de cotação!
-    if (hasRecentlySentPricingQuote(effectiveHistory) && (candidateIsFullQuote || !hasPriceIndicator || hasOnlyBreakfastLogistics)) {
+    if (!isHandoverMessage && convState.currentMessageHasDates && db && !candidateHasSpecificDateQuote) {
+      const stepResult = executeConversationalBookingStep({
+        messageText: queryText,
+        history: effectiveHistory,
+        guestContext,
+        db,
+        aiConfig
+      });
+      if (stepResult.handled && stepResult.replyText) {
+        replyText = stepResult.replyText;
+      }
+    } else if (hasRecentlySentPricingQuote(effectiveHistory) && (candidateIsFullQuote || !hasPriceIndicator || hasOnlyBreakfastLogistics)) {
       const pricing = handleGetPricingInfo(db, {
         guests: /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText) ? 2 : 1,
         withBreakfast: /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText)
@@ -4971,10 +5695,6 @@ export function validateAndRefineResponse({
       botSettings.allowedActions.commitReservation !== false
     );
 
-    const hasDates = Boolean(analysis.hasDates) ||
-                     /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
-                     /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(queryText);
-
     if (!canAutoReserve) {
       missingDataOrCapability = true;
       shouldHandover = true;
@@ -4993,24 +5713,58 @@ export function validateAndRefineResponse({
         createNotification
       });
 
-      if (hasDates) {
-        replyText = ret(`Olá${name}! Perfeito, anotei sua solicitação de reserva para as datas informadas! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seus dados e um atendente continuará o seu atendimento por aqui em instantes para confirmar sua estadia! 🛎️`);
-      } else {
-        replyText = ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
-      }
+      const stepResult = executeConversationalBookingStep({
+        messageText: queryText,
+        history: effectiveHistory,
+        guestContext,
+        db,
+        aiConfig
+      });
+      replyText = stepResult.replyText;
     } else {
-      const candidateRepeatsQuote = hasRecentlySentPricingQuote([{ fromMe: true, text: replyText }]) ||
-        /no canal direto da corpflats|nossas diárias para flats|sem café:\s*a partir|com café da manhã no quarto:/i.test(replyText) ||
-        (/\b(?:r\$\s*237|r\$\s*272|r\$\s*307)\b/i.test(replyText) && /\b(?:di[aá]rias?|taxa.*limpeza)\b/i.test(replyText));
+      const candidateHasPreReservation = /\bcf-\d+\b/i.test(replyText) || /pr[eé]-reserva.*c[oó]digo|pix\s+copia\s+e\s+cola|000201/i.test(replyText);
+      const candidateHasDateQuote = Boolean(
+        convState.hasDates && (
+          /datas\s+informadas/i.test(replyText) ||
+          /or[cç]amento\s+total\s+para\s+o\s+per[ií]odo/i.test(replyText) ||
+          (convState.displayCheckIn && replyText.includes(convState.displayCheckIn))
+        )
+      );
+      const candidateRepeatsGenericQuote = !candidateHasPreReservation && !candidateHasDateQuote && (
+        hasRecentlySentPricingQuote([{ fromMe: true, text: replyText }]) ||
+        /no canal direto da corpflats|nossas diárias para flats|sem café:\s*a partir|com café da manhã no quarto:\s*a partir/i.test(replyText)
+      );
 
-      const isAlreadyAskingDates = /datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(replyText) && !candidateRepeatsQuote;
+      const isAlreadyAskingDates = /datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(replyText) && !candidateRepeatsGenericQuote;
 
-      if (!hasDates) {
-        if (!isAlreadyAskingDates || candidateRepeatsQuote) {
-          replyText = ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
+      if (convState.hasDates) {
+        // Se temos datas (atuais ou do histórico), garante que a resposta execute a ação real (pré-reserva ou disponibilidade/orçamento)
+        const needsPreReservationNow = convState.wantsToBook && !candidateHasPreReservation && (db?.flats?.length > 0);
+        if (candidateRepeatsGenericQuote || isAlreadyAskingDates || needsPreReservationNow || (!candidateHasPreReservation && !candidateHasDateQuote)) {
+          const stepResult = executeConversationalBookingStep({
+            messageText: queryText,
+            history: effectiveHistory,
+            guestContext,
+            db,
+            aiConfig
+          });
+          if (stepResult.handled && stepResult.replyText) {
+            replyText = stepResult.replyText;
+          }
         }
-      } else if (candidateRepeatsQuote) {
-        replyText = ret(`Perfeito${name}! Anotei sua solicitação de reserva para as datas informadas 🏨✨. Já estou verificando a disponibilidade dos nossos flats no Soho Residence para você!`);
+      } else {
+        if (!isAlreadyAskingDates || candidateRepeatsGenericQuote) {
+          const stepResult = executeConversationalBookingStep({
+            messageText: queryText,
+            history: effectiveHistory,
+            guestContext,
+            db,
+            aiConfig
+          });
+          if (stepResult.handled && stepResult.replyText) {
+            replyText = stepResult.replyText;
+          }
+        }
       }
     }
   }
@@ -5727,53 +6481,18 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
-  // 0.75 Solicitação ou Intenção de Nova Reserva (Booking Request)
+  // 0.75 Solicitação ou Intenção de Nova Reserva (Booking Request & Conversational State Progression)
   if (isReservationBookingRequest(text) || (queryAnalysis.type === "RESERVATION_REQUEST")) {
-    const botSettings = getBotActionsSettings(activeDb);
-    const canAutoReserve = botSettings.apiActionsEnabled !== false && (
-      botSettings.allowedActions.createPreReservation !== false ||
-      botSettings.allowedActions.commitReservation !== false
-    );
-
-    const hasDates = Boolean(queryAnalysis.hasDates) ||
-                     /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(text) ||
-                     /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(text);
-
-    const isBreakfastChoice = queryAnalysis.breakfastChoice || (
-      /^(?:quero\s+|vou\s+querer\s+|prefiro\s+|pode\s+ser\s+)?(?:com|sem)\s+caf[eé]/i.test(text)
-    );
-    const isGuestsOnly = !hasDates && (
-      Boolean(queryAnalysis.mentionsGuests) ||
-      /\b(?:\d+|um|uma|dois|duas|tr[eê]s)\s+(?:pessoas?|h[oó]spedes?|adultos?)|casal|individual|solteir[ao]\b/i.test(text)
-    );
-
-    if (!canAutoReserve) {
-      if (hasDates) {
-        return ret(`Olá${name}! Perfeito, anotei sua solicitação de reserva para as datas informadas! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seus dados e um atendente continuará o seu atendimento por aqui em instantes para confirmar sua estadia! 🛎️`);
-      }
-      return ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
+    const stepResult = executeConversationalBookingStep({
+      messageText: text,
+      history: effectiveHistory,
+      guestContext,
+      db: activeDb,
+      aiConfig
+    });
+    if (stepResult && stepResult.handled && stepResult.replyText) {
+      return stepResult.replyText;
     }
-
-    if (hasDates) {
-      return ret(`Perfeito${name}! Anotei sua solicitação de reserva para as datas informadas 🏨✨. Já estou verificando a disponibilidade dos nossos flats no Soho Residence para você! Caso queira com ou sem café da manhã no quarto, me avise por aqui! 🥐☕`);
-    }
-
-    if (isBreakfastChoice) {
-      const withBf = /com\s+caf/i.test(text) || queryAnalysis.breakfastChoice === "com_cafe";
-      if (withBf) {
-        return ret(`Excelente escolha${name}! A opção com café da manhã inclui a deliciosa bandeja no quarto e isenção da taxa de limpeza 🥐☕. Para eu consultar a disponibilidade dos flats e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
-      }
-      return ret(`Perfeito${name}! Anotei a opção sem café da manhã 🏨✨. Para eu consultar a disponibilidade dos flats e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia?`);
-    }
-
-    if (isGuestsOnly) {
-      const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(text);
-      const is1 = /\b(?:1|uma)\s+pessoa|\bindividual|\bsolteir/i.test(text);
-      const guestDesc = isCouple ? "para 2 pessoas (casal)" : (is1 ? "para 1 pessoa" : "a quantidade de pessoas");
-      return ret(`Perfeito${name}! Anotei ${guestDesc} 🏨✨. Para eu verificar os flats disponíveis e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out)?`);
-    }
-
-    return ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
   }
 
   // 0.8 Motor Dinâmico de Cotações, Diárias e Tarifas (Prioridade Máxima sobre comodidades e rotinas operacionais)
@@ -5801,6 +6520,21 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     // 2.1 Pergunta estritamente sobre o valor do café avulso (sem diária de quarto)
     if (isOnlyBreakfastAlone) {
       return ret(`${greetingSalutation} 🥐☕ O café da manhã da CorpFlats é servido exclusivamente em deliciosa bandeja personalizada com todo conforto diretamente no seu flat!\n\n• *Valor avulso:* R$ 35,00 por pessoa/dia.\n• *Dica especial:* Ao reservar sua diária diretamente conosco no plano com café incluso, você ganha o benefício exclusivo de *isenção total da taxa de limpeza*!\n\nGostaria de consultar as diárias com café para alguma data específica? ✨`);
+    }
+
+    // 2.2 Se o hóspede já informou datas concretas na pergunta de disponibilidade/preço, consulta disponibilidade e orçamento reais no PMS!
+    const directDates = parseNaturalDatesFromText(text, guestContext?.todayStr);
+    if (directDates && activeDb && Array.isArray(activeDb.flats) && activeDb.flats.length > 0) {
+      const stepResult = executeConversationalBookingStep({
+        messageText: text,
+        history: effectiveHistory,
+        guestContext,
+        db: activeDb,
+        aiConfig
+      });
+      if (stepResult && stepResult.handled && stepResult.replyText) {
+        return stepResult.replyText;
+      }
     }
 
     // 3. Consulta valores base no banco dinâmico
@@ -6102,7 +6836,11 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "" }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
+  const customModel = db?.settings?.geminiModel || db?.whatsappAiSettings?.geminiModel || null;
   const candidateModels = [
+    ...(customModel ? [{ ver: "v1beta", model: String(customModel).trim() }] : []),
+    { ver: "v1beta", model: "gemini-2.5-flash" },
+    { ver: "v1beta", model: "gemini-2.5-flash-lite" },
     { ver: "v1beta", model: "gemini-2.0-flash" },
     { ver: "v1beta", model: "gemini-2.0-flash-lite" },
     { ver: "v1beta", model: "gemini-1.5-flash" },
@@ -6110,29 +6848,56 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     { ver: "v1beta", model: "gemini-1.5-pro" }
   ];
 
-  // Monta histórico de mensagens
-  const formattedHistory = (history || []).slice(-6).map(m => ({
-    role: m.fromMe ? "model" : "user",
-    parts: [{ text: String(m.text || "") }]
-  })).filter(c => c.parts[0].text.trim().length > 0);
+  // Remove duplicação caso a mensagem atual já tenha sido anexada ao final do histórico pelo webhook
+  const rawHistory = Array.isArray(history) ? history.slice(-8) : [];
+  const lastHistItem = rawHistory[rawHistory.length - 1];
+  const cleanRawHistory = (
+    lastHistItem &&
+    !lastHistItem.fromMe &&
+    String(lastHistItem.text || "").trim() === String(prompt || "").trim()
+  ) ? rawHistory.slice(0, -1) : rawHistory;
+
+  const formattedHistory = [];
+  for (const m of cleanRawHistory) {
+    const txt = String(m?.text || "").trim();
+    if (!txt) continue;
+    const role = m.fromMe ? "model" : "user";
+    const prev = formattedHistory[formattedHistory.length - 1];
+    if (prev && prev.role === role) {
+      prev.parts[0].text += `\n${txt}`;
+    } else {
+      formattedHistory.push({ role, parts: [{ text: txt }] });
+    }
+  }
+
+  if (formattedHistory.length > 0 && formattedHistory[0].role === "model") {
+    formattedHistory.unshift({
+      role: "user",
+      parts: [{ text: "[Início do atendimento via WhatsApp]" }]
+    });
+  }
 
   const fullPrompt = customPrompt
     ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
     : `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
-  const userOnlyPrompt = customPrompt
-    ? prompt
-    : `[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
-
   for (const { ver, model } of candidateModels) {
     try {
       const useNativeSysInst = ver === "v1beta" && Boolean(systemInstruction);
+      const baseContents = [...formattedHistory];
+      const lastTurn = baseContents[baseContents.length - 1];
+      if (lastTurn && lastTurn.role === "user") {
+        baseContents[baseContents.length - 1] = {
+          role: "user",
+          parts: [{ text: `${lastTurn.parts[0].text}\n\n${fullPrompt}` }]
+        };
+      } else {
+        baseContents.push({ role: "user", parts: [{ text: fullPrompt }] });
+      }
+
       const bodyPayload = {
         ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
-        contents: [
-          ...formattedHistory,
-          { role: "user", parts: [{ text: useNativeSysInst ? userOnlyPrompt : fullPrompt }] }
-        ],
+        contents: baseContents,
         generationConfig: {
           temperature: 0.4,
           maxOutputTokens: 800
@@ -6156,50 +6921,54 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
 
       const data = await response.json();
       const candidate = data.candidates?.[0];
-      const parts = candidate?.content?.parts || [];
+      let currentParts = candidate?.content?.parts || [];
 
-      // Verifica se houve solicitação de chamada de ferramenta (Function Calling)
-      const callPart = parts.find(p => p.functionCall);
+      let callPart = currentParts.find(p => p.functionCall);
 
       if (!callPart) {
-        const text = parts.find(p => p.text)?.text || "";
+        const text = currentParts.find(p => p.text)?.text || "";
         if (text && text.trim().length > 0) {
           return { ok: true, text: text.trim(), model };
         }
         continue;
       }
 
-      // ── Loop Multi-Turn de Execução de Ferramentas ──
-      const fnName = callPart.functionCall.name;
-      const fnArgs = callPart.functionCall.args || {};
+      // ── Loop Multi-Turn de Execução Encadeada de Ferramentas (até 4 passos) ──
+      const runningContents = [...baseContents];
+      let lastFnCall = null;
+      let lastActionResult = null;
+      let anyRequiresHandover = false;
 
-      let actionResult;
-      try {
-        // Papel autorizado pelo sistema possui precedência estrita para blindagem contra elevação de privilégio LGPD
-        const authorizedRole = requesterRole || "guest";
-        const effectivePhone = requesterPhone || fnArgs.requesterPhone || "";
-        actionResult = await executeBotAction(db, fnName, {
-          ...fnArgs,
-          requesterRole: authorizedRole,
-          requesterPhone: effectivePhone
-        });
-      } catch (actErr) {
-        actionResult = {
-          error: "ACTION_FAILED",
-          action: fnName,
-          requiresHandover: true,
-          message: actErr.message || "Erro interno ao executar a ação do sistema."
-        };
-      }
+      for (let step = 0; step < 4 && callPart; step++) {
+        const fnName = callPart.functionCall.name;
+        const fnArgs = callPart.functionCall.args || {};
+        lastFnCall = { name: fnName, args: fnArgs };
 
-      // Anexa as partes ao histórico:
-      // Turno 1 Model: functionCall
-      // Turno 2 Function: functionResponse
-      const turn2Contents = [
-        ...formattedHistory,
-        { role: "user", parts: [{ text: fullPrompt }] },
-        { role: "model", parts },
-        {
+        let actionResult;
+        try {
+          const authorizedRole = requesterRole || "guest";
+          const effectivePhone = requesterPhone || fnArgs.requesterPhone || "";
+          actionResult = await executeBotAction(db, fnName, {
+            ...fnArgs,
+            requesterRole: authorizedRole,
+            requesterPhone: effectivePhone
+          });
+        } catch (actErr) {
+          actionResult = {
+            error: "ACTION_FAILED",
+            action: fnName,
+            requiresHandover: true,
+            message: actErr.message || "Erro interno ao executar a ação do sistema."
+          };
+        }
+
+        lastActionResult = actionResult;
+        if (actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED") {
+          anyRequiresHandover = true;
+        }
+
+        runningContents.push({ role: "model", parts: currentParts });
+        runningContents.push({
           role: "function",
           parts: [
             {
@@ -6209,52 +6978,60 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
               }
             }
           ]
-        }
-      ];
+        });
 
-      const turn2Payload = {
-        contents: turn2Contents,
-        generationConfig: {
-          temperature: 0.4,
-          maxOutputTokens: 800
-        }
-      };
+        const nextPayload = {
+          ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
+          contents: runningContents,
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 800
+          }
+        };
 
-      if (Array.isArray(tools) && tools.length > 0) {
-        turn2Payload.tools = tools;
+        if (Array.isArray(tools) && tools.length > 0) {
+          nextPayload.tools = tools;
+        }
+
+        const nextResponse = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(nextPayload),
+          signal: AbortSignal.timeout(8000)
+        });
+
+        if (!nextResponse.ok) {
+          break;
+        }
+
+        const nextData = await nextResponse.json();
+        currentParts = nextData.candidates?.[0]?.content?.parts || [];
+        callPart = currentParts.find(p => p.functionCall);
+
+        if (!callPart) {
+          const finalText = currentParts.find(p => p.text)?.text || "";
+          if (finalText && finalText.trim().length > 0) {
+            return {
+              ok: true,
+              text: finalText.trim(),
+              model,
+              functionCall: lastFnCall,
+              functionResult: lastActionResult,
+              requiresHandover: anyRequiresHandover
+            };
+          }
+          break;
+        }
       }
 
-      const turn2Response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(turn2Payload),
-        signal: AbortSignal.timeout(8000)
-      });
-
-      if (turn2Response.ok) {
-        const turn2Data = await turn2Response.json();
-        const turn2Parts = turn2Data.candidates?.[0]?.content?.parts || [];
-        const turn2Text = turn2Parts.find(p => p.text)?.text || "";
-        if (turn2Text && turn2Text.trim().length > 0) {
-          return {
-            ok: true,
-            text: turn2Text.trim(),
-            model,
-            functionCall: { name: fnName, args: fnArgs },
-            functionResult: actionResult,
-            requiresHandover: Boolean(actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED")
-          };
-        }
-      }
-
-      // Se o Turno 2 não responder texto mas requer transbordo:
-      if (actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED") {
+      // Se o loop de ferramentas exigir transbordo sem texto final do modelo:
+      if (anyRequiresHandover) {
         return {
           ok: true,
-          text: actionResult.message || "Esta operação do sistema requer acompanhamento humano. Já estou transferindo para a recepção! 🛎️",
+          text: lastActionResult?.message || "Esta operação do sistema requer acompanhamento humano. Já estou transferindo para a recepção! 🛎️",
           model,
-          functionCall: { name: fnName, args: fnArgs },
-          functionResult: actionResult,
+          functionCall: lastFnCall,
+          functionResult: lastActionResult,
           requiresHandover: true
         };
       }
@@ -6283,6 +7060,8 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
     ? history
     : (conv?.messages || []);
 
+  guestContext.history = effectiveHistory;
+
   // 1. Verifica intenção de transbordo humano
   const handoverCheck = detectHandoverIntent(messageText, aiConfig.handoverKeywords);
   if (handoverCheck.shouldHandover) {
@@ -6296,7 +7075,8 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
     };
   }
 
-  // 2. Prepara o contexto estruturado para o prompt
+  // 2. Prepara o contexto estruturado e estado acumulado da conversa
+  const convState = extractConversationState(messageText, effectiveHistory, guestContext, db);
   const botSettings = getBotActionsSettings(db);
   const tools = buildGeminiTools(botSettings);
 
@@ -6316,6 +7096,7 @@ DIRETRIZES ESPECÍFICAS:
 Você tem acesso a ferramentas de sistema (Function Calling) autorizadas: ${activeActionsList || "nenhuma"}.
 DIRETRIZES ESPECÍFICAS:
 - Use essas ferramentas de forma precisa quando o hóspede solicitar cotação, consulta de disponibilidade de datas, pré-reserva ou pagamento PIX.
+- Quando o hóspede informar datas (na mensagem atual ou em mensagens anteriores da conversa) e pedir para reservar, execute checkAvailability, calculateQuote e createPreReservation para retornar o código da pré-reserva e o PIX Copia e Cola.
 - Formate a resposta final com os dados retornados de maneira acolhedora, clara e pronta para leitura no WhatsApp.
 `;
   }
@@ -6361,6 +7142,15 @@ ${formattedFaqs}
     stayStatusNotice = "EM ESTADIA (Hóspede já acomodado no flat). ATENÇÃO: NUNCA envie link de pré-check-in digital! Preste suporte à estadia em andamento.";
   }
 
+  const conversationStateSection = `
+[ESTADO ACUMULADO DA CONVERSA ATUAL]
+- Datas já identificadas na conversa: ${convState.hasDates ? `SIM (Check-in: ${convState.checkIn} / Check-out: ${convState.checkOut} — ${convState.nights} diárias)` : "NÃO (ainda não informadas)"}
+- Quantidade de hóspedes identificada: ${convState.guestsExplicit ? `${convState.guests} pessoa(s)` : "Ainda não informada explicitamente (padrão: 1)"}
+- Preferência de plano: ${convState.breakfastPreference === "with_breakfast" ? "Com café da manhã no quarto (ratePlan: with_breakfast)" : (convState.breakfastPreference === "without_breakfast" ? "Sem café da manhã (ratePlan: room_only)" : "Ainda não definida")}
+- Intenção de reservar/fechar estadia: ${convState.wantsToBook ? "SIM (cliente deseja reservar)" : "Em cotação / dúvida"}
+- Pré-reserva ativa gerada: ${convState.activePreReservation ? `SIM (Código ${convState.activePreReservation.code} - Flat ${convState.activePreReservation.flatNumber})` : "NÃO"}
+`;
+
   const contextString = `
 [CONTEXTO EM TEMPO REAL]
 - Data atual: ${guestContext.todayStr} | Horário: ${guestContext.timeStr} (Brasília)
@@ -6373,7 +7163,7 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Status da reserva: ${guestContext.reservation?.status}
 - Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / sem relevância)"}
 ${guestContext.isCheckoutDay && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
-
+${conversationStateSection}
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]
 - Endereço: ${aiConfig.knowledgeBase.address}
 - Horário de Check-in: ${aiConfig.knowledgeBase.checkinTime}
@@ -6407,9 +7197,10 @@ ${guestContext.isCheckoutDay && guestContext.checkoutUrl ? `- Link de Confirmaç
   * Forneça sempre os valores das diárias com clareza e acolhimento (ex: R$ 272 com café / R$ 237 sem café).
   * NUNCA responda apenas explicando o funcionamento da bandeja ou horários do café quando o hóspede perguntar preço/diária!
   * Solicite gentilmente as datas desejadas de check-in e check-out para verificar a disponibilidade exata e fechar a cotação.
-- REGRA CRÍTICA ANTI-REPETIÇÃO E SOLICITAÇÃO DE RESERVA ("reserva pra mim por favor", "quero reservar", "faz uma reserva"):
+- REGRA CRÍTICA DE PROGRESSÃO CONVERSACIONAL E RESERVA:
   * NUNCA repita a mensagem completa de tabela de diárias ou cotação de preços se ela já foi enviada logo acima no histórico da conversa!
-  * Se o usuário responder com "reserva pra mim por favor", "quero reservar" ou similar sem ainda informar as datas de check-in/check-out e quantidade de pessoas: acolha o pedido calorosamente e solicite diretamente apenas as datas de entrada e saída e o número de pessoas para prosseguir com a reserva.
+  * Se o usuário responder com "reserva pra mim por favor", "quero reservar" ou similar e as datas AINDA NÃO foram informadas na conversa: acolha o pedido calorosamente e solicite diretamente apenas as datas de entrada e saída e o número de pessoas.
+  * Se as datas JÁ constam no [ESTADO ACUMULADO DA CONVERSA ATUAL], consulte imediatamente a disponibilidade e o orçamento real usando suas ferramentas (e gere a pré-reserva com código PIX se o cliente solicitou reservar).
   * NUNCA envie mensagens idênticas ou quase idênticas às enviadas recentemente na conversa.
 ${dynamicFaqPromptSection}
 ${systemActionsNotice}
