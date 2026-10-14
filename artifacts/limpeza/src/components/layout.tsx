@@ -419,6 +419,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
               )}
             </div>
           )}
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.dispatchEvent(new CustomEvent("toggle-sofia-copilot"))}
+              className="h-9 px-2.5 gap-1.5 font-bold text-xs rounded-xl bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
+              title="Abrir Sofia Copiloto IA (Ctrl+J)"
+            >
+              <Bot className="w-4 h-4" />
+              <span className="hidden xs:inline">Sofia IA</span>
+            </Button>
+          )}
           <Button 
             variant="outline" 
             size="sm" 
@@ -453,6 +465,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Link>
           )}
         </div>
+
+        {/* Botão Fixo da Sofia Copiloto na Sidebar (Não cobre elementos da tela) */}
+        {isAdmin && (
+          <div className="px-3 pt-3 pb-1">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("toggle-sofia-copilot"))}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white font-semibold text-xs shadow-sm hover:opacity-95 active:scale-[0.99] transition-all cursor-pointer"
+              title="Abrir Copiloto IA de Gestão (Ctrl+J)"
+            >
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>Sofia Copiloto IA</span>
+              </div>
+              <span className="px-1.5 py-0.5 text-[9px] uppercase font-bold bg-white/15 rounded border border-white/10">
+                Ctrl+J
+              </span>
+            </button>
+          </div>
+        )}
         
         {/* Nav Items Categorizados com Scroll Suave */}
         <nav className="flex-1 p-3 space-y-5 overflow-y-auto max-h-[calc(100dvh-130px)]">

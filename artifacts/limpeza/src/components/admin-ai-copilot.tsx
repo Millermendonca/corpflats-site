@@ -197,6 +197,24 @@ export function AdminAiCopilot() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [hideEdgeTab, setHideEdgeTab] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('corpflats_copilot_hide_edge_tab') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [topPercent, setTopPercent] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('corpflats_copilot_top_pct'));
+      return saved >= 15 && saved <= 85 ? saved : 45;
+    } catch {
+      return 45;
+    }
+  });
+  const isDraggingRef = useRef(false);
+  const dragMovedRef = useRef(false);
+
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -233,7 +251,19 @@ export function AdminAiCopilot() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Atalho de teclado: Ctrl + J ou Ctrl + K para abrir/fechar
+  // Escuta eventos disparados pelo botão da Sidebar (Desktop) e Header (Mobile)
+  useEffect(() => {
+    const handleToggle = () => setIsOpen(prev => !prev);
+    const handleOpen = () => setIsOpen(true);
+    window.addEventListener('toggle-sofia-copilot', handleToggle);
+    window.addEventListener('open-sofia-copilot', handleOpen);
+    return () => {
+      window.removeEventListener('toggle-sofia-copilot', handleToggle);
+      window.removeEventListener('open-sofia-copilot', handleOpen);
+    };
+  }, []);
+
+  // Atalho de teclado: Ctrl + J para abrir/fechar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'j' || e.key === 'J')) {
@@ -256,6 +286,44 @@ export function AdminAiCopilot() {
       }, 150);
     }
   }, [isOpen]);
+
+  const toggleHideEdgeTab = (hide: boolean, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setHideEdgeTab(hide);
+    try {
+      localStorage.setItem('corpflats_copilot_hide_edge_tab', String(hide));
+    } catch {}
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    isDraggingRef.current = true;
+    dragMovedRef.current = false;
+    const startY = e.clientY;
+    const startTop = topPercent;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (!isDraggingRef.current) return;
+      const deltaY = moveEvent.clientY - startY;
+      if (Math.abs(deltaY) > 5) {
+        dragMovedRef.current = true;
+      }
+      const deltaPct = (deltaY / window.innerHeight) * 100;
+      const nextPct = Math.min(85, Math.max(15, startTop + deltaPct));
+      setTopPercent(nextPct);
+      try {
+        localStorage.setItem('corpflats_copilot_top_pct', String(Math.round(nextPct)));
+      } catch {}
+    };
+
+    const handlePointerUp = () => {
+      isDraggingRef.current = false;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
 
   if (!isAuthorizedRole || isPublicRoute) {
     return null;
@@ -331,24 +399,36 @@ export function AdminAiCopilot() {
 
   return (
     <>
-      {/* ── Botão Flutuante (Bottom-Right) ── */}
-      <button
-        onClick={() => setIsOpen(prev => !prev)}
-        className="fixed bottom-6 right-6 z-50 group flex items-center gap-2.5 px-4 py-3 rounded-full shadow-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white font-medium text-sm hover:scale-105 active:scale-95 transition-all duration-300 border border-white/20 hover:shadow-indigo-500/25"
-        title="Copiloto IA de Gestão (Ctrl+J)"
-      >
-        <span className="relative flex h-3 w-3">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-          <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
-        </span>
-        <div className="flex items-center gap-1.5">
-          <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-          <span className="tracking-wide">Sofia Copiloto</span>
+      {/* ── Aba Lateral Discreta, Retrátil e Arrastável na Borda Direita (Não bloqueia botões) ── */}
+      {!isOpen && !hideEdgeTab && (
+        <div
+          onPointerDown={handlePointerDown}
+          onClick={() => {
+            if (!dragMovedRef.current) {
+              setIsOpen(true);
+            }
+          }}
+          style={{ top: `${topPercent}%` }}
+          className="fixed right-0 z-30 -translate-y-1/2 translate-x-[calc(100%-32px)] hover:translate-x-0 group flex items-center gap-2 pl-2 pr-2.5 py-2 rounded-l-xl shadow-lg bg-gradient-to-r from-indigo-600/90 to-purple-700/95 hover:from-indigo-600 hover:to-purple-700 text-white text-xs font-semibold transition-transform duration-200 border border-r-0 border-white/20 cursor-pointer select-none backdrop-blur-xs"
+          title="Clique para abrir a Sofia Copiloto (Ctrl+J) • Arraste para mover para cima/baixo"
+        >
+          <div className="relative flex items-center justify-center w-4 h-4 shrink-0">
+            <Bot className="w-4 h-4 text-amber-300" />
+            <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          </div>
+          <span className="whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            Sofia IA
+          </span>
+          <button
+            type="button"
+            onClick={e => toggleHideEdgeTab(true, e)}
+            className="opacity-0 group-hover:opacity-100 ml-0.5 p-0.5 rounded hover:bg-white/20 text-white/70 hover:text-white transition-all"
+            title="Ocultar aba lateral (usar botão do Menu Lateral / Topo ou Ctrl+J)"
+          >
+            <X className="w-3 h-3" />
+          </button>
         </div>
-        <span className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] uppercase font-semibold bg-white/15 rounded border border-white/10 tracking-wider">
-          Ctrl+J
-        </span>
-      </button>
+      )}
 
       {/* ── Drawer Lateral Deslizante (Slide-Over) ── */}
       {isOpen && (
@@ -380,6 +460,17 @@ export function AdminAiCopilot() {
               </div>
 
               <div className="flex items-center gap-1">
+                <button
+                  onClick={() => toggleHideEdgeTab(!hideEdgeTab)}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded-lg border transition-colors ${
+                    hideEdgeTab
+                      ? 'bg-white/5 border-white/15 text-indigo-200 hover:bg-white/15'
+                      : 'bg-emerald-500/20 border-emerald-400/30 text-emerald-200 hover:bg-emerald-500/30'
+                  }`}
+                  title={hideEdgeTab ? 'Reativar atalho na borda direita da tela' : 'Ocultar atalho na borda da tela (abrir apenas pelo menu lateral ou Ctrl+J)'}
+                >
+                  {hideEdgeTab ? 'Mostrar Aba Lateral' : 'Ocultar Aba'}
+                </button>
                 {messages.length > 0 && (
                   <button
                     onClick={handleClearHistory}
