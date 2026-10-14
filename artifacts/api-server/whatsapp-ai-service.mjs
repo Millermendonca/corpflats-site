@@ -4579,6 +4579,14 @@ export function areMessagesSubstantiallyIdentical(textA, textB) {
 
   if (normA === normB) return true;
 
+  // Se qualquer uma for resultado de cálculo/disponibilidade/pré-reserva do PMS e o texto normalizado for diferente
+  // (mudou data, flat, hóspedes, plano ou valor total), NÃO são mensagens idênticas!
+  const isPmsResultA = /resumo da pre reserva|orcamento total para o periodo|verifiquei a disponibilidade para as datas informadas|ocupadas nesse periodo/i.test(normA);
+  const isPmsResultB = /resumo da pre reserva|orcamento total para o periodo|verifiquei a disponibilidade para as datas informadas|ocupadas nesse periodo/i.test(normB);
+  if (isPmsResultA || isPmsResultB) {
+    return false;
+  }
+
   // Se ambas forem mensagens de cotação com a tabela de diárias
   const isQuoteA = hasRecentlySentPricingQuote([{ fromMe: true, text: textA }]) ||
                    (/no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normA) &&
@@ -4589,10 +4597,19 @@ export function areMessagesSubstantiallyIdentical(textA, textB) {
   if (isQuoteA && isQuoteB) return true;
   if (isQuoteA !== isQuoteB) return false;
 
-  // Se ambas forem mensagens perguntando por datas e pessoas para reserva (e não cotações de preços)
+  // Se ambas forem mensagens perguntando por datas e pessoas para reserva, verifica se o estado reconhecido é o mesmo
   const isAskDatesA = !isQuoteA && /datas?\s+(?:de\s+)?entrada/i.test(normA) && (/quantas\s+pessoas/i.test(normA) || /saida/i.test(normA));
   const isAskDatesB = !isQuoteB && /datas?\s+(?:de\s+)?entrada/i.test(normB) && (/quantas\s+pessoas/i.test(normB) || /saida/i.test(normB));
-  if (isAskDatesA && isAskDatesB) return true;
+  if (isAskDatesA && isAskDatesB) {
+    const ackGuestsA = (normA.match(/anotei\s+para\s+\d+\s+pessoa/) || [""])[0];
+    const ackGuestsB = (normB.match(/anotei\s+para\s+\d+\s+pessoa/) || [""])[0];
+    const ackCafeA = /excelente escolha|opcao com cafe|opcao sem cafe/.test(normA);
+    const ackCafeB = /excelente escolha|opcao com cafe|opcao sem cafe/.test(normB);
+    if (ackGuestsA === ackGuestsB && ackCafeA === ackCafeB) {
+      return true;
+    }
+    return false;
+  }
 
   // Comparação de similaridade (Jaccard similarity de palavras relevantes)
   const wordsA = new Set(normA.split(" ").filter(w => w.length > 3));
@@ -4630,6 +4647,16 @@ const PT_MONTH_MAP = {
   outubro: 10, out: 10,
   novembro: 11, nov: 11,
   dezembro: 12, dez: 12
+};
+
+const PT_WEEKDAY_MAP = {
+  domingo: 0,
+  segunda: 1, "segunda-feira": 1,
+  terca: 2, "terca-feira": 2,
+  quarta: 3, "quarta-feira": 3,
+  quinta: 4, "quinta-feira": 4,
+  sexta: 5, "sexta-feira": 5,
+  sabado: 6
 };
 
 function getTodayBrasiliaIso() {
@@ -4714,22 +4741,22 @@ export function parseNaturalDatesFromText(text = "", referenceDateStr = null) {
     if (res) return res;
   }
 
-  // 2. Formato DD/MM[/YYYY] a DD/MM[/YYYY]
-  const slashRange = norm.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s*(?:a|ate|ao|\-|e(?:\s+saida)?(?:\s+dia)?|,?\s*saida(?:\s+dia)?|,?\s*check-?out(?:\s+dia)?)\s*(?:o\s+dia\s+|dia\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
+  // 2. Formato DD/MM[/YYYY] a DD/MM[/YYYY] (incluindo "check-in: 10/11, check-out: 15/11", "chego 10/11 e saio dia 15/11")
+  const slashRange = norm.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s*(?:a|ate|ao|\-|,|;|\be\b|(?:[,;]?\s*(?:e\s+)?(?:saida|saindo|saio|check-?out)\s*:?\s*(?:em|no\s+dia|o\s+dia|dia)?))\s*(?:o\s+dia\s+|no\s+dia\s+|dia\s+|em\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
   if (slashRange) {
     const res = resolveParsedDateRange(slashRange[1], slashRange[2], slashRange[3], slashRange[4], slashRange[5], slashRange[6], referenceDateStr);
     if (res) return res;
   }
 
   // 3. Formato "de DD a DD/MM[/YYYY]" ou "do dia DD ao dia DD/MM"
-  const dayToSlash = norm.match(/\b(?:de|do\s+dia|dia|entre)\s+(\d{1,2})\s*(?:a|ate|ao|\-|e)\s*(?:o\s+dia\s+|dia\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
+  const dayToSlash = norm.match(/\b(?:de|do\s+dia|dia|entre|chego\s+dia|entrada\s+dia)\s+(\d{1,2})\s*(?:a|ate|ao|\-|e(?:\s+(?:saida|saio|saindo))?(?:\s+dia)?)\s*(?:o\s+dia\s+|no\s+dia\s+|dia\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
   if (dayToSlash) {
     const res = resolveParsedDateRange(dayToSlash[1], dayToSlash[3], dayToSlash[4], dayToSlash[2], dayToSlash[3], dayToSlash[4], referenceDateStr);
     if (res) return res;
   }
 
-  // 4. Formato com nome do mês: "do dia 10 ao dia 15 de novembro", "10 de novembro a 15 de novembro"
-  const monthRange = norm.match(/\b(?:de\s+|do\s+dia\s+|dia\s+)?(\d{1,2})(?:\s+de\s+([a-z]{3,9}))?\s*(?:a|ate|ao|\-|e(?:\s+saida)?(?:\s+dia)?)\s*(?:o\s+dia\s+|dia\s+)?(\d{1,2})\s+de\s+([a-z]{3,9})(?:\s+de\s+(\d{4}))?\b/i);
+  // 4. Formato com nome do mês: "do dia 10 ao dia 15 de novembro", "chego dia 10 e saio dia 15 de novembro"
+  const monthRange = norm.match(/\b(?:de\s+|do\s+dia\s+|dia\s+)?(\d{1,2})(?:\s+de\s+([a-z]{3,9}))?\s*(?:a|ate|ao|\-|,?\s*(?:e\s+)?(?:saida|saio|saindo|check-?out)?(?:\s+no\s+dia|\s+dia)?)\s*(?:o\s+dia\s+|no\s+dia\s+|dia\s+)?(\d{1,2})\s+de\s+([a-z]{3,9})(?:\s+de\s+(\d{4}))?\b/i);
   if (monthRange) {
     const outM = PT_MONTH_MAP[monthRange[4]];
     const inM = monthRange[2] ? PT_MONTH_MAP[monthRange[2]] : outM;
@@ -4770,21 +4797,111 @@ export function parseNaturalDatesFromText(text = "", referenceDateStr = null) {
     }
   }
 
-  // 6. Datas relativas ("hoje até amanhã", "amanhã por 2 diárias", etc.)
-  if (/\b(?:hoje|amanha)\b/i.test(norm) && /\b(?:ate\s+amanha|para\s+amanha|depois\s+de\s+amanha|\d+\s*(?:diarias?|noites?))\b/i.test(norm)) {
+  // 6. Intervalo de dias da semana ("de sexta a domingo", "segunda até quarta", "sexta por 2 diárias")
+  const weekdayRangeMatch = norm.match(/\b(?:de|da|na|para|nesta|nessa|proxima|proximo)?\s*(domingo|segunda(?:-feira)?|terca(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sabado)\s*(?:a|ate|ao|\-|e\s+(?:saida|saio)(?:\s+no|\s+na)?)\s*(?:o\s+|a\s+|no\s+|na\s+)?(domingo|segunda(?:-feira)?|terca(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sabado)\b/i);
+  if (weekdayRangeMatch) {
+    const inDow = PT_WEEKDAY_MAP[weekdayRangeMatch[1]];
+    const outDow = PT_WEEKDAY_MAP[weekdayRangeMatch[2]];
+    if (inDow !== undefined && outDow !== undefined) {
+      const refStr = referenceDateStr || getTodayBrasiliaIso();
+      const [refY, refM, refD] = refStr.split("-").map(Number);
+      const baseUtc = new Date(Date.UTC(refY || 2026, (refM || 1) - 1, refD || 1, 12, 0, 0));
+      const refDow = baseUtc.getUTCDay();
+      let daysUntilIn = (inDow - refDow + 7) % 7;
+      if (daysUntilIn === 0 && /\bproxim[ao]\b/i.test(norm)) daysUntilIn = 7;
+      let nightsCount = (outDow - inDow + 7) % 7;
+      if (nightsCount === 0) nightsCount = 7;
+      const start = new Date(baseUtc.getTime() + daysUntilIn * 86400000);
+      const end = new Date(start.getTime() + nightsCount * 86400000);
+      return resolveParsedDateRange(
+        start.getUTCDate(), start.getUTCMonth() + 1, start.getUTCFullYear(),
+        end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(),
+        referenceDateStr
+      );
+    }
+  }
+
+  const weekdayPlusNights = norm.match(/\b(domingo|segunda(?:-feira)?|terca(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sabado)\b.*?\b(\d{1,2})\s*(?:diarias?|noites?)\b/i);
+  if (weekdayPlusNights) {
+    const inDow = PT_WEEKDAY_MAP[weekdayPlusNights[1]];
+    const nightsCount = Math.max(1, Number(weekdayPlusNights[2]));
+    if (inDow !== undefined && nightsCount <= 90) {
+      const refStr = referenceDateStr || getTodayBrasiliaIso();
+      const [refY, refM, refD] = refStr.split("-").map(Number);
+      const baseUtc = new Date(Date.UTC(refY || 2026, (refM || 1) - 1, refD || 1, 12, 0, 0));
+      const refDow = baseUtc.getUTCDay();
+      let daysUntilIn = (inDow - refDow + 7) % 7;
+      if (daysUntilIn === 0 && /\bproxim[ao]\b/i.test(norm)) daysUntilIn = 7;
+      const start = new Date(baseUtc.getTime() + daysUntilIn * 86400000);
+      const end = new Date(start.getTime() + nightsCount * 86400000);
+      return resolveParsedDateRange(
+        start.getUTCDate(), start.getUTCMonth() + 1, start.getUTCFullYear(),
+        end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(),
+        referenceDateStr
+      );
+    }
+  }
+
+  if (/\b(?:fim|final)\s+de\s+semana\b/i.test(norm)) {
     const refStr = referenceDateStr || getTodayBrasiliaIso();
     const [refY, refM, refD] = refStr.split("-").map(Number);
     const baseUtc = new Date(Date.UTC(refY || 2026, (refM || 1) - 1, refD || 1, 12, 0, 0));
-    const startsTomorrow = /\b(?:a\s+partir\s+de\s+amanha|entrada\s+amanha|check-?in\s+amanha|^amanha)\b/i.test(norm);
-    const start = new Date(baseUtc.getTime() + (startsTomorrow ? 86400000 : 0));
+    const refDow = baseUtc.getUTCDay();
+    const isNextWeekend = /\bproxim[ao]\s+(?:fim|final)\s+de\s+semana\b/i.test(norm);
+    let daysUntilStart = refDow === 6 && !isNextWeekend ? 0 : (5 - refDow + 7) % 7;
+    if (isNextWeekend && daysUntilStart < 3) daysUntilStart += 7;
+    const defaultNights = (refDow === 6 && !isNextWeekend) ? 1 : 2;
     const nightsMatch = norm.match(/\b(\d{1,2})\s*(?:diarias?|noites?)\b/i);
-    const nightsCount = nightsMatch ? Math.max(1, Number(nightsMatch[1])) : 1;
+    const nightsCount = nightsMatch ? Math.max(1, Number(nightsMatch[1])) : defaultNights;
+    const start = new Date(baseUtc.getTime() + daysUntilStart * 86400000);
     const end = new Date(start.getTime() + nightsCount * 86400000);
     return resolveParsedDateRange(
       start.getUTCDate(), start.getUTCMonth() + 1, start.getUTCFullYear(),
       end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(),
       referenceDateStr
     );
+  }
+
+  // 7. Datas relativas ("hoje até amanhã", "amanhã por 2 diárias", "de hoje até depois de amanhã", "para amanhã", "para hoje")
+  if (/\b(?:hoje|amanha)\b/i.test(norm)) {
+    const refStr = referenceDateStr || getTodayBrasiliaIso();
+    const [refY, refM, refD] = refStr.split("-").map(Number);
+    const baseUtc = new Date(Date.UTC(refY || 2026, (refM || 1) - 1, refD || 1, 12, 0, 0));
+    const hasHoje = /\bhoje\b/i.test(norm) && !/\bhoje\s+em\s+dia\b/i.test(norm);
+    const hasDepoisDeAmanha = /\bdepois\s+de\s+amanha\b/i.test(norm);
+    const normWithoutDepois = norm.replace(/\bdepois\s+de\s+amanha\b/gi, "");
+    const hasAmanha = /\bamanha\b/i.test(normWithoutDepois);
+    const nightsMatch = norm.match(/\b(\d{1,2})\s*(?:diarias?|noites?)\b/i);
+
+    let startOffsetDays = null;
+    let nightsCount = nightsMatch ? Math.max(1, Number(nightsMatch[1])) : 1;
+
+    if (hasHoje && hasDepoisDeAmanha) {
+      startOffsetDays = 0;
+      if (!nightsMatch) nightsCount = 2;
+    } else if (hasHoje && hasAmanha) {
+      startOffsetDays = 0;
+      if (!nightsMatch) nightsCount = 1;
+    } else if (hasAmanha && hasDepoisDeAmanha) {
+      startOffsetDays = 1;
+      if (!nightsMatch) nightsCount = 1;
+    } else if (hasAmanha) {
+      startOffsetDays = 1;
+    } else if (hasDepoisDeAmanha) {
+      startOffsetDays = 2;
+    } else if (hasHoje && /\b(?:para\s+hoje|reservar\s+hoje|reserva\s+hoje|vaga\s+(?:para\s+)?hoje|entrada\s+hoje|check-?in\s+hoje|\d+\s*(?:diarias?|noites?))\b/i.test(norm)) {
+      startOffsetDays = 0;
+    }
+
+    if (startOffsetDays !== null) {
+      const start = new Date(baseUtc.getTime() + startOffsetDays * 86400000);
+      const end = new Date(start.getTime() + nightsCount * 86400000);
+      return resolveParsedDateRange(
+        start.getUTCDate(), start.getUTCMonth() + 1, start.getUTCFullYear(),
+        end.getUTCDate(), end.getUTCMonth() + 1, end.getUTCFullYear(),
+        referenceDateStr
+      );
+    }
   }
 
   return null;
@@ -4807,6 +4924,12 @@ function extractBreakfastFromSingleText(text = "") {
   if (/\b(?:sem\s+cafe|so\s+o\s+quarto|somente\s+quarto|apenas\s+quarto)\b/i.test(norm)) return "without_breakfast";
   if (/\b(?:com\s+cafe|incluso\s+cafe|incluindo\s+cafe|cafe\s+incluso)\b/i.test(norm)) return "with_breakfast";
   return null;
+}
+
+function isAffirmativeBookingReply(text = "") {
+  return /^(?:sim|quero|pode\s*(?:ser|fazer|fechar|confirmar|gerar|reservar)?|confirma(?:r)?|fechado|combinado|perfeito|ok\s*,?\s*pode|por\s+favor|isso(?:\s+mesmo)?|vamos\s+fechar)(?:\s*,?\s*(?:com\s+caf[eé]|sem\s+caf[eé]|por\s+favor|pode\s*(?:gerar|fazer|fechar|reservar)))?[.!?\s]*$/i.test(
+    String(text || "").trim()
+  );
 }
 
 /**
@@ -4837,16 +4960,42 @@ export function extractConversationState(messageText = "", history = [], guestCo
     ...(messageText ? [String(messageText)] : [])
   ];
 
+  // Procura pré-reserva ativa existente para o telefone do hóspede
+  const cleanPhone = cleanWhatsAppPhone(guestContext?.phone || "");
+  const nowMs = Date.now();
+  const activePreReservation = (db?.reservations || []).find(r => {
+    if (r.status !== "pre_reserva") return false;
+    if (r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+    if (!cleanPhone || !rPhone || (!rPhone.endsWith(cleanPhone.slice(-8)) && !cleanPhone.endsWith(rPhone.slice(-8)))) return false;
+    return true;
+  }) || null;
+
   let parsedDates = null;
-  let guests = 1;
-  let guestsExplicit = false;
-  let breakfastPreference = null; // "with_breakfast" | "without_breakfast" | null
+  let guests = activePreReservation?.guestsCount ? Number(activePreReservation.guestsCount) : 1;
+  let guestsExplicit = Boolean(activePreReservation?.guestsCount);
+  let breakfastPreference = activePreReservation?.ratePlan === "with_breakfast"
+    ? "with_breakfast"
+    : (activePreReservation?.ratePlan === "room_only" ? "without_breakfast" : null);
   let preferredFlatNumber = null;
   const amenityPreferences = {};
-  let priorUserWantedToBook = false;
+  let priorUserWantedToBook = Boolean(activePreReservation);
+
+  if (activePreReservation?.checkinDate && activePreReservation?.checkoutDate) {
+    parsedDates = parseNaturalDatesFromText(`${activePreReservation.checkinDate} a ${activePreReservation.checkoutDate}`, refDateStr);
+  }
+
+  const dateQuoteAlreadyPresented = historyWithoutCurrent.some(m =>
+    m && m.fromMe && m.text && (
+      /ger(?:e|ar)\s+(?:a\s+)?(?:sua\s+)?pr[eé]-reserva/i.test(m.text) ||
+      /deseja\s+que\s+eu\s+j[aá]\s+gere/i.test(m.text) ||
+      /garantir\s+(?:o\s+flat|a\s+unidade)/i.test(m.text) ||
+      /resumo\s+da\s+pr[eé]-reserva/i.test(m.text)
+    )
+  );
 
   for (const uText of historyWithoutCurrent.filter(m => m && !m.fromMe && m.text).map(m => String(m.text))) {
-    if (isReservationBookingRequest(uText)) {
+    if (isReservationBookingRequest(uText) || (dateQuoteAlreadyPresented && isAffirmativeBookingReply(uText))) {
       priorUserWantedToBook = true;
     }
   }
@@ -4884,17 +5033,7 @@ export function extractConversationState(messageText = "", history = [], guestCo
 
   const lastBotMsg = getLastBotMessage(historyWithoutCurrent);
   const pricingAlreadyPresented = hasRecentlySentPricingQuote(historyWithoutCurrent);
-  const dateQuoteAlreadyPresented = historyWithoutCurrent.some(m =>
-    m && m.fromMe && m.text && (
-      /ger(?:e|ar)\s+(?:a\s+)?(?:sua\s+)?pr[eé]-reserva/i.test(m.text) ||
-      /deseja\s+que\s+eu\s+j[aá]\s+gere/i.test(m.text) ||
-      /garantir\s+(?:o\s+flat|a\s+unidade)/i.test(m.text)
-    )
-  );
-
-  const isAffirmativeConfirmation = /^(?:sim|quero|pode\s*(?:ser|fazer|fechar|confirmar|gerar|reservar)?|confirma(?:r)?|fechado|combinado|perfeito|ok\s*,?\s*pode|por\s+favor|isso(?:\s+mesmo)?|vamos\s+fechar)(?:\s*,?\s*(?:com\s+caf[eé]|sem\s+caf[eé]|por\s+favor))?[.!?\s]*$/i.test(
-    String(messageText || "").trim()
-  );
+  const isAffirmativeConfirmation = isAffirmativeBookingReply(messageText);
 
   const wantsToBook = Boolean(
     currentMessageIsBooking ||
@@ -4906,25 +5045,14 @@ export function extractConversationState(messageText = "", history = [], guestCo
     /datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(lastBotMsg.text) ||
     /qual\s+per[ií]odo/i.test(lastBotMsg.text) ||
     /quantas\s+pessoas/i.test(lastBotMsg.text) ||
-    /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBotMsg.text)
+    /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBotMsg.text) ||
+    /outras\s+datas\s+pr[oó]ximas/i.test(lastBotMsg.text)
   ));
 
   const askedForDatesCount = historyWithoutCurrent.filter(m =>
     m && m.fromMe && m.text && !hasRecentlySentPricingQuote([m]) &&
     (/datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(m.text) || /per[ií]odo\s+desejado/i.test(m.text))
   ).length;
-
-  // Procura pré-reserva ativa existente para o telefone do hóspede
-  const cleanPhone = cleanWhatsAppPhone(guestContext?.phone || "");
-  const nowMs = Date.now();
-  const activePreReservation = (db?.reservations || []).find(r => {
-    if (r.status !== "pre_reserva") return false;
-    if (r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
-    const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
-    if (!cleanPhone || !rPhone || (!rPhone.endsWith(cleanPhone.slice(-8)) && !cleanPhone.endsWith(rPhone.slice(-8)))) return false;
-    if (parsedDates && (r.checkinDate !== parsedDates.checkIn || r.checkoutDate !== parsedDates.checkOut)) return false;
-    return true;
-  }) || null;
 
   const ratePlan = breakfastPreference === "with_breakfast" ? "with_breakfast" : "room_only";
 
@@ -5010,8 +5138,8 @@ export function executeConversationalBookingStep({
         })
       : { success: false, available: false, flats: [] };
 
-    // Se o próprio hóspede já possui uma pré-reserva ativa segurando um flat para este período,
-    // garante que o flat reservado para ele próprio conste como disponível para atualização/confirmação!
+    // Se o próprio hóspede já possui uma pré-reserva ativa segurando um flat,
+    // garante que o flat reservado para ele próprio conste como disponível caso não haja conflito com OUTRA reserva!
     if (convState.activePreReservation && Array.isArray(db?.flats)) {
       const heldFlatObj = db.flats.find(f =>
         String(f.id) === String(convState.activePreReservation.flatId) ||
@@ -5020,13 +5148,25 @@ export function executeConversationalBookingStep({
       if (heldFlatObj && Array.isArray(avail.flats)) {
         const alreadyInList = avail.flats.some(f => String(f.id) === String(heldFlatObj.id) || String(f.number) === String(heldFlatObj.number));
         if (!alreadyInList) {
-          avail.flats.unshift({
-            ...getFlatAmenitiesInfo(heldFlatObj),
-            baseRate: Number(db?.tariffSettings?.baseDailyRate || 237),
-            maxGuests: 2
+          const nowCheckMs = Date.now();
+          const hasOtherConflict = (db.reservations || []).some(r => {
+            if (r.id === convState.activePreReservation.id) return false;
+            if (!["confirmada", "checkin", "pre_reserva"].includes(r.status)) return false;
+            if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowCheckMs && r.paymentStatus !== "pago_total") return false;
+            const sameFlat = (r.flatId && String(r.flatId) === String(heldFlatObj.id)) ||
+                             (r.flatNumber && String(r.flatNumber) === String(heldFlatObj.number));
+            if (!sameFlat) return false;
+            return (convState.checkIn < r.checkoutDate && convState.checkOut > r.checkinDate);
           });
-          avail.available = true;
-          avail.totalAvailable = avail.flats.length;
+          if (!hasOtherConflict) {
+            avail.flats.unshift({
+              ...getFlatAmenitiesInfo(heldFlatObj),
+              baseRate: Number(db?.tariffSettings?.baseDailyRate || 237),
+              maxGuests: 2
+            });
+            avail.available = true;
+            avail.totalAvailable = avail.flats.length;
+          }
         }
       }
     }
@@ -5097,9 +5237,11 @@ export function executeConversationalBookingStep({
         const effectiveTotal = quoteChosen?.total || quoteRoomOnly?.total || (237 * convState.nights);
 
         if (convState.activePreReservation) {
-          // Atualiza pré-reserva ativa se o hóspede ajustou plano, número de hóspedes ou flat preferido
+          // Atualiza pré-reserva ativa se o hóspede ajustou datas, plano, número de hóspedes ou flat preferido
           const existing = convState.activePreReservation;
-          if (selectedFlat && convState.preferredFlatNumber) {
+          existing.checkinDate = convState.checkIn;
+          existing.checkoutDate = convState.checkOut;
+          if (selectedFlat && (convState.preferredFlatNumber || String(existing.flatId) !== String(selectedFlat.id))) {
             existing.flatId = selectedFlat.id;
             existing.flatNumber = String(selectedFlat.number);
           }
@@ -5434,7 +5576,7 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
 
   // Se a Sofia acabou de apresentar o orçamento de datas específicas e perguntou se pode gerar a pré-reserva,
   // confirmações curtas ("sim", "quero", "pode fazer", "com café", etc.) são solicitações de reserva!
-  if (convState.hasDates && convState.dateQuoteAlreadyPresented && convState.wantsToBook) {
+  if (convState.hasDates && convState.dateQuoteAlreadyPresented && convState.wantsToBook && isAffirmativeBookingReply(text)) {
     return {
       type: "RESERVATION_REQUEST",
       primaryTopic: "solicitacao_reserva",
@@ -5481,18 +5623,24 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     /verifico\s+a\s+disponibilidade/i.test(lastBot.text) ||
     /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBot.text) ||
     /ger(?:e|ar)\s+(?:a\s+)?(?:sua\s+)?pr[eé]-reserva/i.test(lastBot.text) ||
+    /resumo\s+da\s+pr[eé]-reserva/i.test(lastBot.text) ||
+    /pix\s+copia\s+e\s+cola/i.test(lastBot.text) ||
+    /outras\s+datas\s+pr[oó]ximas/i.test(lastBot.text) ||
+    /outro\s+per[ií]odo\s+que\s+verifico/i.test(lastBot.text) ||
     quoteRecentlySent
   ));
 
   const hasDateIndicator = convState.currentMessageHasDates ||
                            /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(lower) ||
-                           /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(lower);
+                           /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|final\s+de\s+semana|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i.test(lower);
   const mentionsGuests = convState.currentMessageHasGuests ||
                          /\b(?:\d+|um|uma|dois|duas|tr[eê]s)\s+(?:pessoas?|h[oó]spedes?|adultos?)|casal|individual|solteir[ao]\b/i.test(lower);
-  const mentionsBreakfastChoice = /^(?:quero\s+|vou\s+querer\s+|prefiro\s+|pode\s+ser\s+)?(?:com|sem)\s+caf[eé](?:\s+da\s+manh[aã])?(?:\s+no\s+quarto)?(?:\s+por\s+favor)?$/i.test(lower) ||
+  const mentionsBreakfastChoice = /^(?:quero\s+|vou\s+querer\s+|prefiro\s+|pode\s+ser\s+|troca(?:r)?\s+para\s+|muda(?:r)?\s+para\s+|altera(?:r)?\s+para\s+)?(?:com|sem)\s+caf[eé](?:\s+da\s+manh[aã])?(?:\s+no\s+quarto)?(?:\s+por\s+favor)?[.!?\s]*$/i.test(lower) ||
                                   /\b(?:com|sem)\s+caf[eé]\s+da\s+manh[aã]\b/i.test(lower);
+  const mentionsFlatPreference = (!guestContext?.reservation || guestContext.reservation.status === "pre_reserva") &&
+                                 /\b(?:quero|prefiro|pode\s+ser|escolho|reservar?)\s+(?:o\s+)?(?:flat|quarto|apto|apartamento|uh)\s*\d{3,4}\b/i.test(lower);
 
-  if (botAskedDates || quoteRecentlySent || convState.wantsToBook) {
+  if (botAskedDates || quoteRecentlySent || convState.wantsToBook || convState.activePreReservation) {
     if (hasDateIndicator && (convState.currentMessageHasDates || mentionsGuests || /\b(?:dia|dias|de|a|at[eé]|chegada|sa[ií]da|check[- ]?in|check[- ]?out)\b/i.test(lower))) {
       return {
         type: "RESERVATION_REQUEST",
@@ -5518,6 +5666,15 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
         rawText: text,
         hasDates: convState.hasDates,
         mentionsGuests: true
+      };
+    }
+    if (mentionsFlatPreference && !isPricingOrQuoteInquiry(text)) {
+      return {
+        type: "RESERVATION_REQUEST",
+        primaryTopic: "solicitacao_reserva",
+        rawText: text,
+        hasDates: convState.hasDates,
+        mentionsGuests: convState.guestsExplicit
       };
     }
   }
@@ -6906,18 +7063,26 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
     : `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
+  const promptOnly = customPrompt
+    ? prompt
+    : `[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+
   for (const { ver, model } of candidateModels) {
     try {
       const useNativeSysInst = ver === "v1beta" && Boolean(systemInstruction);
-      const baseContents = [...formattedHistory];
+      const effectiveUserPrompt = useNativeSysInst ? promptOnly : fullPrompt;
+      const baseContents = formattedHistory.map(turn => ({
+        role: turn.role,
+        parts: turn.parts.map(p => ({ ...p }))
+      }));
       const lastTurn = baseContents[baseContents.length - 1];
       if (lastTurn && lastTurn.role === "user") {
         baseContents[baseContents.length - 1] = {
           role: "user",
-          parts: [{ text: `${lastTurn.parts[0].text}\n\n${fullPrompt}` }]
+          parts: [{ text: `${lastTurn.parts[0].text}\n\n${effectiveUserPrompt}` }]
         };
       } else {
-        baseContents.push({ role: "user", parts: [{ text: fullPrompt }] });
+        baseContents.push({ role: "user", parts: [{ text: effectiveUserPrompt }] });
       }
 
       const bodyPayload = {
@@ -6948,9 +7113,9 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
       const candidate = data.candidates?.[0];
       let currentParts = candidate?.content?.parts || [];
 
-      let callPart = currentParts.find(p => p.functionCall);
+      let callParts = currentParts.filter(p => p.functionCall);
 
-      if (!callPart) {
+      if (callParts.length === 0) {
         const text = currentParts.find(p => p.text)?.text || "";
         if (text && text.trim().length > 0) {
           return { ok: true, text: text.trim(), model };
@@ -6964,45 +7129,49 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
       let lastActionResult = null;
       let anyRequiresHandover = false;
 
-      for (let step = 0; step < 4 && callPart; step++) {
-        const fnName = callPart.functionCall.name;
-        const fnArgs = callPart.functionCall.args || {};
-        lastFnCall = { name: fnName, args: fnArgs };
+      for (let step = 0; step < 4 && callParts.length > 0; step++) {
+        const functionResponseParts = [];
 
-        let actionResult;
-        try {
-          const authorizedRole = requesterRole || "guest";
-          const effectivePhone = requesterPhone || fnArgs.requesterPhone || "";
-          actionResult = await executeBotAction(db, fnName, {
-            ...fnArgs,
-            requesterRole: authorizedRole,
-            requesterPhone: effectivePhone
+        for (const cp of callParts) {
+          const fnName = cp.functionCall.name;
+          const fnArgs = cp.functionCall.args || {};
+          lastFnCall = { name: fnName, args: fnArgs };
+
+          let actionResult;
+          try {
+            const authorizedRole = requesterRole || "guest";
+            const effectivePhone = requesterPhone || fnArgs.requesterPhone || "";
+            actionResult = await executeBotAction(db, fnName, {
+              ...fnArgs,
+              requesterRole: authorizedRole,
+              requesterPhone: effectivePhone
+            });
+          } catch (actErr) {
+            actionResult = {
+              error: "ACTION_FAILED",
+              action: fnName,
+              requiresHandover: true,
+              message: actErr.message || "Erro interno ao executar a ação do sistema."
+            };
+          }
+
+          lastActionResult = actionResult;
+          if (actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED") {
+            anyRequiresHandover = true;
+          }
+
+          functionResponseParts.push({
+            functionResponse: {
+              name: fnName,
+              response: actionResult
+            }
           });
-        } catch (actErr) {
-          actionResult = {
-            error: "ACTION_FAILED",
-            action: fnName,
-            requiresHandover: true,
-            message: actErr.message || "Erro interno ao executar a ação do sistema."
-          };
-        }
-
-        lastActionResult = actionResult;
-        if (actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED") {
-          anyRequiresHandover = true;
         }
 
         runningContents.push({ role: "model", parts: currentParts });
         runningContents.push({
           role: "function",
-          parts: [
-            {
-              functionResponse: {
-                name: fnName,
-                response: actionResult
-              }
-            }
-          ]
+          parts: functionResponseParts
         });
 
         const nextPayload = {
@@ -7031,9 +7200,9 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
 
         const nextData = await nextResponse.json();
         currentParts = nextData.candidates?.[0]?.content?.parts || [];
-        callPart = currentParts.find(p => p.functionCall);
+        callParts = currentParts.filter(p => p.functionCall);
 
-        if (!callPart) {
+        if (callParts.length === 0) {
           const finalText = currentParts.find(p => p.text)?.text || "";
           if (finalText && finalText.trim().length > 0) {
             return {
@@ -7058,6 +7227,27 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
           functionCall: lastFnCall,
           functionResult: lastActionResult,
           requiresHandover: true
+        };
+      }
+
+      // Se uma ferramenta já foi executada mas a chamada final de síntese falhou, evita re-executar ações de escrita em outro modelo
+      if (lastActionResult) {
+        if (lastActionResult.message && typeof lastActionResult.message === "string") {
+          return {
+            ok: true,
+            text: lastActionResult.message,
+            model,
+            functionCall: lastFnCall,
+            functionResult: lastActionResult,
+            requiresHandover: false
+          };
+        }
+        return {
+          ok: false,
+          error: "Falha ao sintetizar resposta pós-ferramenta",
+          functionCall: lastFnCall,
+          functionResult: lastActionResult,
+          requiresHandover: false
         };
       }
     } catch (e) {

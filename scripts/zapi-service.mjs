@@ -7084,7 +7084,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post("/api/whatsapp/ai-simulate", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const { message, phone = "22998505276" } = req.body;
+    const { message, phone = "22998505276", history } = req.body;
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "Mensagem obrigatória para simulação." });
     }
@@ -7094,7 +7094,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         db,
         phone,
         messageText: message,
-        history: [],
+        history: Array.isArray(history) ? history : [],
         isCopilot: true
       });
       res.json({

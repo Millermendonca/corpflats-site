@@ -434,6 +434,38 @@ Qual período você pretende se hospedar e para quantas pessoas? Me informando a
       assert.equal(d3.checkOut, "2026-11-12");
       assert.equal(d3.nights, 2);
 
+      // Datas relativas ("amanhã por 2 diárias", "de hoje até depois de amanhã", "de amanhã até depois de amanhã")
+      const dTomorrow = parseNaturalDatesFromText("quero reservar amanhã por 2 diárias", "2026-10-14");
+      assert.ok(dTomorrow);
+      assert.equal(dTomorrow.checkIn, "2026-10-15");
+      assert.equal(dTomorrow.checkOut, "2026-10-17");
+      assert.equal(dTomorrow.nights, 2);
+
+      const dTodayToAfterTomorrow = parseNaturalDatesFromText("de hoje até depois de amanhã", "2026-10-14");
+      assert.ok(dTodayToAfterTomorrow);
+      assert.equal(dTodayToAfterTomorrow.checkIn, "2026-10-14");
+      assert.equal(dTodayToAfterTomorrow.checkOut, "2026-10-16");
+      assert.equal(dTodayToAfterTomorrow.nights, 2);
+
+      // Dias da semana e fim de semana ("de sexta a domingo" a partir de quarta-feira 2026-10-14 -> 16/10 a 18/10)
+      const dWeekdays = parseNaturalDatesFromText("quero reservar de sexta a domingo", "2026-10-14");
+      assert.ok(dWeekdays);
+      assert.equal(dWeekdays.checkIn, "2026-10-16");
+      assert.equal(dWeekdays.checkOut, "2026-10-18");
+      assert.equal(dWeekdays.nights, 2);
+
+      const dWeekend = parseNaturalDatesFromText("tem vaga para este fim de semana?", "2026-10-14");
+      assert.ok(dWeekend);
+      assert.equal(dWeekend.checkIn, "2026-10-16");
+      assert.equal(dWeekend.checkOut, "2026-10-18");
+      assert.equal(dWeekend.nights, 2);
+
+      // Formato com dois-pontos e vírgula ("check-in: 10/11, check-out: 15/11")
+      const dColon = parseNaturalDatesFromText("check-in: 10/11, check-out: 15/11", "2026-10-14");
+      assert.ok(dColon);
+      assert.equal(dColon.checkIn, "2026-11-10");
+      assert.equal(dColon.checkOut, "2026-11-15");
+
       // Não gera falso positivo para número de pessoas ou horários
       assert.equal(parseNaturalDatesFromText("para 2 pessoas com café", "2026-10-14"), null);
       assert.equal(parseNaturalDatesFromText("das 05:00 às 09:30", "2026-10-14"), null);
@@ -558,27 +590,38 @@ Qual período você pretende se hospedar e para quantas pessoas? Me informando a
       assert.equal(mockDb.reservations.length, 2, "Não deve criar pré-reserva quando não há disponibilidade");
     });
 
-    it("Fluxo D: callGeminiAi suporta encadeamento multi-step de Function Calling (checkAvailability -> calculateQuote -> createPreReservation)", async () => {
+    it("Fluxo D: callGeminiAi suporta encadeamento multi-step e chamadas paralelas de Function Calling (checkAvailability + calculateQuote -> createPreReservation)", async () => {
       const originalFetch = globalThis.fetch;
       let stepCallCount = 0;
+      const capturedBodies = [];
 
       try {
         globalThis.fetch = async (url, opts) => {
           if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
             stepCallCount++;
+            if (opts?.body) capturedBodies.push(JSON.parse(opts.body));
             if (stepCallCount === 1) {
+              // Retorna 2 functionCalls em paralelo no mesmo turno
               return {
                 ok: true,
                 json: async () => ({
                   candidates: [{
                     content: {
                       role: "model",
-                      parts: [{
-                        functionCall: {
-                          name: "checkAvailability",
-                          args: { checkIn: "2026-11-10", checkOut: "2026-11-12", guests: 2 }
+                      parts: [
+                        {
+                          functionCall: {
+                            name: "checkAvailability",
+                            args: { checkIn: "2026-11-10", checkOut: "2026-11-12", guests: 2 }
+                          }
+                        },
+                        {
+                          functionCall: {
+                            name: "calculateQuote",
+                            args: { checkIn: "2026-11-10", checkOut: "2026-11-12", guests: 2, flatId: "flat-101", ratePlan: "room_only" }
+                          }
                         }
-                      }]
+                      ]
                     }
                   }]
                 })
@@ -632,7 +675,12 @@ Qual período você pretende se hospedar e para quantas pessoas? Me informando a
         });
 
         assert.equal(geminiRes.ok, true);
-        assert.equal(stepCallCount, 3, "Deve ter executado os 2 functionCalls encadeados + resposta final");
+        assert.equal(stepCallCount, 3, "Deve ter executado os 2 passos de functionCall + resposta final");
+        // No segundo request (após as 2 functionCalls paralelas), a mensagem role: 'function' deve conter 2 functionResponses
+        const secondRequestContents = capturedBodies[1].contents;
+        const fnTurn = secondRequestContents.find(c => c.role === "function");
+        assert.ok(fnTurn);
+        assert.equal(fnTurn.parts.length, 2, "Deve enviar 2 functionResponse para corresponder às 2 functionCall paralelas");
         assert.equal(mockDb.reservations.length, 1);
         assert.ok(mockDb.reservations[0].totalAmount > 0, "Deve auto-calcular o total quando omitido em createPreReservation");
         assert.ok(geminiRes.text.includes(mockDb.reservations[0].code));
@@ -641,7 +689,7 @@ Qual período você pretende se hospedar e para quantas pessoas? Me informando a
       }
     });
 
-    it("Fluxo E: Atualiza pré-reserva ativa em memória quando o hóspede altera plano (ex: para com café da manhã) mesmo sendo a única unidade livre", async () => {
+    it("Fluxo E: Atualiza pré-reserva ativa em memória quando o hóspede altera plano, datas ou flat preferido mesmo sendo a única unidade livre", async () => {
       // Deixa apenas 1 flat disponível no banco
       mockDb.flats = [
         { id: "flat-101", number: "101", isActive: true, status: "clean", airConditionerType: "split", bedType: "casal", hasMicrowave: true, tags: ["split", "casal"] }
@@ -680,8 +728,66 @@ Qual período você pretende se hospedar e para quantas pessoas? Me informando a
       assert.equal(mockDb.reservations[0].totalAmount, 1123.55);
       assert.match(turn2.replyText, /1123,55/);
       assert.ok(turn2.replyText.includes(resCode));
+
+      convHistory.push({ fromMe: false, text: "quero com café da manhã para 2 pessoas" });
+      convHistory.push({ fromMe: true, text: turn2.replyText });
+
+      // Turno 3: Hóspede muda as datas da pré-reserva para 12/11 a 15/11 (3 diárias sobrepostas ao período anterior)
+      const turn3 = await generateAiWhatsAppResponse({
+        db: mockDb,
+        phone: "5522998505276",
+        messageText: "na verdade quero mudar para 12/11 a 15/11",
+        history: convHistory
+      });
+
+      // Não pode acusar falso "ocupado" por causa da própria pré-reserva nem criar segunda pré-reserva
+      assert.equal(mockDb.reservations.length, 1);
+      assert.equal(mockDb.reservations[0].code, resCode);
+      assert.equal(mockDb.reservations[0].checkinDate, "2026-11-12");
+      assert.equal(mockDb.reservations[0].checkoutDate, "2026-11-15");
+      assert.match(turn3.replyText, /12\/11\s+a\s+15\/11/);
+      assert.ok(turn3.replyText.includes(resCode));
+    });
+
+    it("Fluxo F: Confirmação curta ('sim, pode gerar') seguida de ajuste de hóspedes/flat mantém contexto de pré-reserva sem cair em saudação genérica", async () => {
+      const convHistory = [];
+
+      // Turno 1: Consulta de disponibilidade
+      const t1 = await generateAiWhatsAppResponse({
+        db: mockDb,
+        phone: "5522998505276",
+        messageText: "tem vaga de 10/11 a 12/11?",
+        history: convHistory
+      });
+      assert.equal(mockDb.reservations.length, 0);
+      convHistory.push({ fromMe: false, text: "tem vaga de 10/11 a 12/11?" });
+      convHistory.push({ fromMe: true, text: t1.replyText });
+
+      // Turno 2: Confirmação curta ("sim, pode gerar")
+      const t2 = await generateAiWhatsAppResponse({
+        db: mockDb,
+        phone: "5522998505276",
+        messageText: "sim, pode gerar",
+        history: convHistory
+      });
+      assert.equal(mockDb.reservations.length, 1);
+      assert.equal(mockDb.reservations[0].flatNumber, "101");
+      convHistory.push({ fromMe: false, text: "sim, pode gerar" });
+      convHistory.push({ fromMe: true, text: t2.replyText });
+
+      // Turno 3: Ajuste de preferência de unidade ("prefiro o flat 204")
+      const t3 = await generateAiWhatsAppResponse({
+        db: mockDb,
+        phone: "5522998505276",
+        messageText: "prefiro o flat 204",
+        history: convHistory
+      });
+      assert.equal(mockDb.reservations.length, 1);
+      assert.equal(mockDb.reservations[0].flatNumber, "204");
+      assert.match(t3.replyText, /Flat\s+204/i);
     });
   });
 });
+
 
 
