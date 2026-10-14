@@ -374,6 +374,7 @@ export default function ServiceOrders() {
   const [formWorkerName, setFormWorkerName] = useState("");
   const [formWorkerCpf, setFormWorkerCpf] = useState("");
   const [formWorkerPhone, setFormWorkerPhone] = useState("");
+  const [formWorkerCollaborators, setFormWorkerCollaborators] = useState<Array<{ name: string; cpf: string }>>([]);
   const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("always");
   const [formAllowedStatuses, setFormAllowedStatuses] = useState<OperationalScenarioId[]>(DEFAULT_ALLOWED_ROOM_STATUSES);
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
@@ -493,6 +494,7 @@ export default function ServiceOrders() {
     setFormWorkerName("");
     setFormWorkerCpf("");
     setFormWorkerPhone("");
+    setFormWorkerCollaborators([]);
     setFormCleanFlatMode("always");
     setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
     setFormMaxSimultaneous(2);
@@ -515,6 +517,13 @@ export default function ServiceOrders() {
     setFormWorkerName((order as any).workerName || "");
     setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
     setFormWorkerPhone((order as any).workerPhone || "");
+    const rawCollabs = Array.isArray((order as any).workerCollaborators) ? (order as any).workerCollaborators : [];
+    setFormWorkerCollaborators(
+      rawCollabs.map((c: any) => ({
+        name: String(c?.name || ""),
+        cpf: formatCpfInput(String(c?.cpf || "")),
+      }))
+    );
     setFormCleanFlatMode("always");
 
     if (Array.isArray(order.allowedRoomStatuses)) {
@@ -556,6 +565,62 @@ export default function ServiceOrders() {
     setActiveTab("form");
   };
 
+  // Mutation: Apagar prestador / ajudante / veículo (Admin)
+  const deleteAdminWorkerMutation = useMutation({
+    mutationFn: async (opts: { orderId: string; collaboratorIndex?: number; clearVehicle?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts.collaboratorIndex !== undefined) {
+        params.set("collaboratorIndex", String(opts.collaboratorIndex));
+      }
+      if (opts.clearVehicle) {
+        params.set("clearVehicle", "true");
+      }
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      const res = await fetch(`/api/service-orders/${opts.orderId}/worker${qs}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao remover prestador");
+      }
+      return { ...(await res.json()), opts };
+    },
+    onSuccess: (resData: any) => {
+      if (resData.opts.collaboratorIndex !== undefined) {
+        toast({
+          title: "Ajudante removido!",
+          description: "O ajudante foi excluído com sucesso.",
+        });
+      } else if (resData.opts.clearVehicle) {
+        toast({
+          title: "Veículo removido!",
+          description: "Os dados de garagem do prestador foram apagados.",
+        });
+      } else {
+        if (editingOrderId === resData.opts.orderId) {
+          setFormWorkerName("");
+          setFormWorkerCpf("");
+          setFormWorkerPhone("");
+          setFormWorkerCollaborators([]);
+        }
+        toast({
+          title: "Prestador removido!",
+          description: "O cadastro do prestador, ajudantes e veículo foi apagado desta ordem.",
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["service-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["service-order-progress", resData.opts.orderId] });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao remover prestador",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Mutation: Salvar Ordem (POST ou PATCH)
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -581,6 +646,18 @@ export default function ServiceOrders() {
         };
       });
 
+      const trimmedWorkerName = formWorkerName.trim();
+      const cleanedWorkerCpf = cleanCpfDigits(formWorkerCpf);
+      const cleanedWorkerPhone = formWorkerPhone ? formWorkerPhone.replace(/\D/g, "") : "";
+      const cleanedCollabs = formWorkerCollaborators
+        .map((c) => ({
+          name: c.name.trim(),
+          cpf: cleanCpfDigits(c.cpf),
+        }))
+        .filter((c) => c.name.length > 0 && c.cpf.length === 11);
+
+      const shouldClearWorker = Boolean(editingOrderId && !trimmedWorkerName && !cleanedWorkerCpf);
+
       const bodyPayload = {
         title: formTitle.trim(),
         cleanFlatMode: "always" as CleanFlatMode,
@@ -592,9 +669,11 @@ export default function ServiceOrders() {
         instructionFormat: formInstructionFormat,
         defaultInstructions: formDefaultInstructions.trim(),
         notificationRecipients: formRecipients,
-        workerName: formWorkerName.trim() || undefined,
-        workerCpf: cleanCpfDigits(formWorkerCpf) || undefined,
-        workerPhone: formWorkerPhone ? formWorkerPhone.replace(/\D/g, "") : undefined,
+        clearWorker: shouldClearWorker,
+        workerName: trimmedWorkerName,
+        workerCpf: cleanedWorkerCpf,
+        workerPhone: cleanedWorkerPhone,
+        workerCollaborators: cleanedCollabs,
         flats: flatsPayload,
       };
 
@@ -1196,14 +1275,38 @@ export default function ServiceOrders() {
 
                   {/* Prestador / Responsável (Opcional - Pré-atribuição) */}
                   <div className="p-4 rounded-xl bg-muted/30 border space-y-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-sm font-semibold flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-primary" />
-                        Prestador Responsável (Opcional - Pré-atribuição)
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        Se você já sabe quem executará o serviço, preencha abaixo para adiantar o cadastro. O prestador também pode preencher no próprio link.
-                      </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <Label className="text-sm font-semibold flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-primary" />
+                          Prestador Responsável (Opcional - Pré-atribuição)
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Se você já sabe quem executará o serviço, preencha abaixo. O prestador receberá WhatsApp automático quando houver quarto disponível.
+                        </p>
+                      </div>
+
+                      {(formWorkerName || formWorkerCpf || formWorkerPhone || formWorkerCollaborators.length > 0) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={deleteAdminWorkerMutation.isPending}
+                          onClick={() => {
+                            setFormWorkerName("");
+                            setFormWorkerCpf("");
+                            setFormWorkerPhone("");
+                            setFormWorkerCollaborators([]);
+                            if (editingOrderId) {
+                              deleteAdminWorkerMutation.mutate({ orderId: editingOrderId });
+                            }
+                          }}
+                          className="h-8 text-xs text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 gap-1.5 shrink-0 self-start sm:self-center"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Apagar Prestador e Ajudantes
+                        </Button>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1234,7 +1337,7 @@ export default function ServiceOrders() {
                       </div>
                       <div className="space-y-1">
                         <Label htmlFor="worker-phone" className="text-xs font-semibold">
-                          WhatsApp / Telefone (Avisos)
+                          WhatsApp / Telefone (Avisos de Quartos)
                         </Label>
                         <Input
                           id="worker-phone"
@@ -1244,6 +1347,73 @@ export default function ServiceOrders() {
                           className="h-9 text-xs"
                         />
                       </div>
+                    </div>
+
+                    {/* Ajudantes / Equipe na Edição do Admin */}
+                    <div className="pt-2 border-t space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label className="text-xs font-semibold text-muted-foreground">
+                          Ajudantes / Equipe ({formWorkerCollaborators.length})
+                        </Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setFormWorkerCollaborators((prev) => [...prev, { name: "", cpf: "" }])
+                          }
+                          className="h-7 text-xs gap-1 border-dashed"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          + Adicionar Ajudante
+                        </Button>
+                      </div>
+
+                      {formWorkerCollaborators.length > 0 && (
+                        <div className="space-y-2">
+                          {formWorkerCollaborators.map((collab, idx) => (
+                            <div key={idx} className="flex items-center gap-2 bg-background p-2 rounded-lg border">
+                              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <Input
+                                  placeholder="Nome do ajudante"
+                                  value={collab.name}
+                                  onChange={(e) =>
+                                    setFormWorkerCollaborators((prev) =>
+                                      prev.map((c, i) => (i === idx ? { ...c, name: e.target.value } : c))
+                                    )
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  placeholder="CPF (000.000.000-00)"
+                                  value={collab.cpf}
+                                  onChange={(e) =>
+                                    setFormWorkerCollaborators((prev) =>
+                                      prev.map((c, i) =>
+                                        i === idx ? { ...c, cpf: formatCpfInput(e.target.value) } : c
+                                      )
+                                    )
+                                  }
+                                  maxLength={14}
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() =>
+                                  setFormWorkerCollaborators((prev) => prev.filter((_, i) => i !== idx))
+                                }
+                                title="Remover ajudante"
+                                className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2086,11 +2256,31 @@ export default function ServiceOrders() {
                     </Card>
 
                     {/* Prestador Identificado */}
-                    <Card className="rounded-xl border p-4 space-y-1 col-span-2 sm:col-span-4 lg:col-span-1 bg-muted/40">
-                      <span className="text-xs text-muted-foreground font-semibold flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5 text-primary" />
-                        Prestador Responsável
-                      </span>
+                    <Card className="rounded-xl border p-4 space-y-1.5 col-span-2 sm:col-span-4 lg:col-span-1 bg-muted/40">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground font-semibold flex items-center gap-1">
+                          <Users className="w-3.5 h-3.5 text-primary" />
+                          Prestador Responsável
+                        </span>
+                        {progressData.worker?.mainWorker?.name && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={deleteAdminWorkerMutation.isPending}
+                            onClick={() => {
+                              if (window.confirm("Deseja remover o prestador cadastrado e seus ajudantes desta ordem?")) {
+                                deleteAdminWorkerMutation.mutate({ orderId: progressData.orderId });
+                              }
+                            }}
+                            className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md gap-1"
+                            title="Remover prestador e ajudantes"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Remover
+                          </Button>
+                        )}
+                      </div>
                       <div className="text-sm font-bold truncate">
                         {progressData.worker?.mainWorker?.name || "Ainda não identificado"}
                       </div>
@@ -2098,11 +2288,52 @@ export default function ServiceOrders() {
                         {progressData.worker?.mainWorker?.cpf
                           ? `CPF: ${formatCpf(progressData.worker.mainWorker.cpf)}`
                           : "Aguardando cadastro no link"}
+                        {progressData.worker?.mainWorker?.phone ? ` • Tel: ${progressData.worker.mainWorker.phone}` : ""}
                       </span>
+                      {Array.isArray(progressData.worker?.collaborators) && progressData.worker.collaborators.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {progressData.worker.collaborators.map((c, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center gap-1 text-[10px] bg-background border px-1.5 py-0.5 rounded-md font-medium"
+                            >
+                              👤 {c.name}
+                              <button
+                                type="button"
+                                disabled={deleteAdminWorkerMutation.isPending}
+                                onClick={() => {
+                                  if (window.confirm(`Remover o ajudante "${c.name}"?`)) {
+                                    deleteAdminWorkerMutation.mutate({ orderId: progressData.orderId, collaboratorIndex: idx });
+                                  }
+                                }}
+                                className="text-destructive hover:bg-destructive/15 rounded px-0.5 font-bold"
+                                title="Remover ajudante"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {progressData.worker?.vehicle?.needsGarage && (
-                        <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold block pt-1">
-                          🚗 Garagem: {progressData.worker.vehicle.plate || "Veículo"} {progressData.worker.vehicle.modelColor ? `(${progressData.worker.vehicle.modelColor})` : ""}
-                        </span>
+                        <div className="flex items-center justify-between gap-1 pt-1">
+                          <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold truncate">
+                            🚗 Garagem: {progressData.worker.vehicle.plate || "Veículo"} {progressData.worker.vehicle.modelColor ? `(${progressData.worker.vehicle.modelColor})` : ""}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={deleteAdminWorkerMutation.isPending}
+                            onClick={() => {
+                              if (window.confirm("Remover veículo/garagem do prestador?")) {
+                                deleteAdminWorkerMutation.mutate({ orderId: progressData.orderId, clearVehicle: true });
+                              }
+                            }}
+                            className="text-xs text-destructive hover:bg-destructive/15 rounded px-1 font-bold shrink-0"
+                            title="Remover veículo"
+                          >
+                            ×
+                          </button>
+                        </div>
                       )}
                     </Card>
                   </div>

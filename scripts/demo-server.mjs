@@ -83,8 +83,7 @@ import {
   sendMirrorEmail,
   buildMirrorEmailSubject,
   renderTemplateButtons,
-  DEFAULT_WHATSAPP_TEMPLATES,
-  isInitialConfirmationInFlightOrSent
+  DEFAULT_WHATSAPP_TEMPLATES
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -3513,8 +3512,8 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
-    // 4. Garantir que para checkouts ATÉ HOJE (nunca futuros!) exista a solicitação de limpeza correspondente
-    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber && r.checkoutDate <= todayStr) {
+    // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
+    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber) {
       const checkoutDate = r.checkoutDate;
       const hasCleaning = db.cleaningRequests.some(c =>
         (String(c.flatNumber) === String(r.flatNumber) || c.flatId === r.flatId) &&
@@ -3579,67 +3578,15 @@ function reconcileUniversalIntegrity(incomingState = null) {
           leavingGuest: r.guestName || "Hóspede",
           arrivingGuest: null,
           pendingObservation: null,
-          willCleanAt: null,
+          willCleanAt: `${checkoutDate}T13:00:00.000Z`,
           createdAt: `${checkoutDate}T08:00:00.000Z`,
-          updatedAt: `${checkoutDate}T08:00:00.000Z`
+          updatedAt: `${checkoutDate}T13:00:00.000Z`
         });
         changed = true;
         console.log(`[Universal Integrity] Limpeza de checkout criada automaticamente para o Flat ${r.flatNumber} na data ${checkoutDate} (status: ${isOldPastCheckout ? "clean" : "dirty"})`);
       }
     }
   });
-
-  // 4.1. Higienizar registros "dirty" futuros gerados indevidamente e registros "dirty" antigos (> 7 dias ou já sucedidos por limpeza concluída)
-  const sevenDaysAgoCleanup = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
-  const beforeFutureFilterCount = (db.cleaningRequests || []).length;
-  db.cleaningRequests = (db.cleaningRequests || []).filter(c => {
-    if (!c) return false;
-    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
-    if (!isInst && c.requestDate > todayStr && c.status === "dirty" && !c.cleaningStartedAt && !c.completedAt && !c.assignedUserId && !c.isManualInstruction) {
-      return false;
-    }
-    return true;
-  });
-  if (db.cleaningRequests.length !== beforeFutureFilterCount) changed = true;
-
-  for (const c of (db.cleaningRequests || [])) {
-    if (!c || c.status !== "dirty") continue;
-    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
-    if (isInst) continue;
-    if (c.requestDate && c.requestDate < todayStr) {
-      const fNum = String(c.flatNumber || "");
-      const hasSubsequentClean = (db.cleaningRequests || []).some(other =>
-        other.id !== c.id &&
-        (String(other.flatNumber) === fNum || (c.flatId && other.flatId === c.flatId)) &&
-        !other.isInstructionOnly &&
-        other.source !== "manual_instruction" &&
-        other.status === "clean" &&
-        (other.effectiveDate || (other.completedAt ? other.completedAt.substring(0, 10) : other.requestDate)) >= c.requestDate
-      );
-      if (c.requestDate < sevenDaysAgoCleanup || hasSubsequentClean) {
-        c.status = "clean";
-        if (!c.completedAt) c.completedAt = `${c.requestDate}T15:00:00.000Z`;
-        changed = true;
-      }
-    }
-  }
-
-  // 4.2. Garantir configuração correta de anexo PDF nos templates de confirmação inicial (evitando envio duplicado no check-in)
-  if (Array.isArray(db.whatsappTemplates)) {
-    for (const tpl of db.whatsappTemplates) {
-      if (tpl.id === "tpl_checkin_completed" && tpl.hasAttachment === true) {
-        tpl.hasAttachment = false;
-        changed = true;
-      }
-      if ((tpl.id === "tpl_sameday_reservation_instructions" || tpl.id === "tpl_payment_confirmed" || tpl.id === "tpl_new_reservation_direct" || tpl.id === "tpl_new_reservation_ota") && tpl.hasAttachment === undefined) {
-        tpl.hasAttachment = true;
-        if (!tpl.documentUrl) tpl.documentUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
-        if (!tpl.documentName) tpl.documentName = "Manual_do_Hospede_CorpFlats.pdf";
-        if (!tpl.documentCaption) tpl.documentCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖";
-        changed = true;
-      }
-    }
-  }
 
   // Limpeza de instruções automáticas obsoletas:
   // Se a solicitação não for manual e não houver reserva ativa com check-in nessa data/quarto, limpa preferências
@@ -9881,6 +9828,172 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
   }
 }
 
+function checkAndNotifyAvailableServiceFlats(targetOrderId = null) {
+  try {
+    if (!Array.isArray(db.serviceOrders) || !Array.isArray(db.serviceWorkers)) return [];
+    const todayStr = getTodayStr();
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    let updated = false;
+    const notificationsSent = [];
+
+    for (const order of db.serviceOrders) {
+      if (order.status !== "active") continue;
+      if (targetOrderId && String(order.id) !== String(targetOrderId) && String(order.token) !== String(targetOrderId)) continue;
+
+      const worker = db.serviceWorkers.find(
+        w => (w.token === order.token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf
+      );
+      const rawPhone = worker?.mainWorker?.phone || order.workerPhone || "";
+      const cleanWp = rawPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawPhone) : String(rawPhone).replace(/\D/g, "")) : "";
+      if (!worker || !cleanWp || cleanWp.length < 10) continue;
+
+      const flats = Array.isArray(order.flats) ? order.flats : [];
+      const maxSimul = Number(order.maxSimultaneousFlats) || 2;
+      const inProgressCount = flats.filter(f => f.status === "in_progress").length;
+      const maxPerDay = Number(order.maxFlatsPerDay) || 4;
+      const doneTodayCount = flats.filter(
+        f => f.status === "done" && f.finishedAt && getExecutionDateStr(f.finishedAt) === todayStr
+      ).length;
+
+      const allowedStatuses = getAllowedRoomStatuses(order);
+      const cleanFlatMode = order.cleanFlatMode || "priority";
+
+      const hasOtherAllowedDirtyFlat = (currentFlatId) => {
+        return flats.some(otherF => {
+          if (Number(otherF.flatId) === Number(currentFlatId) || otherF.status === "done") return false;
+          if (!isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)) return false;
+          const otherScenario = getFlatOperationalScenario(otherF.flatId, otherF.flatNumber, todayStr);
+          return allowedStatuses.includes(otherScenario);
+        });
+      };
+
+      const newlyAvailableFlats = [];
+
+      for (const flat of flats) {
+        if (flat.status !== "pending") continue;
+
+        const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
+        const isScenarioAllowed = allowedStatuses.includes(scenario);
+        const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
+
+        let isCleanModeAllowed = true;
+        if (!isDirty) {
+          if (cleanFlatMode === "never") {
+            isCleanModeAllowed = false;
+          } else if (cleanFlatMode === "priority" && hasOtherAllowedDirtyFlat(flat.flatId)) {
+            isCleanModeAllowed = false;
+          }
+        }
+
+        const isRoomCriteriaMet = isScenarioAllowed && isCleanModeAllowed;
+
+        if (!isRoomCriteriaMet) {
+          if (flat.workerNotifiedAvailable) {
+            flat.workerNotifiedAvailable = false;
+            updated = true;
+          }
+          continue;
+        }
+
+        // Respeita limites operacionais (simultâneos e diário) antes de disparar o aviso
+        if (inProgressCount >= maxSimul || doneTodayCount >= maxPerDay) {
+          continue;
+        }
+
+        if (!flat.workerNotifiedAvailable) {
+          const lastNotifiedMs = flat.workerNotifiedAvailableAt ? new Date(flat.workerNotifiedAvailableAt).getTime() : 0;
+          if (lastNotifiedMs && (nowMs - lastNotifiedMs) < 5 * 60 * 1000 && flat.workerLastNotifiedPhone === cleanWp) {
+            flat.workerNotifiedAvailable = true;
+            updated = true;
+            continue;
+          }
+
+          flat.workerNotifiedAvailable = true;
+          flat.workerNotifiedAvailableAt = nowIso;
+          flat.workerLastNotifiedPhone = cleanWp;
+          updated = true;
+
+          const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
+          const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+          newlyAvailableFlats.push({
+            flat,
+            scenario,
+            scenarioLabel: scenarioInfo.label || scenario,
+            scenarioIcon: scenarioInfo.icon || "🏠",
+            hasCheckinToday: realtime.hasCheckinToday,
+            expectedArrival: realtime.expectedArrival || (realtime.hasCheckinToday ? "14:00" : null)
+          });
+        }
+      }
+
+      if (newlyAvailableFlats.length > 0) {
+        const workerName = (worker.mainWorker?.name || "Prestador").trim();
+        const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "http://localhost:3000";
+        const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
+
+        const flatLines = newlyAvailableFlats.map(item => {
+          const arrivalNote = item.hasCheckinToday ? ` · Entrada prevista: ${item.expectedArrival || "14:00"}` : "";
+          return `• *Flat ${item.flat.flatNumber}* — ${item.scenarioIcon} ${item.scenarioLabel}${arrivalNote}`;
+        });
+
+        const msgText = [
+          `🔔 *Quarto(s) Disponível(is) para Serviço* — *${order.title}*`,
+          `Olá, *${workerName}*!`,
+          newlyAvailableFlats.length === 1
+            ? `O seguinte apartamento está liberado para execução do serviço conforme os critérios da ordem:`
+            : `Os seguintes apartamentos estão liberados para execução do serviço conforme os critérios da ordem:`,
+          ...flatLines,
+          ``,
+          `🔗 Acesse o portal para solicitar entrada na recepção e iniciar:`,
+          portalUrl
+        ].join("\n");
+
+        notificationsSent.push({
+          orderId: order.id,
+          token: order.token,
+          workerPhone: cleanWp,
+          workerName,
+          flats: newlyAvailableFlats.map(i => i.flat.flatNumber),
+          message: msgText
+        });
+
+        try {
+          createNotification({
+            category: "service_order",
+            title: `🔔 Quarto(s) liberado(s) para o prestador (${newlyAvailableFlats.map(i => `Flat ${i.flat.flatNumber}`).join(", ")})`,
+            message: `${order.title}: WhatsApp enviado para ${workerName} (${cleanWp})`,
+            severity: "info",
+            metadata: {
+              serviceOrderId: order.id,
+              workerPhone: cleanWp,
+              flats: newlyAvailableFlats.map(i => i.flat.flatNumber),
+              action: "worker_room_available"
+            },
+            targetUrl: `/servicos`
+          });
+        } catch (_) {}
+
+        if (typeof sendZapiMessage === "function") {
+          sendZapiMessage(db.zapiConfig, {
+            phone: cleanWp,
+            message: msgText,
+            bypassTestMode: true
+          }).catch(err => console.warn(`[ServiceOrder] WhatsApp room available to worker ${cleanWp} failed:`, err.message));
+        }
+      }
+    }
+
+    if (updated) {
+      saveDatabase("check_available_service_flats");
+    }
+    return notificationsSent;
+  } catch (err) {
+    console.warn("[ServiceOrder] Erro ao verificar disponibilidade de quartos para prestador:", err?.message || err);
+    return [];
+  }
+}
+
 function checkOverdueServiceFlats() {
   try {
     if (!Array.isArray(db.serviceOrders)) return;
@@ -9904,6 +10017,7 @@ function checkOverdueServiceFlats() {
     if (updated) {
       saveDatabase("check_overdue_service_flats");
     }
+    checkAndNotifyAvailableServiceFlats();
   } catch (err) {
     console.warn("[ServiceOrder] Erro ao verificar atrasos de serviço:", err?.message || err);
   }
@@ -10749,7 +10863,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         }
         shouldSaveDb = true;
       }
-    } else if (dateStr >= "2026-09-01" && !isFutureDate) {
+    } else if (dateStr >= "2026-09-01") {
       db.cleaningRequests.push(card);
       shouldSaveDb = true;
     }
@@ -11439,33 +11553,15 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
 
   const userAuth = getAuthUser(req);
   const now = new Date().toISOString();
-  const execDate = item.effectiveDate || item.requestDate || getTodayStr();
   item.status = "clean";
   item.assignedUserId = userAuth ? userAuth.id : (item.assignedUserId || 2);
   item.completedAt = now;
   item.pendingObservation = null;
   item.updatedAt = now;
-
-  // Marca eventuais pendências antigas do mesmo flat como concluídas para não ficarem presas no carry-over
-  for (const other of (db.cleaningRequests || [])) {
-    if (other.id !== item.id && (other.flatId === item.flatId || String(other.flatNumber) === String(item.flatNumber))) {
-      const isInst = Boolean(other.isInstructionOnly || other.source === "manual_instruction" || other.type === "instruction" || other.type === "bed_adjustment_only" || other.isBedAdjustmentOnly);
-      if (!isInst && other.requestDate <= execDate && other.status !== "clean" && other.status !== "no_show" && other.status !== "extended") {
-        other.status = "clean";
-        if (!other.completedAt) other.completedAt = now;
-        other.updatedAt = now;
-      }
-    }
-  }
   saveDatabase();
 
   const flat = db.flats.find(f => f.id === item.flatId);
   const assignedUser = db.users.find(u => u.id === item.assignedUserId);
-  const flatNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
-  const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
-  triggerRoomReadyWhatsApp(db, saveDatabase, item.flatId, flatNum, reqBaseUrl).catch(e =>
-    console.warn("[Room Ready WhatsApp] Erro ao notificar no resolve-issue:", e.message)
-  );
 
   res.json({
     ...item,
@@ -11675,19 +11771,6 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         if (item.adminNote && item.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
           item.adminNote = null;
         }
-        if (!isInstructionRequest) {
-          const execDate = item.effectiveDate || item.requestDate || getTodayStr();
-          for (const other of (db.cleaningRequests || [])) {
-            if (other.id !== item.id && (other.flatId === item.flatId || String(other.flatNumber) === String(item.flatNumber))) {
-              const otherIsInst = Boolean(other.isInstructionOnly || other.source === "manual_instruction" || other.type === "instruction" || other.type === "bed_adjustment_only" || other.isBedAdjustmentOnly);
-              if (!otherIsInst && other.requestDate <= execDate && other.status !== "clean" && other.status !== "no_show" && other.status !== "extended") {
-                other.status = "clean";
-                if (!other.completedAt) other.completedAt = item.completedAt || now;
-                other.updatedAt = now;
-              }
-            }
-          }
-        }
       }
 
       if (customDuration !== undefined) {
@@ -11857,6 +11940,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     }
   }
 
+  // ── WhatsApp Prestador: Notificar se algum flat de OS ativa ficou disponível ─
+  checkAndNotifyAvailableServiceFlats();
+
   res.json({
     ...item,
     flatNumber: flat ? flat.number : String(item.flatId),
@@ -12001,26 +12087,7 @@ app.post("/api/cleaning/admin/record", (req, res) => {
   };
 
   db.cleaningRequests.unshift(newReq);
-  if ((status || "clean") === "clean") {
-    for (const other of (db.cleaningRequests || [])) {
-      if (other.id !== newReq.id && (other.flatId === finalFlatId || String(other.flatNumber) === finalFlatNumber)) {
-        const otherIsInst = Boolean(other.isInstructionOnly || other.source === "manual_instruction" || other.type === "instruction" || other.type === "bed_adjustment_only" || other.isBedAdjustmentOnly);
-        if (!otherIsInst && other.requestDate <= requestDate && other.status !== "clean" && other.status !== "no_show" && other.status !== "extended") {
-          other.status = "clean";
-          if (!other.completedAt) other.completedAt = completedTimeIso || nowIso;
-          other.updatedAt = nowIso;
-        }
-      }
-    }
-  }
   saveDatabase();
-
-  if ((status || "clean") === "clean" && requestDate === getTodayStr()) {
-    const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
-    triggerRoomReadyWhatsApp(db, saveDatabase, finalFlatId, finalFlatNumber, reqBaseUrl).catch(e =>
-      console.warn("[Room Ready WhatsApp] Erro ao notificar no admin/record:", e.message)
-    );
-  }
 
   logAuditEvent({
     level: "info",
@@ -12484,7 +12551,10 @@ app.get("/api/service-orders", (req, res) => {
     return {
       ...o,
       workerName: worker?.mainWorker?.name || null,
-      workerCpf: worker?.mainWorker?.cpf || null
+      workerCpf: worker?.mainWorker?.cpf || null,
+      workerPhone: worker?.mainWorker?.phone || o.workerPhone || null,
+      workerCollaborators: Array.isArray(worker?.collaborators) ? worker.collaborators : [],
+      workerVehicle: worker?.vehicle || null
     };
   });
   res.json(list);
@@ -12575,7 +12645,9 @@ app.post("/api/service-orders", (req, res) => {
       observations: null,
       photos: [],
       needsCleaning: null,
-      wasCleanWhenStarted: null
+      wasCleanWhenStarted: null,
+      workerNotifiedAvailable: false,
+      workerNotifiedAvailableAt: null
     };
   });
 
@@ -12613,6 +12685,17 @@ app.post("/api/service-orders", (req, res) => {
   const preWorkerName = String(req.body.workerName || req.body.mainWorker?.name || "").trim();
   const preWorkerCpf = String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "");
   const preWorkerPhone = String(req.body.workerPhone || req.body.mainWorker?.phone || "").replace(/\D/g, "");
+  const rawPreCollabs = req.body.workerCollaborators || req.body.collaborators || [];
+  const preCollaborators = Array.isArray(rawPreCollabs)
+    ? rawPreCollabs.map(c => ({ name: String(c?.name || "").trim(), cpf: String(c?.cpf || "").replace(/\D/g, "") })).filter(c => c.name && c.cpf.length === 11)
+    : [];
+  const rawPreVehicle = req.body.workerVehicle || req.body.vehicle || null;
+  const preVehicle = rawPreVehicle && typeof rawPreVehicle === "object" ? {
+    needsGarage: Boolean(rawPreVehicle.needsGarage),
+    plate: String(rawPreVehicle.plate || "").trim().toUpperCase(),
+    modelColor: String(rawPreVehicle.modelColor || "").trim()
+  } : { needsGarage: false, plate: "", modelColor: "" };
+
   if (preWorkerName && preWorkerCpf.length === 11) {
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     db.serviceWorkers.push({
@@ -12622,9 +12705,10 @@ app.post("/api/service-orders", (req, res) => {
       mainWorker: {
         name: preWorkerName,
         cpf: preWorkerCpf,
-        phone: preWorkerPhone
+        phone: preWorkerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(preWorkerPhone) : preWorkerPhone) : ""
       },
-      collaborators: [],
+      collaborators: preCollaborators,
+      vehicle: preVehicle,
       registeredAt: new Date().toISOString()
     });
   }
@@ -12633,6 +12717,9 @@ app.post("/api/service-orders", (req, res) => {
   db.serviceOrders.unshift(newOrder);
   syncServiceOrderRoomBlocks(newOrder);
   saveDatabase("create_service_order");
+
+  checkAndNotifyAvailableServiceFlats(newOrder.id);
+
   try {
     const todayStr = getTodayStr();
     notifyPmsMutation(db, {
@@ -12661,13 +12748,16 @@ app.get("/api/service-orders/:id", (req, res) => {
 
   const { id } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
   const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
   res.json({
     ...order,
     allowedRoomStatuses: getAllowedRoomStatuses(order),
     workerName: worker?.mainWorker?.name || null,
     workerCpf: worker?.mainWorker?.cpf || null,
-    workerPhone: worker?.mainWorker?.phone || order.workerPhone || null
+    workerPhone: worker?.mainWorker?.phone || order.workerPhone || null,
+    workerCollaborators: Array.isArray(worker?.collaborators) ? worker.collaborators : [],
+    workerVehicle: worker?.vehicle || null
   });
 });
 
@@ -12702,7 +12792,7 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (body.estimatedDurationHours !== undefined) order.estimatedDurationHours = body.estimatedDurationHours ? Number(body.estimatedDurationHours) : null;
   if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
   if (body.notificationRecipients !== undefined) order.notificationRecipients = Array.isArray(body.notificationRecipients) ? body.notificationRecipients : [];
-  if (body.workerPhone !== undefined) order.workerPhone = String(body.workerPhone || "").replace(/\D/g, "");
+  if (body.workerPhone !== undefined) order.workerPhone = String(body.workerPhone || "").replace(/\D/g, "") || null;
   if (body.blockFlats !== undefined || body.interdictFlats !== undefined) {
     const shouldBlock = Boolean(body.blockFlats ?? body.interdictFlats);
     order.blockFlats = shouldBlock;
@@ -12733,38 +12823,107 @@ app.patch("/api/service-orders/:id", (req, res) => {
           observations: null,
           photos: [],
           needsCleaning: null,
-          wasCleanWhenStarted: null
+          wasCleanWhenStarted: null,
+          workerNotifiedAvailable: false,
+          workerNotifiedAvailableAt: null
         });
       }
     }
   }
 
-  if (body.mainWorker || body.workerName || body.workerPhone) {
-    const wName = String(body.workerName || body.mainWorker?.name || "").trim();
-    const wCpf = String(body.workerCpf || body.mainWorker?.cpf || "").replace(/\D/g, "");
-    const wPhone = String(body.workerPhone || body.mainWorker?.phone || "").replace(/\D/g, "");
+  // Suporte para apagar ou atualizar o prestador / ajudantes / veículo pelo Admin
+  const wantsToClearWorker = body.clearWorker === true || (
+    body.workerName !== undefined &&
+    body.workerCpf !== undefined &&
+    !String(body.workerName || "").trim() &&
+    !String(body.workerCpf || "").replace(/\D/g, "")
+  );
+
+  if (wantsToClearWorker) {
+    if (Array.isArray(db.serviceWorkers)) {
+      db.serviceWorkers = db.serviceWorkers.filter(w => w.token !== order.token && w.serviceOrderId !== order.id);
+    }
+    order.workerPhone = null;
+    for (const f of (order.flats || [])) {
+      if (f.status === "pending") {
+        f.workerNotifiedAvailable = false;
+        f.workerNotifiedAvailableAt = null;
+        f.workerLastNotifiedPhone = null;
+      }
+    }
+  } else if (body.mainWorker !== undefined || body.workerName !== undefined || body.workerCpf !== undefined || body.workerPhone !== undefined || body.workerCollaborators !== undefined || body.collaborators !== undefined || body.workerVehicle !== undefined || body.vehicle !== undefined) {
+    if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+    let worker = db.serviceWorkers.find(w => w.token === order.token || w.serviceOrderId === order.id);
+
+    const wName = body.workerName !== undefined || body.mainWorker?.name !== undefined
+      ? String(body.workerName ?? body.mainWorker?.name ?? "").trim()
+      : (worker?.mainWorker?.name || "");
+    const wCpf = body.workerCpf !== undefined || body.mainWorker?.cpf !== undefined
+      ? String(body.workerCpf ?? body.mainWorker?.cpf ?? "").replace(/\D/g, "")
+      : (worker?.mainWorker?.cpf || "");
+    const rawWPhone = body.workerPhone !== undefined || body.mainWorker?.phone !== undefined
+      ? String(body.workerPhone ?? body.mainWorker?.phone ?? "").replace(/\D/g, "")
+      : (worker?.mainWorker?.phone || "");
+    const wPhone = rawWPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawWPhone) : rawWPhone) : "";
+
+    const rawCollabs = body.workerCollaborators !== undefined ? body.workerCollaborators : body.collaborators;
+    const formattedCollabs = Array.isArray(rawCollabs)
+      ? rawCollabs
+          .map(c => ({
+            name: String(c?.name || "").trim(),
+            cpf: String(c?.cpf || "").replace(/\D/g, "")
+          }))
+          .filter(c => c.name && c.cpf.length === 11)
+      : (worker?.collaborators || []);
+
+    const rawVeh = body.workerVehicle !== undefined ? body.workerVehicle : body.vehicle;
+    const formattedVeh = rawVeh && typeof rawVeh === "object"
+      ? {
+          needsGarage: Boolean(rawVeh.needsGarage),
+          plate: rawVeh.needsGarage ? String(rawVeh.plate || "").trim().toUpperCase() : "",
+          modelColor: rawVeh.needsGarage ? String(rawVeh.modelColor || "").trim() : ""
+        }
+      : (worker?.vehicle || { needsGarage: false, plate: "", modelColor: "" });
+
     if (wName && wCpf.length === 11) {
-      if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-      let worker = db.serviceWorkers.find(w => w.token === order.token || w.serviceOrderId === order.id);
+      const oldPhone = worker?.mainWorker?.phone || "";
       if (worker) {
-        worker.mainWorker = { name: wName, cpf: wCpf, phone: wPhone || worker.mainWorker?.phone || "" };
+        worker.mainWorker = { name: wName, cpf: wCpf, phone: wPhone };
+        worker.collaborators = formattedCollabs;
+        worker.vehicle = formattedVeh;
         worker.registeredAt = new Date().toISOString();
       } else {
-        db.serviceWorkers.push({
+        worker = {
           id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           serviceOrderId: order.id,
           token: order.token,
           mainWorker: { name: wName, cpf: wCpf, phone: wPhone },
-          collaborators: [],
+          collaborators: formattedCollabs,
+          vehicle: formattedVeh,
           registeredAt: new Date().toISOString()
-        });
+        };
+        db.serviceWorkers.push(worker);
       }
+      order.workerPhone = wPhone || null;
+      if (wPhone && wPhone !== oldPhone) {
+        for (const f of (order.flats || [])) {
+          if (f.status === "pending") {
+            f.workerNotifiedAvailable = false;
+          }
+        }
+      }
+    } else if (worker && (rawCollabs !== undefined || rawVeh !== undefined)) {
+      worker.collaborators = formattedCollabs;
+      worker.vehicle = formattedVeh;
     }
   }
 
   order.updatedAt = new Date().toISOString();
   syncServiceOrderRoomBlocks(order);
   saveDatabase("update_service_order");
+
+  checkAndNotifyAvailableServiceFlats(order.id);
+
   try {
     const todayStr = getTodayStr();
     notifyPmsMutation(db, {
@@ -12775,6 +12934,47 @@ app.patch("/api/service-orders/:id", (req, res) => {
   } catch (_) {}
 
   res.json(order);
+});
+
+// DELETE /api/service-orders/:id/worker — Remove prestador, ajudante específico ou veículo (Admin)
+app.delete("/api/service-orders/:id/worker", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id } = req.params;
+  const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+  const worker = db.serviceWorkers.find(w => w.token === order.token || w.serviceOrderId === order.id);
+
+  if (req.query.collaboratorIndex !== undefined && worker) {
+    const colIdx = Number(req.query.collaboratorIndex);
+    if (Array.isArray(worker.collaborators) && colIdx >= 0 && colIdx < worker.collaborators.length) {
+      worker.collaborators.splice(colIdx, 1);
+      saveDatabase("delete_service_worker_collaborator_admin");
+    }
+    return res.json({ success: true, worker });
+  }
+
+  if (req.query.clearVehicle === "true" && worker) {
+    worker.vehicle = { needsGarage: false, plate: "", modelColor: "" };
+    saveDatabase("clear_service_worker_vehicle_admin");
+    return res.json({ success: true, worker });
+  }
+
+  db.serviceWorkers = db.serviceWorkers.filter(w => w.token !== order.token && w.serviceOrderId !== order.id);
+  order.workerPhone = null;
+  for (const f of (order.flats || [])) {
+    if (f.status === "pending") {
+      f.workerNotifiedAvailable = false;
+      f.workerNotifiedAvailableAt = null;
+      f.workerLastNotifiedPhone = null;
+    }
+  }
+  saveDatabase("delete_service_worker_admin");
+  res.json({ success: true, worker: null, message: "Prestador e ajudantes removidos com sucesso." });
 });
 
 // DELETE /api/service-orders/:id — Remove ordem de serviço (Admin)
@@ -12902,8 +13102,13 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.entryRequested = false;
   flat.entryRequestedAt = null;
   flat.delayNotified = false;
+  flat.workerNotifiedAvailable = false;
+  flat.workerNotifiedAvailableAt = null;
+  flat.workerLastNotifiedPhone = null;
 
   saveDatabase("reset_service_flat");
+
+  checkAndNotifyAvailableServiceFlats(order.id);
 
   res.json({ success: true, flat });
 });
@@ -12993,7 +13198,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
     return res.status(400).json({ error: "CPF do prestador principal deve conter 11 dígitos." });
   }
 
-  const cleanPhone = mainWorker.phone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(mainWorker.phone) : String(mainWorker.phone).replace(/\D/g, "")) : "";
+  const rawPhoneInput = mainWorker.phone !== undefined ? String(mainWorker.phone || "").replace(/\D/g, "") : undefined;
+  const cleanPhone = rawPhoneInput ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawPhoneInput) : rawPhoneInput) : "";
 
   if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
   let worker = db.serviceWorkers.find(w => w.token === token || w.serviceOrderId === order.id);
@@ -13003,22 +13209,25 @@ app.post("/api/service/public/:token/register", (req, res) => {
     ? collaborators
         .map(c => ({
           name: String(c.name || "").trim(),
-          cpf: String(c.cpf || "").trim()
+          cpf: String(c.cpf || "").replace(/\D/g, "")
         }))
         .filter(c => c.name && c.cpf)
     : [];
 
   const formattedVehicle = vehicle && typeof vehicle === "object" ? {
     needsGarage: Boolean(vehicle.needsGarage),
-    plate: String(vehicle.plate || "").trim().toUpperCase(),
-    modelColor: String(vehicle.modelColor || "").trim()
+    plate: vehicle.needsGarage ? String(vehicle.plate || "").trim().toUpperCase() : "",
+    modelColor: vehicle.needsGarage ? String(vehicle.modelColor || "").trim() : ""
   } : { needsGarage: false, plate: "", modelColor: "" };
+
+  const previousPhone = worker?.mainWorker?.phone || "";
+  const finalPhone = rawPhoneInput !== undefined ? cleanPhone : previousPhone;
 
   if (worker) {
     worker.mainWorker = {
       name: String(mainWorker.name).trim(),
-      cpf: String(mainWorker.cpf).trim(),
-      phone: cleanPhone || worker.mainWorker?.phone || ""
+      cpf: cleanCpf,
+      phone: finalPhone
     };
     worker.collaborators = formattedCollaborators;
     worker.vehicle = formattedVehicle;
@@ -13030,8 +13239,8 @@ app.post("/api/service/public/:token/register", (req, res) => {
       token: order.token,
       mainWorker: {
         name: String(mainWorker.name).trim(),
-        cpf: String(mainWorker.cpf).trim(),
-        phone: cleanPhone
+        cpf: cleanCpf,
+        phone: finalPhone
       },
       collaborators: formattedCollaborators,
       vehicle: formattedVehicle,
@@ -13040,8 +13249,61 @@ app.post("/api/service/public/:token/register", (req, res) => {
     db.serviceWorkers.push(worker);
   }
 
+  order.workerPhone = finalPhone || null;
+
+  if (finalPhone && finalPhone !== previousPhone) {
+    for (const f of (order.flats || [])) {
+      if (f.status === "pending") {
+        f.workerNotifiedAvailable = false;
+      }
+    }
+  }
+
   saveDatabase("register_service_worker");
-  res.json({ success: true, worker });
+
+  // Dispara verificação imediata de apartamentos disponíveis para o WhatsApp do prestador
+  const availableNotifications = checkAndNotifyAvailableServiceFlats(order.id);
+
+  res.json({ success: true, worker, availableNotifiedCount: availableNotifications.length });
+});
+
+// DELETE /api/service/public/:token/worker — Apaga prestador, ajudante específico ou veículo pelo Portal
+app.delete("/api/service/public/:token/worker", (req, res) => {
+  const { token } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) {
+    return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+  }
+
+  if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+  const worker = db.serviceWorkers.find(w => w.token === token || w.serviceOrderId === order.id);
+
+  if (req.query.collaboratorIndex !== undefined && worker) {
+    const colIdx = Number(req.query.collaboratorIndex);
+    if (Array.isArray(worker.collaborators) && colIdx >= 0 && colIdx < worker.collaborators.length) {
+      worker.collaborators.splice(colIdx, 1);
+      saveDatabase("delete_service_worker_collaborator_public");
+    }
+    return res.json({ success: true, worker });
+  }
+
+  if (req.query.clearVehicle === "true" && worker) {
+    worker.vehicle = { needsGarage: false, plate: "", modelColor: "" };
+    saveDatabase("clear_service_worker_vehicle_public");
+    return res.json({ success: true, worker });
+  }
+
+  db.serviceWorkers = db.serviceWorkers.filter(w => w.token !== token && w.serviceOrderId !== order.id);
+  order.workerPhone = null;
+  for (const f of (order.flats || [])) {
+    if (f.status === "pending") {
+      f.workerNotifiedAvailable = false;
+      f.workerNotifiedAvailableAt = null;
+      f.workerLastNotifiedPhone = null;
+    }
+  }
+  saveDatabase("delete_service_worker_public");
+  res.json({ success: true, worker: null, message: "Identificação do prestador removida com sucesso." });
 });
 
 function getOrRegisterServiceWorker(token, orderId, body) {
@@ -13304,6 +13566,9 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
 
   // Multi-channel notifications
   dispatchServiceNotifications("finish", order, flat, worker);
+
+  // Verifica se algum outro flat da OS destravou (por vaga de simultâneos ou prioridade)
+  checkAndNotifyAvailableServiceFlats(order.id);
 
   res.json({
     success: true,
@@ -14788,12 +15053,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       }
     }
 
-    {
-      const bNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
-      const isSameDayBook = reservation.checkinDate === bNow.date;
-      const isAfter0701Book = isSameDayBook && (bNow.hour > 7 || (bNow.hour === 7 && bNow.minute >= 1));
-      triggerImmediateWhatsApp(db, saveDatabase, isAfter0701Book ? "sameday_reservation" : "reservation_created", reservation);
-    }
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
 
     // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in).
     // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
@@ -16803,8 +17063,8 @@ export function dispatchReservationReSignatureNotifications(reservation, changes
     try {
       const resvWithChanges = { ...reservation, _changesContext: changes };
 
-      // A. Disparo integrado via WhatsApp / Z-API (apenas se não tiver sido disparado pelo chamador)
-      if (!options.skipWhatsAppTrigger && typeof triggerImmediateWhatsApp === "function") {
+      // A. Disparo integrado via WhatsApp / Z-API
+      if (typeof triggerImmediateWhatsApp === "function") {
         try {
           await triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvWithChanges, appOrigin);
         } catch (waErr) {
@@ -17331,9 +17591,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (existingOnTarget) {
         // Já existe um card na nova data; descarta o card obsoleto da data antiga
         db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
-      } else if (r.checkoutDate > getTodayStr() && oldReq.status === "dirty" && !oldReq.cleaningStartedAt && !oldReq.completedAt && !oldReq.assignedUserId && !oldReq.isManualInstruction) {
-        // Se a nova data de check-out é futura, remove o card dirty automático (será gerado dinamicamente no dia do checkout)
-        db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
       } else {
         // Move a pendência para a nova data
         oldReq.requestDate = r.checkoutDate;
@@ -17342,8 +17599,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         oldReq.leavingGuest = r.guestName;
         oldReq.updatedAt = new Date().toISOString();
       }
-    } else if (r.checkoutDate <= getTodayStr()) {
-      // 3. Se não havia pendência na data antiga e não existe na nova data (até hoje), garante criação se não cancelada
+    } else {
+      // 3. Se não havia pendência na data antiga e não existe na nova data, garante criação se não cancelada
       const hasAnyReq = db.cleaningRequests.some(c =>
         (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) &&
         c.requestDate === r.checkoutDate &&
@@ -17714,7 +17971,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
             origin: originHeader,
             source: "pms_admin_edit",
-            skipWhatsAppTrigger: guestFacingDiffs.length > 0,
             actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
           });
         }
@@ -18014,70 +18270,49 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const bNow = getBrasiliaNow();
   const todayStr = bNow.date;
 
-  // 1. Status da governança para o flat:
-  // Regra Oficial:
-  // - Flat Limpo: camareira marcou limpeza como finalizada ('clean') e ainda não entrou outro hóspede sem limpar, ou flat já estava limpo antes de hoje sem checkout hoje.
-  // - Em Higienização: camareira marcou limpeza iniciada ('cleaning_now' / 'in_progress').
-  const nonInstRequestsForFlat = (db.cleaningRequests || []).filter(c => {
-    if (c.flatId !== r.flatId && String(c.flatNumber) !== String(r.flatNumber)) return false;
-    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
-    if (isInst || c.status === "no_show" || c.status === "extended") return false;
-    const reqDate = c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : null) || c.requestDate || "";
-    return reqDate <= todayStr;
-  });
+  // 1. Status da governança para o flat (Reconcilia solicitações e turnovers do dia)
+  let dailyRequests = [];
+  try {
+    dailyRequests = getRequestsForDate(todayStr);
+  } catch (errReq) {
+    dailyRequests = [];
+  }
 
-  // Solicitação de hoje no banco (priorizando limpeza iniciada ou já concluída hoje)
-  const todayReqs = nonInstRequestsForFlat.filter(c =>
-    c.requestDate === todayStr ||
-    c.effectiveDate === todayStr ||
-    (c.completedAt && c.completedAt.startsWith(todayStr)) ||
-    (c.cleaningStartedAt && c.cleaningStartedAt.startsWith(todayStr))
+  const cleanReq = (db.cleaningRequests || []).find(c =>
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+    c.requestDate === todayStr &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    c.type !== "instruction"
+  ) || dailyRequests.find(c =>
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+    !c.isInstructionOnly &&
+    !c.cleaningRequest?.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    c.type !== "instruction"
   );
-  const cleanReq =
-    todayReqs.find(c => c.status === "cleaning_now" || c.status === "in_progress") ||
-    todayReqs.find(c => c.status === "clean" || c.status === "completed") ||
-    todayReqs[0] ||
-    null;
 
-  // Verifica se há outra reserva ativa fazendo check-out HOJE neste mesmo flat
   const hasPendingCheckoutToday = (db.reservations || []).some(res =>
     (res.flatId === r.flatId || String(res.flatNumber) === String(r.flatNumber)) &&
-    res.checkoutDate === todayStr &&
-    res.id !== r.id &&
-    res.status !== "cancelada" &&
-    res.status !== "cancelled" &&
-    res.status !== "no_show"
+    res.checkoutDate === todayStr && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
   );
 
-  // Verifica se há qualquer card com limpeza iniciada ('cleaning_now') agora para o flat
-  const activeCleaningNowReq = nonInstRequestsForFlat.find(c => c.status === "cleaning_now" || c.status === "in_progress") || null;
-
   let isFlatClean = true;
-  let flatCleaningStatus = "clean";
-
-  if (activeCleaningNowReq) {
+  if (hasPendingCheckoutToday) {
     isFlatClean = false;
-    flatCleaningStatus = "cleaning_now";
   } else if (cleanReq) {
-    if (cleanReq.status === "clean" || cleanReq.status === "completed") {
-      // Camareira já finalizou a limpeza hoje -> flat está 100% limpo mesmo se havia reserva saindo hoje!
-      isFlatClean = true;
-      flatCleaningStatus = "clean";
-    } else if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
-      isFlatClean = false;
-      flatCleaningStatus = "cleaning_now";
-    } else {
-      isFlatClean = false;
-      flatCleaningStatus = "dirty";
-    }
-  } else if (hasPendingCheckoutToday) {
-    // Há um hóspede saindo hoje e ainda não há registro de limpeza concluída hoje
-    isFlatClean = false;
-    flatCleaningStatus = "dirty";
+    // O flat só é considerado limpo se o status for estritamente 'clean' ou 'completed'
+    isFlatClean = cleanReq.status === "clean" || cleanReq.status === "completed";
   } else {
-    // Não há checkout hoje nem limpeza iniciada hoje: flat já estava limpo antes da reserva!
-    isFlatClean = true;
-    flatCleaningStatus = "clean";
+    // Se não há solicitação hoje e não há checkout pendente, verifica histórico anterior
+    const lastCleaning = (db.cleaningRequests || [])
+      .filter(c => (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)))
+      .sort((a, b) => (b.requestDate || "").localeCompare(a.requestDate || ""))[0];
+    if (lastCleaning && lastCleaning.status !== "clean" && lastCleaning.status !== "completed") {
+      isFlatClean = false;
+    }
   }
 
   // 2. Verificação de Benefício de Early Check-in (mediante disponibilidade de flat limpo)
@@ -18227,15 +18462,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       hasEarlyCheckinBenefit,
       flatNumber: r.flatNumber,
       roomCategory: "Flat Studio Executivo Completo",
-      flatCleanStatus: isFlatClean ? "limpo" : (flatCleaningStatus === "cleaning_now" ? "em_higienizacao" : "em_preparacao"),
-      flatCleaningStatus,
+      flatCleanStatus: isFlatClean ? "limpo" : "em_preparacao",
       specialRequests: r.specialRequests || "",
       notes: r.notes || "",
       receptionNotes: r.receptionNotes || "",
       vehicle: r.vehicle || null,
       estimatedArrivalTime: r.estimatedArrivalTime || null,
       guestArrivalResponse: r.guestArrivalResponse || null,
-      isCleaningPriority: Boolean(cleanReq?.isPriority || activeCleaningNowReq?.isPriority),
+      isCleaningPriority: Boolean(cleanReq?.isPriority),
       fnhrCompleted: Boolean(r.fnhrCompleted),
       preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
       hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
@@ -18255,7 +18489,6 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     googleMapsUrl: db.settings.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2",
     isCheckinToday,
     isFlatClean,
-    flatCleaningStatus,
     hasEarlyCheckinBenefit,
     canDoEarlyCheckin,
     isPastOrExact14h,
@@ -35428,21 +35661,13 @@ async function checkInterBankingExtratoPixForPending(r, pending) {
 
 function isConfirmationAlreadyDispatched(r) {
   if (!r) return true;
-  if (typeof isInitialConfirmationInFlightOrSent === "function" && isInitialConfirmationInFlightOrSent(db, r)) {
-    return true;
-  }
   const history = db.whatsappHistory || [];
   const rCode = String(r.code || "").toUpperCase();
   const rId = String(r.id || "");
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
-    const hId = String(h.reservationId || "");
-    const isSameRes = (rCode && hCode === rCode) || (rId && (hCode === rId || hId === rId));
-    return isSameRes && (
-      h.triggerEvent === "payment_confirmed" ||
-      h.triggerEvent === "reservation_created" ||
-      h.triggerEvent === "sameday_reservation"
-    ) && (h.status === "sent" || h.status === "delivered");
+    const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created") && (h.status === "sent" || h.status === "delivered");
   });
 }
 
@@ -35477,29 +35702,54 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     saveDatabase();
   }
 
-  // Dispara EXATAMENTE UMA confirmação inicial (mutuamente exclusiva entre sameday_reservation, payment_confirmed e reservation_created)
+  // 1. Dispara o comprovante financeiro / confirmação se ainda não foi disparado
   if (!isConfirmationAlreadyDispatched(r)) {
-    const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
-    const todayStr = brNow.date;
-    const isSameDay = r.checkinDate === todayStr;
-    const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
-
     const chan = String(r.channel || "").toLowerCase();
     const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
-    let targetEvent = "reservation_created";
-    if (isAfter0701) {
-      targetEvent = "sameday_reservation";
-    } else if (isPreOrWasPre && isDirect) {
-      targetEvent = "payment_confirmed";
+    if (isPreOrWasPre && isDirect) {
+      console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
+      }
+    } else {
+      // Para OTAs (booking/airbnb) ou reservas diretas já criadas confirmadas sem passar por pré-reserva
+      console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
+      }
     }
+  }
 
-    console.log(`[WhatsApp Dispatch] Disparando confirmação única (${targetEvent}) para ${r.guestName} (${r.code})...`);
-    try {
-      await triggerImmediateWhatsApp(db, saveDatabase, targetEvent, r);
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
-    } catch (err) {
-      console.error(`[WhatsApp Dispatch] Erro ao disparar ${targetEvent}:`, err.message);
+  // 2. Para reservas confirmadas no dia do check-in após 07:01, garante envio das orientações de chegada imediatas
+  const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
+  const todayStr = brNow.date;
+  const isSameDay = r.checkinDate === todayStr;
+  const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
+
+  if (isAfter0701) {
+    const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
+      const hCode = String(h.reservationCode || "").toUpperCase();
+      const rCode = String(r.code || "").toUpperCase();
+      const rId = String(r.id || "");
+      const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+      return isSameRes && h.triggerEvent === "sameday_reservation" && (h.status === "sent" || h.status === "delivered");
+    });
+
+    if (!hasSameDayDispatched) {
+      console.log(`[WhatsApp Dispatch] Reserva no dia do check-in após as 07:01 confirmada: disparando sameday_reservation para ${r.guestName}...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
+      }
     }
   }
 }

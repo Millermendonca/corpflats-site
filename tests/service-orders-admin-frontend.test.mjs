@@ -94,4 +94,31 @@ describe('Frontend Admin Service Orders (M2 Verification)', () => {
     const jsContent = fs.readFileSync(distJsPath, 'utf8');
     assert.ok(jsContent.includes('/servicos'), 'Compiled JS bundle must contain /servicos route');
   });
+
+  it('9. Worker availability WhatsApp notification & worker/collaborator deletion are implemented in backend and frontend', () => {
+    const backendPath = path.resolve('artifacts/api-server/demo-server.mjs');
+    const scriptBackendPath = path.resolve('scripts/demo-server.mjs');
+    const portalPagePath = path.resolve('artifacts/limpeza/src/pages/service-worker-portal.tsx');
+
+    const backendContent = fs.readFileSync(backendPath, 'utf8');
+    const scriptBackendContent = fs.readFileSync(scriptBackendPath, 'utf8');
+    const adminContent = fs.readFileSync(serviceOrdersPagePath, 'utf8');
+    const portalContent = fs.readFileSync(portalPagePath, 'utf8');
+
+    // Parity between demo-server.mjs and scripts/demo-server.mjs
+    assert.equal(backendContent, scriptBackendContent, 'demo-server.mjs and scripts/demo-server.mjs must be 100% identical');
+
+    // Backend availability notification engine + anti-loop
+    assert.ok(backendContent.includes('function checkAndNotifyAvailableServiceFlats('), 'Backend must define checkAndNotifyAvailableServiceFlats');
+    assert.ok(backendContent.includes('workerNotifiedAvailable'), 'Backend must track workerNotifiedAvailable anti-loop flag');
+    assert.ok(backendContent.includes('app.delete("/api/service-orders/:id/worker"'), 'Backend must support admin DELETE worker route');
+    assert.ok(backendContent.includes('app.delete("/api/service/public/:token/worker"'), 'Backend must support public portal DELETE worker route');
+
+    // Frontend Admin & Portal deletion + WhatsApp requirement
+    assert.ok(adminContent.includes('deleteAdminWorkerMutation'), 'Admin page must have deleteAdminWorkerMutation');
+    assert.ok(adminContent.includes('formWorkerCollaborators'), 'Admin page must manage worker collaborators');
+    assert.ok(portalContent.includes('deleteWorkerMutation'), 'Portal page must have deleteWorkerMutation');
+    assert.ok(portalContent.includes('Você receberá avisos no WhatsApp assim que houver apartamento liberado para o serviço'), 'Portal page must confirm WhatsApp availability alerts');
+  });
 });
+

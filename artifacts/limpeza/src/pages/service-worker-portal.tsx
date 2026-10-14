@@ -248,9 +248,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     if (serverWorker?.mainWorker?.name && !isEditingWorker) {
       setMainWorkerName(serverWorker.mainWorker.name);
       setMainWorkerCpf(formatCpf(serverWorker.mainWorker.cpf || ""));
-      if (serverWorker.mainWorker.phone) {
-        setMainWorkerPhone(serverWorker.mainWorker.phone);
-      }
+      setMainWorkerPhone(serverWorker.mainWorker.phone || "");
       if (Array.isArray(serverWorker.collaborators)) {
         setCollaborators(
           serverWorker.collaborators.map((c) => ({
@@ -258,11 +256,17 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             cpf: formatCpf(c.cpf || ""),
           }))
         );
+      } else {
+        setCollaborators([]);
       }
       if (serverWorker.vehicle) {
         setNeedsGarage(Boolean(serverWorker.vehicle.needsGarage));
         setVehiclePlate(serverWorker.vehicle.plate || "");
         setVehicleModelColor(serverWorker.vehicle.modelColor || "");
+      } else {
+        setNeedsGarage(false);
+        setVehiclePlate("");
+        setVehicleModelColor("");
       }
     }
   }, [serverWorker, isEditingWorker]);
@@ -289,6 +293,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         throw new Error("O CPF informado deve conter 11 dígitos numéricos.");
       }
 
+      const cleanPhone = mainWorkerPhone.replace(/\D/g, "");
+      if (cleanPhone.length < 10) {
+        throw new Error("Por favor, informe seu número de WhatsApp com DDD (mínimo 10 dígitos) para receber os avisos de quartos liberados.");
+      }
+
       const validCollaborators = collaborators
         .map((c) => ({
           name: c.name.trim(),
@@ -309,8 +318,6 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         throw new Error("Por favor, informe a placa do veículo para liberação do acesso à garagem.");
       }
 
-      const cleanPhone = mainWorkerPhone.replace(/\D/g, "");
-
       const res = await fetch(`/api/service/public/${token}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -323,8 +330,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
           collaborators: validCollaborators,
           vehicle: {
             needsGarage,
-            plate: cleanPlate,
-            modelColor: cleanModelColor,
+            plate: needsGarage ? cleanPlate : "",
+            modelColor: needsGarage ? cleanModelColor : "",
           },
         }),
       });
@@ -338,7 +345,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     onSuccess: (data: any) => {
       toast({
         title: "Identificação salva com sucesso!",
-        description: "Agora você pode solicitar entrada e iniciar os atendimentos nos apartamentos.",
+        description: "Você receberá avisos no WhatsApp assim que houver apartamento liberado para o serviço.",
       });
       setIsEditingWorker(false);
       queryClient.setQueryData(["public-service-order", token], (old: any) => {
@@ -354,8 +361,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             collaborators,
             vehicle: {
               needsGarage,
-              plate: vehiclePlate.trim().toUpperCase(),
-              modelColor: vehicleModelColor.trim(),
+              plate: needsGarage ? vehiclePlate.trim().toUpperCase() : "",
+              modelColor: needsGarage ? vehicleModelColor.trim() : "",
             },
           },
         };
@@ -365,6 +372,65 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     onError: (err: any) => {
       toast({
         title: "Erro ao salvar identificação",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation: Delete Worker, Collaborator, or Vehicle
+  const deleteWorkerMutation = useMutation({
+    mutationFn: async (opts?: { collaboratorIndex?: number; clearVehicle?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts?.collaboratorIndex !== undefined) {
+        params.set("collaboratorIndex", String(opts.collaboratorIndex));
+      }
+      if (opts?.clearVehicle) {
+        params.set("clearVehicle", "true");
+      }
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      const res = await fetch(`/api/service/public/${token}/worker${qs}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao remover dados do prestador");
+      }
+      return { ...(await res.json()), opts };
+    },
+    onSuccess: (resData: any) => {
+      if (resData.opts?.collaboratorIndex !== undefined) {
+        toast({
+          title: "Ajudante removido!",
+          description: "O ajudante foi excluído da equipe com sucesso.",
+        });
+      } else if (resData.opts?.clearVehicle) {
+        setNeedsGarage(false);
+        setVehiclePlate("");
+        setVehicleModelColor("");
+        toast({
+          title: "Veículo removido!",
+          description: "A solicitação de garagem foi removida.",
+        });
+      } else {
+        setMainWorkerName("");
+        setMainWorkerCpf("");
+        setMainWorkerPhone("");
+        setCollaborators([]);
+        setNeedsGarage(false);
+        setVehiclePlate("");
+        setVehicleModelColor("");
+        setIsEditingWorker(false);
+        toast({
+          title: "Cadastro removido!",
+          description: "Os dados do prestador, ajudantes e veículo foram apagados.",
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["public-service-order", token] });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao remover",
         description: err.message,
         variant: "destructive",
       });
@@ -966,29 +1032,43 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     </div>
                   </div>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setMainWorkerName(serverWorker?.mainWorker?.name || "");
-                      setMainWorkerCpf(formatCpf(serverWorker?.mainWorker?.cpf || ""));
-                      setMainWorkerPhone(serverWorker?.mainWorker?.phone || "");
-                      setCollaborators(
-                        serverWorker?.collaborators?.map((c) => ({
-                          name: c.name,
-                          cpf: formatCpf(c.cpf),
-                        })) || []
-                      );
-                      setNeedsGarage(Boolean(serverWorker?.vehicle?.needsGarage));
-                      setVehiclePlate(serverWorker?.vehicle?.plate || "");
-                      setVehicleModelColor(serverWorker?.vehicle?.modelColor || "");
-                      setIsEditingWorker(true);
-                    }}
-                    className="text-emerald-800 hover:text-emerald-900 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900/50 text-xs gap-1.5"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    Editar
-                  </Button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setMainWorkerName(serverWorker?.mainWorker?.name || "");
+                        setMainWorkerCpf(formatCpf(serverWorker?.mainWorker?.cpf || ""));
+                        setMainWorkerPhone(serverWorker?.mainWorker?.phone || "");
+                        setCollaborators(
+                          serverWorker?.collaborators?.map((c) => ({
+                            name: c.name,
+                            cpf: formatCpf(c.cpf),
+                          })) || []
+                        );
+                        setNeedsGarage(Boolean(serverWorker?.vehicle?.needsGarage));
+                        setVehiclePlate(serverWorker?.vehicle?.plate || "");
+                        setVehicleModelColor(serverWorker?.vehicle?.modelColor || "");
+                        setIsEditingWorker(true);
+                      }}
+                      className="text-emerald-800 hover:text-emerald-900 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900/50 text-xs gap-1 px-2.5 h-8"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      Editar
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={deleteWorkerMutation.isPending}
+                      onClick={() => deleteWorkerMutation.mutate({})}
+                      title="Apagar cadastro do prestador e ajudantes"
+                      className="text-rose-600 hover:text-rose-700 hover:bg-rose-100 dark:text-rose-400 dark:hover:bg-rose-950/50 text-xs gap-1 px-2.5 h-8"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Apagar
+                    </Button>
+                  </div>
                 </div>
 
                 {serverWorker?.collaborators && serverWorker.collaborators.length > 0 && (
@@ -1001,9 +1081,20 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         <Badge
                           key={i}
                           variant="secondary"
-                          className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5"
+                          className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 pr-1 flex items-center gap-1"
                         >
-                          {c.name} ({formatCpf(c.cpf)})
+                          <span>
+                            {c.name} ({formatCpf(c.cpf)})
+                          </span>
+                          <button
+                            type="button"
+                            disabled={deleteWorkerMutation.isPending}
+                            onClick={() => deleteWorkerMutation.mutate({ collaboratorIndex: i })}
+                            title="Remover ajudante"
+                            className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-rose-600 dark:hover:bg-rose-950/60 transition-colors"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
                         </Badge>
                       ))}
                     </div>
@@ -1018,10 +1109,21 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     {serverWorker.vehicle.needsGarage ? (
                       <Badge
                         variant="secondary"
-                        className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 flex items-center gap-1"
+                        className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 pr-1 flex items-center gap-1"
                       >
                         <Car className="w-3 h-3 text-emerald-700" />
-                        Garagem Solicitada: {serverWorker.vehicle.plate || "Sem placa"} {serverWorker.vehicle.modelColor ? `(${serverWorker.vehicle.modelColor})` : ""}
+                        <span>
+                          Garagem Solicitada: {serverWorker.vehicle.plate || "Sem placa"} {serverWorker.vehicle.modelColor ? `(${serverWorker.vehicle.modelColor})` : ""}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={deleteWorkerMutation.isPending}
+                          onClick={() => deleteWorkerMutation.mutate({ clearVehicle: true })}
+                          title="Remover solicitação de garagem"
+                          className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-rose-600 dark:hover:bg-rose-950/60 transition-colors"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </Badge>
                     ) : (
                       <Badge
@@ -1044,7 +1146,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   <CardTitle className="text-base font-bold">Identificação do Prestador</CardTitle>
                 </div>
                 <CardDescription className="text-xs text-amber-900/80 dark:text-amber-300/80 mt-1">
-                  Preencha seu nome e CPF antes de iniciar qualquer serviço. Você também pode cadastrar ajudantes.
+                  Preencha seu nome, CPF e WhatsApp antes de iniciar qualquer serviço. Você receberá aviso automático no WhatsApp quando houver quarto disponível para o serviço.
                 </CardDescription>
               </CardHeader>
 
@@ -1071,13 +1173,16 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     />
                   </div>
                   <div>
-                    <Label className="text-xs font-semibold">WhatsApp / Celular (para avisos do serviço)</Label>
+                    <Label className="text-xs font-semibold">WhatsApp / Celular (para avisos de quartos liberados) *</Label>
                     <Input
                       placeholder="Ex: 22999999999"
                       value={mainWorkerPhone}
                       onChange={(e) => setMainWorkerPhone(e.target.value)}
                       className="mt-1 text-sm bg-transparent"
                     />
+                    <span className="text-[11px] text-muted-foreground block mt-1">
+                      Você receberá mensagem automática via WhatsApp assim que um apartamento ficar disponível.
+                    </span>
                   </div>
                 </div>
 
@@ -1182,10 +1287,10 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 </div>
               </CardContent>
 
-              <CardFooter className="p-4 sm:p-5 pt-0 flex gap-2">
+              <CardFooter className="p-4 sm:p-5 pt-0 flex flex-wrap gap-2">
                 <Button
                   onClick={() => registerMutation.mutate()}
-                  disabled={registerMutation.isPending || !mainWorkerName.trim() || cleanCpfDigits(mainWorkerCpf).length !== 11}
+                  disabled={registerMutation.isPending || !mainWorkerName.trim() || cleanCpfDigits(mainWorkerCpf).length !== 11 || mainWorkerPhone.replace(/\D/g, "").length < 10}
                   className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs h-9 shadow-xs"
                 >
                   {registerMutation.isPending ? (
@@ -1197,14 +1302,26 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 </Button>
 
                 {hasSavedWorker && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsEditingWorker(false)}
-                    className="text-xs h-9"
-                  >
-                    Cancelar
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={deleteWorkerMutation.isPending}
+                      onClick={() => deleteWorkerMutation.mutate({})}
+                      className="text-xs h-9 text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Apagar Cadastro
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingWorker(false)}
+                      className="text-xs h-9"
+                    >
+                      Cancelar
+                    </Button>
+                  </>
                 )}
               </CardFooter>
             </Card>
