@@ -155,6 +155,12 @@ import {
   WbpPricingManager,
   DEFAULT_SEBRAE_CONFIG
 } from "./wbp/pricing.mjs";
+import {
+  getAriSynchronizer,
+  notifyPmsMutation,
+  getWbpRestrictionsState,
+  resolveRestrictions
+} from "./wbp/ari-sync.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -922,10 +928,67 @@ app.post("/api/wbp/pricing/publish", (req, res) => {
     const { startDate, endDate, user = "admin" } = req.body || {};
     const result = WbpPricingManager.publish(db, startDate, endDate, user);
     saveDatabase("wbp_pricing_published");
+    try {
+      notifyPmsMutation(db, {
+        type: "pricing_published",
+        minDate: startDate,
+        maxDate: endDate
+      });
+    } catch (_) {}
     res.json({
       success: true,
       ...result
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/ari/full-sync", async (req, res) => {
+  try {
+    const { startDate, endDate, bypassSwitch } = req.body || {};
+    const sync = getAriSynchronizer(db);
+    const result = await sync.performFullPush({ startDate, endDate, bypassSwitch });
+    saveDatabase("wbp_ari_full_sync");
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/wbp/ari/status", (req, res) => {
+  try {
+    const sync = getAriSynchronizer(db);
+    res.json({ success: true, ...sync.getStatus() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/wbp/restrictions", (req, res) => {
+  try {
+    const state = getWbpRestrictionsState(db);
+    res.json({ success: true, restrictions: state });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/wbp/restrictions", (req, res) => {
+  try {
+    const { defaults, planDefaults, overrides } = req.body || {};
+    const state = getWbpRestrictionsState(db);
+    if (defaults && typeof defaults === "object") {
+      state.defaults = { ...state.defaults, ...defaults };
+    }
+    if (planDefaults && typeof planDefaults === "object") {
+      state.planDefaults = { ...state.planDefaults, ...planDefaults };
+    }
+    if (overrides && typeof overrides === "object") {
+      state.overrides = { ...state.overrides, ...overrides };
+    }
+    saveDatabase("wbp_restrictions_update");
+    res.json({ success: true, restrictions: state });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -8229,6 +8292,108 @@ function isFlatDirty(flatId, flatNumber, dateStr = getTodayStr()) {
   return Boolean(realtime.isDirty);
 }
 
+const OPERATIONAL_SCENARIOS = {
+  vago_limpo: {
+    id: "vago_limpo",
+    label: "Vago & Limpo",
+    icon: "🟢",
+    description: "Apartamento vago, limpo e sem previsão de check-in para hoje.",
+    defaultAllowed: true,
+    warning: null,
+    blockReason: "serviço não permite apartamentos limpos e vagos."
+  },
+  vago_sujo: {
+    id: "vago_sujo",
+    label: "Vago & Sujo",
+    icon: "🧹",
+    description: "Pós-checkout já concluído ou vago sujo, sem check-in hoje.",
+    defaultAllowed: true,
+    warning: null,
+    blockReason: "serviço não permite apartamentos sujos."
+  },
+  checkin_hoje_limpo: {
+    id: "checkin_hoje_limpo",
+    label: "Check-in Hoje (Limpo)",
+    icon: "🔵",
+    description: "Quarto limpo e preparado aguardando a chegada do hóspede hoje.",
+    defaultAllowed: false,
+    warning: "Hóspede previsto para chegar hoje. Verifique se o serviço não atrasará a entrada.",
+    blockReason: "quarto limpo aguardando check-in hoje não autorizado para este serviço."
+  },
+  checkin_hoje_sujo: {
+    id: "checkin_hoje_sujo",
+    label: "Check-in Hoje (Sujo)",
+    icon: "🟡",
+    description: "Hóspede chega hoje, mas quarto ainda está sujo aguardando faxina.",
+    defaultAllowed: false,
+    warning: "Hóspede chega hoje e o quarto ainda aguarda limpeza de camareira.",
+    blockReason: "quarto com check-in hoje não autorizado para este serviço."
+  },
+  em_limpeza: {
+    id: "em_limpeza",
+    label: "Em Limpeza no Momento",
+    icon: "🧽",
+    description: "Camareira executando a faxina no apartamento agora.",
+    defaultAllowed: false,
+    warning: "Camareira em atendimento no apartamento no momento.",
+    blockReason: "aguardando camareira finalizar a faxina."
+  },
+  stayover: {
+    id: "stayover",
+    label: "Hóspede em Estadia",
+    icon: "🔴",
+    description: "Hóspede ativo que dormiu ontem e continua hospedado.",
+    defaultAllowed: false,
+    warning: "⚠️ Hóspede no quarto. Bater na porta antes de entrar e verificar se foi comunicado.",
+    hasGuestInside: true,
+    blockReason: "hóspede no quarto não autorizado para este serviço."
+  },
+  checkout_pendente: {
+    id: "checkout_pendente",
+    label: "Check-out Hoje Pendente",
+    icon: "🟠",
+    description: "Hóspede com saída prevista para hoje que ainda não desocupou.",
+    defaultAllowed: false,
+    warning: "⚠️ Hóspede no quarto aguardando check-out. Bater na porta antes de entrar.",
+    hasGuestInside: true,
+    blockReason: "aguardando saída do hóspede (check-out hoje pendente)."
+  }
+};
+
+const DEFAULT_ALLOWED_ROOM_STATUSES = ["vago_limpo", "vago_sujo"];
+const VALID_ROOM_STATUSES = Object.keys(OPERATIONAL_SCENARIOS);
+
+function getFlatOperationalScenario(flatId, flatNumber, dateStr = getTodayStr()) {
+  const realtime = getFlatRealtimeStatus(flatId, flatNumber, dateStr);
+
+  if (realtime.cleaningStatus === "in_progress") {
+    return "em_limpeza";
+  }
+  if (realtime.hasCheckoutToday && !realtime.isCheckedOut) {
+    return "checkout_pendente";
+  }
+  if (realtime.isOccupied || realtime.isCheckedIn) {
+    return "stayover";
+  }
+  if (realtime.hasCheckinToday) {
+    return realtime.isDirty ? "checkin_hoje_sujo" : "checkin_hoje_limpo";
+  }
+  return realtime.isDirty ? "vago_sujo" : "vago_limpo";
+}
+
+function getAllowedRoomStatuses(order) {
+  if (Array.isArray(order?.allowedRoomStatuses) && order.allowedRoomStatuses.length > 0) {
+    return order.allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s));
+  }
+  if (order?.cleanFlatMode === "always") {
+    return ["vago_limpo", "vago_sujo", "checkin_hoje_limpo", "checkin_hoje_sujo"];
+  }
+  if (order?.cleanFlatMode === "never") {
+    return ["vago_sujo"];
+  }
+  return [...DEFAULT_ALLOWED_ROOM_STATUSES];
+}
+
 function formatServiceDuration(startIso, endIso) {
   if (!startIso || !endIso) return "0 min";
   const start = new Date(startIso).getTime();
@@ -8281,27 +8446,41 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       ? `SIM 🚗 — Placa: ${vehicle.plate || "Não informada"} | Modelo/Cor: ${vehicle.modelColor || "Não informado"}`
       : "Não necessita de garagem";
 
+    const todayStr = getTodayStr();
+    const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
+    const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente" || Boolean(extraData?.hasGuestInside);
+
     let message = "";
     if (action === "entry_request") {
+      const guestWarningLine = isGuestInside
+        ? "⚠️ *ATENÇÃO: Quarto ocupado por hóspede. Verificar comunicação prévia antes de liberar o acesso.*"
+        : null;
+
       message = [
         `🔑 *Solicitação de Liberação de Entrada* — ${order.title}`,
         `🏠 Flat *${flat.flatNumber}*`,
+        guestWarningLine,
         `👤 Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
         `👥 Ajudante(s): ${collabsStr}`,
         `🚗 Garagem/Veículo: ${vehicleStr}`,
         `⏰ Horário: ${nowTimeStr}`,
         `➡️ *Ação para Recepção:* Favor liberar o acesso / cartão ao flat ${flat.flatNumber} para o profissional.`
-      ].join("\n");
+      ].filter(Boolean).join("\n");
     } else if (action === "start") {
       const estFinishStr = flat.estimatedFinishAt
         ? formatDateTimeShort(flat.estimatedFinishAt)
         : (order.estimatedDurationHours ? `${order.estimatedDurationHours}h` : "2h");
+      const guestWarningLine = isGuestInside
+        ? "⚠️ *ATENÇÃO: Quarto ocupado por hóspede. Bater na porta antes de entrar.*"
+        : null;
+
       message = [
         `🔧 *Serviço iniciado* — ${order.title}`,
         `🏠 Flat *${flat.flatNumber}* | Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
+        guestWarningLine,
         `⏰ Início: ${nowTimeStr} · Previsão de término: ${estFinishStr}`,
         `➡️ Cartão de acesso liberado ao flat ${flat.flatNumber}`
-      ].join("\n");
+      ].filter(Boolean).join("\n");
     } else if (action === "delay" || action === "overdue_alert") {
       const estFinishStr = flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--";
       const isOverdue = action === "overdue_alert";
@@ -11093,6 +11272,7 @@ app.post("/api/service-orders", (req, res) => {
   const {
     title,
     cleanFlatMode = "priority",
+    allowedRoomStatuses: rawAllowedStatuses,
     maxSimultaneousFlats = 2,
     maxFlatsPerDay = 4,
     requirePhotos = true,
@@ -11138,6 +11318,10 @@ app.post("/api/service-orders", (req, res) => {
     };
   });
 
+  const allowedRoomStatuses = Array.isArray(rawAllowedStatuses) && rawAllowedStatuses.length > 0
+    ? rawAllowedStatuses.filter(s => VALID_ROOM_STATUSES.includes(s))
+    : [...DEFAULT_ALLOWED_ROOM_STATUSES];
+
   const newOrder = {
     id: `so_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     title: String(title).trim(),
@@ -11146,6 +11330,7 @@ app.post("/api/service-orders", (req, res) => {
     createdAt: new Date().toISOString(),
     createdBy: userAuth.name || userAuth.username || "admin",
     cleanFlatMode: ["never", "priority", "always"].includes(cleanFlatMode) ? cleanFlatMode : "priority",
+    allowedRoomStatuses,
     maxSimultaneousFlats: Math.max(1, parseInt(maxSimultaneousFlats, 10) || 2),
     maxFlatsPerDay: Math.max(1, parseInt(maxFlatsPerDay, 10) || 4),
     requirePhotos: typeof requirePhotos === "boolean" ? requirePhotos : true,
@@ -11178,6 +11363,14 @@ app.post("/api/service-orders", (req, res) => {
   if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
   db.serviceOrders.unshift(newOrder);
   saveDatabase("create_service_order");
+  try {
+    const todayStr = getTodayStr();
+    notifyPmsMutation(db, {
+      type: "service_order_created",
+      minDate: todayStr,
+      maxDate: todayStr
+    });
+  } catch (_) {}
 
   logAuditEvent({
     level: "info",
@@ -11201,6 +11394,7 @@ app.get("/api/service-orders/:id", (req, res) => {
   const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
   res.json({
     ...order,
+    allowedRoomStatuses: getAllowedRoomStatuses(order),
     workerName: worker?.mainWorker?.name || null,
     workerCpf: worker?.mainWorker?.cpf || null,
     workerPhone: worker?.mainWorker?.phone || order.workerPhone || null
@@ -11227,6 +11421,11 @@ app.patch("/api/service-orders/:id", (req, res) => {
   }
   if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
   if (body.cleanFlatMode !== undefined && ["never", "priority", "always"].includes(body.cleanFlatMode)) order.cleanFlatMode = body.cleanFlatMode;
+  if (body.allowedRoomStatuses !== undefined) {
+    order.allowedRoomStatuses = Array.isArray(body.allowedRoomStatuses)
+      ? body.allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s))
+      : [...DEFAULT_ALLOWED_ROOM_STATUSES];
+  }
   if (body.maxSimultaneousFlats !== undefined) order.maxSimultaneousFlats = Math.max(1, parseInt(body.maxSimultaneousFlats, 10) || 2);
   if (body.maxFlatsPerDay !== undefined) order.maxFlatsPerDay = Math.max(1, parseInt(body.maxFlatsPerDay, 10) || 4);
   if (body.requirePhotos !== undefined) order.requirePhotos = Boolean(body.requirePhotos);
@@ -11288,6 +11487,14 @@ app.patch("/api/service-orders/:id", (req, res) => {
 
   order.updatedAt = new Date().toISOString();
   saveDatabase("update_service_order");
+  try {
+    const todayStr = getTodayStr();
+    notifyPmsMutation(db, {
+      type: "service_order_updated",
+      minDate: todayStr,
+      maxDate: todayStr
+    });
+  } catch (_) {}
 
   res.json(order);
 });
@@ -11308,6 +11515,14 @@ app.delete("/api/service-orders/:id", (req, res) => {
   }
 
   saveDatabase("delete_service_order");
+  try {
+    const todayStr = getTodayStr();
+    notifyPmsMutation(db, {
+      type: "service_order_deleted",
+      minDate: todayStr,
+      maxDate: todayStr
+    });
+  } catch (_) {}
   res.json({ success: true, message: "Ordem de serviço removida com sucesso." });
 });
 
@@ -11333,8 +11548,12 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
 
   const worker = (db.serviceWorkers || []).find(w => w.serviceOrderId === order.id || w.token === order.token) || null;
   const todayStr = getTodayStr();
+  const allowedStatuses = getAllowedRoomStatuses(order);
   const enrichedFlats = flats.map(f => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
+    const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
+    const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+    const isAllowed = allowedStatuses.includes(scenario);
     return {
       ...f,
       isDirty: realtime.isDirty,
@@ -11346,7 +11565,14 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
       expectedArrival: realtime.expectedArrival || (realtime.hasCheckinToday ? "14:00" : null),
       hasCheckoutToday: realtime.hasCheckoutToday,
       entryRequested: Boolean(f.entryRequested),
-      entryRequestedAt: f.entryRequestedAt || null
+      entryRequestedAt: f.entryRequestedAt || null,
+      operationalScenario: scenario,
+      operationalScenarioLabel: scenarioInfo.label || scenario,
+      operationalScenarioIcon: scenarioInfo.icon || "🏠",
+      isStatusAllowed: isAllowed,
+      statusBlockReason: isAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`,
+      hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente",
+      scenarioWarning: scenarioInfo.warning || null
     };
   });
 
@@ -11355,6 +11581,8 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     title: order.title,
     token: order.token,
     status: order.status,
+    cleanFlatMode: order.cleanFlatMode,
+    allowedRoomStatuses: allowedStatuses,
     notificationRecipients: order.notificationRecipients || [],
     stats: {
       total,
@@ -11416,9 +11644,13 @@ app.get("/api/service/public/:token", (req, res) => {
 
   const worker = (db.serviceWorkers || []).find(w => w.token === token || w.serviceOrderId === order.id) || null;
   const todayStr = getTodayStr();
+  const allowedStatuses = getAllowedRoomStatuses(order);
 
   const enrichedFlats = (order.flats || []).map(f => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
+    const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
+    const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+    const isAllowed = allowedStatuses.includes(scenario);
     return {
       ...f,
       isDirty: realtime.isDirty,
@@ -11431,7 +11663,14 @@ app.get("/api/service/public/:token", (req, res) => {
       expectedArrival: realtime.expectedArrival || (realtime.hasCheckinToday ? "14:00" : null),
       hasCheckoutToday: realtime.hasCheckoutToday,
       entryRequested: Boolean(f.entryRequested),
-      entryRequestedAt: f.entryRequestedAt || null
+      entryRequestedAt: f.entryRequestedAt || null,
+      operationalScenario: scenario,
+      operationalScenarioLabel: scenarioInfo.label || scenario,
+      operationalScenarioIcon: scenarioInfo.icon || "🏠",
+      isStatusAllowed: isAllowed,
+      statusBlockReason: isAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`,
+      hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente",
+      scenarioWarning: scenarioInfo.warning || null
     };
   });
 
@@ -11445,6 +11684,7 @@ app.get("/api/service/public/:token", (req, res) => {
       createdAt: order.createdAt,
       createdBy: order.createdBy,
       cleanFlatMode: order.cleanFlatMode,
+      allowedRoomStatuses: allowedStatuses,
       maxSimultaneousFlats: order.maxSimultaneousFlats,
       maxFlatsPerDay: order.maxFlatsPerDay,
       requirePhotos: order.requirePhotos,
@@ -11583,6 +11823,17 @@ app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, r
     return res.status(400).json({ error: "Serviço já foi finalizado neste apartamento." });
   }
 
+  // Validação da Matriz de Status Permitidos
+  const todayStr = getTodayStr();
+  const allowedStatuses = getAllowedRoomStatuses(order);
+  const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
+  if (!allowedStatuses.includes(scenario)) {
+    const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+    return res.status(400).json({
+      error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
+    });
+  }
+
   flat.entryRequested = true;
   flat.entryRequestedAt = new Date().toISOString();
   flat.workerName = worker.mainWorker.name;
@@ -11591,7 +11842,8 @@ app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, r
   saveDatabase("service_flat_request_entry");
 
   // Dispara notificação da solicitação de entrada (evento entry_request)
-  dispatchServiceNotifications("entry_request", order, flat, worker, { vehicle: worker.vehicle });
+  const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente";
+  dispatchServiceNotifications("entry_request", order, flat, worker, { vehicle: worker.vehicle, hasGuestInside: isGuestInside });
 
   res.json({
     success: true,
@@ -11606,36 +11858,26 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   const { token, flatId } = req.params;
   const order = (db.serviceOrders || []).find(o => o.token === token);
   if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+  if (order.status === "closed") return res.status(400).json({ success: false, error: "Esta ordem de serviço está encerrada." });
 
-  if (order.status === "closed") {
-    return res.status(400).json({ success: false, error: "Esta ordem de serviço está encerrada." });
-  }
-
-  // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
+  // 1. Prestador deve ter registro em serviceWorkers (403 se não tiver)
   const worker = getOrRegisterServiceWorker(token, order.id, req.body);
-  if (!worker) {
-    return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
-  }
+  if (!worker) return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
 
   const fId = Number(flatId);
   const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+  if (flat.status === "in_progress") return res.status(400).json({ error: "Serviço já está em andamento neste apartamento." });
+  if (flat.status === "done") return res.status(400).json({ error: "Serviço já foi finalizado neste apartamento." });
 
-  if (flat.status === "in_progress") {
-    return res.status(400).json({ error: "Serviço já está em andamento neste apartamento." });
-  }
-  if (flat.status === "done") {
-    return res.status(400).json({ error: "Serviço já foi finalizado neste apartamento." });
-  }
-
-  // 2. Contar flats com status: "in_progress" do prestador na ordem → deve ser < maxSimultaneousFlats (400 if reached)
+  // 2. Contar flats in_progress (< maxSimultaneousFlats)
   const maxSimul = Number(order.maxSimultaneousFlats) || 2;
   const inProgressCount = (order.flats || []).filter(f => f.status === "in_progress").length;
   if (inProgressCount >= maxSimul) {
     return res.status(400).json({ error: `Limite de apartamentos simultâneos atingido (máximo: ${maxSimul}). Finalize um apartamento antes de iniciar outro.` });
   }
 
-  // 3. Contar flats com status: "done" finalizados hoje pelo prestador → deve ser < maxFlatsPerDay (400 if reached)
+  // 3. Contar flats done hoje (< maxFlatsPerDay)
   const maxPerDay = Number(order.maxFlatsPerDay) || 4;
   const todayStr = getTodayStr();
   const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && getExecutionDateStr(f.finishedAt) === todayStr).length;
@@ -11643,19 +11885,23 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
     return res.status(400).json({ error: `Limite diário de apartamentos atingido para hoje (máximo: ${maxPerDay}).` });
   }
 
-  // 4. Avaliar cleanFlatMode (considera apenas os flats do serviço):
+  // 4. Avaliar allowedRoomStatuses e cleanFlatMode
+  const allowedStatuses = getAllowedRoomStatuses(order);
+  const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
+  if (!allowedStatuses.includes(scenario)) {
+    const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+    return res.status(400).json({ error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}` });
+  }
+
   const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
   const cleanFlatMode = order.cleanFlatMode || "priority";
-
   if (!isDirty) {
     if (cleanFlatMode === "never") {
       return res.status(400).json({ error: "Este serviço não permite intervenção em apartamentos limpos." });
     }
     if (cleanFlatMode === "priority") {
       const otherDirty = (order.flats || []).some(otherF =>
-        Number(otherF.flatId) !== Number(flat.flatId) &&
-        otherF.status !== "done" &&
-        isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)
+        Number(otherF.flatId) !== Number(flat.flatId) && otherF.status !== "done" && isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)
       );
       if (otherDirty) {
         return res.status(400).json({ error: "Existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro." });
@@ -11675,12 +11921,8 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
 
   if (req.body?.estimatedFinishAt) {
     const customEst = new Date(req.body.estimatedFinishAt);
-    if (isNaN(customEst.getTime())) {
-      return res.status(400).json({ error: "Data e hora de previsão de término inválida." });
-    }
-    if (customEst.getTime() <= now.getTime()) {
-      return res.status(400).json({ error: "A previsão de término deve ser posterior ao horário de início." });
-    }
+    if (isNaN(customEst.getTime())) return res.status(400).json({ error: "Data e hora de previsão de término inválida." });
+    if (customEst.getTime() <= now.getTime()) return res.status(400).json({ error: "A previsão de término deve ser posterior ao horário de início." });
     flat.estimatedFinishAt = customEst.toISOString();
   } else if (order.estimatedDurationHours && Number(order.estimatedDurationHours) > 0) {
     flat.estimatedFinishAt = new Date(now.getTime() + Number(order.estimatedDurationHours) * 3600 * 1000).toISOString();
@@ -11688,14 +11930,11 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
     flat.estimatedFinishAt = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
   }
 
-  if (order.status === "draft") {
-    order.status = "active";
-  }
-
+  if (order.status === "draft") order.status = "active";
   saveDatabase("service_flat_start");
 
-  // Multi-channel notifications
-  dispatchServiceNotifications("start", order, flat, worker);
+  const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente";
+  dispatchServiceNotifications("start", order, flat, worker, { hasGuestInside: isGuestInside });
 
   res.json({
     success: true,
@@ -14509,6 +14748,15 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   } catch (_) {}
 
+  // ── WBP Incremental ARI Sync Trigger ─────────────────────────────────────────
+  try {
+    notifyPmsMutation(db, {
+      type: "reservation_created",
+      checkinDate: newReservation.checkinDate,
+      checkoutDate: newReservation.checkoutDate
+    });
+  } catch (_) {}
+
   res.status(201).json(newReservation);
 });
 
@@ -16200,6 +16448,19 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   } catch (_) {}
 
+  // ── WBP Incremental ARI Sync Trigger ─────────────────────────────────────────
+  try {
+    const minD = [oldCheckin, r.checkinDate].filter(Boolean).sort()[0];
+    const maxD = [oldCheckout, r.checkoutDate].filter(Boolean).sort().reverse()[0];
+    if (minD && maxD) {
+      notifyPmsMutation(db, {
+        type: "reservation_updated",
+        minDate: minD,
+        maxDate: maxD
+      });
+    }
+  } catch (_) {}
+
   res.json(r);
 });
 
@@ -17554,6 +17815,18 @@ export async function commitPendingModification(r, pending, {
   pending.status = "paid";
   delete r.pendingModification;
 
+  try {
+    const minD = [oldCheckin, targetCheckin].filter(Boolean).sort()[0];
+    const maxD = [oldCheckout, targetCheckout].filter(Boolean).sort().reverse()[0];
+    if (minD && maxD) {
+      notifyPmsMutation(db, {
+        type: "hold_committed",
+        minDate: minD,
+        maxDate: maxD
+      });
+    }
+  } catch (_) {}
+
   // 9. Emite Notificação Operacional no Painel
   createNotification({
     category: "checkout",
@@ -18025,6 +18298,13 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
     };
 
     saveDatabase("modify_checkout_hold");
+    try {
+      notifyPmsMutation(db, {
+        type: "hold_created",
+        minDate: newCheckinDate,
+        maxDate: newCheckoutDate
+      });
+    } catch (_) {}
 
     // 8. Resposta com dados de liquidação e hold
     res.json({
@@ -18353,6 +18633,8 @@ app.post("/api/pms/guest-portal/:code/modify-cancel-pending", (req, res) => {
     }
 
     const canceledPendingId = pending.pendingId || pending.id || "mod_hold";
+    const holdIn = pending.newCheckinDate;
+    const holdOut = pending.newCheckoutDate;
     delete r.pendingModification;
 
     ensureReservationAuditLogs(r);
@@ -18381,6 +18663,15 @@ app.post("/api/pms/guest-portal/:code/modify-cancel-pending", (req, res) => {
     });
 
     saveDatabase("modify_hold_canceled");
+    try {
+      if (holdIn && holdOut) {
+        notifyPmsMutation(db, {
+          type: "hold_canceled",
+          minDate: holdIn,
+          maxDate: holdOut
+        });
+      }
+    } catch (_) {}
 
     return res.json({
       success: true,
@@ -19475,6 +19766,13 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   }
 
   saveDatabase();
+  try {
+    notifyPmsMutation(db, {
+      type: "reservation_cancelled",
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate
+    });
+  } catch (_) {}
   triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
   res.json({ success: true, message: "Reserva cancelada com sucesso.", calendarSequence: r.calendarSequence });
 });
@@ -20481,13 +20779,30 @@ app.post("/api/pms/blocks", (req, res) => {
   };
   db.roomBlocks.push(newBlock);
   saveDatabase();
+  try {
+    notifyPmsMutation(db, {
+      type: "block_created",
+      minDate: newBlock.startDate,
+      maxDate: newBlock.endDate
+    });
+  } catch (_) {}
   res.status(201).json(newBlock);
 });
 
 app.delete("/api/pms/blocks/:id", (req, res) => {
   const id = Number(req.params.id);
+  const block = (db.roomBlocks || []).find(b => b.id === id);
   db.roomBlocks = (db.roomBlocks || []).filter(b => b.id !== id);
   saveDatabase();
+  if (block) {
+    try {
+      notifyPmsMutation(db, {
+        type: "block_deleted",
+        minDate: block.startDate,
+        maxDate: block.endDate
+      });
+    } catch (_) {}
+  }
   res.json({ success: true });
 });
 
@@ -35513,5 +35828,9 @@ export {
   applyPricingLocks,
   calculateRatePlanPrices,
   WbpPricingManager,
-  DEFAULT_SEBRAE_CONFIG
+  DEFAULT_SEBRAE_CONFIG,
+  getAriSynchronizer,
+  notifyPmsMutation,
+  getWbpRestrictionsState,
+  resolveRestrictions
 };

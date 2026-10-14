@@ -49,7 +49,8 @@ import {
   Image as ImageIcon,
   Bell,
   Car,
-  Phone
+  Phone,
+  Lock
 } from "lucide-react";
 
 export type CleanFlatMode = "never" | "priority" | "always";
@@ -57,6 +58,86 @@ export type OrderStatus = "draft" | "active" | "closed";
 export type FlatServiceStatus = "pending" | "in_progress" | "done";
 export type InstructionFormat = "text" | "list";
 export type NotificationEvent = "entry_request" | "start" | "finish" | "delay";
+
+export type OperationalScenarioId =
+  | "vago_limpo"
+  | "vago_sujo"
+  | "checkin_hoje_limpo"
+  | "checkin_hoje_sujo"
+  | "em_limpeza"
+  | "stayover"
+  | "checkout_pendente";
+
+export interface ScenarioMeta {
+  id: OperationalScenarioId;
+  label: string;
+  icon: string;
+  description: string;
+  defaultAllowed: boolean;
+  warning?: string | null;
+  hasGuestInside?: boolean;
+}
+
+export const OPERATIONAL_SCENARIOS_META: ScenarioMeta[] = [
+  {
+    id: "vago_limpo",
+    label: "Vago & Limpo",
+    icon: "🟢",
+    description: "Apartamento vago, limpo e sem previsão de check-in para hoje.",
+    defaultAllowed: true,
+  },
+  {
+    id: "vago_sujo",
+    label: "Vago & Sujo",
+    icon: "🧹",
+    description: "Pós-checkout já concluído ou vago sujo, sem check-in hoje.",
+    defaultAllowed: true,
+  },
+  {
+    id: "checkin_hoje_limpo",
+    label: "Check-in Hoje (Limpo)",
+    icon: "🔵",
+    description: "Quarto limpo e preparado aguardando a chegada do hóspede hoje.",
+    defaultAllowed: false,
+    warning: "Hóspede previsto para chegar hoje. Verifique se o serviço não atrasará a entrada.",
+  },
+  {
+    id: "checkin_hoje_sujo",
+    label: "Check-in Hoje (Sujo)",
+    icon: "🟡",
+    description: "Hóspede chega hoje, mas quarto ainda está sujo aguardando faxina.",
+    defaultAllowed: false,
+    warning: "Hóspede chega hoje e o quarto ainda aguarda limpeza de camareira.",
+  },
+  {
+    id: "em_limpeza",
+    label: "Em Limpeza no Momento",
+    icon: "🧽",
+    description: "Camareira executando a faxina no apartamento agora.",
+    defaultAllowed: false,
+    warning: "Camareira em atendimento no apartamento no momento.",
+  },
+  {
+    id: "stayover",
+    label: "Hóspede em Estadia",
+    icon: "🔴",
+    description: "Hóspede ativo que dormiu ontem e continua hospedado.",
+    defaultAllowed: false,
+    warning: "⚠️ Hóspede no quarto. Bater na porta antes de entrar e verificar se foi comunicado.",
+    hasGuestInside: true,
+  },
+  {
+    id: "checkout_pendente",
+    label: "Check-out Hoje Pendente",
+    icon: "🟠",
+    description: "Hóspede com saída prevista para hoje que ainda não desocupou.",
+    defaultAllowed: false,
+    warning: "⚠️ Hóspede no quarto aguardando check-out. Bater na porta antes de entrar.",
+    hasGuestInside: true,
+  },
+];
+
+export const DEFAULT_ALLOWED_ROOM_STATUSES: OperationalScenarioId[] = ["vago_limpo", "vago_sujo"];
 
 export interface ServiceNotificationRecipient {
   id: string;
@@ -83,6 +164,20 @@ export interface ServiceFlat {
   entryRequested?: boolean;
   entryRequestedAt?: string | null;
   delayNotified?: boolean;
+  operationalScenario?: OperationalScenarioId;
+  operationalScenarioLabel?: string;
+  operationalScenarioIcon?: string;
+  isStatusAllowed?: boolean;
+  statusBlockReason?: string | null;
+  hasGuestInside?: boolean;
+  scenarioWarning?: string | null;
+  isDirty?: boolean;
+  isOccupied?: boolean;
+  cleaningStatus?: string;
+  occupancyStatus?: string;
+  currentGuest?: string | null;
+  hasCheckinToday?: boolean;
+  hasCheckoutToday?: boolean;
 }
 
 export interface ServiceOrder {
@@ -93,6 +188,7 @@ export interface ServiceOrder {
   createdAt: string;
   createdBy?: string;
   cleanFlatMode: CleanFlatMode;
+  allowedRoomStatuses?: string[];
   maxSimultaneousFlats: number;
   maxFlatsPerDay: number;
   requirePhotos: boolean;
@@ -101,6 +197,7 @@ export interface ServiceOrder {
   defaultInstructions?: string;
   notificationRecipients?: ServiceNotificationRecipient[];
   flats: ServiceFlat[];
+  workerPhone?: string | null;
 }
 
 export interface ProgressWorker {
@@ -121,6 +218,8 @@ export interface ServiceOrderProgressResponse {
   token: string;
   status: OrderStatus;
   notificationRecipients?: ServiceNotificationRecipient[];
+  allowedRoomStatuses?: string[];
+  cleanFlatMode?: CleanFlatMode;
   stats: {
     total: number;
     done: number;
@@ -276,6 +375,7 @@ export default function ServiceOrders() {
   const [formWorkerCpf, setFormWorkerCpf] = useState("");
   const [formWorkerPhone, setFormWorkerPhone] = useState("");
   const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("priority");
+  const [formAllowedStatuses, setFormAllowedStatuses] = useState<OperationalScenarioId[]>(DEFAULT_ALLOWED_ROOM_STATUSES);
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
   const [formMaxPerDay, setFormMaxPerDay] = useState<number>(4);
   const [formRequirePhotos, setFormRequirePhotos] = useState<boolean>(true);
@@ -285,6 +385,40 @@ export default function ServiceOrders() {
   const [formSelectedFlatIds, setFormSelectedFlatIds] = useState<number[]>([]);
   const [formHasCustomInstructions, setFormHasCustomInstructions] = useState(false);
   const [formFlatCustomInstructions, setFormFlatCustomInstructions] = useState<Record<number, string>>({});
+
+  const handleToggleAllowedStatus = (statusId: OperationalScenarioId) => {
+    setFormAllowedStatuses((prev) =>
+      prev.includes(statusId) ? prev.filter((id) => id !== statusId) : [...prev, statusId]
+    );
+  };
+
+  const applyStatusPreset = (preset: "default" | "dirty_only" | "any_vacant" | "all" | "clear") => {
+    switch (preset) {
+      case "default":
+        setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
+        break;
+      case "dirty_only":
+        setFormAllowedStatuses(["vago_sujo", "checkin_hoje_sujo"]);
+        break;
+      case "any_vacant":
+        setFormAllowedStatuses(["vago_limpo", "vago_sujo", "checkin_hoje_limpo", "checkin_hoje_sujo"]);
+        break;
+      case "all":
+        setFormAllowedStatuses([
+          "vago_limpo",
+          "vago_sujo",
+          "checkin_hoje_limpo",
+          "checkin_hoje_sujo",
+          "em_limpeza",
+          "stayover",
+          "checkout_pendente",
+        ]);
+        break;
+      case "clear":
+        setFormAllowedStatuses([]);
+        break;
+    }
+  };
 
   // Notification Recipients State (R2 / Configuração de quem recebe cada notificação)
   const DEFAULT_NOTIFICATION_RECIPIENTS: ServiceNotificationRecipient[] = [
@@ -355,6 +489,7 @@ export default function ServiceOrders() {
     setFormWorkerCpf("");
     setFormWorkerPhone("");
     setFormCleanFlatMode("priority");
+    setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
     setFormMaxSimultaneous(2);
     setFormMaxPerDay(4);
     setFormRequirePhotos(true);
@@ -376,6 +511,17 @@ export default function ServiceOrders() {
     setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
     setFormWorkerPhone((order as any).workerPhone || "");
     setFormCleanFlatMode(order.cleanFlatMode || "priority");
+
+    if (Array.isArray(order.allowedRoomStatuses) && order.allowedRoomStatuses.length > 0) {
+      setFormAllowedStatuses(order.allowedRoomStatuses as OperationalScenarioId[]);
+    } else if (order.cleanFlatMode === "always") {
+      setFormAllowedStatuses(["vago_limpo", "vago_sujo", "checkin_hoje_limpo", "checkin_hoje_sujo"]);
+    } else if (order.cleanFlatMode === "never") {
+      setFormAllowedStatuses(["vago_sujo"]);
+    } else {
+      setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
+    }
+
     setFormMaxSimultaneous(order.maxSimultaneousFlats || 2);
     setFormMaxPerDay(order.maxFlatsPerDay || 4);
     setFormRequirePhotos(order.requirePhotos ?? true);
@@ -433,6 +579,7 @@ export default function ServiceOrders() {
       const bodyPayload = {
         title: formTitle.trim(),
         cleanFlatMode: formCleanFlatMode,
+        allowedRoomStatuses: formAllowedStatuses,
         maxSimultaneousFlats: Number(formMaxSimultaneous) || 2,
         maxFlatsPerDay: Number(formMaxPerDay) || 4,
         requirePhotos: Boolean(formRequirePhotos),
@@ -1209,6 +1356,142 @@ export default function ServiceOrders() {
                           </p>
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* 2b. Matriz Granular de Status de Quartos Permitidos */}
+                  <div className="space-y-3 p-4 rounded-xl border bg-card/60">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <Label className="text-sm font-semibold flex items-center gap-1.5">
+                          Status dos Quartos Permitidos para este Serviço <span className="text-rose-500">*</span>
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Selecione em quais estados operacionais e de ocupação o prestador tem permissão para intervir.
+                        </p>
+                      </div>
+
+                      {/* Presets Toolbar */}
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="text-[11px] font-semibold text-muted-foreground mr-1">Atalhos:</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px] px-2"
+                          onClick={() => applyStatusPreset("default")}
+                        >
+                          Padrão
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px] px-2"
+                          onClick={() => applyStatusPreset("dirty_only")}
+                        >
+                          Apenas Sujos
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px] px-2"
+                          onClick={() => applyStatusPreset("any_vacant")}
+                        >
+                          Qualquer Vago
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px] px-2"
+                          onClick={() => applyStatusPreset("all")}
+                        >
+                          Selecionar Todos
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-[11px] px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                          onClick={() => applyStatusPreset("clear")}
+                        >
+                          Limpar
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Warning if Stayover or Checkout Pendente is active */}
+                    {(formAllowedStatuses.includes("stayover") || formAllowedStatuses.includes("checkout_pendente")) && (
+                      <div className="p-3 rounded-lg border border-amber-300 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2 animate-in fade-in">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold">⚠️ Atenção: Quartos com Hóspede Autorizados!</span>
+                          <p className="mt-0.5 text-[11px] leading-relaxed">
+                            O prestador verá um aviso em destaque e precisará confirmar obrigatoriamente um alerta no portal antes de entrar, lembrando de bater na porta e alinhar com a recepção. A notificação de WhatsApp para a recepção também conterá alerta de hóspede presente.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Warning if no status is active */}
+                    {formAllowedStatuses.length === 0 && (
+                      <div className="p-3 rounded-lg border border-rose-300 bg-rose-500/10 text-rose-900 dark:text-rose-200 text-xs flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold">Nenhum status permitido!</span>
+                          <p className="mt-0.5 text-[11px]">
+                            Todos os quartos ficarão com cadeado 🔒 e bloqueados para o prestador até que ao menos um status seja marcado.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 7 Scenario Cards Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 pt-1">
+                      {OPERATIONAL_SCENARIOS_META.map((scenario) => {
+                        const isChecked = formAllowedStatuses.includes(scenario.id);
+                        return (
+                          <div
+                            key={scenario.id}
+                            onClick={() => handleToggleAllowedStatus(scenario.id)}
+                            className={`cursor-pointer p-3 rounded-xl border transition-all flex flex-col justify-between gap-2 ${
+                              isChecked
+                                ? "border-primary bg-primary/5 shadow-xs"
+                                : "border-border/60 hover:border-border hover:bg-muted/30 opacity-70"
+                            }`}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                                  <span>{scenario.icon}</span>
+                                  <span>{scenario.label}</span>
+                                </span>
+                                <Checkbox
+                                  checked={isChecked}
+                                  onCheckedChange={() => handleToggleAllowedStatus(scenario.id)}
+                                  className="data-[state=checked]:bg-primary"
+                                />
+                              </div>
+                              <p className="text-[11px] text-muted-foreground leading-snug">
+                                {scenario.description}
+                              </p>
+                            </div>
+
+                            {scenario.hasGuestInside && (
+                              <Badge variant="outline" className="text-[9px] w-fit font-bold border-rose-300 text-rose-700 dark:text-rose-300 bg-rose-50/50 dark:bg-rose-950/30">
+                                🔴 Hóspede no quarto
+                              </Badge>
+                            )}
+                            {scenario.id === "em_limpeza" && (
+                              <Badge variant="outline" className="text-[9px] w-fit font-bold border-purple-300 text-purple-700 dark:text-purple-300 bg-purple-50/50 dark:bg-purple-950/30">
+                                🧽 Camareira no local
+                              </Badge>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -2090,7 +2373,19 @@ export default function ServiceOrders() {
                               >
                                 {/* Flat */}
                                 <TableCell className="font-bold text-sm text-foreground">
-                                  <div>Flat {flat.flatNumber}</div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span>Flat {flat.flatNumber}</span>
+                                    {flat.operationalScenarioIcon && flat.operationalScenarioLabel && (
+                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-medium">
+                                        {flat.operationalScenarioIcon} {flat.operationalScenarioLabel}
+                                      </Badge>
+                                    )}
+                                    {flat.isStatusAllowed === false && (
+                                      <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-bold">
+                                        🔒 Não Permitido
+                                      </Badge>
+                                    )}
+                                  </div>
                                   <div className="text-[10px] font-normal text-muted-foreground flex items-center gap-1 mt-0.5 flex-wrap">
                                     {(flat as any).isOccupied ? (
                                       <span className="text-rose-600 font-semibold">🔴 Ocupado{(flat as any).currentGuest ? ` (${(flat as any).currentGuest})` : ""}</span>
@@ -2102,6 +2397,11 @@ export default function ServiceOrders() {
                                     {(flat as any).hasCheckinToday && (
                                       <span className="text-blue-600 font-medium">
                                         🔵 Chegada: {(flat as any).expectedArrival || "14:00"}
+                                      </span>
+                                    )}
+                                    {flat.hasGuestInside && (
+                                      <span className="text-rose-600 font-semibold">
+                                        ⚠️ Hóspede presente
                                       </span>
                                     )}
                                     {flat.entryRequested && flat.status === "pending" && (

@@ -43,6 +43,7 @@ import {
   Info,
   Car,
   KeyRound,
+  Lock,
 } from "lucide-react";
 
 // Types
@@ -87,6 +88,13 @@ export interface ServiceFlat {
   expectedArrival?: string | null;
   entryRequested?: boolean;
   entryRequestedAt?: string | null;
+  operationalScenario?: string;
+  operationalScenarioLabel?: string;
+  operationalScenarioIcon?: string;
+  isStatusAllowed?: boolean;
+  statusBlockReason?: string | null;
+  hasGuestInside?: boolean;
+  scenarioWarning?: string | null;
 }
 
 export interface ServiceOrderData {
@@ -97,6 +105,7 @@ export interface ServiceOrderData {
   createdAt: string;
   createdBy?: string;
   cleanFlatMode: "never" | "priority" | "always";
+  allowedRoomStatuses?: string[];
   maxSimultaneousFlats: number;
   maxFlatsPerDay: number;
   requirePhotos: boolean;
@@ -184,6 +193,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   // Guard Dialog State
   const [guardDialogOpen, setGuardDialogOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<{ type: "request_entry" | "start"; flat: ServiceFlat } | null>(null);
+
+  // Guest Warning Modal State (Mandatory confirmation for flats with guests inside)
+  const [guestWarningModalOpen, setGuestWarningModalOpen] = useState(false);
+  const [guestWarningFlat, setGuestWarningFlat] = useState<ServiceFlat | null>(null);
+  const [guestWarningAction, setGuestWarningAction] = useState<"request_entry" | "start" | null>(null);
 
   // Start Modal State (Required estimated finish)
   const [startModalOpen, setStartModalOpen] = useState(false);
@@ -527,13 +541,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     setCollaborators((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Start Click Handler with Identification Guard
-  const handleStartFlatClick = (flat: ServiceFlat) => {
-    setPendingAction({ type: "start", flat });
-    if (!hasSavedWorker) {
-      setGuardDialogOpen(true);
-      return;
-    }
+  const triggerStartModal = (flat: ServiceFlat) => {
     setStartingFlat(flat);
     const def = new Date(Date.now() + (order?.estimatedDurationHours || 2) * 3600000);
     const defStr = new Date(def.getTime() - def.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -541,14 +549,56 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     setStartModalOpen(true);
   };
 
-  // Request Entry Handler
+  // Start Click Handler with Identification Guard and Guest Warning
+  const handleStartFlatClick = (flat: ServiceFlat) => {
+    setPendingAction({ type: "start", flat });
+    if (!hasSavedWorker) {
+      setGuardDialogOpen(true);
+      return;
+    }
+    const hasGuest = Boolean(
+      flat.hasGuestInside ||
+      flat.operationalScenario === "stayover" ||
+      flat.operationalScenario === "checkout_pendente"
+    );
+    if (hasGuest) {
+      setGuestWarningFlat(flat);
+      setGuestWarningAction("start");
+      setGuestWarningModalOpen(true);
+      return;
+    }
+    triggerStartModal(flat);
+  };
+
+  // Request Entry Handler with Identification Guard and Guest Warning
   const handleRequestEntry = (flat: ServiceFlat) => {
     if (!hasSavedWorker) {
       setPendingAction({ type: "request_entry", flat });
       setGuardDialogOpen(true);
       return;
     }
+    const hasGuest = Boolean(
+      flat.hasGuestInside ||
+      flat.operationalScenario === "stayover" ||
+      flat.operationalScenario === "checkout_pendente"
+    );
+    if (hasGuest) {
+      setGuestWarningFlat(flat);
+      setGuestWarningAction("request_entry");
+      setGuestWarningModalOpen(true);
+      return;
+    }
     requestEntryMutation.mutate(flat.flatId);
+  };
+
+  const handleConfirmGuestWarning = () => {
+    setGuestWarningModalOpen(false);
+    if (!guestWarningFlat) return;
+    if (guestWarningAction === "request_entry") {
+      requestEntryMutation.mutate(guestWarningFlat.flatId);
+    } else if (guestWarningAction === "start") {
+      triggerStartModal(guestWarningFlat);
+    }
   };
 
   // Confirm Start Service with Estimated Finish Time
@@ -1271,11 +1321,18 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               }
             }
 
+            // Allowed Room Statuses Evaluation
+            const isStatusAllowed = flat.isStatusAllowed !== false;
+            const statusBlockReason = flat.statusBlockReason || "Bloqueado: status do apartamento não autorizado para este serviço.";
+
             // Action Button logic for pending
             let canStart = true;
             let disabledReason = "";
 
-            if (isSimulLimitReached) {
+            if (!isStatusAllowed) {
+              canStart = false;
+              disabledReason = statusBlockReason;
+            } else if (isSimulLimitReached) {
               canStart = false;
               disabledReason = `Limite de simultâneos atingido (máx: ${maxSimul}). Finalize o flat em andamento.`;
             } else if (isDailyLimitReached) {
@@ -1294,20 +1351,34 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     ? "border-sky-400 bg-sky-50/20 dark:bg-sky-950/20 shadow-md ring-1 ring-sky-300 dark:ring-sky-800"
                     : flat.status === "done"
                     ? "border-emerald-200 bg-slate-50/70 dark:bg-slate-900/60 opacity-90"
+                    : !isStatusAllowed
+                    ? "border-slate-200 bg-slate-50/60 dark:bg-slate-900/60 opacity-80"
                     : "border-slate-200 bg-white dark:bg-slate-900"
                 }`}
               >
                 <CardHeader className="p-4 pb-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight">
                           Flat {flat.flatNumber}
                         </span>
-                        {occupancyBadge}
+                        {flat.operationalScenarioIcon && flat.operationalScenarioLabel ? (
+                          <Badge variant="outline" className="text-[11px] font-semibold flex items-center gap-1">
+                            <span>{flat.operationalScenarioIcon}</span>
+                            <span>{flat.operationalScenarioLabel}</span>
+                          </Badge>
+                        ) : (
+                          occupancyBadge
+                        )}
+                        {!isStatusAllowed && (
+                          <Badge variant="destructive" className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 text-[10px] font-bold flex items-center gap-1">
+                            <Lock className="w-3 h-3" /> Bloqueado
+                          </Badge>
+                        )}
                       </div>
 
-                      {prioritySuggested && flat.status === "pending" && (
+                      {prioritySuggested && flat.status === "pending" && isStatusAllowed && (
                         <div className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
                           ⭐ Recomendado iniciar este primeiro
                         </div>
@@ -1319,6 +1390,32 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 </CardHeader>
 
                 <CardContent className="p-4 pt-2 space-y-3">
+                  {/* Warning Banner: Quarto com Hóspede Dentro */}
+                  {(flat.hasGuestInside || flat.operationalScenario === "stayover" || flat.operationalScenario === "checkout_pendente") && flat.status !== "done" && (
+                    <div className="p-2.5 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">⚠️ Hóspede no quarto</span>
+                        <p className="text-[11px] leading-snug mt-0.5">
+                          Bater na porta antes de entrar e verificar se foi comunicado pela recepção.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warning Banner: Em Limpeza */}
+                  {flat.operationalScenario === "em_limpeza" && flat.status !== "done" && (
+                    <div className="p-2.5 rounded-xl border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 text-xs flex items-start gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">🧽 Camareira no local</span>
+                        <p className="text-[11px] leading-snug mt-0.5">
+                          {flat.scenarioWarning || "Camareira em atendimento no apartamento no momento."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Instructions */}
                   {flat.instructions ? (
                     <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border text-xs">
@@ -1440,14 +1537,20 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         <Button
                           onClick={() => handleRequestEntry(flat)}
                           disabled={!canStart || requestEntryMutation.isPending}
-                          className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 shadow-xs flex items-center justify-center gap-1.5"
+                          className={`w-full font-bold text-xs h-10 shadow-xs flex items-center justify-center gap-1.5 ${
+                            canStart
+                              ? "bg-amber-600 hover:bg-amber-700 text-white"
+                              : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400 cursor-not-allowed opacity-80"
+                          }`}
                         >
                           {requestEntryMutation.isPending && requestEntryMutation.variables === flat.flatId ? (
                             <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                          ) : !isStatusAllowed ? (
+                            <Lock className="w-4 h-4 mr-1.5" />
                           ) : (
                             <KeyRound className="w-4 h-4 mr-1.5" />
                           )}
-                          🔑 1. Solicitar Entrada
+                          {!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "🔑 1. Solicitar Entrada"}
                         </Button>
                       ) : (
                         <>
@@ -1468,10 +1571,12 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           >
                             {startMutation.isPending && startMutation.variables === flat.flatId ? (
                               <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                            ) : !isStatusAllowed ? (
+                              <Lock className="w-4 h-4 mr-1.5" />
                             ) : (
                               <Play className="w-4 h-4 mr-1.5 fill-current" />
                             )}
-                            ▶️ Iniciar Apartamento (2. Iniciar Serviço)
+                            {!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "▶️ Iniciar Apartamento (2. Iniciar Serviço)"}
                           </Button>
                         </>
                       )}
@@ -1620,6 +1725,55 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               className="w-full text-xs h-9"
             >
               Preencher no Início da Página
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Mandatório de Confirmação: Quarto Ocupado por Hóspede */}
+      <Dialog open={guestWarningModalOpen} onOpenChange={setGuestWarningModalOpen}>
+        <DialogContent className="max-w-md rounded-2xl p-6">
+          <DialogHeader className="space-y-3">
+            <div className="w-12 h-12 bg-amber-100 dark:bg-amber-950 text-amber-600 dark:text-amber-400 rounded-2xl flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+            <DialogTitle className="text-center text-lg font-black text-slate-800 dark:text-slate-100">
+              ⚠️ Atenção: Quarto Ocupado por Hóspede!
+            </DialogTitle>
+            <DialogDescription className="text-center text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
+              Confirmação de segurança e protocolo de acesso CorpFlats
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-left">
+            <div className="p-3.5 bg-amber-500/10 border border-amber-300 dark:border-amber-700 rounded-xl space-y-2">
+              <p className="font-semibold text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
+                Este apartamento está com hóspede dentro. Certifique-se com a recepção de que o hóspede foi previamente comunicado do serviço e BATA NA PORTA antes de entrar.
+              </p>
+              <div className="text-[11px] text-amber-800 dark:text-amber-300 space-y-1 pt-1 border-t border-amber-200 dark:border-amber-800">
+                <div>• Apartamento: <strong>Flat {guestWarningFlat?.flatNumber}</strong></div>
+                <div>• Status operacional: <strong>{guestWarningFlat?.operationalScenarioLabel || "Hóspede no quarto"}</strong></div>
+                <div>• A recepção receberá alerta em tempo real de que o quarto possui hóspede no momento da liberação.</div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setGuestWarningModalOpen(false)}
+              className="w-full sm:w-auto text-xs h-9"
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleConfirmGuestWarning}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-9"
+            >
+              Estou Ciente, Continuar
             </Button>
           </DialogFooter>
         </DialogContent>
