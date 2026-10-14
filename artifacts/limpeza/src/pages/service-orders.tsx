@@ -799,19 +799,19 @@ export default function ServiceOrders() {
   return (
     <Shell>
       <TooltipProvider>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-10 space-y-5 sm:space-y-6">
           {/* Header principal da página */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5 border-b border-border/40 pb-4 sm:pb-5">
             <div className="space-y-1">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs">
-                  <Wrench className="w-5 h-5" />
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 shrink-0 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs mt-0.5 sm:mt-0">
+                  <Wrench className="w-5 h-5 shrink-0" />
                 </div>
-                <div>
-                  <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground leading-tight">
                     Ordens de Serviço de Terceirizados
                   </h1>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 leading-snug">
                     Gestão de pintores, eletricistas e reformas com portal exclusivo e controle de faxina
                   </p>
                 </div>
@@ -825,9 +825,9 @@ export default function ServiceOrders() {
                   resetFormToCreate();
                   setActiveTab("form");
                 }}
-                className="gap-2 font-medium shadow-xs"
+                className="w-full sm:w-auto justify-center gap-2 font-medium shadow-xs"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-4 h-4 shrink-0" />
                 <span>Nova Ordem de Serviço</span>
               </Button>
             </div>
@@ -837,27 +837,27 @@ export default function ServiceOrders() {
           <Tabs
             value={activeTab}
             onValueChange={(val) => setActiveTab(val as "list" | "form" | "tracking")}
-            className="w-full space-y-6"
+            className="w-full space-y-5 sm:space-y-6"
           >
-            <TabsList className="grid grid-cols-3 max-w-lg h-11 p-1 bg-muted/80 rounded-xl">
-              <TabsTrigger value="list" className="gap-2 text-sm font-medium rounded-lg">
-                <FileText className="w-4 h-4" />
-                <span>Lista de Serviços</span>
+            <TabsList className="grid grid-cols-3 w-full max-w-lg h-auto min-h-11 p-1 bg-muted/80 rounded-xl">
+              <TabsTrigger value="list" className="gap-1 sm:gap-2 text-[11px] sm:text-sm font-medium rounded-lg px-1.5 sm:px-3 py-1.5 truncate">
+                <FileText className="w-3.5 h-3.5 hidden sm:inline-block shrink-0" />
+                <span className="truncate">Lista de Serviços</span>
                 {orders.length > 0 && (
-                  <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] font-semibold">
+                  <Badge variant="secondary" className="ml-0.5 sm:ml-1 px-1 sm:px-1.5 py-0 text-[9px] sm:text-[10px] font-semibold shrink-0">
                     {orders.length}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="form" className="gap-2 text-sm font-medium rounded-lg">
-                <Edit className="w-4 h-4" />
-                <span>{editingOrderId ? "Editar Ordem" : "Criar Ordem"}</span>
+              <TabsTrigger value="form" className="gap-1 sm:gap-2 text-[11px] sm:text-sm font-medium rounded-lg px-1.5 sm:px-3 py-1.5 truncate">
+                <Edit className="w-3.5 h-3.5 hidden sm:inline-block shrink-0" />
+                <span className="truncate">{editingOrderId ? "Editar Ordem" : "Criar Ordem"}</span>
               </TabsTrigger>
-              <TabsTrigger value="tracking" className="gap-2 text-sm font-medium rounded-lg">
-                <Layers className="w-4 h-4" />
-                <span>Acompanhamento</span>
+              <TabsTrigger value="tracking" className="gap-1 sm:gap-2 text-[11px] sm:text-sm font-medium rounded-lg px-1.5 sm:px-3 py-1.5 truncate">
+                <Layers className="w-3.5 h-3.5 hidden sm:inline-block shrink-0" />
+                <span className="truncate">Acompanhamento</span>
                 {progressData?.stats?.inProgress ? (
-                  <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+                  <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
                 ) : null}
               </TabsTrigger>
             </TabsList>
@@ -1144,38 +1144,39 @@ export default function ServiceOrders() {
                 ABA 2: CRIAR / EDITAR ORDEM DE SERVIÇO
                ════════════════════════════════════════════════════════════════ */}
             <TabsContent value="form" className="space-y-6 focus-visible:outline-none">
-              <Card className="rounded-2xl border shadow-xs">
-                <CardHeader className="border-b pb-4">
-                  <div className="flex items-center justify-between">
+              <Card className="rounded-2xl border shadow-xs overflow-hidden">
+                <CardHeader className="border-b p-4 sm:p-6 pb-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setActiveTab("list")}
+                        className="h-8 px-2 -ml-2 text-muted-foreground hover:text-foreground gap-1 shrink-0"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>Voltar</span>
+                      </Button>
+
+                      {editingOrderId && (
+                        <Badge variant="outline" className="text-[10px] sm:text-xs font-mono max-w-[210px] sm:max-w-none truncate">
+                          ID: {editingOrderId}
+                        </Badge>
+                      )}
+                    </div>
+
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setActiveTab("list")}
-                          className="h-8 px-2 -ml-2 text-muted-foreground hover:text-foreground gap-1"
-                        >
-                          <ArrowLeft className="w-4 h-4" />
-                          <span>Voltar</span>
-                        </Button>
-                        <CardTitle className="text-xl font-bold">
-                          {editingOrderId ? "Editar Ordem de Serviço" : "Nova Ordem de Serviço"}
-                        </CardTitle>
-                      </div>
-                      <CardDescription>
+                      <CardTitle className="text-lg sm:text-xl font-bold leading-snug">
+                        {editingOrderId ? "Editar Ordem de Serviço" : "Nova Ordem de Serviço"}
+                      </CardTitle>
+                      <CardDescription className="text-xs sm:text-sm leading-relaxed">
                         Configure os flats, regras de limpeza e orientações para o prestador externo.
                       </CardDescription>
                     </div>
-
-                    {editingOrderId && (
-                      <Badge variant="outline" className="text-xs font-mono">
-                        ID: {editingOrderId}
-                      </Badge>
-                    )}
                   </div>
                 </CardHeader>
 
-                <CardContent className="space-y-6 pt-6">
+                <CardContent className="space-y-6 p-4 sm:p-6 pt-5 sm:pt-6">
                   {/* 1. Título do Serviço */}
                   <div className="space-y-2">
                     <Label htmlFor="service-title" className="text-sm font-semibold flex items-center gap-1.5">
@@ -1649,10 +1650,10 @@ export default function ServiceOrders() {
                         return (
                           <div
                             key={rec.id}
-                            className="p-3.5 bg-card border rounded-xl shadow-2xs space-y-3"
+                            className="p-3 sm:p-3.5 bg-card border rounded-xl shadow-2xs space-y-3"
                           >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2.5">
-                              <div className="flex items-center gap-2 flex-1">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b pb-2.5">
+                              <div className="flex items-center gap-2 w-full sm:flex-1 min-w-0">
                                 {isPresetReception ? (
                                   <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border-sky-300 text-[10px] uppercase font-bold shrink-0">
                                     🏢 Recepção
@@ -1668,21 +1669,21 @@ export default function ServiceOrders() {
                                 )}
 
                                 <Input
-                                  placeholder="Nome da pessoa ou setor (ex: Miller, Grazi, Recepção)"
+                                  placeholder="Nome da pessoa ou setor"
                                   value={rec.name}
                                   onChange={(e) => handleUpdateRecipient(rec.id, { name: e.target.value })}
-                                  className="h-8 text-xs font-semibold flex-1 min-w-[150px]"
+                                  className="h-8 text-xs font-semibold flex-1 min-w-0"
                                 />
                               </div>
 
-                              <div className="flex items-center gap-2">
-                                <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-2 w-full sm:w-auto">
+                                <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
                                   <Phone className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                                   <Input
                                     placeholder="WhatsApp (ex: 22998505276)"
                                     value={rec.phone}
                                     onChange={(e) => handleUpdateRecipient(rec.id, { phone: e.target.value })}
-                                    className="h-8 text-xs w-[160px]"
+                                    className="h-8 text-xs w-full sm:w-[160px]"
                                   />
                                 </div>
 
@@ -1706,7 +1707,7 @@ export default function ServiceOrders() {
                               <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">
                                 Notificações que este destinatário recebe:
                               </span>
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-0.5">
                                 <label
                                   className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer select-none transition-colors ${
                                     rec.events.includes("entry_request")
@@ -1908,13 +1909,13 @@ export default function ServiceOrders() {
                 </CardContent>
 
                 {/* Botões do Rodapé do Formulário */}
-                <CardFooter className="border-t pt-4 pb-5 px-6 flex items-center justify-between gap-3 bg-muted/20">
+                <CardFooter className="border-t pt-4 pb-5 px-4 sm:px-6 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 bg-muted/20">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => setActiveTab("list")}
                     disabled={saveMutation.isPending}
-                    className="font-medium"
+                    className="font-medium w-full sm:w-auto"
                   >
                     Cancelar
                   </Button>
@@ -1923,7 +1924,7 @@ export default function ServiceOrders() {
                     type="button"
                     onClick={() => saveMutation.mutate()}
                     disabled={saveMutation.isPending}
-                    className="gap-2 font-semibold px-6 shadow-xs"
+                    className="gap-2 font-semibold px-6 shadow-xs w-full sm:w-auto"
                   >
                     {saveMutation.isPending ? (
                       <>
@@ -1947,8 +1948,8 @@ export default function ServiceOrders() {
             <TabsContent value="tracking" className="space-y-6 focus-visible:outline-none">
               {/* Barra Superior de Seleção e Polling */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-4 rounded-2xl border shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
-                  <div className="space-y-0.5 shrink-0">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1 min-w-0">
+                  <div className="space-y-1 w-full sm:w-auto shrink-0">
                     <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
                       Ordem Selecionada
                     </span>
@@ -1970,12 +1971,12 @@ export default function ServiceOrders() {
                   </div>
 
                   {progressData?.token && (
-                    <div className="flex items-center gap-1.5 self-end sm:self-center pt-2 sm:pt-4">
+                    <div className="flex items-center gap-1.5 w-full sm:w-auto pt-1 sm:pt-4">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => copyPortalLink(progressData.token)}
-                        className="h-8 text-xs gap-1.5 font-medium"
+                        className="h-9 sm:h-8 text-xs gap-1.5 font-medium flex-1 sm:flex-initial"
                       >
                         <Copy className="w-3.5 h-3.5" />
                         <span>Copiar Link do Portal</span>
@@ -1984,7 +1985,7 @@ export default function ServiceOrders() {
                         variant="ghost"
                         size="sm"
                         asChild
-                        className="h-8 px-2"
+                        className="h-9 sm:h-8 px-2.5 shrink-0"
                         title="Abrir portal do prestador"
                       >
                         <a
@@ -2001,9 +2002,9 @@ export default function ServiceOrders() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-t-0 pt-3 sm:pt-0">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/60 px-3 py-1.5 rounded-lg">
-                    <span className="relative flex h-2 w-2">
+                    <span className="relative flex h-2 w-2 shrink-0">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
@@ -2015,7 +2016,7 @@ export default function ServiceOrders() {
                     size="sm"
                     onClick={() => refetchProgress()}
                     disabled={progressFetching}
-                    className="h-9 gap-1.5 text-xs font-semibold"
+                    className="h-9 gap-1.5 text-xs font-semibold shrink-0"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${progressFetching ? "animate-spin" : ""}`} />
                     <span>Atualizar</span>
