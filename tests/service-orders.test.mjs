@@ -138,4 +138,55 @@ describe('External Service Orders Module (OS Prestadores de Serviços Externos)'
     assert.ok(calSnippet.includes('reason: "service_order"') || calSnippet.includes("reason: 'service_order'"), 'GET /api/pms/calendar deve marcar reason: "service_order"');
     assert.ok(calSnippet.includes('serviceOrderBlocks'), 'GET /api/pms/calendar deve sintetizar serviceOrderBlocks');
   });
+
+  it('13. Matriz de 7 Cenários Operacionais (allowedRoomStatuses) e preservação de array vazio', () => {
+    const serverCode = fs.readFileSync(artifactsServerPath, 'utf8');
+    const requiredScenarios = [
+      'vago_limpo',
+      'vago_sujo',
+      'checkin_hoje_limpo',
+      'checkin_hoje_sujo',
+      'em_limpeza',
+      'stayover',
+      'checkout_pendente'
+    ];
+    for (const sc of requiredScenarios) {
+      assert.ok(serverCode.includes(`id: "${sc}"`) || serverCode.includes(`id: '${sc}'`), `Cenário ${sc} deve existir em OPERATIONAL_SCENARIOS`);
+    }
+
+    assert.ok(serverCode.includes('DEFAULT_ALLOWED_ROOM_STATUSES = ["vago_limpo", "vago_sujo"]'), 'DEFAULT_ALLOWED_ROOM_STATUSES deve conter vago_limpo e vago_sujo');
+    assert.ok(serverCode.includes('function getAllowedRoomStatuses(order)'), 'getAllowedRoomStatuses deve estar definida');
+
+    // Preservação de array vazio (não reverte para default se admin limpou os status)
+    assert.ok(!serverCode.includes('rawAllowedStatuses.length > 0 ? rawAllowedStatuses'), 'POST não deve rejeitar array vazio []');
+  });
+
+  it('14. Bloqueio fail-closed em request-entry e start com prevenção de deadlock em modo priority', () => {
+    const serverCode = fs.readFileSync(artifactsServerPath, 'utf8');
+    const startIdx = serverCode.indexOf('app.post("/api/service/public/:token/flats/:flatId/start"');
+    assert.ok(startIdx !== -1);
+    const startSnippet = serverCode.substring(startIdx, startIdx + 5000);
+
+    assert.ok(startSnippet.includes('allowedStatuses.includes(scenario)'), 'start deve validar allowedStatuses.includes(scenario)');
+    assert.ok(startSnippet.includes('scenarioInfo.blockReason'), 'start deve retornar blockReason no erro 400');
+    assert.ok(startSnippet.includes('allowedStatuses.includes(otherScenario)'), 'start deve verificar se outro flat sujo é permitido antes de bloquear por prioridade');
+
+    const entryIdx = serverCode.indexOf('app.post("/api/service/public/:token/flats/:flatId/request-entry"');
+    assert.ok(entryIdx !== -1);
+    const entrySnippet = serverCode.substring(entryIdx, entryIdx + 5000);
+    assert.ok(entrySnippet.includes('allowedStatuses.includes(scenario)'), 'request-entry deve validar allowedStatuses.includes(scenario)');
+  });
+
+  it('15. Alerta de quarto ocupado por hóspede com suporte a realtime.isOccupied e notificação recepção', () => {
+    const serverCode = fs.readFileSync(artifactsServerPath, 'utf8');
+    assert.ok(
+      serverCode.includes('⚠️ *ATENÇÃO: Quarto ocupado por hóspede. Verificar comunicação prévia antes de liberar o acesso.*'),
+      'Notificação WhatsApp de entrada para recepção deve conter destaque explícito de quarto ocupado'
+    );
+    assert.ok(
+      serverCode.includes('Boolean(realtime.isOccupied)'),
+      'isGuestInside deve considerar realtime.isOccupied para cobrir stayover em limpeza'
+    );
+  });
 });
+

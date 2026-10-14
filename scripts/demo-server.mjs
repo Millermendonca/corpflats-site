@@ -8382,7 +8382,7 @@ function getFlatOperationalScenario(flatId, flatNumber, dateStr = getTodayStr())
 }
 
 function getAllowedRoomStatuses(order) {
-  if (Array.isArray(order?.allowedRoomStatuses) && order.allowedRoomStatuses.length > 0) {
+  if (Array.isArray(order?.allowedRoomStatuses)) {
     return order.allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s));
   }
   if (order?.cleanFlatMode === "always") {
@@ -8447,8 +8447,9 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       : "Não necessita de garagem";
 
     const todayStr = getTodayStr();
+    const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-    const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente" || Boolean(extraData?.hasGuestInside);
+    const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied) || Boolean(extraData?.hasGuestInside);
 
     let message = "";
     if (action === "entry_request") {
@@ -8471,7 +8472,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         ? formatDateTimeShort(flat.estimatedFinishAt)
         : (order.estimatedDurationHours ? `${order.estimatedDurationHours}h` : "2h");
       const guestWarningLine = isGuestInside
-        ? "⚠️ *ATENÇÃO: Quarto ocupado por hóspede. Bater na porta antes de entrar.*"
+        ? "⚠️ *ATENÇÃO: Quarto ocupado por hóspede. Verificar comunicação prévia antes de liberar o acesso e bater na porta antes de entrar.*"
         : null;
 
       message = [
@@ -11318,7 +11319,7 @@ app.post("/api/service-orders", (req, res) => {
     };
   });
 
-  const allowedRoomStatuses = Array.isArray(rawAllowedStatuses) && rawAllowedStatuses.length > 0
+  const allowedRoomStatuses = Array.isArray(rawAllowedStatuses)
     ? rawAllowedStatuses.filter(s => VALID_ROOM_STATUSES.includes(s))
     : [...DEFAULT_ALLOWED_ROOM_STATUSES];
 
@@ -11571,7 +11572,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
       operationalScenarioIcon: scenarioInfo.icon || "🏠",
       isStatusAllowed: isAllowed,
       statusBlockReason: isAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`,
-      hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente",
+      hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied),
       scenarioWarning: scenarioInfo.warning || null
     };
   });
@@ -11669,7 +11670,7 @@ app.get("/api/service/public/:token", (req, res) => {
       operationalScenarioIcon: scenarioInfo.icon || "🏠",
       isStatusAllowed: isAllowed,
       statusBlockReason: isAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`,
-      hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente",
+      hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied),
       scenarioWarning: scenarioInfo.warning || null
     };
   });
@@ -11900,9 +11901,12 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
       return res.status(400).json({ error: "Este serviço não permite intervenção em apartamentos limpos." });
     }
     if (cleanFlatMode === "priority") {
-      const otherDirty = (order.flats || []).some(otherF =>
-        Number(otherF.flatId) !== Number(flat.flatId) && otherF.status !== "done" && isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)
-      );
+      const otherDirty = (order.flats || []).some(otherF => {
+        if (Number(otherF.flatId) === Number(flat.flatId) || otherF.status === "done") return false;
+        if (!isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)) return false;
+        const otherScenario = getFlatOperationalScenario(otherF.flatId, otherF.flatNumber, todayStr);
+        return allowedStatuses.includes(otherScenario);
+      });
       if (otherDirty) {
         return res.status(400).json({ error: "Existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro." });
       }

@@ -512,7 +512,7 @@ export default function ServiceOrders() {
     setFormWorkerPhone((order as any).workerPhone || "");
     setFormCleanFlatMode(order.cleanFlatMode || "priority");
 
-    if (Array.isArray(order.allowedRoomStatuses) && order.allowedRoomStatuses.length > 0) {
+    if (Array.isArray(order.allowedRoomStatuses)) {
       setFormAllowedStatuses(order.allowedRoomStatuses as OperationalScenarioId[]);
     } else if (order.cleanFlatMode === "always") {
       setFormAllowedStatuses(["vago_limpo", "vago_sujo", "checkin_hoje_limpo", "checkin_hoje_sujo"]);
@@ -1417,7 +1417,7 @@ export default function ServiceOrders() {
                           className="h-7 text-[11px] px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
                           onClick={() => applyStatusPreset("clear")}
                         >
-                          Limpar
+                          Limpar Seleção
                         </Button>
                       </div>
                     </div>
@@ -2381,7 +2381,7 @@ export default function ServiceOrders() {
                                       </Badge>
                                     )}
                                     {flat.isStatusAllowed === false && (
-                                      <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-bold">
+                                      <Badge variant="destructive" title={flat.statusBlockReason || "Status não autorizado para este serviço"} className="text-[9px] px-1.5 py-0 h-4 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-bold">
                                         🔒 Não Permitido
                                       </Badge>
                                     )}

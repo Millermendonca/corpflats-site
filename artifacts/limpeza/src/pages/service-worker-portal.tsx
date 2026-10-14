@@ -1308,7 +1308,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   (f) =>
                     Number(f.flatId) !== Number(flat.flatId) &&
                     f.status !== "done" &&
-                    Boolean(f.isDirty)
+                    Boolean(f.isDirty) &&
+                    f.isStatusAllowed !== false
                 );
                 if (otherDirty) {
                   isCleanModeBlocked = true;
@@ -1372,8 +1373,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           occupancyBadge
                         )}
                         {!isStatusAllowed && (
-                          <Badge variant="destructive" className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 text-[10px] font-bold flex items-center gap-1">
-                            <Lock className="w-3 h-3" /> Bloqueado
+                          <Badge variant="destructive" className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2">
+                            <Lock className="w-3 h-3 shrink-0" /> {statusBlockReason}
                           </Badge>
                         )}
                       </div>
@@ -1692,7 +1693,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     const action = pendingAction;
                     setPendingAction(null);
                     if (action.type === "request_entry") {
-                      requestEntryMutation.mutate(action.flat.flatId);
+                      handleRequestEntry(action.flat);
                     } else if (action.type === "start") {
                       handleStartFlatClick(action.flat);
                     }
@@ -1771,6 +1772,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               variant="default"
               size="sm"
               onClick={handleConfirmGuestWarning}
+              disabled={requestEntryMutation.isPending || startMutation.isPending}
               className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-9"
             >
               Estou Ciente, Continuar

@@ -484,4 +484,61 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
       assert.ok(flat1.finishedAt);
     });
   });
+
+  describe('7. Allowed Room Statuses Matrix, Badges & Guest Warning Modal', () => {
+    const adminOrdersFilePath = path.resolve('artifacts/limpeza/src/pages/service-orders.tsx');
+    let adminOrdersContent = '';
+
+    before(() => {
+      adminOrdersContent = fs.readFileSync(adminOrdersFilePath, 'utf8');
+    });
+
+    it('renders lock badge with explicit reason in portal flat cards', () => {
+      assert.ok(
+        portalContent.includes('{statusBlockReason}'),
+        'Portal must render statusBlockReason in the flat card lock badge'
+      );
+      assert.ok(
+        portalContent.includes('🔒 Bloqueado para este Serviço'),
+        'Disabled button must display 🔒 Bloqueado para este Serviço when status is not allowed'
+      );
+    });
+
+    it('implements mandatory Guest Warning Modal with exact required title and body text', () => {
+      assert.ok(
+        portalContent.includes('⚠️ Atenção: Quarto Ocupado por Hóspede!'),
+        'Modal title must be "⚠️ Atenção: Quarto Ocupado por Hóspede!"'
+      );
+      assert.ok(
+        portalContent.includes('Este apartamento está com hóspede dentro. Certifique-se com a recepção de que o hóspede foi previamente comunicado do serviço e BATA NA PORTA antes de entrar.'),
+        'Modal body must contain exact mandatory safety instruction'
+      );
+    });
+
+    it('disables Guest Warning Modal confirm button while mutation is pending', () => {
+      assert.ok(
+        portalContent.includes('disabled={requestEntryMutation.isPending || startMutation.isPending}'),
+        'Guest warning confirmation button must be disabled when request is in-flight'
+      );
+    });
+
+    it('routes request_entry through handleRequestEntry after Guard Dialog identification to enforce guest safety modal', () => {
+      const idx = portalContent.indexOf('if (action.type === "request_entry")');
+      assert.ok(idx !== -1, 'Guard dialog must handle request_entry');
+      const snippet = portalContent.substring(idx, idx + 200);
+      assert.ok(
+        snippet.includes('handleRequestEntry(action.flat)'),
+        'Guard Dialog must route through handleRequestEntry instead of bypassing guest warning modal'
+      );
+    });
+
+    it('provides all 5 presets in Admin page including exact "Limpar Seleção" button', () => {
+      assert.ok(adminOrdersContent.includes('Limpar Seleção'), 'Admin presets must include button "Limpar Seleção"');
+      assert.ok(adminOrdersContent.includes('Padrão'), 'Admin presets must include "Padrão"');
+      assert.ok(adminOrdersContent.includes('Apenas Sujos'), 'Admin presets must include "Apenas Sujos"');
+      assert.ok(adminOrdersContent.includes('Qualquer Vago'), 'Admin presets must include "Qualquer Vago"');
+      assert.ok(adminOrdersContent.includes('Selecionar Todos'), 'Admin presets must include "Selecionar Todos"');
+    });
+  });
 });
+
