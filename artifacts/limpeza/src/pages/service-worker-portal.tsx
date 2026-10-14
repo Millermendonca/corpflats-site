@@ -1211,27 +1211,38 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
           )}
         </div>
 
-        {/* Flats List Header */}
-        <div className="space-y-1 pt-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-              <Building className="w-4 h-4 text-primary" />
-              Apartamentos do Serviço ({order.flats.length})
-            </h2>
-            {isFetching && (
-              <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
-                <Loader2 className="w-3 h-3 animate-spin text-primary" /> Atualizando...
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Siga as regras de atendimento e registre as informações em cada apartamento.
-          </p>
-        </div>
+        {/* Flats List Header & 4-Group Classification */}
+        {(() => {
+          const isFlatBlockedByModeOrStatus = (flat: ServiceFlat) => {
+            if (flat.isStatusAllowed === false) return true;
+            const isClean = !flat.isDirty;
+            const cleanFlatMode = order.cleanFlatMode || "priority";
+            if (isClean) {
+              if (cleanFlatMode === "never") return true;
+              if (cleanFlatMode === "priority") {
+                const otherDirty = order.flats.some(
+                  (f) =>
+                    Number(f.flatId) !== Number(flat.flatId) &&
+                    f.status !== "done" &&
+                    Boolean(f.isDirty) &&
+                    f.isStatusAllowed !== false
+                );
+                if (otherDirty) return true;
+              }
+            }
+            return false;
+          };
 
-        {/* Flats Cards List (R5) */}
-        <div className="space-y-4">
-          {order.flats.map((flat) => {
+          const inProgressGroup = order.flats.filter((f) => f.status === "in_progress");
+          const availableGroup = order.flats.filter(
+            (f) => f.status === "pending" && !isFlatBlockedByModeOrStatus(f)
+          );
+          const blockedGroup = order.flats.filter(
+            (f) => f.status === "pending" && isFlatBlockedByModeOrStatus(f)
+          );
+          const doneGroup = order.flats.filter((f) => f.status === "done");
+
+          const renderFlatCard = (flat: ServiceFlat) => {
             // Occupancy Badge (Requirement 1: No guest name, show expected arrival if check-in today)
             let occupancyBadge = (
               <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 text-[11px] font-semibold">
@@ -1620,8 +1631,136 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 </CardFooter>
               </Card>
             );
-          })}
-        </div>
+          };
+
+          return (
+            <>
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                    <Building className="w-4 h-4 text-primary" />
+                    Apartamentos do Serviço ({order.flats.length})
+                  </h2>
+                  {isFetching && (
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
+                      <Loader2 className="w-3 h-3 animate-spin text-primary" /> Atualizando...
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Os apartamentos abaixo estão organizados automaticamente conforme as travas de status definidas pela administração.
+                </p>
+
+                {/* Quick Status Counters */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                  <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 rounded-xl p-2 text-center">
+                    <span className="text-[10px] font-bold uppercase text-sky-700 dark:text-sky-300 block">
+                      ⚡ Em Andamento
+                    </span>
+                    <span className="text-base font-black text-sky-900 dark:text-sky-100">
+                      {inProgressGroup.length}
+                    </span>
+                  </div>
+                  <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 rounded-xl p-2 text-center">
+                    <span className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-300 block">
+                      ✅ Liberados Agora
+                    </span>
+                    <span className="text-base font-black text-emerald-900 dark:text-emerald-100">
+                      {availableGroup.length}
+                    </span>
+                  </div>
+                  <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-xl p-2 text-center">
+                    <span className="text-[10px] font-bold uppercase text-rose-700 dark:text-rose-300 block">
+                      🔒 Bloqueados
+                    </span>
+                    <span className="text-base font-black text-rose-900 dark:text-rose-100">
+                      {blockedGroup.length}
+                    </span>
+                  </div>
+                  <div className="bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded-xl p-2 text-center">
+                    <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 block">
+                      🏁 Finalizados
+                    </span>
+                    <span className="text-base font-black text-slate-800 dark:text-slate-200">
+                      {doneGroup.length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                {/* 1. EM ANDAMENTO */}
+                {inProgressGroup.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <h3 className="text-sm font-extrabold text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
+                        ⚡ Em Andamento ({inProgressGroup.length})
+                      </h3>
+                      <span className="text-[11px] text-sky-700 dark:text-sky-400 font-medium">
+                        Finalize ao concluir o serviço
+                      </span>
+                    </div>
+                    <div className="space-y-4">
+                      {inProgressGroup.map((flat) => renderFlatCard(flat))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. LIBERADOS PARA INICIAR */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-sm font-extrabold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                      ✅ Liberados para Iniciar ({availableGroup.length})
+                    </h3>
+                    <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+                      Autorizados pelas travas do serviço
+                    </span>
+                  </div>
+                  {availableGroup.length === 0 ? (
+                    <div className="p-4 rounded-2xl border border-dashed bg-white/60 dark:bg-slate-900/40 text-center text-xs text-muted-foreground">
+                      Nenhum apartamento liberado para início imediato neste momento. Verifique os apartamentos em andamento ou aguardando liberação abaixo.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {availableGroup.map((flat) => renderFlatCard(flat))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. AGUARDANDO LIBERAÇÃO (BLOQUEADOS PELAS TRAVAS) */}
+                {blockedGroup.length > 0 && (
+                  <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div className="space-y-0.5 px-1">
+                      <h3 className="text-sm font-extrabold text-rose-800 dark:text-rose-300 flex items-center gap-1.5">
+                        🔒 Aguardando Liberação — Bloqueados pelas Travas ({blockedGroup.length})
+                      </h3>
+                      <p className="text-[11px] text-muted-foreground">
+                        Estes apartamentos fazem parte do serviço, mas o status atual deles não permite início agora. Assim que o status do quarto mudar (ex.: hóspede fizer check-out ou camareira concluir a limpeza), eles subirão automaticamente para a lista de liberados.
+                      </p>
+                    </div>
+                    <div className="space-y-4">
+                      {blockedGroup.map((flat) => renderFlatCard(flat))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. FINALIZADOS */}
+                {doneGroup.length > 0 && (
+                  <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center justify-between px-1">
+                      <h3 className="text-sm font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        🏁 Finalizados ({doneGroup.length})
+                      </h3>
+                    </div>
+                    <div className="space-y-4">
+                      {doneGroup.map((flat) => renderFlatCard(flat))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          );
+        })()}
       </main>
 
       {/* Guard Dialog: Blocking Action when Identification Not Saved */}

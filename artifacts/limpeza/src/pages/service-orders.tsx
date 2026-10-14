@@ -374,7 +374,7 @@ export default function ServiceOrders() {
   const [formWorkerName, setFormWorkerName] = useState("");
   const [formWorkerCpf, setFormWorkerCpf] = useState("");
   const [formWorkerPhone, setFormWorkerPhone] = useState("");
-  const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("priority");
+  const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("always");
   const [formAllowedStatuses, setFormAllowedStatuses] = useState<OperationalScenarioId[]>(DEFAULT_ALLOWED_ROOM_STATUSES);
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
   const [formMaxPerDay, setFormMaxPerDay] = useState<number>(4);
@@ -392,7 +392,12 @@ export default function ServiceOrders() {
     );
   };
 
+  // Presets de travas para o prestador (unifica modos legados:
+  // setFormCleanFlatMode("never") -> Bloquear se o flat estiver limpo
+  // setFormCleanFlatMode("priority") -> Só liberar flat limpo se nenhum outro flat do serviço estiver sujo
+  // setFormCleanFlatMode("always") -> Liberar qualquer flat a qualquer momento conforme os 7 status abaixo)
   const applyStatusPreset = (preset: "default" | "dirty_only" | "any_vacant" | "all" | "clear") => {
+    setFormCleanFlatMode("always");
     switch (preset) {
       case "default":
         setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
@@ -488,7 +493,7 @@ export default function ServiceOrders() {
     setFormWorkerName("");
     setFormWorkerCpf("");
     setFormWorkerPhone("");
-    setFormCleanFlatMode("priority");
+    setFormCleanFlatMode("always");
     setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
     setFormMaxSimultaneous(2);
     setFormMaxPerDay(4);
@@ -510,7 +515,7 @@ export default function ServiceOrders() {
     setFormWorkerName((order as any).workerName || "");
     setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
     setFormWorkerPhone((order as any).workerPhone || "");
-    setFormCleanFlatMode(order.cleanFlatMode || "priority");
+    setFormCleanFlatMode("always");
 
     if (Array.isArray(order.allowedRoomStatuses)) {
       setFormAllowedStatuses(order.allowedRoomStatuses as OperationalScenarioId[]);
@@ -578,7 +583,7 @@ export default function ServiceOrders() {
 
       const bodyPayload = {
         title: formTitle.trim(),
-        cleanFlatMode: formCleanFlatMode,
+        cleanFlatMode: "always" as CleanFlatMode,
         allowedRoomStatuses: formAllowedStatuses,
         maxSimultaneousFlats: Number(formMaxSimultaneous) || 2,
         maxFlatsPerDay: Number(formMaxPerDay) || 4,
@@ -983,9 +988,7 @@ export default function ServiceOrders() {
                           {/* Chips de Regras */}
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             <Badge variant="outline" className="text-[10px] font-normal py-0.5 px-2 bg-muted/40">
-                              {order.cleanFlatMode === "never" && "🚫 Bloqueia Limpo"}
-                              {order.cleanFlatMode === "priority" && "⚠️ Sujos Primeiro"}
-                              {order.cleanFlatMode === "always" && "✅ Todos Liberados"}
+                              🔓 {(order.allowedRoomStatuses || DEFAULT_ALLOWED_ROOM_STATUSES).length}/7 status liberados
                             </Badge>
                             <Badge variant="outline" className="text-[10px] font-normal py-0.5 px-2 bg-muted/40">
                               ⚡ Máx {order.maxSimultaneousFlats} simult.
@@ -1243,131 +1246,15 @@ export default function ServiceOrders() {
                     </div>
                   </div>
 
-                  {/* 2. Modo de Liberação de Flat Limpo (R3/R4) */}
-                  <div className="space-y-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-sm font-semibold flex items-center gap-1.5">
-                        Regra de Liberação de Flats Limpos <span className="text-rose-500">*</span>
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        Define como o sistema lida com quartos que já estão limpos para evitar retrabalho de faxina.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {/* Opção 1: never */}
-                      <div
-                        onClick={() => setFormCleanFlatMode("never")}
-                        className={`cursor-pointer p-4 rounded-xl border-2 transition-all flex flex-col justify-between gap-3 ${
-                          formCleanFlatMode === "never"
-                            ? "border-rose-600 bg-rose-500/10 shadow-xs"
-                            : "border-border/60 hover:border-border hover:bg-muted/30"
-                        }`}
-                      >
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
-                              🚫 Bloquear se estiver limpo
-                            </span>
-                            <div
-                              className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                                formCleanFlatMode === "never"
-                                  ? "border-rose-600 bg-rose-600 text-white"
-                                  : "border-muted-foreground/40"
-                              }`}
-                            >
-                              {formCleanFlatMode === "never" && <Check className="w-2.5 h-2.5" />}
-                            </div>
-                          </div>
-                          <Badge variant="outline" className="text-[10px] text-rose-700 dark:text-rose-300 border-rose-300">
-                            never
-                          </Badge>
-                          <p className="text-xs text-muted-foreground leading-relaxed pt-1">
-                            Bloquear se o flat estiver limpo (não tem pós-checkout nem dirty). O prestador só
-                            pode iniciar flats que já estejam sujos.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Opção 2: priority */}
-                      <div
-                        onClick={() => setFormCleanFlatMode("priority")}
-                        className={`cursor-pointer p-4 rounded-xl border-2 transition-all flex flex-col justify-between gap-3 ${
-                          formCleanFlatMode === "priority"
-                            ? "border-amber-600 bg-amber-500/10 shadow-xs"
-                            : "border-border/60 hover:border-border hover:bg-muted/30"
-                        }`}
-                      >
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
-                              ⚠️ Prioridade para flats sujos
-                            </span>
-                            <div
-                              className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                                formCleanFlatMode === "priority"
-                                  ? "border-amber-600 bg-amber-600 text-white"
-                                  : "border-muted-foreground/40"
-                              }`}
-                            >
-                              {formCleanFlatMode === "priority" && <Check className="w-2.5 h-2.5" />}
-                            </div>
-                          </div>
-                          <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-300 border-amber-300">
-                            priority (Recomendado)
-                          </Badge>
-                          <p className="text-xs text-muted-foreground leading-relaxed pt-1">
-                            Só liberar flat limpo se nenhum outro flat do serviço estiver sujo. Força o
-                            prestador a realizar primeiro os quartos que já estão aguardando faxina.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Opção 3: always */}
-                      <div
-                        onClick={() => setFormCleanFlatMode("always")}
-                        className={`cursor-pointer p-4 rounded-xl border-2 transition-all flex flex-col justify-between gap-3 ${
-                          formCleanFlatMode === "always"
-                            ? "border-emerald-600 bg-emerald-500/10 shadow-xs"
-                            : "border-border/60 hover:border-border hover:bg-muted/30"
-                        }`}
-                      >
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
-                              ✅ Liberar qualquer flat
-                            </span>
-                            <div
-                              className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                                formCleanFlatMode === "always"
-                                  ? "border-emerald-600 bg-emerald-600 text-white"
-                                  : "border-muted-foreground/40"
-                              }`}
-                            >
-                              {formCleanFlatMode === "always" && <Check className="w-2.5 h-2.5" />}
-                            </div>
-                          </div>
-                          <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-300 border-emerald-300">
-                            always
-                          </Badge>
-                          <p className="text-xs text-muted-foreground leading-relaxed pt-1">
-                            Liberar qualquer flat a qualquer momento (com sugestão de prioridade visual para os
-                            quartos sujos no portal).
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 2b. Matriz Granular de Status de Quartos Permitidos */}
+                  {/* 2. Travas de Liberação de Quartos para o Prestador (7 Cenários Operacionais) */}
                   <div className="space-y-3 p-4 rounded-xl border bg-card/60">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="space-y-0.5">
                         <Label className="text-sm font-semibold flex items-center gap-1.5">
-                          Status dos Quartos Permitidos para este Serviço <span className="text-rose-500">*</span>
+                          🔒 Travas de Liberação de Quartos para o Prestador <span className="text-rose-500">*</span>
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          Selecione em quais estados operacionais e de ocupação o prestador tem permissão para intervir.
+                          Defina em quais situações de quarto o <strong>prestador</strong> terá permissão para solicitar entrada e iniciar o serviço. Os flats participantes que estiverem fora dessas travas aparecerão bloqueados com cadeado 🔒 no link do prestador até que mudem de status.
                         </p>
                       </div>
 
@@ -1893,29 +1780,11 @@ export default function ServiceOrders() {
                         </Label>
                         <p className="text-xs text-muted-foreground">
                           {formSelectedFlatIds.length} flat{formSelectedFlatIds.length !== 1 ? "s" : ""} selecionado
-                          {formSelectedFlatIds.length !== 1 ? "s" : ""} de {activeFlats.length} ativos.
+                          {formSelectedFlatIds.length !== 1 ? "s" : ""} de {activeFlats.length} ativos — selecione todos os flats que precisam do serviço independente do status atual (o portal do prestador aplicará as travas configuradas acima).
                         </p>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setFormSelectedFlatIds(dirtyFlats.map((f: any) => f.id))}
-                          className="h-7 text-xs bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-300 hover:bg-amber-500/20"
-                        >
-                          🧹 Selecionar Todos os Sujos ({dirtyFlats.length})
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setFormSelectedFlatIds(cleanFlats.map((f: any) => f.id))}
-                          className="h-7 text-xs bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-300 hover:bg-emerald-500/20"
-                        >
-                          🟢 Selecionar Todos os Limpos ({cleanFlats.length})
-                        </Button>
                         <Button
                           type="button"
                           variant="outline"
@@ -1937,19 +1806,6 @@ export default function ServiceOrders() {
                       </div>
                     </div>
 
-                    {/* Summary badges */}
-                    <div className="flex items-center gap-2 text-xs flex-wrap py-1">
-                      <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[11px] font-semibold">
-                        🧹 Sujos / Pós-Checkout: {dirtyFlats.length}
-                      </Badge>
-                      <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-300 text-[11px] font-semibold">
-                        🟢 Vagos Limpos: {cleanFlats.filter((f: any) => !f.isOccupied).length}
-                      </Badge>
-                      <Badge variant="outline" className="bg-rose-50 text-rose-800 border-rose-300 text-[11px] font-semibold">
-                        🔴 Ocupados: {occupiedFlats.length}
-                      </Badge>
-                    </div>
-
                     {flatsLoading ? (
                       <div className="h-32 flex items-center justify-center">
                         <span className="text-xs text-muted-foreground animate-pulse">
@@ -1957,7 +1813,7 @@ export default function ServiceOrders() {
                         </span>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 gap-2.5">
+                      <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2.5">
                         {activeFlats.map((flat: any) => {
                           const isSelected = formSelectedFlatIds.includes(flat.id);
                           return (
@@ -1970,51 +1826,23 @@ export default function ServiceOrders() {
                                     : [...prev, flat.id]
                                 );
                               }}
-                              className={`cursor-pointer select-none p-2.5 rounded-xl border text-center transition-all flex flex-col items-center justify-between gap-1.5 ${
+                              className={`cursor-pointer select-none p-3 rounded-xl border text-center transition-all flex items-center justify-between gap-2 ${
                                 isSelected
                                   ? "border-primary bg-primary/10 shadow-xs font-semibold text-primary"
                                   : "border-border/60 hover:bg-muted/40 text-muted-foreground"
                               }`}
                             >
-                              <div className="flex items-center justify-between w-full">
-                                <span className="text-base font-bold text-foreground">
-                                  {flat.number}
-                                </span>
-                                <div
-                                  className={`w-4 h-4 rounded border flex items-center justify-center ${
-                                    isSelected
-                                      ? "bg-primary border-primary text-primary-foreground"
-                                      : "border-muted-foreground/40 bg-background"
-                                  }`}
-                                >
-                                  {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                                </div>
-                              </div>
-
-                              <div className="flex flex-col items-center gap-0.5 w-full text-center">
-                                {flat.serviceInProgress ? (
-                                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-sky-100 text-sky-800 border-sky-300">
-                                    ⏳ Em Serviço
-                                  </Badge>
-                                ) : null}
-
-                                {flat.isOccupied ? (
-                                  <span className="text-[10px] text-rose-600 font-semibold truncate w-full" title={flat.currentGuest ? `Hóspede: ${flat.currentGuest}` : "Ocupado"}>
-                                    🔴 Ocupado {flat.currentGuest ? `(${flat.currentGuest.split(' ')[0]})` : ""}
-                                  </span>
-                                ) : flat.hasCheckinToday ? (
-                                  <span className="text-[10px] text-blue-600 font-semibold truncate w-full" title={flat.currentGuest ? `Check-in Hoje: ${flat.currentGuest}` : "Check-in Hoje"}>
-                                    🔵 Check-in Hoje {flat.currentGuest ? `(${flat.currentGuest.split(' ')[0]})` : ""}
-                                  </span>
-                                ) : flat.isDirty ? (
-                                  <span className="text-[10px] text-amber-700 font-medium truncate w-full">
-                                    🧹 Sujo / Checkout
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] text-emerald-700 font-medium truncate w-full">
-                                    🟢 Vago / Limpo
-                                  </span>
-                                )}
+                              <span className="text-base font-bold text-foreground">
+                                {flat.number}
+                              </span>
+                              <div
+                                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                                  isSelected
+                                    ? "bg-primary border-primary text-primary-foreground"
+                                    : "border-muted-foreground/40 bg-background"
+                                }`}
+                              >
+                                {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                               </div>
                             </div>
                           );

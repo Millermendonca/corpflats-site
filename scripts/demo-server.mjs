@@ -7714,7 +7714,7 @@ let existingManualRequests = [];
 // ── Session Auth Helper (with Global Session Revocation Version & HMAC-SHA256) ──
 const AUTH_COOKIE_NAME = "gfm_session_v2";
 const AUTH_SESSION_VERSION = 2;
-const AUTH_SECRET = process.env.AUTH_SECRET || process.env.JWT_SECRET || crypto.createHash("sha256").update(__dirname + "_corpflats_session_hmac_key").digest("hex");
+const AUTH_SECRET = process.env.AUTH_SECRET || process.env.GUEST_SESSION_SECRET || process.env.SESSION_SECRET || process.env.JWT_SECRET || crypto.createHash("sha256").update(__dirname + "_corpflats_session_hmac_key").digest("hex");
 
 function createAuthToken(payload) {
   const dataB64 = Buffer.from(JSON.stringify(payload), "utf-8").toString("base64url");
@@ -12229,6 +12229,36 @@ app.get("/api/service-orders", (req, res) => {
   res.json(list);
 });
 
+// Sincroniza bloqueios de inventário (db.roomBlocks) quando uma OS interdita apartamentos
+function syncServiceOrderRoomBlocks(order, isDeleted = false) {
+  if (!order || !order.id) return;
+  if (!Array.isArray(db.roomBlocks)) db.roomBlocks = [];
+  db.roomBlocks = db.roomBlocks.filter(b => b.serviceOrderId !== order.id);
+
+  if (isDeleted || order.status !== "active" || (!order.blockFlats && !order.interdictFlats)) {
+    return;
+  }
+
+  const todayStr = getTodayStr();
+  const startDate = order.blockStartDate || todayStr;
+  const endDate = order.blockEndDate || getOffsetDateStr(1);
+
+  for (const f of (order.flats || [])) {
+    if (f.status === "done") continue;
+    const nextBlockId = db.roomBlocks.length > 0 ? Math.max(...db.roomBlocks.map(b => Number(b.id) || 0)) + 1 : 1;
+    db.roomBlocks.push({
+      id: nextBlockId,
+      flatId: Number(f.flatId),
+      flatNumber: String(f.flatNumber),
+      startDate,
+      endDate,
+      reason: `OS Manutenção: ${order.title}`,
+      serviceOrderId: order.id,
+      createdAt: new Date().toISOString()
+    });
+  }
+}
+
 // POST /api/service-orders — Cria nova ordem de serviço (Admin)
 app.post("/api/service-orders", (req, res) => {
   const userAuth = getAuthUser(req);
@@ -12246,7 +12276,11 @@ app.post("/api/service-orders", (req, res) => {
     instructionFormat = "text",
     flats = [],
     defaultInstructions = "",
-    notificationRecipients = []
+    notificationRecipients = [],
+    blockFlats = false,
+    interdictFlats = false,
+    blockStartDate = null,
+    blockEndDate = null
   } = req.body || {};
 
   if (!title || !String(title).trim()) {
@@ -12307,6 +12341,10 @@ app.post("/api/service-orders", (req, res) => {
     estimatedDurationHours: estimatedDurationHours ? Number(estimatedDurationHours) : null,
     instructionFormat: instructionFormat === "list" ? "list" : "text",
     notificationRecipients: Array.isArray(notificationRecipients) ? notificationRecipients : [],
+    blockFlats: Boolean(blockFlats || interdictFlats),
+    interdictFlats: Boolean(blockFlats || interdictFlats),
+    blockStartDate: blockStartDate || null,
+    blockEndDate: blockEndDate || null,
     flats: formattedFlats,
     workerPhone: req.body.workerPhone || req.body.mainWorker?.phone || null
   };
@@ -12332,13 +12370,14 @@ app.post("/api/service-orders", (req, res) => {
 
   if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
   db.serviceOrders.unshift(newOrder);
+  syncServiceOrderRoomBlocks(newOrder);
   saveDatabase("create_service_order");
   try {
     const todayStr = getTodayStr();
     notifyPmsMutation(db, {
       type: "service_order_created",
-      minDate: todayStr,
-      maxDate: todayStr
+      minDate: newOrder.blockStartDate || todayStr,
+      maxDate: newOrder.blockEndDate || todayStr
     });
   } catch (_) {}
 
@@ -12347,7 +12386,7 @@ app.post("/api/service-orders", (req, res) => {
     category: "cleaning",
     action: "SERVICE_ORDER_CREATED",
     actor: { id: userAuth.id, name: userAuth.username, role: userAuth.role },
-    details: { orderId: newOrder.id, title: newOrder.title, flatsCount: newOrder.flats.length }
+    details: { orderId: newOrder.id, title: newOrder.title, flatsCount: newOrder.flats.length, blockFlats: newOrder.blockFlats }
   });
 
   res.status(201).json(newOrder);
@@ -12403,6 +12442,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
   if (body.notificationRecipients !== undefined) order.notificationRecipients = Array.isArray(body.notificationRecipients) ? body.notificationRecipients : [];
   if (body.workerPhone !== undefined) order.workerPhone = String(body.workerPhone || "").replace(/\D/g, "");
+  if (body.blockFlats !== undefined || body.interdictFlats !== undefined) {
+    const shouldBlock = Boolean(body.blockFlats ?? body.interdictFlats);
+    order.blockFlats = shouldBlock;
+    order.interdictFlats = shouldBlock;
+  }
+  if (body.blockStartDate !== undefined) order.blockStartDate = body.blockStartDate;
+  if (body.blockEndDate !== undefined) order.blockEndDate = body.blockEndDate;
 
   if (Array.isArray(body.flats)) {
     for (const f of body.flats) {
@@ -12456,13 +12502,14 @@ app.patch("/api/service-orders/:id", (req, res) => {
   }
 
   order.updatedAt = new Date().toISOString();
+  syncServiceOrderRoomBlocks(order);
   saveDatabase("update_service_order");
   try {
     const todayStr = getTodayStr();
     notifyPmsMutation(db, {
       type: "service_order_updated",
-      minDate: todayStr,
-      maxDate: todayStr
+      minDate: order.blockStartDate || todayStr,
+      maxDate: order.blockEndDate || todayStr
     });
   } catch (_) {}
 
@@ -12480,6 +12527,7 @@ app.delete("/api/service-orders/:id", (req, res) => {
   if (idx === -1) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
 
   const removed = db.serviceOrders.splice(idx, 1)[0];
+  syncServiceOrderRoomBlocks(removed, true);
   if (Array.isArray(db.serviceWorkers)) {
     db.serviceWorkers = db.serviceWorkers.filter(w => w.serviceOrderId !== removed.id && w.token !== removed.token);
   }
@@ -17666,14 +17714,15 @@ function findReservationByLocatorOrContact(query) {
     if (r) return r;
   }
 
-  // 5. Nome do hóspede ou solicitante (se tiver 3 ou mais letras)
+  // 5. Nome completo do hóspede ou solicitante (exige correspondência exata ou ao menos nome + sobrenome com 6+ caracteres para evitar enumeração por 3 letras)
   const normQuery = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-  if (normQuery.length >= 3 && /[a-zA-Z]/.test(normQuery)) {
+  const queryWords = normQuery.split(/\s+/).filter(Boolean);
+  if (normQuery.length >= 6 && queryWords.length >= 2 && /[a-zA-Z]/.test(normQuery)) {
     r = db.reservations.slice().reverse().find(resItem => {
       const names = getAllReservationNames(resItem);
       return names.some(n => {
         const normN = String(n).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-        return normN.includes(normQuery) || normQuery.includes(normN);
+        return normN === normQuery || normN.includes(normQuery);
       });
     });
     if (r) return r;
@@ -17857,8 +17906,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       cancellationReason: r.cancellationReason || null,
       refundStatus: r.refundStatus || null,
       refundAmount: Number(r.refundAmount) || 0,
-      doorPassword: isCancelledRes ? null : (r.doorPassword || null),
-      accessCode: isCancelledRes ? null : (r.accessCode || null),
+      doorPassword: (!isCancelledRes && isPaid && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.doorPassword || null) : null,
+      accessCode: (!isCancelledRes && isPaid && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.accessCode || null) : null,
       guestName: r.guestName,
       guestPhone: r.guestPhone,
       guestEmail: r.guestEmail,
@@ -21288,6 +21337,10 @@ app.get("/api/pms/guests/:id", (req, res) => {
 
 // Exportação da base de Hóspedes em CSV
 app.get("/api/pms/guests/export/csv", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito à administração e recepção." });
+  }
   if (!db.guests) db.guests = [];
   reconcileAndMergeGuests(db);
 
@@ -21393,16 +21446,22 @@ const handleUpdateGuest = async (req, res) => {
     guest.ibgeCode = ib;
     guest.codigoMunicipio = ib;
   }
-  if (req.body.vehicle !== undefined || req.body.vehiclePlate !== undefined || req.body.vehicleBrand !== undefined || req.body.vehicleModel !== undefined || req.body.vehicleColor !== undefined) {
+  const prefVehiclePlate = req.body.preferences?.vehiclePlate !== undefined
+    ? String(req.body.preferences.vehiclePlate || "").toUpperCase().trim()
+    : undefined;
+  if (req.body.vehicle !== undefined || req.body.vehiclePlate !== undefined || req.body.vehicleBrand !== undefined || req.body.vehicleModel !== undefined || req.body.vehicleColor !== undefined || prefVehiclePlate !== undefined) {
     if (req.body.vehicle === null) {
       guest.vehicle = null;
       guest.vehiclePlate = "";
       guest.vehicleBrand = "";
       guest.vehicleModel = "";
       guest.vehicleColor = "";
+      if (guest.preferences && typeof guest.preferences === "object") {
+        guest.preferences.vehiclePlate = "";
+      }
     } else {
       const vObj = typeof req.body.vehicle === "object" && req.body.vehicle ? req.body.vehicle : {};
-      const plate = String(vObj.plate ?? req.body.vehiclePlate ?? guest.vehiclePlate ?? "").toUpperCase().trim();
+      const plate = String(vObj.plate ?? req.body.vehiclePlate ?? prefVehiclePlate ?? guest.vehiclePlate ?? "").toUpperCase().trim();
       const brand = String(vObj.brand ?? req.body.vehicleBrand ?? guest.vehicleBrand ?? "").trim();
       const model = String(vObj.model ?? req.body.vehicleModel ?? guest.vehicleModel ?? "").trim();
       const color = String(vObj.color ?? req.body.vehicleColor ?? guest.vehicleColor ?? "").trim();
@@ -21411,6 +21470,9 @@ const handleUpdateGuest = async (req, res) => {
       guest.vehicleModel = model;
       guest.vehicleColor = color;
       guest.vehicle = plate ? { plate, brand, model, color } : null;
+      if (guest.preferences && typeof guest.preferences === "object") {
+        guest.preferences.vehiclePlate = plate;
+      }
     }
   }
   if (req.body.companyId !== undefined) {
@@ -21521,6 +21583,7 @@ const handleUpdateGuest = async (req, res) => {
   // Sincronização Bidirecional Atômica CRM -> Minha Conta (db.guestAccounts) e Reservas
   syncBidirectionalGuestProfile(db, guest, {
     ...req.body,
+    ...(prefVehiclePlate !== undefined && req.body.vehiclePlate === undefined ? { vehiclePlate: prefVehiclePlate } : {}),
     previousEmail,
     previousDoc,
     previousPhone,
@@ -21596,7 +21659,7 @@ app.post("/api/pms/guests", async (req, res) => {
     if (c) resolvedCompName = c.corporateName || c.tradeName;
   }
 
-  const vPlate = String(vehicle?.plate || vehiclePlate || "").toUpperCase().trim();
+  const vPlate = String(vehicle?.plate || vehiclePlate || preferences?.vehiclePlate || "").toUpperCase().trim();
   const vBrand = String(vehicle?.brand || vehicleBrand || "").trim();
   const vModel = String(vehicle?.model || vehicleModel || "").trim();
   const vColor = String(vehicle?.color || vehicleColor || "").trim();
@@ -23578,6 +23641,10 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     for (let i = 1; i < matchingAccounts.length; i++) {
       const dupAcc = matchingAccounts[i];
       if (dupAcc.id === account.id) continue;
+      // Nunca funde/deleta duas contas distintas que possuem credenciais próprias conflitantes
+      const bothHavePassword = Boolean(account.passwordHash && dupAcc.passwordHash);
+      const bothHaveDifferentGoogle = Boolean(account.googleSub && dupAcc.googleSub && account.googleSub !== dupAcc.googleSub);
+      if (bothHavePassword || bothHaveDifferentGoogle) continue;
       if (!account.passwordHash && dupAcc.passwordHash) account.passwordHash = dupAcc.passwordHash;
       if (!account.googleSub && dupAcc.googleSub) account.googleSub = dupAcc.googleSub;
       if (Array.isArray(dupAcc.passkeys) && dupAcc.passkeys.length > 0) {
@@ -23589,14 +23656,30 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     }
   }
 
-  // 3. Resolve valores canônicos unificados (updates explícitos têm precedência, depois accountOrGuest, depois guest/account existente)
+  // 3. Resolve valores canônicos unificados (updates explícitos têm precedência)
+  const isHydrationOnly = Object.keys(updates).length === 0;
   const pickVal = (keys, fallback = "") => {
     for (const k of keys) {
       if (hasExplicit(k) && updates[k] !== null) return typeof updates[k] === "string" ? updates[k].trim() : updates[k];
     }
+    if (isHydrationOnly) {
+      // Durante hidratação passiva, prioriza dados ricos já presentes no CRM (guest) antes de defaults da conta
+      for (const k of keys) {
+        if (guest && guest[k] !== undefined && guest[k] !== null && String(guest[k]).trim() !== "") {
+          const gVal = typeof guest[k] === "string" ? guest[k].trim() : guest[k];
+          if ((k === "name" || k === "fullName") && /^h[oó]spede(\s+\d+)?$/i.test(String(gVal))) continue;
+          return gVal;
+        }
+      }
+    }
     for (const k of keys) {
       if (accountOrGuest && accountOrGuest[k] !== undefined && accountOrGuest[k] !== null && String(accountOrGuest[k]).trim() !== "") {
-        return typeof accountOrGuest[k] === "string" ? accountOrGuest[k].trim() : accountOrGuest[k];
+        const aVal = typeof accountOrGuest[k] === "string" ? accountOrGuest[k].trim() : accountOrGuest[k];
+        // Evita que UF default ("RJ") de uma conta sem endereço sobrescreva a UF real do CRM
+        if ((k === "state" || k === "uf" || k === "estado") && aVal === "RJ" && !accountOrGuest.city && !accountOrGuest.street && guest?.state) {
+          continue;
+        }
+        return aVal;
       }
     }
     for (const k of keys) {
@@ -23637,7 +23720,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     finalVehicle = null;
   } else {
     const existingVeh = {
-      plate: guest.vehiclePlate || guest.vehicle?.plate || account?.vehicle?.plate || "",
+      plate: guest.vehiclePlate || guest.vehicle?.plate || guest.preferences?.vehiclePlate || account?.vehicle?.plate || "",
       brand: guest.vehicleBrand || guest.vehicle?.brand || account?.vehicle?.brand || "",
       model: guest.vehicleModel || guest.vehicle?.model || account?.vehicle?.model || "",
       color: guest.vehicleColor || guest.vehicle?.color || account?.vehicle?.color || ""
@@ -23645,8 +23728,9 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     const srcVeh = (hasExplicit("vehicle") && typeof updates.vehicle === "object" && updates.vehicle)
       ? updates.vehicle
       : (accountOrGuest?.vehicle && typeof accountOrGuest.vehicle === "object" ? accountOrGuest.vehicle : {});
+    const explicitPrefPlate = updates.preferences?.vehiclePlate !== undefined ? updates.preferences.vehiclePlate : undefined;
     const vPlate = String(
-      (srcVeh.plate !== undefined ? srcVeh.plate : (hasExplicit("vehiclePlate") ? updates.vehiclePlate : existingVeh.plate)) || ""
+      (srcVeh.plate !== undefined ? srcVeh.plate : (hasExplicit("vehiclePlate") ? updates.vehiclePlate : (explicitPrefPlate !== undefined ? explicitPrefPlate : existingVeh.plate))) || ""
     ).toUpperCase().trim();
     const vBrand = String(
       (srcVeh.brand !== undefined ? srcVeh.brand : (hasExplicit("vehicleBrand") ? updates.vehicleBrand : existingVeh.brand)) || ""
@@ -23742,12 +23826,18 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     guest.vehicleModel = finalVehicle.model;
     guest.vehicleColor = finalVehicle.color;
     guest.vehicle = { ...finalVehicle };
+    if (guest.preferences && typeof guest.preferences === "object") {
+      guest.preferences.vehiclePlate = finalVehicle.plate;
+    }
   } else if (hasExplicit("vehicle") && updates.vehicle === null) {
     guest.vehiclePlate = "";
     guest.vehicleBrand = "";
     guest.vehicleModel = "";
     guest.vehicleColor = "";
     guest.vehicle = null;
+    if (guest.preferences && typeof guest.preferences === "object") {
+      guest.preferences.vehiclePlate = "";
+    }
   }
   if (finalCompanyData) {
     guest.companyData = { ...finalCompanyData };
@@ -24708,6 +24798,23 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     if (cep || req.body.cep) r.guestCep = cep || req.body.cep;
     if (originCity || req.body.originCity) r.originCity = originCity || req.body.originCity;
     if (originState || req.body.originState) r.originState = originState || req.body.originState;
+    if (req.body.estimatedArrivalTime) {
+      const etaVal = String(req.body.estimatedArrivalTime).trim();
+      r.estimatedArrivalTime = etaVal;
+      targetGuest.estimatedArrivalTime = etaVal;
+      if (isEarlyOrNearCheckinTime(etaVal)) {
+        const cleanReq = (db.cleaningRequests || []).find(c =>
+          (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+          (c.requestDate === r.checkinDate || c.effectiveDate === r.checkinDate) &&
+          c.status !== "clean"
+        );
+        if (cleanReq) {
+          cleanReq.isPriority = true;
+          cleanReq.priorityReason = `Hóspede informou previsão de chegada (${etaVal}) no Check-in Digital.`;
+          cleanReq.updatedAt = now;
+        }
+      }
+    }
     if (selfieUrl) r.selfieUrl = selfieUrl;
     if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
     if (signatureUrl) r.signatureUrl = signatureUrl;
@@ -34276,6 +34383,15 @@ app.post("/api/pms/inter/create-charge", async (req, res) => {
 // 6.2 Webhook Oficial Banco Inter (Notificação de Pagamento Instantâneo)
 app.post("/api/pms/inter/webhook", (req, res) => {
   try {
+    const configuredSecret = process.env.INTER_WEBHOOK_SECRET || db.settings?.interWebhookSecret;
+    if (configuredSecret) {
+      const providedSecret = req.headers["x-inter-webhook-secret"] || req.headers["x-webhook-secret"] || req.query?.secret || "";
+      if (providedSecret !== configuredSecret) {
+        console.warn("[Banco Inter Webhook] Rejeitado por token de webhook inválido.");
+        return res.status(401).json({ error: "Unauthorized webhook request." });
+      }
+    }
+
     const { pix } = req.body;
     console.log("[Banco Inter Webhook] Notificação recebida:", JSON.stringify(req.body));
 
@@ -34292,17 +34408,25 @@ app.post("/api/pms/inter/webhook", (req, res) => {
             (txid === "PIX_SANDBOX_TX_001" && resItem.code === "RES-TEST-PIX-PENDING")
           );
           if (r) {
-            r.paymentStatus = "pago_total";
-            r.paidAmount = valorPago || r.totalAmount;
+            const expectedTotal = Number(r.totalAmount) || 0;
+            const newPaidAmount = valorPago > 0 ? valorPago : expectedTotal;
+            const isFullPayment = expectedTotal <= 0 || newPaidAmount >= (expectedTotal - 0.05);
+
+            r.paymentStatus = isFullPayment ? "pago_total" : "pago_parcial";
+            r.paidAmount = newPaidAmount;
             r.paidAt = item.horario || new Date().toISOString();
             r.pixEndToEndId = item.endToEndId;
 
             createNotification({
               category: "checkout",
-              title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
-              message: `Reserva ${r.code} paga instantaneamente via Banco Inter por ${r.guestName}!`,
-              severity: "success",
-              metadata: { reservationCode: r.code, txid, amount: valorPago },
+              title: isFullPayment
+                ? `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`
+                : `⚠️ PIX Parcial Recebido: R$ ${valorPago.toLocaleString("pt-BR")} / R$ ${expectedTotal.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
+              message: isFullPayment
+                ? `Reserva ${r.code} paga instantaneamente via Banco Inter por ${r.guestName}!`
+                : `Pagamento parcial recebido na reserva ${r.code} (${r.guestName}). Valor pago: R$ ${valorPago.toFixed(2)} de R$ ${expectedTotal.toFixed(2)}.`,
+              severity: isFullPayment ? "success" : "warning",
+              metadata: { reservationCode: r.code, txid, amount: valorPago, isFullPayment },
               targetUrl: `/reservas`
             });
           }
@@ -35902,6 +36026,24 @@ app.post("/api/admin/server-monitor/trigger-gc", (req, res) => {
 // 8.4 Middleware Global de Captura de Erros Express
 app.use((err, req, res, next) => {
   console.error("[EXPRESS UNHANDLED ERROR]", err);
+  let safeBody = req.body;
+  if (req.body && typeof req.body === "object" && !Array.isArray(req.body)) {
+    const SENSITIVE_KEYS = new Set([
+      "password", "currentPassword", "newPassword", "passphrase", "certPassword",
+      "token", "clientSecret", "apiKey", "cardNumber", "cvv", "securityCode",
+      "pfxBase64", "certPem", "keyPem", "selfieBase64", "docPhotoBase64", "signatureBase64"
+    ]);
+    safeBody = {};
+    for (const [k, v] of Object.entries(req.body)) {
+      if (SENSITIVE_KEYS.has(k) || /password|secret|token|cvv|base64/i.test(k)) {
+        safeBody[k] = "[REDACTED]";
+      } else if (typeof v === "string" && v.length > 500) {
+        safeBody[k] = `${v.slice(0, 200)}... [TRUNCATED]`;
+      } else {
+        safeBody[k] = v;
+      }
+    }
+  }
   logAuditEvent({
     level: "error",
     category: "system",
@@ -35910,7 +36052,7 @@ app.use((err, req, res, next) => {
     details: {
       message: err.message,
       stack: err.stack,
-      body: req.body,
+      body: safeBody,
       query: req.query
     },
     ip: req.ip || req.headers["x-forwarded-for"] || "",
@@ -37032,8 +37174,52 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
   ensureMaidPaymentsDb();
   syncMaidCredits(targetId);
 
+  let refStart = null;
+  let refEnd = null;
+  let computedReferencePeriod = referencePeriod;
+  if (computedReferencePeriod && computedReferencePeriod.includes("_")) {
+    [refStart, refEnd] = computedReferencePeriod.split("_");
+  } else {
+    const bNow = getBrasiliaNowCanonical();
+    const [year, month, day] = bNow.date.split("-").map(Number);
+    const isFirstHalf = day <= 15;
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+    refStart = isFirstHalf 
+      ? `${year}-${String(month).padStart(2, "0")}-01` 
+      : `${year}-${String(month).padStart(2, "0")}-16`;
+    refEnd = isFirstHalf 
+      ? `${year}-${String(month).padStart(2, "0")}-15` 
+      : `${year}-${String(month).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
+    computedReferencePeriod = `${refStart}_${refEnd}`;
+  }
+
+  // Proteção anti-duplicidade (idempotência determinística contra duplo clique / reenvio acidental)
+  if (type === "payment" && !req.body?.forceDuplicate) {
+    const fiveMinAgoMs = Date.now() - (5 * 60 * 1000);
+    const recentDuplicate = (db.maidPayments || []).find(p =>
+      Number(p.userId) === targetId &&
+      p.type === "payment" &&
+      p.referencePeriod === computedReferencePeriod &&
+      Math.abs((Number(p.amount) || 0) - numAmount) < 0.01 &&
+      !p.reversedAt &&
+      p.interStatus !== "FALHA" &&
+      p.interStatus !== "ESTORNADO" &&
+      new Date(p.createdAt || 0).getTime() >= fiveMinAgoMs
+    );
+    if (recentDuplicate) {
+      return res.status(409).json({
+        error: `Pagamento duplicado bloqueado: já foi realizado um PIX de R$ ${numAmount.toFixed(2)} para ${user.name || user.username} na quinzena ${computedReferencePeriod} há menos de 5 minutos.`,
+        duplicatePaymentId: recentDuplicate.id
+      });
+    }
+  }
+
   const paymentId = generatePaymentId();
-  const idempotencyKey = paymentId;
+  const idempotencyKey = req.body?.idempotencyKey || (
+    type === "payment"
+      ? `MAID_${targetId}_${computedReferencePeriod}_${Math.round(numAmount * 100)}`
+      : paymentId
+  );
   const pixKey = user.pixKey || "";
 
   let interResult = null;
@@ -37062,27 +37248,9 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
     };
   }
 
-  let refStart = null;
-  let refEnd = null;
-  let computedReferencePeriod = referencePeriod;
-  if (computedReferencePeriod && computedReferencePeriod.includes("_")) {
-    [refStart, refEnd] = computedReferencePeriod.split("_");
-  } else {
-    const bNow = getBrasiliaNowCanonical();
-    const [year, month, day] = bNow.date.split("-").map(Number);
-    const isFirstHalf = day <= 15;
-    const lastDayOfMonth = new Date(year, month, 0).getDate();
-    refStart = isFirstHalf 
-      ? `${year}-${String(month).padStart(2, "0")}-01` 
-      : `${year}-${String(month).padStart(2, "0")}-16`;
-    refEnd = isFirstHalf 
-      ? `${year}-${String(month).padStart(2, "0")}-15` 
-      : `${year}-${String(month).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
-    computedReferencePeriod = `${refStart}_${refEnd}`;
-  }
-
   const payment = {
     id: paymentId,
+    idempotencyKey,
     userId: targetId,
     type,
     amount: numAmount,

@@ -2,6 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawn, execSync } from 'node:child_process';
 
 describe('Service Worker Public Portal (R5) Verification Suite', () => {
@@ -328,7 +329,10 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
     const isolatedDbPath = path.resolve('data/isolated-worker-portal-database.json');
     let serverProcess = null;
 
-    const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString('base64');
+    const TEST_AUTH_SECRET = 'test-worker-portal-hmac-secret';
+    const dataB64 = Buffer.from(JSON.stringify({ v: 2, id: 1 }), 'utf-8').toString('base64url');
+    const sig = crypto.createHmac('sha256', TEST_AUTH_SECRET).update(dataB64).digest('base64url');
+    const adminToken = `${dataB64}.${sig}`;
     const adminHeaders = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${adminToken}`,
@@ -353,7 +357,7 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
       }
 
       serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-        env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
+        env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', AUTH_SECRET: TEST_AUTH_SECRET, DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
         stdio: 'pipe',
       });
 
@@ -544,6 +548,27 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
       assert.ok(adminOrdersContent.includes('Qualquer Vago'), 'Admin presets must include "Qualquer Vago"');
       assert.ok(adminOrdersContent.includes('Selecionar Todos'), 'Admin presets must include "Selecionar Todos"');
     });
+
+    it('groups flats into 4 visual sections in Worker Portal and keeps Admin flat selection independent of status', () => {
+      assert.ok(portalContent.includes('⚡ Em Andamento'), 'Portal must render Em Andamento section');
+      assert.ok(portalContent.includes('✅ Liberados para Iniciar'), 'Portal must render Liberados para Iniciar section');
+      assert.ok(portalContent.includes('🔒 Aguardando Liberação — Bloqueados pelas Travas'), 'Portal must render Aguardando Liberação (Bloqueados) section');
+      assert.ok(portalContent.includes('🏁 Finalizados'), 'Portal must render Finalizados section');
+
+      assert.ok(
+        adminOrdersContent.includes('Travas de Liberação de Quartos para o Prestador'),
+        'Admin page must feature unified Travas de Liberação de Quartos para o Prestador section'
+      );
+      assert.ok(
+        !adminOrdersContent.includes('Selecionar Todos os Sujos'),
+        'Admin flat selection must be status-independent without Selecionar Todos os Sujos filter'
+      );
+      assert.ok(
+        !adminOrdersContent.includes('Selecionar Todos os Limpos'),
+        'Admin flat selection must be status-independent without Selecionar Todos os Limpos filter'
+      );
+    });
   });
 });
+
 
