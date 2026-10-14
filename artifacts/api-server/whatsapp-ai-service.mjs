@@ -116,6 +116,12 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
   * Trate isso ESTRITAMENTE como consulta de COTAÇÃO/TARIFA, NUNCA como uma dúvida operacional sobre entrega de bandeja de café!
   * Apresente os valores das diárias de forma clara, acolhedora e objetiva (ex: diária direta a partir de R$ 237,00 sem café (+ taxa única de limpeza de R$ 70,00); com café da manhã no quarto por apenas R$ 35,00/pessoa adicional, totalizando a partir de R$ 272,00 para 1 pessoa, com o grande benefício de ISENÇÃO TOTAL da taxa de limpeza!).
   * Pergunte para quais datas (entrada e saída) a pessoa deseja se hospedar para consultar a disponibilidade e fornecer o orçamento exato.
+5.1. Solicitação de Reserva e Regra Anti-Repetição de Cotação:
+- Quando o hóspede solicitar reserva ("reserva pra mim por favor", "quero reservar", "faz uma reserva", "como faço para reservar?", "quero fechar"):
+  * Se a cotação/tabela de diárias já foi informada anteriormente ou se o hóspede ainda não especificou as datas de estadia: NUNCA repita a tabela de preços!
+  * Acolha o pedido com simpatia e pergunte diretamente pelas datas de check-in, check-out e para quantas pessoas será a estadia (ex: "Com certeza, Miller! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨").
+  * Se as operações automáticas de criação de reserva estiverem desativadas: esclareça que a equipe da recepção finalizará a reserva e solicite as datas para adiantar o processo.
+  * NUNCA envie respostas idênticas ou repetitivas à mensagem anterior do bot.
 6. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
 7. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.
 8. ARQUITETURA EM DUAS VIAS E AUTO-AVALIAÇÃO CRÍTICA OBRIGATÓRIA:
@@ -210,6 +216,14 @@ export function getWhatsAppAiConfig(db) {
   * Trate isso ESTRITAMENTE como consulta de COTAÇÃO/TARIFA, NUNCA como uma dúvida operacional sobre entrega de bandeja de café!
   * Apresente os valores das diárias de forma clara, acolhedora e objetiva (ex: diária direta a partir de R$ 237,00 sem café (+ taxa única de limpeza de R$ 70,00); com café da manhã no quarto por apenas R$ 35,00/pessoa adicional, totalizando a partir de R$ 272,00 para 1 pessoa, com o grande benefício de ISENÇÃO TOTAL da taxa de limpeza!).
   * Pergunte para quais datas (entrada e saída) a pessoa deseja se hospedar para consultar a disponibilidade e fornecer o orçamento exato.`;
+      }
+      if (!current.systemPrompt.includes("Solicitação de Reserva e Regra Anti-Repetição de Cotação") && !current.systemPrompt.includes("5.1. Solicitação de Reserva")) {
+        current.systemPrompt = current.systemPrompt + `\n\n5.1. Solicitação de Reserva e Regra Anti-Repetição de Cotação:
+- Quando o hóspede solicitar reserva ("reserva pra mim por favor", "quero reservar", "faz uma reserva", "como faço para reservar?", "quero fechar"):
+  * Se a cotação/tabela de diárias já foi informada anteriormente ou se o hóspede ainda não especificou as datas de estadia: NUNCA repita a tabela de preços!
+  * Acolha o pedido com simpatia e pergunte diretamente pelas datas de check-in, check-out e para quantas pessoas será a estadia (ex: "Com certeza, Miller! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨").
+  * Se as operações automáticas de criação de reserva estiverem desativadas: esclareça que a equipe da recepção finalizará a reserva e solicite as datas para adiantar o processo.
+  * NUNCA envie respostas idênticas ou repetitivas à mensagem anterior do bot.`;
       }
     }
     if (!current.knowledgeBase) current.knowledgeBase = { ...DEFAULT_AI_CONFIG.knowledgeBase };
@@ -4401,7 +4415,7 @@ export function isAvailabilityInquiry(text = "") {
 
 /**
  * Detecta se a mensagem é uma solicitação ou intenção explícita de realizar/fazer uma reserva
- * (ex: "reserva pra mim por favor", "quero reservar", "faz uma reserva", "reservar agora")
+ * (ex: "reserva pra mim por favor", "quero reservar", "faz uma reserva", "reservar agora", "como faço pra reservar?")
  */
 export function isReservationBookingRequest(text = "") {
   if (!text || typeof text !== "string") return false;
@@ -4418,14 +4432,17 @@ export function isReservationBookingRequest(text = "") {
   if (/(?:minhas?\s+reservas?|minha\s+estadia|status\s+da\s+reserva|reserva\s+confirmada|estou\s+hospedado)/i.test(norm)) return false;
 
   return (
-    /\b(?:reserva|reservar|reserve)\s+(?:pra|para|pro|por)\s+mim\b/i.test(norm) ||
-    /\b(?:quero|desejo|gostaria\s+de|preciso|pode|consegue|faz|fazer|efetuar|fechar|confirmar|realizar|garantir)\s+(?:uma\s+|a\s+|minha\s+)?reserva\b/i.test(norm) ||
-    /\b(?:quero|desejo|gostaria\s+de|preciso)\s+(?:reservar|fechar|alugar)(?:\s+um\s+flat|\s+um\s+quarto|\s+agora|\s+hoje)?\b/i.test(norm) ||
-    /\b(?:faz|fazer|fa[cç]a|pode\s+fazer|faria)\s+(?:a\s+|uma\s+|minha\s+)?reserva\b/i.test(norm) ||
-    /\b(?:como\s+fa[cç]o\s+para\s+reservar|como\s+reservar|como\s+fa[cç]o\s+a\s+reserva)\b/i.test(norm) ||
-    /\b(?:reserva\s+a[ií]|reserva\s+l[aá]|vamos\s+reservar|vamos\s+fechar)\b/i.test(norm) ||
+    /\b(?:por\s+favor\s*,?\s*)?(?:reserva|reservar|reserve)\s*(?:a[ií]|l[aá])?\s*(?:pra|para|pro|por)\s*(?:mim|n[oó]s|(?:a\s+)?gente)\b/i.test(norm) ||
+    /\b(?:por\s+favor\s*,?\s*)?(?:reserva|reservar|reserve)\s+(?:por\s+favor|pfv?|pvr|a[ií]|l[aá])\b/i.test(norm) ||
+    (/\b(?:por\s+favor\s*,?\s+)?(?:reserva|reservar|reserve)\b/i.test(norm) && /^(?:por\s+favor\s*,?\s*)?(?:reserva|reservar|reserve)[.!]?$/i.test(norm)) ||
+    /\b(?:como\s+(?:fa[cç]o|fazer)\s+(?:para|pra)\s+reservar|como\s+reservar|como\s+(?:fa[cç]o|fazer)\s+a\s+reserva)\b/i.test(norm) ||
+    /\b(?:quero|desejo|gostaria\s+de|preciso|pode|consegue|faz|fazer|efetuar|fechar|confirmar|realizar|garantir)\s+(?:uma\s+|a\s+|minha\s+)?reserva(?:\s+(?:pra|para|pro)\s+(?:mim|n[oó]s|(?:a\s+)?gente))?\b/i.test(norm) ||
+    /\b(?:quero|desejo|gostaria\s+de|preciso|vamos)\s+(?:reservar|fechar|alugar)(?:\s+(?:um\s+)?(?:flat|quarto|estadia|apto|\d+\s+di[aá]rias?|\d+\s+noites?|agora|hoje))?\b/i.test(norm) ||
+    /\b(?:faz|fazer|fa[cç]a|pode\s+fazer|faria|fecha|fechar|feche|pode\s+fechar)\s+(?:a\s+|uma\s+|minha\s+)?reserva(?:\s+(?:pra|para|pro)\s+(?:mim|n[oó]s|(?:a\s+)?gente))?\b/i.test(norm) ||
+    /\b(?:fecha|fechar|feche)\s*(?:a[ií]|l[aá])?\s*(?:pra|para|pro)\s+(?:mim|n[oó]s|(?:a\s+)?gente)\b/i.test(norm) ||
+    /\b(?:reserva\s+a[ií]|reserva\s+l[aá]|vamos\s+reservar|vamos\s+fechar|fechar\s+(?:a\s+)?reserva)\b/i.test(norm) ||
     /\b(?:pode\s+reservar|pode\s+fechar|prosseguir\s+com\s+a\s+reserva|dar\s+andamento\s+na\s+reserva)\b/i.test(norm) ||
-    /^(?:reserva|reservar|reserve)[.!]?$/i.test(norm)
+    /^(?:por\s+favor\s*,?\s*)?(?:reserva|reservar|reserve|fechar|feche)[.!]?$/i.test(norm)
   );
 }
 
@@ -4438,11 +4455,27 @@ export function hasRecentlySentPricingQuote(history = []) {
   return recentMessages.some(m => {
     if (!m || !m.fromMe || !m.text) return false;
     const t = String(m.text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return (
-      (t.includes("no canal direto da corpflats") || t.includes("diarias para flats executivos completos")) ||
-      (t.includes("qual periodo voce pretende se hospedar") && t.includes("datas de entrada e saida")) ||
-      (t.includes("sem cafe:") && t.includes("com cafe da manha no quarto:"))
-    );
+
+    // 1. Padrões textuais do banner oficial
+    if (
+      t.includes("no canal direto da corpflats") ||
+      t.includes("diarias para flats executivos") ||
+      (t.includes("qual periodo voce pretende se hospedar") && (t.includes("datas de entrada") || t.includes("datas"))) ||
+      (t.includes("sem cafe") && t.includes("com cafe da manha"))
+    ) {
+      return true;
+    }
+
+    // 2. Detecção semântica ampla de mensagem contendo tarifas e valores de diárias
+    const mentionsRates = /\b(?:r\$\s*237|r\$\s*272|r\$\s*307|r\$\s*\d{2,3}(?:,\d{2})?)\b/i.test(t);
+    const mentionsDiarias = /\b(?:di[aá]rias?|sem\s+caf[eé]|com\s+caf[eé]|taxa.*limpeza)\b/i.test(t);
+    const asksDatesOrPeriod = /\b(?:qual\s+per[ií]odo|quais\s+datas|datas?\s+de\s+entrada|quantas\s+pessoas)\b/i.test(t);
+
+    if (mentionsRates && (mentionsDiarias || asksDatesOrPeriod)) {
+      return true;
+    }
+
+    return false;
   });
 }
 
@@ -4485,11 +4518,19 @@ export function areMessagesSubstantiallyIdentical(textA, textB) {
   if (normA === normB) return true;
 
   // Se ambas forem mensagens de cotação com a tabela de diárias
-  const isQuoteA = /no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normA) &&
-                   /(?:sem cafe|com cafe|taxa.*limpeza)/i.test(normA);
-  const isQuoteB = /no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normB) &&
-                   /(?:sem cafe|com cafe|taxa.*limpeza)/i.test(normB);
+  const isQuoteA = hasRecentlySentPricingQuote([{ fromMe: true, text: textA }]) ||
+                   (/no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normA) &&
+                   /(?:sem cafe|com cafe|taxa.*limpeza)/i.test(normA));
+  const isQuoteB = hasRecentlySentPricingQuote([{ fromMe: true, text: textB }]) ||
+                   (/no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normB) &&
+                   /(?:sem cafe|com cafe|taxa.*limpeza)/i.test(normB));
   if (isQuoteA && isQuoteB) return true;
+  if (isQuoteA !== isQuoteB) return false;
+
+  // Se ambas forem mensagens perguntando por datas e pessoas para reserva (e não cotações de preços)
+  const isAskDatesA = !isQuoteA && /datas?\s+(?:de\s+)?entrada/i.test(normA) && (/quantas\s+pessoas/i.test(normA) || /saida/i.test(normA));
+  const isAskDatesB = !isQuoteB && /datas?\s+(?:de\s+)?entrada/i.test(normB) && (/quantas\s+pessoas/i.test(normB) || /saida/i.test(normB));
+  if (isAskDatesA && isAskDatesB) return true;
 
   // Comparação de similaridade (Jaccard similarity de palavras relevantes)
   const wordsA = new Set(normA.split(" ").filter(w => w.length > 3));
@@ -4549,46 +4590,64 @@ export function applyAntiRepetitionGuard({
     botSettings.allowedActions.commitReservation !== false
   );
 
-  const hasDates = /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
+  const hasDates = Boolean(queryAnalysis.hasDates) ||
+                   /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
                    /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(queryText);
+
+  const isLastBotQuote = hasRecentlySentPricingQuote([lastBotMsg]);
+  const lastBotAskedDates = !isLastBotQuote && Boolean(
+    /datas?\s+(?:de\s+)?entrada/i.test(lastBotMsg.text) ||
+    /quantas\s+pessoas/i.test(lastBotMsg.text) ||
+    /qual\s+per[ií]odo/i.test(lastBotMsg.text) ||
+    /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBotMsg.text)
+  );
+
+  let resultText = candidateText;
 
   // Caso 1: Usuário solicitando reserva
   if (isBooking) {
     if (!canAutoReserve) {
-      return {
-        wasRepetitive: true,
-        refinedText: ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`)
-      };
+      if (lastBotMsg.text.includes("realização de novas reservas diretas está sendo concluída") || lastBotMsg.text.includes("equipe da recepção")) {
+        resultText = ret(`Olá${name}! Eu já registrei seu pedido de reserva com a nossa recepção! 🛎️ Assim que você puder me enviar as datas de entrada/saída e número de pessoas, isso ajudará nossa equipe a agilizar a sua reserva! ✨`);
+      } else {
+        resultText = ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
+      }
+    } else if (!hasDates) {
+      if (lastBotAskedDates) {
+        resultText = ret(`Olá${name}! Eu realmente quero te ajudar com a sua reserva! 😊 Só preciso que você me passe o período desejado (dia de entrada e saída) e quantas pessoas serão, pois sem essas informações eu não consigo consultar os flats disponíveis nem emitir a reserva para você! 🏨✨`);
+      } else {
+        resultText = ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
+      }
+    } else {
+      resultText = ret(`Perfeito${name}! Já anotei o seu período e estou verificando a disponibilidade dos flats com todo carinho para confirmarmos sua estadia! 🏨✨`);
     }
-    if (!hasDates) {
-      return {
-        wasRepetitive: true,
-        refinedText: ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`)
-      };
+  } else {
+    // Caso 2: Resposta duplicada de cotação / diárias
+    const isQuoteCandidate = hasRecentlySentPricingQuote([{ fromMe: true, text: candidateText }]) ||
+      /no canal direto da corpflats|nossas diárias para flats executivos|qual período você pretende se hospedar/i.test(candidateText);
+    if (isQuoteCandidate) {
+      if (lastBotAskedDates) {
+        resultText = ret(`Olá${name}! Como te passei os valores logo acima, me informe as datas de entrada e saída e o número de pessoas para que eu possa verificar a disponibilidade e reservar o flat para você! 🏨✨`);
+      } else {
+        resultText = ret(`Olá${name}! Como passei os valores das diárias logo acima ✨, para eu verificar a disponibilidade exata dos nossos flats e passarmos para a sua reserva, você poderia me informar as datas de check-in e check-out desejadas e para quantas pessoas será a estadia? 🏨`);
+      }
+    } else if (/^(?:ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá]\s+bom|blz|agrade[cç]o|sim|n[aã]o|positivo|por\s+favor)[.!?\s]*$/i.test(queryText)) {
+      // Caso 3: Confirmações curtas / gentilezas do usuário
+      resultText = ret(`Perfeito${name}! Se desejar dar andamento na sua reserva, basta me informar as datas de entrada e saída e para quantas pessoas será a estadia. Qualquer outra dúvida, estou à sua disposição! ✨`);
+    } else {
+      // Caso 4: Refinamento genérico cordial anti-eco
+      resultText = ret(`Olá${name}! Já compartilhei essas orientações com você logo acima ✨. Caso precise de mais algum detalhe específico ou queira dar andamento na sua hospedagem, por favor me avise por aqui! 🏨`);
     }
   }
 
-  // Caso 2: Resposta duplicada de cotação / diárias
-  const isQuoteCandidate = /no canal direto da corpflats|nossas diárias para flats executivos|qual período você pretende se hospedar/i.test(candidateText);
-  if (isQuoteCandidate) {
-    return {
-      wasRepetitive: true,
-      refinedText: ret(`Olá${name}! Como passei os valores das diárias logo acima ✨, para eu verificar a disponibilidade exata dos nossos flats e passarmos para a sua reserva, você poderia me informar as datas de check-in e check-out desejadas e para quantas pessoas será a estadia? 🏨`)
-    };
+  // Barreira final: NUNCA retornar uma resposta que ainda seja substancialmente idêntica à anterior
+  if (areMessagesSubstantiallyIdentical(resultText, lastBotMsg.text)) {
+    resultText = ret(`Olá${name}! Estou à sua disposição para o que precisar. Me avise se deseja fechar a reserva com as suas datas ou tirar mais alguma dúvida! 🏨✨`);
   }
 
-  // Caso 3: Confirmações curtas / gentilezas do usuário
-  if (/^(?:ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá]\s+bom|blz|agrade[cç]o|sim|n[aã]o|positivo|por\s+favor)[.!?\s]*$/i.test(queryText)) {
-    return {
-      wasRepetitive: true,
-      refinedText: ret(`Perfeito${name}! Se desejar dar andamento na sua reserva, basta me informar as datas de entrada e saída e para quantas pessoas será a estadia. Qualquer outra dúvida, estou à sua disposição! ✨`)
-    };
-  }
-
-  // Caso 4: Refinamento genérico cordial anti-eco
   return {
     wasRepetitive: true,
-    refinedText: ret(`Olá${name}! Já compartilhei essas orientações com você logo acima ✨. Caso precise de mais algum detalhe específico ou queira dar andamento na sua hospedagem, por favor me avise por aqui! 🏨`)
+    refinedText: resultText
   };
 }
 
@@ -4671,6 +4730,61 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
       primaryTopic: "solicitacao_reserva",
       rawText: text
     };
+  }
+
+  // 1.6 Resposta com Datas, Hóspedes ou Preferências em Fluxo de Reserva
+  const hist = (guestContext?.history && Array.isArray(guestContext.history))
+    ? guestContext.history
+    : ((db?.whatsappConversations || []).find(c => {
+        const p = cleanWhatsAppPhone(c.phone);
+        const target = cleanWhatsAppPhone(guestContext?.phone);
+        return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+      })?.messages || []);
+  const lastBot = getLastBotMessage(hist);
+  const quoteRecentlySent = hasRecentlySentPricingQuote(hist);
+  const botAskedDates = Boolean(lastBot && (
+    /datas?\s+(?:de\s+)?entrada/i.test(lastBot.text) ||
+    /qual\s+per[ií]odo/i.test(lastBot.text) ||
+    /quantas\s+pessoas/i.test(lastBot.text) ||
+    /verifico\s+a\s+disponibilidade/i.test(lastBot.text) ||
+    /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(lastBot.text) ||
+    quoteRecentlySent
+  ));
+
+  const hasDateIndicator = /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(lower) ||
+                           /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(lower);
+  const mentionsGuests = /\b(?:\d+|um|uma|dois|duas|tr[eê]s)\s+(?:pessoas?|h[oó]spedes?|adultos?)|casal|individual|solteir[ao]\b/i.test(lower);
+  const mentionsBreakfastChoice = /^(?:quero\s+|vou\s+querer\s+|prefiro\s+|pode\s+ser\s+)?(?:com|sem)\s+caf[eé](?:\s+da\s+manh[aã])?(?:\s+no\s+quarto)?(?:\s+por\s+favor)?$/i.test(lower) ||
+                                  /\b(?:com|sem)\s+caf[eé]\s+da\s+manh[aã]\b/i.test(lower);
+
+  if (botAskedDates || quoteRecentlySent) {
+    if (hasDateIndicator && (mentionsGuests || /\b(?:dia|dias|de|a|at[eé]|chegada|sa[ií]da|check[- ]?in|check[- ]?out)\b/i.test(lower))) {
+      return {
+        type: "RESERVATION_REQUEST",
+        primaryTopic: "solicitacao_reserva",
+        rawText: text,
+        hasDates: true,
+        mentionsGuests
+      };
+    }
+    if (mentionsBreakfastChoice && !isPricingOrQuoteInquiry(text)) {
+      return {
+        type: "RESERVATION_REQUEST",
+        primaryTopic: "solicitacao_reserva",
+        rawText: text,
+        hasDates: false,
+        breakfastChoice: /com\s+caf/i.test(lower) ? "com_cafe" : "sem_cafe"
+      };
+    }
+    if (mentionsGuests && !hasDateIndicator && !isPricingOrQuoteInquiry(text) && !/wifi|garagem|check-?in|check-?out/i.test(lower)) {
+      return {
+        type: "RESERVATION_REQUEST",
+        primaryTopic: "solicitacao_reserva",
+        rawText: text,
+        hasDates: false,
+        mentionsGuests: true
+      };
+    }
   }
 
   // 2. Preços, Tarifas, Diárias, Disponibilidade e Cotações (VIA 2 - Leitura do Sistema)
@@ -4816,33 +4930,35 @@ export function validateAndRefineResponse({
     const isHandoverMessage = /transferindo|pausad[ao]s|manuten[cç][aã]o|atendimento\s+humano|equipe\s+humana/i.test(replyText);
     const hasPriceIndicator = /\b(?:r\$|\d+,\d{2}|\d+\s*reais)\b/i.test(replyText);
     const hasOnlyBreakfastLogistics = /servido\s+em\s+bandeja|das\s+05:00|portal\s+\/cafe|agendamento\s+at[eé]\s+a\s+v[eé]spera/i.test(replyText) && !hasPriceIndicator;
+    const candidateIsFullQuote = hasRecentlySentPricingQuote([{ fromMe: true, text: replyText }]) ||
+      /no canal direto da corpflats|nossas diárias para flats executivos/i.test(replyText);
 
-    // Se o texto candidato NÃO fornece preço ou é apenas sobre a logística da bandeja, E não for um transbordo:
-    if (!isHandoverMessage && (!hasPriceIndicator || hasOnlyBreakfastLogistics)) {
+    // Se já enviou cotação recentemente, NUNCA permite reenvio do banner grande de cotação!
+    if (hasRecentlySentPricingQuote(effectiveHistory) && (candidateIsFullQuote || !hasPriceIndicator || hasOnlyBreakfastLogistics)) {
       const pricing = handleGetPricingInfo(db, {
         guests: /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText) ? 2 : 1,
         withBreakfast: /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText)
       });
+      console.log(`[Semantic Critique] Cotação já enviada recentemente para "${queryText}". Evitando reenvio do banner de diárias.`);
+      replyText = ret(`Olá${name}! Como mencionei acima, nossas diárias são a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* sem café ou *R$ ${pricing.rateWithBreakfastFor1},00* com café no quarto (isenção da taxa de limpeza). Me informando as datas desejadas de check-in e check-out e quantas pessoas serão, verifico a disponibilidade exata agora mesmo! 🏨✨`);
+    } else if (!isHandoverMessage && (!hasPriceIndicator || hasOnlyBreakfastLogistics)) {
+      const pricing = handleGetPricingInfo(db, {
+        guests: /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText) ? 2 : 1,
+        withBreakfast: /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText)
+      });
+      console.log(`[Semantic Critique] Mismatch detectado para query de preço ("${queryText}"). Substituindo resposta por valores oficiais do sistema.`);
+      const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText);
+      const withBreakfast = /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText);
+      const withoutBreakfast = /\b(?:sem\s+caf[eé])/i.test(queryText);
 
-      // Se a cotação já foi enviada logo acima no histórico, NÃO repete o banner inteiro!
-      if (hasRecentlySentPricingQuote(effectiveHistory)) {
-        console.log(`[Semantic Critique] Cotação já enviada recentemente para "${queryText}". Evitando reenvio do banner de diárias.`);
-        replyText = ret(`Olá${name}! Como mencionei acima, nossas diárias são a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* sem café ou *R$ ${pricing.rateWithBreakfastFor1},00* com café no quarto (isenção da taxa de limpeza). Me informando as datas desejadas de check-in e check-out e quantas pessoas serão, verifico a disponibilidade exata agora mesmo! 🏨✨`);
+      if (withBreakfast) {
+        const rate = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
+        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} com café da manhã* servido no quarto fica a partir de *R$ ${rate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
+      } else if (withoutBreakfast) {
+        const rateWithBf = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
+        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} sem café* fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${rateWithBf},00 / diária* (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
       } else {
-        console.log(`[Semantic Critique] Mismatch detectado para query de preço ("${queryText}"). Substituindo resposta por valores oficiais do sistema.`);
-        const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText);
-        const withBreakfast = /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText);
-        const withoutBreakfast = /\b(?:sem\s+caf[eé])/i.test(queryText);
-
-        if (withBreakfast) {
-          const rate = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
-          replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} com café da manhã* servido no quarto fica a partir de *R$ ${rate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
-        } else if (withoutBreakfast) {
-          const rateWithBf = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
-          replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} sem café* fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${rateWithBf},00 / diária* (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
-        } else {
-          replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${pricing.baseRateWithoutBreakfast},00 / diária* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${pricing.rateWithBreakfastFor1},00 / diária* (1 pessoa) ou *R$ ${pricing.rateWithBreakfastFor2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
-        }
+        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${pricing.baseRateWithoutBreakfast},00 / diária* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${pricing.rateWithBreakfastFor1},00 / diária* (1 pessoa) ou *R$ ${pricing.rateWithBreakfastFor2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
       }
     }
   }
@@ -4855,7 +4971,8 @@ export function validateAndRefineResponse({
       botSettings.allowedActions.commitReservation !== false
     );
 
-    const hasDates = /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
+    const hasDates = Boolean(analysis.hasDates) ||
+                     /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
                      /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(queryText);
 
     if (!canAutoReserve) {
@@ -4876,15 +4993,24 @@ export function validateAndRefineResponse({
         createNotification
       });
 
-      replyText = ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
+      if (hasDates) {
+        replyText = ret(`Olá${name}! Perfeito, anotei sua solicitação de reserva para as datas informadas! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seus dados e um atendente continuará o seu atendimento por aqui em instantes para confirmar sua estadia! 🛎️`);
+      } else {
+        replyText = ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
+      }
     } else {
-      const candidateRepeatsQuote = /no canal direto da corpflats|nossas diárias para flats executivos|sem café: a partir de/i.test(replyText);
+      const candidateRepeatsQuote = hasRecentlySentPricingQuote([{ fromMe: true, text: replyText }]) ||
+        /no canal direto da corpflats|nossas diárias para flats|sem café:\s*a partir|com café da manhã no quarto:/i.test(replyText) ||
+        (/\b(?:r\$\s*237|r\$\s*272|r\$\s*307)\b/i.test(replyText) && /\b(?:di[aá]rias?|taxa.*limpeza)\b/i.test(replyText));
+
       const isAlreadyAskingDates = /datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(replyText) && !candidateRepeatsQuote;
 
-      if (!hasDates || candidateRepeatsQuote) {
+      if (!hasDates) {
         if (!isAlreadyAskingDates || candidateRepeatsQuote) {
           replyText = ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
         }
+      } else if (candidateRepeatsQuote) {
+        replyText = ret(`Perfeito${name}! Anotei sua solicitação de reserva para as datas informadas 🏨✨. Já estou verificando a disponibilidade dos nossos flats no Soho Residence para você!`);
       }
     }
   }
@@ -5163,7 +5289,8 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   const asksCheckoutTime = /(?:hor[aá]rio\s+(?:de\s+)?check-?out|que\s+horas\s+(?:é\s+o\s+|tenho\s+que\s+)?sair|hor[aá]rio\s+de\s+sa[ií]da|hor[aá]rio\s+do\s+check-?out|limite\s+de\s+sa[ií]da)/i.test(text);
 
   // 0.A Comunicação de Check-out pelo Hóspede (Aviso de saída/desocupação)
-  const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
+  const effectiveContext = { ...(guestContext || {}), history: effectiveHistory };
+  const queryAnalysis = analyzeGuestQuery(messageText, effectiveContext, activeDb);
   if (queryAnalysis.type === "OPERATIONAL_DEMAND" && queryAnalysis.primaryTopic === "checkout_comunicacao") {
     const extractedFlat = guestContext?.flatNumber || (messageText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
     const effectiveCtx = extractedFlat && (!guestContext || !guestContext.flatNumber)
@@ -5601,15 +5728,51 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   // 0.75 Solicitação ou Intenção de Nova Reserva (Booking Request)
-  if (isReservationBookingRequest(text)) {
+  if (isReservationBookingRequest(text) || (queryAnalysis.type === "RESERVATION_REQUEST")) {
     const botSettings = getBotActionsSettings(activeDb);
     const canAutoReserve = botSettings.apiActionsEnabled !== false && (
       botSettings.allowedActions.createPreReservation !== false ||
       botSettings.allowedActions.commitReservation !== false
     );
+
+    const hasDates = Boolean(queryAnalysis.hasDates) ||
+                     /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(text) ||
+                     /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(text);
+
+    const isBreakfastChoice = queryAnalysis.breakfastChoice || (
+      /^(?:quero\s+|vou\s+querer\s+|prefiro\s+|pode\s+ser\s+)?(?:com|sem)\s+caf[eé]/i.test(text)
+    );
+    const isGuestsOnly = !hasDates && (
+      Boolean(queryAnalysis.mentionsGuests) ||
+      /\b(?:\d+|um|uma|dois|duas|tr[eê]s)\s+(?:pessoas?|h[oó]spedes?|adultos?)|casal|individual|solteir[ao]\b/i.test(text)
+    );
+
     if (!canAutoReserve) {
+      if (hasDates) {
+        return ret(`Olá${name}! Perfeito, anotei sua solicitação de reserva para as datas informadas! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seus dados e um atendente continuará o seu atendimento por aqui em instantes para confirmar sua estadia! 🛎️`);
+      }
       return ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
     }
+
+    if (hasDates) {
+      return ret(`Perfeito${name}! Anotei sua solicitação de reserva para as datas informadas 🏨✨. Já estou verificando a disponibilidade dos nossos flats no Soho Residence para você! Caso queira com ou sem café da manhã no quarto, me avise por aqui! 🥐☕`);
+    }
+
+    if (isBreakfastChoice) {
+      const withBf = /com\s+caf/i.test(text) || queryAnalysis.breakfastChoice === "com_cafe";
+      if (withBf) {
+        return ret(`Excelente escolha${name}! A opção com café da manhã inclui a deliciosa bandeja no quarto e isenção da taxa de limpeza 🥐☕. Para eu consultar a disponibilidade dos flats e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
+      }
+      return ret(`Perfeito${name}! Anotei a opção sem café da manhã 🏨✨. Para eu consultar a disponibilidade dos flats e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia?`);
+    }
+
+    if (isGuestsOnly) {
+      const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(text);
+      const is1 = /\b(?:1|uma)\s+pessoa|\bindividual|\bsolteir/i.test(text);
+      const guestDesc = isCouple ? "para 2 pessoas (casal)" : (is1 ? "para 1 pessoa" : "a quantidade de pessoas");
+      return ret(`Perfeito${name}! Anotei ${guestDesc} 🏨✨. Para eu verificar os flats disponíveis e prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out)?`);
+    }
+
     return ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
   }
 
@@ -5649,24 +5812,36 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     // 4. Se especificou "1 pessoa com café" (pergunta exata do usuário!)
     if (isExplicit1 && mentionsWithBreakfast) {
       const withBreakfastRate = baseDailyRate + breakfastFeePerson; // 237 + 35 = 272
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        return ret(`Olá${name}! Como mencionei, para *1 pessoa com café da manhã* servido no quarto a diária fica a partir de *R$ ${withBreakfastRate},00* (com *isenção total da taxa de limpeza*!). Me informando as datas de check-in e check-out, já verifico a disponibilidade para você! 🏨✨`);
+      }
       return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *1 pessoa com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
     }
 
     // 5. Se especificou "1 pessoa sem café"
     if (isExplicit1 && mentionsWithoutBreakfast) {
       const withBreakfastRate = baseDailyRate + breakfastFeePerson; // 272
-      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *1 pessoa sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${withBreakfastRate},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída para que eu consulte as vagas para você! 🏨`);
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        return ret(`Olá${name}! Conforme passei acima, a diária para *1 pessoa sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa de limpeza de R$ ${cleaningFee},00 por estadia). Me informando as datas desejadas de entrada e saída, já consulto as vagas para você! 🏨✨`);
+      }
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *1 pessoa sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${withBreakfastRate},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
     }
 
     // 6. Se especificou casal / 2 pessoas com café
     if (isCoupleOr2 && mentionsWithBreakfast) {
       const withBreakfastRate2 = baseDailyRate + (breakfastFeePerson * 2); // 237 + 70 = 307
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        return ret(`Olá${name}! Como mencionei, para *2 pessoas (casal) com café da manhã* servido no quarto a diária fica a partir de *R$ ${withBreakfastRate2},00* (com *isenção total da taxa de limpeza*!). Me informando as datas de check-in e check-out, já consulto a disponibilidade! 🏨✨`);
+      }
       return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate2},00* (com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas vocês pretendem vir? Me informe o check-in e check-out que já consulto a disponibilidade! 🏨`);
     }
 
     // 7. Se especificou casal / 2 pessoas sem café
     if (isCoupleOr2 && mentionsWithoutBreakfast) {
       const withBreakfastRate2 = baseDailyRate + (breakfastFeePerson * 2);
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        return ret(`Olá${name}! Conforme passei acima, a diária para *2 pessoas (casal) sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa de limpeza de R$ ${cleaningFee},00 por estadia). Me informando as datas de entrada e saída, já verifico as opções! 🏨✨`);
+      }
       return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no quarto:* a partir de *R$ ${withBreakfastRate2},00 / diária* para o casal (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você gostaria da reserva? Me informe o período desejado! 🏨`);
     }
 
@@ -5674,12 +5849,18 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     if (mentionsWithBreakfast) {
       const rate1 = baseDailyRate + breakfastFeePerson; // 272
       const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        return ret(`Olá${name}! Nossas diárias com *café da manhã no quarto* e isenção da taxa de limpeza são *R$ ${rate1},00* (1 pessoa) ou *R$ ${rate2},00* (casal). Me informe para quantas pessoas e as datas de check-in e check-out que já verifico a disponibilidade! 🏨✨`);
+      }
       return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, nossas diárias com *café da manhã incluso servido no flat* são a partir de:\n• *1 pessoa:* a partir de *R$ ${rate1},00 / diária*\n• *2 pessoas (casal):* a partir de *R$ ${rate2},00 / diária*\n\n🎁 *Grande benefício:* No plano com café incluso, você tem *isenção total da taxa de limpeza*!\n(Na opção sem café, a diária base é a partir de R$ ${baseDailyRate},00 + taxa única de limpeza de R$ ${cleaningFee},00).\n\nPara qual período você planeja a sua estadia? Me informe as datas de entrada e saída que já verifico as vagas! 🏨`);
     }
 
     // 9. Se mencionou "sem café" genérico
     if (mentionsWithoutBreakfast) {
       const rate1 = baseDailyRate + breakfastFeePerson;
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        return ret(`Olá${name}! A diária *sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia). Me informando as datas de check-in e check-out e quantas pessoas serão, verifico as vagas agora mesmo! 🏨✨`);
+      }
       return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária de acomodação completa *sem café* é a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no flat:* a partir de *R$ ${rate1},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você precisa da hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
     }
 
@@ -7646,12 +7827,31 @@ export async function processAiInboundMessage({
     }
   }
 
+  // 6.8. Proteção Anti-Loop de Mensagens Idênticas Fail-Safe
+  // Executa ANTES do envio (seja transbordo humano ou resposta autônoma normal)
+  const lastBotMsg = getLastBotMessage(history);
+  if (lastBotMsg && areMessagesSubstantiallyIdentical(aiResult.replyText, lastBotMsg.text)) {
+    const repetitionCheck = applyAntiRepetitionGuard({
+      candidateText: aiResult.replyText,
+      history,
+      queryText: incomingInfo.text,
+      guestContext: aiResult.guestContext,
+      db
+    });
+    if (repetitionCheck.wasRepetitive && repetitionCheck.refinedText) {
+      console.log(`[Anti-Repetition Guard Fail-Safe] Substituindo resposta repetida antes do envio.`);
+      aiResult.replyText = repetitionCheck.refinedText;
+    }
+  }
+
   // 7. Se for transbordo humano:
   if (aiResult.shouldHandover) {
     if (conv && !isDev) {
       conv.aiPaused = true;
       conv.aiPausedAt = new Date().toISOString();
-      conv.aiPausedReason = "guest_requested_human";
+      conv.aiPausedReason = detectHandoverIntent(incomingInfo.text)?.shouldHandover
+        ? "guest_requested_human"
+        : "system_handover";
     }
 
     // Envia mensagem educada de transbordo
@@ -7698,22 +7898,6 @@ export async function processAiInboundMessage({
       unmetDemandCreated: Boolean(unmetDemand),
       unmetDemand
     };
-  }
-
-  // 7.9. Proteção Anti-Loop de Mensagens Idênticas Fail-Safe
-  const lastBotMsg = getLastBotMessage(history);
-  if (lastBotMsg && areMessagesSubstantiallyIdentical(aiResult.replyText, lastBotMsg.text)) {
-    const repetitionCheck = applyAntiRepetitionGuard({
-      candidateText: aiResult.replyText,
-      history,
-      queryText: incomingInfo.text,
-      guestContext: aiResult.guestContext,
-      db
-    });
-    if (repetitionCheck.wasRepetitive && repetitionCheck.refinedText) {
-      console.log(`[Anti-Repetition Guard Fail-Safe] Substituindo resposta repetida antes do envio.`);
-      aiResult.replyText = repetitionCheck.refinedText;
-    }
   }
 
   // 8. Resposta Autônoma Normal:

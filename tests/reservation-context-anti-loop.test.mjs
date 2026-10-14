@@ -269,4 +269,141 @@ Qual período você pretende se hospedar e para quantas pessoas? Me informando a
       assert.match(sentMessage, /datas?\s+(?:de\s+)?entrada/i);
     });
   });
+
+  describe("6. Proteção Anti-Loop Multi-Turn (3x 'reserva pra mim por favor')", () => {
+    it("garante que 3 pedidos consecutivos idênticos do usuário gerem 3 respostas distintas sem repetição", () => {
+      // 1ª vez: após cotação
+      const hist1 = [
+        { fromMe: false, text: "quanto custa a diária?" },
+        { fromMe: true, text: quoteMessage }
+      ];
+      const resp1 = generateHeuristicResponse(
+        "reserva pra mim por favor",
+        { guestName: "Miller", phone: "5522998505276", history: hist1 },
+        DEFAULT_AI_CONFIG,
+        [],
+        mockDb,
+        hist1
+      );
+      assert.match(resp1, /com\s+certeza/i);
+      assert.match(resp1, /datas?\s+(?:de\s+)?entrada/i);
+
+      // 2ª vez: usuário repete "reserva pra mim por favor" sem passar as datas
+      const hist2 = [
+        ...hist1,
+        { fromMe: false, text: "reserva pra mim por favor" },
+        { fromMe: true, text: resp1 }
+      ];
+      const guard2 = applyAntiRepetitionGuard({
+        candidateText: resp1, // modelo tenta repetir resp1
+        history: hist2,
+        queryText: "reserva pra mim por favor",
+        guestContext: { guestName: "Miller", phone: "5522998505276" },
+        db: mockDb
+      });
+      assert.equal(guard2.wasRepetitive, true);
+      assert.notEqual(guard2.refinedText, resp1);
+      assert.match(guard2.refinedText, /realmente\s+quero\s+te\s+ajudar/i);
+
+      // 3ª vez: usuário insiste pela 3ª vez
+      const hist3 = [
+        ...hist2,
+        { fromMe: false, text: "reserva pra mim por favor" },
+        { fromMe: true, text: guard2.refinedText }
+      ];
+      const guard3 = applyAntiRepetitionGuard({
+        candidateText: guard2.refinedText, // modelo tenta repetir
+        history: hist3,
+        queryText: "reserva pra mim por favor",
+        guestContext: { guestName: "Miller", phone: "5522998505276" },
+        db: mockDb
+      });
+      assert.equal(guard3.wasRepetitive, true);
+      assert.notEqual(guard3.refinedText, guard2.refinedText);
+      assert.notEqual(guard3.refinedText, resp1);
+      assert.match(guard3.refinedText, /disposi[cç][aã]o/i);
+    });
+  });
+
+  describe("7. Respostas Contextuais em Fluxo de Reserva (Hóspedes, Café e Datas)", () => {
+    it("reconhece quantidade de pessoas e pede datas sem reiniciar com saudação genérica", () => {
+      const hist = [
+        { fromMe: true, text: quoteMessage }
+      ];
+      const resp = generateHeuristicResponse(
+        "para 2 pessoas",
+        { guestName: "Miller", phone: "5522998505276", history: hist },
+        DEFAULT_AI_CONFIG,
+        [],
+        mockDb,
+        hist
+      );
+      assert.equal(resp.includes("Sou a Sofia, concierge virtual"), false);
+      assert.match(resp, /2\s+pessoas/i);
+      assert.match(resp, /datas?\s+(?:de\s+)?entrada/i);
+    });
+
+    it("reconhece opção com café e pede datas sem disparar FAQ de entrega de bandeja", () => {
+      const hist = [
+        { fromMe: true, text: quoteMessage }
+      ];
+      const resp = generateHeuristicResponse(
+        "quero com café",
+        { guestName: "Miller", phone: "5522998505276", history: hist },
+        DEFAULT_AI_CONFIG,
+        [],
+        mockDb,
+        hist
+      );
+      assert.equal(resp.includes("05:00 às 09:30"), false);
+      assert.match(resp, /caf[eé]\s+da\s+manh[aã]/i);
+      assert.match(resp, /datas?\s+(?:de\s+)?entrada/i);
+    });
+
+    it("reconhece datas e avança na verificação sem cuspir tabela de preços", () => {
+      const hist = [
+        { fromMe: true, text: quoteMessage }
+      ];
+      const resp = generateHeuristicResponse(
+        "do dia 10 ao dia 15 de novembro para 2 pessoas",
+        { guestName: "Miller", phone: "5522998505276", history: hist },
+        DEFAULT_AI_CONFIG,
+        [],
+        mockDb,
+        hist
+      );
+      assert.equal(resp.includes("Sem café: a partir de"), false);
+      assert.match(resp, /datas\s+informadas|verificando\s+a\s+disponibilidade/i);
+    });
+  });
+
+  describe("8. Cotação Sem Repetição do Banner de 10 Linhas", () => {
+    it("responde de forma concisa quando cotação já foi enviada logo acima", () => {
+      const hist = [
+        { fromMe: true, text: quoteMessage }
+      ];
+      const resp = generateHeuristicResponse(
+        "quanto fica 1 pessoa com café?",
+        { guestName: "Miller", phone: "5522998505276", history: hist },
+        DEFAULT_AI_CONFIG,
+        [],
+        mockDb,
+        hist
+      );
+      assert.equal(resp.includes("No canal direto da CorpFlats, a diária para *1 pessoa com café"), false);
+      assert.match(resp, /mencionei|a\s+partir\s+de\s+\*?R\$\s*272/i);
+    });
+  });
+
+  describe("9. Variações Adicionais de Intenção de Reserva", () => {
+    it("reconhece expressões brasileiras coloquiais de reserva", () => {
+      assert.equal(isReservationBookingRequest("por favor reserva"), true);
+      assert.equal(isReservationBookingRequest("por favor reserve pra mim"), true);
+      assert.equal(isReservationBookingRequest("fecha pra mim por favor"), true);
+      assert.equal(isReservationBookingRequest("reserva aí pra mim"), true);
+      assert.equal(isReservationBookingRequest("reserva pra nós"), true);
+      assert.equal(isReservationBookingRequest("reserva pra gente"), true);
+      assert.equal(isReservationBookingRequest("como faco pra reservar?"), true);
+    });
+  });
 });
