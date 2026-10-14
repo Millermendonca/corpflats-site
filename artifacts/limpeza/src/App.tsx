@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, Suspense, lazy, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -9,57 +9,60 @@ import { useGetMe } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
 import { AdminAiCopilot } from '@/components/admin-ai-copilot';
 
+// Páginas públicas do Hóspede, Portaria, Governança e Prestadores (Carregamento Imediato)
 import Login from '@/pages/login';
 import Dashboard from '@/pages/dashboard';
-import History from '@/pages/history';
-import Settings from '@/pages/settings';
-import PropertySettings from '@/pages/property-settings';
-import Tasks from '@/pages/tasks';
-import Observations from '@/pages/observations';
-import LostAndFoundPage from '@/pages/lost-and-found';
-import Reports from '@/pages/reports';
-import Surveys from '@/pages/surveys';
-import PmsCalendar from '@/pages/pms-calendar';
-import PmsReportsPage from '@/pages/pms-reports';
-import CrmGuests from '@/pages/crm-guests';
-import ReceptionTablet from '@/pages/reception-tablet';
 import GuestPreCheckin from '@/pages/guest-pre-checkin';
 import VerifyFnrh from '@/pages/verify-fnrh';
 import BookingEngine from '@/pages/booking-engine';
-import FinancialDashboard from '@/pages/financial-dashboard';
-import MarketingTraffic from '@/pages/marketing-traffic';
-import FiscalInvoices from '@/pages/fiscal-invoices';
 import GuestBreakfast from '@/pages/guest-breakfast';
-import BreakfastProduction from '@/pages/breakfast-production';
-import NotificationsHub from '@/pages/notifications-hub';
 import GuestCheckout from '@/pages/guest-checkout';
-import ReceptionCheckout from '@/pages/reception-checkout';
 import GuestPortal from '@/pages/guest-portal';
-import LiveOperationsPanel from '@/pages/live-operations-panel';
-import ReviewInsights from '@/pages/review-insights';
-import GarageDashboard from '@/pages/garage-dashboard';
-import Payments from '@/pages/payments';
-import SiteEditor from '@/pages/site-editor';
-import TarifasEditor from '@/pages/tarifas';
-import SystemLogsPage from '@/pages/system-logs';
 import MyAccount from '@/pages/my-account';
-import WhatsappAutomation from '@/pages/whatsapp-automation';
-import WhatsappChat from '@/pages/whatsapp-chat';
-import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
-import ShoppingListPage from '@/pages/shopping-list';
-import AiStatusPage from '@/pages/ai-status';
-import MaidStatementPage from '@/pages/maid-statement';
-import ZapiConnection from '@/pages/zapi-connection';
-import EmailHub from '@/pages/email-hub';
-import ReservationJourney from '@/pages/reservation-journey';
 import ServiceOrders from '@/pages/service-orders';
 import ServiceWorkerPortal from '@/pages/service-worker-portal';
-import ServerMonitorPage from '@/pages/server-monitor';
-import SmartFlatPreview from '@/pages/smart-flat-preview';
-import PricingSebraePage from '@/pages/precificacao-sebrae';
-import OtaInboxPage from '@/pages/ota-inbox';
-import WbpManualPage from '@/pages/wbp-manual';
 import NotFound from '@/pages/not-found';
+
+// Páginas Administrativas e Backoffice Pesadas (Code-Splitting sob demanda via React.lazy)
+const History = lazy(() => import('@/pages/history'));
+const Settings = lazy(() => import('@/pages/settings'));
+const PropertySettings = lazy(() => import('@/pages/property-settings'));
+const Tasks = lazy(() => import('@/pages/tasks'));
+const Observations = lazy(() => import('@/pages/observations'));
+const LostAndFoundPage = lazy(() => import('@/pages/lost-and-found'));
+const Reports = lazy(() => import('@/pages/reports'));
+const Surveys = lazy(() => import('@/pages/surveys'));
+const PmsCalendar = lazy(() => import('@/pages/pms-calendar'));
+const PmsReportsPage = lazy(() => import('@/pages/pms-reports'));
+const CrmGuests = lazy(() => import('@/pages/crm-guests'));
+const ReceptionTablet = lazy(() => import('@/pages/reception-tablet'));
+const FinancialDashboard = lazy(() => import('@/pages/financial-dashboard'));
+const MarketingTraffic = lazy(() => import('@/pages/marketing-traffic'));
+const FiscalInvoices = lazy(() => import('@/pages/fiscal-invoices'));
+const BreakfastProduction = lazy(() => import('@/pages/breakfast-production'));
+const NotificationsHub = lazy(() => import('@/pages/notifications-hub'));
+const ReceptionCheckout = lazy(() => import('@/pages/reception-checkout'));
+const LiveOperationsPanel = lazy(() => import('@/pages/live-operations-panel'));
+const ReviewInsights = lazy(() => import('@/pages/review-insights'));
+const GarageDashboard = lazy(() => import('@/pages/garage-dashboard'));
+const Payments = lazy(() => import('@/pages/payments'));
+const SiteEditor = lazy(() => import('@/pages/site-editor'));
+const TarifasEditor = lazy(() => import('@/pages/tarifas'));
+const SystemLogsPage = lazy(() => import('@/pages/system-logs'));
+const WhatsappAutomation = lazy(() => import('@/pages/whatsapp-automation'));
+const WhatsappChat = lazy(() => import('@/pages/whatsapp-chat'));
+const MaidWhatsappAutomation = lazy(() => import('@/pages/maid-whatsapp-automation'));
+const ShoppingListPage = lazy(() => import('@/pages/shopping-list'));
+const AiStatusPage = lazy(() => import('@/pages/ai-status'));
+const MaidStatementPage = lazy(() => import('@/pages/maid-statement'));
+const ZapiConnection = lazy(() => import('@/pages/zapi-connection'));
+const EmailHub = lazy(() => import('@/pages/email-hub'));
+const ReservationJourney = lazy(() => import('@/pages/reservation-journey'));
+const ServerMonitorPage = lazy(() => import('@/pages/server-monitor'));
+const SmartFlatPreview = lazy(() => import('@/pages/smart-flat-preview'));
+const PricingSebraePage = lazy(() => import('@/pages/precificacao-sebrae'));
+const OtaInboxPage = lazy(() => import('@/pages/ota-inbox'));
+const WbpManualPage = lazy(() => import('@/pages/wbp-manual'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -181,9 +184,21 @@ function GuestPortalWrapper(props: any) {
   return <GuestPortal {...props} />;
 }
 
+function PageLoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs text-muted-foreground font-semibold">Carregando módulo...</span>
+      </div>
+    </div>
+  );
+}
+
 function Router() {
   return (
     <RoutedErrorBoundary>
+      <Suspense fallback={<PageLoadingFallback />}>
       <Switch>
         {/* Smart Flat Hub Sandbox Preview Routes (Isolated from production guests) */}
         <Route path="/preview/smart-flat/:code" component={SmartFlatPreview} />
@@ -382,6 +397,7 @@ function Router() {
         <Route path="/"><Redirect to="/reservar" /></Route>
         <Route component={NotFound} />
       </Switch>
+      </Suspense>
     </RoutedErrorBoundary>
   );
 }

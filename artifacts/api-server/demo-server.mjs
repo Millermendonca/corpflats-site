@@ -5251,6 +5251,16 @@ async function loadDatabase() {
             );
             CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
             CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
+            CREATE TABLE IF NOT EXISTS media_blobs (
+              id TEXT PRIMARY KEY,
+              entity_type TEXT NOT NULL,
+              entity_id TEXT NOT NULL,
+              field_name TEXT NOT NULL,
+              mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+              data_url TEXT NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_media_blobs_entity ON media_blobs (entity_type, entity_id);
           `);
         } catch (ddlErr) {
           console.warn("[PostgreSQL] Aviso ao verificar tabelas DDL:", ddlErr.message);
@@ -6931,6 +6941,152 @@ let pendingPgStateJson = null;
 let pendingPgDirty = false;
 let pendingPgReason = "auto_save";
 let pgSaveTimeout = null;
+let lastMediaOffloadTime = 0;
+
+// Cache LRU leve em RAM para mídias históricas consultadas via /api/media/blob/:id (máx 40 itens)
+const mediaBlobMemoryCache = new Map();
+function cacheMediaBlob(id, entry) {
+  if (!id || !entry) return;
+  if (mediaBlobMemoryCache.has(id)) mediaBlobMemoryCache.delete(id);
+  mediaBlobMemoryCache.set(id, entry);
+  if (mediaBlobMemoryCache.size > 40) {
+    const oldestKey = mediaBlobMemoryCache.keys().next().value;
+    if (oldestKey) mediaBlobMemoryCache.delete(oldestKey);
+  }
+}
+
+async function resolveMediaDataUrl(val) {
+  if (!val || typeof val !== "string") return val;
+  if (val.startsWith("data:")) return val;
+  const match = val.match(/^\/api\/media\/blob\/([a-zA-Z0-9_\-]+)/);
+  if (!match || !pgPool) return val;
+  const blobId = match[1];
+  const cached = mediaBlobMemoryCache.get(blobId);
+  if (cached?.dataUrl) return cached.dataUrl;
+  try {
+    const res = await pgPool.query("SELECT mime_type, data_url FROM media_blobs WHERE id = $1 LIMIT 1", [blobId]);
+    if (res.rows && res.rows[0]?.data_url) {
+      cacheMediaBlob(blobId, { mimeType: res.rows[0].mime_type || "image/jpeg", dataUrl: res.rows[0].data_url });
+      return res.rows[0].data_url;
+    }
+  } catch (_) {}
+  return val;
+}
+
+async function hydrateReservationMediaBlobsForPdf(reservation, guest) {
+  if (!pgPool || !reservation) return { reservation, guest };
+  const clonedRes = { ...reservation };
+  const clonedGuest = guest ? { ...guest } : null;
+  const mediaFields = ["selfieUrl", "docPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
+  for (const f of mediaFields) {
+    if (typeof clonedRes[f] === "string" && clonedRes[f].startsWith("/api/media/blob/")) {
+      clonedRes[f] = await resolveMediaDataUrl(clonedRes[f]);
+    }
+    if (clonedGuest && typeof clonedGuest[f] === "string" && clonedGuest[f].startsWith("/api/media/blob/")) {
+      clonedGuest[f] = await resolveMediaDataUrl(clonedGuest[f]);
+    }
+  }
+  if (Array.isArray(clonedRes.guests)) {
+    clonedRes.guests = await Promise.all(clonedRes.guests.map(async (g) => {
+      if (!g || typeof g !== "object") return g;
+      const cg = { ...g };
+      for (const f of mediaFields) {
+        if (typeof cg[f] === "string" && cg[f].startsWith("/api/media/blob/")) {
+          cg[f] = await resolveMediaDataUrl(cg[f]);
+        }
+      }
+      return cg;
+    }));
+  }
+  return { reservation: clonedRes, guest: clonedGuest };
+}
+
+async function offloadSingleBase64Field(entityType, entityId, fieldName, rawVal) {
+  if (typeof rawVal !== "string" || !rawVal.startsWith("data:image/") || rawVal.length < 2048 || !pgPool) {
+    return rawVal;
+  }
+  const mimeMatch = rawVal.match(/^data:(image\/[a-zA-Z0-9+.\-]+);base64,/);
+  const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const hash8 = crypto.createHash("sha1").update(rawVal.slice(0, 512) + rawVal.length).digest("hex").slice(0, 10);
+  const safeEntityId = String(entityId || "0").replace(/[^a-zA-Z0-9_\-]/g, "");
+  const safeField = String(fieldName || "img").replace(/[^a-zA-Z0-9_\-]/g, "");
+  const blobId = `blob_${entityType}_${safeEntityId}_${safeField}_${hash8}`;
+  await pgPool.query(
+    `INSERT INTO media_blobs (id, entity_type, entity_id, field_name, mime_type, data_url, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [blobId, entityType, String(entityId), fieldName, mimeType, rawVal]
+  );
+  return `/api/media/blob/${blobId}`;
+}
+
+async function offloadHistoricalBase64Media() {
+  if (!pgPool || !pgHydratedSuccessfully || process.env.NODE_ENV === "test") return 0;
+  const nowMs = Date.now();
+  // Executa offload no máximo a cada 10 minutos para não onerar o loop de persistência
+  if (nowMs - lastMediaOffloadTime < 10 * 60 * 1000) return 0;
+  lastMediaOffloadTime = nowMs;
+
+  let offloadedCount = 0;
+  const cutoffDate14d = getOffsetDateStr(-14);
+  const mediaFields = ["selfieUrl", "docPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
+
+  try {
+    // 1. Reservas encerradas há mais de 14 dias: preserva 100% dos metadados para SEBRAE/Fiscal e externaliza Base64 pesado
+    if (Array.isArray(db.reservations)) {
+      for (const r of db.reservations) {
+        if (!r || !r.checkoutDate || r.checkoutDate >= cutoffDate14d) continue;
+        const rId = r.code || r.id;
+        for (const f of mediaFields) {
+          if (typeof r[f] === "string" && r[f].startsWith("data:image/") && r[f].length >= 2048) {
+            r[f] = await offloadSingleBase64Field("res", rId, f, r[f]);
+            offloadedCount++;
+          }
+        }
+        if (Array.isArray(r.guests)) {
+          for (let i = 0; i < r.guests.length; i++) {
+            const g = r.guests[i];
+            if (!g || typeof g !== "object") continue;
+            for (const f of mediaFields) {
+              if (typeof g[f] === "string" && g[f].startsWith("data:image/") && g[f].length >= 2048) {
+                g[f] = await offloadSingleBase64Field("res_guest", `${rId}_g${i + 1}`, f, g[f]);
+                offloadedCount++;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Limpezas concluídas há mais de 14 dias: externaliza fotos de vistoria em Base64
+    if (Array.isArray(db.cleaningRequests)) {
+      for (const c of db.cleaningRequests) {
+        if (!c || !c.requestDate || c.requestDate >= cutoffDate14d) continue;
+        for (const arrField of ["inspectionPhotos", "checkoutPhotos", "photos"]) {
+          if (Array.isArray(c[arrField])) {
+            for (let i = 0; i < c[arrField].length; i++) {
+              const item = c[arrField][i];
+              if (typeof item === "string" && item.startsWith("data:image/") && item.length >= 2048) {
+                c[arrField][i] = await offloadSingleBase64Field("clean", c.id, `${arrField}_${i}`, item);
+                offloadedCount++;
+              } else if (item && typeof item.url === "string" && item.url.startsWith("data:image/") && item.url.length >= 2048) {
+                item.url = await offloadSingleBase64Field("clean", c.id, `${arrField}_${i}`, item.url);
+                offloadedCount++;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (offloadedCount > 0) {
+      console.log(`[Media Offload] ${offloadedCount} mídia(s) Base64 histórica(s) externalizada(s) para media_blobs no PostgreSQL.`);
+    }
+  } catch (err) {
+    console.warn("[Media Offload] Aviso durante externalização de mídias históricas:", err.message);
+  }
+  return offloadedCount;
+}
 
 async function flushPgState() {
   if (!pgPool || !pgHydratedSuccessfully || isPgSaving) return;
@@ -6940,6 +7096,7 @@ async function flushPgState() {
   if (pendingPgDirty || !pendingPgStateJson) {
     reconcileCleaningRequests();
     pruneDatabase();
+    await offloadHistoricalBase64Media();
     pendingPgStateJson = JSON.stringify(db);
     pendingPgDirty = false;
   }
@@ -7005,7 +7162,8 @@ function pruneDatabase() {
     reservationCommunications: 500,
     serviceOrders: 500,
     auditLogs: 200,
-    notifications: 250
+    notifications: 250,
+    nfseRetryQueue: 100
   };
 
   for (const [key, max] of Object.entries(LIMITS)) {
@@ -22747,7 +22905,7 @@ const handleCheckout = async (req, res) => {
         tomadorNome: r.guestName,
         tomadorCpfCnpj: r.guestDocument || guest?.document || guest?.documentNumber || "",
         localNome: "CorpFlats",
-        localEndereco: "Av. Pelinca, 100 - Campos dos Goytacazes/RJ",
+        localEndereco: "Rua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes/RJ",
         flatNumber: String(r.flatNumber || "113"),
         checkIn: r.checkinDate,
         checkOut: r.checkoutDate,
@@ -25322,9 +25480,10 @@ function handleFnrhServe(isDownload) {
       if (targetReservation) {
         try {
           const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+          const hydrated = await hydrateReservationMediaBlobsForPdf(targetReservation, targetGuest);
           const rebuilt = await rebuildFnrhPdfOnTheFly({
-            reservation: targetReservation,
-            guest: targetGuest,
+            reservation: hydrated.reservation,
+            guest: hydrated.guest,
             auditTrail: docRecord,
             appOrigin: originHeader,
             db
@@ -25370,6 +25529,39 @@ function handleFnrhServe(isDownload) {
 // ── Rotas Públicas e Seguras para Visualização e Download da FNRH ──────────
 app.get("/api/pms/fnrh/:documentUuid/view", handleFnrhServe(false));
 app.get("/api/pms/fnrh/:documentUuid/download", handleFnrhServe(true));
+
+// ── Endpoint de Streaming de Mídias Externalizadas (media_blobs no PostgreSQL) ──
+app.get("/api/media/blob/:id", async (req, res) => {
+  const blobId = String(req.params.id || "").trim();
+  if (!blobId || !/^[a-zA-Z0-9_\-]+$/.test(blobId)) {
+    return res.status(400).json({ error: "ID de mídia inválido." });
+  }
+  try {
+    let entry = mediaBlobMemoryCache.get(blobId);
+    if (!entry && pgPool) {
+      const q = await pgPool.query("SELECT mime_type, data_url FROM media_blobs WHERE id = $1 LIMIT 1", [blobId]);
+      if (q.rows && q.rows[0]?.data_url) {
+        entry = { mimeType: q.rows[0].mime_type || "image/jpeg", dataUrl: q.rows[0].data_url };
+        cacheMediaBlob(blobId, entry);
+      }
+    }
+    if (!entry || !entry.dataUrl) {
+      return res.status(404).json({ error: "Mídia não encontrada." });
+    }
+    if (req.query.format === "data_url") {
+      return res.json({ id: blobId, mimeType: entry.mimeType, dataUrl: entry.dataUrl });
+    }
+    const commaIdx = entry.dataUrl.indexOf(",");
+    const base64Body = commaIdx >= 0 ? entry.dataUrl.slice(commaIdx + 1) : entry.dataUrl;
+    const imgBuffer = Buffer.from(base64Body, "base64");
+    res.setHeader("Content-Type", entry.mimeType || "image/jpeg");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    return res.send(imgBuffer);
+  } catch (err) {
+    return res.status(500).json({ error: "Erro ao carregar mídia: " + err.message });
+  }
+});
 
 app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
   const uuid = req.params.uuid;
@@ -28531,7 +28723,9 @@ app.post("/api/nfse/emit", async (req, res) => {
       }
 
       if (!emissionResult.success && process.env.NODE_ENV !== "test") {
-        return res.status(502).json({ error: emissionResult.error || "Falha na autorização pela SEFIN Nacional" });
+        const errMsg = emissionResult.error || "Falha na autorização pela SEFIN Nacional";
+        const retryItem = enqueueNfseRetry(req.body, errMsg, motorEscolhido);
+        return res.status(502).json({ error: errMsg, retryQueued: true, retryId: retryItem?.id });
       }
 
       numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
@@ -28570,7 +28764,9 @@ app.post("/api/nfse/emit", async (req, res) => {
       });
 
       if (!emissionResult.ok && process.env.NODE_ENV !== "test") {
-        return res.status(502).json({ error: (emissionResult.errors || []).join(" | ") || "Falha na emissão pela Prefeitura Municipal (GissOnline)" });
+        const errMsg = (emissionResult.errors || []).join(" | ") || "Falha na emissão pela Prefeitura Municipal (GissOnline)";
+        const retryItem = enqueueNfseRetry(req.body, errMsg, motorEscolhido);
+        return res.status(502).json({ error: errMsg, retryQueued: true, retryId: retryItem?.id });
       }
 
       numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
@@ -28631,6 +28827,16 @@ app.post("/api/nfse/emit", async (req, res) => {
     };
 
     db.invoices.unshift(newInvoice);
+
+    // Se havia item na fila de retentativa fiscal para esta reserva/documento, marca como concluído
+    if (Array.isArray(db.nfseRetryQueue)) {
+      db.nfseRetryQueue = db.nfseRetryQueue.filter(q =>
+        !(reservationCode && q.payload?.reservationCode === reservationCode) &&
+        !(reservationId && Number(q.payload?.reservationId) === Number(reservationId)) &&
+        !(onlyDigits(q.payload?.tomadorCpfCnpj) === cleanDoc && Number(q.payload?.valorServico) === valor)
+      );
+    }
+
     saveDatabase();
 
     // Log de auditoria
@@ -28662,9 +28868,244 @@ app.post("/api/nfse/emit", async (req, res) => {
     });
   } catch (err) {
     console.error("[NFS-e Emission Error]", err);
-    res.status(500).json({ error: "Erro na emissão de NFS-e: " + err.message });
+    const retryItem = enqueueNfseRetry(req.body, err.message, motorEscolhido);
+    res.status(500).json({ error: "Erro na emissão de NFS-e: " + err.message, retryQueued: true, retryId: retryItem?.id });
   }
 });
+
+// ── Fila Persistente de Retry Fiscal (NFS-e GISS / ADN) com Backoff Exponencial ──
+function enqueueNfseRetry(payload, errorMessage, engine = "giss_prefeitura") {
+  if (!payload || typeof payload !== "object") return null;
+  if (!Array.isArray(db.nfseRetryQueue)) db.nfseRetryQueue = [];
+  const cleanDoc = onlyDigits(payload.tomadorCpfCnpj || "");
+  const valor = Number(payload.valorServico || 0);
+  const resCode = payload.reservationCode || null;
+  const resId = payload.reservationId ? Number(payload.reservationId) : null;
+
+  let existing = db.nfseRetryQueue.find(item =>
+    item.status !== "exhausted" && (
+      (resCode && item.payload?.reservationCode === resCode) ||
+      (resId && Number(item.payload?.reservationId) === resId) ||
+      (cleanDoc && onlyDigits(item.payload?.tomadorCpfCnpj) === cleanDoc && Number(item.payload?.valorServico) === valor)
+    )
+  );
+
+  const now = Date.now();
+  if (existing) {
+    existing.attempts = (existing.attempts || 1) + 1;
+    existing.lastError = String(errorMessage || "Erro de comunicação com webservice fiscal").slice(0, 500);
+    existing.updatedAt = new Date(now).toISOString();
+    if (existing.attempts >= 5) {
+      existing.status = "exhausted";
+      existing.nextRetryAt = null;
+    } else {
+      // Backoff exponencial: 2min, 5min, 15min, 30min
+      const delayMinutes = [2, 5, 15, 30][Math.min(existing.attempts - 1, 3)];
+      existing.status = "pending";
+      existing.nextRetryAt = new Date(now + delayMinutes * 60 * 1000).toISOString();
+    }
+    saveDatabase();
+    return existing;
+  }
+
+  const newItem = {
+    id: `nfse_retry_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    engine,
+    status: "pending",
+    attempts: 1,
+    maxAttempts: 5,
+    lastError: String(errorMessage || "Erro de comunicação com webservice fiscal").slice(0, 500),
+    nextRetryAt: new Date(now + 2 * 60 * 1000).toISOString(),
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    payload: {
+      reservationId: resId,
+      reservationCode: resCode,
+      guestId: payload.guestId || null,
+      companyId: payload.companyId || null,
+      sistemaEmissor: engine,
+      tomadorNome: payload.tomadorNome,
+      tomadorCpfCnpj: cleanDoc,
+      tomadorEmail: payload.tomadorEmail || "",
+      tomadorTelefone: payload.tomadorTelefone || "",
+      tomadorEndereco: payload.tomadorEndereco || payload.tomadorLogradouro || "",
+      tomadorLogradouro: payload.tomadorLogradouro || payload.tomadorEndereco || "",
+      tomadorNumero: payload.tomadorNumero || "",
+      tomadorComplemento: payload.tomadorComplemento || "",
+      tomadorBairro: payload.tomadorBairro || "",
+      tomadorCep: payload.tomadorCep || "",
+      tomadorCidade: payload.tomadorCidade || "Campos dos Goytacazes",
+      tomadorUf: payload.tomadorUf || "RJ",
+      tomadorCodigoMunicipio: payload.tomadorCodigoMunicipio || "3301009",
+      flatNumber: payload.flatNumber || "",
+      checkinDate: payload.checkinDate || null,
+      checkoutDate: payload.checkoutDate || null,
+      valorServico: valor,
+      discriminacao: payload.discriminacao || "",
+      aliquota: payload.aliquota || 2.0,
+      cnae: payload.cnae || "5510801",
+      codigoServico: payload.codigoServico || "09.02",
+      codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000"
+    }
+  };
+  db.nfseRetryQueue.unshift(newItem);
+  saveDatabase();
+  return newItem;
+}
+
+app.get("/api/nfse/retry-queue", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "recepcao")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  res.json({
+    items: db.nfseRetryQueue || [],
+    pendingCount: (db.nfseRetryQueue || []).filter(i => i.status === "pending").length
+  });
+});
+
+app.delete("/api/nfse/retry-queue/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
+  const id = String(req.params.id || "");
+  if (!Array.isArray(db.nfseRetryQueue)) db.nfseRetryQueue = [];
+  db.nfseRetryQueue = db.nfseRetryQueue.filter(i => i.id !== id);
+  saveDatabase();
+  res.json({ success: true });
+});
+
+async function processSingleNfseRetryItem(item) {
+  if (!item || !item.payload) return { ok: false, error: "Item inválido" };
+  const p = item.payload;
+  const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
+  const rpsCandidates = (db.invoices || [])
+    .map(i => Number(i.numeroRps || 0))
+    .filter(n => n > 0 && n < 10000000);
+  const maxRps = rpsCandidates.length > 0 ? Math.max(...rpsCandidates) : 876;
+  const timeBasedRps = Math.floor(Date.now() / 1000) % 900000 + 100000;
+  const nextDpsNumber = maxId + 1;
+  const nextRpsNumber = Math.max(maxRps + 1, timeBasedRps);
+
+  try {
+    const emissionResult = await emitirNfseGissReal({
+      numeroRps: nextRpsNumber,
+      numeroLote: nextDpsNumber,
+      valorServico: Number(p.valorServico),
+      aliquota: p.aliquota || 2.0,
+      cnae: p.cnae || "5510801",
+      codigoServico: p.codigoServico || "09.02",
+      codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
+      discriminacao: p.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${p.flatNumber || ''}.`,
+      tomadorNome: String(p.tomadorNome || "").trim(),
+      tomadorCpfCnpj: onlyDigits(p.tomadorCpfCnpj || ""),
+      tomadorEmail: String(p.tomadorEmail || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(p.tomadorTelefone || ""),
+      tomadorEndereco: p.tomadorEndereco || "",
+      tomadorLogradouro: p.tomadorLogradouro || p.tomadorEndereco || "",
+      tomadorNumero: p.tomadorNumero || "",
+      tomadorComplemento: p.tomadorComplemento || "",
+      tomadorBairro: p.tomadorBairro || "",
+      tomadorCep: cleanCep(p.tomadorCep || "28035000"),
+      tomadorCidade: p.tomadorCidade || "Campos dos Goytacazes",
+      tomadorUf: p.tomadorUf || "RJ",
+      tomadorCodigoMunicipio: p.tomadorCodigoMunicipio || "3301009",
+      flatNumber: p.flatNumber ? String(p.flatNumber) : "",
+      reservationCode: p.reservationCode || null
+    });
+
+    if (!emissionResult.ok) {
+      const errMsg = (emissionResult.errors || []).join(" | ") || "Falha no reprocessamento GissOnline";
+      enqueueNfseRetry(p, errMsg, item.engine || "giss_prefeitura");
+      return { ok: false, error: errMsg };
+    }
+
+    const numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
+    const codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
+    const newInvoice = {
+      id: nextDpsNumber,
+      numeroRps: nextRpsNumber,
+      numeroNfse,
+      numeroNota: numeroNfse,
+      codigoVerificacao,
+      chaveAcesso: emissionResult.protocoloAutorizacao || null,
+      protocoloAutorizacao: emissionResult.protocoloAutorizacao || null,
+      dataEmissao: emissionResult.dataEmissao || new Date().toISOString(),
+      sistemaEmissor: "giss_prefeitura",
+      municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
+      regraFiscalId: "hospedagem_corpflats",
+      prestadorRazaoSocial: "Rental Miller's LTDA",
+      prestadorCnpj: "47.964.813/0001-65",
+      prestadorIm: "142591",
+      companyId: p.companyId ? Number(p.companyId) : null,
+      guestId: p.guestId ? Number(p.guestId) : null,
+      tomadorNome: toTitleCase(p.tomadorNome || ""),
+      tomadorCpfCnpj: onlyDigits(p.tomadorCpfCnpj || ""),
+      tomadorEmail: String(p.tomadorEmail || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(p.tomadorTelefone || ""),
+      tomadorEndereco: p.tomadorEndereco || "",
+      tomadorLogradouro: p.tomadorLogradouro || p.tomadorEndereco || "",
+      tomadorNumero: p.tomadorNumero || "",
+      tomadorComplemento: p.tomadorComplemento || "",
+      tomadorBairro: p.tomadorBairro || "",
+      tomadorCep: cleanCep(p.tomadorCep || "28035000"),
+      tomadorCidade: p.tomadorCidade || "Campos dos Goytacazes",
+      tomadorUf: p.tomadorUf || "RJ",
+      tomadorCodigoMunicipio: p.tomadorCodigoMunicipio || "3301009",
+      flatNumber: p.flatNumber ? String(p.flatNumber) : "",
+      checkinDate: p.checkinDate || null,
+      checkoutDate: p.checkoutDate || null,
+      reservationId: p.reservationId ? Number(p.reservationId) : null,
+      reservationCode: p.reservationCode || null,
+      valorServico: Number(p.valorServico),
+      aliquota: Number(p.aliquota || 2.0),
+      cnae: p.cnae || "5510801",
+      codigoServico: p.codigoServico || "09.02",
+      codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
+      discriminacao: p.discriminacao || "",
+      status: "autorizada",
+      linkPrefeitura: emissionResult.linkNota || "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
+      qrCodeUrl: emissionResult.qrCodeUrl || null,
+      danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
+      createdAt: new Date().toISOString()
+    };
+
+    db.invoices.unshift(newInvoice);
+    db.nfseRetryQueue = (db.nfseRetryQueue || []).filter(q => q.id !== item.id);
+    saveDatabase();
+    return { ok: true, invoice: newInvoice };
+  } catch (err) {
+    enqueueNfseRetry(p, err.message, item.engine || "giss_prefeitura");
+    return { ok: false, error: err.message };
+  }
+}
+
+app.post("/api/nfse/retry-queue/:id/retry", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "recepcao")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  const id = String(req.params.id || "");
+  const item = (db.nfseRetryQueue || []).find(i => i.id === id);
+  if (!item) return res.status(404).json({ error: "Item de retentativa não encontrado." });
+  const result = await processSingleNfseRetryItem(item);
+  if (!result.ok) {
+    return res.status(502).json({ error: result.error, item });
+  }
+  res.json({ success: true, invoice: result.invoice });
+});
+
+if (process.env.NODE_ENV !== "test") {
+  setInterval(async () => {
+    if (!Array.isArray(db.nfseRetryQueue) || db.nfseRetryQueue.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const dueItems = db.nfseRetryQueue.filter(i => i.status === "pending" && i.nextRetryAt && i.nextRetryAt <= nowIso);
+    for (const item of dueItems.slice(0, 3)) {
+      await processSingleNfseRetryItem(item).catch(() => {});
+    }
+  }, 3 * 60 * 1000);
+}
 
 app.get("/api/nfse/danfse/:id", (req, res) => {
   getFiscalData();

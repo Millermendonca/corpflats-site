@@ -358,8 +358,18 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     });
   }
 
+  // 2.5 Busca nome na conversa de WhatsApp caso não haja cadastro formal
+  let convRecord = null;
+  if (Array.isArray(db?.whatsappConversations) && cleanPhone) {
+    convRecord = db.whatsappConversations.find(c => {
+      const p = normalizePhone(c.phone || "");
+      return p && (cleanPhone.endsWith(p.slice(-8)) || p.endsWith(cleanPhone.slice(-8)));
+    });
+  }
+  const convName = (convRecord?.name && convRecord.name.trim() !== "Hóspede") ? convRecord.name.trim() : null;
+
   // 3. Monta resumo do hóspede
-  const guestName = matchedReservation?.guestName || guestRecord?.name || null;
+  const guestName = matchedReservation?.guestName || guestRecord?.name || convName || null;
 
   let stayStatus = "sem_reserva_ativa";
   let flatNumber = matchedReservation?.flatNumber || null;
@@ -4390,11 +4400,209 @@ export function isAvailabilityInquiry(text = "") {
 }
 
 /**
+ * Detecta se a mensagem é uma solicitação ou intenção explícita de realizar/fazer uma reserva
+ * (ex: "reserva pra mim por favor", "quero reservar", "faz uma reserva", "reservar agora")
+ */
+export function isReservationBookingRequest(text = "") {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase().trim();
+  const norm = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Se contiver pergunta explícita de preço / quanto custa / qual o valor, prioriza cotação
+  if (/\b(?:quanto\s+(?:custa|fica|sai|t[aá]|[eé])|qual\s+(?:o\s+)?(?:valor|pre[cç]o|tarifa)|tabela\s+de\s+(?:pre[cç]os?|valores))\b/i.test(norm)) {
+    return false;
+  }
+
+  // Não confundir com cancelamento, alteração ou consulta de reserva existente
+  if (/\b(?:cancelar|cancelamento|cancele|desistir|alterar|mudar|trocar|adiar|remarcar)\b/i.test(norm)) return false;
+  if (/(?:minhas?\s+reservas?|minha\s+estadia|status\s+da\s+reserva|reserva\s+confirmada|estou\s+hospedado)/i.test(norm)) return false;
+
+  return (
+    /\b(?:reserva|reservar|reserve)\s+(?:pra|para|pro|por)\s+mim\b/i.test(norm) ||
+    /\b(?:quero|desejo|gostaria\s+de|preciso|pode|consegue|faz|fazer|efetuar|fechar|confirmar|realizar|garantir)\s+(?:uma\s+|a\s+|minha\s+)?reserva\b/i.test(norm) ||
+    /\b(?:quero|desejo|gostaria\s+de|preciso)\s+(?:reservar|fechar|alugar)(?:\s+um\s+flat|\s+um\s+quarto|\s+agora|\s+hoje)?\b/i.test(norm) ||
+    /\b(?:faz|fazer|fa[cç]a|pode\s+fazer|faria)\s+(?:a\s+|uma\s+|minha\s+)?reserva\b/i.test(norm) ||
+    /\b(?:como\s+fa[cç]o\s+para\s+reservar|como\s+reservar|como\s+fa[cç]o\s+a\s+reserva)\b/i.test(norm) ||
+    /\b(?:reserva\s+a[ií]|reserva\s+l[aá]|vamos\s+reservar|vamos\s+fechar)\b/i.test(norm) ||
+    /\b(?:pode\s+reservar|pode\s+fechar|prosseguir\s+com\s+a\s+reserva|dar\s+andamento\s+na\s+reserva)\b/i.test(norm) ||
+    /^(?:reserva|reservar|reserve)[.!]?$/i.test(norm)
+  );
+}
+
+/**
+ * Verifica se a tabela de preços/cotação já foi enviada recentemente para este contato
+ */
+export function hasRecentlySentPricingQuote(history = []) {
+  if (!Array.isArray(history) || history.length === 0) return false;
+  const recentMessages = history.slice(-6);
+  return recentMessages.some(m => {
+    if (!m || !m.fromMe || !m.text) return false;
+    const t = String(m.text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return (
+      (t.includes("no canal direto da corpflats") || t.includes("diarias para flats executivos completos")) ||
+      (t.includes("qual periodo voce pretende se hospedar") && t.includes("datas de entrada e saida")) ||
+      (t.includes("sem cafe:") && t.includes("com cafe da manha no quarto:"))
+    );
+  });
+}
+
+/**
+ * Obtém a última mensagem enviada pelo bot (fromMe === true)
+ */
+export function getLastBotMessage(history = []) {
+  if (!Array.isArray(history) || history.length === 0) return null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg && msg.fromMe && msg.text && typeof msg.text === "string" && msg.text.trim()) {
+      return msg;
+    }
+  }
+  return null;
+}
+
+/**
+ * Avalia se duas mensagens são substancialmente idênticas (para proteção anti-repetição / anti-loop)
+ */
+export function areMessagesSubstantiallyIdentical(textA, textB) {
+  if (!textA || !textB) return false;
+  const cleanA = String(textA).trim();
+  const cleanB = String(textB).trim();
+  if (cleanA === cleanB) return true;
+
+  const normalizeForComparison = (str) => {
+    return str
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  const normA = normalizeForComparison(cleanA);
+  const normB = normalizeForComparison(cleanB);
+
+  if (normA === normB) return true;
+
+  // Se ambas forem mensagens de cotação com a tabela de diárias
+  const isQuoteA = /no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normA) &&
+                   /(?:sem cafe|com cafe|taxa.*limpeza)/i.test(normA);
+  const isQuoteB = /no canal direto da corpflats|nossas diarias para flats executivos|qual periodo voce pretende se hospedar/i.test(normB) &&
+                   /(?:sem cafe|com cafe|taxa.*limpeza)/i.test(normB);
+  if (isQuoteA && isQuoteB) return true;
+
+  // Comparação de similaridade (Jaccard similarity de palavras relevantes)
+  const wordsA = new Set(normA.split(" ").filter(w => w.length > 3));
+  const wordsB = new Set(normB.split(" ").filter(w => w.length > 3));
+  if (wordsA.size > 6 && wordsB.size > 6) {
+    let intersection = 0;
+    for (const w of wordsA) {
+      if (wordsB.has(w)) intersection++;
+    }
+    const union = new Set([...wordsA, ...wordsB]).size;
+    if (union > 0 && (intersection / union) >= 0.82) return true;
+  }
+
+  // Se um contém o outro e a diferença de tamanho for menor que 18%
+  if (normA.length > 30 && normB.length > 30) {
+    if ((normA.includes(normB) || normB.includes(normA)) &&
+        Math.min(normA.length, normB.length) / Math.max(normA.length, normB.length) >= 0.82) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Proteção Anti-Loop de Mensagens Idênticas (Anti-Repetition Guard)
+ * Garante que a Sofia NUNCA envie uma resposta substancialmente idêntica à última resposta enviada
+ * para o mesmo contato, refinando a mensagem de acordo com a intenção do usuário.
+ */
+export function applyAntiRepetitionGuard({
+  candidateText = "",
+  history = [],
+  queryText = "",
+  guestContext = {},
+  db = null,
+  analysis = null
+}) {
+  const lastBotMsg = getLastBotMessage(history);
+  if (!lastBotMsg) {
+    return { wasRepetitive: false, refinedText: candidateText };
+  }
+
+  const isDuplicate = areMessagesSubstantiallyIdentical(candidateText, lastBotMsg.text);
+  if (!isDuplicate) {
+    return { wasRepetitive: false, refinedText: candidateText };
+  }
+
+  const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
+  const toneSettings = db?.whatsappAiSettings?.toneSettings || null;
+  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  const queryAnalysis = analysis || analyzeGuestQuery(queryText, guestContext, db);
+  const isBooking = queryAnalysis.type === "RESERVATION_REQUEST" || isReservationBookingRequest(queryText);
+  const botSettings = getBotActionsSettings(db);
+  const canAutoReserve = botSettings.apiActionsEnabled !== false && (
+    botSettings.allowedActions.createPreReservation !== false ||
+    botSettings.allowedActions.commitReservation !== false
+  );
+
+  const hasDates = /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
+                   /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(queryText);
+
+  // Caso 1: Usuário solicitando reserva
+  if (isBooking) {
+    if (!canAutoReserve) {
+      return {
+        wasRepetitive: true,
+        refinedText: ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`)
+      };
+    }
+    if (!hasDates) {
+      return {
+        wasRepetitive: true,
+        refinedText: ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`)
+      };
+    }
+  }
+
+  // Caso 2: Resposta duplicada de cotação / diárias
+  const isQuoteCandidate = /no canal direto da corpflats|nossas diárias para flats executivos|qual período você pretende se hospedar/i.test(candidateText);
+  if (isQuoteCandidate) {
+    return {
+      wasRepetitive: true,
+      refinedText: ret(`Olá${name}! Como passei os valores das diárias logo acima ✨, para eu verificar a disponibilidade exata dos nossos flats e passarmos para a sua reserva, você poderia me informar as datas de check-in e check-out desejadas e para quantas pessoas será a estadia? 🏨`)
+    };
+  }
+
+  // Caso 3: Confirmações curtas / gentilezas do usuário
+  if (/^(?:ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá]\s+bom|blz|agrade[cç]o|sim|n[aã]o|positivo|por\s+favor)[.!?\s]*$/i.test(queryText)) {
+    return {
+      wasRepetitive: true,
+      refinedText: ret(`Perfeito${name}! Se desejar dar andamento na sua reserva, basta me informar as datas de entrada e saída e para quantas pessoas será a estadia. Qualquer outra dúvida, estou à sua disposição! ✨`)
+    };
+  }
+
+  // Caso 4: Refinamento genérico cordial anti-eco
+  return {
+    wasRepetitive: true,
+    refinedText: ret(`Olá${name}! Já compartilhei essas orientações com você logo acima ✨. Caso precise de mais algum detalhe específico ou queira dar andamento na sua hospedagem, por favor me avise por aqui! 🏨`)
+  };
+}
+
+/**
  * Detecta se a mensagem é uma consulta de cotação, tarifas, diárias ou valores
  */
 export function isPricingOrQuoteInquiry(text = "") {
   if (!text || typeof text !== "string") return false;
   const lower = text.toLowerCase().trim();
+
+  // Se for solicitação explícita de reserva ("reserva pra mim", "quero reservar", etc.), NÃO é cotação de preços pura!
+  if (isReservationBookingRequest(text)) {
+    return false;
+  }
 
   // Expressões explícitas de cotação / preço / diária / orçamento ou disponibilidade de vagas
   return (
@@ -4403,7 +4611,6 @@ export function isPricingOrQuoteInquiry(text = "") {
     /\b(?:di[aá]rias?|hospedagem|estadia)\s+(?:com\s+caf[eé]|sem\s+caf[eé]|para\s+\d+\s+pesso|para\s+casal|individual|solteiro)\b/i.test(lower) ||
     /\b(?:or[cç]amento|cota[cç][aã]o|cotar)\b/i.test(lower) ||
     /\bdi[aá]rias?\b/i.test(lower) ||
-    /\b(?:nova\s+reserva|fazer\s+reserva|quero\s+reservar|reservar\s+quarto|alugar\s+flat)\b/i.test(lower) ||
     isAvailabilityInquiry(text)
   );
 }
@@ -4453,6 +4660,15 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     return {
       type: "GREETING_ONLY",
       primaryTopic: "saudacao",
+      rawText: text
+    };
+  }
+
+  // 1.5 Solicitação de Nova Reserva / Intenção de Reservar (Booking Request)
+  if (isReservationBookingRequest(text)) {
+    return {
+      type: "RESERVATION_REQUEST",
+      primaryTopic: "solicitacao_reserva",
       rawText: text
     };
   }
@@ -4571,8 +4787,19 @@ export function validateAndRefineResponse({
   db = null,
   aiConfig = DEFAULT_AI_CONFIG,
   saveDatabase = null,
-  createNotification = null
+  createNotification = null,
+  history = []
 }) {
+  const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
+    ? history
+    : (guestContext?.history && Array.isArray(guestContext.history) && guestContext.history.length > 0
+        ? guestContext.history
+        : ((db?.whatsappConversations || []).find(c => {
+            const p = cleanWhatsAppPhone(c.phone);
+            const target = cleanWhatsAppPhone(guestContext?.phone);
+            return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+          })?.messages || []));
+
   const analysis = analyzeGuestQuery(queryText, guestContext, db);
   let replyText = candidateText;
   let unmetDemand = null;
@@ -4580,7 +4807,7 @@ export function validateAndRefineResponse({
   let shouldHandover = false;
   let requiresHandover = false;
 
-  const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
+  const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
   const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
   const ret = (msg) => applyToneFormatting(msg, toneSettings);
 
@@ -4592,24 +4819,72 @@ export function validateAndRefineResponse({
 
     // Se o texto candidato NÃO fornece preço ou é apenas sobre a logística da bandeja, E não for um transbordo:
     if (!isHandoverMessage && (!hasPriceIndicator || hasOnlyBreakfastLogistics)) {
-      console.log(`[Semantic Critique] Mismatch detectado para query de preço ("${queryText}"). Substituindo resposta por valores oficiais do sistema.`);
       const pricing = handleGetPricingInfo(db, {
         guests: /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText) ? 2 : 1,
         withBreakfast: /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText)
       });
 
-      const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText);
-      const withBreakfast = /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText);
-      const withoutBreakfast = /\b(?:sem\s+caf[eé])/i.test(queryText);
-
-      if (withBreakfast) {
-        const rate = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
-        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} com café da manhã* servido no quarto fica a partir de *R$ ${rate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
-      } else if (withoutBreakfast) {
-        const rateWithBf = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
-        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} sem café* fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${rateWithBf},00 / diária* (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
+      // Se a cotação já foi enviada logo acima no histórico, NÃO repete o banner inteiro!
+      if (hasRecentlySentPricingQuote(effectiveHistory)) {
+        console.log(`[Semantic Critique] Cotação já enviada recentemente para "${queryText}". Evitando reenvio do banner de diárias.`);
+        replyText = ret(`Olá${name}! Como mencionei acima, nossas diárias são a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* sem café ou *R$ ${pricing.rateWithBreakfastFor1},00* com café no quarto (isenção da taxa de limpeza). Me informando as datas desejadas de check-in e check-out e quantas pessoas serão, verifico a disponibilidade exata agora mesmo! 🏨✨`);
       } else {
-        replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${pricing.baseRateWithoutBreakfast},00 / diária* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${pricing.rateWithBreakfastFor1},00 / diária* (1 pessoa) ou *R$ ${pricing.rateWithBreakfastFor2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
+        console.log(`[Semantic Critique] Mismatch detectado para query de preço ("${queryText}"). Substituindo resposta por valores oficiais do sistema.`);
+        const isCouple = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(queryText);
+        const withBreakfast = /\b(?:com\s+caf[eé]|incluso\s+caf[eé])/i.test(queryText);
+        const withoutBreakfast = /\b(?:sem\s+caf[eé])/i.test(queryText);
+
+        if (withBreakfast) {
+          const rate = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
+          replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} com café da manhã* servido no quarto fica a partir de *R$ ${rate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
+        } else if (withoutBreakfast) {
+          const rateWithBf = isCouple ? pricing.rateWithBreakfastFor2 : pricing.rateWithBreakfastFor1;
+          replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *${isCouple ? "2 pessoas (casal)" : "1 pessoa"} sem café* fica a partir de *R$ ${pricing.baseRateWithoutBreakfast},00* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${rateWithBf},00 / diária* (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
+        } else {
+          replyText = ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${pricing.baseRateWithoutBreakfast},00 / diária* (+ taxa única de limpeza de R$ ${pricing.cleaningFeeStandard},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${pricing.rateWithBreakfastFor1},00 / diária* (1 pessoa) ou *R$ ${pricing.rateWithBreakfastFor2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
+        }
+      }
+    }
+  }
+
+  // Regra 1.5: Validação Crítica de Solicitação de Reserva (RESERVATION_REQUEST)
+  if (analysis.type === "RESERVATION_REQUEST") {
+    const botSettings = getBotActionsSettings(db);
+    const canAutoReserve = botSettings.apiActionsEnabled !== false && (
+      botSettings.allowedActions.createPreReservation !== false ||
+      botSettings.allowedActions.commitReservation !== false
+    );
+
+    const hasDates = /\b\d{1,2}(?:\/\d{1,2}(?:\/\d{2,4})?|\s+de\s+[a-zç]+)\b/i.test(queryText) ||
+                     /\b(?:hoje|amanh[aã]|fim\s+de\s+semana|sexta|s[aá]bado|domingo)\b/i.test(queryText);
+
+    if (!canAutoReserve) {
+      missingDataOrCapability = true;
+      shouldHandover = true;
+      requiresHandover = true;
+      unmetDemand = detectAndRecordUnmetDemand({
+        db,
+        text: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        guestContext,
+        actionTarget: "createPreReservation",
+        reason: "action_disabled",
+        category: "pre_reserva",
+        demandTitle: "Nova Pré-Reserva / Solicitação Direta",
+        saveDatabase,
+        createNotification
+      });
+
+      replyText = ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei o seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
+    } else {
+      const candidateRepeatsQuote = /no canal direto da corpflats|nossas diárias para flats executivos|sem café: a partir de/i.test(replyText);
+      const isAlreadyAskingDates = /datas?\s+(?:de\s+)?(?:entrada|check-?in)/i.test(replyText) && !candidateRepeatsQuote;
+
+      if (!hasDates || candidateRepeatsQuote) {
+        if (!isAlreadyAskingDates || candidateRepeatsQuote) {
+          replyText = ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
+        }
       }
     }
   }
@@ -4823,6 +5098,22 @@ export function validateAndRefineResponse({
     }
   }
 
+  // Regra 7: Proteção Anti-Loop de Mensagens Idênticas (Anti-Repetition Guard)
+  if (effectiveHistory && effectiveHistory.length > 0) {
+    const repetitionCheck = applyAntiRepetitionGuard({
+      candidateText: replyText,
+      history: effectiveHistory,
+      queryText,
+      guestContext,
+      db,
+      analysis
+    });
+    if (repetitionCheck.wasRepetitive && repetitionCheck.refinedText) {
+      console.log(`[Anti-Repetition Guard] Resposta duplicada/substancialmente idêntica detectada. Refinando resposta.`);
+      replyText = repetitionCheck.refinedText;
+    }
+  }
+
   return {
     replyText,
     analysis,
@@ -4847,16 +5138,26 @@ export function getGreetingSalutation(messageText, name = "") {
 /**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
-export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null) {
+export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null, history = []) {
   const text = (messageText || "").toLowerCase().trim();
   const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
-  const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
+  const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
   const greetingSalutation = getGreetingSalutation(messageText, name);
 
   const activeDb = dbParam || (dbOrFaqs && typeof dbOrFaqs === "object" && !Array.isArray(dbOrFaqs) ? dbOrFaqs : (typeof globalThis !== "undefined" ? globalThis.db : null));
   const activeGuidelines = (activeDb?.whatsappAiSettings?.developerGuidelines || []).filter(g => g && g.active !== false);
   const toneSettings = activeDb?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
   const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
+    ? history
+    : (guestContext?.history && Array.isArray(guestContext.history) && guestContext.history.length > 0
+        ? guestContext.history
+        : ((activeDb?.whatsappConversations || []).find(c => {
+            const p = cleanWhatsAppPhone(c.phone);
+            const target = cleanWhatsAppPhone(guestContext?.phone);
+            return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+          })?.messages || []));
 
   const asksExtension = /(?:estender|prorroga|prolongar|mais\s+di[aá]rias|ficar\s+mais)/i.test(text);
   const asksCheckoutTime = /(?:hor[aá]rio\s+(?:de\s+)?check-?out|que\s+horas\s+(?:é\s+o\s+|tenho\s+que\s+)?sair|hor[aá]rio\s+de\s+sa[ií]da|hor[aá]rio\s+do\s+check-?out|limite\s+de\s+sa[ií]da)/i.test(text);
@@ -5299,10 +5600,23 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
+  // 0.75 Solicitação ou Intenção de Nova Reserva (Booking Request)
+  if (isReservationBookingRequest(text)) {
+    const botSettings = getBotActionsSettings(activeDb);
+    const canAutoReserve = botSettings.apiActionsEnabled !== false && (
+      botSettings.allowedActions.createPreReservation !== false ||
+      botSettings.allowedActions.commitReservation !== false
+    );
+    if (!canAutoReserve) {
+      return ret(`Olá${name}! Com certeza podemos providenciar a sua reserva! 🏨✨ No momento, a realização de novas reservas diretas está sendo concluída pela nossa equipe da recepção. Já registrei seu interesse e um atendente continuará o seu atendimento por aqui em instantes! Para adiantarmos, você poderia me informar as datas desejadas de entrada e saída e quantas pessoas serão? 🛎️`);
+    }
+    return ret(`Com certeza${name}! Para eu prosseguir com a sua reserva, você poderia me informar apenas as datas de entrada (check-in) e saída (check-out), e para quantas pessoas será a estadia? 🏨✨`);
+  }
+
   // 0.8 Motor Dinâmico de Cotações, Diárias e Tarifas (Prioridade Máxima sobre comodidades e rotinas operacionais)
   const mentionsGarage = /\b(?:garagem|estacionamento|carro|ve[ií]culo|placa)\b/i.test(text);
   const isPricingOrQuote = isPricingOrQuoteInquiry(text) || (
-    /reserva|diaria|diária|preco|preço|valor|alugar|disponibilidade/i.test(text) && !mentionsGarage
+    /(?:di[aá]rias?|preco|preço|valor|valores|tabela|or[cç]amento|disponibilidade)/i.test(text) && !mentionsGarage
   ) || (
     /\bvaga\b/i.test(text) && !mentionsGarage
   );
@@ -5372,6 +5686,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     // 10. Pergunta genérica de diária / valores / cotação
     const rate1 = baseDailyRate + breakfastFeePerson; // 272
     const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
+    if (hasRecentlySentPricingQuote(effectiveHistory)) {
+      return ret(`Olá${name}! Como mencionei acima, nossas diárias são a partir de *R$ ${baseDailyRate},00* sem café ou *R$ ${rate1},00* com café no quarto (isenção da taxa de limpeza). Me informando as datas desejadas de check-in e check-out e quantas pessoas serão, verifico a disponibilidade exata agora mesmo! 🏨✨`);
+    }
     return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${rate1},00 / diária* (1 pessoa) ou *R$ ${rate2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nDispomos de flats com cozinha completa, ar Split, Wi-Fi veloz e garagem no melhor ponto de Campos/RJ.\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
   }
 
@@ -5622,12 +5939,18 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
     : `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
+  const userOnlyPrompt = customPrompt
+    ? prompt
+    : `[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+
   for (const { ver, model } of candidateModels) {
     try {
+      const useNativeSysInst = ver === "v1beta" && Boolean(systemInstruction);
       const bodyPayload = {
+        ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
         contents: [
           ...formattedHistory,
-          { role: "user", parts: [{ text: fullPrompt }] }
+          { role: "user", parts: [{ text: useNativeSysInst ? userOnlyPrompt : fullPrompt }] }
         ],
         generationConfig: {
           temperature: 0.4,
@@ -5770,6 +6093,15 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
   const aiConfig = getWhatsAppAiConfig(db);
   const guestContext = buildGuestContext(db, phone);
 
+  const conv = (db?.whatsappConversations || []).find(c => {
+    const p = cleanWhatsAppPhone(c.phone);
+    const target = cleanWhatsAppPhone(phone);
+    return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+  });
+  const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
+    ? history
+    : (conv?.messages || []);
+
   // 1. Verifica intenção de transbordo humano
   const handoverCheck = detectHandoverIntent(messageText, aiConfig.handoverKeywords);
   if (handoverCheck.shouldHandover) {
@@ -5894,6 +6226,10 @@ ${guestContext.isCheckoutDay && guestContext.checkoutUrl ? `- Link de Confirmaç
   * Forneça sempre os valores das diárias com clareza e acolhimento (ex: R$ 272 com café / R$ 237 sem café).
   * NUNCA responda apenas explicando o funcionamento da bandeja ou horários do café quando o hóspede perguntar preço/diária!
   * Solicite gentilmente as datas desejadas de check-in e check-out para verificar a disponibilidade exata e fechar a cotação.
+- REGRA CRÍTICA ANTI-REPETIÇÃO E SOLICITAÇÃO DE RESERVA ("reserva pra mim por favor", "quero reservar", "faz uma reserva"):
+  * NUNCA repita a mensagem completa de tabela de diárias ou cotação de preços se ela já foi enviada logo acima no histórico da conversa!
+  * Se o usuário responder com "reserva pra mim por favor", "quero reservar" ou similar sem ainda informar as datas de check-in/check-out e quantidade de pessoas: acolha o pedido calorosamente e solicite diretamente apenas as datas de entrada e saída e o número de pessoas para prosseguir com a reserva.
+  * NUNCA envie mensagens idênticas ou quase idênticas às enviadas recentemente na conversa.
 ${dynamicFaqPromptSection}
 ${systemActionsNotice}
 `;
@@ -5908,7 +6244,7 @@ ${systemActionsNotice}
         apiKey,
         systemInstruction: `${aiConfig.systemPrompt}\n${toneSection}${guidelinesSection}\n${flatsCatalogSection || ""}\n${contextString}`,
         prompt: messageText,
-        history,
+        history: effectiveHistory,
         db,
         tools,
         requesterRole: "guest",
@@ -5921,7 +6257,8 @@ ${systemActionsNotice}
           candidateText: geminiRes.text,
           guestContext,
           db,
-          aiConfig
+          aiConfig,
+          history: effectiveHistory
         });
 
         const finalReply = geminiRes.requiresHandover ? geminiRes.text : (validation.replyText || geminiRes.text);
@@ -5945,13 +6282,14 @@ ${systemActionsNotice}
   }
 
   // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
-  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs, db);
+  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs, db, effectiveHistory);
   const validation = validateAndRefineResponse({
     queryText: messageText,
     candidateText: heuristicText,
     guestContext,
     db,
-    aiConfig
+    aiConfig,
+    history: effectiveHistory
   });
 
   return {
@@ -6165,7 +6503,7 @@ export function generateIntelligentFaqDraft(questionText, db = null, category = 
     return "O flat é entregue completamente limpo e higienizado antes do seu check-in. Limpezas extras durante a estadia podem ser solicitadas com a nossa equipe mediante taxa de serviço. 🧹✨";
   }
   if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar/i.test(lower)) {
-    return "Estamos localizados na Av. Jornalista Roberto Marinho, Edifício Soho, em Macaé/RJ, em localização privilegiada e de fácil acesso! 📍🏨";
+    return "Estamos localizados na Rua Baronesa da Lagoa Dourada, 144 (esquina com Av. Pelinca) — Edifício Soho, Parque Tamandaré, Campos dos Goytacazes/RJ, CEP 28035-212! 📍🏨";
   }
   if (/fumar|cigarro|narguile|tabaco/i.test(lower)) {
     return "Por lei e pelo regulamento do condomínio, é estritamente proibido fumar no interior dos flats e nas áreas comuns fechadas. 🚭";
@@ -7360,6 +7698,22 @@ export async function processAiInboundMessage({
       unmetDemandCreated: Boolean(unmetDemand),
       unmetDemand
     };
+  }
+
+  // 7.9. Proteção Anti-Loop de Mensagens Idênticas Fail-Safe
+  const lastBotMsg = getLastBotMessage(history);
+  if (lastBotMsg && areMessagesSubstantiallyIdentical(aiResult.replyText, lastBotMsg.text)) {
+    const repetitionCheck = applyAntiRepetitionGuard({
+      candidateText: aiResult.replyText,
+      history,
+      queryText: incomingInfo.text,
+      guestContext: aiResult.guestContext,
+      db
+    });
+    if (repetitionCheck.wasRepetitive && repetitionCheck.refinedText) {
+      console.log(`[Anti-Repetition Guard Fail-Safe] Substituindo resposta repetida antes do envio.`);
+      aiResult.replyText = repetitionCheck.refinedText;
+    }
   }
 
   // 8. Resposta Autônoma Normal:
