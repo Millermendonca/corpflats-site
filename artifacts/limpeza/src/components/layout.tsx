@@ -10,7 +10,8 @@ import {
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
-  Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity
+  Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity,
+  Inbox, HelpCircle
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -61,6 +62,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
     loadCount()
     const interval = setInterval(loadCount, 60000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Pending quarantine count for WBP integration
+  const [quarantineCount, setQuarantineCount] = useState<number>(0)
+  useEffect(() => {
+    const loadQuarantine = () => {
+      fetch("/api/wbp/quarantine")
+        .then(r => r.json())
+        .then((d: any) => {
+          if (Array.isArray(d)) {
+            setQuarantineCount(d.length)
+          } else if (d && Array.isArray(d.items)) {
+            setQuarantineCount(d.items.length)
+          }
+        })
+        .catch(() => {})
+    }
+    loadQuarantine()
+    const interval = setInterval(loadQuarantine, 30000)
     return () => clearInterval(interval)
   }, [])
 
@@ -255,6 +276,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {
         title: "📅 Reservas & Hospedagem",
         items: [
+          { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", icon: Inbox, badge: quarantineCount > 0 ? quarantineCount : null, description: "Reservas Booking/Airbnb, quarentena e conciliação" },
           { href: "/reservas", label: "Mapa de Reservas (PMS)", icon: CalendarDays, description: "Calendário de ocupação e reservas" },
           { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", icon: TrendingUp, description: "Taxa de ocupação, diária média, RevPAR e ranking" },
           { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },
@@ -274,6 +296,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         title: "💰 Financeiro & Vendas",
         items: [
           { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "Contas a Pagar/Receber e DRE gerencial" },
+          { href: "/precificacao-sebrae", label: "Precificação SEBRAE", icon: Sparkles, description: "Custo por UH (R$ 149,38), tarifa mínima R$ 276,63 e travas" },
           { href: "/tarifas", label: "Gestão de Tarifas & Taxas", icon: Coins, description: "Preços com/sem café, limpeza, pet e camas" },
           { href: "/pagamentos", label: "Pagamentos & Conciliação PIX", icon: CreditCard, description: "PIX Inter automático, Mercado Pago e taxas" },
           { href: "/trafego", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Pipeline de conversão, carrinhos e anúncios" },
@@ -291,6 +314,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {
         title: "⚙️ Sistema & Integrações",
         items: [
+          { href: "/ajuda-wbp", label: "Manual de Integração WBP", icon: HelpCircle, description: "Guia completo, rotinas da recepção e códigos de erro" },
           { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream" },
           { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, usuários" },
           { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos e chamados" },
@@ -534,6 +558,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-1">
+            <Link href="/ajuda-wbp">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8 text-muted-foreground hover:text-primary" 
+                title="Manual de Ajuda da Integração WebBookingPro"
+              >
+                <HelpCircle className="w-4 h-4" />
+              </Button>
+            </Link>
             {isAdmin && (
               <Link href="/configuracoes">
                 <Button 

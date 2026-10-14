@@ -56,6 +56,9 @@ import ServiceOrders from '@/pages/service-orders';
 import ServiceWorkerPortal from '@/pages/service-worker-portal';
 import ServerMonitorPage from '@/pages/server-monitor';
 import SmartFlatPreview from '@/pages/smart-flat-preview';
+import PricingSebraePage from '@/pages/precificacao-sebrae';
+import OtaInboxPage from '@/pages/ota-inbox';
+import WbpManualPage from '@/pages/wbp-manual';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -361,6 +364,20 @@ function Router() {
         {/* External Service Orders Management (Admin Only) */}
         <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
         <AdminRoute path="/service-orders" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
+
+        {/* Feature 28: Precificação SEBRAE & Publicar (Admin Only) */}
+        <AdminRoute path="/precificacao-sebrae" component={PricingSebraePage} moduleName="a Precificação SEBRAE" />
+        <AdminRoute path="/pricing-sebrae" component={PricingSebraePage} moduleName="a Precificação SEBRAE" />
+
+        {/* Feature 29: Caixa de Entrada OTA & Quarentena (Recepção e Admin) */}
+        <ReceptionRoute path="/caixa-entrada-ota" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
+        <ReceptionRoute path="/ota-inbox" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
+        <ReceptionRoute path="/quarentena" component={OtaInboxPage} moduleName="a Quarentena de Reservas" />
+
+        {/* Feature 30: Manual em Sistema da Integração WebBookingPro (Recepção e Admin) */}
+        <ReceptionRoute path="/ajuda-wbp" component={WbpManualPage} moduleName="o Manual da Integração WebBookingPro" />
+        <ReceptionRoute path="/manual-wbp" component={WbpManualPage} moduleName="o Manual da Integração WebBookingPro" />
+        <ReceptionRoute path="/manual-integracao" component={WbpManualPage} moduleName="o Manual da Integração WebBookingPro" />
 
         <Route path="/"><Redirect to="/reservar" /></Route>
         <Route component={NotFound} />
