@@ -393,6 +393,10 @@ Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Che
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖",
     message: `Olá, *{{nome_hospede}}*! 🌟
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
@@ -870,6 +874,10 @@ Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX o
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖",
     message: `Olá, *{{nome_destinatario}}*! 💚🎉
 Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!
 
@@ -915,6 +923,10 @@ Para agilizar sua entrada na portaria na chegada, realize com antecedência o se
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖",
     message: `Olá, *{{primeiro_nome}}*! 🌟🔑
 Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 
@@ -3403,19 +3415,20 @@ export async function checkZapiPhoneExists(phone, config) {
   }
 }
 
-// ── Cálculo do Horário de Disparo (Offset Engine) ──────────────────────────────
+// ── Cálculo do Horário de Disparo (Offset Engine - Fuso Brasília -03:00) ───────
 export function calculateScheduledTime(template, reservation, db) {
   const now = new Date();
+  const { todayStr: brTodayStr } = getBrasiliaDateParts(now);
   const checkinTimeStr = db.settings?.checkinTime || "14:00";
   const checkoutTimeStr = db.settings?.checkoutTime || "12:00";
 
-  // Checkin ISO datetime
-  const checkinDateStr = reservation.checkinDate || now.toISOString().substring(0, 10);
-  const checkinDateTime = new Date(`${checkinDateStr}T${checkinTimeStr}:00`);
+  // Checkin ISO datetime (Horário de Brasília -03:00)
+  const checkinDateStr = reservation.checkinDate || brTodayStr;
+  const checkinDateTime = new Date(`${checkinDateStr}T${checkinTimeStr}:00-03:00`);
 
-  // Checkout ISO datetime
-  const checkoutDateStr = reservation.checkoutDate || now.toISOString().substring(0, 10);
-  const checkoutDateTime = new Date(`${checkoutDateStr}T${checkoutTimeStr}:00`);
+  // Checkout ISO datetime (Horário de Brasília -03:00)
+  const checkoutDateStr = reservation.checkoutDate || brTodayStr;
+  const checkoutDateTime = new Date(`${checkoutDateStr}T${checkoutTimeStr}:00-03:00`);
 
   const timing = template.triggerTiming || "immediate";
 
@@ -3426,18 +3439,15 @@ export function calculateScheduledTime(template, reservation, db) {
   if (timing === "fixed_time_day_of") {
     const targetHour = template.fixedTime || "09:00";
     const eventDate = template.triggerEvent.includes("checkout") ? checkoutDateStr : checkinDateStr;
-    return new Date(`${eventDate}T${targetHour}:00`).toISOString();
+    return new Date(`${eventDate}T${targetHour}:00-03:00`).toISOString();
   }
 
   if (timing === "fixed_time_day_before") {
     const targetHour = template.fixedTime || "18:00";
     const eventDate = template.triggerEvent.includes("checkout") ? checkoutDateStr : checkinDateStr;
-    const dayBefore = new Date(eventDate);
-    dayBefore.setDate(dayBefore.getDate() - 1);
-    const yyyy = dayBefore.getFullYear();
-    const mm = String(dayBefore.getMonth() + 1).padStart(2, "0");
-    const dd = String(dayBefore.getDate()).padStart(2, "0");
-    return new Date(`${yyyy}-${mm}-${dd}T${targetHour}:00`).toISOString();
+    const eventNoonUtc = new Date(`${eventDate}T12:00:00Z`);
+    const dayBeforeStr = new Date(eventNoonUtc.getTime() - 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+    return new Date(`${dayBeforeStr}T${targetHour}:00-03:00`).toISOString();
   }
 
   const offsetMultiplier = template.offsetUnit === "days" 
@@ -7832,6 +7842,108 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   console.log("✓ [Z-API WhatsApp Engine] Inicializado e monitorando réguas de mensagens.");
 }
 
+// ── Controle de Concorrência (In-Flight Lock) e Desduplicação Global ───────────
+const inFlightDispatches = new Set();
+const inFlightPdfAttachments = new Set();
+
+export const MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS = new Set([
+  "reservation_created",
+  "payment_confirmed",
+  "sameday_reservation"
+]);
+
+const ROOM_READY_GROUP_EVENTS = new Set([
+  "room_ready",
+  "room_ready_ota",
+  "room_ready_regular"
+]);
+
+const CHECKOUT_GROUP_EVENTS = new Set([
+  "checkout_completed",
+  "on_checkout"
+]);
+
+const SINGLE_DISPATCH_EVENTS = new Set([
+  "reservation_created",
+  "payment_confirmed",
+  "sameday_reservation",
+  "pre_reservation_created",
+  "checkin_completed",
+  "checkout_completed",
+  "on_checkout",
+  "room_ready",
+  "room_ready_ota",
+  "room_ready_regular",
+  "reservation_cancelled",
+  "checkin_cleaning_delay"
+]);
+
+function normalizePhoneForDedup(phone) {
+  return String(phone || "").replace(/\D/g, "").replace(/^55/, "");
+}
+
+function getReservationDedupKey(reservation) {
+  if (!reservation) return "";
+  const code = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+  if (code) return code;
+  if (reservation.id) return `ID_${reservation.id}`;
+  return "";
+}
+
+function getEventGroupKey(eventName) {
+  if (MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(eventName)) return "INITIAL_CONFIRMATION";
+  if (ROOM_READY_GROUP_EVENTS.has(eventName)) return "ROOM_READY_GROUP";
+  if (CHECKOUT_GROUP_EVENTS.has(eventName)) return "CHECKOUT_GROUP";
+  return eventName;
+}
+
+function isSameEventGroup(evA, evB) {
+  return getEventGroupKey(evA) === getEventGroupKey(evB);
+}
+
+export function isInitialConfirmationInFlightOrSent(db, reservation) {
+  if (!reservation) return false;
+  const resKey = getReservationDedupKey(reservation);
+  const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+  const rId = reservation.id ? String(reservation.id) : "";
+
+  for (const key of inFlightDispatches) {
+    if (resKey && key.startsWith(`${resKey}:INITIAL_CONFIRMATION:`)) {
+      return true;
+    }
+  }
+
+  const history = db?.whatsappHistory || [];
+  return history.some(h => {
+    const hCode = String(h.reservationCode || "").trim().toUpperCase();
+    const hId = h.reservationId ? String(h.reservationId) : "";
+    const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+    return isSameRes && MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(h.triggerEvent) && (h.status === "sent" || h.status === "delivered");
+  });
+}
+
+function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, phone) {
+  const normPhone = normalizePhoneForDedup(phone);
+  if (!normPhone) return false;
+  const rCode = String(reservationCode || "").trim().toUpperCase();
+  const rId = reservationId ? String(reservationId) : "";
+  const resKey = rCode || (rId ? `ID_${rId}` : "");
+
+  if (resKey && inFlightPdfAttachments.has(`${resKey}:${normPhone}`)) {
+    return true;
+  }
+
+  return (db?.whatsappHistory || []).some(h => {
+    if (h.status !== "sent" && h.status !== "delivered") return false;
+    if (!h.documentUrl) return false;
+    const hCode = String(h.reservationCode || "").trim().toUpperCase();
+    const hId = h.reservationId ? String(h.reservationId) : "";
+    const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+    if (!isSameRes) return false;
+    return normalizePhoneForDedup(h.guestPhone) === normPhone;
+  });
+}
+
 // ── Disparo Unificado por Destinatário (WhatsApp + Espelho por E-mail) ────────
 /**
  * Monta um item da fila de agendamentos para um destinatário (hóspede, acompanhante ou solicitante).
@@ -7839,7 +7951,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, channel, baseUrl = "https://corpflats.onrender.com", idPrefix = "q", recipientTarget = null }) {
   const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, target.type);
   const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, target.type, tpl);
-  const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
+  const hasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
   return {
     id: `${idPrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     reservationId: resv.id,
@@ -7878,14 +7990,31 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
   let emailLog = null;
 
   if (item.guestPhone && !skipWhatsApp) {
-    waResult = await sendZapiMessage(db.zapiConfig, {
-      phone: item.guestPhone,
-      message: item.renderedMessage,
-      title: item.title,
-      footer: item.footer,
-      buttons: sendButtons,
-      ...(includeDocument ? { documentUrl: item.documentUrl, documentName: item.documentName } : {})
-    });
+    let shouldSendDoc = Boolean(includeDocument && item.documentUrl);
+    const normPhone = normalizePhoneForDedup(item.guestPhone);
+    const resKey = String(item.reservationCode || (item.reservationId ? `ID_${item.reservationId}` : "")).trim().toUpperCase();
+    const pdfLockKey = (shouldSendDoc && resKey && normPhone) ? `${resKey}:${normPhone}` : "";
+
+    if (shouldSendDoc && hasPdfAlreadyBeenSentOrInFlight(db, item.reservationCode, item.reservationId, item.guestPhone)) {
+      console.log(`[Z-API PDF Dedup] Anexo PDF já enviado anteriormente para ${item.guestPhone} na reserva ${item.reservationCode || item.reservationId}. Omitindo segundo envio de PDF na fila.`);
+      shouldSendDoc = false;
+    }
+
+    if (shouldSendDoc && pdfLockKey) {
+      inFlightPdfAttachments.add(pdfLockKey);
+    }
+    try {
+      waResult = await sendZapiMessage(db.zapiConfig, {
+        phone: item.guestPhone,
+        message: item.renderedMessage,
+        title: item.title,
+        footer: item.footer,
+        buttons: sendButtons,
+        ...(shouldSendDoc ? { documentUrl: item.documentUrl, documentName: item.documentName } : {})
+      });
+    } finally {
+      if (pdfLockKey) inFlightPdfAttachments.delete(pdfLockKey);
+    }
 
     const sentAtWa = new Date().toISOString();
     if (!db.whatsappHistory) db.whatsappHistory = [];
@@ -7901,7 +8030,7 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       triggerEvent: item.triggerEvent,
       message: item.renderedMessage,
       buttons: item.renderedButtons,
-      ...(includeDocument ? { documentUrl: item.documentUrl || null, documentName: item.documentName || null } : {}),
+      ...(shouldSendDoc ? { documentUrl: item.documentUrl || null, documentName: item.documentName || null } : {}),
       status: waResult.success ? "sent" : "failed",
       method: waResult.method || method,
       error: waResult.error || null,
@@ -7914,8 +8043,8 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       senderPhone: db?.zapiConfig?.instanceId || "",
       fromMe: true,
       text: item.renderedMessage,
-      type: (includeDocument && item.documentUrl) ? "document" : "text",
-      ...(includeDocument ? { mediaUrl: item.documentUrl || null, fileName: item.documentName || null } : {}),
+      type: (shouldSendDoc && item.documentUrl) ? "document" : "text",
+      ...(shouldSendDoc ? { mediaUrl: item.documentUrl || null, fileName: item.documentName || null } : {}),
       buttons: item.renderedButtons,
       triggerEvent: item.triggerEvent,
       reservationCode: item.reservationCode,
@@ -7971,10 +8100,19 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
 export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl = "" }) {
   const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, target.type);
   const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, target.type, tpl);
-  const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
-  const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
-  const docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+  const rawHasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
+  let hasAttachment = rawHasAttachment;
+  let docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+  let docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
   const label = `${getRecipientTypeLabel(target.type)}: ${target.name}`;
+
+  const resCode = reservation.code || reservation.reservationCode || (reservation.id ? `RES-${reservation.flatNumber || ''}-${String(reservation.id).padStart(4, '0')}` : null);
+  const resId = reservation.id || null;
+  const resKey = getReservationDedupKey(reservation) || String(resCode || "");
+  const eventGroup = getEventGroupKey(eventName);
+  const normPhone = normalizePhoneForDedup(target.phone);
+  const lockKey = (resKey && normPhone) ? `${resKey}:${eventGroup}:${normPhone}` : "";
+  const pdfLockKey = (resKey && normPhone) ? `${resKey}:${normPhone}` : "";
 
   let waResult = null;
   let emailLog = null;
@@ -7982,56 +8120,74 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
   if (target.phone) {
     if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(target.phone, db?.zapiConfig)) {
       console.warn(`[WhatsApp Sandbox] Envio imediato de '${tpl.title}' para ${target.phone} (${target.name}) IGNORADO: Modo de Teste ativo.`);
+    } else if (lockKey && inFlightDispatches.has(lockKey)) {
+      console.warn(`[Z-API Anti-Dup Lock] Disparo concorrente de '${eventName}' (${eventGroup}) para ${target.phone} na reserva ${resCode} BLOQUEADO (já em andamento).`);
     } else {
-      console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' (${label}) para ${target.phone}...`);
-      waResult = await sendZapiMessage(db.zapiConfig, {
-        phone: target.phone,
-        message: renderedMessage,
-        title: tpl.title,
-        footer: tpl.footer,
-        buttons: renderedButtons,
-        documentUrl: docUrl,
-        documentName: docName,
-        documentCaption: hasAttachment ? tpl.documentCaption : undefined
-      });
+      // Verifica se este documento PDF já foi enviado ou está em envio para esta reserva + telefone
+      if (hasAttachment && docUrl && hasPdfAlreadyBeenSentOrInFlight(db, resCode, resId, target.phone)) {
+        console.log(`[Z-API PDF Dedup] Manual em PDF já foi enviado para ${target.phone} na reserva ${resCode}. Enviando apenas texto sem duplicar o PDF.`);
+        hasAttachment = false;
+        docUrl = undefined;
+        docName = undefined;
+      }
 
-      if (!db.whatsappHistory) db.whatsappHistory = [];
-      db.whatsappHistory.push({
-        id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        reservationCode: reservation.code || reservation.reservationCode || (reservation.id ? `RES-${reservation.flatNumber || ''}-${String(reservation.id).padStart(4, '0')}` : null),
-        reservationId: reservation.id || null,
-        title: tpl.title || null,
-        guestName: reservation.guestName,
-        guestPhone: target.phone,
-        recipientType: target.type,
-        recipientName: target.name,
-        triggerEvent: eventName,
-        message: renderedMessage,
-        buttons: renderedButtons,
-        documentUrl: docUrl || null,
-        documentName: docName || null,
-        status: waResult.success ? "sent" : "failed",
-        method: waResult.method || "instant_trigger",
-        error: waResult.error || null,
-        sentAt: new Date().toISOString()
-      });
+      if (lockKey) inFlightDispatches.add(lockKey);
+      if (hasAttachment && docUrl && pdfLockKey) inFlightPdfAttachments.add(pdfLockKey);
 
-      appendMessageToConversation(db, {
-        phone: target.phone,
-        senderName: "CorpFlats",
-        senderPhone: db?.zapiConfig?.instanceId || "",
-        fromMe: true,
-        text: renderedMessage,
-        type: (docUrl || hasAttachment) ? "document" : "text",
-        mediaUrl: docUrl || null,
-        fileName: docName || null,
-        buttons: renderedButtons,
-        triggerEvent: eventName,
-        reservationCode: reservation.code,
-        status: waResult.success ? "read" : "failed",
-        timestamp: new Date().toISOString(),
-        messageId: waResult.messageId || `msg_auto_${Date.now()}`
-      });
+      try {
+        console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' (${label}) para ${target.phone}...`);
+        waResult = await sendZapiMessage(db.zapiConfig, {
+          phone: target.phone,
+          message: renderedMessage,
+          title: tpl.title,
+          footer: tpl.footer,
+          buttons: renderedButtons,
+          documentUrl: docUrl,
+          documentName: docName,
+          documentCaption: hasAttachment ? tpl.documentCaption : undefined
+        });
+
+        if (!db.whatsappHistory) db.whatsappHistory = [];
+        db.whatsappHistory.push({
+          id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          reservationCode: resCode,
+          reservationId: resId,
+          title: tpl.title || null,
+          guestName: reservation.guestName,
+          guestPhone: target.phone,
+          recipientType: target.type,
+          recipientName: target.name,
+          triggerEvent: eventName,
+          message: renderedMessage,
+          buttons: renderedButtons,
+          documentUrl: docUrl || null,
+          documentName: docName || null,
+          status: waResult.success ? "sent" : "failed",
+          method: waResult.method || "instant_trigger",
+          error: waResult.error || null,
+          sentAt: new Date().toISOString()
+        });
+
+        appendMessageToConversation(db, {
+          phone: target.phone,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: renderedMessage,
+          type: (docUrl || hasAttachment) ? "document" : "text",
+          mediaUrl: docUrl || null,
+          fileName: docName || null,
+          buttons: renderedButtons,
+          triggerEvent: eventName,
+          reservationCode: reservation.code,
+          status: waResult.success ? "read" : "failed",
+          timestamp: new Date().toISOString(),
+          messageId: waResult.messageId || `msg_auto_${Date.now()}`
+        });
+      } finally {
+        if (lockKey) inFlightDispatches.delete(lockKey);
+        if (pdfLockKey) inFlightPdfAttachments.delete(pdfLockKey);
+      }
     }
   }
 
@@ -8316,6 +8472,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     }
 
     const recipients = getReservationRecipients(reservation, db);
+    const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+    const rId = reservation.id ? String(reservation.id) : "";
+    const resKey = getReservationDedupKey(reservation);
+    const eventGroup = getEventGroupKey(eventName);
+    const isSingleFireEvent = SINGLE_DISPATCH_EVENTS.has(eventName);
+    const isUpdatedEvent = eventName === "reservation_updated";
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
@@ -8324,31 +8486,55 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       for (const d of dispatches) {
         let target = { ...d };
 
-        // Validação anti-duplicação para checkout_completed (por canal)
-        if (eventName === "checkout_completed" || eventName === "on_checkout") {
-          const isCheckoutEvent = (ev) => ev === "checkout_completed" || ev === "on_checkout";
+        // Validação global anti-duplicação (Histórico + In-Flight Lock) para eventos únicos e reservation_updated (janela de 30s)
+        if ((isSingleFireEvent || isUpdatedEvent) && (rCode || rId)) {
           if (target.phone) {
-            const alreadySentWa = (db.whatsappHistory || []).some(h =>
-              (h.reservationCode === reservation.code || h.reservationId === reservation.id) &&
-              isCheckoutEvent(h.triggerEvent) &&
-              h.guestPhone === target.phone &&
-              (h.status === "sent" || h.status === "delivered")
-            );
-            if (alreadySentWa) {
-              console.log(`[Z-API Instant Trigger] Mensagem de checkout já foi enviada anteriormente para ${target.phone} (Reserva ${reservation.code}). Ignorando duplicação.`);
+            const normTargetPhone = normalizePhoneForDedup(target.phone);
+            const lockKey = (resKey && normTargetPhone) ? `${resKey}:${eventGroup}:${normTargetPhone}` : "";
+            const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
+
+            const alreadySentWa = (db.whatsappHistory || []).some(h => {
+              if (h.status !== "sent" && h.status !== "delivered") return false;
+              const hCode = String(h.reservationCode || "").trim().toUpperCase();
+              const hId = h.reservationId ? String(h.reservationId) : "";
+              const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+              if (!isSameRes) return false;
+              if (!isSameEventGroup(h.triggerEvent, eventName)) return false;
+              if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
+              if (isUpdatedEvent && h.sentAt) {
+                const ageMs = Date.now() - new Date(h.sentAt).getTime();
+                return ageMs >= 0 && ageMs < 30000;
+              }
+              return true;
+            });
+
+            if (isInFlight || alreadySentWa) {
+              console.log(`[Z-API Anti-Dup] Evento '${eventName}' (${eventGroup}) já enviado ou em trânsito para ${target.phone} (Reserva ${reservation.code || reservation.id}). Ignorando duplicação.`);
               target.phone = "";
             }
           }
+
           if (target.email) {
-            const alreadySentEmail = (db.reservationCommunications || []).some(c =>
-              (String(c.reservation_id) === String(reservation.code) || String(c.reservation_id) === String(reservation.id)) &&
-              c.metadata?.channel === "whatsapp_mirror" &&
-              isCheckoutEvent(c.metadata?.trigger) &&
-              String(c.recipient || "").toLowerCase() === target.email &&
-              c.status !== "failed"
-            );
-            if (alreadySentEmail) target.email = "";
+            const normTargetEmail = String(target.email).trim().toLowerCase();
+            const alreadySentEmail = (db.reservationCommunications || []).some(c => {
+              if (c.status === "failed") return false;
+              const cResId = String(c.reservation_id || "").trim().toUpperCase();
+              const isSameRes = (rCode && cResId === rCode) || (rId && cResId === rId);
+              if (!isSameRes) return false;
+              if (c.metadata?.channel !== "whatsapp_mirror") return false;
+              if (!isSameEventGroup(c.metadata?.trigger, eventName)) return false;
+              if (String(c.recipient || "").trim().toLowerCase() !== normTargetEmail) return false;
+              if (isUpdatedEvent && c.sent_at) {
+                const ageMs = Date.now() - new Date(c.sent_at).getTime();
+                return ageMs >= 0 && ageMs < 30000;
+              }
+              return true;
+            });
+            if (alreadySentEmail) {
+              target.email = "";
+            }
           }
+
           if (!target.phone && !target.email) continue;
         }
 
@@ -8583,14 +8769,39 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
       const flatNum = String(resv.flatNumber || "");
       const flatId = resv.flatId;
 
-      // Localiza a solicitação de limpeza de hoje
+      // Localiza a solicitação de limpeza de hoje (excluindo instruções avulsas)
       const cleanReq = (db.cleaningRequests || []).find(c =>
         (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
-        (c.requestDate === todayStr || c.effectiveDate === todayStr)
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "instruction" &&
+        c.type !== "bed_adjustment_only" &&
+        (c.requestDate === todayStr || c.effectiveDate === todayStr || (c.completedAt && c.completedAt.startsWith(todayStr)))
       );
 
-      // Se o flat já está limpo, não envia o alerta de limpeza em andamento
-      if (cleanReq && cleanReq.status === "clean") {
+      // Se a limpeza de hoje já foi concluída, não envia o alerta
+      if (cleanReq && (cleanReq.status === "clean" || cleanReq.status === "completed")) {
+        continue;
+      }
+
+      // Verifica se houve check-out hoje neste flat ou se há limpeza efetivamente em andamento ("cleaning_now")
+      const hasCheckoutToday = (db.reservations || []).some(r =>
+        r.id !== resv.id &&
+        r.status !== "cancelada" &&
+        r.status !== "cancelled" &&
+        r.status !== "no_show" &&
+        (r.flatId === flatId || String(r.flatNumber) === flatNum) &&
+        r.checkoutDate === todayStr
+      );
+      const hasActiveCleaningNow = (db.cleaningRequests || []).some(c =>
+        (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
+        !c.isInstructionOnly &&
+        (c.status === "cleaning_now" || c.status === "in_progress")
+      );
+
+      // Se não há solicitação pendente de hoje, não houve checkout hoje e não há camareira limpando agora,
+      // significa que o flat já estava limpo antes de hoje — nunca disparar alerta falso de atraso!
+      if (!cleanReq && !hasCheckoutToday && !hasActiveCleaningNow) {
         continue;
       }
 

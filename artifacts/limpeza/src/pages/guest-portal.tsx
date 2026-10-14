@@ -909,7 +909,8 @@ export default function GuestPortal() {
     )
   }
 
-  const { isFlatClean, canDoEarlyCheckin, hasEarlyCheckinBenefit, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
+  const { isFlatClean, flatCleaningStatus, canDoEarlyCheckin, hasEarlyCheckinBenefit, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
+  const isActivelyCleaning = flatCleaningStatus === "cleaning_now"
 
   const currentHour = data?.currentHour ?? data?.brasilia?.hour ?? (typeof window !== "undefined" ? new Date().getHours() : 14)
   const isPastOrExact14h = Boolean(data?.isPastOrExact14h ?? (currentHour >= 14))
@@ -2960,13 +2961,13 @@ export default function GuestPortal() {
               isCancelled
                 ? "bg-rose-50 text-rose-700 border-rose-200 font-bold text-xs"
                 : data.isCheckinToday 
-                  ? (isFlatClean || isPastOrExact14h ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs")
+                  ? (isFlatClean ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : (isActivelyCleaning || !isPastOrExact14h ? "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs" : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"))
                   : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"
             }>
               {isCancelled
                 ? "✕ Reserva Cancelada"
                 : data.isCheckinToday 
-                  ? (isFlatClean ? "✨ Flat Pronto e Limpo" : (isPastOrExact14h ? "🔑 Check-in Liberado" : "🧹 Em Higienização"))
+                  ? (isFlatClean ? "✨ Flat Pronto e Limpo" : (isActivelyCleaning ? "🧹 Em Higienização" : (isPastOrExact14h ? "🔑 Check-in Liberado" : "🧹 Em Higienização")))
                   : "✨ Flat Confirmado & Preparado"
               }
             </Badge>
@@ -3015,7 +3016,7 @@ export default function GuestPortal() {
             {/* Status de Check-in e Governança no Dia da Chegada */}
             {data.isCheckinToday && !isCancelled && (
               <>
-                {!isFlatClean && !isPastOrExact14h ? (
+                {!isFlatClean && (isActivelyCleaning || !isPastOrExact14h) ? (
                   <div className="space-y-3">
                     <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
                       <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />

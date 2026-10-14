@@ -83,7 +83,8 @@ import {
   sendMirrorEmail,
   buildMirrorEmailSubject,
   renderTemplateButtons,
-  DEFAULT_WHATSAPP_TEMPLATES
+  DEFAULT_WHATSAPP_TEMPLATES,
+  isInitialConfirmationInFlightOrSent
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -3512,8 +3513,8 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
-    // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
-    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber) {
+    // 4. Garantir que para checkouts ATÉ HOJE (nunca futuros!) exista a solicitação de limpeza correspondente
+    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber && r.checkoutDate <= todayStr) {
       const checkoutDate = r.checkoutDate;
       const hasCleaning = db.cleaningRequests.some(c =>
         (String(c.flatNumber) === String(r.flatNumber) || c.flatId === r.flatId) &&
@@ -3578,15 +3579,67 @@ function reconcileUniversalIntegrity(incomingState = null) {
           leavingGuest: r.guestName || "Hóspede",
           arrivingGuest: null,
           pendingObservation: null,
-          willCleanAt: `${checkoutDate}T13:00:00.000Z`,
+          willCleanAt: null,
           createdAt: `${checkoutDate}T08:00:00.000Z`,
-          updatedAt: `${checkoutDate}T13:00:00.000Z`
+          updatedAt: `${checkoutDate}T08:00:00.000Z`
         });
         changed = true;
         console.log(`[Universal Integrity] Limpeza de checkout criada automaticamente para o Flat ${r.flatNumber} na data ${checkoutDate} (status: ${isOldPastCheckout ? "clean" : "dirty"})`);
       }
     }
   });
+
+  // 4.1. Higienizar registros "dirty" futuros gerados indevidamente e registros "dirty" antigos (> 7 dias ou já sucedidos por limpeza concluída)
+  const sevenDaysAgoCleanup = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
+  const beforeFutureFilterCount = (db.cleaningRequests || []).length;
+  db.cleaningRequests = (db.cleaningRequests || []).filter(c => {
+    if (!c) return false;
+    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+    if (!isInst && c.requestDate > todayStr && c.status === "dirty" && !c.cleaningStartedAt && !c.completedAt && !c.assignedUserId && !c.isManualInstruction) {
+      return false;
+    }
+    return true;
+  });
+  if (db.cleaningRequests.length !== beforeFutureFilterCount) changed = true;
+
+  for (const c of (db.cleaningRequests || [])) {
+    if (!c || c.status !== "dirty") continue;
+    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+    if (isInst) continue;
+    if (c.requestDate && c.requestDate < todayStr) {
+      const fNum = String(c.flatNumber || "");
+      const hasSubsequentClean = (db.cleaningRequests || []).some(other =>
+        other.id !== c.id &&
+        (String(other.flatNumber) === fNum || (c.flatId && other.flatId === c.flatId)) &&
+        !other.isInstructionOnly &&
+        other.source !== "manual_instruction" &&
+        other.status === "clean" &&
+        (other.effectiveDate || (other.completedAt ? other.completedAt.substring(0, 10) : other.requestDate)) >= c.requestDate
+      );
+      if (c.requestDate < sevenDaysAgoCleanup || hasSubsequentClean) {
+        c.status = "clean";
+        if (!c.completedAt) c.completedAt = `${c.requestDate}T15:00:00.000Z`;
+        changed = true;
+      }
+    }
+  }
+
+  // 4.2. Garantir configuração correta de anexo PDF nos templates de confirmação inicial (evitando envio duplicado no check-in)
+  if (Array.isArray(db.whatsappTemplates)) {
+    for (const tpl of db.whatsappTemplates) {
+      if (tpl.id === "tpl_checkin_completed" && tpl.hasAttachment === true) {
+        tpl.hasAttachment = false;
+        changed = true;
+      }
+      if ((tpl.id === "tpl_sameday_reservation_instructions" || tpl.id === "tpl_payment_confirmed" || tpl.id === "tpl_new_reservation_direct" || tpl.id === "tpl_new_reservation_ota") && tpl.hasAttachment === undefined) {
+        tpl.hasAttachment = true;
+        if (!tpl.documentUrl) tpl.documentUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+        if (!tpl.documentName) tpl.documentName = "Manual_do_Hospede_CorpFlats.pdf";
+        if (!tpl.documentCaption) tpl.documentCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖";
+        changed = true;
+      }
+    }
+  }
 
   // Limpeza de instruções automáticas obsoletas:
   // Se a solicitação não for manual e não houver reserva ativa com check-in nessa data/quarto, limpa preferências
@@ -10696,7 +10749,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         }
         shouldSaveDb = true;
       }
-    } else if (dateStr >= "2026-09-01") {
+    } else if (dateStr >= "2026-09-01" && !isFutureDate) {
       db.cleaningRequests.push(card);
       shouldSaveDb = true;
     }
@@ -11386,15 +11439,33 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
 
   const userAuth = getAuthUser(req);
   const now = new Date().toISOString();
+  const execDate = item.effectiveDate || item.requestDate || getTodayStr();
   item.status = "clean";
   item.assignedUserId = userAuth ? userAuth.id : (item.assignedUserId || 2);
   item.completedAt = now;
   item.pendingObservation = null;
   item.updatedAt = now;
+
+  // Marca eventuais pendências antigas do mesmo flat como concluídas para não ficarem presas no carry-over
+  for (const other of (db.cleaningRequests || [])) {
+    if (other.id !== item.id && (other.flatId === item.flatId || String(other.flatNumber) === String(item.flatNumber))) {
+      const isInst = Boolean(other.isInstructionOnly || other.source === "manual_instruction" || other.type === "instruction" || other.type === "bed_adjustment_only" || other.isBedAdjustmentOnly);
+      if (!isInst && other.requestDate <= execDate && other.status !== "clean" && other.status !== "no_show" && other.status !== "extended") {
+        other.status = "clean";
+        if (!other.completedAt) other.completedAt = now;
+        other.updatedAt = now;
+      }
+    }
+  }
   saveDatabase();
 
   const flat = db.flats.find(f => f.id === item.flatId);
   const assignedUser = db.users.find(u => u.id === item.assignedUserId);
+  const flatNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
+  const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
+  triggerRoomReadyWhatsApp(db, saveDatabase, item.flatId, flatNum, reqBaseUrl).catch(e =>
+    console.warn("[Room Ready WhatsApp] Erro ao notificar no resolve-issue:", e.message)
+  );
 
   res.json({
     ...item,
@@ -11603,6 +11674,19 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         }
         if (item.adminNote && item.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
           item.adminNote = null;
+        }
+        if (!isInstructionRequest) {
+          const execDate = item.effectiveDate || item.requestDate || getTodayStr();
+          for (const other of (db.cleaningRequests || [])) {
+            if (other.id !== item.id && (other.flatId === item.flatId || String(other.flatNumber) === String(item.flatNumber))) {
+              const otherIsInst = Boolean(other.isInstructionOnly || other.source === "manual_instruction" || other.type === "instruction" || other.type === "bed_adjustment_only" || other.isBedAdjustmentOnly);
+              if (!otherIsInst && other.requestDate <= execDate && other.status !== "clean" && other.status !== "no_show" && other.status !== "extended") {
+                other.status = "clean";
+                if (!other.completedAt) other.completedAt = item.completedAt || now;
+                other.updatedAt = now;
+              }
+            }
+          }
         }
       }
 
@@ -11917,7 +12001,26 @@ app.post("/api/cleaning/admin/record", (req, res) => {
   };
 
   db.cleaningRequests.unshift(newReq);
+  if ((status || "clean") === "clean") {
+    for (const other of (db.cleaningRequests || [])) {
+      if (other.id !== newReq.id && (other.flatId === finalFlatId || String(other.flatNumber) === finalFlatNumber)) {
+        const otherIsInst = Boolean(other.isInstructionOnly || other.source === "manual_instruction" || other.type === "instruction" || other.type === "bed_adjustment_only" || other.isBedAdjustmentOnly);
+        if (!otherIsInst && other.requestDate <= requestDate && other.status !== "clean" && other.status !== "no_show" && other.status !== "extended") {
+          other.status = "clean";
+          if (!other.completedAt) other.completedAt = completedTimeIso || nowIso;
+          other.updatedAt = nowIso;
+        }
+      }
+    }
+  }
   saveDatabase();
+
+  if ((status || "clean") === "clean" && requestDate === getTodayStr()) {
+    const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
+    triggerRoomReadyWhatsApp(db, saveDatabase, finalFlatId, finalFlatNumber, reqBaseUrl).catch(e =>
+      console.warn("[Room Ready WhatsApp] Erro ao notificar no admin/record:", e.message)
+    );
+  }
 
   logAuditEvent({
     level: "info",
@@ -14685,7 +14788,12 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       }
     }
 
-    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
+    {
+      const bNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
+      const isSameDayBook = reservation.checkinDate === bNow.date;
+      const isAfter0701Book = isSameDayBook && (bNow.hour > 7 || (bNow.hour === 7 && bNow.minute >= 1));
+      triggerImmediateWhatsApp(db, saveDatabase, isAfter0701Book ? "sameday_reservation" : "reservation_created", reservation);
+    }
 
     // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in).
     // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
@@ -16695,8 +16803,8 @@ export function dispatchReservationReSignatureNotifications(reservation, changes
     try {
       const resvWithChanges = { ...reservation, _changesContext: changes };
 
-      // A. Disparo integrado via WhatsApp / Z-API
-      if (typeof triggerImmediateWhatsApp === "function") {
+      // A. Disparo integrado via WhatsApp / Z-API (apenas se não tiver sido disparado pelo chamador)
+      if (!options.skipWhatsAppTrigger && typeof triggerImmediateWhatsApp === "function") {
         try {
           await triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvWithChanges, appOrigin);
         } catch (waErr) {
@@ -17223,6 +17331,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (existingOnTarget) {
         // Já existe um card na nova data; descarta o card obsoleto da data antiga
         db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
+      } else if (r.checkoutDate > getTodayStr() && oldReq.status === "dirty" && !oldReq.cleaningStartedAt && !oldReq.completedAt && !oldReq.assignedUserId && !oldReq.isManualInstruction) {
+        // Se a nova data de check-out é futura, remove o card dirty automático (será gerado dinamicamente no dia do checkout)
+        db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
       } else {
         // Move a pendência para a nova data
         oldReq.requestDate = r.checkoutDate;
@@ -17231,8 +17342,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         oldReq.leavingGuest = r.guestName;
         oldReq.updatedAt = new Date().toISOString();
       }
-    } else {
-      // 3. Se não havia pendência na data antiga e não existe na nova data, garante criação se não cancelada
+    } else if (r.checkoutDate <= getTodayStr()) {
+      // 3. Se não havia pendência na data antiga e não existe na nova data (até hoje), garante criação se não cancelada
       const hasAnyReq = db.cleaningRequests.some(c =>
         (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) &&
         c.requestDate === r.checkoutDate &&
@@ -17603,6 +17714,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
             origin: originHeader,
             source: "pms_admin_edit",
+            skipWhatsAppTrigger: guestFacingDiffs.length > 0,
             actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
           });
         }
@@ -17902,49 +18014,70 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const bNow = getBrasiliaNow();
   const todayStr = bNow.date;
 
-  // 1. Status da governança para o flat (Reconcilia solicitações e turnovers do dia)
-  let dailyRequests = [];
-  try {
-    dailyRequests = getRequestsForDate(todayStr);
-  } catch (errReq) {
-    dailyRequests = [];
-  }
+  // 1. Status da governança para o flat:
+  // Regra Oficial:
+  // - Flat Limpo: camareira marcou limpeza como finalizada ('clean') e ainda não entrou outro hóspede sem limpar, ou flat já estava limpo antes de hoje sem checkout hoje.
+  // - Em Higienização: camareira marcou limpeza iniciada ('cleaning_now' / 'in_progress').
+  const nonInstRequestsForFlat = (db.cleaningRequests || []).filter(c => {
+    if (c.flatId !== r.flatId && String(c.flatNumber) !== String(r.flatNumber)) return false;
+    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+    if (isInst || c.status === "no_show" || c.status === "extended") return false;
+    const reqDate = c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : null) || c.requestDate || "";
+    return reqDate <= todayStr;
+  });
 
-  const cleanReq = (db.cleaningRequests || []).find(c =>
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
-    c.requestDate === todayStr &&
-    !c.isInstructionOnly &&
-    c.source !== "manual_instruction" &&
-    c.type !== "bed_adjustment_only" &&
-    c.type !== "instruction"
-  ) || dailyRequests.find(c =>
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
-    !c.isInstructionOnly &&
-    !c.cleaningRequest?.isInstructionOnly &&
-    c.source !== "manual_instruction" &&
-    c.type !== "bed_adjustment_only" &&
-    c.type !== "instruction"
+  // Solicitação de hoje no banco (priorizando limpeza iniciada ou já concluída hoje)
+  const todayReqs = nonInstRequestsForFlat.filter(c =>
+    c.requestDate === todayStr ||
+    c.effectiveDate === todayStr ||
+    (c.completedAt && c.completedAt.startsWith(todayStr)) ||
+    (c.cleaningStartedAt && c.cleaningStartedAt.startsWith(todayStr))
   );
+  const cleanReq =
+    todayReqs.find(c => c.status === "cleaning_now" || c.status === "in_progress") ||
+    todayReqs.find(c => c.status === "clean" || c.status === "completed") ||
+    todayReqs[0] ||
+    null;
 
+  // Verifica se há outra reserva ativa fazendo check-out HOJE neste mesmo flat
   const hasPendingCheckoutToday = (db.reservations || []).some(res =>
     (res.flatId === r.flatId || String(res.flatNumber) === String(r.flatNumber)) &&
-    res.checkoutDate === todayStr && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
+    res.checkoutDate === todayStr &&
+    res.id !== r.id &&
+    res.status !== "cancelada" &&
+    res.status !== "cancelled" &&
+    res.status !== "no_show"
   );
 
+  // Verifica se há qualquer card com limpeza iniciada ('cleaning_now') agora para o flat
+  const activeCleaningNowReq = nonInstRequestsForFlat.find(c => c.status === "cleaning_now" || c.status === "in_progress") || null;
+
   let isFlatClean = true;
-  if (hasPendingCheckoutToday) {
+  let flatCleaningStatus = "clean";
+
+  if (activeCleaningNowReq) {
     isFlatClean = false;
+    flatCleaningStatus = "cleaning_now";
   } else if (cleanReq) {
-    // O flat só é considerado limpo se o status for estritamente 'clean' ou 'completed'
-    isFlatClean = cleanReq.status === "clean" || cleanReq.status === "completed";
-  } else {
-    // Se não há solicitação hoje e não há checkout pendente, verifica histórico anterior
-    const lastCleaning = (db.cleaningRequests || [])
-      .filter(c => (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)))
-      .sort((a, b) => (b.requestDate || "").localeCompare(a.requestDate || ""))[0];
-    if (lastCleaning && lastCleaning.status !== "clean" && lastCleaning.status !== "completed") {
+    if (cleanReq.status === "clean" || cleanReq.status === "completed") {
+      // Camareira já finalizou a limpeza hoje -> flat está 100% limpo mesmo se havia reserva saindo hoje!
+      isFlatClean = true;
+      flatCleaningStatus = "clean";
+    } else if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
       isFlatClean = false;
+      flatCleaningStatus = "cleaning_now";
+    } else {
+      isFlatClean = false;
+      flatCleaningStatus = "dirty";
     }
+  } else if (hasPendingCheckoutToday) {
+    // Há um hóspede saindo hoje e ainda não há registro de limpeza concluída hoje
+    isFlatClean = false;
+    flatCleaningStatus = "dirty";
+  } else {
+    // Não há checkout hoje nem limpeza iniciada hoje: flat já estava limpo antes da reserva!
+    isFlatClean = true;
+    flatCleaningStatus = "clean";
   }
 
   // 2. Verificação de Benefício de Early Check-in (mediante disponibilidade de flat limpo)
@@ -18094,14 +18227,15 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       hasEarlyCheckinBenefit,
       flatNumber: r.flatNumber,
       roomCategory: "Flat Studio Executivo Completo",
-      flatCleanStatus: isFlatClean ? "limpo" : "em_preparacao",
+      flatCleanStatus: isFlatClean ? "limpo" : (flatCleaningStatus === "cleaning_now" ? "em_higienizacao" : "em_preparacao"),
+      flatCleaningStatus,
       specialRequests: r.specialRequests || "",
       notes: r.notes || "",
       receptionNotes: r.receptionNotes || "",
       vehicle: r.vehicle || null,
       estimatedArrivalTime: r.estimatedArrivalTime || null,
       guestArrivalResponse: r.guestArrivalResponse || null,
-      isCleaningPriority: Boolean(cleanReq?.isPriority),
+      isCleaningPriority: Boolean(cleanReq?.isPriority || activeCleaningNowReq?.isPriority),
       fnhrCompleted: Boolean(r.fnhrCompleted),
       preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
       hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
@@ -18121,6 +18255,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     googleMapsUrl: db.settings.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2",
     isCheckinToday,
     isFlatClean,
+    flatCleaningStatus,
     hasEarlyCheckinBenefit,
     canDoEarlyCheckin,
     isPastOrExact14h,
@@ -35293,13 +35428,21 @@ async function checkInterBankingExtratoPixForPending(r, pending) {
 
 function isConfirmationAlreadyDispatched(r) {
   if (!r) return true;
+  if (typeof isInitialConfirmationInFlightOrSent === "function" && isInitialConfirmationInFlightOrSent(db, r)) {
+    return true;
+  }
   const history = db.whatsappHistory || [];
   const rCode = String(r.code || "").toUpperCase();
   const rId = String(r.id || "");
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
-    const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created") && (h.status === "sent" || h.status === "delivered");
+    const hId = String(h.reservationId || "");
+    const isSameRes = (rCode && hCode === rCode) || (rId && (hCode === rId || hId === rId));
+    return isSameRes && (
+      h.triggerEvent === "payment_confirmed" ||
+      h.triggerEvent === "reservation_created" ||
+      h.triggerEvent === "sameday_reservation"
+    ) && (h.status === "sent" || h.status === "delivered");
   });
 }
 
@@ -35334,54 +35477,29 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     saveDatabase();
   }
 
-  // 1. Dispara o comprovante financeiro / confirmação se ainda não foi disparado
+  // Dispara EXATAMENTE UMA confirmação inicial (mutuamente exclusiva entre sameday_reservation, payment_confirmed e reservation_created)
   if (!isConfirmationAlreadyDispatched(r)) {
+    const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
+    const todayStr = brNow.date;
+    const isSameDay = r.checkinDate === todayStr;
+    const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
+
     const chan = String(r.channel || "").toLowerCase();
     const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
-    if (isPreOrWasPre && isDirect) {
-      console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
-      try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
-        scheduleUpcomingReservationTriggers(db, saveDatabase);
-      } catch (err) {
-        console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
-      }
-    } else {
-      // Para OTAs (booking/airbnb) ou reservas diretas já criadas confirmadas sem passar por pré-reserva
-      console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
-      try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
-        scheduleUpcomingReservationTriggers(db, saveDatabase);
-      } catch (err) {
-        console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
-      }
+    let targetEvent = "reservation_created";
+    if (isAfter0701) {
+      targetEvent = "sameday_reservation";
+    } else if (isPreOrWasPre && isDirect) {
+      targetEvent = "payment_confirmed";
     }
-  }
 
-  // 2. Para reservas confirmadas no dia do check-in após 07:01, garante envio das orientações de chegada imediatas
-  const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
-  const todayStr = brNow.date;
-  const isSameDay = r.checkinDate === todayStr;
-  const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
-
-  if (isAfter0701) {
-    const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
-      const hCode = String(h.reservationCode || "").toUpperCase();
-      const rCode = String(r.code || "").toUpperCase();
-      const rId = String(r.id || "");
-      const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-      return isSameRes && h.triggerEvent === "sameday_reservation" && (h.status === "sent" || h.status === "delivered");
-    });
-
-    if (!hasSameDayDispatched) {
-      console.log(`[WhatsApp Dispatch] Reserva no dia do check-in após as 07:01 confirmada: disparando sameday_reservation para ${r.guestName}...`);
-      try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
-        scheduleUpcomingReservationTriggers(db, saveDatabase);
-      } catch (err) {
-        console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
-      }
+    console.log(`[WhatsApp Dispatch] Disparando confirmação única (${targetEvent}) para ${r.guestName} (${r.code})...`);
+    try {
+      await triggerImmediateWhatsApp(db, saveDatabase, targetEvent, r);
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (err) {
+      console.error(`[WhatsApp Dispatch] Erro ao disparar ${targetEvent}:`, err.message);
     }
   }
 }
