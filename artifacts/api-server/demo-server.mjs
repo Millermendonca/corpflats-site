@@ -155,7 +155,8 @@ import {
   calculateRatePlanPrices,
   WbpPricingManager,
   DEFAULT_SEBRAE_CONFIG,
-  STANDARD_SEBRAE_SEASONALITY_FACTORS
+  STANDARD_SEBRAE_SEASONALITY_FACTORS,
+  round2
 } from "./wbp/pricing.mjs";
 import {
   getAriSynchronizer,
@@ -28743,7 +28744,7 @@ app.get("/api/finance/cashflow", (req, res) => {
   let recPendingTotal = receivables.filter(r => r.status !== "recebido" && r.status !== "pago").reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
   // Sum from reservations (avoid double counting if an account receivable has matching reservation code/id)
-  const existingRecCodes = new Set(receivables.map(r => String(r.reservationCode || r.code || r.id)));
+  const existingRecCodes = new Set(receivables.map(r => String(r.reservationCode || r.code || "")).filter(Boolean));
 
   let resPaidTotal = 0;
   let resPendingTotal = 0;
