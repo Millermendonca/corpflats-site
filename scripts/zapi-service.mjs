@@ -4470,6 +4470,52 @@ export function formatPhoneDisplay(phone = "") {
   return digits;
 }
 
+const BRASILIA_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit"
+});
+
+let _cachedGuestPhoneIndex = null;
+let _cachedGuestArrayRef = null;
+let _cachedGuestArrayLen = -1;
+let _cachedGuestIndexTs = 0;
+
+function getGuestPhoneLookup(db) {
+  const guests = db?.guests;
+  if (!Array.isArray(guests) || guests.length === 0) return null;
+  const now = Date.now();
+  if (
+    _cachedGuestPhoneIndex &&
+    _cachedGuestArrayRef === guests &&
+    _cachedGuestArrayLen === guests.length &&
+    now - _cachedGuestIndexTs < 5000
+  ) {
+    return _cachedGuestPhoneIndex;
+  }
+  const byId = new Map();
+  const byCode = new Map();
+  const byName = new Map();
+  for (const g of guests) {
+    if (!g || typeof g !== "object") continue;
+    if (g.id !== undefined && g.id !== null) {
+      byId.set(g.id, g);
+      byId.set(String(g.id), g);
+    }
+    if (g.guestCode) byCode.set(g.guestCode, g);
+    if (g.name) {
+      const norm = String(g.name).trim().toLowerCase();
+      if (norm.length >= 3 && !byName.has(norm)) byName.set(norm, g);
+    }
+  }
+  _cachedGuestArrayRef = guests;
+  _cachedGuestArrayLen = guests.length;
+  _cachedGuestIndexTs = now;
+  _cachedGuestPhoneIndex = { byId, byCode, byName };
+  return _cachedGuestPhoneIndex;
+}
+
 // ── Extrator e Localizador de Telefones de Reserva e Hóspede ──────────────────
 export function getReservationPhones(r, db) {
   if (!r) return [];
@@ -4494,18 +4540,19 @@ export function getReservationPhones(r, db) {
     }
   }
 
-  if (db?.guests && Array.isArray(db.guests)) {
+  const lookup = getGuestPhoneLookup(db);
+  if (lookup) {
     let guest = null;
-    if (r.guestId) {
-      guest = db.guests.find(g => g.id === r.guestId || String(g.id) === String(r.guestId));
+    if (r.guestId !== undefined && r.guestId !== null) {
+      guest = lookup.byId.get(r.guestId) || lookup.byId.get(String(r.guestId)) || null;
     }
     if (!guest && r.guestCode) {
-      guest = db.guests.find(g => g.guestCode === r.guestCode);
+      guest = lookup.byCode.get(r.guestCode) || null;
     }
     if (!guest && r.guestName) {
       const norm = String(r.guestName).trim().toLowerCase();
       if (norm.length >= 3) {
-        guest = db.guests.find(g => g.name && String(g.name).trim().toLowerCase() === norm);
+        guest = lookup.byName.get(norm) || null;
       }
     }
     if (guest) {
@@ -4541,20 +4588,9 @@ export function findAllReservationsByPhone(db, phone) {
   return (db.reservations || []).filter(r => doesReservationMatchPhone(r, cleanP, db));
 }
 
-// ── Localizador da Melhor Reserva por Telefone (Classificação por Tiers) ────────
-export function findReservationByPhone(db, phone) {
-  const matched = findAllReservationsByPhone(db, phone);
-  if (matched.length === 0) return null;
+function selectBestReservationFromMatched(matched, todayStr) {
+  if (!matched || matched.length === 0) return null;
   if (matched.length === 1) return matched[0];
-
-  const now = new Date();
-  const brasiliaFormatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-  const todayStr = brasiliaFormatter.format(now);
 
   // TIER 1: Estadia Ativa Hoje (check-in <= hoje <= checkout, e status não cancelada)
   const activeToday = matched.filter(r => 
@@ -4626,6 +4662,15 @@ export function findReservationByPhone(db, phone) {
   }
 
   return matched[0];
+}
+
+// ── Localizador da Melhor Reserva por Telefone (Classificação por Tiers) ────────
+export function findReservationByPhone(db, phone) {
+  const matched = findAllReservationsByPhone(db, phone);
+  if (matched.length === 0) return null;
+  if (matched.length === 1) return matched[0];
+  const todayStr = BRASILIA_DATE_FORMATTER.format(new Date());
+  return selectBestReservationFromMatched(matched, todayStr);
 }
 
 // ── Inclusão de Mensagem na Conversa do WhatsApp ───────────────────────────────
@@ -4770,14 +4815,74 @@ export function syncWhatsappConversationsStore(db) {
   if (!db) return;
   if (!db.whatsappConversations) db.whatsappConversations = [];
 
-  for (const r of (db.reservations || [])) {
-    const phones = getReservationPhones(r, db);
-    for (const rawP of phones) {
+  const reservations = db.reservations || [];
+  const todayStr = BRASILIA_DATE_FORMATTER.format(new Date());
+
+  // 1. Pré-indexa conversas existentes por telefone O(C)
+  const convByPhone = new Map();
+  for (const c of db.whatsappConversations) {
+    if (c && c.phone) convByPhone.set(c.phone, c);
+  }
+
+  // 2. Extrai telefones limpos de cada reserva uma única vez e indexa por sufixo de 8 dígitos O(R)
+  const resCleanedPhones = new Array(reservations.length);
+  const resBySuffix = new Map();
+
+  for (let i = 0; i < reservations.length; i++) {
+    const r = reservations[i];
+    const rawPhones = getReservationPhones(r, db);
+    const cleanedList = [];
+    const seenSuffixes = new Set();
+
+    for (const rawP of rawPhones) {
       const cleanP = cleanWhatsAppPhone(rawP);
       if (!cleanP) continue;
+      cleanedList.push(cleanP);
+      const suffixKey = cleanP.length >= 8 ? cleanP.slice(-8) : cleanP;
+      if (!seenSuffixes.has(suffixKey)) {
+        seenSuffixes.add(suffixKey);
+        let bucket = resBySuffix.get(suffixKey);
+        if (!bucket) {
+          bucket = [];
+          resBySuffix.set(suffixKey, bucket);
+        }
+        bucket.push({ r, cleanedList });
+      }
+    }
+    resCleanedPhones[i] = cleanedList;
+  }
 
-      let conv = db.whatsappConversations.find(c => c.phone === cleanP);
-      const bestRes = findReservationByPhone(db, cleanP) || r;
+  const bestResCache = new Map();
+  const resolveBestResFast = (cleanP) => {
+    if (bestResCache.has(cleanP)) return bestResCache.get(cleanP);
+    const suffixKey = cleanP.length >= 8 ? cleanP.slice(-8) : cleanP;
+    const bucket = resBySuffix.get(suffixKey);
+    if (!bucket || bucket.length === 0) {
+      bestResCache.set(cleanP, null);
+      return null;
+    }
+    const targetLast8 = cleanP.slice(-8);
+    const targetLast9 = cleanP.slice(-9);
+    const matched = [];
+    for (const entry of bucket) {
+      const hasMatch = entry.cleanedList.some(cand =>
+        cand === cleanP ||
+        (targetLast9 && cand.endsWith(targetLast9)) ||
+        (targetLast8 && cand.endsWith(targetLast8))
+      );
+      if (hasMatch) matched.push(entry.r);
+    }
+    const best = selectBestReservationFromMatched(matched, todayStr);
+    bestResCache.set(cleanP, best);
+    return best;
+  };
+
+  for (let i = 0; i < reservations.length; i++) {
+    const r = reservations[i];
+    const cleanedList = resCleanedPhones[i];
+    for (const cleanP of cleanedList) {
+      let conv = convByPhone.get(cleanP);
+      const bestRes = resolveBestResFast(cleanP) || r;
 
       if (!conv) {
         conv = {
@@ -4801,18 +4906,17 @@ export function syncWhatsappConversationsStore(db) {
           messages: []
         };
         db.whatsappConversations.push(conv);
-      } else {
-        if (bestRes) {
-          conv.reservationCode = bestRes.code;
-          conv.flatNumber = bestRes.flatNumber || "";
-          conv.checkinDate = bestRes.checkinDate || "";
-          conv.checkoutDate = bestRes.checkoutDate || "";
-          conv.status = bestRes.status || "confirmada";
-          conv.paymentStatus = bestRes.paymentStatus || "";
-          conv.totalAmount = bestRes.totalAmount || 0;
-          if (!conv.name || conv.name === "Hóspede" || conv.name === conv.phone) {
-            conv.name = bestRes.guestName;
-          }
+        convByPhone.set(cleanP, conv);
+      } else if (bestRes) {
+        conv.reservationCode = bestRes.code;
+        conv.flatNumber = bestRes.flatNumber || "";
+        conv.checkinDate = bestRes.checkinDate || "";
+        conv.checkoutDate = bestRes.checkoutDate || "";
+        conv.status = bestRes.status || "confirmada";
+        conv.paymentStatus = bestRes.paymentStatus || "";
+        conv.totalAmount = bestRes.totalAmount || 0;
+        if (!conv.name || conv.name === "Hóspede" || conv.name === conv.phone) {
+          conv.name = bestRes.guestName;
         }
       }
     }
@@ -4823,7 +4927,7 @@ export function syncWhatsappConversationsStore(db) {
     const cleanP = cleanWhatsAppPhone(hist.guestPhone);
     if (!cleanP) continue;
 
-    let conv = db.whatsappConversations.find(c => c.phone === cleanP);
+    let conv = convByPhone.get(cleanP);
     if (!conv) {
       conv = {
         id: cleanP,
@@ -4846,6 +4950,7 @@ export function syncWhatsappConversationsStore(db) {
         messages: []
       };
       db.whatsappConversations.push(conv);
+      convByPhone.set(cleanP, conv);
     }
 
     const msgId = hist.id || `msg_hist_${hist.sentAt}`;
@@ -4872,7 +4977,13 @@ export function syncWhatsappConversationsStore(db) {
 
   for (const conv of db.whatsappConversations) {
     if (conv.messages && conv.messages.length > 0) {
-      conv.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      if (conv.messages.length > 1) {
+        conv.messages.sort((a, b) => {
+          const ta = String(a.timestamp || "");
+          const tb = String(b.timestamp || "");
+          return ta < tb ? -1 : (ta > tb ? 1 : 0);
+        });
+      }
       const last = conv.messages[conv.messages.length - 1];
       conv.lastMessage = {
         text: last.text || (last.type === "document" ? `📄 ${last.fileName || "Documento"}` : (last.type === "image" ? "📷 Foto" : (last.type === "audio" ? "🎵 Áudio" : "Mensagem"))),
@@ -4885,7 +4996,11 @@ export function syncWhatsappConversationsStore(db) {
     }
   }
 
-  db.whatsappConversations.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+  db.whatsappConversations.sort((a, b) => {
+    const ta = String(a.updatedAt || "");
+    const tb = String(b.updatedAt || "");
+    return tb < ta ? -1 : (tb > ta ? 1 : 0);
+  });
 }
 
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
@@ -4893,9 +5008,35 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   const getDb = typeof dbOrGetter === "function" ? dbOrGetter : () => dbOrGetter;
   globalDbGetter = getDb;
 
+  let _lastInitializedDbRef = null;
+  let _lastEnsureDefaultsTs = 0;
+
   function ensureDbDefaults() {
     const db = getDb();
     if (!db) return;
+
+    const nowMs = Date.now();
+    if (
+      _lastInitializedDbRef === db &&
+      nowMs - _lastEnsureDefaultsTs < 30000 &&
+      db.whatsappAiSettings &&
+      Array.isArray(db.whatsappAiSettings.developerGuidelines) &&
+      db.whatsappAiSettings.toneSettings &&
+      Array.isArray(db.faqItems) &&
+      db.zapiConfig &&
+      Array.isArray(db.zapiConnectionLogs) &&
+      Array.isArray(db.conciergeWhatsappLogs) &&
+      Array.isArray(db.whatsappTemplates) && db.whatsappTemplates.length >= DEFAULT_WHATSAPP_TEMPLATES.length &&
+      Array.isArray(db.whatsappQuickMessages) && db.whatsappQuickMessages.length >= DEFAULT_WHATSAPP_QUICK_MESSAGES.length &&
+      Array.isArray(db.whatsappQueue) &&
+      Array.isArray(db.whatsappHistory) &&
+      Array.isArray(db.whatsappConversations)
+    ) {
+      return;
+    }
+    _lastInitializedDbRef = db;
+    _lastEnsureDefaultsTs = nowMs;
+
     if (!db.whatsappAiSettings) {
       db.whatsappAiSettings = {
         developerPhone: "22998505276",

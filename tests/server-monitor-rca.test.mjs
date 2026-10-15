@@ -258,3 +258,38 @@ test("Server Monitor: Limitação de activeRequestsMap sob alta concorrência e 
   stopMonitoringEngine();
 });
 
+test("Server Monitor: Não repete a mesma requisição concluída em múltiplos alertas seguidos de Event Loop", async () => {
+  const fakeReq = {
+    method: "GET",
+    url: "/api/whatsapp/quick-messages",
+    headers: { "x-forwarded-for": "127.0.0.1" }
+  };
+  const fakeRes = {
+    statusCode: 200,
+    handlers: {},
+    on(event, handler) { this.handlers[event] = handler; }
+  };
+
+  serverMonitorMiddleware(fakeReq, fakeRes, () => {});
+  await new Promise(resolve => setTimeout(resolve, 510));
+  fakeRes.handlers.finish();
+
+  const lagSnapshot = {
+    memory: { heapUsedMB: 120, heapLimitMB: 384, heapPercent: 31, rssMB: 180, containerMemUsedMB: 180, containerMemLimitMB: 512, containerMemPercent: 35, spaces: [] },
+    cpu: { processPercent: 20, userPercent: 15, systemPercent: 5 },
+    eventLoop: { max: 450, p99: 310 },
+    traffic: { activeRequests: [] }
+  };
+
+  // 1º ciclo logo após término: atribui à requisição recém-concluída
+  const firstIssues = evaluateRootCauses(lagSnapshot, null);
+  const firstLoopIssue = firstIssues.find(i => i.category === "EVENT_LOOP_STARVATION");
+  assert.ok(firstLoopIssue.probableCause.includes("/api/whatsapp/quick-messages"), "Primeira avaliação imediata correlaciona a requisição recém-finalizada");
+
+  // 2º ciclo subsequente sem novas requisições: NÃO pode culpar novamente a mesma requisição passada
+  const secondIssues = evaluateRootCauses(lagSnapshot, null);
+  const secondLoopIssue = secondIssues.find(i => i.category === "EVENT_LOOP_STARVATION");
+  assert.ok(!secondLoopIssue.probableCause.includes("/api/whatsapp/quick-messages"), "Ciclos subsequentes não devem repetir a culpa na mesma requisição antiga");
+});
+
+

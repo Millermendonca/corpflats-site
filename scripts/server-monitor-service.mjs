@@ -155,6 +155,7 @@ export function serverMonitorMiddleware(req, res, next) {
         heapDeltaMB = Math.round(((memEnd.heapUsed - (lastMemoryUsage?.heapUsed || memEnd.heapUsed)) / (1024 * 1024)) * 10) / 10;
       } catch (_) {}
 
+      const finishedAtMs = Date.now();
       recentSlowRequests.unshift({
         id: reqId,
         method: reqRecord.method,
@@ -162,7 +163,8 @@ export function serverMonitorMiddleware(req, res, next) {
         durationMs,
         heapDeltaMB,
         statusCode: res.statusCode,
-        timestamp: new Date().toISOString()
+        finishedAtMs,
+        timestamp: new Date(finishedAtMs).toISOString()
       });
       if (recentSlowRequests.length > 20) recentSlowRequests.pop();
     }
@@ -176,12 +178,15 @@ export function serverMonitorMiddleware(req, res, next) {
 /**
  * Coleta instantânea de métricas em tempo real
  */
-export function collectCurrentMetrics() {
+export function collectCurrentMetrics({ isBackgroundTick = false } = {}) {
   const now = Date.now();
+  const shouldResetCounters = !sampleTimer || isBackgroundTick;
   const timeDeltaSec = Math.max(0.1, (now - lastCpuTimestamp) / 1000);
   const currentCpu = process.cpuUsage(lastCpuUsage);
-  lastCpuUsage = process.cpuUsage();
-  lastCpuTimestamp = now;
+  if (shouldResetCounters) {
+    lastCpuUsage = process.cpuUsage();
+    lastCpuTimestamp = now;
+  }
 
   // CPU percent = (microssegundos / 1.000.000) / segundos decorridos * 100
   const totalCpus = os.cpus()?.length || 1;
@@ -205,14 +210,19 @@ export function collectCurrentMetrics() {
   // Event Loop Delay (nanosegundos -> milissegundos)
   let loopLag = { p50: 0, p90: 0, p99: 0, max: 0, mean: 0 };
   if (eventLoopHistogram) {
+    const rawMax = Math.round(eventLoopHistogram.max / 1000000 * 10) / 10;
     loopLag = {
       p50: Math.round(eventLoopHistogram.percentile(50) / 1000000 * 10) / 10,
       p90: Math.round(eventLoopHistogram.percentile(90) / 1000000 * 10) / 10,
       p99: Math.round(eventLoopHistogram.percentile(99) / 1000000 * 10) / 10,
-      max: Math.round(eventLoopHistogram.max / 1000000 * 10) / 10,
+      max: rawMax > 100000 ? 0 : rawMax,
       mean: Math.round(eventLoopHistogram.mean / 1000000 * 10) / 10
     };
-    eventLoopHistogram.reset();
+    if (shouldResetCounters) {
+      eventLoopHistogram.reset();
+    } else if (loopLag.max === 0 && previousSnapshot?.eventLoop) {
+      loopLag = { ...previousSnapshot.eventLoop };
+    }
   }
 
   const heapLimitMB = Math.round(heapStats.heap_size_limit / (1024 * 1024));
@@ -280,7 +290,9 @@ export function collectCurrentMetrics() {
  */
 export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
   const issues = [];
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const recentCorrelationWindowMs = MONITOR_CONFIG.SAMPLE_INTERVAL_MS + 1500;
 
   const heapUsed = currentSnapshot.memory.heapUsedMB;
   const heapLimit = currentSnapshot.memory.heapLimitMB;
@@ -301,7 +313,11 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
         candidateRoute = `Rota ativa em processamento: ${topActive.method} ${topActive.url} (${topActive.elapsedMs}ms em execução por IP ${topActive.ip})`;
       } else if (recentSlowRequests.length > 0) {
         const lastSlow = recentSlowRequests[0];
-        candidateRoute = `Última requisição pesada concluída: ${lastSlow.method} ${lastSlow.url} (alocou ~${lastSlow.heapDeltaMB}MB em ${lastSlow.durationMs}ms)`;
+        const finishedAt = lastSlow.finishedAtMs || new Date(lastSlow.timestamp).getTime() || 0;
+        if (nowMs - finishedAt <= recentCorrelationWindowMs && !lastSlow._attributedToMemSpike) {
+          lastSlow._attributedToMemSpike = true;
+          candidateRoute = `Última requisição pesada concluída: ${lastSlow.method} ${lastSlow.url} (alocou ~${lastSlow.heapDeltaMB}MB em ${lastSlow.durationMs}ms)`;
+        }
       }
 
       // Inspeciona espaço V8
@@ -312,7 +328,7 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
       }
 
       issues.push({
-        id: `RCA_MEM_SPIKE_${Date.now()}`,
+        id: `RCA_MEM_SPIKE_${nowMs}`,
         severity: heapPercent > 80 ? "critical" : "warning",
         category: "MEMORY_SPIKE",
         title: `Pico rápido de alocação de memória (+${heapDeltaMB}MB)`,
@@ -343,7 +359,7 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
     }
 
     issues.push({
-      id: `RCA_MEM_LIMIT_${Date.now()}`,
+      id: `RCA_MEM_LIMIT_${nowMs}`,
       severity: isCritical ? "critical" : "warning",
       category: isCritical ? "RENDER_CONTAINER_OOM_RISK" : "MEMORY_HIGH_PRESSURE",
       title: isCritical 
@@ -372,18 +388,22 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
   // 3. Investigação de Travamento do Event Loop (Event Loop Starvation / CPU Síncrona)
   if (eventLoopLagMax >= MONITOR_CONFIG.EVENT_LOOP_WARNING_MS) {
     const isCritical = eventLoopLagMax >= MONITOR_CONFIG.EVENT_LOOP_CRITICAL_MS;
-    let cause = "Execução de código síncrono bloqueante no loop de eventos do Node.js";
+    let cause = "Execução de rotina síncrona interna em segundo plano (persistência de banco, sincronização ou GC do Node.js)";
 
     if (active.length > 0) {
       const longest = [...active].sort((a, b) => b.elapsedMs - a.elapsedMs)[0];
       cause = `Operação síncrona ou serialização pesada durante: ${longest.method} ${longest.url} (${longest.elapsedMs}ms ativa)`;
     } else if (recentSlowRequests.length > 0) {
       const lastSlow = recentSlowRequests[0];
-      cause = `Conclusão da operação síncrona associada a ${lastSlow.method} ${lastSlow.url} (${lastSlow.durationMs}ms)`;
+      const finishedAt = lastSlow.finishedAtMs || new Date(lastSlow.timestamp).getTime() || 0;
+      if (nowMs - finishedAt <= recentCorrelationWindowMs && !lastSlow._attributedToEventLoop) {
+        lastSlow._attributedToEventLoop = true;
+        cause = `Conclusão da operação síncrona associada a ${lastSlow.method} ${lastSlow.url} (${lastSlow.durationMs}ms)`;
+      }
     }
 
     issues.push({
-      id: `RCA_EVENT_LOOP_${Date.now()}`,
+      id: `RCA_EVENT_LOOP_${nowMs}`,
       severity: isCritical ? "critical" : "warning",
       category: "EVENT_LOOP_STARVATION",
       title: isCritical ? `Travamento Crítico do Event Loop (${eventLoopLagMax}ms)` : `Atraso no Event Loop (${eventLoopLagMax}ms)`,
@@ -409,7 +429,7 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
     }
 
     issues.push({
-      id: `RCA_CPU_HIGH_${Date.now()}`,
+      id: `RCA_CPU_HIGH_${nowMs}`,
       severity: cpuPercent >= 90 ? "critical" : "warning",
       category: "CPU_SPIKE",
       title: `Uso elevado de CPU (${cpuPercent}%)`,
@@ -425,9 +445,25 @@ export function evaluateRootCauses(currentSnapshot, prevSnapshot) {
     });
   }
 
-  // Salva no histórico de diagnósticos e emite para audit log se relevante
+  // Salva no histórico de diagnósticos (com deduplicação de alertas idênticos consecutivos em janela de 10s) e emite para audit log
   if (issues.length > 0) {
     for (const issue of issues) {
+      const latestDiag = diagnosticsHistory[0];
+      const latestDiagAgeMs = latestDiag ? (nowMs - (new Date(latestDiag.timestamp).getTime() || 0)) : Infinity;
+
+      if (
+        latestDiag &&
+        latestDiag.category === issue.category &&
+        latestDiag.probableCause === issue.probableCause &&
+        latestDiagAgeMs <= 10000
+      ) {
+        latestDiag.title = issue.title;
+        latestDiag.severity = issue.severity;
+        latestDiag.technicalEvidence = issue.technicalEvidence;
+        latestDiag.timestamp = issue.timestamp;
+        continue;
+      }
+
       diagnosticsHistory.unshift(issue);
       if (diagnosticsHistory.length > MONITOR_CONFIG.DIAGNOSTICS_MAX_ITEMS) {
         diagnosticsHistory.pop();
@@ -466,7 +502,7 @@ export function startMonitoringEngine() {
 
   const tick = () => {
     try {
-      const snapshot = collectCurrentMetrics();
+      const snapshot = collectCurrentMetrics({ isBackgroundTick: true });
       evaluateRootCauses(snapshot, previousSnapshot);
       previousSnapshot = snapshot;
 

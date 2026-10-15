@@ -481,67 +481,125 @@ export function buildFullWhatsAppTextMessage(
   return full
 }
 
+let sharedQuickMessagesCache: WhatsAppQuickMessage[] | null = null
+let sharedQuickMessagesLastFetch = 0
+let sharedQuickMessagesInFlight: Promise<WhatsAppQuickMessage[] | null> | null = null
+const sharedQuickMessagesListeners = new Set<(msgs: WhatsAppQuickMessage[]) => void>()
+const QUICK_MESSAGES_CACHE_TTL_MS = 60000
+
+function normalizeQuickMessagesList(list: any[]): WhatsAppQuickMessage[] {
+  return list.map(m => {
+    if (m.id === "qm_breakfast" && (!m.buttons || m.buttons.length === 0)) {
+      return {
+        ...m,
+        buttons: [
+          { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" },
+          { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
+        ]
+      }
+    }
+    return m
+  })
+}
+
+function updateSharedQuickMessages(updated: WhatsAppQuickMessage[]) {
+  sharedQuickMessagesCache = updated
+  sharedQuickMessagesLastFetch = Date.now()
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+  } catch {}
+  for (const listener of sharedQuickMessagesListeners) {
+    try {
+      listener(updated)
+    } catch {}
+  }
+}
+
 export function useQuickMessages() {
   const { toast } = useToast()
-  const normalizeMessages = (list: any[]) => {
-    return list.map(m => {
-      if (m.id === "qm_breakfast" && (!m.buttons || m.buttons.length === 0)) {
-        return {
-          ...m,
-          buttons: [
-            { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" },
-            { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
-          ]
-        };
-      }
-      return m;
-    });
-  };
 
   const [quickMessages, setQuickMessages] = useState<WhatsAppQuickMessage[]>(() => {
+    if (sharedQuickMessagesCache && sharedQuickMessagesCache.length > 0) {
+      return sharedQuickMessagesCache
+    }
     try {
       const local = localStorage.getItem(STORAGE_KEY)
       if (local) {
         const parsed = JSON.parse(local)
-        if (Array.isArray(parsed) && parsed.length > 0) return normalizeMessages(parsed)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const normalized = normalizeQuickMessagesList(parsed)
+          sharedQuickMessagesCache = normalized
+          return normalized
+        }
       }
     } catch {}
     return DEFAULT_QUICK_MESSAGES
   })
   const [loading, setLoading] = useState(false)
 
-  const fetchQuickMessages = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch("/api/whatsapp/quick-messages")
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data) && data.length > 0) {
-          const normalized = normalizeMessages(data)
-          setQuickMessages(normalized)
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
-          } catch {}
-          return
-        }
+  useEffect(() => {
+    const listener = (msgs: WhatsAppQuickMessage[]) => {
+      setQuickMessages(msgs)
+    }
+    sharedQuickMessagesListeners.add(listener)
+    return () => {
+      sharedQuickMessagesListeners.delete(listener)
+    }
+  }, [])
+
+  const fetchQuickMessages = useCallback(async (force = false) => {
+    const now = Date.now()
+    if (!force && sharedQuickMessagesCache && (now - sharedQuickMessagesLastFetch) < QUICK_MESSAGES_CACHE_TTL_MS) {
+      setQuickMessages(sharedQuickMessagesCache)
+      return
+    }
+
+    if (sharedQuickMessagesInFlight) {
+      setLoading(true)
+      try {
+        const result = await sharedQuickMessagesInFlight
+        if (result) setQuickMessages(result)
+      } finally {
+        setLoading(false)
       }
-    } catch (e) {
-      console.warn("Falha ao buscar quick messages da API, usando cache local:", e)
+      return
+    }
+
+    setLoading(true)
+    sharedQuickMessagesInFlight = (async () => {
+      try {
+        const res = await fetch("/api/whatsapp/quick-messages")
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data) && data.length > 0) {
+            const normalized = normalizeQuickMessagesList(data)
+            updateSharedQuickMessages(normalized)
+            return normalized
+          }
+        }
+      } catch (e) {
+        console.warn("Falha ao buscar quick messages da API, usando cache local:", e)
+      } finally {
+        sharedQuickMessagesInFlight = null
+      }
+      return null
+    })()
+
+    try {
+      const result = await sharedQuickMessagesInFlight
+      if (result) setQuickMessages(result)
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchQuickMessages()
+    fetchQuickMessages(false)
   }, [fetchQuickMessages])
 
   const toggleQuickMessage = async (id: string, enabled: boolean) => {
     const updated = quickMessages.map(m => m.id === id ? { ...m, enabled } : m)
-    setQuickMessages(updated)
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-    } catch {}
+    updateSharedQuickMessages(updated)
 
     const target = updated.find(m => m.id === id)
     try {
@@ -569,10 +627,7 @@ export function useQuickMessages() {
       ? quickMessages.map(m => m.id === item.id ? item : m)
       : [...quickMessages, item]
 
-    setQuickMessages(updated)
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-    } catch {}
+    updateSharedQuickMessages(updated)
 
     try {
       const res = await fetch("/api/whatsapp/quick-messages", {
@@ -591,10 +646,7 @@ export function useQuickMessages() {
   const deleteQuickMessage = async (id: string) => {
     const target = quickMessages.find(m => m.id === id)
     const updated = quickMessages.filter(m => m.id !== id)
-    setQuickMessages(updated)
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-    } catch {}
+    updateSharedQuickMessages(updated)
 
     try {
       await fetch(`/api/whatsapp/quick-messages/${id}`, { method: "DELETE" })
@@ -610,20 +662,15 @@ export function useQuickMessages() {
       if (res.ok) {
         const data = await res.json()
         if (data.quickMessages) {
-          setQuickMessages(data.quickMessages)
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data.quickMessages))
-          } catch {}
+          const normalized = normalizeQuickMessagesList(data.quickMessages)
+          updateSharedQuickMessages(normalized)
           toast({ title: "✓ Mensagens restauradas!", description: "Modelos originais redefinidos com sucesso." })
           return
         }
       }
     } catch {}
 
-    setQuickMessages(DEFAULT_QUICK_MESSAGES)
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_QUICK_MESSAGES))
-    } catch {}
+    updateSharedQuickMessages(DEFAULT_QUICK_MESSAGES)
     toast({ title: "✓ Mensagens restauradas", description: "Padrões de fábrica reaplicados." })
   }
 

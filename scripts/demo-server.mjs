@@ -16027,11 +16027,18 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Expires", "0");
 
   const now = Date.now();
-  if (now - lastCalendarReconcileTime > 15000) {
+  if (lastCalendarReconcileTime === 0) {
     lastCalendarReconcileTime = now;
     if (reconcileUniversalIntegrity()) {
       setImmediate(() => saveDatabase());
     }
+  } else if (now - lastCalendarReconcileTime > 60000) {
+    lastCalendarReconcileTime = now;
+    setImmediate(() => {
+      if (reconcileUniversalIntegrity()) {
+        saveDatabase();
+      }
+    });
   }
 
   const { startDate, endDate } = req.query;
