@@ -10193,10 +10193,11 @@ app.patch("/api/flats/:id", (req, res) => {
   const f = db.flats.find(x => x.id === Number(req.params.id));
   if (!f) return res.status(404).json({ error: "Flat não encontrado" });
   if (typeof req.body.isOccupied === "boolean") {
+    const now = new Date().toISOString();
     f.isOccupied = req.body.isOccupied;
-    f.updatedAt = new Date().toISOString();
+    f.updatedAt = now;
 
-    const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
+    const todayStr = getTodayStr ? getTodayStr() : now.substring(0, 10);
     const cleanReq = (db.cleaningRequests || []).find(c =>
       (c.flatId === f.id || String(c.flatNumber) === String(f.number)) &&
       (c.requestDate === todayStr || c.effectiveDate === todayStr)
@@ -10205,8 +10206,33 @@ app.patch("/api/flats/:id", (req, res) => {
       cleanReq.isVacant = !req.body.isOccupied;
       cleanReq.isVacantExplicitlySet = true;
       cleanReq.vacantSource = "manual_card";
-      cleanReq.vacantSetAt = new Date().toISOString();
-      cleanReq.updatedAt = new Date().toISOString();
+      cleanReq.vacantSetAt = now;
+      cleanReq.updatedAt = now;
+    }
+
+    const checkoutRes = (db.reservations || []).find(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+      r.checkoutDate === todayStr
+    );
+    if (checkoutRes) {
+      if (!req.body.isOccupied) {
+        checkoutRes.checkoutDone = true;
+        if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+          checkoutRes.previousStatus = checkoutRes.status;
+          checkoutRes.status = "completed";
+        }
+        if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+        checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || "manual_card";
+      } else {
+        checkoutRes.checkoutDone = false;
+        if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
+          checkoutRes.status = checkoutRes.previousStatus || "confirmada";
+        }
+        checkoutRes.actualCheckoutAt = null;
+        checkoutRes.actualCheckoutTime = null;
+      }
+      checkoutRes.updatedAt = now;
     }
   }
   saveDatabase();
@@ -10895,20 +10921,36 @@ function getRequestsForDate(dateStr, isNested = false) {
       : (isFutureDate ? null : (existingCleaning?.assignedUserId || null));
 
     // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isVacant = false).
-    // "Desocupado" apenas quando explicitamente confirmado manualmente via card ou via link (hóspede ou recepção).
-    const isExplicitlyVacantCheckout = Boolean(existingCleaning && existingCleaning.isVacant && (
-      existingCleaning.isVacantExplicitlySet ||
-      existingCleaning.vacantSource === "guest_checkout" ||
-      existingCleaning.vacantSource === "reception_checkout" ||
-      existingCleaning.vacantSource === "whatsapp_concierge" ||
-      existingCleaning.vacantSource === "manual_card" ||
-      existingCleaning.vacantSource === "admin" ||
-      existingCleaning.source === "guest_checkout" ||
-      existingCleaning.source === "whatsapp_concierge"
-    ));
+    // "Desocupado" apenas quando explicitamente confirmado manualmente via card, via link/WhatsApp (hóspede ou recepção) ou quando a limpeza já foi iniciada/concluída.
+    const isCleaningStartedOrDone = !isFutureDate && (resolvedStatus === "cleaning_now" || resolvedStatus === "in_progress" || resolvedStatus === "clean");
+    const isExplicitlyVacantCheckout = Boolean(
+      isCleaningStartedOrDone ||
+      (existingCleaning && existingCleaning.isVacant && (
+        existingCleaning.isVacantExplicitlySet ||
+        existingCleaning.vacantSource === "guest_checkout" ||
+        existingCleaning.vacantSource === "reception_checkout" ||
+        existingCleaning.vacantSource === "whatsapp_concierge" ||
+        existingCleaning.vacantSource === "whatsapp_guest" ||
+        existingCleaning.vacantSource === "cleaning_started" ||
+        existingCleaning.vacantSource === "cleaning_completed" ||
+        existingCleaning.vacantSource === "manual_card" ||
+        existingCleaning.vacantSource === "admin" ||
+        existingCleaning.source === "guest_checkout" ||
+        existingCleaning.source === "whatsapp_concierge" ||
+        existingCleaning.source === "whatsapp_guest"
+      )) ||
+      (!isFutureDate && (!existingCleaning || !existingCleaning.isVacantExplicitlySet) && Boolean(
+        pmsRes.checkoutDone || pmsRes.status === "completed" || pmsRes.status === "checked_out" || pmsRes.actualCheckoutAt
+      ))
+    );
 
     const cleanExistingAdmin = sanitizeCardNote(resolvedAdminNote);
     const cleanExistingPendingObs = existingCleaning ? sanitizeCardNote(existingCleaning.pendingObservation) : cleanExistingAdmin;
+    const resolvedVacantSource = existingCleaning?.vacantSource || (
+      isExplicitlyVacantCheckout
+        ? (isCleaningStartedOrDone ? "cleaning_started" : (pmsRes.checkoutMethod || "reception_checkout"))
+        : null
+    );
 
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
@@ -10921,8 +10963,8 @@ function getRequestsForDate(dateStr, isNested = false) {
       assignedUsername: resolvedMaidName,
       assignedUserName: resolvedMaidName,
       isVacant: isExplicitlyVacantCheckout,
-      isVacantExplicitlySet: Boolean(existingCleaning?.isVacantExplicitlySet),
-      vacantSource: existingCleaning?.vacantSource || null,
+      isVacantExplicitlySet: Boolean(existingCleaning?.isVacantExplicitlySet || isExplicitlyVacantCheckout),
+      vacantSource: resolvedVacantSource,
       isPriority: existingCleaning ? Boolean(existingCleaning.isPriority) : Boolean(pmsRes.isPriority),
       isExtended: false,
       twinBeds: resolvedTwinBeds,
@@ -10952,6 +10994,12 @@ function getRequestsForDate(dateStr, isNested = false) {
         existingCleaning.durationMinutes = null;
         shouldSaveDb = true;
       }
+      if (isExplicitlyVacantCheckout && !existingCleaning.isVacant) {
+        existingCleaning.isVacant = true;
+        existingCleaning.isVacantExplicitlySet = true;
+        existingCleaning.vacantSource = resolvedVacantSource;
+        shouldSaveDb = true;
+      }
       if (existingCleaning.twinBeds !== resolvedTwinBeds || existingCleaning.extraMattress !== resolvedExtraMattress || existingCleaning.adminNote !== cleanExistingAdmin) {
         existingCleaning.twinBeds = resolvedTwinBeds;
         existingCleaning.extraMattress = resolvedExtraMattress;
@@ -10966,6 +11014,16 @@ function getRequestsForDate(dateStr, isNested = false) {
       }
     } else if (dateStr >= "2026-09-01") {
       db.cleaningRequests.push(card);
+      shouldSaveDb = true;
+    }
+
+    if (!isFutureDate && isExplicitlyVacantCheckout && !pmsRes.checkoutDone) {
+      pmsRes.checkoutDone = true;
+      if (pmsRes.status !== "completed" && pmsRes.status !== "checked_out") {
+        pmsRes.previousStatus = pmsRes.status;
+        pmsRes.status = "completed";
+      }
+      pmsRes.checkoutMethod = pmsRes.checkoutMethod || resolvedVacantSource || "checkout_sync";
       shouldSaveDb = true;
     }
 
@@ -11192,17 +11250,25 @@ app.get("/api/reservations/checkouts", (req, res) => {
     }
 
     // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isOccupied = true, isVacant = false).
-    // "Desocupado" apenas quando explicitamente confirmado manualmente via card ou via link (hóspede ou recepção).
+    // "Desocupado" apenas quando explicitamente confirmado manualmente via card, via link/WhatsApp (hóspede ou recepção) ou quando a limpeza já foi iniciada/concluída.
+    const isCleaningStartedOrDone = dateStr <= getTodayStr() && (req_.status === "cleaning_now" || req_.status === "in_progress" || req_.status === "clean");
     const isExplicitlyVacant = Boolean(
-      req_.isVacantExplicitlySet ||
-      req_.vacantSource === "guest_checkout" ||
-      req_.vacantSource === "reception_checkout" ||
-      req_.vacantSource === "whatsapp_concierge" ||
-      req_.vacantSource === "manual_card" ||
-      req_.vacantSource === "admin" ||
-      req_.source === "guest_checkout" ||
-      req_.source === "whatsapp_concierge"
-    ) && Boolean(req_.isVacant);
+      isCleaningStartedOrDone ||
+      ((
+        req_.isVacantExplicitlySet ||
+        req_.vacantSource === "guest_checkout" ||
+        req_.vacantSource === "reception_checkout" ||
+        req_.vacantSource === "whatsapp_concierge" ||
+        req_.vacantSource === "whatsapp_guest" ||
+        req_.vacantSource === "cleaning_started" ||
+        req_.vacantSource === "cleaning_completed" ||
+        req_.vacantSource === "manual_card" ||
+        req_.vacantSource === "admin" ||
+        req_.source === "guest_checkout" ||
+        req_.source === "whatsapp_concierge" ||
+        req_.source === "whatsapp_guest"
+      ) && Boolean(req_.isVacant))
+    );
 
     const isVacant = isExplicitlyVacant;
     const isOccupied = !isVacant;
@@ -11786,6 +11852,32 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       relatedFlat.isOccupied = !isVacant;
       relatedFlat.updatedAt = now;
     }
+
+    const targetDate = item.requestDate || date || item.effectiveDate || getTodayStr();
+    const checkoutRes = (db.reservations || []).find(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
+      (r.checkoutDate === targetDate || r.checkoutDate === (date || getTodayStr()))
+    );
+    if (checkoutRes) {
+      if (isVacant) {
+        checkoutRes.checkoutDone = true;
+        if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+          checkoutRes.previousStatus = checkoutRes.status;
+          checkoutRes.status = "completed";
+        }
+        if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+        checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || "manual_card";
+      } else {
+        checkoutRes.checkoutDone = false;
+        if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
+          checkoutRes.status = checkoutRes.previousStatus || "confirmada";
+        }
+        checkoutRes.actualCheckoutAt = null;
+        checkoutRes.actualCheckoutTime = null;
+      }
+      checkoutRes.updatedAt = now;
+    }
   }
 
   // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments)
@@ -11797,6 +11889,42 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       return res.status(400).json({
         error: "Não é possível finalizar a limpeza ainda. Tempo insuficiente de higienização (mínimo de 10 minutos)."
       });
+    }
+  }
+
+  // Regra de Negócio: Sempre que um card for marcado como limpeza iniciada (ou concluída),
+  // considera-se automaticamente como desocupado e check-out realizado caso ainda não esteja.
+  if (!isInstructionRequest && (status === "cleaning_now" || status === "in_progress" || status === "clean")) {
+    const autoSource = status === "clean" ? "cleaning_completed" : "cleaning_started";
+    if (!item.isVacant || !item.isVacantExplicitlySet) {
+      item.isVacant = true;
+      item.isVacantExplicitlySet = true;
+      item.vacantSource = item.vacantSource || autoSource;
+      item.vacantSetAt = item.vacantSetAt || now;
+      item.vacantSetBy = item.vacantSetBy || (userAuth?.username || autoSource);
+    }
+
+    const relatedFlat = db.flats.find(f => f.id === item.flatId || String(f.number) === String(item.flatNumber));
+    if (relatedFlat) {
+      relatedFlat.isOccupied = false;
+      relatedFlat.updatedAt = now;
+    }
+
+    const targetDate = item.requestDate || date || item.effectiveDate || getTodayStr();
+    const checkoutRes = (db.reservations || []).find(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
+      (r.checkoutDate === targetDate || r.checkoutDate === (date || getTodayStr()))
+    );
+    if (checkoutRes) {
+      checkoutRes.checkoutDone = true;
+      if (checkoutRes.status !== "completed" && checkoutRes.status !== "checked_out") {
+        checkoutRes.previousStatus = checkoutRes.status;
+        checkoutRes.status = "completed";
+      }
+      if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
+      checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || autoSource;
+      checkoutRes.updatedAt = now;
     }
   }
 
@@ -15721,6 +15849,44 @@ app.get("/api/pms/calendar", (req, res) => {
     const isPaid = isOtaRes || r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
     const sanitizedPaid = isPaid && Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0);
 
+    const fNum = String(r.flatNumber || "");
+    const todayCleanReq = cleaningRequestsToday.find(cr =>
+      (String(cr.flatNumber) === fNum || cr.flatId === r.flatId) &&
+      !cr.isInstructionOnly &&
+      !cr.cleaningRequest?.isInstructionOnly &&
+      cr.source !== "manual_instruction" &&
+      cr.cleaningRequest?.source !== "manual_instruction" &&
+      cr.type !== "bed_adjustment_only" &&
+      cr.type !== "instruction" &&
+      cr.cleaningRequest?.type !== "bed_adjustment_only" &&
+      cr.cleaningRequest?.type !== "instruction"
+    );
+
+    const cleanStatus = todayCleanReq ? (todayCleanReq.cleaningRequest?.status || todayCleanReq.status) : null;
+    const isCleanReqCheckedOut = Boolean(
+      todayCleanReq && (
+        Boolean(todayCleanReq.isVacant) ||
+        cleanStatus === "cleaning_now" ||
+        cleanStatus === "in_progress" ||
+        cleanStatus === "clean"
+      )
+    );
+    const isResMarkedCheckedOut = Boolean(
+      r.checkoutDone ||
+      r.status === "completed" ||
+      r.status === "checked_out" ||
+      r.actualCheckoutAt
+    );
+
+    const isCheckingOutToday = r.checkoutDate === todayStr;
+    const isArrivingTodayForFuture = r.checkinDate === todayStr && r.checkoutDate > todayStr;
+    const isCheckoutDone = !isArrivingTodayForFuture && (
+      isResMarkedCheckedOut || (isCheckingOutToday && isCleanReqCheckedOut)
+    );
+    const isCheckedOutToday = isCheckoutDone && (
+      isCheckingOutToday || (Boolean(r.actualCheckoutAt) && String(r.actualCheckoutAt).substring(0, 10) === todayStr)
+    );
+
     return {
       ...r,
       paidAmount: sanitizedPaid,
@@ -15733,7 +15899,10 @@ app.get("/api/pms/calendar", (req, res) => {
       hasMinor: Boolean(r.hasMinor || matchedGuest?.isMinor || (r.guests || []).some(g => g.isMinor)),
       riskAttentionAlert: Boolean(r.riskAttentionAlert || matchedGuest?.riskAttentionAlert || (r.guests || []).some(g => g.riskAttentionAlert)),
       riskAttentionReason: r.riskAttentionReason || matchedGuest?.riskAttentionReason || (r.guests || []).find(g => g.riskAttentionAlert)?.riskAttentionReason || "",
-      breakfastToken: r.breakfastToken || (r.code ? `bfk_${r.code.toLowerCase().replace(/[^a-z0-9]/g, '')}` : `bfk_${r.id}`)
+      breakfastToken: r.breakfastToken || (r.code ? `bfk_${r.code.toLowerCase().replace(/[^a-z0-9]/g, '')}` : `bfk_${r.id}`),
+      checkoutDone: isCheckoutDone,
+      isCheckedOutToday,
+      checkoutSource: r.checkoutMethod || todayCleanReq?.vacantSource || (cleanStatus === "cleaning_now" ? "cleaning_started" : (cleanStatus === "clean" ? "cleaning_completed" : null))
     };
   });
   const serviceOrderBlocks = [];
@@ -23328,6 +23497,9 @@ const handleCheckout = async (req, res) => {
     (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
     (c.requestDate === today || c.requestDate === r.checkoutDate)
   );
+  if (!cleanReq) {
+    cleanReq = findOrUpsertCleaningRequest(0, r.flatNumber, r.flatId, r.checkoutDate || today);
+  }
   if (cleanReq) {
     cleanReq.isVacant = true;
     cleanReq.isVacantExplicitlySet = true;
@@ -23520,6 +23692,7 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   r.status = r.previousStatus || "in_house";
+  r.checkoutDone = false;
   r.actualCheckoutAt = null;
   r.actualCheckoutTime = null;
   r.updatedAt = new Date().toISOString();
@@ -23528,6 +23701,18 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
   if (flat) {
     flat.isOccupied = true;
     flat.updatedAt = new Date().toISOString();
+  }
+
+  const today = getTodayStr();
+  const cleanReq = (db.cleaningRequests || []).find(c =>
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+    (c.requestDate === today || c.requestDate === r.checkoutDate)
+  );
+  if (cleanReq && cleanReq.status !== "cleaning_now" && cleanReq.status !== "in_progress" && cleanReq.status !== "clean") {
+    cleanReq.isVacant = false;
+    cleanReq.isVacantExplicitlySet = false;
+    cleanReq.vacantSource = null;
+    cleanReq.updatedAt = new Date().toISOString();
   }
 
   // Reativar pedidos de café da manhã vinculados caso tenham sido cancelados por checkout

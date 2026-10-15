@@ -700,6 +700,10 @@ export function FlatCard({
     queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
     queryClient.invalidateQueries({ queryKey: getListPendingPeriodicTasksQueryKey() })
     queryClient.invalidateQueries({ queryKey: getListPeriodicTasksQueryKey() })
+    try {
+      localStorage.setItem("pms_calendar_sync_trigger", String(Date.now()))
+      window.dispatchEvent(new Event("pms_calendar_updated"))
+    } catch {}
   }
 
   // Acknowledge Extended Stay ("Ciente")
@@ -1010,24 +1014,30 @@ export function FlatCard({
   const isViewingFuture = date > todayStr
   const isViewingPast = date < todayStr
 
-  // Occupancy precedence: prioritize flat.isOccupied over request.isVacant so future checkouts for occupied rooms don't falsely show "Desocupado"
-  const isOccupied = typeof flat.isOccupied === "boolean"
-    ? flat.isOccupied
-    : (typeof request?.isVacant === "boolean" ? !request.isVacant : true)
+  // Occupancy precedence: cleaning_now or clean automatically means the guest has checked out (Desocupado).
+  // Otherwise prioritize flat.isOccupied over request.isVacant so future checkouts for occupied rooms don't falsely show "Desocupado"
+  const isOccupied = (!isInstruction && (currentStatus === "cleaning_now" || currentStatus === "clean"))
+    ? false
+    : (typeof flat.isOccupied === "boolean"
+        ? flat.isOccupied
+        : (typeof request?.isVacant === "boolean" ? !request.isVacant : true))
 
   const toggleOccupancy = () => {
     updateOccupancy.mutate({
       id: flat.flatId,
       data: { isOccupied: !isOccupied }
     })
-    if (request?.id) {
-      fetch(`/api/cleaning/assignments/${request.id}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isVacant: isOccupied }),
-        credentials: "include"
-      }).then(() => refreshData()).catch(() => {})
-    }
+    fetch(`/api/cleaning/assignments/${request?.id || 0}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isVacant: isOccupied,
+        flatNumber: flat.flatNumber,
+        flatId: flat.flatId,
+        date: date,
+      }),
+      credentials: "include"
+    }).then(() => refreshData()).catch(() => {})
   }
 
   const hasCheckin = flat.hasCheckinToday || !!checkin

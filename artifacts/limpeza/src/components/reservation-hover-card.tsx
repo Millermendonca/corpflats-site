@@ -39,6 +39,10 @@ const STATUS_MAP: Record<string, { label: string; className: string }> = {
     label: "Hospedado (In)", 
     className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
   },
+  in_house: { 
+    label: "Hospedado (In)", 
+    className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
+  },
   hospedado: { 
     label: "Hospedado (In)", 
     className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
@@ -48,8 +52,16 @@ const STATUS_MAP: Record<string, { label: string; className: string }> = {
     className: "bg-amber-50 text-amber-700 border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800" 
   },
   checkout: { 
-    label: "Check-out (Out)", 
-    className: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700" 
+    label: "✓ Check-out Realizado", 
+    className: "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-600 dark:text-white dark:border-emerald-500 font-black shadow-2xs" 
+  },
+  completed: { 
+    label: "✓ Check-out Realizado", 
+    className: "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-600 dark:text-white dark:border-emerald-500 font-black shadow-2xs" 
+  },
+  checked_out: { 
+    label: "✓ Check-out Realizado", 
+    className: "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-600 dark:text-white dark:border-emerald-500 font-black shadow-2xs" 
   },
   cancelada: { 
     label: "Cancelada", 
@@ -206,7 +218,16 @@ export function ReservationHoverCard({
     ? `R$ ${resTotal.toLocaleString("pt-BR", { minimumFractionDigits: resTotal % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}` 
     : null
 
-  const statusCfg = STATUS_MAP[resItem.status] || STATUS_MAP.confirmada
+  const isCheckoutCompleted = Boolean(
+    resItem.isCheckedOutToday ||
+    resItem.checkoutDone ||
+    resItem.status === "completed" ||
+    resItem.status === "checked_out" ||
+    resItem.actualCheckoutAt
+  )
+  const statusCfg = isCheckoutCompleted
+    ? STATUS_MAP.completed
+    : (STATUS_MAP[resItem.status] || STATUS_MAP.confirmada)
   const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
   const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
   const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
@@ -462,6 +483,15 @@ export function ReservationHoverCard({
           <h4 className="text-sm font-black text-slate-900 dark:text-slate-50 truncate leading-snug">
             {guestName}
           </h4>
+
+          {isCheckoutCompleted && (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 rounded-lg text-emerald-900 dark:text-emerald-200 text-[10.5px] font-bold shadow-2xs">
+              <DoorOpen className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>
+                ✓ Check-out já realizado{resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""} (Quarto desocupado)
+              </span>
+            </div>
+          )}
 
           {/* Alertas de Atenção e Menores no Hover Card */}
           {resItem.hasMinor && (

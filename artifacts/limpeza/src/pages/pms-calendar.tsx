@@ -3374,6 +3374,15 @@ export default function PmsCalendar() {
     r.status !== "cancelada" && r.checkoutDate === todayStr
   )
   const checkoutsTodayCount = checkoutsToday.length
+  const checkedOutTodayDoneCount = checkoutsToday.filter(r =>
+    Boolean(
+      (r as any).isCheckedOutToday ||
+      (r as any).checkoutDone ||
+      r.status === "completed" ||
+      r.status === "checked_out" ||
+      (r as any).actualCheckoutAt
+    )
+  ).length
 
   // 6. Stayovers no Dia (entraram antes de hoje e saem após hoje)
   const stayoversToday = data.reservations.filter(r => 
@@ -3580,9 +3589,18 @@ export default function PmsCalendar() {
               <LogOut className="w-4 h-4 text-rose-500 shrink-0" />
             </div>
             <div className="mt-1.5">
-              <div className="text-2xl font-black text-rose-600 dark:text-rose-400">{checkoutsTodayCount}</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-rose-600 dark:text-rose-400">{checkoutsTodayCount}</span>
+                {checkoutsTodayCount > 0 && (
+                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                    ✓ {checkedOutTodayDoneCount} {checkedOutTodayDoneCount === 1 ? 'saiu' : 'saíram'}
+                  </span>
+                )}
+              </div>
               <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate">
-                {checkoutsTodayCount === 1 ? '1 saída hoje' : `${checkoutsTodayCount} saídas hoje`}
+                {checkoutsTodayCount === 0
+                  ? '0 saídas hoje'
+                  : `${checkedOutTodayDoneCount} de ${checkoutsTodayCount} já fizeram check-out`}
               </div>
             </div>
           </Card>
@@ -3753,13 +3771,19 @@ export default function PmsCalendar() {
 
             {/* Channels & Cleaning Legend */}
             <div className="flex flex-wrap items-center gap-3 text-[11px]">
-              {/* Legenda de Limpeza */}
+              {/* Legenda de Limpeza e Check-out */}
               <div className="flex items-center gap-2 pr-2 border-r">
                 <span className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-500" /> Limpo
                 </span>
                 <span className="flex items-center gap-1 font-bold text-rose-600 dark:text-rose-400">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" /> Sujo
+                </span>
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-black text-[10px]"
+                  title="Indica nas reservas de hoje que o hóspede já fez check-out / desocupou o apartamento"
+                >
+                  ✓ Saiu (Check-out feito)
                 </span>
               </div>
 
@@ -4080,6 +4104,17 @@ export default function PmsCalendar() {
                           ? Array.from(new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase()))) 
                           : [];
 
+                        const isCheckingOutToday = resItem.checkoutDate === todayStr;
+                        const isCheckedOutToday = Boolean(
+                          resItem.isCheckedOutToday ||
+                          (isCheckingOutToday && (
+                            resItem.checkoutDone ||
+                            resItem.status === "completed" ||
+                            resItem.status === "checked_out" ||
+                            resItem.actualCheckoutAt
+                          ))
+                        );
+
                         return (
                           <ReservationHoverCard
                             key={`res-${resItem.id}`}
@@ -4094,6 +4129,7 @@ export default function PmsCalendar() {
                           >
                             <div
                               data-reservation-id={resItem.id}
+                              data-checked-out-today={isCheckedOutToday ? "true" : undefined}
                               style={{ 
                                 position: "absolute",
                                 left: `${pos.left}px`,
@@ -4114,7 +4150,9 @@ export default function PmsCalendar() {
                                   ? 'border-dashed border-2 border-amber-400 ring-1 ring-amber-300/80'
                                   : ''
                               } ${
-                                resItem.hasMinor 
+                                isCheckedOutToday
+                                  ? 'ring-2 ring-emerald-400 border-emerald-300'
+                                  : resItem.hasMinor 
                                   ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
                                   : (resItem.isCamposResident || isCamposCard)
                                   ? 'border-2 border-purple-500 ring-1 ring-purple-400'
@@ -4126,7 +4164,7 @@ export default function PmsCalendar() {
                               } ${
                                 isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
                               }`}
-                              title={`${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou segure para mover`}
+                              title={`${isCheckedOutToday ? `✓ CHECK-OUT REALIZADO${resItem.actualCheckoutTime ? ` ÀS ${resItem.actualCheckoutTime}` : ""} • ` : ""}${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou segure para mover`}
                             >
                               {/* Background Segmentado por Diária para Reservas Multi-Canal */}
                               {isMultiChannel && (
@@ -4160,6 +4198,15 @@ export default function PmsCalendar() {
 
                               {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
                               <div className="relative z-10 flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none select-none">
+                                {isCheckedOutToday && (
+                                  <span
+                                    data-checkout-done-badge="true"
+                                    title={`Check-out já realizado hoje${resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""} (Quarto desocupado)`}
+                                    className="shrink-0 text-[9.5px] px-1.5 py-0.2 bg-white text-emerald-900 border border-emerald-300 font-black rounded shadow-xs flex items-center gap-0.5"
+                                  >
+                                    ✓ Saiu{resItem.actualCheckoutTime ? ` ${resItem.actualCheckoutTime}` : ""}
+                                  </span>
+                                )}
                                 {resItem.status === 'pre_reserva' && (
                                   <span title="Pré-Reserva (Aguardando Pagamento / Confirmação)" className="shrink-0 text-[9px] px-1 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
                                     ⏳ Pré-Reserva
@@ -4203,6 +4250,14 @@ export default function PmsCalendar() {
                                   {formattedTotal ? ` • ${formattedTotal}` : ""}
                                   {` • ${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'}`}
                                 </span>
+                                {isCheckedOutToday && nightsCount > 1 && pos.width >= 150 && (
+                                  <span
+                                    title={`Check-out concluído hoje${resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""}`}
+                                    className="ml-auto shrink-0 text-[9px] px-1.5 py-0.2 bg-emerald-400 text-slate-950 font-black rounded shadow-xs border border-white/80 flex items-center gap-0.5"
+                                  >
+                                    ✓ Check-out
+                                  </span>
+                                )}
                               </div>
 
                               {/* Handle Direito: Redimensionar Fim (Check-out) */}
