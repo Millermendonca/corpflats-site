@@ -67,7 +67,9 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
     }
   };
 
-  const unconfirmedRetained = summary.retainedItems.filter(item => !item.confirmed);
+  const itemsList = Array.isArray(summary?.items) ? summary.items : [];
+  const retainedList = Array.isArray(summary?.retainedItems) ? summary.retainedItems : [];
+  const unconfirmedRetained = retainedList.filter(item => !item.confirmed);
   const hasUnconfirmedLocks = unconfirmedRetained.length > 0;
 
   return (
@@ -81,7 +83,7 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
               Datas afetadas
             </span>
             <span className="text-2xl font-black text-foreground">
-              {summary.affectedDatesCount}
+              {summary?.affectedDatesCount ?? 0}
             </span>
           </div>
           <div className="w-10 h-10 rounded-xl bg-muted/60 text-muted-foreground flex items-center justify-center">
@@ -96,7 +98,7 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
               Preços alterados
             </span>
             <span className="text-2xl font-black text-foreground">
-              {summary.alteredRatesCount}
+              {summary?.alteredRatesCount ?? 0}
             </span>
           </div>
           <div className="w-10 h-10 rounded-xl bg-sky-50 dark:bg-sky-950/40 text-sky-600 flex items-center justify-center">
@@ -106,7 +108,7 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
 
         {/* KPI 3: Retidos pela trava */}
         <div className={`p-3.5 border rounded-xl shadow-xs flex items-center justify-between transition-colors ${
-          summary.retainedLockedCount > 0 
+          (summary?.retainedLockedCount ?? 0) > 0 
             ? "bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700/60" 
             : "bg-card border-border"
         }`}>
@@ -115,15 +117,15 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
               Retidos pela trava
             </span>
             <span className={`text-2xl font-black ${
-              summary.retainedLockedCount > 0 
+              (summary?.retainedLockedCount ?? 0) > 0 
                 ? "text-amber-700 dark:text-amber-400" 
                 : "text-foreground"
             }`}>
-              {summary.retainedLockedCount}
+              {summary?.retainedLockedCount ?? 0}
             </span>
           </div>
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-            summary.retainedLockedCount > 0 
+            (summary?.retainedLockedCount ?? 0) > 0 
               ? "bg-amber-500/20 text-amber-700 dark:text-amber-400" 
               : "bg-muted/60 text-muted-foreground"
           }`}>
@@ -138,7 +140,7 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
               Abaixo do piso
             </span>
             <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-              {summary.belowFloorCount}
+              {summary?.belowFloorCount ?? 0}
             </span>
           </div>
           <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center">
@@ -186,18 +188,23 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {summary.items.length === 0 ? (
+                    {itemsList.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-10 text-muted-foreground text-xs">
                           Nenhuma alteração pendente de publicação no momento. Todas as tarifas enviadas estão em sincronia.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      summary.items.map((item) => {
+                      itemsList.map((item, idx) => {
                         const isLockedAndPending = item.isLocked && !item.confirmed;
+                        const safeNewRate = Number(item.newRate ?? 0);
+                        const safeCurrentRate = item.currentRate != null && !Number.isNaN(Number(item.currentRate))
+                          ? Number(item.currentRate)
+                          : safeNewRate;
+                        const safeVarPct = Number(item.variationPct ?? 0);
                         return (
                           <TableRow 
-                            key={item.id}
+                            key={item.id || `${item.date}_${item.planId}_${idx}`}
                             className={`text-xs transition-colors ${
                               isLockedAndPending 
                                 ? "bg-amber-100/50 dark:bg-amber-950/25 border-l-4 border-l-amber-500" 
@@ -212,19 +219,19 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
                             <TableCell className="font-medium">
                               <span className="flex items-center gap-1.5">
                                 <Layers className="w-3.5 h-3.5 text-muted-foreground" />
-                                {item.planName}
+                                {item.planName || (item.planId === "com_cafe" ? "Com café (2 hósp.)" : "Sem café")}
                               </span>
                             </TableCell>
                             <TableCell className="text-right font-mono text-muted-foreground">
-                              R$ {item.currentRate.toFixed(2)}
+                              R$ {safeCurrentRate.toFixed(2)}
                             </TableCell>
                             <TableCell className="text-right font-mono font-bold text-foreground">
-                              R$ {item.newRate.toFixed(2)}
+                              R$ {safeNewRate.toFixed(2)}
                             </TableCell>
                             <TableCell className="text-center">
                               {isLockedAndPending ? (
                                 <Badge className="bg-amber-500 hover:bg-amber-600 text-white font-mono text-[11px] gap-1 px-1.5 py-0.5">
-                                  +{Math.abs(item.variationPct)}%
+                                  +{Math.abs(safeVarPct)}%
                                   <Lock className="w-3 h-3" />
                                 </Badge>
                               ) : item.confirmed ? (
@@ -234,18 +241,18 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
                                 </Badge>
                               ) : (
                                 <span className={`font-mono text-[11px] ${
-                                  item.variationPct > 0 
+                                  safeVarPct > 0 
                                     ? "text-emerald-600 dark:text-emerald-400" 
-                                    : item.variationPct < 0 
+                                    : safeVarPct < 0 
                                       ? "text-rose-600 dark:text-rose-400" 
                                       : "text-muted-foreground"
                                 }`}>
-                                  {item.variationPct > 0 ? `+${item.variationPct}%` : `${item.variationPct}%`}
+                                  {safeVarPct > 0 ? `+${safeVarPct}%` : `${safeVarPct}%`}
                                 </span>
                               )}
                             </TableCell>
                             <TableCell className="text-right font-semibold text-muted-foreground">
-                              {item.freeUnits} UHs
+                              {item.freeUnits ?? 19} UHs
                             </TableCell>
                           </TableRow>
                         );
@@ -273,32 +280,38 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-4 space-y-3">
-              {summary.retainedItems.length === 0 ? (
+              {retainedList.length === 0 ? (
                 <div className="text-center py-8 text-xs text-muted-foreground">
                   <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2 opacity-80" />
                   Nenhuma tarifa retida por variação excessiva. Todas dentro do teto seguro de 30%.
                 </div>
               ) : (
-                summary.retainedItems.map((item) => (
+                retainedList.map((item, idx) => {
+                  const safeNewRate = Number(item.newRate ?? 0);
+                  const safeCurrentRate = item.currentRate != null && !Number.isNaN(Number(item.currentRate))
+                    ? Number(item.currentRate)
+                    : safeNewRate;
+                  const safeVarPct = Number(item.variationPct ?? 0);
+                  return (
                   <div
-                    key={item.id}
+                    key={item.id || `${item.date}_${item.planId}_${idx}`}
                     className="p-3 bg-card border border-amber-300/80 dark:border-amber-700/80 rounded-xl space-y-2 shadow-2xs"
                   >
                     <div className="flex justify-between items-start">
                       <div>
                         <span className="font-bold text-xs text-foreground block">
-                          {item.date} • {item.planName}
+                          {item.date} • {item.planName || (item.planId === "com_cafe" ? "Com café" : "Sem café")}
                         </span>
                         <div className="flex items-center gap-1.5 mt-0.5 text-xs">
                           <span className="text-muted-foreground font-mono">
-                            R$ {item.currentRate.toFixed(2)}
+                            R$ {safeCurrentRate.toFixed(2)}
                           </span>
                           <span className="text-muted-foreground">→</span>
                           <span className="font-bold font-mono text-foreground">
-                            R$ {item.newRate.toFixed(2)}
+                            R$ {safeNewRate.toFixed(2)}
                           </span>
                           <Badge className="bg-amber-500 text-white text-[10px] ml-1 px-1 py-0">
-                            +{item.variationPct}%
+                            +{safeVarPct}%
                           </Badge>
                         </div>
                       </div>
@@ -333,7 +346,8 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
                       </div>
                     )}
                   </div>
-                ))
+                  );
+                })
               )}
             </CardContent>
           </Card>
@@ -353,7 +367,7 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
             <p className="text-xs text-muted-foreground">
               {hasUnconfirmedLocks
                 ? "⚠️ Existem tarifas retidas pela trava de 30% que requerem confirmação antes do envio."
-                : `${summary.alteredRatesCount} alterações prontas para envio imediato às OTAs.`}
+                : `${summary?.alteredRatesCount ?? 0} alterações prontas para envio imediato às OTAs.`}
             </p>
           </div>
         </div>
@@ -362,7 +376,7 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
           <Button
             variant="outline"
             onClick={onDiscardAll}
-            disabled={isPublishing || summary.alteredRatesCount === 0}
+            disabled={isPublishing || (summary?.alteredRatesCount ?? 0) === 0}
             className="text-xs text-muted-foreground hover:text-destructive h-9 gap-1.5"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -370,13 +384,13 @@ export const PublishPreviewTab: React.FC<PublishPreviewTabProps> = ({
           </Button>
           <Button
             onClick={onPublish}
-            disabled={isPublishing || summary.alteredRatesCount === 0 || hasUnconfirmedLocks}
+            disabled={isPublishing || (summary?.alteredRatesCount ?? 0) === 0 || hasUnconfirmedLocks}
             className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-5 gap-2 shadow-xs"
           >
             <Send className="w-3.5 h-3.5" />
             {isPublishing 
               ? "Enviando à WBP..." 
-              : `Publicar ${summary.alteredRatesCount} alterações na WebBookingPro`}
+              : `Publicar ${summary?.alteredRatesCount ?? 0} alterações na WebBookingPro`}
           </Button>
         </div>
       </div>

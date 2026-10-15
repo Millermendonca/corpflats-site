@@ -114,6 +114,36 @@ export const PricingContainer: React.FC = () => {
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
   const [publishSuccessBanner, setPublishSuccessBanner] = useState<string | null>(null);
 
+  const normalizePreviewItem = (it: any, idx: number): PreviewRateItem => {
+    const newRate = it?.newRate != null && !Number.isNaN(Number(it.newRate))
+      ? Number(it.newRate)
+      : 276.63;
+    const currentRate = it?.currentRate != null && !Number.isNaN(Number(it.currentRate))
+      ? Number(it.currentRate)
+      : newRate;
+    const variationPct = it?.variationPct != null && !Number.isNaN(Number(it.variationPct))
+      ? Number(it.variationPct)
+      : it?.deltaPct != null && !Number.isNaN(Number(it.deltaPct))
+      ? Math.round(Number(it.deltaPct) * 100)
+      : 0;
+    const dateStr = String(it?.date || "");
+    const planId = it?.planId === "com_cafe" ? "com_cafe" : "sem_cafe";
+    return {
+      id: String(it?.id || `${dateStr}_${planId}_${idx}`),
+      date: dateStr,
+      planId,
+      planName: String(it?.planName || (planId === "com_cafe" ? "Com café (2 hóspedes)" : "Sem café")),
+      currentRate,
+      newRate,
+      variationPct,
+      isLocked: Boolean(it?.isLocked ?? it?.isVariationLocked),
+      lockReason: it?.lockReason || it?.message || undefined,
+      isBelowFloor: Boolean(it?.isBelowFloor),
+      freeUnits: Number(it?.freeUnits ?? 19),
+      confirmed: Boolean(it?.confirmed ?? it?.isConfirmed),
+    };
+  };
+
   // Load live settings from API on mount
   useEffect(() => {
     const fetchSettings = async () => {
@@ -121,8 +151,24 @@ export const PricingContainer: React.FC = () => {
         const res = await fetch("/api/wbp/pricing/settings");
         if (res.ok) {
           const data = await res.json();
-          if (data && typeof data === "object") {
-            setSettings(prev => ({ ...prev, ...data }));
+          const rawSettings = (data && typeof data.settings === "object" && data.settings !== null)
+            ? data.settings
+            : data;
+          if (rawSettings && typeof rawSettings === "object") {
+            const cleanSettings: Partial<PricingSettings> = {};
+            for (const [k, v] of Object.entries(rawSettings)) {
+              if (v !== null && v !== undefined && typeof v !== "object") {
+                (cleanSettings as any)[k] = v;
+              }
+            }
+            setSettings(prev => ({
+              ...prev,
+              ...cleanSettings,
+              hasStagedChanges: data?.status === "staged" ? true : prev.hasStagedChanges,
+            }));
+          }
+          if (data?.sebraeRate && typeof data.sebraeRate === "object") {
+            setCalculation(prev => ({ ...prev, ...data.sebraeRate }));
           }
         }
       } catch {}
@@ -134,15 +180,20 @@ export const PricingContainer: React.FC = () => {
         if (res.ok) {
           const data = await res.json();
           if (data && (data.items || data.diffList)) {
-            const items = data.items || data.diffList || [];
+            const rawItems = Array.isArray(data.items) ? data.items : (Array.isArray(data.diffList) ? data.diffList : []);
+            const items = rawItems.map((it: any, idx: number) => normalizePreviewItem(it, idx));
+            const rawRetained = Array.isArray(data.retainedItems) ? data.retainedItems : null;
+            const retainedItems = rawRetained
+              ? rawRetained.map((it: any, idx: number) => normalizePreviewItem(it, idx))
+              : items.filter((i) => i.isLocked && !i.confirmed);
             setPreview({
-              affectedDatesCount: data.affectedDatesCount ?? items.length,
-              alteredRatesCount: data.alteredRatesCount ?? items.length,
-              retainedLockedCount: data.retainedLockedCount ?? items.filter((i: any) => i.isLocked && !i.confirmed).length,
-              belowFloorCount: data.belowFloorCount ?? items.filter((i: any) => i.isBelowFloor).length,
-              items: items,
-              retainedItems: data.retainedItems || items.filter((i: any) => i.isLocked && !i.confirmed),
-              diffList: data.diffList || items,
+              affectedDatesCount: data.affectedDatesCount ?? data.kpis?.datasAfetadas ?? items.length,
+              alteredRatesCount: data.alteredRatesCount ?? data.kpis?.precosAlterados ?? items.length,
+              retainedLockedCount: data.retainedLockedCount ?? data.kpis?.retidosPelaTrava ?? items.filter((i) => i.isLocked && !i.confirmed).length,
+              belowFloorCount: data.belowFloorCount ?? data.kpis?.abaixoDoPiso ?? items.filter((i) => i.isBelowFloor).length,
+              items,
+              retainedItems,
+              diffList: items,
               kpis: data.kpis,
             });
           }
@@ -333,15 +384,20 @@ export const PricingContainer: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         if (data && (data.items || data.diffList)) {
-          const items = data.items || data.diffList || [];
+          const rawItems = Array.isArray(data.items) ? data.items : (Array.isArray(data.diffList) ? data.diffList : []);
+          const items = rawItems.map((it: any, idx: number) => normalizePreviewItem(it, idx));
+          const rawRetained = Array.isArray(data.retainedItems) ? data.retainedItems : null;
+          const retainedItems = rawRetained
+            ? rawRetained.map((it: any, idx: number) => normalizePreviewItem(it, idx))
+            : items.filter((i) => i.isLocked && !i.confirmed);
           setPreview({
-            affectedDatesCount: data.affectedDatesCount ?? items.length,
-            alteredRatesCount: data.alteredRatesCount ?? items.length,
-            retainedLockedCount: data.retainedLockedCount ?? items.filter((i: any) => i.isLocked && !i.confirmed).length,
-            belowFloorCount: data.belowFloorCount ?? items.filter((i: any) => i.isBelowFloor).length,
-            items: items,
-            retainedItems: data.retainedItems || items.filter((i: any) => i.isLocked && !i.confirmed),
-            diffList: data.diffList || items,
+            affectedDatesCount: data.affectedDatesCount ?? data.kpis?.datasAfetadas ?? items.length,
+            alteredRatesCount: data.alteredRatesCount ?? data.kpis?.precosAlterados ?? items.length,
+            retainedLockedCount: data.retainedLockedCount ?? data.kpis?.retidosPelaTrava ?? items.filter((i) => i.isLocked && !i.confirmed).length,
+            belowFloorCount: data.belowFloorCount ?? data.kpis?.abaixoDoPiso ?? items.filter((i) => i.isBelowFloor).length,
+            items,
+            retainedItems,
+            diffList: items,
             kpis: data.kpis,
           });
         }

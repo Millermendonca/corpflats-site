@@ -38,6 +38,10 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
   const [hasPlanCeiling, setHasPlanCeiling] = useState(false);
   const [planCeilingCount, setPlanCeilingCount] = useState(12);
 
+  React.useEffect(() => {
+    setLocalSettings(settings);
+  }, [settings]);
+
   const handleInputChange = (field: keyof PricingSettings, value: number) => {
     const updated = { ...localSettings, [field]: value };
     setLocalSettings(updated);
@@ -61,15 +65,15 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
       breakfastSurchargePerGuest: 25.00,
       extraBedFee: 60.00,
       variationLimitPct: 0.30,
-      manualFloor: 276.63,
+      manualFloor: 189.09,
       weekendMarkupPct: 0.15,
     };
     setLocalSettings(defaults);
     onUpdateSettings(defaults);
   };
 
-  const breakfastSurcharge = localSettings.breakfastSurchargePerGuest || 25;
-  const baseRate = calculation.tarifaMinima || 276.63;
+  const breakfastSurcharge = Number(localSettings.breakfastSurchargePerGuest ?? 25);
+  const baseRate = Number(calculation.tarifaMinima || 276.63);
 
   return (
     <div className="space-y-6">
@@ -102,19 +106,19 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs">
                 <span className="text-muted-foreground">Custos fixos mensais (Aluguel+Outros)</span>
                 <span className="font-semibold text-foreground">
-                  R$ {localSettings.fixedCostsMonth.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  R$ {Number(localSettings.fixedCostsMonth ?? 38906.61).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs">
                 <span className="text-muted-foreground">Ocupação média estimada</span>
                 <span className="font-semibold text-foreground">
-                  {(localSettings.occupancyRate * 100).toFixed(0)}% ({calculation.soldUnitsMonth?.toFixed(1) || "382.9"} diárias)
+                  {(Number(localSettings.occupancyRate ?? 0.65) * 100).toFixed(0)}% ({Number(calculation.soldUnitsMonth ?? 382.85).toFixed(1)} diárias)
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs bg-muted/20 px-1 rounded">
                 <span className="font-medium text-foreground">Custo fixo por diária vendida</span>
                 <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                  R$ {calculation.fixedCostPerSoldUnit?.toFixed(2) || "101.62"}
+                  R$ {Number(calculation.fixedCostPerSoldUnit ?? 101.62).toFixed(2)}
                 </span>
               </div>
             </div>
@@ -127,25 +131,25 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs">
                 <span className="text-muted-foreground">Limpeza e amenities</span>
                 <span className="font-medium text-foreground">
-                  R$ {localSettings.varCleaning.toFixed(2)}
+                  R$ {Number(localSettings.varCleaning ?? 23.25).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs">
                 <span className="text-muted-foreground">Lavanderia / Enxoval</span>
                 <span className="font-medium text-foreground">
-                  R$ {localSettings.varLinen.toFixed(2)}
+                  R$ {Number(localSettings.varLinen ?? 15.51).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs">
                 <span className="text-muted-foreground">Energia elétrica e água</span>
                 <span className="font-medium text-foreground">
-                  R$ {localSettings.varUtilities.toFixed(2)}
+                  R$ {Number(localSettings.varUtilities ?? 9.00).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs bg-emerald-50/50 dark:bg-emerald-950/20 px-1 rounded text-emerald-800 dark:text-emerald-300">
                 <span className="font-semibold">Subtotal variável por diária</span>
                 <span className="font-bold">
-                  R$ {calculation.varCostPerUnit?.toFixed(2) || "47.76"}
+                  R$ {Number(calculation.varCostPerUnit ?? 47.76).toFixed(2)}
                 </span>
               </div>
             </div>
@@ -162,7 +166,7 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
               </div>
               <div className="text-right">
                 <span className="text-xl font-black text-emerald-700 dark:text-emerald-400">
-                  R$ {calculation.custoUH?.toFixed(2) || "149.38"}
+                  R$ {Number(calculation.custoUH ?? 149.38).toFixed(2)}
                 </span>
               </div>
             </div>

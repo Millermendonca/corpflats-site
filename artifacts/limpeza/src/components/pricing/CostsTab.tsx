@@ -39,7 +39,7 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
             <div className="flex justify-between items-center py-2 bg-muted/30 px-3 rounded-lg text-xs">
               <span className="font-bold text-foreground">Total de Custos Fixos Mensais:</span>
               <span className="font-black text-foreground">
-                R$ {settings.fixedCostsMonth.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                R$ {Number(settings.fixedCostsMonth ?? 38906.61).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
               </span>
             </div>
 
@@ -51,13 +51,13 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
               <div className="flex justify-between text-muted-foreground">
                 <span>Custo fixo por diária disponível (100% ocupação):</span>
                 <span className="font-mono font-bold text-foreground">
-                  R$ {calculation.fixedCostPerAvailableUnit?.toFixed(2) || "66.06"}
+                  R$ {Number(calculation.fixedCostPerAvailableUnit ?? 66.06).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between text-emerald-800 dark:text-emerald-300 font-semibold pt-1 border-t border-border/40">
                 <span>Custo fixo na ocupação real (65% = 382,9 diárias):</span>
                 <span className="font-mono font-black">
-                  R$ {calculation.fixedCostPerSoldUnit?.toFixed(2) || "101.62"}
+                  R$ {Number(calculation.fixedCostPerSoldUnit ?? 101.62).toFixed(2)}
                 </span>
               </div>
             </div>
@@ -80,20 +80,20 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
           <CardContent className="pt-4 space-y-3 text-sm">
             <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
               <span className="text-muted-foreground">Limpeza e amenities descartáveis</span>
-              <span className="font-semibold text-foreground">R$ {settings.varCleaning.toFixed(2)}</span>
+              <span className="font-semibold text-foreground">R$ {Number(settings.varCleaning ?? 23.25).toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
               <span className="text-muted-foreground">Lavanderia industrial e enxoval</span>
-              <span className="font-semibold text-foreground">R$ {settings.varLinen.toFixed(2)}</span>
+              <span className="font-semibold text-foreground">R$ {Number(settings.varLinen ?? 15.51).toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
               <span className="text-muted-foreground">Energia elétrica e água consumida</span>
-              <span className="font-semibold text-foreground">R$ {settings.varUtilities.toFixed(2)}</span>
+              <span className="font-semibold text-foreground">R$ {Number(settings.varUtilities ?? 9.00).toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center py-2 bg-emerald-50/60 dark:bg-emerald-950/30 px-3 rounded-lg text-xs">
               <span className="font-bold text-emerald-900 dark:text-emerald-200">Total Variável por UH:</span>
               <span className="font-black text-emerald-700 dark:text-emerald-400">
-                R$ {calculation.varCostPerUnit?.toFixed(2) || "47.76"}
+                R$ {Number(calculation.varCostPerUnit ?? 47.76).toFixed(2)}
               </span>
             </div>
 
@@ -136,11 +136,16 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
               </thead>
               <tbody className="divide-y divide-border/40 font-mono">
                 {occupancyLevels.map((occ) => {
-                  const sold = 19 * 31 * occ;
-                  const fixoUnit = 38906.61 / sold;
-                  const custoUH = fixoUnit + 47.76;
-                  const tarifaMin = custoUH / 0.54;
-                  const isCurrent = occ === 0.65;
+                  const totalUHs = Number(settings.totalUHs ?? 19) || 19;
+                  const days = Number(settings.daysInMonth ?? 31) || 31;
+                  const fixed = Number(settings.fixedCostsMonth ?? 38906.61) || 38906.61;
+                  const varUnit = Number(calculation.varCostPerUnit ?? 47.76) || 47.76;
+                  const divisor = Number(calculation.divisor ?? 0.54) || 0.54;
+                  const sold = totalUHs * days * occ;
+                  const fixoUnit = fixed / sold;
+                  const custoUH = fixoUnit + varUnit;
+                  const tarifaMin = custoUH / divisor;
+                  const isCurrent = Math.abs(occ - Number(settings.occupancyRate ?? 0.65)) < 0.005;
                   return (
                     <tr 
                       key={occ} 

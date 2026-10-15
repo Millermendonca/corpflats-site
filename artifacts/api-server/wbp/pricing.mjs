@@ -639,11 +639,13 @@ export class WbpPricingManager {
       const candidateBaseRate = round2(seasonalBaseRate * weekendMultiplier);
 
       const planPrices = calculateRatePlanPrices(candidateBaseRate, settings);
+      const baselinePlanPrices = calculateRatePlanPrices(sebraeBase.tarifaMinima, settings);
 
       for (const planId of ["sem_cafe", "com_cafe"]) {
         const key = `${dateStr}_${planId}`;
         const proposedRate = planPrices[planId].rate;
         const lastSentRate = state.lastPublishedRates?.[key] || null;
+        const displayCurrentRate = lastSentRate != null ? Number(lastSentRate) : baselinePlanPrices[planId].rate;
 
         // Check if manual staged override exists
         const stagedOverride = state.stagedModifications?.[key];
@@ -683,7 +685,8 @@ export class WbpPricingManager {
           date: dateStr,
           planId,
           planName: planId === "sem_cafe" ? "Sem café" : "Com café (2 hósp.)",
-          currentRate: lastSentRate,
+          currentRate: displayCurrentRate,
+          lastSentRate,
           newRate: effectiveRate,
           deltaPct: lockResult.deltaPct,
           variationPct: round2(lockResult.deltaPct * 100),
