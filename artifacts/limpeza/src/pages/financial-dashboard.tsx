@@ -32,6 +32,10 @@ export default function FinancialDashboard() {
   const [loading, setLoading] = useState(true)
 
   // Filtros
+  const now = new Date()
+  const initialMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(initialMonthStr)
+  const [viewMode, setViewMode] = useState<"competencia" | "caixa">("competencia")
   const [payableStatusFilter, setPayableStatusFilter] = useState<string>("all")
   const [payableScopeFilter, setPayableScopeFilter] = useState<"all" | "corpflats" | "flats">("all")
   const [receivableStatusFilter, setReceivableStatusFilter] = useState<string>("all")
@@ -84,11 +88,11 @@ export default function FinancialDashboard() {
   const [formMargin, setFormMargin] = useState("25")
   const [savingSettings, setSavingSettings] = useState(false)
 
-  const fetchAllERPData = async () => {
+  const fetchAllERPData = async (period = selectedPeriod, mode = viewMode) => {
     setLoading(true)
     try {
       const [overviewRes, payRes, recRes, cashRes, contractsRes, flatsRes] = await Promise.all([
-        fetch("/api/finance/overview", { credentials: "include" }),
+        fetch(`/api/finance/overview?period=${encodeURIComponent(period)}&viewMode=${encodeURIComponent(mode)}`, { credentials: "include" }),
         fetch("/api/finance/payables", { credentials: "include" }),
         fetch("/api/finance/receivables", { credentials: "include" }),
         fetch("/api/finance/cashflow", { credentials: "include" }),
@@ -125,9 +129,9 @@ export default function FinancialDashboard() {
 
   useEffect(() => {
     if (!loadingUser && user?.role === "admin") {
-      fetchAllERPData()
+      fetchAllERPData(selectedPeriod, viewMode)
     }
-  }, [loadingUser, user?.role])
+  }, [loadingUser, user?.role, selectedPeriod, viewMode])
 
   // Ações de Contas a Pagar
   const handleMarkPayablePaid = async (id: number) => {
@@ -456,6 +460,46 @@ export default function FinancialDashboard() {
         {/* ── ABA 1: DRE GERENCIAL ─────────────────────────────────────────── */}
         {activeTab === "dre" && data && (
           <div className="space-y-6">
+            {/* Filtros de Mês / Período e Regime (Competência vs Caixa) */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-muted/30 border border-border/70 rounded-2xl">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-primary" />
+                  <span className="text-xs font-bold text-foreground">Período:</span>
+                </div>
+                <Input
+                  type="month"
+                  value={selectedPeriod}
+                  onChange={(e) => setSelectedPeriod(e.target.value)}
+                  className="h-8 text-xs font-bold w-36 bg-background"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-muted-foreground mr-1">Regime:</span>
+                <div className="inline-flex rounded-xl p-0.5 bg-muted border border-border">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={viewMode === "competencia" ? "default" : "ghost"}
+                    onClick={() => setViewMode("competencia")}
+                    className="h-7 text-xs font-bold px-3 rounded-lg"
+                  >
+                    Competência
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={viewMode === "caixa" ? "default" : "ghost"}
+                    onClick={() => setViewMode("caixa")}
+                    className="h-7 text-xs font-bold px-3 rounded-lg"
+                  >
+                    Caixa
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {/* Top Cards KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Card className="rounded-2xl border p-4 shadow-xs">
@@ -471,7 +515,7 @@ export default function FinancialDashboard() {
                 <div className="text-2xl font-black text-emerald-600 mt-1">
                   R$ {(data.dre.netRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
-                <span className="text-[10px] text-emerald-500 font-semibold mt-0.5 block">Após comissões de OTAs</span>
+                <span className="text-[10px] text-emerald-500 font-semibold mt-0.5 block">Após comissões, taxas e impostos</span>
               </Card>
 
               <Card className="rounded-2xl border p-4 shadow-xs">
@@ -479,7 +523,7 @@ export default function FinancialDashboard() {
                 <div className="text-2xl font-black text-rose-600 mt-1">
                   R$ {(data.dre.totalFixedCosts || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
-                <span className="text-[10px] text-muted-foreground mt-0.5 block">Flats arrendados + Salários</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5 block">Flats + Folha + Marketing</span>
               </Card>
 
               <Card className="rounded-2xl border p-4 shadow-xs bg-emerald-950/20 border-emerald-800/60">
@@ -502,11 +546,11 @@ export default function FinancialDashboard() {
                     Demonstrativo de Resultado do Exercício (DRE Gerencial CorpFlats)
                   </span>
                   <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-xs">
-                    Modelo de Arrendamento Fixo
+                    Modelo de Arrendamento Fixo ({viewMode === "competencia" ? "Competência" : "Caixa"})
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Demonstração de receitas, deduções de canais, custos operacionais e margem de lucro líquida.
+                  Demonstração de receitas por canal, deduções completas, custos operacionais reais e margem líquida.
                 </CardDescription>
               </CardHeader>
 
@@ -519,21 +563,46 @@ export default function FinancialDashboard() {
                   </span>
                 </div>
 
-                <div className="px-6 py-2.5 flex items-center justify-between text-xs text-muted-foreground pl-8">
-                  <span>• Vendas Diretas (Site CorpFlats + WhatsApp + Long-Stay)</span>
-                  <span>R$ {(data.dre.revenueDirect || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
+                  <span>• Vendas Diretas Short-Stay (Site CorpFlats + WhatsApp)</span>
+                  <span>R$ {((data.dre.revenueDirectShortStay ?? data.dre.revenueDirect) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
-                <div className="px-6 py-2.5 flex items-center justify-between text-xs text-muted-foreground pl-8">
-                  <span>• Vendas Booking.com / OTAs</span>
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
+                  <span>• Mensalidades Contratos Long-Stay</span>
+                  <span>R$ {(data.dre.revenueLongStay || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
+                  <span>• Vendas Booking.com (OTA)</span>
                   <span>R$ {(data.dre.revenueBooking || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
+                  <span>• Vendas Airbnb (OTA)</span>
+                  <span>R$ {(data.dre.revenueAirbnb || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
                 <div className="p-4 flex items-center justify-between font-semibold text-rose-600 bg-rose-950/10">
-                  <span className="text-xs">(-) Deduções: Comissões Pagas a Canais (OTAs / Booking)</span>
+                  <span className="text-xs">(-) DEDUÇÕES SOBRE FATURAMENTO BRUTO</span>
                   <span className="text-xs font-black">
-                    - R$ {(data.dre.totalCommissionsPaid || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    - R$ {(data.dre.totalDeductions ?? ((data.dre.totalCommissionsPaid || 0) + (data.dre.totalGatewayFees || 0) + (data.dre.totalTaxes || 0))).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
+                </div>
+
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
+                  <span>• Comissões Pagas a OTAs (Booking / Airbnb)</span>
+                  <span>- R$ {(data.dre.totalCommissionsPaid || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
+                  <span>• Taxas Meios de Pagamento (PIX / Gateway Cartão Mercado Pago)</span>
+                  <span>- R$ {(data.dre.totalGatewayFees || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
+                  <span>• Impostos sobre Faturamento (Simples Nacional / ISS 6%)</span>
+                  <span>- R$ {(data.dre.totalTaxes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 <div className="p-4 flex items-center justify-between font-black bg-muted/20">
@@ -553,16 +622,23 @@ export default function FinancialDashboard() {
                 <div className="p-4 flex items-center justify-between font-black bg-muted/20">
                   <span className="text-sm text-foreground">(=) MARGEM DE CONTRIBUIÇÃO</span>
                   <span className="text-base text-foreground">
-                    R$ {((data.dre.netRevenue || 0) - (data.dre.totalVariableCosts || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {(data.dre.contributionMargin != null ? data.dre.contributionMargin : ((data.dre.netRevenue || 0) - (data.dre.totalVariableCosts || 0))).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
                 <div className="p-4 flex items-center justify-between font-semibold text-rose-600 bg-rose-950/10">
-                  <span className="text-xs">(-) Despesas Fixas da CorpFlats (Aluguéis Fixos dos Flats + Condomínios + Folha)</span>
+                  <span className="text-xs">(-) Despesas Fixas da CorpFlats (Aluguéis Fixos dos Flats + Condomínios + Folha + Marketing)</span>
                   <span className="text-xs font-black">
                     - R$ {(data.dre.totalFixedCosts || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
+
+                {data.dre.marketingExpenses > 0 && (
+                  <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
+                    <span>• Investimento em Tráfego & Marketing (Meta/Google Ads)</span>
+                    <span>R$ {(data.dre.marketingExpenses || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
 
                 <div className="p-5 flex items-center justify-between font-black bg-emerald-950/40 text-emerald-400 text-base">
                   <span>(=) LUCRO OPERACIONAL LÍQUIDO (EBITDA DA CORPFLATS)</span>

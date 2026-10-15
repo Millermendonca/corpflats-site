@@ -12,6 +12,7 @@ export interface SebraeCalculationResult {
   totalDeductionsPct: number;
   divisor: number;
   tarifaMinima: number;
+  breakEvenFloor?: number;
   decomposicao: {
     custo: number;
     comissao: number;
@@ -71,7 +72,9 @@ export interface PreviewSummary {
   retainedLockedCount: number;
   belowFloorCount: number;
   items: PreviewRateItem[];
-  retainedItems: PreviewRateItem[];
+  diffList?: PreviewRateItem[];
+  retainedItems?: PreviewRateItem[];
+  kpis?: Record<string, any>;
 }
 
 export interface SeasonalityMonth {

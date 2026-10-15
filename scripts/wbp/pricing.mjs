@@ -41,7 +41,7 @@ export const DEFAULT_SEBRAE_CONFIG = {
   breakfastSurchargePerGuest: 25.00,
   extraBedFee: 60.00,
   variationLimitPct: 0.30, // 30% default variation lock
-  manualFloor: 276.63,
+  manualFloor: 189.09,
   weekendMarkupPct: 0.15
 };
 
@@ -165,6 +165,11 @@ export function calculateSebraeRate(params = {}) {
   }
   const divisor = round2(1.0 - totalDeductionsPct); // 0.54
 
+  // 5b. Deduções de Break-Even (Ponto de Equilíbrio: margem de lucro 0%)
+  const breakEvenDeductionsPct = round2(channelCommissionPct + taxRatePct); // 0.15 + 0.06 = 0.21
+  const breakEvenDivisor = round2(1.0 - breakEvenDeductionsPct); // 0.79
+  const breakEvenFloor = round2(custoUH / breakEvenDivisor); // 149.38 / 0.79 = 189.09
+
   // 6. Tarifa Mínima Recomendada
   const tarifaMinimaRaw = custoUH / divisor; // 149.38 / 0.54 = 276.6296...
   const tarifaMinima = round2(tarifaMinimaRaw); // 276.63
@@ -198,6 +203,9 @@ export function calculateSebraeRate(params = {}) {
     totalDeductionsPct,
     divisor,
     tarifaMinima,
+    breakEvenDeductionsPct,
+    breakEvenDivisor,
+    breakEvenFloor,
     decomposicao: {
       custo: custoParcela,
       comissao: comissaoParcela,
@@ -214,6 +222,8 @@ export function calculateSebraeRate(params = {}) {
     }
   };
 }
+
+export const calculateSebraeSustainableRate = calculateSebraeRate;
 
 /**
  * Calculates historical occupancy rates and seasonality factors for all 12 months.
@@ -331,20 +341,27 @@ export function calculateHistoricalSeasonality(reservations = [], options = {}) 
  */
 export function applyPricingLocks({
   candidateRate,
+  calculatedRate,
   lastSentRate = null,
+  currentRate = null,
   tarifaMinima = 276.63,
-  manualFloor = 276.63,
-  variationLimitPct = 0.30
+  manualFloor = 189.09,
+  variationLimitPct = 0.30,
+  breakEvenFloor = null
 }) {
-  const rate = round2(Number(candidateRate));
+  const rateVal = candidateRate !== undefined ? candidateRate : calculatedRate;
+  const lastRateVal = lastSentRate !== null ? lastSentRate : currentRate;
+  const rate = round2(Number(rateVal));
 
   const numTarifaMinima = (typeof tarifaMinima === "number" || typeof tarifaMinima === "string") ? Number(tarifaMinima) : NaN;
   const numManualFloor = (typeof manualFloor === "number" || typeof manualFloor === "string") ? Number(manualFloor) : NaN;
+  const numBreakEvenFloor = (typeof breakEvenFloor === "number" || typeof breakEvenFloor === "string") ? Number(breakEvenFloor) : NaN;
 
   const isTmValid = Number.isFinite(numTarifaMinima) && numTarifaMinima > 0;
   const isMfValid = Number.isFinite(numManualFloor) && numManualFloor > 0;
+  const isBfValid = Number.isFinite(numBreakEvenFloor) && numBreakEvenFloor > 0;
 
-  if (!isTmValid && !isMfValid) {
+  if (!isTmValid && !isMfValid && !isBfValid) {
     return {
       approved: false,
       candidateRate: Number.isFinite(rate) ? rate : null,
@@ -357,7 +374,11 @@ export function applyPricingLocks({
   }
 
   let effectiveFloor;
-  if (isTmValid && isMfValid) {
+  if (isBfValid) {
+    // When breakEvenFloor is explicitly supplied, the baseline floor is the break-even floor.
+    // If manualFloor is also valid, use the maximum of breakEvenFloor and manualFloor.
+    effectiveFloor = isMfValid ? Math.max(numBreakEvenFloor, numManualFloor) : numBreakEvenFloor;
+  } else if (isTmValid && isMfValid) {
     effectiveFloor = Math.max(numTarifaMinima, numManualFloor);
   } else if (isTmValid) {
     effectiveFloor = numTarifaMinima;
@@ -369,6 +390,7 @@ export function applyPricingLocks({
   if (!Number.isFinite(floor) || floor <= 0) {
     return {
       approved: false,
+      isLocked: true,
       candidateRate: Number.isFinite(rate) ? rate : null,
       finalRate: null,
       lockedReason: "FLOOR_LOCK",
@@ -382,6 +404,7 @@ export function applyPricingLocks({
   if (isNaN(rate) || !Number.isFinite(rate) || rate <= 0) {
     return {
       approved: false,
+      isLocked: true,
       candidateRate: isNaN(rate) ? null : rate,
       finalRate: null,
       lockedReason: "FLOOR_LOCK",
@@ -394,6 +417,7 @@ export function applyPricingLocks({
   if (rate < floor) {
     return {
       approved: false,
+      isLocked: true,
       candidateRate: rate,
       finalRate: null,
       lockedReason: "FLOOR_LOCK",
@@ -414,14 +438,15 @@ export function applyPricingLocks({
     maxVariation = 0.30;
   }
 
-  if (lastSentRate != null && !isNaN(Number(lastSentRate)) && Number(lastSentRate) > 0) {
-    const prevRate = Number(lastSentRate);
+  if (lastRateVal != null && !isNaN(Number(lastRateVal)) && Number(lastRateVal) > 0) {
+    const prevRate = Number(lastRateVal);
     const deltaPct = (rate - prevRate) / prevRate;
 
     if (Math.abs(deltaPct) > maxVariation) {
       const deltaPercentStr = (deltaPct * 100).toFixed(1);
       return {
         approved: false,
+        isLocked: true,
         candidateRate: rate,
         finalRate: null,
         lockedReason: "VARIATION_LOCK",
@@ -433,6 +458,7 @@ export function applyPricingLocks({
 
     return {
       approved: true,
+      isLocked: false,
       candidateRate: rate,
       finalRate: rate,
       lockedReason: null,
@@ -444,6 +470,7 @@ export function applyPricingLocks({
 
   return {
     approved: true,
+    isLocked: false,
     candidateRate: rate,
     finalRate: rate,
     lockedReason: null,
@@ -622,12 +649,15 @@ export class WbpPricingManager {
         const stagedOverride = state.stagedModifications?.[key];
         const effectiveRate = stagedOverride != null ? Number(stagedOverride) : proposedRate;
 
-        // Evaluate Safety Locks
+        // Evaluate Safety Locks anchored to Break-Even floor
         const lockResult = applyPricingLocks({
           candidateRate: effectiveRate,
           lastSentRate,
-          tarifaMinima: sebraeBase.tarifaMinima,
-          manualFloor: settings.manualFloor,
+          tarifaMinima: sebraeBase.breakEvenFloor || 189.09,
+          breakEvenFloor: sebraeBase.breakEvenFloor || 189.09,
+          manualFloor: (settings.manualFloor != null && Number(settings.manualFloor) !== 276.63)
+            ? Number(settings.manualFloor)
+            : (sebraeBase.breakEvenFloor || 189.09),
           variationLimitPct: settings.variationLimitPct
         });
 
@@ -649,18 +679,23 @@ export class WbpPricingManager {
           : 19;
 
         const diffItem = {
+          id: `${dateStr}_${planId}`,
           date: dateStr,
           planId,
           planName: planId === "sem_cafe" ? "Sem café" : "Com café (2 hósp.)",
           currentRate: lastSentRate,
           newRate: effectiveRate,
           deltaPct: lockResult.deltaPct,
+          variationPct: round2(lockResult.deltaPct * 100),
           freeUnits,
           isChanged,
           isBelowFloor,
           isVariationLocked,
+          isLocked: isVariationLocked,
           isConfirmed,
+          confirmed: isConfirmed,
           lockedReason: lockResult.lockedReason,
+          lockReason: lockResult.message,
           message: lockResult.message,
           prices: planPrices[planId]
         };
@@ -682,7 +717,12 @@ export class WbpPricingManager {
         retidosPelaTrava: retidosCount,
         abaixoDoPiso: abaixoDoPisoCount
       },
+      affectedDatesCount: affectedDatesSet.size,
+      alteredRatesCount: precosAlteradosCount,
+      retainedLockedCount: retidosCount,
+      belowFloorCount: abaixoDoPisoCount,
       diffList,
+      items: diffList,
       retainedItems,
       sebraeRate: sebraeBase
     };
@@ -690,12 +730,22 @@ export class WbpPricingManager {
 
   /**
    * Confirms a retained variation lock for a specific date and rate plan.
-   * @param {string} date
-   * @param {string} planId
-   * @param {object} db
+   * Accepts (date, planId, db) or (itemId, db) where itemId is `${date}_${planId}`.
+   * @param {string} dateOrItemId
+   * @param {string|object} planIdOrDb
+   * @param {object} [maybeDb]
    * @returns {boolean}
    */
-  static confirmVariation(date, planId, db) {
+  static confirmVariation(dateOrItemId, planIdOrDb, maybeDb) {
+    let date = dateOrItemId;
+    let planId = planIdOrDb;
+    let db = maybeDb;
+    if (typeof dateOrItemId === "string" && dateOrItemId.includes("_") && !maybeDb) {
+      const parts = dateOrItemId.split("_");
+      date = parts[0];
+      planId = parts.slice(1).join("_");
+      db = planIdOrDb;
+    }
     const state = this.getPricingState(db);
     const key = `${date}_${planId}`;
     if (!state.confirmedVariations) state.confirmedVariations = {};
@@ -705,12 +755,22 @@ export class WbpPricingManager {
 
   /**
    * Discards a modification, reverting it to the previous published rate.
-   * @param {string} date
-   * @param {string} planId
-   * @param {object} db
+   * Accepts (date, planId, db) or (itemId, db) where itemId is `${date}_${planId}`.
+   * @param {string} dateOrItemId
+   * @param {string|object} planIdOrDb
+   * @param {object} [maybeDb]
    * @returns {boolean}
    */
-  static discardVariation(date, planId, db) {
+  static discardVariation(dateOrItemId, planIdOrDb, maybeDb) {
+    let date = dateOrItemId;
+    let planId = planIdOrDb;
+    let db = maybeDb;
+    if (typeof dateOrItemId === "string" && dateOrItemId.includes("_") && !maybeDb) {
+      const parts = dateOrItemId.split("_");
+      date = parts[0];
+      planId = parts.slice(1).join("_");
+      db = planIdOrDb;
+    }
     const state = this.getPricingState(db);
     const key = `${date}_${planId}`;
     if (state.stagedModifications) delete state.stagedModifications[key];

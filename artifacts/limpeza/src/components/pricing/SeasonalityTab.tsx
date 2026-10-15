@@ -9,6 +9,7 @@ import { PricingSettings, SeasonalityMonth } from "./types";
 interface SeasonalityTabProps {
   settings: PricingSettings;
   baseRate: number;
+  breakEvenFloor?: number;
 }
 
 const DEFAULT_MONTHS: SeasonalityMonth[] = [
@@ -26,7 +27,7 @@ const DEFAULT_MONTHS: SeasonalityMonth[] = [
   { month: 11, label: "Dezembro", occupancyRate: 0.83, season: "Alta", factor: 1.15, isManualOverride: false },
 ];
 
-export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRate }) => {
+export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRate, breakEvenFloor }) => {
   const [months, setMonths] = useState<SeasonalityMonth[]>(DEFAULT_MONTHS);
   const [weekendMarkup, setWeekendMarkup] = useState<number>(settings.weekendMarkupPct * 100 || 15);
 
@@ -153,7 +154,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
               </thead>
               <tbody className="divide-y divide-border/40 font-mono">
                 {months.map((m, idx) => {
-                  const monthBaseRate = Math.max(baseRate, baseRate * m.factor);
+                  const monthBaseRate = Math.max(breakEvenFloor || 189.09, Math.round(baseRate * m.factor * 100) / 100);
                   const monthWeekendRate = monthBaseRate * (1 + weekendMarkup / 100);
                   return (
                     <tr key={m.month} className="hover:bg-muted/30 transition-colors">

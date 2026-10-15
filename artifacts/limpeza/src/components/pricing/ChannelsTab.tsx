@@ -11,8 +11,8 @@ interface ChannelsTabProps {
 
 const DEFAULT_CHANNELS: ChannelPricingConfig[] = [
   { id: "direct", name: "Site Direto (CorpFlats)", markupPct: 0.0, commissionPct: 0.0, cardFeePct: 0.025, active: true },
-  { id: "booking", name: "Booking.com", markupPct: 0.15, commissionPct: 0.15, cardFeePct: 0.015, active: true },
-  { id: "airbnb", name: "Airbnb", markupPct: 0.18, commissionPct: 0.18, cardFeePct: 0.0, active: true },
+  { id: "booking", name: "Booking.com", markupPct: 0.0, commissionPct: 0.15, cardFeePct: 0.015, active: true },
+  { id: "airbnb", name: "Airbnb", markupPct: 0.03, commissionPct: 0.15, cardFeePct: 0.0, active: true },
 ];
 
 export const ChannelsTab: React.FC<ChannelsTabProps> = ({ baseRate }) => {

@@ -45,7 +45,7 @@ const INITIAL_SETTINGS: PricingSettings = {
   breakfastSurchargePerGuest: 25.00,
   extraBedFee: 60.00,
   variationLimitPct: 0.30,
-  manualFloor: 276.63,
+  manualFloor: 189.09,
   weekendMarkupPct: 0.15,
   hasStagedChanges: true,
   stagedChangesCount: 84,
@@ -65,6 +65,7 @@ const INITIAL_CALCULATION: SebraeCalculationResult = {
   totalDeductionsPct: 0.46,
   divisor: 0.54,
   tarifaMinima: 276.63,
+  breakEvenFloor: 189.09,
   decomposicao: {
     custo: 149.38,
     comissao: 41.49,
@@ -132,8 +133,18 @@ export const PricingContainer: React.FC = () => {
         const res = await fetch("/api/wbp/pricing/preview");
         if (res.ok) {
           const data = await res.json();
-          if (data && data.items) {
-            setPreview(data);
+          if (data && (data.items || data.diffList)) {
+            const items = data.items || data.diffList || [];
+            setPreview({
+              affectedDatesCount: data.affectedDatesCount ?? items.length,
+              alteredRatesCount: data.alteredRatesCount ?? items.length,
+              retainedLockedCount: data.retainedLockedCount ?? items.filter((i: any) => i.isLocked && !i.confirmed).length,
+              belowFloorCount: data.belowFloorCount ?? items.filter((i: any) => i.isBelowFloor).length,
+              items: items,
+              retainedItems: data.retainedItems || items.filter((i: any) => i.isLocked && !i.confirmed),
+              diffList: data.diffList || items,
+              kpis: data.kpis,
+            });
           }
         }
       } catch {}
@@ -158,6 +169,8 @@ export const PricingContainer: React.FC = () => {
       const deducoes = (merged.channelCommissionPct || 0.15) + (merged.targetMarginPct || 0.25) + (merged.taxRatePct || 0.06);
       const divisor = 1.0 - deducoes;
       const tarifaMinima = custoUH / divisor;
+      const breakEvenDivisor = 1.0 - (merged.channelCommissionPct || 0.15) - (merged.taxRatePct || 0.06);
+      const breakEvenFloor = Math.round((custoUH / breakEvenDivisor) * 100) / 100;
 
       const custoParcela = Math.round(custoUH * 100) / 100;
       const comissaoParcela = Math.round(tarifaMinima * (merged.channelCommissionPct || 0.15) * 100) / 100;
@@ -182,6 +195,7 @@ export const PricingContainer: React.FC = () => {
         totalDeductionsPct: Math.round(deducoes * 100) / 100,
         divisor: Math.round(divisor * 100) / 100,
         tarifaMinima: Math.round(tarifaMinima * 100) / 100,
+        breakEvenFloor,
         decomposicao: {
           custo: custoParcela,
           comissao: comissaoParcela,
@@ -219,16 +233,19 @@ export const PricingContainer: React.FC = () => {
 
   const handleConfirmVariation = async (itemId: string) => {
     try {
+      const parts = itemId.split("_");
+      const date = parts.length >= 2 ? parts[0] : undefined;
+      const planId = parts.length >= 2 ? parts.slice(1).join("_") : undefined;
       await fetch("/api/wbp/pricing/confirm-variation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemId }),
+        body: JSON.stringify({ itemId, date, planId }),
       });
     } catch {}
 
     setPreview(prev => {
       const updatedItems = prev.items.map(it => it.id === itemId ? { ...it, confirmed: true, isLocked: false } : it);
-      const updatedRetained = prev.retainedItems.map(it => it.id === itemId ? { ...it, confirmed: true, isLocked: false } : it);
+      const updatedRetained = (prev.retainedItems || []).map(it => it.id === itemId ? { ...it, confirmed: true, isLocked: false } : it);
       return {
         ...prev,
         retainedLockedCount: Math.max(0, prev.retainedLockedCount - 1),
@@ -240,10 +257,13 @@ export const PricingContainer: React.FC = () => {
 
   const handleDiscardVariation = async (itemId: string) => {
     try {
+      const parts = itemId.split("_");
+      const date = parts.length >= 2 ? parts[0] : undefined;
+      const planId = parts.length >= 2 ? parts.slice(1).join("_") : undefined;
       await fetch("/api/wbp/pricing/discard-variation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemId }),
+        body: JSON.stringify({ itemId, date, planId }),
       });
     } catch {}
 
@@ -252,7 +272,7 @@ export const PricingContainer: React.FC = () => {
       alteredRatesCount: Math.max(0, prev.alteredRatesCount - 1),
       retainedLockedCount: Math.max(0, prev.retainedLockedCount - 1),
       items: prev.items.filter(it => it.id !== itemId),
-      retainedItems: prev.retainedItems.filter(it => it.id !== itemId),
+      retainedItems: (prev.retainedItems || []).filter(it => it.id !== itemId),
     }));
   };
 
@@ -312,7 +332,19 @@ export const PricingContainer: React.FC = () => {
       const res = await fetch("/api/wbp/pricing/preview");
       if (res.ok) {
         const data = await res.json();
-        if (data && data.items) setPreview(data);
+        if (data && (data.items || data.diffList)) {
+          const items = data.items || data.diffList || [];
+          setPreview({
+            affectedDatesCount: data.affectedDatesCount ?? items.length,
+            alteredRatesCount: data.alteredRatesCount ?? items.length,
+            retainedLockedCount: data.retainedLockedCount ?? items.filter((i: any) => i.isLocked && !i.confirmed).length,
+            belowFloorCount: data.belowFloorCount ?? items.filter((i: any) => i.isBelowFloor).length,
+            items: items,
+            retainedItems: data.retainedItems || items.filter((i: any) => i.isLocked && !i.confirmed),
+            diffList: data.diffList || items,
+            kpis: data.kpis,
+          });
+        }
       }
     } catch {} finally {
       setIsLoading(false);
@@ -416,7 +448,7 @@ export const PricingContainer: React.FC = () => {
 
         {/* Tab 3: Tarifário & Sazonalidade */}
         <TabsContent value="sazonalidade" className="mt-0 focus-visible:outline-none">
-          <SeasonalityTab settings={settings} baseRate={calculation.tarifaMinima || 276.63} />
+          <SeasonalityTab settings={settings} baseRate={calculation.tarifaMinima || 276.63} breakEvenFloor={calculation.breakEvenFloor || 189.09} />
         </TabsContent>
 
         {/* Tab 4: Canais */}

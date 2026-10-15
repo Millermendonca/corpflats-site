@@ -248,7 +248,7 @@ export default function TarifasEditor() {
 
     let finalRate = bulkValue
     if (bulkAdjustmentType === "percent") {
-      const base = tariffSettings?.baseDailyRate || 237
+      const base = tariffSettings?.baseDailyRate || 276.63
       finalRate = Math.round(base * (1 + bulkValue / 100))
     }
 
@@ -738,7 +738,7 @@ export default function TarifasEditor() {
                         <Input
                           type="number"
                           disabled={tariffSettings?.mode === "auto"}
-                          value={tariffSettings?.baseDailyRate ?? 237}
+                          value={tariffSettings?.baseDailyRate ?? 276.63}
                           onChange={e => setTariffSettings({ ...tariffSettings, baseDailyRate: Number(e.target.value) })}
                           className="h-9 font-black text-sm"
                         />
@@ -815,7 +815,7 @@ export default function TarifasEditor() {
                       <Input
                         type="number"
                         step="1"
-                        value={Math.round((tariffSettings?.channelMarkups?.booking?.markupPct ?? 0.18) * 100)}
+                        value={Math.round((tariffSettings?.channelMarkups?.booking?.markupPct ?? 0.0) * 100)}
                         onChange={e => {
                           const val = Number(e.target.value) / 100
                           setTariffSettings({
@@ -830,7 +830,7 @@ export default function TarifasEditor() {
                       />
                     </div>
                     <p className="text-[10.5px] text-slate-500 pt-1">
-                      Repassa +18% na diária final para compensar a comissão da plataforma.
+                      Margem neutra com tarifa SEBRAE (comissão já considerada no divisor).
                     </p>
                   </div>
 
@@ -845,7 +845,7 @@ export default function TarifasEditor() {
                       <Input
                         type="number"
                         step="1"
-                        value={Math.round((tariffSettings?.channelMarkups?.airbnb?.markupPct ?? 0.15) * 100)}
+                        value={Math.round((tariffSettings?.channelMarkups?.airbnb?.markupPct ?? 0.03) * 100)}
                         onChange={e => {
                           const val = Number(e.target.value) / 100
                           setTariffSettings({
@@ -860,7 +860,7 @@ export default function TarifasEditor() {
                       />
                     </div>
                     <p className="text-[10.5px] text-slate-500 pt-1">
-                      Repassa +15% na diária final para absorver a taxa de serviço.
+                      Ajuste para taxa de anfitrião Airbnb (+3%).
                     </p>
                   </div>
                 </div>

@@ -154,7 +154,8 @@ import {
   applyPricingLocks,
   calculateRatePlanPrices,
   WbpPricingManager,
-  DEFAULT_SEBRAE_CONFIG
+  DEFAULT_SEBRAE_CONFIG,
+  STANDARD_SEBRAE_SEASONALITY_FACTORS
 } from "./wbp/pricing.mjs";
 import {
   getAriSynchronizer,
@@ -936,9 +937,214 @@ app.get("/api/wbp/pricing/settings", (req, res) => {
   }
 });
 
+export const DEFAULT_FEE_SETTINGS = {
+  pixInterRate: 0.0,            // 0% Banco Inter PIX Oficial
+  mpCreditSpotRate: 3.99,       // 3.99% Mercado Pago Crédito à Vista
+  mpCreditInstallmentRate: 5.49,// 5.49% Mercado Pago Crédito Parcelado
+  bookingCommissionRate: 15.0,  // 15.0% Comissão Booking.com
+  airbnbCommissionRate: 15.0,   // 15.0% Comissão Airbnb
+  directRate: 0.0,              // 0% Vendas Diretas / WhatsApp
+  issTaxRate: 6.0               // 6.0% Simples Nacional / ISS
+};
+
+export function syncFinancialAndTariffSettings(db, partial = {}) {
+  if (!db) return {};
+  if (!db.financialSettings) {
+    db.financialSettings = {
+      fixedRent: 38506.61,
+      fixedSalaries: 0,
+      fixedCondoIptu: 0,
+      fixedSystemsMaintenance: 0,
+      fixedOther: 400.00,
+      varCleaningPerDay: 23.25,
+      varUtilitiesPerDay: 9.00,
+      varCardBreakfastPerDay: 15.51,
+      targetProfitMarginPct: 0.25,
+      avgChannelCommissionPct: 0.15,
+      taxRatePct: 0.06,
+      targetDirectMixPct: 0.45,
+      referenceBaseRate: 276.63,
+    };
+  }
+  if (!db.wbpPricing) {
+    WbpPricingManager.getPricingState(db);
+  }
+  if (!db.tariffSettings) {
+    db.tariffSettings = {
+      mode: "auto",
+      baseDailyRate: 276.63,
+      currency: "BRL",
+      minNights: 1,
+      weekendMarkupPct: 0.15,
+      channelMarkups: {
+        direct: { channelName: "Venda Direta / Site / WhatsApp", markupPct: 0.0, commissionPct: 0.0, discountPct: 0.15 },
+        booking: { channelName: "Booking.com", markupPct: 0.0, commissionPct: 0.15, discountPct: 0.0 },
+        airbnb: { channelName: "Airbnb", markupPct: 0.03, commissionPct: 0.18, discountPct: 0.0 }
+      },
+      updatedAt: new Date().toISOString()
+    };
+  }
+  if (!db.settings) db.settings = {};
+  if (!db.settings.feeSettings) {
+    db.settings.feeSettings = { ...DEFAULT_FEE_SETTINGS };
+  }
+
+  const fin = db.financialSettings;
+  const wbp = db.wbpPricing.settings;
+  const tar = db.tariffSettings;
+  const fee = db.settings.feeSettings;
+
+  // 1. Custos Fixos
+  if (partial.fixedRent !== undefined) {
+    fin.fixedRent = Number(partial.fixedRent);
+    wbp.fixedRent = Number(partial.fixedRent);
+  }
+  if (partial.fixedSalaries !== undefined) {
+    fin.fixedSalaries = Number(partial.fixedSalaries);
+    wbp.fixedSalaries = Number(partial.fixedSalaries);
+  }
+  if (partial.fixedCondoIptu !== undefined) {
+    fin.fixedCondoIptu = Number(partial.fixedCondoIptu);
+    wbp.fixedCondoIptu = Number(partial.fixedCondoIptu);
+  }
+  if (partial.fixedSystemsMaintenance !== undefined || partial.fixedSystems !== undefined) {
+    const s = Number(partial.fixedSystemsMaintenance ?? partial.fixedSystems);
+    fin.fixedSystemsMaintenance = s;
+    wbp.fixedSystems = s;
+  }
+  if (partial.fixedOther !== undefined) {
+    fin.fixedOther = Number(partial.fixedOther);
+    wbp.fixedOther = Number(partial.fixedOther);
+  }
+  const calcTotalFixed = (fin.fixedRent || 0) + (fin.fixedSalaries || 0) + (fin.fixedCondoIptu || 0) + (fin.fixedSystemsMaintenance || 0) + (fin.fixedOther || 0);
+  if (partial.fixedCostsMonth !== undefined) {
+    wbp.fixedCostsMonth = Number(partial.fixedCostsMonth);
+  } else if (calcTotalFixed > 0) {
+    wbp.fixedCostsMonth = calcTotalFixed;
+  }
+
+  // 2. Custos Variáveis
+  if (partial.varCleaningPerDay !== undefined || partial.varCleaning !== undefined) {
+    const c = Number(partial.varCleaningPerDay ?? partial.varCleaning);
+    fin.varCleaningPerDay = c;
+    wbp.varCleaning = c;
+  }
+  if (partial.varUtilitiesPerDay !== undefined || partial.varUtilities !== undefined) {
+    const u = Number(partial.varUtilitiesPerDay ?? partial.varUtilities);
+    fin.varUtilitiesPerDay = u;
+    wbp.varUtilities = u;
+  }
+  if (partial.varCardBreakfastPerDay !== undefined || partial.varLinen !== undefined) {
+    const l = Number(partial.varCardBreakfastPerDay ?? partial.varLinen);
+    fin.varCardBreakfastPerDay = l;
+    wbp.varLinen = l;
+  }
+
+  // 3. Margens e Impostos
+  if (partial.targetProfitMarginPct !== undefined || partial.targetMarginPct !== undefined) {
+    const m = Number(partial.targetProfitMarginPct ?? partial.targetMarginPct);
+    fin.targetProfitMarginPct = m;
+    wbp.targetMarginPct = m;
+  }
+  if (partial.taxRatePct !== undefined || partial.issTaxRate !== undefined) {
+    const tPct = partial.taxRatePct !== undefined ? Number(partial.taxRatePct) : (Number(partial.issTaxRate) / 100);
+    const tRate = partial.issTaxRate !== undefined ? Number(partial.issTaxRate) : (Number(partial.taxRatePct) * 100);
+    fin.taxRatePct = tPct;
+    wbp.taxRatePct = tPct;
+    fee.issTaxRate = tRate;
+  }
+
+  // 4. Comissões de Canais
+  if (partial.bookingCommissionRate !== undefined || partial.channelCommissionPct !== undefined || partial.avgChannelCommissionPct !== undefined || partial.bookingCommissionPct !== undefined) {
+    const bPct = partial.channelCommissionPct !== undefined ? Number(partial.channelCommissionPct)
+               : partial.bookingCommissionPct !== undefined ? Number(partial.bookingCommissionPct)
+               : partial.avgChannelCommissionPct !== undefined ? Number(partial.avgChannelCommissionPct)
+               : (Number(partial.bookingCommissionRate) / 100);
+    const bRate = partial.bookingCommissionRate !== undefined ? Number(partial.bookingCommissionRate) : (bPct * 100);
+    wbp.channelCommissionPct = bPct;
+    fin.avgChannelCommissionPct = bPct;
+    fee.bookingCommissionRate = bRate;
+    if (!tar.channelMarkups) tar.channelMarkups = {};
+    if (!tar.channelMarkups.booking) tar.channelMarkups.booking = {};
+    tar.channelMarkups.booking.commissionPct = bPct;
+    tar.channelMarkups.booking.commissionRate = bPct;
+  }
+
+  if (partial.airbnbCommissionRate !== undefined || partial.airbnbCommissionPct !== undefined) {
+    const aPct = partial.airbnbCommissionPct !== undefined ? Number(partial.airbnbCommissionPct) : (Number(partial.airbnbCommissionRate) / 100);
+    const aRate = partial.airbnbCommissionRate !== undefined ? Number(partial.airbnbCommissionRate) : (aPct * 100);
+    fee.airbnbCommissionRate = aRate;
+    if (!tar.channelMarkups) tar.channelMarkups = {};
+    if (!tar.channelMarkups.airbnb) tar.channelMarkups.airbnb = {};
+    tar.channelMarkups.airbnb.commissionPct = aPct;
+    tar.channelMarkups.airbnb.commissionRate = aPct;
+  }
+
+  // 5. Taxas de Meios de Pagamento
+  if (partial.pixInterRate !== undefined) {
+    fee.pixInterRate = Number(partial.pixInterRate);
+    if (!tar.channelMarkups) tar.channelMarkups = {};
+    if (!tar.channelMarkups.direct) tar.channelMarkups.direct = {};
+    tar.channelMarkups.direct.gatewayRate = Number(partial.pixInterRate) / 100;
+  }
+  if (partial.mpCreditSpotRate !== undefined) {
+    fee.mpCreditSpotRate = Number(partial.mpCreditSpotRate);
+  }
+  if (partial.mpCreditInstallmentRate !== undefined) {
+    fee.mpCreditInstallmentRate = Number(partial.mpCreditInstallmentRate);
+  }
+
+  // 6. Parâmetros Operacionais e Tarifas
+  if (partial.totalUHs !== undefined) wbp.totalUHs = Number(partial.totalUHs);
+  if (partial.daysInMonth !== undefined) wbp.daysInMonth = Number(partial.daysInMonth);
+  if (partial.occupancyRate !== undefined) wbp.occupancyRate = Number(partial.occupancyRate);
+  if (partial.weekendMarkupPct !== undefined) {
+    wbp.weekendMarkupPct = Number(partial.weekendMarkupPct);
+    tar.weekendMarkupPct = Number(partial.weekendMarkupPct);
+  }
+  if (partial.variationLimitPct !== undefined) wbp.variationLimitPct = Number(partial.variationLimitPct);
+  if (partial.manualFloor !== undefined) wbp.manualFloor = Number(partial.manualFloor);
+  if (partial.referenceBaseRate !== undefined || partial.baseDailyRate !== undefined) {
+    const b = Number(partial.referenceBaseRate ?? partial.baseDailyRate);
+    fin.referenceBaseRate = b;
+    tar.baseDailyRate = b;
+  }
+  if (partial.pixDiscountPercent !== undefined) {
+    tar.pixDiscountPercent = Number(partial.pixDiscountPercent);
+  }
+  if (partial.directDiscountPercent !== undefined) {
+    tar.directDiscountPercent = Number(partial.directDiscountPercent);
+  }
+  if (partial.targetDirectMixPct !== undefined) fin.targetDirectMixPct = Number(partial.targetDirectMixPct);
+  if (partial.seasonalityOverrides) {
+    db.wbpPricing.seasonalityOverrides = { ...(db.wbpPricing.seasonalityOverrides || {}), ...partial.seasonalityOverrides };
+  }
+  if (partial.channelMarkups) {
+    tar.channelMarkups = { ...(tar.channelMarkups || {}), ...partial.channelMarkups };
+  }
+  if (partial.mode) {
+    tar.mode = partial.mode;
+  }
+
+  // Recalcular SEBRAE canônico atualizado
+  try {
+    const sebrae = calculateSebraeRate(wbp);
+    fin.referenceBaseRate = sebrae.tarifaMinima;
+    tar.baseDailyRate = sebrae.tarifaMinima;
+  } catch (_) {}
+
+  return {
+    financialSettings: fin,
+    wbpPricingSettings: wbp,
+    tariffSettings: tar,
+    feeSettings: fee
+  };
+}
+
 app.post("/api/wbp/pricing/settings", (req, res) => {
   try {
     const newSettings = req.body || {};
+    syncFinancialAndTariffSettings(db, newSettings);
     const updated = WbpPricingManager.updateSettings(newSettings, db);
     saveDatabase("wbp_pricing_settings_update");
     res.json({
@@ -988,7 +1194,12 @@ app.get("/api/wbp/pricing/preview", (req, res) => {
 
 app.post("/api/wbp/pricing/confirm-variation", (req, res) => {
   try {
-    const { date, planId } = req.body || {};
+    let { date, planId, itemId } = req.body || {};
+    if (!date && itemId && typeof itemId === "string") {
+      const parts = itemId.split("_");
+      date = parts[0];
+      planId = parts.slice(1).join("_");
+    }
     if (!date || !planId) {
       return res.status(400).json({ error: "date e planId são obrigatórios." });
     }
@@ -1002,13 +1213,20 @@ app.post("/api/wbp/pricing/confirm-variation", (req, res) => {
 
 app.post("/api/wbp/pricing/discard-variation", (req, res) => {
   try {
-    const { date, planId, discardAll } = req.body || {};
+    let { date, planId, itemId, discardAll } = req.body || {};
     if (discardAll) {
       WbpPricingManager.discardAll(db);
-    } else if (date && planId) {
-      WbpPricingManager.discardVariation(date, planId, db);
     } else {
-      return res.status(400).json({ error: "date e planId ou discardAll são obrigatórios." });
+      if (!date && itemId && typeof itemId === "string") {
+        const parts = itemId.split("_");
+        date = parts[0];
+        planId = parts.slice(1).join("_");
+      }
+      if (date && planId) {
+        WbpPricingManager.discardVariation(date, planId, db);
+      } else {
+        return res.status(400).json({ error: "date e planId ou discardAll são obrigatórios." });
+      }
     }
     saveDatabase("wbp_discard_variation");
     res.json({ success: true });
@@ -26410,41 +26628,36 @@ app.get("/api/finance/overview", (req, res) => {
   if (!userAuth || userAuth.role !== "admin") {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores têm acesso ao financeiro." });
   }
+  initERPFinancialData();
   const cfg = getFinancialSettings();
-  const totalUHs = Math.max(1, db.flats.length || 24);
-  const daysInMonth = 30;
+  const period = req.query.period || req.query.month || null;
+  const viewMode = String(req.query.viewMode || "competencia").toLowerCase();
+
+  const totalUHs = Math.max(1, (db.flats && db.flats.length) ? db.flats.length : (cfg.totalUHs || 19));
+  const daysInMonth = (period && period.includes("-"))
+    ? new Date(Number(period.split("-")[0]), Number(period.split("-")[1]), 0).getDate()
+    : 30;
   const availableNights = totalUHs * daysInMonth;
 
-  // Real or Simulated Reservations metrics
-  const activeReservations = (db.reservations || []).filter(r => r.status !== "cancelada");
-  const soldNights = activeReservations.reduce((acc, r) => {
-    try {
-      const d1 = new Date(r.checkinDate);
-      const d2 = new Date(r.checkoutDate);
-      const n = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000));
-      return acc + n;
-    } catch {
-      return acc + 1;
+  // Active reservations
+  let activeReservations = (db.reservations || []).filter(r => r.status !== "cancelada" && r.status !== "cancelado");
+
+  if (period && period.length >= 7) {
+    if (viewMode === "caixa") {
+      activeReservations = activeReservations.filter(r => {
+        const pDate = r.paidAt || r.paymentDate || r.checkinDate || "";
+        return pDate.startsWith(period);
+      });
+    } else {
+      activeReservations = activeReservations.filter(r => {
+        const cin = String(r.checkinDate || "").substring(0, 7);
+        const cout = String(r.checkoutDate || "").substring(0, 7);
+        return cin <= period && cout >= period;
+      });
     }
-  }, 0) || Math.round(availableNights * 0.70); // default 70% occupancy if empty
+  }
 
-  const occupancyPct = Math.min(1, soldNights / availableNights);
-
-  // Fixed Costs
-  const totalFixedCosts = (cfg.fixedRent || 0) + (cfg.fixedSalaries || 0) + (cfg.fixedCondoIptu || 0) + (cfg.fixedSystemsMaintenance || 0) + (cfg.fixedOther || 0);
-  const fixedCostPerAvailableNight = totalFixedCosts / availableNights;
-  const fixedCostPerSoldNight = soldNights > 0 ? (totalFixedCosts / soldNights) : fixedCostPerAvailableNight;
-
-  // Variable Costs per occupied UH
-  const varCostPerNight = (cfg.varCleaningPerDay || 15) + (cfg.varUtilitiesPerDay || 5) + (cfg.varCardBreakfastPerDay || 10);
-  const totalCostPerOccupiedUH = fixedCostPerAvailableNight + varCostPerNight;
-
-  // SEBRAE Sustainable Minimum Rate Formula: Custo por UH / (1 - Comissao% - Margem%)
-  const denom = Math.max(0.1, 1 - (cfg.avgChannelCommissionPct || 0.18) - (cfg.targetProfitMarginPct || 0.25));
-  const sustainableMinRate = totalCostPerOccupiedUH / denom;
-
-  // Revenue & Channels breakdown
-  let revenueDirect = 0;
+  let revenueDirectShortStay = 0;
   let revenueBooking = 0;
   let revenueAirbnb = 0;
   let nightsDirect = 0;
@@ -26452,25 +26665,53 @@ app.get("/api/finance/overview", (req, res) => {
   let nightsAirbnb = 0;
 
   activeReservations.forEach(r => {
-    const amt = Number(r.totalAmount) || (Number(r.dailyRate || cfg.referenceBaseRate) * 2);
+    const d1 = new Date(r.checkinDate);
+    const d2 = new Date(r.checkoutDate);
+    const diffDays = (!isNaN(d1.getTime()) && !isNaN(d2.getTime()))
+      ? Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000))
+      : (Number(r.nights) || 1);
+
+    const amt = Number(r.totalAmount) || (Number(r.dailyRate || cfg.referenceBaseRate || 276.63) * diffDays);
     const chan = (r.channel || "").toLowerCase();
-    if (chan.includes("site") || chan.includes("whatsapp") || chan.includes("direta")) {
-      revenueDirect += amt;
-      nightsDirect += 2;
+
+    if (chan.includes("site") || chan.includes("whatsapp") || chan.includes("direta") || chan === "direct") {
+      revenueDirectShortStay += amt;
+      nightsDirect += diffDays;
     } else if (chan.includes("booking")) {
       revenueBooking += amt;
-      nightsBooking += 2;
+      nightsBooking += diffDays;
     } else if (chan.includes("airbnb")) {
       revenueAirbnb += amt;
-      nightsAirbnb += 2;
+      nightsAirbnb += diffDays;
     } else {
-      revenueDirect += amt;
-      nightsDirect += 2;
+      revenueDirectShortStay += amt;
+      nightsDirect += diffDays;
     }
   });
 
-  if (revenueDirect === 0 && revenueBooking === 0 && revenueAirbnb === 0) {
-    revenueDirect = 23400;
+  // Long-Stay: Faturas / Contratos
+  const receivables = db.accountsReceivable || [];
+  let longStayRecs = receivables.filter(rec => rec.category === "mensalidade_longstay");
+  if (period && period.length >= 7) {
+    if (viewMode === "caixa") {
+      longStayRecs = longStayRecs.filter(rec => (rec.status === "recebido" || rec.status === "pago") && rec.receivedDate && rec.receivedDate.startsWith(period));
+    } else {
+      longStayRecs = longStayRecs.filter(rec => (rec.dueDate && rec.dueDate.startsWith(period)) || (rec.receivedDate && rec.receivedDate.startsWith(period)));
+    }
+  }
+  let revenueLongStay = longStayRecs.reduce((acc, rec) => acc + (Number(rec.amount) || 0), 0);
+  if (revenueLongStay === 0 && (!period || viewMode === "competencia")) {
+    const activeContracts = (db.longStayContracts || []).filter(c => c.status === "ativo");
+    revenueLongStay = activeContracts.reduce((acc, c) => acc + (Number(c.monthlyRate) || 0), 0);
+  }
+
+  const activeLongStayCount = (db.longStayContracts || []).filter(c => c.status === "ativo").length || (revenueLongStay > 0 ? 2 : 0);
+  const nightsLongStay = activeLongStayCount * daysInMonth;
+
+  // Fallback se tudo for 0 para preservar simulações em banco vazio
+  if (revenueDirectShortStay === 0 && revenueBooking === 0 && revenueAirbnb === 0 && revenueLongStay === 0) {
+    revenueDirectShortStay = 23400;
+    revenueLongStay = 8100;
     revenueBooking = 35000;
     revenueAirbnb = 14700;
     nightsDirect = 90;
@@ -26478,66 +26719,100 @@ app.get("/api/finance/overview", (req, res) => {
     nightsAirbnb = 60;
   }
 
-  const grossRevenue = revenueDirect + revenueBooking + revenueAirbnb;
-  const commissionBooking = revenueBooking * 0.18;
-  const commissionAirbnb = revenueAirbnb * 0.15;
-  const commissionDirectCard = revenueDirect * 0.025; // 2.5% card fee
-  const totalCommissionsPaid = commissionBooking + commissionAirbnb;
-  const directSavings = (revenueDirect * 0.18) - commissionDirectCard; // what was saved by not paying OTA
+  // Receita Bruta Total
+  const grossRevenue = round2(revenueDirectShortStay + revenueLongStay + revenueBooking + revenueAirbnb);
+  const soldNights = nightsDirect + nightsBooking + nightsAirbnb + nightsLongStay;
+  const occupancyPct = availableNights > 0 ? Math.min(1, soldNights / availableNights) : 0;
 
-  const netRevenue = grossRevenue - totalCommissionsPaid;
-  const totalVariableCosts = (soldNights * varCostPerNight) + totalCommissionsPaid;
-  const totalAllCosts = totalFixedCosts + totalVariableCosts;
-  const ebitda = grossRevenue - totalAllCosts;
-  const profitMarginPct = grossRevenue > 0 ? (ebitda / grossRevenue) : 0;
+  // Deduções
+  const feeSettings = db.settings?.feeSettings || DEFAULT_FEE_SETTINGS;
+  const bookingCommRate = (feeSettings.bookingCommissionRate != null ? Number(feeSettings.bookingCommissionRate) / 100 : (cfg.avgChannelCommissionPct || 0.15));
+  const airbnbCommRate = (feeSettings.airbnbCommissionRate != null ? Number(feeSettings.airbnbCommissionRate) / 100 : 0.15);
+  const taxRatePct = (feeSettings.issTaxRate != null ? Number(feeSettings.issTaxRate) / 100 : (cfg.taxRatePct || 0.06));
 
-  // Key Indicators (KPIs)
-  const adr = soldNights > 0 ? (grossRevenue / soldNights) : cfg.referenceBaseRate;
-  const revparGross = grossRevenue / availableNights;
-  const revparNet = netRevenue / availableNights;
-  const directMixPct = grossRevenue > 0 ? (revenueDirect / grossRevenue) : 0.30;
+  const commissionBooking = round2(revenueBooking * bookingCommRate);
+  const commissionAirbnb = round2(revenueAirbnb * airbnbCommRate);
+  const totalCommissionsPaid = round2(commissionBooking + commissionAirbnb);
+  const totalGatewayFees = round2(revenueDirectShortStay * 0.025); // 2.5% card / gateway fee
+  const totalTaxes = round2(grossRevenue * taxRatePct); // 6% Simples Nacional / ISS
+  const totalDeductions = round2(totalCommissionsPaid + totalGatewayFees + totalTaxes);
+  const directSavings = round2((revenueDirectShortStay * bookingCommRate) - totalGatewayFees);
 
-  // Monthly Seasonality Curve (SEBRAE model)
+  const netRevenue = round2(grossRevenue - totalDeductions);
+
+  // Custos Variáveis Operacionais (sem duplicar comissões!)
+  const varCostPerNight = (cfg.varCleaningPerDay || 23.25) + (cfg.varUtilitiesPerDay || 9.00) + (cfg.varCardBreakfastPerDay || 15.51);
+  const operationalVariableCosts = round2(soldNights * varCostPerNight);
+  const totalVariableCosts = operationalVariableCosts;
+
+  // Margem de Contribuição
+  const contributionMargin = round2(netRevenue - operationalVariableCosts);
+
+  // Custos Fixos & Marketing
+  const totalMarketingSpent = (db.adCampaigns || []).reduce((acc, c) => acc + (Number(c.spent) || 0), 0);
+  const baseFixedCosts = (cfg.fixedRent || 0) + (cfg.fixedSalaries || 0) + (cfg.fixedCondoIptu || 0) + (cfg.fixedSystemsMaintenance || 0) + (cfg.fixedOther || 0);
+  const totalFixedCosts = round2((baseFixedCosts > 0 ? baseFixedCosts : 38906.61) + totalMarketingSpent);
+
+  const fixedCostPerAvailableNight = round2(totalFixedCosts / (availableNights || 1));
+  const fixedCostPerSoldNight = soldNights > 0 ? round2(totalFixedCosts / soldNights) : fixedCostPerAvailableNight;
+  const totalCostPerOccupiedUH = round2(fixedCostPerSoldNight + varCostPerNight);
+
+  // EBITDA
+  const ebitda = round2(contributionMargin - totalFixedCosts);
+  const profitMarginPct = grossRevenue > 0 ? round2(ebitda / grossRevenue) : 0;
+  const totalAllCosts = round2(totalFixedCosts + totalVariableCosts);
+
+  // KPIs
+  const adr = soldNights > 0 ? round2(grossRevenue / soldNights) : (cfg.referenceBaseRate || 276.63);
+  const revparGross = availableNights > 0 ? round2(grossRevenue / availableNights) : 0;
+  const revparNet = availableNights > 0 ? round2(netRevenue / availableNights) : 0;
+  const directMixPct = grossRevenue > 0 ? round2((revenueDirectShortStay + revenueLongStay) / grossRevenue) : 0.30;
+
+  // SEBRAE Rate Canonical
+  const sebraeState = WbpPricingManager.getPricingState(db);
+  const sebraeCanonical = calculateSebraeRate(sebraeState.settings);
+  const sustainableMinRate = sebraeCanonical.tarifaMinima;
+
+  // Monthly Seasonality Curve
   const seasonalityMonths = [
-    { month: "Jan", occupancy: 0.88, factor: 0.15, season: "Alta", rate: sustainableMinRate * 1.15 },
+    { month: "Jan", occupancy: 0.88, factor: 0.15, season: "Alta", rate: round2(sustainableMinRate * 1.15) },
     { month: "Fev", occupancy: 0.70, factor: 0.00, season: "Média", rate: sustainableMinRate },
     { month: "Mar", occupancy: 0.58, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Abr", occupancy: 0.52, factor: -0.10, season: "Baixa", rate: sustainableMinRate * 0.90 },
-    { month: "Mai", occupancy: 0.48, factor: -0.10, season: "Baixa", rate: sustainableMinRate * 0.90 },
+    { month: "Abr", occupancy: 0.52, factor: -0.10, season: "Baixa", rate: round2(sustainableMinRate * 0.90) },
+    { month: "Mai", occupancy: 0.48, factor: -0.10, season: "Baixa", rate: round2(sustainableMinRate * 0.90) },
     { month: "Jun", occupancy: 0.55, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Jul", occupancy: 0.82, factor: 0.15, season: "Alta", rate: sustainableMinRate * 1.15 },
+    { month: "Jul", occupancy: 0.82, factor: 0.15, season: "Alta", rate: round2(sustainableMinRate * 1.15) },
     { month: "Ago", occupancy: 0.60, factor: 0.00, season: "Média", rate: sustainableMinRate },
     { month: "Set", occupancy: 0.58, factor: 0.00, season: "Média", rate: sustainableMinRate },
     { month: "Out", occupancy: 0.62, factor: 0.00, season: "Média", rate: sustainableMinRate },
     { month: "Nov", occupancy: 0.68, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Dez", occupancy: 0.90, factor: 0.15, season: "Alta", rate: sustainableMinRate * 1.15 },
+    { month: "Dez", occupancy: 0.90, factor: 0.15, season: "Alta", rate: round2(sustainableMinRate * 1.15) },
   ];
 
-  // Channel Net Yield Comparison (Simulation based on R$ 400 standard sale price)
   const simPrice = 400;
   const channelComparison = [
     { name: "Venda Direta — PIX", commissionPct: 0, feePct: 0, netReceived: simPrice, lostPct: 0, lostAmount: 0 },
-    { name: "Venda Direta — Cartão Próprio", commissionPct: 0, feePct: 0.025, netReceived: simPrice * (1 - 0.025), lostPct: 2.5, lostAmount: simPrice * 0.025 },
-    { name: "Booking.com (Padrão 15%)", commissionPct: 0.15, feePct: 0, netReceived: simPrice * 0.85, lostPct: 15, lostAmount: simPrice * 0.15 },
-    { name: "Booking.com (Preferencial 18%)", commissionPct: 0.18, feePct: 0, netReceived: simPrice * 0.82, lostPct: 18, lostAmount: simPrice * 0.18 },
-    { name: "Airbnb (Taxa 15%)", commissionPct: 0.15, feePct: 0, netReceived: simPrice * 0.85, lostPct: 15, lostAmount: simPrice * 0.15 },
-    { name: "Decolar / Expedia (com VCC 19%)", commissionPct: 0.15, feePct: 0.04, netReceived: simPrice * 0.81, lostPct: 19, lostAmount: simPrice * 0.19 }
+    { name: "Venda Direta — Cartão Próprio", commissionPct: 0, feePct: 0.025, netReceived: round2(simPrice * (1 - 0.025)), lostPct: 2.5, lostAmount: round2(simPrice * 0.025) },
+    { name: "Booking.com (Padrão 15%)", commissionPct: 0.15, feePct: 0, netReceived: round2(simPrice * 0.85), lostPct: 15, lostAmount: round2(simPrice * 0.15) },
+    { name: "Booking.com (Preferencial 18%)", commissionPct: 0.18, feePct: 0, netReceived: round2(simPrice * 0.82), lostPct: 18, lostAmount: round2(simPrice * 0.18) },
+    { name: "Airbnb (Taxa 15%)", commissionPct: 0.15, feePct: 0, netReceived: round2(simPrice * 0.85), lostPct: 15, lostAmount: round2(simPrice * 0.15) },
+    { name: "Decolar / Expedia (com VCC 19%)", commissionPct: 0.15, feePct: 0.04, netReceived: round2(simPrice * 0.81), lostPct: 19, lostAmount: round2(simPrice * 0.19) }
   ];
 
-  // Sensitivity Matrix (Commission vs Profit Margin)
   const margins = [0.15, 0.20, 0.25, 0.30];
   const commissions = [0, 0.15, 0.18, 0.20, 0.25];
-  const sensitivityMatrix = commissions.map(comm => {
-    return {
-      commissionPct: comm,
-      values: margins.map(m => {
-        const d = Math.max(0.05, 1 - comm - m);
-        return Math.round(totalCostPerOccupiedUH / d);
-      })
-    };
-  });
+  const sensitivityMatrix = commissions.map(comm => ({
+    commissionPct: comm,
+    values: margins.map(m => {
+      const d = Math.max(0.05, 1 - comm - m - taxRatePct);
+      return Math.round(totalCostPerOccupiedUH / d);
+    })
+  }));
 
   res.json({
+    success: true,
+    period: period || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+    viewMode,
     settings: cfg,
     totalUHs,
     availableNights,
@@ -26549,26 +26824,45 @@ app.get("/api/finance/overview", (req, res) => {
       fixedCostPerSoldNight,
       varCostPerNight,
       totalCostPerOccupiedUH,
-      sustainableMinRate
+      sustainableMinRate,
+      marketingSpent: totalMarketingSpent
     },
     dre: {
       grossRevenue,
-      revenueDirect,
+      revenueDirect: revenueDirectShortStay,
+      revenueDirectShortStay,
+      revenueLongStay,
       revenueBooking,
       revenueAirbnb,
       totalCommissionsPaid,
+      commissionBooking,
+      commissionAirbnb,
+      totalGatewayFees,
+      totalTaxes,
+      totalDeductions,
       directSavings,
       netRevenue,
-      totalFixedCosts,
+      operationalVariableCosts,
       totalVariableCosts,
+      contributionMargin,
+      totalFixedCosts,
+      fixedRent: cfg.fixedRent,
+      fixedSalaries: cfg.fixedSalaries,
+      fixedCondoIptu: cfg.fixedCondoIptu,
+      fixedSystemsMaintenance: cfg.fixedSystemsMaintenance,
+      fixedOther: cfg.fixedOther,
+      marketingExpenses: totalMarketingSpent,
       totalAllCosts,
       ebitda,
       profitMarginPct
     },
     kpis: {
-      adr,
+      totalNights: soldNights,
+      occupancyRate: occupancyPct,
+      revpar: revparGross,
       revparGross,
       revparNet,
+      adr,
       directMixPct,
       targetDirectMixPct: cfg.targetDirectMixPct || 0.45
     },
@@ -26580,22 +26874,9 @@ app.get("/api/finance/overview", (req, res) => {
 });
 
 app.post("/api/finance/settings", (req, res) => {
-  const cfg = getFinancialSettings();
-  const fields = [
-    "fixedRent", "fixedSalaries", "fixedCondoIptu", "fixedSystemsMaintenance", "fixedOther",
-    "varCleaningPerDay", "varUtilitiesPerDay", "varCardBreakfastPerDay",
-    "targetProfitMarginPct", "avgChannelCommissionPct", "targetDirectMixPct", "referenceBaseRate"
-  ];
-
-  for (const f of fields) {
-    if (req.body[f] !== undefined) {
-      cfg[f] = Number(req.body[f]);
-    }
-  }
-
-  db.financialSettings = cfg;
-  saveDatabase();
-  res.json({ success: true, settings: cfg });
+  const synced = syncFinancialAndTariffSettings(db, req.body || {});
+  saveDatabase("finance_settings_update");
+  res.json({ success: true, settings: db.financialSettings, allSettings: synced });
 });
 
 // ── Motor de Tarifas Inteligente & Gestor Multi-Canal (Tariff Engine) ──
@@ -26603,7 +26884,7 @@ export function getTariffSettings() {
   if (!db.tariffSettings) {
     db.tariffSettings = {
       mode: "auto", // "auto" (cálculo SEBRAE) ou "manual"
-      baseDailyRate: 237,
+      baseDailyRate: 276.63,
       currency: "BRL",
       minNights: 1,
       weekendMarkupPct: 0.15,
@@ -26616,14 +26897,14 @@ export function getTariffSettings() {
         },
         booking: {
           channelName: "Booking.com",
-          markupPct: 0.18,
-          commissionPct: 0.18,
+          markupPct: 0.0,
+          commissionPct: 0.15,
           discountPct: 0.0
         },
         airbnb: {
           channelName: "Airbnb",
-          markupPct: 0.15,
-          commissionPct: 0.15,
+          markupPct: 0.03,
+          commissionPct: 0.18,
           discountPct: 0.0
         }
       },
@@ -26656,35 +26937,13 @@ export const SEBRAE_SEASONALITY_FACTORS = {
 };
 
 export function calculateSebraeSustainableRate(customMonth = null) {
-  const cfg = getFinancialSettings();
-  const totalUHs = Math.max(1, (db.flats && db.flats.length) ? db.flats.length : 19);
-  const daysInMonth = 30;
-  const availableNights = totalUHs * daysInMonth;
-
-  // Custos Fixos Totais
-  const totalFixedCosts = (cfg.fixedRent || 0) +
-                          (cfg.fixedSalaries || 0) +
-                          (cfg.fixedCondoIptu || 0) +
-                          (cfg.fixedSystemsMaintenance || 0) +
-                          (cfg.fixedOther || 0);
-  const fixedCostPerAvailableNight = totalFixedCosts / availableNights;
-
-  // Custos Variáveis por Noite Ocupada
-  const varCostPerNight = (cfg.varCleaningPerDay || 15) +
-                          (cfg.varUtilitiesPerDay || 5) +
-                          (cfg.varCardBreakfastPerDay || 10);
-  const totalCostPerOccupiedUH = fixedCostPerAvailableNight + varCostPerNight;
-
-  // Fórmula SEBRAE Diária Mínima Sustentável: Custo UH / (1 - Comissão - Margem)
-  const denom = Math.max(0.1, 1 - (cfg.avgChannelCommissionPct || 0.18) - (cfg.targetProfitMarginPct || 0.25));
-  const sustainableMinRate = totalCostPerOccupiedUH / denom;
-
+  const state = WbpPricingManager.getPricingState(db);
+  const sebrae = calculateSebraeRate(state.settings);
   if (customMonth !== null && customMonth !== undefined) {
-    const seasonInfo = SEBRAE_SEASONALITY_FACTORS[customMonth] || { factor: 1.0, season: "Média" };
-    return Math.round(sustainableMinRate * seasonInfo.factor * 100) / 100;
+    const seasonInfo = STANDARD_SEBRAE_SEASONALITY_FACTORS[customMonth] || SEBRAE_SEASONALITY_FACTORS[customMonth] || { factor: 1.0, season: "Média" };
+    return Math.round(sebrae.tarifaMinima * seasonInfo.factor * 100) / 100;
   }
-
-  return Math.round(sustainableMinRate * 100) / 100;
+  return sebrae.tarifaMinima;
 }
 
 export function findEffectiveTariffOverride(flatId, date, channel = "direct") {
@@ -26790,9 +27049,9 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
   // 4. Markup de Canal
   const channelCfg = settings.channelMarkups?.[normChannel] ||
                      (normChannel === "direct" ? { markupPct: 0.0 } :
-                      normChannel === "booking" ? { markupPct: 0.18 } :
-                      normChannel === "airbnb" ? { markupPct: 0.15 } : { markupPct: 0.0 });
-  const channelMarkupPct = Number(channelCfg.markupPct || 0);
+                      normChannel === "booking" ? { markupPct: 0.0 } :
+                      normChannel === "airbnb" ? { markupPct: 0.03 } : { markupPct: 0.0 });
+  const channelMarkupPct = Number(channelCfg.markupPct != null ? channelCfg.markupPct : 0);
   const finalRate = rateBeforeChannel * (1 + channelMarkupPct);
 
   return Math.round(finalRate * 100) / 100;
@@ -26827,6 +27086,8 @@ app.post("/api/tariffs/settings", (req, res) => {
   }
   current.updatedAt = new Date().toISOString();
   db.tariffSettings = current;
+
+  syncFinancialAndTariffSettings(db, req.body || {});
   saveDatabase("tariff_settings_update");
 
   res.json({
@@ -28475,15 +28736,41 @@ app.get("/api/finance/cashflow", (req, res) => {
   initERPFinancialData();
   const payables = db.accountsPayable || [];
   const receivables = db.accountsReceivable || [];
+  const reservations = (db.reservations || []).filter(r => r.status !== "cancelada" && r.status !== "cancelado");
 
-  const totalInflow = receivables.filter(r => r.status === "recebido").reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
-  const totalPendingInflow = receivables.filter(r => r.status !== "recebido").reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  // Sum from accountsReceivable
+  let recPaidTotal = receivables.filter(r => r.status === "recebido" || r.status === "pago").reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  let recPendingTotal = receivables.filter(r => r.status !== "recebido" && r.status !== "pago").reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
-  const totalOutflow = payables.filter(p => p.status === "pago").reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-  const totalPendingOutflow = payables.filter(p => p.status !== "pago").reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  // Sum from reservations (avoid double counting if an account receivable has matching reservation code/id)
+  const existingRecCodes = new Set(receivables.map(r => String(r.reservationCode || r.code || r.id)));
 
-  const netRealized = totalInflow - totalOutflow;
-  const netProjected = (totalInflow + totalPendingInflow) - (totalOutflow + totalPendingOutflow);
+  let resPaidTotal = 0;
+  let resPendingTotal = 0;
+
+  for (const r of reservations) {
+    const code = String(r.id || r.code || "");
+    if (existingRecCodes.has(code) || (r.code && existingRecCodes.has(String(r.code)))) {
+      continue;
+    }
+    const total = Number(r.totalAmount || 0);
+    const paid = Number(r.paidAmount || (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" ? total : 0));
+    const pending = Math.max(0, total - paid);
+
+    resPaidTotal += paid;
+    if (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") {
+      resPendingTotal += pending > 0 ? pending : total;
+    }
+  }
+
+  const totalInflow = round2(recPaidTotal + resPaidTotal);
+  const totalPendingInflow = round2(recPendingTotal + resPendingTotal);
+
+  const totalOutflow = round2(payables.filter(p => p.status === "pago").reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+  const totalPendingOutflow = round2(payables.filter(p => p.status !== "pago").reduce((acc, p) => acc + (Number(p.amount) || 0), 0));
+
+  const netRealized = round2(totalInflow - totalOutflow);
+  const netProjected = round2((totalInflow + totalPendingInflow) - (totalOutflow + totalPendingOutflow));
 
   res.json({
     totalInflow,
@@ -28492,6 +28779,12 @@ app.get("/api/finance/cashflow", (req, res) => {
     totalPendingOutflow,
     netRealized,
     netProjected,
+    breakdown: {
+      receivablesPaid: round2(recPaidTotal),
+      receivablesPending: round2(recPendingTotal),
+      reservationsPaid: round2(resPaidTotal),
+      reservationsPending: round2(resPendingTotal)
+    },
     recentPayables: payables.slice(0, 10),
     recentReceivables: receivables.slice(0, 10)
   });
@@ -36708,16 +37001,6 @@ app.post("/api/integrations/mercadopago/config", (req, res) => {
 // MÓDULO 8: GESTÃO DE PAGAMENTOS, TAXAS, COMISSÕES E CONCILIAÇÃO FINANCEIRA
 // ══════════════════════════════════════════════════════════════════════════════
 
-const DEFAULT_FEE_SETTINGS = {
-  pixInterRate: 0.0,            // 0% Banco Inter PIX Oficial
-  mpCreditSpotRate: 3.99,       // 3.99% Mercado Pago Crédito à Vista
-  mpCreditInstallmentRate: 5.49,// 5.49% Mercado Pago Crédito Parcelado
-  bookingCommissionRate: 13.0,  // 13.0% Comissão Booking.com
-  airbnbCommissionRate: 3.0,    // 3.0% Comissão Airbnb
-  directRate: 0.0,              // 0% Vendas Diretas / WhatsApp
-  issTaxRate: 2.0               // 2.0% ISS Municipal Estimado
-};
-
 // 8.1 Obter e Atualizar Configuração de Taxas e Formas de Pagamento
 app.get("/api/finance/payment-methods", (req, res) => {
   res.json(getPaymentMethodsList());
@@ -36808,17 +37091,33 @@ app.get("/api/finance/fee-settings", (req, res) => {
 
 app.post("/api/finance/fee-settings", (req, res) => {
   try {
-    const fees = req.body;
+    const fees = req.body || {};
     if (!db.settings) db.settings = {};
     if (fees.paymentMethods && Array.isArray(fees.paymentMethods)) {
       db.settings.paymentMethods = fees.paymentMethods;
     }
-    db.settings.feeSettings = {
-      ...DEFAULT_FEE_SETTINGS,
-      ...fees,
-      updatedAt: new Date().toISOString()
-    };
-    saveDatabase();
+    syncFinancialAndTariffSettings(db, fees);
+    saveDatabase("fee_settings_update");
+    res.json({ success: true, feeSettings: db.settings.feeSettings, paymentMethods: getPaymentMethodsList() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Alias /api/settings/fees
+app.get("/api/settings/fees", (req, res) => {
+  const fees = db.settings?.feeSettings || DEFAULT_FEE_SETTINGS;
+  res.json({ ...fees, paymentMethods: getPaymentMethodsList() });
+});
+app.post("/api/settings/fees", (req, res) => {
+  try {
+    const fees = req.body || {};
+    if (!db.settings) db.settings = {};
+    if (fees.paymentMethods && Array.isArray(fees.paymentMethods)) {
+      db.settings.paymentMethods = fees.paymentMethods;
+    }
+    syncFinancialAndTariffSettings(db, fees);
+    saveDatabase("fee_settings_update");
     res.json({ success: true, feeSettings: db.settings.feeSettings, paymentMethods: getPaymentMethodsList() });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -36920,7 +37219,7 @@ app.get("/api/finance/payments", (req, res) => {
     }
 
     // 2. Processar Contas a Receber Adicionais (Long-Stay, Day-Use, Serviços)
-    for (const rec of (db.receivables || [])) {
+    for (const rec of (db.accountsReceivable || [])) {
       const grossAmount = Number(rec.amount || 0);
       const isPaid = rec.status === "recebido" || rec.status === "pago";
       let paymentMethod = rec.paymentMethod || "pix";
@@ -36929,6 +37228,7 @@ app.get("/api/finance/payments", (req, res) => {
       let gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
       let gatewayFeeAmount = Number(((grossAmount * (gatewayFeePct / 100)) + (grossAmount > 0 ? gatewayFeeFixed : 0)).toFixed(2));
       let netAmount = Number((grossAmount - gatewayFeeAmount).toFixed(2));
+      const paymentDate = rec.receivedDate || rec.paidAt || (isPaid ? rec.dueDate : null);
 
       allPayments.push({
         id: `rec-${rec.id}`,
@@ -36952,8 +37252,8 @@ app.get("/api/finance/payments", (req, res) => {
         channelCommissionAmount: 0,
         totalDeductions: gatewayFeeAmount,
         netAmount,
-        paidAt: rec.paidAt || (isPaid ? rec.dueDate : null),
-        date: rec.dueDate || "",
+        paidAt: paymentDate,
+        date: paymentDate ? paymentDate.substring(0, 10) : (rec.dueDate || ""),
         pixTxId: rec.pixTxId || null,
         pixEndToEndId: rec.pixEndToEndId || null,
         mpPaymentId: null,
