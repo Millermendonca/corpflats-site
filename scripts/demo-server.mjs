@@ -9924,7 +9924,7 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
           }
         }
 
-        const isRoomCriteriaMet = isScenarioAllowed && isCleanModeAllowed;
+        const isRoomCriteriaMet = Boolean(flat.forceReleased) || (isScenarioAllowed && isCleanModeAllowed);
 
         if (!isRoomCriteriaMet) {
           if (flat.workerNotifiedAvailable) {
@@ -9970,8 +9970,9 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
         updated = true;
 
         const flatLines = newlyAvailableFlats.map(item => {
+          const forceBadge = item.flat.forceReleased ? " _(🔓 Liberado pela Administração)_" : "";
           const arrivalNote = item.hasCheckinToday ? ` · Entrada prevista: ${item.expectedArrival || "14:00"}` : "";
-          return `• *Flat ${item.flat.flatNumber}* — ${item.scenarioIcon} ${item.scenarioLabel}${arrivalNote}`;
+          return `• *Flat ${item.flat.flatNumber}* — ${item.scenarioIcon} ${item.scenarioLabel}${forceBadge}${arrivalNote}`;
         });
 
         const msgText = [
@@ -13282,9 +13283,10 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    const isAllowed = allowedStatuses.includes(scenario);
+    const isAllowed = Boolean(f.forceReleased) || allowedStatuses.includes(scenario);
     return {
       ...f,
+      forceReleased: Boolean(f.forceReleased),
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -13352,6 +13354,7 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.entryRequested = false;
   flat.entryRequestedAt = null;
   flat.delayNotified = false;
+  flat.forceReleased = false;
   flat.workerNotifiedAvailable = false;
   flat.workerNotifiedAvailableAt = null;
   flat.workerLastNotifiedPhone = null;
@@ -13361,6 +13364,48 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   checkAndNotifyAvailableServiceFlats(order.id);
 
   res.json({ success: true, flat });
+});
+
+// POST /api/service-orders/:id/flats/:flatId/force-release — Força ou revoga liberação manual de flat (Admin)
+app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  if (flat.status !== "pending") {
+    return res.status(400).json({ error: "Apenas apartamentos pendentes podem ter liberação manual alterada." });
+  }
+
+  const targetForce = typeof req.body?.forceReleased === "boolean" ? req.body.forceReleased : !Boolean(flat.forceReleased);
+  flat.forceReleased = targetForce;
+
+  if (flat.forceReleased) {
+    flat.workerNotifiedAvailable = false;
+    flat.workerNotifiedAvailableAt = null;
+    flat.workerLastNotifiedPhone = null;
+  }
+
+  saveDatabase("force_release_service_flat");
+
+  // Dispara verificação imediata para notificar o prestador via WhatsApp
+  checkAndNotifyAvailableServiceFlats(order.id);
+
+  res.json({
+    success: true,
+    flat,
+    forceReleased: flat.forceReleased,
+    message: flat.forceReleased
+      ? `Flat ${flat.flatNumber} liberado manualmente para execução.`
+      : `Liberação manual do Flat ${flat.flatNumber} revogada.`
+  });
 });
 
 // ── Rotas Públicas do Prestador (Sem Autenticação, Identificação por Token) ──
@@ -13384,9 +13429,10 @@ app.get("/api/service/public/:token", (req, res) => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    const isAllowed = allowedStatuses.includes(scenario);
+    const isAllowed = Boolean(f.forceReleased) || allowedStatuses.includes(scenario);
     return {
       ...f,
+      forceReleased: Boolean(f.forceReleased),
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -13622,7 +13668,7 @@ app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, r
   const todayStr = getTodayStr();
   const allowedStatuses = getAllowedRoomStatuses(order);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  if (!allowedStatuses.includes(scenario)) {
+  if (!flat.forceReleased && !allowedStatuses.includes(scenario)) {
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
     return res.status(400).json({
       error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
@@ -13683,14 +13729,14 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   // 4. Avaliar allowedRoomStatuses e cleanFlatMode
   const allowedStatuses = getAllowedRoomStatuses(order);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  if (!allowedStatuses.includes(scenario)) {
+  if (!flat.forceReleased && !allowedStatuses.includes(scenario)) {
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
     return res.status(400).json({ error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}` });
   }
 
   const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
   const cleanFlatMode = order.cleanFlatMode || "priority";
-  if (!isDirty) {
+  if (!flat.forceReleased && !isDirty) {
     if (cleanFlatMode === "never") {
       return res.status(400).json({ error: "Este serviço não permite intervenção em apartamentos limpos." });
     }
@@ -13712,7 +13758,7 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   flat.startedAt = now.toISOString();
   flat.workerName = worker.mainWorker.name;
   flat.workerCpf = worker.mainWorker.cpf;
-  flat.wasCleanWhenStarted = !isDirty;
+  flat.wasCleanWhenStarted = scenario === "vago_limpo" || scenario === "checkin_hoje_limpo";
   flat.entryRequested = true;
   if (!flat.entryRequestedAt) flat.entryRequestedAt = now.toISOString();
   flat.delayNotified = false;
@@ -13778,7 +13824,7 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
   flat.finishedAt = now.toISOString();
   flat.observations = req.body.observations ? String(req.body.observations).trim() : "";
   flat.photos = photos;
-  flat.needsCleaning = typeof req.body.needsCleaning === "boolean" ? req.body.needsCleaning : null;
+  flat.needsCleaning = flat.wasCleanWhenStarted === true && typeof req.body.needsCleaning === "boolean" ? req.body.needsCleaning : null;
   flat.estimatedFinishAt = null;
 
   // Se precisa de camareira, enfileirar solicitação de limpeza dirty

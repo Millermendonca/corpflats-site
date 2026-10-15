@@ -95,6 +95,7 @@ export interface ServiceFlat {
   statusBlockReason?: string | null;
   hasGuestInside?: boolean;
   scenarioWarning?: string | null;
+  forceReleased?: boolean;
 }
 
 export interface ServiceOrderData {
@@ -135,6 +136,13 @@ interface ServiceWorkerPortalProps {
 }
 
 // Helpers
+export function isCleanWhenStarted(flat?: ServiceFlat | null): boolean {
+  if (!flat) return false;
+  if (flat.wasCleanWhenStarted === true) return true;
+  if (flat.wasCleanWhenStarted === false) return false;
+  return flat.operationalScenario === "vago_limpo" || flat.operationalScenario === "checkin_hoje_limpo";
+}
+
 function formatCpf(val: string): string {
   const digits = val.replace(/\D/g, "").slice(0, 11);
   if (digits.length <= 3) return digits;
@@ -836,7 +844,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   const handleSubmitFinish = () => {
     if (!finishingFlat) return;
 
-    const isCleanFlat = Boolean(finishingFlat.wasCleanWhenStarted || !finishingFlat.isDirty);
+    const isCleanFlat = isCleanWhenStarted(finishingFlat);
     let finalNeedsCleaning: boolean | null = null;
 
     if (isCleanFlat) {
@@ -1427,7 +1435,9 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             let cleanModeReason = "";
             let prioritySuggested = false;
 
-            if (isClean) {
+            const isForceReleased = Boolean(flat.forceReleased);
+
+            if (isClean && !isForceReleased) {
               if (cleanFlatMode === "never") {
                 isCleanModeBlocked = true;
                 cleanModeReason = "Bloqueado: serviço não permite flats limpos.";
@@ -1444,14 +1454,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   cleanModeReason = "Bloqueado: priorize os apartamentos sujos primeiro.";
                 }
               }
-            } else {
+            } else if (!isClean) {
               if (cleanFlatMode === "always") {
                 prioritySuggested = true;
               }
             }
 
             // Allowed Room Statuses Evaluation
-            const isStatusAllowed = flat.isStatusAllowed !== false;
+            const isStatusAllowed = isForceReleased || flat.isStatusAllowed !== false;
             const statusBlockReason = flat.statusBlockReason || "Bloqueado: status do apartamento não autorizado para este serviço.";
 
             // Action Button logic for pending
@@ -1493,12 +1503,17 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           Flat {flat.flatNumber}
                         </span>
                         {flat.operationalScenarioIcon && flat.operationalScenarioLabel ? (
-                          <Badge variant="outline" className="text-[11px] font-semibold flex items-center gap-1">
+                          <Badge variant="outline" className="text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap rounded-md">
                             <span>{flat.operationalScenarioIcon}</span>
                             <span>{flat.operationalScenarioLabel}</span>
                           </Badge>
                         ) : (
                           occupancyBadge
+                        )}
+                        {isForceReleased && (
+                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2 whitespace-nowrap rounded-md">
+                            🔓 Liberado pela Administração
+                          </Badge>
                         )}
                         {!isStatusAllowed && (
                           <Badge variant="destructive" className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2">
@@ -2258,13 +2273,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             </div>
 
             {/* Mandatory Cleaning Question for Clean Flats */}
-            {(finishingFlat?.wasCleanWhenStarted === true || !finishingFlat?.isDirty) && (
+            {isCleanWhenStarted(finishingFlat) && (
               <div className="p-3.5 bg-slate-50 dark:bg-slate-800/70 border-2 border-primary/20 rounded-xl space-y-2.5">
                 <Label className="text-xs font-bold text-slate-800 dark:text-slate-100 block">
                   Precisa de camareira para finalizar a limpeza? *
                 </Label>
                 <p className="text-[11px] text-muted-foreground leading-snug">
-                  Este quarto estava limpo ao iniciar. Informe se houve sujeira, poeira de obra ou se é necessária higienização completa pela equipe de governança.
+                  Este quarto estava limpo ao iniciar. Informe se o flat permanece limpo ou se é necessária higienização completa pela equipe de governança.
                 </p>
 
                 <RadioGroup
@@ -2272,18 +2287,6 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   onValueChange={(val) => setNeedsCleaningChoice(val as "yes" | "no")}
                   className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1"
                 >
-                  <label
-                    htmlFor="clean-yes"
-                    className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
-                      needsCleaningChoice === "yes"
-                        ? "bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
-                        : "bg-white dark:bg-slate-900 border-slate-200 hover:bg-slate-100"
-                    }`}
-                  >
-                    <RadioGroupItem value="yes" id="clean-yes" />
-                    <span>Sim, precisa de camareira</span>
-                  </label>
-
                   <label
                     htmlFor="clean-no"
                     className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
@@ -2293,7 +2296,19 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     }`}
                   >
                     <RadioGroupItem value="no" id="clean-no" />
-                    <span>Não, mantido limpo</span>
+                    <span>O flat permanece limpo</span>
+                  </label>
+
+                  <label
+                    htmlFor="clean-yes"
+                    className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                      needsCleaningChoice === "yes"
+                        ? "bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+                        : "bg-white dark:bg-slate-900 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    <RadioGroupItem value="yes" id="clean-yes" />
+                    <span>Precisa de uma camareira para limpeza</span>
                   </label>
                 </RadioGroup>
               </div>
@@ -2401,7 +2416,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               disabled={
                 finishMutation.isPending ||
                 isCompressingPhotos ||
-                ((finishingFlat?.wasCleanWhenStarted === true || !finishingFlat?.isDirty) && needsCleaningChoice === null) ||
+                (isCleanWhenStarted(finishingFlat) && needsCleaningChoice === null) ||
                 (Boolean(order.requirePhotos) && uploadedPhotos.length === 0)
               }
               className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-xs"

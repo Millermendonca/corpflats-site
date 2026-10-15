@@ -120,5 +120,46 @@ describe('Frontend Admin Service Orders (M2 Verification)', () => {
     assert.ok(portalContent.includes('deleteWorkerMutation'), 'Portal page must have deleteWorkerMutation');
     assert.ok(portalContent.includes('Você receberá avisos no WhatsApp assim que houver apartamento liberado para o serviço'), 'Portal page must confirm WhatsApp availability alerts');
   });
-});
 
+  it('10. R1: Tab 3 tracking table fixes squished Flat column and translates notification events', () => {
+    const adminContent = fs.readFileSync(serviceOrdersPagePath, 'utf8');
+    assert.ok(!adminContent.includes('<TableHead className="w-24 font-bold text-xs">Flat</TableHead>'), 'Must not use narrow w-24 on Flat TableHead');
+    assert.ok(adminContent.includes('min-w-[220px]'), 'Must apply generous min-width to Flat column');
+    assert.ok(adminContent.includes('whitespace-nowrap rounded-md'), 'Scenario badges must use whitespace-nowrap rounded-md');
+    assert.ok(adminContent.includes('NOTIFICATION_EVENT_LABELS'), 'Must translate notification event keys to Portuguese');
+  });
+
+  it('11. R2: Clean-flat finish question is strictly scoped to vago_limpo and checkin_hoje_limpo', () => {
+    const backendPath = path.resolve('artifacts/api-server/demo-server.mjs');
+    const portalPagePath = path.resolve('artifacts/limpeza/src/pages/service-worker-portal.tsx');
+    const backendContent = fs.readFileSync(backendPath, 'utf8');
+    const portalContent = fs.readFileSync(portalPagePath, 'utf8');
+
+    assert.ok(
+      backendContent.includes('flat.wasCleanWhenStarted = scenario === "vago_limpo" || scenario === "checkin_hoje_limpo"'),
+      'Backend /start must set wasCleanWhenStarted strictly for vago_limpo and checkin_hoje_limpo'
+    );
+    assert.ok(
+      backendContent.includes('flat.needsCleaning = flat.wasCleanWhenStarted === true && typeof req.body.needsCleaning === "boolean" ? req.body.needsCleaning : null'),
+      'Backend /finish must force needsCleaning to null when wasCleanWhenStarted is not true'
+    );
+    assert.ok(portalContent.includes('export function isCleanWhenStarted('), 'Portal must define isCleanWhenStarted helper');
+    assert.ok(portalContent.includes('O flat permanece limpo'), 'Portal finish modal must display "O flat permanece limpo" option');
+    assert.ok(portalContent.includes('Precisa de uma camareira para limpeza'), 'Portal finish modal must display "Precisa de uma camareira para limpeza" option');
+  });
+
+  it('12. R3: Per-flat manual override (force-release / forceReleased) is implemented across backend, admin, and portal', () => {
+    const backendPath = path.resolve('artifacts/api-server/demo-server.mjs');
+    const portalPagePath = path.resolve('artifacts/limpeza/src/pages/service-worker-portal.tsx');
+    const backendContent = fs.readFileSync(backendPath, 'utf8');
+    const adminContent = fs.readFileSync(serviceOrdersPagePath, 'utf8');
+    const portalContent = fs.readFileSync(portalPagePath, 'utf8');
+
+    assert.ok(backendContent.includes('app.post("/api/service-orders/:id/flats/:flatId/force-release"'), 'Backend must expose POST /force-release endpoint');
+    assert.ok(backendContent.includes('Boolean(flat.forceReleased) || (isScenarioAllowed && isCleanModeAllowed)'), 'checkAndNotifyAvailableServiceFlats must bypass restrictions when forceReleased is true');
+    assert.ok(adminContent.includes('forceReleaseMutation'), 'Admin page must have forceReleaseMutation');
+    assert.ok(adminContent.includes('🔓 Liberar Flat'), 'Admin page must render "🔓 Liberar Flat" button');
+    assert.ok(adminContent.includes('🔓 Liberado Manualmente'), 'Admin page must render "🔓 Liberado Manualmente" badge');
+    assert.ok(portalContent.includes('🔓 Liberado pela Administração'), 'Worker portal must render "🔓 Liberado pela Administração" badge');
+  });
+});

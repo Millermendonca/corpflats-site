@@ -59,6 +59,13 @@ export type FlatServiceStatus = "pending" | "in_progress" | "done";
 export type InstructionFormat = "text" | "list";
 export type NotificationEvent = "entry_request" | "start" | "finish" | "delay";
 
+export const NOTIFICATION_EVENT_LABELS: Record<string, string> = {
+  start: "Início",
+  finish: "Conclusão",
+  entry_request: "Pedido de Entrada",
+  delay: "Atraso",
+};
+
 export type OperationalScenarioId =
   | "vago_limpo"
   | "vago_sujo"
@@ -178,6 +185,7 @@ export interface ServiceFlat {
   currentGuest?: string | null;
   hasCheckinToday?: boolean;
   hasCheckoutToday?: boolean;
+  forceReleased?: boolean;
 }
 
 export interface ServiceOrder {
@@ -806,6 +814,50 @@ export default function ServiceOrders() {
     onError: (err: any) => {
       toast({
         title: "Erro ao resetar flat",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const forceReleaseMutation = useMutation({
+    mutationFn: async ({ orderId, flatId, forceReleased }: { orderId: string; flatId: number; forceReleased: boolean }) => {
+      const res = await fetch(`/api/service-orders/${orderId}/flats/${flatId}/force-release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ forceReleased }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao alterar liberação do flat.");
+      }
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["service-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["service-order-progress", vars.orderId] });
+      toast({
+        title: vars.forceReleased ? "Flat liberado manualmente!" : "Liberação manual revogada!",
+        description: vars.forceReleased
+          ? `O Flat ${vars.flatId} foi desbloqueado para execução pelo prestador.`
+          : `O Flat ${vars.flatId} voltou às restrições normais de status.`,
+      });
+      if (detailModalFlat && detailModalFlat.flatId === vars.flatId) {
+        setDetailModalFlat((prev) =>
+          prev
+            ? {
+                ...prev,
+                forceReleased: vars.forceReleased,
+                isStatusAllowed: vars.forceReleased || prev.isStatusAllowed,
+              }
+            : null
+        );
+      }
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro na liberação do flat",
         description: err.message,
         variant: "destructive",
       });
@@ -2339,20 +2391,23 @@ export default function ServiceOrders() {
                   </div>
 
                   {/* Destinatários Configurados na Ordem */}
-                  {Array.isArray(progressData.notificationRecipients) && progressData.notificationRecipients.length > 0 && (
-                    <div className="p-3 bg-muted/40 rounded-xl border text-xs flex items-center justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Bell className="w-4 h-4 text-primary shrink-0" />
-                        <span className="font-bold text-foreground">Notificações configuradas:</span>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {progressData.notificationRecipients.map((r, i) => (
-                            <Badge key={i} variant="outline" className="text-[10px] bg-background">
-                              {r.name} ({r.phone}) [{r.events.join(", ")}]
-                            </Badge>
-                          ))}
+                  {Array.isArray(progressData.notificationRecipients) &&
+                    progressData.notificationRecipients.filter((r) => Array.isArray(r.events) && r.events.length > 0).length > 0 && (
+                      <div className="p-3 bg-muted/40 rounded-xl border text-xs flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Bell className="w-4 h-4 text-primary shrink-0" />
+                          <span className="font-bold text-foreground">Notificações configuradas:</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {progressData.notificationRecipients
+                              .filter((r) => Array.isArray(r.events) && r.events.length > 0)
+                              .map((r, i) => (
+                                <Badge key={i} variant="outline" className="text-[10px] bg-background rounded-md whitespace-nowrap">
+                                  {r.name} ({r.phone}) [{r.events.map((e) => NOTIFICATION_EVENT_LABELS[e] || e).join(", ")}]
+                                </Badge>
+                              ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
                   )}
 
                   {/* Filtro por Status da Tabela */}
@@ -2402,7 +2457,7 @@ export default function ServiceOrders() {
                     <Table>
                       <TableHeader className="bg-muted/50">
                         <TableRow className="hover:bg-transparent">
-                          <TableHead className="w-24 font-bold text-xs">Flat</TableHead>
+                          <TableHead className="min-w-[220px] font-bold text-xs">Flat</TableHead>
                           <TableHead className="w-36 font-bold text-xs">Status</TableHead>
                           <TableHead className="font-bold text-xs">Prestador</TableHead>
                           <TableHead className="font-bold text-xs">Início</TableHead>
@@ -2410,7 +2465,7 @@ export default function ServiceOrders() {
                           <TableHead className="w-36 font-bold text-xs">Precisa Camareira?</TableHead>
                           <TableHead className="font-bold text-xs">Observações</TableHead>
                           <TableHead className="w-24 font-bold text-xs text-center">Fotos</TableHead>
-                          <TableHead className="w-28 font-bold text-xs text-right">Ação</TableHead>
+                          <TableHead className="w-36 min-w-[140px] font-bold text-xs text-right">Ação</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -2432,40 +2487,61 @@ export default function ServiceOrders() {
                                 className="cursor-pointer hover:bg-muted/50 transition-colors"
                               >
                                 {/* Flat */}
-                                <TableCell className="font-bold text-sm text-foreground">
+                                <TableCell className="font-bold text-sm text-foreground min-w-[220px] align-top py-3">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span>Flat {flat.flatNumber}</span>
+                                    <span className="whitespace-nowrap">Flat {flat.flatNumber}</span>
                                     {flat.operationalScenarioIcon && flat.operationalScenarioLabel && (
-                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-medium">
-                                        {flat.operationalScenarioIcon} {flat.operationalScenarioLabel}
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[10px] px-1.5 py-0.5 rounded-md font-medium whitespace-nowrap inline-flex items-center gap-1 shrink-0"
+                                      >
+                                        <span>{flat.operationalScenarioIcon}</span>
+                                        <span>{flat.operationalScenarioLabel}</span>
                                       </Badge>
                                     )}
-                                    {flat.isStatusAllowed === false && (
-                                      <Badge variant="destructive" title={flat.statusBlockReason || "Status não autorizado para este serviço"} className="text-[9px] px-1.5 py-0 h-4 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-bold">
+                                    {flat.forceReleased ? (
+                                      <Badge className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-bold whitespace-nowrap inline-flex items-center gap-1 shrink-0">
+                                        🔓 Liberado Manualmente
+                                      </Badge>
+                                    ) : flat.isStatusAllowed === false ? (
+                                      <Badge
+                                        variant="destructive"
+                                        title={flat.statusBlockReason || "Status não autorizado para este serviço"}
+                                        className="text-[9px] px-1.5 py-0.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-bold whitespace-nowrap inline-flex items-center gap-1 shrink-0"
+                                      >
                                         🔒 Não Permitido
                                       </Badge>
-                                    )}
+                                    ) : null}
                                   </div>
-                                  <div className="text-[10px] font-normal text-muted-foreground flex items-center gap-1 mt-0.5 flex-wrap">
+                                  <div className="text-[10px] font-normal text-muted-foreground flex items-center gap-1.5 mt-1.5 flex-wrap">
                                     {(flat as any).isOccupied ? (
-                                      <span className="text-rose-600 font-semibold">🔴 Ocupado{(flat as any).currentGuest ? ` (${(flat as any).currentGuest})` : ""}</span>
+                                      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-medium bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+                                        🔴 Ocupado{(flat as any).currentGuest ? `: ${(flat as any).currentGuest}` : ""}
+                                      </span>
                                     ) : (flat as any).isDirty ? (
-                                      <span className="text-amber-700 font-medium">🧹 Sujo</span>
+                                      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-medium bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+                                        🧹 Sujo
+                                      </span>
                                     ) : (
-                                      <span className="text-emerald-700 font-medium">🟢 Vago / Limpo</span>
+                                      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                                        🟢 Vago / Limpo
+                                      </span>
                                     )}
                                     {(flat as any).hasCheckinToday && (
-                                      <span className="text-blue-600 font-medium">
+                                      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-medium bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
                                         🔵 Chegada: {(flat as any).expectedArrival || "14:00"}
                                       </span>
                                     )}
                                     {flat.hasGuestInside && (
-                                      <span className="text-rose-600 font-semibold">
+                                      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-semibold bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-700">
                                         ⚠️ Hóspede presente
                                       </span>
                                     )}
                                     {flat.entryRequested && flat.status === "pending" && (
-                                      <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-amber-50 text-amber-800 border-amber-300">
+                                      <Badge
+                                        variant="outline"
+                                        className="inline-flex items-center gap-1 whitespace-nowrap text-[9px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border-amber-300 font-medium shrink-0"
+                                      >
                                         🔑 Entrada Solicitada
                                       </Badge>
                                     )}
@@ -2594,25 +2670,74 @@ export default function ServiceOrders() {
                                   )}
                                 </TableCell>
 
-                                {/* Ações: Resetar */}
-                                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setResetConfirmFlat(flat)}
-                                        disabled={flat.status === "pending"}
-                                        className="h-8 px-2 text-xs text-muted-foreground hover:text-amber-600 gap-1"
-                                      >
-                                        <RotateCcw className="w-3.5 h-3.5" />
-                                        <span className="hidden sm:inline">Resetar</span>
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      Reabrir flat para o status Pendente
-                                    </TooltipContent>
-                                  </Tooltip>
+                                {/* Ações */}
+                                <TableCell className="text-right align-top py-3" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {flat.status === "pending" ? (
+                                      flat.forceReleased ? (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() =>
+                                                forceReleaseMutation.mutate({
+                                                  orderId: effectiveTrackingOrderId,
+                                                  flatId: flat.flatId,
+                                                  forceReleased: false,
+                                                })
+                                              }
+                                              disabled={forceReleaseMutation.isPending}
+                                              className="h-8 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 gap-1 font-medium"
+                                            >
+                                              <Lock className="w-3.5 h-3.5" />
+                                              <span className="hidden sm:inline">Bloquear</span>
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>Revogar liberação manual (restaurar restrições)</TooltipContent>
+                                        </Tooltip>
+                                      ) : (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() =>
+                                                forceReleaseMutation.mutate({
+                                                  orderId: effectiveTrackingOrderId,
+                                                  flatId: flat.flatId,
+                                                  forceReleased: true,
+                                                })
+                                              }
+                                              disabled={forceReleaseMutation.isPending}
+                                              className="h-8 px-2 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold gap-1"
+                                            >
+                                              <span>🔓 Liberar Flat</span>
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>Liberar flat independente de status ou regras de prioridade</TooltipContent>
+                                        </Tooltip>
+                                      )
+                                    ) : (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setResetConfirmFlat(flat)}
+                                            disabled={flat.status === "pending"}
+                                            className="h-8 px-2 text-xs text-muted-foreground hover:text-amber-600 gap-1"
+                                          >
+                                            <RotateCcw className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Resetar</span>
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          Reabrir flat para o status Pendente
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             );
@@ -2636,6 +2761,11 @@ export default function ServiceOrders() {
                   <DialogTitle className="text-xl font-bold flex items-center gap-2">
                     <Building className="w-5 h-5 text-primary" />
                     <span>Acompanhamento — Flat {detailModalFlat?.flatNumber}</span>
+                    {detailModalFlat?.forceReleased && (
+                      <Badge className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-bold whitespace-nowrap">
+                        🔓 Liberado Manualmente
+                      </Badge>
+                    )}
                   </DialogTitle>
                   {detailModalFlat && (
                     <Badge
@@ -2788,6 +2918,28 @@ export default function ServiceOrders() {
               )}
 
               <DialogFooter className="border-t pt-3 flex items-center justify-between gap-2">
+                {detailModalFlat && detailModalFlat.status === "pending" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      forceReleaseMutation.mutate({
+                        orderId: effectiveTrackingOrderId,
+                        flatId: detailModalFlat.flatId,
+                        forceReleased: !detailModalFlat.forceReleased,
+                      });
+                    }}
+                    disabled={forceReleaseMutation.isPending}
+                    className={`text-xs gap-1.5 font-semibold ${
+                      detailModalFlat.forceReleased
+                        ? "text-amber-700 border-amber-300 hover:bg-amber-50"
+                        : "text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                    }`}
+                  >
+                    {detailModalFlat.forceReleased ? "🔒 Revogar Liberação Manual" : "🔓 Liberar Flat"}
+                  </Button>
+                )}
+
                 {detailModalFlat && detailModalFlat.status !== "pending" && (
                   <Button
                     variant="outline"
