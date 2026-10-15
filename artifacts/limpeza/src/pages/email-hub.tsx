@@ -731,30 +731,51 @@ export default function EmailHub() {
                           </div>
                         </div>
 
-                        {/* Botão de Enviar Agora (Antecipar) */}
-                        {isPending && (
-                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                        {/* Ações da Fila: Visualizar + Enviar Agora + Cancelar */}
+                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                          {(item.bodyHtml || item.bodyText) && (
                             <Button
                               type="button"
+                              variant="outline"
                               size="sm"
-                              disabled={dispatchingQueueId === item.id}
-                              onClick={() => handleSendNow(item.id)}
-                              className="h-8 text-xs font-bold gap-1 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                              onClick={() => {
+                                setSelectedMail({
+                                  ...item,
+                                  body: item.bodyHtml || item.bodyText,
+                                  created_at: item.scheduledFor || item.createdAt
+                                })
+                                setPreviewOpen(true)
+                              }}
+                              className="h-8 text-xs font-semibold gap-1 px-2.5 rounded-xl"
                             >
-                              <Send className={`w-3.5 h-3.5 ${dispatchingQueueId === item.id ? 'animate-spin' : ''}`} />
-                              <span>{dispatchingQueueId === item.id ? "Enviando..." : "Enviar Agora"}</span>
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Visualizar</span>
                             </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleCancelQueueItem(item.id)}
-                              className="h-8 text-xs text-muted-foreground hover:text-destructive px-2 rounded-xl"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        )}
+                          )}
+                          {isPending && (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={dispatchingQueueId === item.id}
+                                onClick={() => handleSendNow(item.id)}
+                                className="h-8 text-xs font-bold gap-1 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                              >
+                                <Send className={`w-3.5 h-3.5 ${dispatchingQueueId === item.id ? 'animate-spin' : ''}`} />
+                                <span>{dispatchingQueueId === item.id ? "Enviando..." : "Enviar Agora"}</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleCancelQueueItem(item.id)}
+                                className="h-8 text-xs text-muted-foreground hover:text-destructive px-2 rounded-xl"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   )
@@ -763,147 +784,278 @@ export default function EmailHub() {
             )}
           </TabsContent>
 
-          {/* ABA 3: NOVO ENVIO MANUAL */}
+          {/* ABA 3: NOVO ENVIO MANUAL + PREVIEW EM TEMPO REAL */}
           <TabsContent value="compose" className="mt-0">
-            <Card className="rounded-3xl border shadow-xs bg-card">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Send className="w-4 h-4 text-primary" />
-                  <span>Redigir E-mail Manual</span>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Envie e-mails com entrega imediata via servidor Zoho SMTP corporativo.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSendManual} className="space-y-4">
-                  {/* Modelos rápidos */}
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-muted-foreground">Modelos Rápidos (Preenchimento Automático)</Label>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Button
-                        type="button"
-                        variant={formTemplate === "portaria" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => applyTemplate("portaria")}
-                        className="text-xs h-8 rounded-xl font-bold"
-                      >
-                        🏢 Notificação Portaria
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={formTemplate === "garagem" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => applyTemplate("garagem")}
-                        className="text-xs h-8 rounded-xl font-bold"
-                      >
-                        🚗 Autorização Garagem
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={formTemplate === "hospede_welcome" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => applyTemplate("hospede_welcome")}
-                        className="text-xs h-8 rounded-xl font-bold"
-                      >
-                        👋 Boas-Vindas Hóspede
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={formTemplate === "custom" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => applyTemplate("custom")}
-                        className="text-xs h-8 rounded-xl font-bold"
-                      >
-                        ✍️ Mensagem Livre
-                      </Button>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              <Card className="rounded-3xl border shadow-xs bg-card lg:col-span-6">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Send className="w-4 h-4 text-primary" />
+                    <span>Redigir E-mail Manual</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Envie e-mails com entrega imediata via servidor Zoho SMTP corporativo.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSendManual} className="space-y-4">
+                    {/* Modelos rápidos */}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold text-muted-foreground">Modelos Rápidos (Preenchimento Automático)</Label>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          type="button"
+                          variant={formTemplate === "portaria" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => applyTemplate("portaria")}
+                          className="text-xs h-8 rounded-xl font-bold"
+                        >
+                          🏢 Notificação Portaria
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formTemplate === "garagem" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => applyTemplate("garagem")}
+                          className="text-xs h-8 rounded-xl font-bold"
+                        >
+                          🚗 Autorização Garagem
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formTemplate === "hospede_welcome" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => applyTemplate("hospede_welcome")}
+                          className="text-xs h-8 rounded-xl font-bold"
+                        >
+                          👋 Boas-Vindas Hóspede
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formTemplate === "custom" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => applyTemplate("custom")}
+                          className="text-xs h-8 rounded-xl font-bold"
+                        >
+                          ✍️ Mensagem Livre
+                        </Button>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs font-bold text-foreground">Destinatário (E-mail) *</Label>
+                        <Input
+                          type="email"
+                          required
+                          value={formRecipient}
+                          onChange={e => setFormRecipient(e.target.value)}
+                          placeholder="ex: hospede@gmail.com ou millerpessanha@gmail.com"
+                          className="text-xs h-9 rounded-xl"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs font-bold text-muted-foreground">Com Cópia (CC Opcional)</Label>
+                        <Input
+                          type="email"
+                          value={formCc}
+                          onChange={e => setFormCc(e.target.value)}
+                          placeholder="ex: admin@corpflats.com.br"
+                          className="text-xs h-9 rounded-xl"
+                        />
+                      </div>
+                    </div>
+
                     <div className="space-y-1">
-                      <Label className="text-xs font-bold text-foreground">Destinatário (E-mail) *</Label>
+                      <Label className="text-xs font-bold text-foreground">Assunto do E-mail *</Label>
                       <Input
-                        type="email"
                         required
-                        value={formRecipient}
-                        onChange={e => setFormRecipient(e.target.value)}
-                        placeholder="ex: hospede@gmail.com ou millerpessanha@gmail.com"
-                        className="text-xs h-9 rounded-xl"
+                        value={formSubject}
+                        onChange={e => setFormSubject(e.target.value)}
+                        placeholder="ex: [CONFIRMAÇÃO] Orientação para sua estadia no Flat 113"
+                        className="text-xs h-9 rounded-xl font-medium"
                       />
                     </div>
+
                     <div className="space-y-1">
-                      <Label className="text-xs font-bold text-muted-foreground">Com Cópia (CC Opcional)</Label>
-                      <Input
-                        type="email"
-                        value={formCc}
-                        onChange={e => setFormCc(e.target.value)}
-                        placeholder="ex: admin@corpflats.com.br"
-                        className="text-xs h-9 rounded-xl"
+                      <Label className="text-xs font-bold text-foreground">Corpo da Mensagem *</Label>
+                      <Textarea
+                        required
+                        rows={7}
+                        value={formBody}
+                        onChange={e => setFormBody(e.target.value)}
+                        placeholder="Escreva a mensagem a ser enviada ao destinatário..."
+                        className="text-xs rounded-xl"
                       />
                     </div>
-                  </div>
 
-                  <div className="space-y-1">
-                    <Label className="text-xs font-bold text-foreground">Assunto do E-mail *</Label>
-                    <Input
-                      required
-                      value={formSubject}
-                      onChange={e => setFormSubject(e.target.value)}
-                      placeholder="ex: [CONFIRMAÇÃO] Orientação para sua estadia no Flat 113"
-                      className="text-xs h-9 rounded-xl font-medium"
-                    />
-                  </div>
+                    <div className="flex justify-end pt-2">
+                      <Button
+                        type="submit"
+                        disabled={sendingManual || !formRecipient || !formSubject || !formBody}
+                        className="h-9 px-4 text-xs font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                      >
+                        {sendingManual ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        <span>{sendingManual ? "Enviando e-mail..." : "Enviar E-mail Agora"}</span>
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
 
-                  <div className="space-y-1">
-                    <Label className="text-xs font-bold text-foreground">Corpo da Mensagem *</Label>
-                    <Textarea
-                      required
-                      rows={6}
-                      value={formBody}
-                      onChange={e => setFormBody(e.target.value)}
-                      placeholder="Escreva a mensagem a ser enviada ao destinatário..."
-                      className="text-xs rounded-xl"
-                    />
-                  </div>
+              {/* Preview Ao Vivo do Template Refatorado (Padrão Gmail / Superhuman / Linear) */}
+              <div className="lg:col-span-6 space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                    <Eye className="w-3.5 h-3.5 text-primary" />
+                    Preview do Template Transacional (Tempo Real)
+                  </span>
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    Layout 600px • Inline CSS
+                  </Badge>
+                </div>
 
-                  <div className="flex justify-end pt-2">
-                    <Button
-                      type="submit"
-                      disabled={sendingManual || !formRecipient || !formSubject || !formBody}
-                      className="h-9 px-4 text-xs font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                <div
+                  style={{
+                    backgroundColor: "#F8FAFC",
+                    padding: "24px 16px",
+                    borderRadius: "16px",
+                    border: "1px solid #E5E7EB",
+                    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+                  }}
+                >
+                  <div
+                    style={{
+                      maxWidth: "600px",
+                      margin: "0 auto",
+                      width: "100%",
+                      backgroundColor: "#FFFFFF",
+                      border: "1px solid #E5E7EB",
+                      borderRadius: "8px",
+                      padding: "36px 40px",
+                      color: "#374151"
+                    }}
+                  >
+                    {/* Header Sutil com respiro inferior de 24px */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: "24px",
+                        paddingBottom: "16px",
+                        borderBottom: "1px solid #E5E7EB"
+                      }}
                     >
-                      {sendingManual ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                      <span>{sendingManual ? "Enviando e-mail..." : "Enviar E-mail Agora"}</span>
-                    </Button>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            backgroundColor: "#111827"
+                          }}
+                        />
+                        <span style={{ color: "#111827", fontSize: "15px", fontWeight: 600, letterSpacing: "-0.2px" }}>
+                          CorpFlats
+                        </span>
+                        <span style={{ color: "#9CA3AF", fontSize: "12px" }}>• Gestão de Hospedagem</span>
+                      </div>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "4px 10px",
+                          borderRadius: "6px",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          backgroundColor: "#F9FAFB",
+                          color: "#374151",
+                          border: "1px solid #E5E7EB"
+                        }}
+                      >
+                        Mensagem Direta
+                      </span>
+                    </div>
+
+                    {/* Assunto / Título */}
+                    <div style={{ marginBottom: "20px" }}>
+                      <h2
+                        style={{
+                          color: "#111827",
+                          fontWeight: 600,
+                          lineHeight: 1.3,
+                          fontSize: "20px",
+                          margin: "0 0 8px 0"
+                        }}
+                      >
+                        {formSubject.trim() || "Assunto do e-mail aparecerá aqui"}
+                      </h2>
+                      {formRecipient && (
+                        <div style={{ color: "#6B7280", fontSize: "12px" }}>
+                          Para: {formRecipient}{formCc ? ` • CC: ${formCc}` : ""}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Bloco de Conteúdo */}
+                    <div
+                      style={{
+                        backgroundColor: "#F9FAFB",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "6px",
+                        padding: "16px",
+                        color: "#374151",
+                        fontSize: "15px",
+                        lineHeight: 1.6,
+                        whiteSpace: "pre-wrap"
+                      }}
+                    >
+                      {formBody.trim() || "Digite a mensagem ao lado para visualizar a formatação final do corpo do e-mail em tempo real."}
+                    </div>
+
+                    {/* Footer Separado por HR */}
+                    <hr style={{ border: "none", borderTop: "1px solid #E5E7EB", margin: "32px 0 16px 0" }} />
+                    <div style={{ color: "#6B7280", fontSize: "12px", lineHeight: 1.5 }}>
+                      <div style={{ fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
+                        CorpFlats • Sistema Transacional de Hotelaria
+                      </div>
+                      <div>
+                        Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.
+                        <br />
+                        Para suporte ou dúvidas operacionais, consulte a administração do hotel.
+                      </div>
+                    </div>
                   </div>
-                </form>
-              </CardContent>
-            </Card>
+                </div>
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
 
         {/* Modal: Preview do HTML do E-mail */}
         <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-3xl max-h-[88vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-sm font-bold flex items-center gap-2">
                 <Mail className="w-4 h-4 text-primary" />
                 <span>{selectedMail?.subject || "Visualização do E-mail"}</span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Enviado para: <strong>{selectedMail?.recipient}</strong> em {selectedMail?.created_at && new Date(selectedMail.created_at).toLocaleString("pt-BR")}
+                Destinatário: <strong>{selectedMail?.recipient}</strong>
+                {selectedMail?.created_at ? ` • ${new Date(selectedMail.created_at).toLocaleString("pt-BR")}` : ""}
               </DialogDescription>
             </DialogHeader>
 
             <div className="py-2 border-t border-b border-border my-1">
               {selectedMail?.body && selectedMail.body.includes("<") ? (
                 <div 
-                  className="prose prose-xs max-w-none text-xs bg-white text-slate-900 p-4 rounded-xl border border-border"
+                  className="max-w-none rounded-xl border border-[#E5E7EB] overflow-hidden"
+                  style={{ backgroundColor: "#F8FAFC" }}
                   dangerouslySetInnerHTML={{ __html: selectedMail.body }}
                 />
               ) : (
-                <div className="whitespace-pre-wrap text-xs font-mono p-3 bg-muted/40 rounded-xl">
+                <div className="whitespace-pre-wrap text-xs font-mono p-4 bg-[#F9FAFB] text-[#374151] rounded-xl border border-[#E5E7EB]">
                   {selectedMail?.body || "Sem conteúdo de corpo."}
                 </div>
               )}

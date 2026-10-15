@@ -99,6 +99,7 @@ import {
   verifySmtpConnection,
   sendEmailAsync,
   resendEmailAsync,
+  wrapEmailTemplate,
   renderCheckinConfirmedEmail,
   renderReservationUpdateEmail,
   renderGarageAuthorizationEmail,
@@ -23583,7 +23584,19 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
       guestName: r.guestName || "Hóspede",
       recipient: guestEmail,
       subject: `[INSTRUÇÕES DE CHEGADA] Flat ${r.flatNumber} - CorpFlats Soho`,
-      bodyHtml: `<p>Olá, <strong>${r.guestName}</strong>!</p><p>Sua estadia no <strong>Flat ${r.flatNumber}</strong> está próxima! Lembramos que o check-in inicia às 14:00. Preencha sua ficha de check-in digital antecipadamente para agilizar sua entrada na portaria.</p>`,
+      bodyHtml: wrapEmailTemplate({
+        title: `[INSTRUÇÕES DE CHEGADA] Flat ${r.flatNumber} - CorpFlats Soho`,
+        badge: `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Pré-Check-in</span>`,
+        contentHtml: `
+          <div style="margin-bottom: 20px;">
+            <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Instruções de Chegada • Flat ${r.flatNumber}</h1>
+            <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">Olá, <strong>${r.guestName}</strong>!</p>
+          </div>
+          <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
+            Sua estadia no <strong>Flat ${r.flatNumber}</strong> está próxima! Lembramos que o check-in inicia às 14:00. Preencha sua ficha de check-in digital antecipadamente para agilizar sua entrada na portaria.
+          </div>
+        `
+      }),
       bodyText: `Olá, ${r.guestName}! Sua estadia no Flat ${r.flatNumber} está próxima! Check-in a partir das 14:00.`,
       status: "pending",
       scheduledFor: `${schedDate}T09:00:00.000Z`,
@@ -23608,7 +23621,19 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
       guestName: r.guestName || "Hóspede",
       recipient: guestEmail,
       subject: `[LEMBRETE DE CHECK-OUT] Flat ${r.flatNumber} - CorpFlats Soho`,
-      bodyHtml: `<p>Bom dia, <strong>${r.guestName}</strong>!</p><p>Lembramos que hoje encerra sua estadia no <strong>Flat ${r.flatNumber}</strong>. O horário limite de saída é às 12:00. Ao desocupar a unidade, basta entregar a chave na portaria.</p>`,
+      bodyHtml: wrapEmailTemplate({
+        title: `[LEMBRETE DE CHECK-OUT] Flat ${r.flatNumber} - CorpFlats Soho`,
+        badge: `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Check-out</span>`,
+        contentHtml: `
+          <div style="margin-bottom: 20px;">
+            <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Lembrete de Check-out • Flat ${r.flatNumber}</h1>
+            <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">Bom dia, <strong>${r.guestName}</strong>!</p>
+          </div>
+          <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
+            Lembramos que hoje encerra sua estadia no <strong>Flat ${r.flatNumber}</strong>. O horário limite de saída é às 12:00. Ao desocupar a unidade, basta entregar a chave na portaria.
+          </div>
+        `
+      }),
       bodyText: `Bom dia, ${r.guestName}! Lembramos que hoje é a data de saída do Flat ${r.flatNumber} até as 12:00.`,
       status: "pending",
       scheduledFor: `${r.checkoutDate}T08:30:00.000Z`,
@@ -23983,22 +24008,31 @@ app.post("/api/settings/email/test", async (req, res) => {
 
   if (targetEmail) {
     const config = getSmtpConfig(db, overrides);
+    const testSubject = `[TESTE] Conexão Zoho Mail SMTP CorpFlats - ${new Date().toLocaleTimeString('pt-BR')}`;
     const commLog = sendEmailAsync({
       db,
       saveDatabase,
       reservationId: "TEST",
       recipient: targetEmail.trim(),
-      subject: `[TESTE] Conexão Zoho Mail SMTP CorpFlats - ${new Date().toLocaleTimeString('pt-BR')}`,
-      bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 25px; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; max-width: 550px; margin: 20px auto;">
-        <h2 style="color: #0f172a; margin-top: 0;">🚀 Teste de Conexão SMTP Bem-Sucedido!</h2>
-        <p style="color: #475569; line-height: 1.5;">Este é um e-mail transacional de validação enviado pelo servidor CorpFlats via Zoho Mail SMTP.</p>
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; margin: 15px 0;">
-          <p style="margin: 4px 0; font-size: 13px;"><strong>Host:</strong> ${config.host}:${config.port}</p>
-          <p style="margin: 4px 0; font-size: 13px;"><strong>Usuário:</strong> ${config.user}</p>
-          <p style="margin: 4px 0; font-size: 13px;"><strong>Remetente:</strong> ${config.fromName} &lt;${config.fromEmail}&gt;</p>
-        </div>
-        <p style="color: #059669; font-weight: bold; margin-bottom: 0;">✓ Status: Operacional e pronto para envios à portaria e aos hóspedes!</p>
-      </div>`,
+      subject: testSubject,
+      bodyHtml: wrapEmailTemplate({
+        title: testSubject,
+        badge: `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">SMTP Validado</span>`,
+        contentHtml: `
+          <div style="margin-bottom: 20px;">
+            <h1 style="color: #111827; font-size: 20px; font-weight: 600; line-height: 1.3; margin: 0 0 8px 0;">Teste de Conexão SMTP Bem-Sucedido</h1>
+            <p style="color: #374151; font-size: 15px; line-height: 1.6; margin: 0;">Este é um e-mail transacional de validação enviado pelo servidor CorpFlats via Zoho Mail SMTP.</p>
+          </div>
+          <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; padding: 16px; border-radius: 6px; margin: 16px 0;">
+            <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+              <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 35%;">Host:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">${config.host}:${config.port}</td></tr>
+              <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 35%;">Usuário:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600;">${config.user}</td></tr>
+              <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 35%;">Remetente:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600;">${config.fromName} &lt;${config.fromEmail}&gt;</td></tr>
+            </table>
+          </div>
+          <p style="color: #059669; font-size: 14px; font-weight: 600; margin-bottom: 0;">✓ Status: Operacional e pronto para envios à portaria e aos hóspedes.</p>
+        `
+      }),
       bodyText: "Teste de Conexão SMTP CorpFlats bem-sucedido!",
       metadata: { trigger: "smtp_test" },
       overrides

@@ -216,58 +216,219 @@ function formatDateBr(dateStr) {
 }
 
 /**
- * Layout HTML Base CorpFlats
+ * Layout HTML Base CorpFlats (UI/UX Refatorado — Padrão Gmail / Superhuman / Linear)
+ * Tabelas fluidas aninhadas + CSS Inline defensivo + Responsividade Mobile
  */
-function wrapEmailTemplate({ title, badge, contentHtml, footerHtml = "" }) {
+export function wrapEmailTemplate({ title, badge = "", contentHtml, footerHtml = "" }) {
+  const fontStack = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
   <title>${title}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }
-    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
-    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }
-    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }
-    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }
-    .badge-bar { margin-top: 14px; }
-    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
-    .badge-checkin { background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
-    .badge-update { background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
-    .badge-cancel { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
-    .badge-general { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
-    .content { padding: 30px; }
-    .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 20px; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
-    .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
-    .info-table { width: 100%; border-collapse: collapse; }
-    .info-table td { padding: 5px 0; font-size: 13px; vertical-align: top; }
-    .info-table .label { color: #64748b; font-weight: 600; width: 38%; }
-    .info-table .val { color: #0f172a; font-weight: 700; width: 62%; }
-    .guest-box { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
-    .callout-alert { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 6px; margin-bottom: 18px; }
-    .callout-cancel { background: #fef2f2; border-left: 4px solid #ef4444; padding: 14px 16px; border-radius: 6px; margin-bottom: 18px; }
-    .footer { background: #f1f5f9; padding: 18px 30px; text-align: center; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; }
-    .btn-action { display: inline-block; padding: 9px 18px; background: #0f172a; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-size: 12px; font-weight: 700; margin-top: 10px; }
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+  <style type="text/css">
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      width: 100% !important;
+      background-color: #F8FAFC;
+      color: #374151;
+      font-family: ${fontStack};
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .email-card {
+      background-color: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      border-radius: 8px;
+    }
+    .email-card-pad {
+      padding: 36px 40px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.4;
+      letter-spacing: 0.2px;
+    }
+    .badge-checkin { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }
+    .badge-update { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }
+    .badge-cancel { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }
+    .badge-general { background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB; }
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #6B7280;
+      margin: 24px 0 8px 0;
+    }
+    .info-card {
+      background-color: #F9FAFB;
+      border: 1px solid #E5E7EB;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .info-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .info-table td {
+      padding: 6px 0;
+      font-size: 14px;
+      line-height: 1.5;
+      vertical-align: top;
+      font-family: ${fontStack};
+    }
+    .info-table .label {
+      color: #6B7280;
+      font-weight: 500;
+      width: 38%;
+      font-size: 13px;
+    }
+    .info-table .val {
+      color: #111827;
+      font-weight: 600;
+      width: 62%;
+      font-size: 14px;
+    }
+    .guest-box {
+      background-color: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      border-radius: 6px;
+      padding: 16px;
+      margin-top: 8px;
+    }
+    .callout-alert {
+      background-color: #F9FAFB;
+      border: 1px solid #E5E7EB;
+      border-left: 3px solid #D97706;
+      padding: 16px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .callout-cancel {
+      background-color: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-left: 3px solid #DC2626;
+      padding: 16px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .btn-action {
+      display: inline-block;
+      padding: 12px 24px;
+      background-color: #111827;
+      color: #FFFFFF !important;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.4;
+      margin-top: 8px;
+    }
+    @media only screen and (max-width: 600px) {
+      .outer-pad {
+        padding: 16px 12px !important;
+      }
+      .email-card-pad {
+        padding: 20px !important;
+      }
+      .info-table .label,
+      .info-table .val {
+        display: block !important;
+        width: 100% !important;
+        padding: 2px 0 !important;
+      }
+      .info-table tr {
+        display: block !important;
+        padding: 6px 0 !important;
+        border-bottom: 1px solid #F3F4F6;
+      }
+      .info-table tr:last-child {
+        border-bottom: none !important;
+      }
+      .btn-action {
+        display: block !important;
+        text-align: center !important;
+      }
+    }
   </style>
 </head>
-<body>
-  <div class="wrapper">
-    <div class="header">
-      <div class="brand">CorpFlats</div>
-      <div class="subbrand">Gestão Inteligente de Hospedagem</div>
-      <div class="badge-bar">
-        ${badge}
-      </div>
-    </div>
-    <div class="content">
-      ${contentHtml}
-    </div>
-    <div class="footer">
-      ${footerHtml || `Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.<br/>
-      Para suporte ou dúvidas operacionais, consulte a administração do hotel.`}
-    </div>
-  </div>
+<body style="margin: 0; padding: 0; width: 100%; background-color: #F8FAFC; color: #374151; font-family: ${fontStack}; -webkit-font-smoothing: antialiased;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color: #F8FAFC; width: 100%; margin: 0; padding: 0;">
+    <tr>
+      <td align="center" class="outer-pad" style="padding: 32px 16px;">
+        <!--[if mso]>
+        <table role="presentation" align="center" border="0" cellspacing="0" cellpadding="0" width="600">
+        <tr>
+        <td width="600">
+        <![endif]-->
+        <div class="wrapper" style="max-width: 600px; margin: 0 auto; width: 100%;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="email-card" style="background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; width: 100%; border-collapse: separate;">
+            <tr>
+              <td class="email-card-pad" style="padding: 36px 40px; font-family: ${fontStack}; color: #374151; font-size: 15px; line-height: 1.6; text-align: left;">
+                <!-- Header Sutil e Discreto com Respiro Inferior de 24px -->
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #E5E7EB;">
+                  <tr>
+                    <td align="left" valign="middle" style="font-family: ${fontStack};">
+                      <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #111827; margin-right: 8px; vertical-align: middle;"></span>
+                      <span style="color: #111827; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; vertical-align: middle;">CorpFlats</span>
+                      <span style="color: #9CA3AF; font-size: 12px; font-weight: 400; margin-left: 6px; vertical-align: middle;">• Gestão de Hospedagem</span>
+                    </td>
+                    <td align="right" valign="middle" style="font-family: ${fontStack};">
+                      ${badge}
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Corpo Principal -->
+                <div class="content" style="color: #374151; font-size: 15px; line-height: 1.6; font-family: ${fontStack};">
+                  ${contentHtml}
+                </div>
+
+                <!-- Footer Separado por HR -->
+                <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 32px 0 16px 0;" />
+                <div class="footer" style="font-size: 12px; line-height: 1.5; color: #6B7280; text-align: left; font-family: ${fontStack};">
+                  <div style="font-weight: 600; color: #374151; margin-bottom: 4px;">CorpFlats • Sistema Transacional de Hotelaria</div>
+                  <div>
+                    ${footerHtml || `Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.<br/>Para suporte ou dúvidas operacionais, consulte a administração do hotel.`}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </table>
+        </div>
+        <!--[if mso]>
+        </td>
+        </tr>
+        </table>
+        <![endif]-->
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`;
 }
@@ -307,14 +468,14 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   }
 
   const guestsHtml = guests.map((g, idx) => `
-    <div class="guest-box">
-      <div style="font-weight: 800; color: #0f172a; font-size: 13px; margin-bottom: 4px;">
+    <div class="guest-box" style="background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px; padding: 14px 16px; margin-top: ${idx === 0 ? '0' : '8px'};">
+      <div style="font-weight: 600; color: #111827; font-size: 14px; margin-bottom: 6px;">
         👤 Hóspede ${idx + 1}: ${g.name || guestName}
       </div>
-      <table class="info-table">
-        <tr><td class="label">Documento:</td><td class="val">${g.cpf || g.document || g.doc || "Não informado"}</td></tr>
-        <tr><td class="label">Telefone / WhatsApp:</td><td class="val">${g.phone || reservation?.guestPhone || "Não informado"}</td></tr>
-        <tr><td class="label">E-mail:</td><td class="val">${g.email || reservation?.guestEmail || "Não informado"}</td></tr>
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Documento:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.cpf || g.document || g.doc || "Não informado"}</td></tr>
+        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Telefone / WhatsApp:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.phone || reservation?.guestPhone || "Não informado"}</td></tr>
+        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">E-mail:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.email || reservation?.guestEmail || "Não informado"}</td></tr>
       </table>
     </div>
   `).join("");
@@ -322,12 +483,12 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   // Veículo
   const vehicle = reservation?.vehicle;
   const vehicleHtml = (vehicle && vehicle.plate) ? `
-    <table class="info-table">
-      <tr><td class="label">Placa:</td><td class="val" style="font-family: monospace; font-size: 14px; color: #0369a1;">${vehicle.plate.toUpperCase()}</td></tr>
-      <tr><td class="label">Modelo / Marca:</td><td class="val">${[vehicle.brand, vehicle.model].filter(Boolean).join(" - ") || "Não informado"}</td></tr>
-      <tr><td class="label">Cor:</td><td class="val">${vehicle.color || "Não informado"}</td></tr>
+    <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+      <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Placa:</td><td class="val" style="padding: 5px 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${vehicle.plate.toUpperCase()}</td></tr>
+      <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Modelo / Marca:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${[vehicle.brand, vehicle.model].filter(Boolean).join(" - ") || "Não informado"}</td></tr>
+      <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Cor:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${vehicle.color || "Não informado"}</td></tr>
     </table>
-  ` : `<div style="font-size: 13px; color: #64748b;">Nenhum veículo cadastrado para esta estadia.</div>`;
+  ` : `<div style="font-size: 13px; color: #6B7280;">Nenhum veículo cadastrado para esta estadia.</div>`;
 
   // Observações e Notas de Recepção (apenas nota destinada à portaria/recepção)
   const rawReceptionNotes = (reservation?.receptionNotes || "").trim();
@@ -339,27 +500,22 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   const isPendingSecondGuest = expectedGuests > 1 && completedGuests < expectedGuests;
 
   const contentHtml = `
-    <!-- Divulgação da Tela da Recepção / Portaria (Tablet / Web) -->
-    <div style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; color: #ffffff; text-align: center; border: 1px solid #4338ca;">
-      <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #a5b4fc; margin-bottom: 4px;">Painel da Recepção & Portaria 24h</div>
-      <div style="font-size: 15px; font-weight: 800; color: #ffffff; margin-bottom: 6px;">Consulte Detalhes no Terminal da Portaria</div>
-      <p style="font-size: 12px; color: #c7d2fe; margin: 0 0 12px 0; line-height: 1.4;">
-        Acesse pelo tablet ou computador da portaria para conferência de documentos, fotos dos hóspedes e baixa rápida de entrada.
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Olá, Equipe de Recepção & Portaria</h1>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Segue o informativo cadastral da reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong>.
       </p>
-      <a href="https://corpflats.onrender.com/portaria" style="display: inline-block; background: #f59e0b; color: #0f172a !important; font-weight: 800; font-size: 13px; padding: 9px 20px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
-        🖥️ Abrir Terminal da Portaria (/portaria)
-      </a>
     </div>
 
     ${isPendingSecondGuest ? `
       <!-- Alerta de 2 Hóspedes com apenas 1 Ficha Preenchida -->
-      <div style="background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
-        <strong style="color: #92400e; font-size: 13px;">⚠️ ATENÇÃO PORTARIA: RESERVA PARA ${expectedGuests} HÓSPEDES</strong>
-        <p style="color: #78350f; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
+      <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 3px solid #D97706; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="color: #92400E; font-size: 13px; font-weight: 600;">⚠️ ATENÇÃO PORTARIA: RESERVA PARA ${expectedGuests} HÓSPEDES</div>
+        <p style="color: #78350F; font-size: 13px; margin: 6px 0 0 0; line-height: 1.5;">
           <strong>Apenas o 1º hóspede (${guestName}) que preencheu a ficha digital está LIBERADO para check-in.</strong> O segundo hóspede AINDA NÃO ESTÁ LIBERADO; estamos aguardando o preenchimento digital de sua ficha para autorização de acesso ao flat.
         </p>
-        <div style="margin-top: 8px;">
-          <a href="${checkinUrlGuest2}" style="color: #b45309; font-weight: 700; font-size: 12px; text-decoration: underline;">
+        <div style="margin-top: 10px;">
+          <a href="${checkinUrlGuest2}" style="color: #B45309; font-weight: 600; font-size: 13px; text-decoration: underline;">
             🔗 Link de Check-in para o 2º Hóspede
           </a>
         </div>
@@ -368,9 +524,9 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
 
     ${Boolean(reservation?.hasMinor || guests.some(g => g.isMinor)) ? `
       <!-- Alerta de Menor de Idade (ECA Art. 82) -->
-      <div style="background: #fff1f2; border: 1px solid #fecdd3; border-left: 4px solid #e11d48; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
-        <strong style="color: #9f1239; font-size: 13px;">👶 ATENÇÃO RECEPÇÃO: HÓSPEDE MENOR DE IDADE REGISTRADO (ECA Art. 82)</strong>
-        <p style="color: #881337; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
+      <div style="background-color: #FFF1F2; border: 1px solid #FECDD3; border-left: 3px solid #E11D48; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="color: #9F1239; font-size: 13px; font-weight: 600;">👶 ATENÇÃO RECEPÇÃO: HÓSPEDE MENOR DE IDADE REGISTRADO (ECA Art. 82)</div>
+        <p style="color: #881337; font-size: 13px; margin: 6px 0 0 0; line-height: 1.5;">
           Identificado hóspede menor de 18 anos nesta estadia. <strong>Conforme a Lei nº 8.069/1990 (ECA), é obrigatória a presença dos pais ou responsável maior portando autorização formal por escrito com firma reconhecida em cartório para liberação de chaves.</strong>
         </p>
       </div>
@@ -378,9 +534,9 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
 
     ${Boolean(reservation?.isCamposResident || reservation?.riskAttentionReason?.toLowerCase()?.includes("campos")) ? `
       <!-- Alerta de Radar Local (Campos dos Goytacazes/RJ) -->
-      <div style="background: #f5f3ff; border: 1px solid #ddd6fe; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
-        <strong style="color: #5b21b6; font-size: 13px;">📍 RADAR OPERACIONAL: HÓSPEDE DE CAMPOS DOS GOYTACAZES/RJ</strong>
-        <p style="color: #4c1d95; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
+      <div style="background-color: #F5F3FF; border: 1px solid #DDD6FE; border-left: 3px solid #7C3AED; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="color: #5B21B6; font-size: 13px; font-weight: 600;">📍 RADAR OPERACIONAL: HÓSPEDE DE CAMPOS DOS GOYTACAZES/RJ</div>
+        <p style="color: #4C1D95; font-size: 13px; margin: 6px 0 0 0; line-height: 1.5;">
           Hóspede residente ou com documento emitido em Campos dos Goytacazes/RJ. Reserva incluída no radar de atenção operacional da equipe.
         </p>
       </div>
@@ -388,63 +544,68 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
 
     ${Boolean(reservation?.fnrhDocumentUuid || reservation?.fnrhFilePath || guests.some(g => g.fnrhDocumentUuid || g.fnrhFilePath)) ? `
       <!-- Aviso de FNRH PDF Anexada -->
-      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #059669; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #065f46; line-height: 1.4;">
-        <strong>📄 Ficha Digital FNRH Anexada em PDF:</strong> A Ficha Nacional de Registro de Hóspedes (FNRH) assinada digitalmente com trilha forense e QR Code foi anexada a este e-mail em formato PDF.
+      <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #059669; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #374151; line-height: 1.5;">
+        <strong style="color: #111827;">📄 Ficha Digital FNRH Anexada em PDF:</strong> A Ficha Nacional de Registro de Hóspedes (FNRH) assinada digitalmente com trilha forense e QR Code foi anexada a este e-mail em formato PDF.
       </div>
     ` : ""}
 
     ${Boolean(reservation?.docPhotoUrl || reservation?.docPhotoPath || reservation?.documentPhotoUrl || guests.some(g => g.docPhotoUrl || g.docPhotoPath)) ? `
       <!-- Aviso de Documento Oficial Anexado -->
-      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #166534; line-height: 1.4;">
-        <strong>📎 Documento Oficial do Hóspede Anexado:</strong> O documento com foto (PDF ou imagem) anexado à reserva foi incluído como anexo a este e-mail para conferência na recepção.
+      <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #16A34A; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #374151; line-height: 1.5;">
+        <strong style="color: #111827;">📎 Documento Oficial do Hóspede Anexado:</strong> O documento com foto (PDF ou imagem) anexado à reserva foi incluído como anexo a este e-mail para conferência na recepção.
       </div>
     ` : ""}
 
-    <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe de Recepção & Portaria!</h2>
-      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        Segue o informativo cadastral da reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong>:
-      </p>
-    </div>
-
-    <div class="section-title">🏢 Identificação da Unidade</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Edifício:</td><td class="val">${buildingName}</td></tr>
-        <tr><td class="label">Apartamento:</td><td class="val" style="font-size: 15px; color: #d97706;">Flat ${flatNumber}</td></tr>
-        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${reservation?.code || reservation?.id}</td></tr>
-        <tr><td class="label">Check-in Digital:</td><td class="val"><a href="${checkinUrl}" style="color: #059669; font-weight: 700; text-decoration: none;">Abrir Ficha de Check-in</a></td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Identificação da Unidade</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${buildingName}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">Flat ${flatNumber}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${reservation?.code || reservation?.id}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Abrir Ficha de Check-in</a></td></tr>
       </table>
     </div>
 
-    <div class="section-title">📅 Período da Hospedagem</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Entrada (Check-in):</td><td class="val">${checkinDateBr} (Previsão: ${checkinTime})</td></tr>
-        <tr><td class="label">Early Check-in:</td><td class="val">${earlyCheckin}</td></tr>
-        <tr><td class="label">Saída (Check-out):</td><td class="val">${checkoutDateBr} (até as ${checkoutTime})</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Período da Hospedagem</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (Previsão: ${checkinTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Early Check-in:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${earlyCheckin}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr} (até as ${checkoutTime})</td></tr>
       </table>
     </div>
 
-    <div class="section-title">👥 Hóspedes Autorizados (${guests.length})</div>
-    <div class="info-card" style="padding-top: 6px;">
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Hóspedes Autorizados (${guests.length})</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
       ${guestsHtml}
     </div>
 
-    <div class="section-title">🚗 Veículo / Vaga de Garagem</div>
-    <div class="info-card">
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Veículo / Vaga de Garagem</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
       ${vehicleHtml}
     </div>
 
     ${receptionNotes ? `
-      <div class="section-title">⚠️ Observações de Acesso</div>
-      <div class="info-card" style="background: #fffbeb; border-color: #fde68a;">
-        <div style="font-size: 13px; color: #92400e; font-weight: 600;">${receptionNotes}</div>
+      <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Observações de Acesso</div>
+      <div class="info-card" style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="font-size: 14px; color: #92400E; font-weight: 600;">${receptionNotes}</div>
       </div>
     ` : ""}
+
+    <!-- Bloco de Ação: Terminal da Portaria -->
+    <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-top: 24px;">
+      <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-bottom: 4px;">Painel da Recepção & Portaria 24h</div>
+      <div style="font-size: 15px; font-weight: 600; color: #111827; margin-bottom: 6px;">Consulte Detalhes no Terminal da Portaria</div>
+      <p style="font-size: 13px; color: #6B7280; margin: 0 0 14px 0; line-height: 1.5;">
+        Acesse pelo tablet ou computador da portaria para conferência de documentos, fotos dos hóspedes e baixa rápida de entrada.
+      </p>
+      <a href="https://corpflats.onrender.com/portaria" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
+        Abrir Terminal da Portaria (/portaria)
+      </a>
+    </div>
   `;
 
-  const badge = `<span class="badge badge-checkin">✓ Check-in Confirmado</span>`;
+  const badge = `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Check-in Confirmado</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
 
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
@@ -476,53 +637,53 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
     }
     return `
       <li style="margin-bottom: 6px;">
-        <strong>${c.label || c.field}:</strong> 
-        <span style="text-decoration: line-through; color: #94a3b8;">${c.oldValue || "Anterior"}</span> 
-        ➔ <strong style="color: #047857;">${c.newValue || "Novo"}</strong>
+        <strong style="color: #111827;">${c.label || c.field}:</strong> 
+        <span style="text-decoration: line-through; color: #9CA3AF;">${c.oldValue || "Anterior"}</span> 
+        ➔ <strong style="color: #111827;">${c.newValue || "Novo"}</strong>
       </li>
     `;
   }).join("");
 
   const contentHtml = `
-    <div style="margin-bottom: 18px;">
-      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Aviso de Modificação de Reserva</h2>
-      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        A reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong> sofreu alterações no sistema:
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Aviso de Modificação de Reserva</h1>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        A reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong> sofreu alterações no sistema.
       </p>
     </div>
 
     ${isCancelled ? `
-      <div class="callout-cancel">
-        <strong style="color: #b91c1c; font-size: 14px;">❌ ATENÇÃO: RESERVA CANCELADA</strong>
-        <p style="color: #7f1d1d; font-size: 12px; margin: 4px 0 0 0;">
+      <div class="callout-cancel" style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 3px solid #DC2626; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
+        <strong style="color: #B91C1C; font-size: 14px;">ATENÇÃO: RESERVA CANCELADA</strong>
+        <p style="color: #7F1D1D; font-size: 13px; margin: 6px 0 0 0; line-height: 1.5;">
           A entrada para esta reserva não deve ser liberada. O quarto retornou ao status vago.
         </p>
       </div>
     ` : `
-      <div class="callout-alert">
-        <strong style="color: #92400e; font-size: 14px;">⚡ Modificações Realizadas:</strong>
-        <ul style="margin: 8px 0 0 16px; padding: 0; font-size: 13px; color: #78350f;">
+      <div class="callout-alert" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #D97706; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
+        <strong style="color: #111827; font-size: 14px;">Modificações Realizadas:</strong>
+        <ul style="margin: 8px 0 0 18px; padding: 0; font-size: 14px; color: #374151; line-height: 1.6;">
           ${changesHtml || "<li>As datas ou detalhes cadastrais da reserva foram atualizados.</li>"}
         </ul>
       </div>
     `}
 
-    <div class="section-title">📋 Resumo Atualizado da Reserva</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Apartamento:</td><td class="val">Flat ${flatNumber} (${buildingName})</td></tr>
-        <tr><td class="label">Hóspede Titular:</td><td class="val">${guestName}</td></tr>
-        <tr><td class="label">Entrada (Check-in):</td><td class="val">${formatDateBr(reservation?.checkinDate)}</td></tr>
-        <tr><td class="label">Saída (Check-out):</td><td class="val">${formatDateBr(reservation?.checkoutDate)}</td></tr>
-        <tr><td class="label">Status Atual:</td><td class="val" style="text-transform: uppercase; color: ${isCancelled ? '#dc2626' : '#059669'}; font-weight: 800;">${reservation?.status || "Confirmada"}</td></tr>
-        <tr><td class="label">Check-in Digital:</td><td class="val"><a href="${checkinUrl}" style="color: #059669; font-weight: 700; text-decoration: none;">Acessar Ficha de Check-in</a></td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Resumo Atualizado da Reserva</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">Flat ${flatNumber} (${buildingName})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Hóspede Titular:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${guestName}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatDateBr(reservation?.checkinDate)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatDateBr(reservation?.checkoutDate)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status Atual:</td><td class="val" style="padding: 5px 0; font-size: 14px; text-transform: uppercase; color: ${isCancelled ? '#DC2626' : '#059669'}; font-weight: 600; width: 62%;">${reservation?.status || "Confirmada"}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Acessar Ficha de Check-in</a></td></tr>
       </table>
     </div>
   `;
 
   const badge = isCancelled 
-    ? `<span class="badge badge-cancel">❌ Reserva Cancelada</span>` 
-    : `<span class="badge badge-update">⚡ Reserva Alterada</span>`;
+    ? `<span class="badge badge-cancel" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Reserva Cancelada</span>` 
+    : `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Reserva Alterada</span>`;
 
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
@@ -538,21 +699,19 @@ export function renderManualEmail({ subject, message, bodyText, reservation, fla
   const finalMessage = message || bodyText || "";
 
   const contentHtml = `
-    <div style="margin-bottom: 16px;">
-      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">${subject}</h2>
+    <div style="margin-bottom: 20px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">${subject}</h1>
       ${reservation ? `
-        <p style="font-size: 11px; color: #64748b; margin: 0 0 16px 0;">
-          Ref: Flat ${flatNumber} • Hóspede: ${guestName} • Reserva #${reservation?.code || reservation?.id}
+        <p style="font-size: 12px; color: #6B7280; margin: 0;">
+          Ref: Flat ${flatNumber} • Hóspede: ${guestName} • Reserva #${reservation?.code || reservation?.id} • ${buildingName}
         </p>
       ` : ""}
     </div>
 
-    <div class="info-card" style="background: #ffffff; line-height: 1.6; font-size: 14px; color: #1e293b; white-space: pre-wrap;">
-      ${finalMessage}
-    </div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; line-height: 1.6; font-size: 15px; color: #374151; white-space: pre-wrap;">${finalMessage}</div>
   `;
 
-  const badge = `<span class="badge badge-general">Mensagem Direta</span>`;
+  const badge = `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Mensagem Direta</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml };
 }
@@ -580,7 +739,7 @@ export function whatsAppTextToEmailHtml(text = "") {
   html = html.replace(/https?:\/\/[^\s<]+/g, (url) => {
     const cleanUrl = url.replace(/[.,;:!?)]+$/, "");
     const trailing = url.slice(cleanUrl.length);
-    urlTokens.push(`<a href="${cleanUrl}" style="color: #047857; font-weight: 700; word-break: break-all;">${cleanUrl}</a>`);
+    urlTokens.push(`<a href="${cleanUrl}" style="color: #111827; font-weight: 600; text-decoration: underline; word-break: break-all;">${cleanUrl}</a>`);
     return `\u0000URL${urlTokens.length - 1}\u0000${trailing}`;
   });
   html = html
@@ -627,37 +786,40 @@ export function renderWhatsAppMirrorEmail({
         const code = String(b.copyCode || "").trim();
         const link = absolutize(b.url);
         return `
-          <div style="background: #f8fafc; border: 1px dashed #94a3b8; border-radius: 10px; padding: 12px 14px; margin: 10px 0; text-align: left;">
-            <div style="font-size: 12px; font-weight: 800; color: #334155; margin-bottom: 6px;">${label}</div>
-            ${code ? `<div style="font-family: monospace; font-size: 12px; color: #0f172a; word-break: break-all; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px;">${escapeHtml(code)}</div>` : ""}
-            ${link ? `<a href="${escapeHtml(link)}" class="btn-action" style="background: #047857;">Abrir página para copiar</a>` : ""}
+          <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin: 12px 0; text-align: left;">
+            <div style="font-size: 13px; font-weight: 600; color: #111827; margin-bottom: 8px;">${label}</div>
+            ${code ? `<div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; color: #111827; word-break: break-all; background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px; padding: 10px 12px;">${escapeHtml(code)}</div>` : ""}
+            ${link ? `<a href="${escapeHtml(link)}" class="btn-action" style="display: inline-block; padding: 12px 24px; background-color: #111827; color: #FFFFFF !important; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 700; margin-top: 10px;">Abrir página para copiar</a>` : ""}
           </div>`;
       }
       if (type === "CALL" || (b.phone && !b.url)) {
         const digits = String(b.phone || "").replace(/\D/g, "");
         if (!digits) return "";
-        return `<a href="https://wa.me/${digits}" class="btn-action" style="margin-right: 8px;">${label}</a>`;
+        return `<a href="https://wa.me/${digits}" class="btn-action" style="display: inline-block; padding: 12px 24px; background-color: #111827; color: #FFFFFF !important; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 700; margin-right: 8px; margin-top: 8px;">${label}</a>`;
       }
       const link = absolutize(b.url);
       if (!link) return ""; // Respostas rápidas (REPLY) não funcionam por e-mail
-      return `<a href="${escapeHtml(link)}" class="btn-action" style="margin-right: 8px;">${label}</a>`;
+      return `<a href="${escapeHtml(link)}" class="btn-action" style="display: inline-block; padding: 12px 24px; background-color: #111827; color: #FFFFFF !important; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 700; margin-right: 8px; margin-top: 8px;">${label}</a>`;
     })
     .filter(Boolean)
     .join("\n");
 
   const docLink = documentUrl ? absolutize(documentUrl) : "";
   const docHtml = docLink
-    ? `<a href="${escapeHtml(docLink)}" class="btn-action" style="background: #b45309;">📄 Baixar ${escapeHtml(documentName || "documento")}</a>`
+    ? `<a href="${escapeHtml(docLink)}" class="btn-action" style="display: inline-block; padding: 12px 24px; background-color: #111827; color: #FFFFFF !important; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 700; margin-top: 8px;">📄 Baixar ${escapeHtml(documentName || "documento")}</a>`
     : "";
 
-  const footerLine = footer ? `<div style="margin-top: 18px; font-size: 12px; color: #64748b;">${escapeHtml(footer)}</div>` : "";
+  const footerLine = footer ? `<div style="margin-top: 20px; font-size: 12px; color: #6B7280;">${escapeHtml(footer)}</div>` : "";
 
   const contentHtml = `
-    <div style="font-size: 14px; line-height: 1.6; color: #1e293b;">
+    <div style="margin-bottom: 16px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0;">${escapeHtml(finalSubject)}</h1>
+    </div>
+    <div style="font-size: 15px; line-height: 1.6; color: #374151;">
       ${messageHtml}
     </div>
     ${(buttonsHtml || docHtml) ? `
-      <div style="margin-top: 20px;">
+      <div style="margin-top: 24px;">
         ${buttonsHtml}
         ${docHtml}
       </div>
@@ -669,7 +831,7 @@ export function renderWhatsAppMirrorEmail({
   const footerHtml = `Você recebeu este e-mail porque está cadastrado(a) em uma reserva no ${hotelName}.<br/>
       Esta mensagem também foi enviada pelo nosso WhatsApp. Em caso de dúvidas, responda este e-mail ou fale conosco pelo WhatsApp.`;
 
-  const badge = `<span class="badge badge-general">Sua Reserva</span>`;
+  const badge = `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Sua Reserva</span>`;
   const bodyHtml = wrapEmailTemplate({ title: escapeHtml(finalSubject), badge, contentHtml, footerHtml });
 
   const bodyText = [
@@ -709,70 +871,70 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
   const subject = `${flatDisplay} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
 
   const contentHtml = `
-    <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe da Garagem (PFB Estacionamentos)!</h2>
-      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        Solicitamos a <strong>liberação de entrada e acesso à vaga de garagem</strong> para o veículo cadastrado abaixo, referente à acomodação no <strong>${flatDisplay}</strong> (${buildingName}):
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Olá, Equipe da Garagem (PFB Estacionamentos)</h1>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Solicitamos a <strong>liberação de entrada e acesso à vaga de garagem</strong> para o veículo cadastrado abaixo, referente à acomodação no <strong>${flatDisplay}</strong> (${buildingName}).
       </p>
     </div>
 
-    <div class="section-title">🚗 Veículo Autorizado</div>
-    <div class="info-card" style="background: #f0f9ff; border-color: #bae6fd; padding: 16px;">
-      <table class="info-table">
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Veículo Autorizado</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
         <tr>
-          <td class="label" style="color: #0369a1; font-weight: 800; font-size: 13px;">Placa do Veículo:</td>
-          <td class="val">
-            <span style="font-family: monospace; font-size: 17px; font-weight: 900; color: #0284c7; background: #ffffff; padding: 4px 12px; border-radius: 6px; border: 1px solid #7dd3fc; letter-spacing: 1px; display: inline-block;">
+          <td class="label" style="padding: 5px 0; color: #6B7280; font-weight: 500; font-size: 13px; width: 38%;">Placa do Veículo:</td>
+          <td class="val" style="padding: 5px 0; width: 62%;">
+            <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 15px; font-weight: 700; color: #111827; background-color: #FFFFFF; padding: 4px 10px; border-radius: 6px; border: 1px solid #E5E7EB; letter-spacing: 0.8px; display: inline-block;">
               ${vPlate}
             </span>
           </td>
         </tr>
         <tr>
-          <td class="label" style="color: #0369a1;">Modelo / Marca:</td>
-          <td class="val" style="color: #0f172a; font-size: 14px;">${vehicleDesc}</td>
+          <td class="label" style="padding: 5px 0; color: #6B7280; font-weight: 500; font-size: 13px; width: 38%;">Modelo / Marca:</td>
+          <td class="val" style="padding: 5px 0; color: #111827; font-size: 14px; font-weight: 600; width: 62%;">${vehicleDesc}</td>
         </tr>
         <tr>
-          <td class="label" style="color: #0369a1;">Cor:</td>
-          <td class="val" style="color: #0f172a;">${vColor || "Não informada"}</td>
+          <td class="label" style="padding: 5px 0; color: #6B7280; font-weight: 500; font-size: 13px; width: 38%;">Cor:</td>
+          <td class="val" style="padding: 5px 0; color: #111827; font-size: 14px; font-weight: 600; width: 62%;">${vColor || "Não informada"}</td>
         </tr>
         <tr>
-          <td class="label" style="color: #0369a1;">Status de Entrada:</td>
-          <td class="val" style="color: #059669; font-weight: 800; font-size: 13px;">✓ ENTRADA LIBERADA NA GARAGEM</td>
+          <td class="label" style="padding: 5px 0; color: #6B7280; font-weight: 500; font-size: 13px; width: 38%;">Status de Entrada:</td>
+          <td class="val" style="padding: 5px 0; color: #059669; font-weight: 600; font-size: 13px; width: 62%;">✓ ENTRADA LIBERADA NA GARAGEM</td>
         </tr>
       </table>
     </div>
 
-    <div class="section-title">🏢 Identificação da Unidade & Hóspede</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Apartamento:</td><td class="val" style="font-size: 15px; color: #d97706; font-weight: 800;">${flatDisplay}</td></tr>
-        <tr><td class="label">Edifício / Condomínio:</td><td class="val">${buildingName}</td></tr>
-        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${reservation?.code || reservation?.id || "-"}</td></tr>
-        <tr><td class="label">Hóspede Titular:</td><td class="val">${guestName}</td></tr>
-        ${reservation?.guestDocument ? `<tr><td class="label">Documento / CPF:</td><td class="val">${reservation.guestDocument}</td></tr>` : ""}
-        ${reservation?.guestPhone ? `<tr><td class="label">Telefone / WhatsApp:</td><td class="val">${reservation.guestPhone}</td></tr>` : ""}
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Identificação da Unidade & Hóspede</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício / Condomínio:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${buildingName}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${reservation?.code || reservation?.id || "-"}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Hóspede Titular:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${guestName}</td></tr>
+        ${reservation?.guestDocument ? `<tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Documento / CPF:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${reservation.guestDocument}</td></tr>` : ""}
+        ${reservation?.guestPhone ? `<tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Telefone / WhatsApp:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${reservation.guestPhone}</td></tr>` : ""}
       </table>
     </div>
 
-    <div class="section-title">📅 Período da Estadia Autorizada</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Entrada (Check-in):</td><td class="val">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
-        <tr><td class="label">Saída (Check-out):</td><td class="val">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Período da Estadia Autorizada</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
       </table>
     </div>
 
     ${reservation?.receptionNotes && reservation.receptionNotes.trim() ? `
-      <div class="section-title">⚠️ Observações Adicionais</div>
-      <div class="info-card" style="background: #fffbeb; border-color: #fde68a;">
-        <div style="font-size: 13px; color: #92400e; font-weight: 600;">
+      <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Observações Adicionais</div>
+      <div class="info-card" style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="font-size: 14px; color: #92400E; font-weight: 600;">
           Nota de Recepção: ${reservation.receptionNotes.trim().replace(/^nota\s+(de\s+)?recep[cç][aã]o:\s*/i, "").trim()}
         </div>
       </div>
     ` : ""}
   `;
 
-  const badge = `<span class="badge" style="background-color: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;">🚗 Garagem Autorizada</span>`;
+  const badge = `<span class="badge" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Garagem Autorizada</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
 
   return { subject, bodyHtml, html: bodyHtml };
@@ -801,47 +963,47 @@ export function renderReservationConfirmationEmail({ reservation, flat, settings
   const subject = `[CONFIRMAÇÃO DE RESERVA] ${flatDisplay} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
 
   const contentHtml = `
-    <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Sua Reserva está Confirmada! 🎉</h2>
-      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        Olá, <strong>${guestName}</strong>! É uma satisfação receber você no <strong>${buildingName}</strong>. Abaixo estão os detalhes da sua estadia:
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Sua Reserva está Confirmada</h1>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Olá, <strong>${guestName}</strong>. É uma satisfação receber você no <strong>${buildingName}</strong>. Abaixo estão os detalhes da sua estadia e o link para o pré-check-in digital.
       </p>
     </div>
 
     <!-- Chamada para Pré Check-in Digital Dinâmico -->
-    <div style="background: linear-gradient(135deg, #064e3b 0%, #047857 100%); border-radius: 12px; padding: 20px; margin-bottom: 22px; color: #ffffff; text-align: center; border: 1px solid #059669; box-shadow: 0 4px 12px rgba(4,120,87,0.15);">
-      <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #a7f3d0; margin-bottom: 6px;">Agilidade na Portaria</div>
-      <div style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">Realize seu Check-in Digital Antecipado</div>
-      <p style="font-size: 12px; color: #d1fae5; margin: 0 0 14px 0; line-height: 1.4;">
+    <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 24px;">
+      <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: #6B7280; margin-bottom: 4px;">Agilidade na Portaria</div>
+      <div style="font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 6px;">Realize seu Check-in Digital Antecipado</div>
+      <p style="font-size: 14px; color: #374151; margin: 0 0 16px 0; line-height: 1.5;">
         Para liberar seu acesso na portaria 24h sem filas, preencha os dados dos hóspedes pelo link seguro abaixo:
       </p>
-      <a href="${checkinUrl}" style="display: inline-block; background: #ffffff; color: #065f46 !important; font-weight: 800; font-size: 14px; padding: 11px 24px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+      <a href="${checkinUrl}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
         ${buttonLabel}
       </a>
-      <div style="font-size: 11px; color: #a7f3d0; margin-top: 10px; word-break: break-all;">
+      <div style="font-size: 12px; color: #6B7280; margin-top: 12px; word-break: break-all;">
         Ou copie o link: <span style="text-decoration: underline;">${checkinUrl}</span>
       </div>
     </div>
 
-    <div class="section-title">🏢 Identificação da Unidade</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Edifício:</td><td class="val">${buildingName}</td></tr>
-        <tr><td class="label">Acomodação:</td><td class="val" style="font-size: 15px; color: #d97706; font-weight: 800;">${flatDisplay}</td></tr>
-        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${resCode}</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Identificação da Unidade</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${buildingName}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Acomodação:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${resCode}</td></tr>
       </table>
     </div>
 
-    <div class="section-title">📅 Período da Hospedagem</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Entrada (Check-in):</td><td class="val">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
-        <tr><td class="label">Saída (Check-out):</td><td class="val">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Período da Hospedagem</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
       </table>
     </div>
   `;
 
-  const badge = `<span class="badge badge-checkin">✓ Reserva Confirmada</span>`;
+  const badge = `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Reserva Confirmada</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
@@ -872,50 +1034,50 @@ export function renderPreCheckinReminderEmail({ reservation, flat, settings, bas
   const subject = `[LEMBRETE DE CHECK-IN] ${flatDisplay} - ${guestName} (Entrada: ${checkinDateBr})`;
 
   const contentHtml = `
-    <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Lembrete de Pré-Check-in Digital 🏨</h2>
-      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        Olá, <strong>${guestName}</strong>! Sua entrada no <strong>${flatDisplay}</strong> está próxima (${checkinDateBr} a partir das ${checkinTime}).
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Lembrete de Pré-Check-in Digital</h1>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Olá, <strong>${guestName}</strong>. Sua entrada no <strong>${flatDisplay}</strong> está próxima (${checkinDateBr} a partir das ${checkinTime}).
       </p>
     </div>
 
     ${isMultiGuest && firstGuestDone ? `
-      <div style="background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 14px 16px; margin-bottom: 18px;">
-        <strong style="color: #92400e; font-size: 13px;">⚠️ Cadastro Pendente do 2º Hóspede</strong>
-        <p style="color: #78350f; font-size: 12px; margin: 4px 0 10px 0; line-height: 1.4;">
-          A ficha do titular foi recebida com sucesso! Falta apenas o preenchimento do segundo acompanhante para liberação de crachá na portaria:
+      <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #D97706; border-radius: 6px; padding: 16px; margin-bottom: 20px;">
+        <div style="color: #111827; font-size: 14px; font-weight: 600;">Cadastro Pendente do 2º Hóspede</div>
+        <p style="color: #374151; font-size: 14px; margin: 6px 0 14px 0; line-height: 1.5;">
+          A ficha do titular foi recebida com sucesso. Falta apenas o preenchimento do segundo acompanhante para liberação na portaria:
         </p>
-        <a href="${checkinUrlGuest2}" style="display: inline-block; background: #f59e0b; color: #ffffff !important; font-weight: 800; font-size: 13px; padding: 8px 18px; border-radius: 6px; text-decoration: none;">
+        <a href="${checkinUrlGuest2}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
           Preencher Check-in do 2º Hóspede
         </a>
       </div>
     ` : `
-      <div style="background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%); border-radius: 12px; padding: 20px; margin-bottom: 22px; color: #ffffff; text-align: center; border: 1px solid #2563eb; box-shadow: 0 4px 12px rgba(29,78,216,0.15);">
-        <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #93c5fd; margin-bottom: 6px;">Liberação Antecipada</div>
-        <div style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">Sua Ficha de Check-in ainda está pendente</div>
-        <p style="font-size: 12px; color: #bfdbfe; margin: 0 0 14px 0; line-height: 1.4;">
+      <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 24px;">
+        <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: #6B7280; margin-bottom: 4px;">Liberação Antecipada</div>
+        <div style="font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 6px;">Sua Ficha de Check-in ainda está pendente</div>
+        <p style="font-size: 14px; color: #374151; margin: 0 0 16px 0; line-height: 1.5;">
           Preencha antecipadamente para que a portaria autorize sua entrada sem burocracia na chegada:
         </p>
-        <a href="${checkinUrl}" style="display: inline-block; background: #ffffff; color: #1e40af !important; font-weight: 800; font-size: 14px; padding: 11px 24px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+        <a href="${checkinUrl}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
           ${buttonLabel}
         </a>
-        <div style="font-size: 11px; color: #93c5fd; margin-top: 10px; word-break: break-all;">
+        <div style="font-size: 12px; color: #6B7280; margin-top: 12px; word-break: break-all;">
           Ou acesse: <span style="text-decoration: underline;">${checkinUrl}</span>
         </div>
       </div>
     `}
 
-    <div class="section-title">🏢 Dados da Estadia</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Apartamento:</td><td class="val" style="color: #d97706; font-weight: 800;">${flatDisplay} (${buildingName})</td></tr>
-        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${resCode}</td></tr>
-        <tr><td class="label">Data de Entrada:</td><td class="val">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Dados da Estadia</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay} (${buildingName})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${resCode}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Data de Entrada:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
       </table>
     </div>
   `;
 
-  const badge = `<span class="badge badge-update">⚡ Lembrete de Check-in</span>`;
+  const badge = `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Lembrete de Check-in</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
@@ -942,47 +1104,47 @@ export function renderAccessInstructionsEmail({ reservation, flat, settings, bas
   const subject = `[INSTRUÇÕES DE ACESSO] ${flatDisplay} - ${guestName} (${buildingName})`;
 
   const contentHtml = `
-    <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Instruções para sua Chegada e Acesso 🔑</h2>
-      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        Olá, <strong>${guestName}</strong>! Seguem todas as informações necessárias para sua entrada no <strong>${flatDisplay}</strong>:
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Instruções para sua Chegada e Acesso</h1>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Olá, <strong>${guestName}</strong>. Seguem todas as informações necessárias para sua entrada no <strong>${flatDisplay}</strong>.
       </p>
     </div>
 
     <!-- Passos de Entrada -->
-    <div class="info-card" style="background: #f8fafc; border-left: 4px solid #3b82f6;">
-      <div style="font-weight: 800; color: #1e293b; font-size: 14px; margin-bottom: 8px;">📋 Passo a Passo para Entrada:</div>
-      <ol style="margin: 0 0 0 16px; padding: 0; font-size: 13px; color: #334155; line-height: 1.6;">
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <div style="font-weight: 600; color: #111827; font-size: 14px; margin-bottom: 8px;">Passo a Passo para Entrada:</div>
+      <ol style="margin: 0 0 16px 18px; padding: 0; font-size: 14px; color: #374151; line-height: 1.6;">
         <li>Dirija-se à <strong>portaria 24h</strong> do condomínio <strong>${buildingName}</strong>.</li>
         <li>Identifique-se informando seu nome e o <strong>${flatDisplay}</strong>.</li>
         <li>Certifique-se de que seu <strong>Pré-Check-in Digital</strong> está concluído no link abaixo para autorização imediata da chave.</li>
       </ol>
-      <div style="margin-top: 14px; text-align: center;">
-        <a href="${checkinUrl}" style="display: inline-block; background: #2563eb; color: #ffffff !important; font-weight: 800; font-size: 13px; padding: 10px 22px; border-radius: 8px; text-decoration: none;">
+      <div>
+        <a href="${checkinUrl}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
           📝 Acessar / Conferir Ficha de Check-in
         </a>
       </div>
     </div>
 
-    <div class="section-title">📶 Conexão Wi-Fi</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Rede:</td><td class="val" style="font-weight: 800; color: #0369a1;">${wifiNetwork}</td></tr>
-        <tr><td class="label">Senha:</td><td class="val" style="font-family: monospace; font-size: 14px; color: #0f172a;">${wifiPassword}</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Conexão Wi-Fi</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Rede:</td><td class="val" style="padding: 5px 0; font-size: 14px; font-weight: 600; color: #111827; width: 62%;">${wifiNetwork}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Senha:</td><td class="val" style="padding: 5px 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${wifiPassword}</td></tr>
       </table>
     </div>
 
-    <div class="section-title">🏢 Detalhes da Reserva</div>
-    <div class="info-card">
-      <table class="info-table">
-        <tr><td class="label">Acomodação:</td><td class="val" style="color: #d97706; font-weight: 800;">${flatDisplay} (${buildingName})</td></tr>
-        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${resCode}</td></tr>
-        <tr><td class="label">Horário de Entrada:</td><td class="val">${checkinDateBr} a partir das ${checkinTime}</td></tr>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Detalhes da Reserva</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Acomodação:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay} (${buildingName})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${resCode}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Horário de Entrada:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} a partir das ${checkinTime}</td></tr>
       </table>
     </div>
   `;
 
-  const badge = `<span class="badge badge-general">🔑 Instruções de Acesso</span>`;
+  const badge = `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Instruções de Acesso</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
