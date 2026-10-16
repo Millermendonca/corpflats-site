@@ -35,6 +35,9 @@ export interface PricingSettings {
   occupancyRate: number;
   fixedRent: number;
   fixedOther: number;
+  fixedSalaries?: number;
+  fixedCondoIptu?: number;
+  fixedSystems?: number;
   fixedCostsMonth: number;
   varCleaning: number;
   varLinen: number;
@@ -47,6 +50,9 @@ export interface PricingSettings {
   variationLimitPct: number;
   manualFloor: number;
   weekendMarkupPct: number;
+  hasPlanCeiling?: boolean;
+  planCeilingCount?: number;
+  seasonalityOverrides?: Record<string, { factor: number; season: "Alta" | "Média" | "Baixa"; occupancyRate?: number }>;
   hasStagedChanges?: boolean;
   stagedChangesCount?: number;
 }

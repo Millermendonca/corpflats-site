@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Sliders, ShieldAlert, CheckCircle, Save, Calendar, Ban } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,27 @@ export const RestrictionsTab: React.FC = () => {
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/wbp/restrictions")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.restrictions?.defaults) {
+          const def = data.restrictions.defaults;
+          setRestrictions((prev) => ({
+            ...prev,
+            minStay: Number(def.minNights ?? prev.minStay),
+            maxStay: Number(def.maxNights ?? prev.maxStay),
+            stopSell: Boolean(def.stopSell ?? prev.stopSell),
+            closedToArrival: Boolean(def.closedToArrival ?? prev.closedToArrival),
+            closedToDeparture: Boolean(def.closedToDeparture ?? prev.closedToDeparture),
+            minAdvanceDays: Number(def.minAdvanceDays ?? prev.minAdvanceDays),
+            maxAdvanceDays: Number(def.maxAdvanceDays ?? prev.maxAdvanceDays),
+          }));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSave = async () => {
     setIsSaving(true);

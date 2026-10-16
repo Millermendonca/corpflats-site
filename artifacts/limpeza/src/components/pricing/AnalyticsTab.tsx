@@ -8,19 +8,27 @@ interface AnalyticsTabProps {
 }
 
 export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
-  // 19 flats * 365 days * 65% occupancy = 4507.75 room nights/year
-  const totalRoomNightsYear = 19 * 365 * (calculation.occupancyRate || 0.65);
-  const avgRate = calculation.tarifaMinima || 276.63;
-  
-  const grossRevenueYear = totalRoomNightsYear * avgRate; // e.g. ~ R$ 1.246.980,00
-  const totalCostYear = totalRoomNightsYear * (calculation.custoUH || 149.38);
-  const totalCommissionYear = grossRevenueYear * 0.15;
-  const totalTaxesYear = grossRevenueYear * 0.06;
+  const totalUHs = Number(calculation.totalUHs || 19);
+  const occRate = Number(calculation.occupancyRate || 0.65);
+  const totalRoomNightsYear = totalUHs * 365 * occRate;
+  const avgRate = Number(calculation.tarifaMinima || 276.63);
+  const commPct = Number(calculation.percentuais?.comissaoPct ?? 0.15);
+  const taxPct = Number(calculation.percentuais?.impostoPct ?? 0.06);
+  const marginPct = Number(calculation.percentuais?.margemPct ?? 0.25);
+  const custoPct = Number(calculation.percentuais?.custoPct ?? 0.54);
+  const netRatio = Math.max(0.01, 1 - commPct - taxPct);
+
+  const grossRevenueYear = totalRoomNightsYear * avgRate;
+  const totalCostYear = totalRoomNightsYear * Number(calculation.custoUH || 149.38);
+  const fixedYear = Number(calculation.fixedCostsMonth || 38906.61) * 12;
+  const varYear = totalRoomNightsYear * Number(calculation.varCostPerUnit || 47.76);
+  const totalCommissionYear = grossRevenueYear * commPct;
+  const totalTaxesYear = grossRevenueYear * taxPct;
   const totalNetMarginYear = grossRevenueYear - totalCostYear - totalCommissionYear - totalTaxesYear;
 
   // RevPAR = Occupancy * Average Daily Rate (ADR)
-  const revparGross = avgRate * (calculation.occupancyRate || 0.65);
-  const revparNet = (avgRate * 0.54) * (calculation.occupancyRate || 0.65);
+  const revparGross = avgRate * occRate;
+  const revparNet = (avgRate * Number(calculation.divisor || 0.54)) * occRate;
 
   return (
     <div className="space-y-6">
@@ -53,7 +61,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               R$ {totalCostYear.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Fixos (R$ 466k) + Variáveis (R$ 215k)
+              Fixos (R$ {(fixedYear / 1000).toFixed(0)}k) + Variáveis (R$ {(varYear / 1000).toFixed(0)}k)
             </p>
           </CardContent>
         </Card>
@@ -61,7 +69,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
         <Card className="border-border shadow-xs">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-semibold text-muted-foreground uppercase">
-              Lucro Líquido Projetado (25%)
+              Lucro Líquido Projetado ({Math.round(marginPct * 100)}%)
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -69,7 +77,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               R$ {totalNetMarginYear.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Margem livre após comissões e Simples
+              Margem livre após comissões ({Math.round(commPct * 100)}%) e Simples ({Math.round(taxPct * 100)}%)
             </p>
           </CardContent>
         </Card>
@@ -85,7 +93,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               R$ {revparNet.toFixed(2)}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Receita líquida por UH disponível/dia
+              RevPAR Bruto: R$ {revparGross.toFixed(2)} / dia
             </p>
           </CardContent>
         </Card>
@@ -112,7 +120,9 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-bold text-foreground">Site Direto (CorpFlats)</span>
-                  <span className="font-mono font-bold text-emerald-600">40% do mix • RevPAR Liq: R$ 104,50</span>
+                  <span className="font-mono font-bold text-emerald-600">
+                    40% do mix • RevPAR Liq: R$ {(avgRate * (1 - taxPct) * occRate).toFixed(2)}
+                  </span>
                 </div>
                 <div className="w-full h-3 rounded-full bg-muted overflow-hidden flex">
                   <div style={{ width: "40%" }} className="bg-emerald-600" />
@@ -123,7 +133,9 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-bold text-foreground">Booking.com</span>
-                  <span className="font-mono font-bold text-sky-600">45% do mix • RevPAR Liq: R$ 92,30</span>
+                  <span className="font-mono font-bold text-sky-600">
+                    45% do mix • RevPAR Liq: R$ {(avgRate * (1 - commPct - taxPct) * occRate).toFixed(2)}
+                  </span>
                 </div>
                 <div className="w-full h-3 rounded-full bg-muted overflow-hidden flex">
                   <div style={{ width: "45%" }} className="bg-sky-600" />
@@ -134,7 +146,9 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-bold text-foreground">Airbnb</span>
-                  <span className="font-mono font-bold text-rose-500">15% do mix • RevPAR Liq: R$ 89,70</span>
+                  <span className="font-mono font-bold text-rose-500">
+                    15% do mix • RevPAR Liq: R$ {(avgRate * (1 - Math.max(commPct, 0.15) - taxPct) * occRate).toFixed(2)}
+                  </span>
                 </div>
                 <div className="w-full h-3 rounded-full bg-muted overflow-hidden flex">
                   <div style={{ width: "15%" }} className="bg-rose-500" />
@@ -163,23 +177,23 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ calculation }) => {
               <span>R$ {grossRevenueYear.toFixed(2)}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-border/40 text-rose-600">
-              <span>(-) Comissões das OTAs (15%)</span>
+              <span>(-) Comissões das OTAs ({Math.round(commPct * 100)}%)</span>
               <span>- R$ {totalCommissionYear.toFixed(2)}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-border/40 text-rose-600">
-              <span>(-) Impostos s/ Faturamento (6%)</span>
+              <span>(-) Impostos s/ Faturamento ({Math.round(taxPct * 100)}%)</span>
               <span>- R$ {totalTaxesYear.toFixed(2)}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-border/40 font-semibold text-foreground">
-              <span>(=) Receita Operacional Líquida (79%)</span>
+              <span>(=) Receita Operacional Líquida ({Math.round(netRatio * 100)}%)</span>
               <span>R$ {(grossRevenueYear - totalCommissionYear - totalTaxesYear).toFixed(2)}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-border/40 text-rose-600">
-              <span>(-) Custos Totais da UH (54%)</span>
+              <span>(-) Custos Totais da UH ({Math.round(custoPct * 100)}%)</span>
               <span>- R$ {totalCostYear.toFixed(2)}</span>
             </div>
             <div className="flex justify-between py-2 bg-emerald-500/10 px-2 rounded-lg font-black text-emerald-700 dark:text-emerald-400 text-sm">
-              <span>(=) Lucro Operacional Líquido (25%)</span>
+              <span>(=) Lucro Operacional Líquido ({Math.round(marginPct * 100)}%)</span>
               <span>R$ {totalNetMarginYear.toFixed(2)}</span>
             </div>
           </CardContent>

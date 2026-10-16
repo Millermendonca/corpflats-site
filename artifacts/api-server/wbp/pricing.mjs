@@ -42,7 +42,9 @@ export const DEFAULT_SEBRAE_CONFIG = {
   extraBedFee: 60.00,
   variationLimitPct: 0.30, // 30% default variation lock
   manualFloor: 189.09,
-  weekendMarkupPct: 0.15
+  weekendMarkupPct: 0.15,
+  hasPlanCeiling: false,
+  planCeilingCount: 20
 };
 
 export const STANDARD_SEBRAE_SEASONALITY_FACTORS = {

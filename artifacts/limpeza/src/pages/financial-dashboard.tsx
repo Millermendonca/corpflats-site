@@ -22,7 +22,7 @@ export default function FinancialDashboard() {
   const { data: user, isLoading: loadingUser } = useGetMe()
 
   // Tabs do ERP Financeiro
-  const [activeTab, setActiveTab] = useState<"dre" | "payables" | "receivables" | "cashflow" | "contracts" | "pricing">("dre")
+  const [activeTab, setActiveTab] = useState<"dre" | "payables" | "receivables" | "cashflow" | "contracts">("dre")
   const [data, setData] = useState<any | null>(null)
   const [payablesData, setPayablesData] = useState<any | null>(null)
   const [receivablesData, setReceivablesData] = useState<any | null>(null)
@@ -390,6 +390,16 @@ export default function FinancialDashboard() {
               <span>Atualizar</span>
             </Button>
             <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => setLocation("/tarifas?tab=sebrae")}
+              className="text-xs font-bold gap-1.5 border-amber-500/40 text-amber-400 hover:bg-amber-950/30"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Tarifas & Motor SEBRAE</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </Button>
+            <Button 
               variant="default" 
               size="sm" 
               onClick={() => setSettingsModalOpen(true)}
@@ -401,31 +411,31 @@ export default function FinancialDashboard() {
           </div>
         </div>
 
-        {/* Hub Integrado — Fonte Única da Verdade (SSOT) dos 5 Módulos Financeiros */}
+        {/* Hub Integrado — Fonte Única da Verdade (SSOT) dos 4 Módulos Financeiros */}
         {data && (
           <div className="rounded-2xl border border-emerald-800/40 bg-emerald-950/15 p-3.5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
                 <span className="text-xs font-black uppercase tracking-wider text-emerald-300">
-                  Ecossistema Financeiro Unificado (SSOT Ativo)
+                  Ecossistema Financeiro & Vendas Unificado (4 Módulos SSOT)
                 </span>
                 <Badge variant="outline" className="text-[10px] border-emerald-700/60 text-emerald-300">
-                  19 UHs • Ocupação Alvo {Math.round(((data.settings?.expectedOccupancyRate ?? 0.65) * 100))}% (382,85 diárias/mês)
+                  19 UHs • Ocupação Alvo {Math.round(((data.settings?.expectedOccupancyRate ?? data.sebraeCanonical?.occupancyRate ?? 0.65) * 100))}% (382,85 diárias/mês)
                 </Badge>
               </div>
               <span className="text-[11px] text-muted-foreground">
-                Qualquer ajuste nos parâmetros reflete instantaneamente nos 5 módulos abaixo:
+                Qualquer ajuste nos parâmetros reflete instantaneamente nos 4 módulos abaixo:
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
               <div
                 onClick={() => setActiveTab("dre")}
                 className="cursor-pointer rounded-xl border border-emerald-700/50 bg-background/70 p-2.5 hover:border-emerald-500 transition-all"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-emerald-400">1. ERP & DRE</span>
+                  <span className="text-[10px] font-bold uppercase text-emerald-400">1. ERP Financeiro & DRE</span>
                   <Calculator className="w-3.5 h-3.5 text-emerald-400" />
                 </div>
                 <div className="text-sm font-black text-foreground mt-1">
@@ -437,34 +447,18 @@ export default function FinancialDashboard() {
               </div>
 
               <div
-                onClick={() => setLocation("/precificacao-sebrae")}
+                onClick={() => setLocation("/tarifas?tab=sebrae")}
                 className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-amber-500 transition-all"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-amber-400">2. Motor SEBRAE</span>
+                  <span className="text-[10px] font-bold uppercase text-amber-400">2. Tarifas & Precificação SEBRAE</span>
                   <ArrowUpRight className="w-3.5 h-3.5 text-amber-400" />
                 </div>
                 <div className="text-sm font-black text-foreground mt-1">
-                  R$ {(data.costs?.sustainableMinRate ?? 276.63).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {(data.costs?.sustainableMinRate ?? 276.63).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} • OTA {Math.round(((data.settings?.avgChannelCommissionPct ?? 0.15) * 100))}%
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
-                  Custo UH R$ {(data.costs?.sebraeCostUH ?? 149.38).toFixed(2)} • Piso R$ {(data.costs?.breakEvenFloor ?? 189.09).toFixed(2)}
-                </span>
-              </div>
-
-              <div
-                onClick={() => setLocation("/tarifas")}
-                className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-sky-500 transition-all"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-sky-400">3. Tarifas & Canais</span>
-                  <ArrowUpRight className="w-3.5 h-3.5 text-sky-400" />
-                </div>
-                <div className="text-sm font-black text-foreground mt-1">
-                  OTA {Math.round(((data.settings?.avgChannelCommissionPct ?? 0.15) * 100))}% • ISS {Math.round(((data.settings?.taxRatePct ?? 0.06) * 100))}%
-                </div>
-                <span className="text-[10px] text-muted-foreground block">
-                  Baixa Temp. (-10%): R$ {((data.costs?.sustainableMinRate ?? 276.63) * 0.9).toFixed(2)}
+                  Custo UH R$ {(data.costs?.sebraeCostUH ?? 149.38).toFixed(2)} • Piso Break-Even R$ {(data.costs?.breakEvenFloor ?? 189.09).toFixed(2)}
                 </span>
               </div>
 
@@ -473,14 +467,14 @@ export default function FinancialDashboard() {
                 className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-indigo-500 transition-all"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-indigo-400">4. PIX & Recebíveis</span>
+                  <span className="text-[10px] font-bold uppercase text-indigo-400">3. Pagamentos, PIX & Cauções</span>
                   <ArrowUpRight className="w-3.5 h-3.5 text-indigo-400" />
                 </div>
                 <div className="text-sm font-black text-foreground mt-1">
                   R$ {(receivablesData?.summary?.received ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
-                  {(receivablesData?.receivables || []).length} faturas sincronizadas
+                  {(receivablesData?.receivables || []).length} faturas sincronizadas • ISS {Math.round(((data.settings?.taxRatePct ?? 0.06) * 100))}%
                 </span>
               </div>
 
@@ -489,7 +483,7 @@ export default function FinancialDashboard() {
                 className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-pink-500 transition-all"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-pink-400">5. Funil & Ads IA</span>
+                  <span className="text-[10px] font-bold uppercase text-pink-400">4. Funil de Vendas & Tráfego IA</span>
                   <ArrowUpRight className="w-3.5 h-3.5 text-pink-400" />
                 </div>
                 <div className="text-sm font-black text-foreground mt-1">
@@ -503,8 +497,8 @@ export default function FinancialDashboard() {
           </div>
         )}
 
-        {/* Navigation Tabs do ERP */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 p-1.5 bg-muted/40 rounded-2xl border">
+        {/* Navigation Tabs do ERP (5 Abas Contábeis Dedicadas) */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 p-1.5 bg-muted/40 rounded-2xl border">
           <button
             type="button"
             onClick={() => setActiveTab("dre")}
@@ -568,19 +562,6 @@ export default function FinancialDashboard() {
           >
             <DollarSign className="w-4 h-4 text-amber-600" />
             <span>Fluxo de Caixa</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("pricing")}
-            className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-              activeTab === "pricing"
-                ? "bg-background text-foreground shadow-sm ring-1 ring-border"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Percent className="w-4 h-4 text-sky-600" />
-            <span>Precificação SEBRAE</span>
           </button>
         </div>
 
@@ -1248,87 +1229,6 @@ export default function FinancialDashboard() {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* ── ABA 6: PRECIFICAÇÃO SEBRAE ───────────────────────────────────── */}
-        {activeTab === "pricing" && data && (
-          <div className="space-y-6">
-            <Card className="p-5 rounded-3xl border shadow-xs space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-black text-foreground flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
-                    Matriz de Precificação Sustentável SEBRAE (SSOT Canônico)
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Fórmula oficial SEBRAE: Custo UH ÷ (1 - Comissão - Imposto - Margem Alvo) • Sincronizado com o Simulador SEBRAE e Mapa de Tarifas.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setLocation("/precificacao-sebrae")} className="text-xs font-bold gap-1.5">
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                    Abrir Motor SEBRAE Completo
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setLocation("/tarifas")} className="text-xs font-bold gap-1.5">
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                    Abrir Gestão de Tarifas & Canais
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-                <div className="p-4 bg-muted/30 rounded-2xl border">
-                  <span className="text-[10px] text-muted-foreground block uppercase font-bold">1. Custo Fixo / UH Vendida</span>
-                  <span className="text-xl font-black text-foreground mt-1 block">
-                    R$ {(data.costs?.fixedCostPerSoldNight ?? 101.62).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground block mt-0.5">
-                    R$ {(data.costs?.structuralFixedCosts ?? 38906.61).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ÷ 382,85 diárias
-                  </span>
-                </div>
-
-                <div className="p-4 bg-muted/30 rounded-2xl border">
-                  <span className="text-[10px] text-muted-foreground block uppercase font-bold">2. Custo Variável / Noite</span>
-                  <span className="text-xl font-black text-foreground mt-1 block">
-                    R$ {(data.costs?.varCostPerNight ?? 47.76).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground block mt-0.5">
-                    Limpeza R$ 23,25 + Enxoval R$ 15,51 + Util. R$ 9,00
-                  </span>
-                </div>
-
-                <div className="p-4 bg-amber-950/25 border border-amber-800/60 rounded-2xl">
-                  <span className="text-[10px] text-amber-300 block uppercase font-bold">3. Custo Total UH Ocupada</span>
-                  <span className="text-xl font-black text-amber-300 mt-1 block">
-                    R$ {(data.costs?.sebraeCostUH ?? 149.38).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <span className="text-[10px] text-amber-200/80 block mt-0.5">
-                    54,0% da Tarifa Alvo SEBRAE
-                  </span>
-                </div>
-
-                <div className="p-4 bg-sky-950/25 border border-sky-800/60 rounded-2xl">
-                  <span className="text-[10px] text-sky-300 block uppercase font-bold">4. Piso Break-Even (Margem 0%)</span>
-                  <span className="text-xl font-black text-sky-300 mt-1 block">
-                    R$ {(data.costs?.breakEvenFloor ?? 189.09).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <span className="text-[10px] text-sky-200/80 block mt-0.5">
-                    Baixa Temp. (-10%): R$ {((data.costs?.sustainableMinRate ?? 276.63) * 0.9).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-
-                <div className="p-4 bg-emerald-950/30 border border-emerald-700 rounded-2xl">
-                  <span className="text-[10px] text-emerald-400 block uppercase font-bold">5. Tarifa Base Alvo (25% Lucro)</span>
-                  <span className="text-xl font-black text-emerald-400 mt-1 block">
-                    R$ {(data.costs?.sustainableMinRate ?? 276.63).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <span className="text-[10px] text-emerald-300 block mt-0.5">
-                    Decomposição fecha 100% exato
-                  </span>
-                </div>
               </div>
             </Card>
           </div>

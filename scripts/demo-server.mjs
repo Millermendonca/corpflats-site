@@ -929,7 +929,11 @@ app.get("/api/wbp/pricing/settings", (req, res) => {
     const sebrae = calculateSebraeRate(state.settings);
     res.json({
       success: true,
-      settings: state.settings,
+      settings: {
+        ...state.settings,
+        seasonalityOverrides: state.seasonalityOverrides || {}
+      },
+      seasonalityOverrides: state.seasonalityOverrides || {},
       status: state.status,
       lastPublishedAt: state.lastPublishedAt,
       sebraeRate: sebrae
@@ -1107,12 +1111,19 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
   if (partial.totalUHs !== undefined) wbp.totalUHs = Number(partial.totalUHs);
   if (partial.daysInMonth !== undefined) wbp.daysInMonth = Number(partial.daysInMonth);
   if (partial.occupancyRate !== undefined) wbp.occupancyRate = Number(partial.occupancyRate);
+  if (partial.breakfastSurchargePerGuest !== undefined) wbp.breakfastSurchargePerGuest = Number(partial.breakfastSurchargePerGuest);
+  if (partial.extraBedFee !== undefined) wbp.extraBedFee = Number(partial.extraBedFee);
+  if (partial.hasPlanCeiling !== undefined) wbp.hasPlanCeiling = Boolean(partial.hasPlanCeiling);
+  if (partial.planCeilingCount !== undefined) wbp.planCeilingCount = Number(partial.planCeilingCount);
   if (partial.weekendMarkupPct !== undefined) {
     wbp.weekendMarkupPct = Number(partial.weekendMarkupPct);
     tar.weekendMarkupPct = Number(partial.weekendMarkupPct);
   }
   if (partial.variationLimitPct !== undefined) wbp.variationLimitPct = Number(partial.variationLimitPct);
   if (partial.manualFloor !== undefined) wbp.manualFloor = Number(partial.manualFloor);
+  if (partial.mode) {
+    tar.mode = partial.mode;
+  }
   if (partial.referenceBaseRate !== undefined || partial.baseDailyRate !== undefined) {
     const b = Number(partial.referenceBaseRate ?? partial.baseDailyRate);
     fin.referenceBaseRate = b;
@@ -1131,15 +1142,14 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
   if (partial.channelMarkups) {
     tar.channelMarkups = { ...(tar.channelMarkups || {}), ...partial.channelMarkups };
   }
-  if (partial.mode) {
-    tar.mode = partial.mode;
-  }
 
   // Recalcular SEBRAE canônico atualizado
   try {
     const sebrae = calculateSebraeRate(wbp);
     fin.referenceBaseRate = sebrae.tarifaMinima;
-    tar.baseDailyRate = sebrae.tarifaMinima;
+    if (tar.mode !== "manual" || (partial.baseDailyRate === undefined && partial.referenceBaseRate === undefined)) {
+      tar.baseDailyRate = sebrae.tarifaMinima;
+    }
   } catch (_) {}
 
   return {
@@ -1158,7 +1168,11 @@ app.post("/api/wbp/pricing/settings", (req, res) => {
     saveDatabase("wbp_pricing_settings_update");
     res.json({
       success: true,
-      settings: updated,
+      settings: {
+        ...updated,
+        seasonalityOverrides: db.wbpPricing?.seasonalityOverrides || {}
+      },
+      seasonalityOverrides: db.wbpPricing?.seasonalityOverrides || {},
       status: "staged"
     });
   } catch (err) {
@@ -1297,7 +1311,8 @@ app.get("/api/wbp/restrictions", (req, res) => {
 
 app.post("/api/wbp/restrictions", (req, res) => {
   try {
-    const { defaults, planDefaults, overrides } = req.body || {};
+    const body = req.body || {};
+    const { defaults, planDefaults, overrides } = body;
     const state = getWbpRestrictionsState(db);
     if (defaults && typeof defaults === "object") {
       state.defaults = { ...state.defaults, ...defaults };
@@ -1307,6 +1322,33 @@ app.post("/api/wbp/restrictions", (req, res) => {
     }
     if (overrides && typeof overrides === "object") {
       state.overrides = { ...state.overrides, ...overrides };
+    }
+    if (!defaults && !planDefaults && !overrides && (body.minStay !== undefined || body.maxStay !== undefined || body.stopSell !== undefined)) {
+      const rulePayload = {
+        minStay: Number(body.minStay ?? state.defaults?.minStay ?? 1),
+        maxStay: Number(body.maxStay ?? state.defaults?.maxStay ?? 30),
+        stopSell: Boolean(body.stopSell),
+        closedToArrival: Boolean(body.closedToArrival),
+        closedToDeparture: Boolean(body.closedToDeparture),
+        minAdvanceDays: Number(body.minAdvanceDays ?? 0),
+        maxAdvanceDays: Number(body.maxAdvanceDays ?? 365)
+      };
+      state.defaults = { ...state.defaults, ...rulePayload };
+      if (body.dateStart && body.dateEnd) {
+        if (!state.overrides) state.overrides = {};
+        const cur = new Date(body.dateStart + "T12:00:00Z");
+        const end = new Date(body.dateEnd + "T12:00:00Z");
+        const pId = body.planId || "all";
+        while (!isNaN(cur.getTime()) && !isNaN(end.getTime()) && cur <= end) {
+          const dStr = cur.toISOString().substring(0, 10);
+          state.overrides[`${dStr}_${pId}`] = {
+            ...rulePayload,
+            date: dStr,
+            planId: pId
+          };
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+      }
     }
     saveDatabase("wbp_restrictions_update");
     res.json({ success: true, restrictions: state });
@@ -27018,8 +27060,11 @@ export function calculateSebraeSustainableRate(customMonth = null) {
   const state = WbpPricingManager.getPricingState(db);
   const sebrae = calculateSebraeRate(state.settings);
   if (customMonth !== null && customMonth !== undefined) {
-    const seasonInfo = STANDARD_SEBRAE_SEASONALITY_FACTORS[customMonth] || SEBRAE_SEASONALITY_FACTORS[customMonth] || { factor: 1.0, season: "Média" };
-    return Math.round(sebrae.tarifaMinima * seasonInfo.factor * 100) / 100;
+    const manualOverride = state.seasonalityOverrides && (state.seasonalityOverrides[customMonth] || state.seasonalityOverrides[String(customMonth)]);
+    const seasonInfo = (manualOverride && manualOverride.factor != null)
+      ? manualOverride
+      : (STANDARD_SEBRAE_SEASONALITY_FACTORS[customMonth] || SEBRAE_SEASONALITY_FACTORS[customMonth] || { factor: 1.0, season: "Média" });
+    return Math.round(sebrae.tarifaMinima * Number(seasonInfo.factor) * 100) / 100;
   }
   return sebrae.tarifaMinima;
 }
@@ -27215,11 +27260,25 @@ app.get("/api/tariffs/calendar", (req, res) => {
     name: f.colName || `Flat ${f.number}`
   }));
 
+  const wbpState = WbpPricingManager.getPricingState(db);
+  const sebraeObj = calculateSebraeRate(wbpState.settings);
+  const monthIdx0 = m - 1;
+  const manualSeason = wbpState.seasonalityOverrides && (wbpState.seasonalityOverrides[monthIdx0] || wbpState.seasonalityOverrides[String(monthIdx0)]);
+  const seasonInfo = (manualSeason && manualSeason.factor != null)
+    ? manualSeason
+    : (STANDARD_SEBRAE_SEASONALITY_FACTORS[monthIdx0] || SEBRAE_SEASONALITY_FACTORS[monthIdx0] || { factor: 1.0, season: "Média" });
+  const sebraeBaseRate = calculateSebraeSustainableRate(monthIdx0);
+
   res.json({
     success: true,
     month: targetMonthStr,
     channel,
     flatId: flatId || null,
+    sebraeBaseRate,
+    sebraeTarifaMinima: sebraeObj.tarifaMinima,
+    sebraeBreakEvenFloor: sebraeObj.breakEvenFloor,
+    seasonalityFactor: Number(seasonInfo.factor),
+    seasonName: seasonInfo.season || "Média",
     settings: getTariffSettings(),
     days,
     flats,

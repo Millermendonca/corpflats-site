@@ -1,11 +1,6 @@
 import React from "react";
-import { Shell } from "@/components/layout";
-import { PricingContainer } from "@/components/pricing";
+import TarifasEditor from "@/pages/tarifas";
 
 export default function PricingSebraePage() {
-  return (
-    <Shell>
-      <PricingContainer />
-    </Shell>
-  );
+  return <TarifasEditor initialTab="sebrae" />;
 }

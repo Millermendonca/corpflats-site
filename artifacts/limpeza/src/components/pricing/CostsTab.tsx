@@ -30,11 +30,43 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
           <CardContent className="pt-4 space-y-3 text-sm">
             <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
               <span className="text-muted-foreground">Locação / Arrendamento dos Flats</span>
-              <span className="font-semibold text-foreground">R$ 38.506,61</span>
+              <span className="font-semibold text-foreground">
+                R$ {Number(settings.fixedRent ?? 38506.61).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
             </div>
+            {(Number(settings.fixedSalaries) > 0 || Number(settings.fixedCondoIptu) > 0 || Number(settings.fixedSystems) > 0) && (
+              <>
+                {Number(settings.fixedSalaries) > 0 && (
+                  <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
+                    <span className="text-muted-foreground">Folha de Pagamento / Equipe Fixa</span>
+                    <span className="font-semibold text-foreground">
+                      R$ {Number(settings.fixedSalaries).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {Number(settings.fixedCondoIptu) > 0 && (
+                  <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
+                    <span className="text-muted-foreground">Condomínio + IPTU dos Flats</span>
+                    <span className="font-semibold text-foreground">
+                      R$ {Number(settings.fixedCondoIptu).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {Number(settings.fixedSystems) > 0 && (
+                  <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
+                    <span className="text-muted-foreground">Sistemas, Internet & Manutenção</span>
+                    <span className="font-semibold text-foreground">
+                      R$ {Number(settings.fixedSystems).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
             <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
               <span className="text-muted-foreground">Outros Custos Fixos Operacionais</span>
-              <span className="font-semibold text-foreground">R$ 400,00</span>
+              <span className="font-semibold text-foreground">
+                R$ {Number(settings.fixedOther ?? 400.00).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
             </div>
             <div className="flex justify-between items-center py-2 bg-muted/30 px-3 rounded-lg text-xs">
               <span className="font-bold text-foreground">Total de Custos Fixos Mensais:</span>
@@ -45,8 +77,10 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
 
             <div className="p-3 bg-muted/20 rounded-xl space-y-1 text-xs">
               <div className="flex justify-between text-muted-foreground">
-                <span>Diárias disponíveis no mês (19 flats × 31 dias):</span>
-                <span className="font-mono font-bold text-foreground">589 diárias</span>
+                <span>Diárias disponíveis no mês ({Number(settings.totalUHs ?? 19)} flats × {Number(settings.daysInMonth ?? 31)} dias):</span>
+                <span className="font-mono font-bold text-foreground">
+                  {Number(calculation.availableUnits ?? (Number(settings.totalUHs ?? 19) * Number(settings.daysInMonth ?? 31)))} diárias
+                </span>
               </div>
               <div className="flex justify-between text-muted-foreground">
                 <span>Custo fixo por diária disponível (100% ocupação):</span>
@@ -55,7 +89,7 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
                 </span>
               </div>
               <div className="flex justify-between text-emerald-800 dark:text-emerald-300 font-semibold pt-1 border-t border-border/40">
-                <span>Custo fixo na ocupação real (65% = 382,9 diárias):</span>
+                <span>Custo fixo na ocupação alvo ({Math.round(Number(settings.occupancyRate ?? 0.65) * 100)}% = {Number(calculation.soldUnitsMonth ?? 382.85).toFixed(1)} diárias):</span>
                 <span className="font-mono font-black">
                   R$ {Number(calculation.fixedCostPerSoldUnit ?? 101.62).toFixed(2)}
                 </span>

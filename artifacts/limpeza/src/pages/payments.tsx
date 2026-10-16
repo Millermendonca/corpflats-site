@@ -49,8 +49,8 @@ export default function Payments() {
   const [feePixInter, setFeePixInter] = useState("0")
   const [feeMpSpot, setFeeMpSpot] = useState("3.99")
   const [feeMpInstallments, setFeeMpInstallments] = useState("5.49")
-  const [feeBooking, setFeeBooking] = useState("13.0")
-  const [feeAirbnb, setFeeAirbnb] = useState("3.0")
+  const [feeBooking, setFeeBooking] = useState("15.0")
+  const [feeAirbnb, setFeeAirbnb] = useState("15.0")
   const [savingFees, setSavingFees] = useState(false)
   const [feeSuccessMsg, setFeeSuccessMsg] = useState("")
   const [paymentMethodsModalOpen, setPaymentMethodsModalOpen] = useState(false)
@@ -86,11 +86,11 @@ export default function Payments() {
         const data = await res.json()
         setPaymentsData(data)
         if (data.feeSettings) {
-          setFeePixInter(String(data.feeSettings.pixInterRate || 0))
-          setFeeMpSpot(String(data.feeSettings.mpCreditSpotRate || 3.99))
-          setFeeMpInstallments(String(data.feeSettings.mpCreditInstallmentRate || 5.49))
-          setFeeBooking(String(data.feeSettings.bookingCommissionRate || 13))
-          setFeeAirbnb(String(data.feeSettings.airbnbCommissionRate || 3))
+          setFeePixInter(String(data.feeSettings.pixInterRate ?? 0))
+          setFeeMpSpot(String(data.feeSettings.mpCreditSpotRate ?? 3.99))
+          setFeeMpInstallments(String(data.feeSettings.mpCreditInstallmentRate ?? 5.49))
+          setFeeBooking(String(data.feeSettings.bookingCommissionRate ?? 15))
+          setFeeAirbnb(String(data.feeSettings.airbnbCommissionRate ?? 15))
         }
       }
     } catch (e) {

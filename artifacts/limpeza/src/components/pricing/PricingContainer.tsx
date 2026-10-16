@@ -157,7 +157,7 @@ export const PricingContainer: React.FC = () => {
           if (rawSettings && typeof rawSettings === "object") {
             const cleanSettings: Partial<PricingSettings> = {};
             for (const [k, v] of Object.entries(rawSettings)) {
-              if (v !== null && v !== undefined && typeof v !== "object") {
+              if (v !== null && v !== undefined && (typeof v !== "object" || k === "seasonalityOverrides")) {
                 (cleanSettings as any)[k] = v;
               }
             }
@@ -504,7 +504,12 @@ export const PricingContainer: React.FC = () => {
 
         {/* Tab 3: Tarifário & Sazonalidade */}
         <TabsContent value="sazonalidade" className="mt-0 focus-visible:outline-none">
-          <SeasonalityTab settings={settings} baseRate={calculation.tarifaMinima || 276.63} breakEvenFloor={calculation.breakEvenFloor || 189.09} />
+          <SeasonalityTab
+            settings={settings}
+            baseRate={calculation.tarifaMinima || 276.63}
+            breakEvenFloor={calculation.breakEvenFloor || 189.09}
+            onUpdateSettings={handleUpdateSettings}
+          />
         </TabsContent>
 
         {/* Tab 4: Canais */}

@@ -1,15 +1,17 @@
-import React, { useState } from "react";
-import { Calendar, TrendingUp, Sun, Snowflake, Flame, Sliders } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Calendar, Sun, Snowflake, Flame, Save, CheckCircle2, RotateCcw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { PricingSettings, SeasonalityMonth } from "./types";
 
 interface SeasonalityTabProps {
   settings: PricingSettings;
   baseRate: number;
   breakEvenFloor?: number;
+  onUpdateSettings?: (partial: Partial<PricingSettings>) => void;
+  onSaved?: () => void;
 }
 
 const DEFAULT_MONTHS: SeasonalityMonth[] = [
@@ -27,41 +29,133 @@ const DEFAULT_MONTHS: SeasonalityMonth[] = [
   { month: 11, label: "Dezembro", occupancyRate: 0.83, season: "Alta", factor: 1.15, isManualOverride: false },
 ];
 
-export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRate, breakEvenFloor }) => {
-  const [months, setMonths] = useState<SeasonalityMonth[]>(DEFAULT_MONTHS);
-  const [weekendMarkup, setWeekendMarkup] = useState<number>(settings.weekendMarkupPct * 100 || 15);
+export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
+  settings,
+  baseRate,
+  breakEvenFloor,
+  onUpdateSettings,
+  onSaved,
+}) => {
+  const buildMonthsFromOverrides = (overrides?: Record<string | number, number>): SeasonalityMonth[] => {
+    return DEFAULT_MONTHS.map((m) => {
+      const customVal = overrides?.[m.month] ?? overrides?.[String(m.month)];
+      if (customVal !== undefined && customVal !== null && !Number.isNaN(Number(customVal))) {
+        const factor = Number(customVal);
+        return {
+          ...m,
+          factor,
+          isManualOverride: factor !== m.factor,
+          season: factor > 1.05 ? "Alta" : factor < 0.95 ? "Baixa" : "Média",
+        };
+      }
+      return m;
+    });
+  };
+
+  const [months, setMonths] = useState<SeasonalityMonth[]>(() =>
+    buildMonthsFromOverrides(settings.seasonalityOverrides)
+  );
+  const [weekendMarkup, setWeekendMarkup] = useState<number>(
+    Math.round((settings.weekendMarkupPct ?? 0.15) * 100)
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    if (settings.seasonalityOverrides) {
+      setMonths(buildMonthsFromOverrides(settings.seasonalityOverrides));
+    }
+  }, [settings.seasonalityOverrides]);
+
+  useEffect(() => {
+    if (settings.weekendMarkupPct !== undefined) {
+      setWeekendMarkup(Math.round(settings.weekendMarkupPct * 100));
+    }
+  }, [settings.weekendMarkupPct]);
 
   const handleFactorChange = (index: number, newFactor: number) => {
-    setMonths(prev => {
+    setMonths((prev) => {
       const copy = [...prev];
       copy[index] = {
         ...copy[index],
         factor: newFactor,
-        isManualOverride: true,
+        isManualOverride: newFactor !== DEFAULT_MONTHS[index].factor,
         season: newFactor > 1.05 ? "Alta" : newFactor < 0.95 ? "Baixa" : "Média",
       };
+      const overridesMap: Record<number, number> = {};
+      copy.forEach((item) => {
+        if (item.isManualOverride) {
+          overridesMap[item.month] = item.factor;
+        }
+      });
+      onUpdateSettings?.({ seasonalityOverrides: overridesMap });
       return copy;
     });
   };
 
-  const getSeasonBadge = (season: string) => {
+  const handleWeekendChange = (val: number) => {
+    setWeekendMarkup(val);
+    onUpdateSettings?.({ weekendMarkupPct: val / 100 });
+  };
+
+  const handleResetDefaults = () => {
+    setMonths(DEFAULT_MONTHS);
+    setWeekendMarkup(15);
+    onUpdateSettings?.({ seasonalityOverrides: {}, weekendMarkupPct: 0.15 });
+  };
+
+  const handleSaveSeasonality = async () => {
+    setIsSaving(true);
+    try {
+      const overridesMap: Record<number, number> = {};
+      months.forEach((m) => {
+        if (m.isManualOverride || m.factor !== DEFAULT_MONTHS[m.month].factor) {
+          overridesMap[m.month] = m.factor;
+        }
+      });
+      const payload = {
+        ...settings,
+        weekendMarkupPct: weekendMarkup / 100,
+        seasonalityOverrides: overridesMap,
+      };
+      const res = await fetch("/api/wbp/pricing/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setSavedSuccess(true);
+        onSaved?.();
+        setTimeout(() => setSavedSuccess(false), 3500);
+      }
+    } catch {
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const getSeasonBadge = (season: string, factor: number) => {
+    const diffPct = Math.round((factor - 1) * 100);
+    const signStr = diffPct > 0 ? `+${diffPct}%` : `${diffPct}%`;
     if (season === "Alta") {
       return (
         <Badge className="bg-rose-500 hover:bg-rose-600 text-white text-[10px] gap-1">
-          <Flame className="w-3 h-3" /> Alta (+15%)
+          <Flame className="w-3 h-3" /> Alta ({signStr})
         </Badge>
       );
     }
     if (season === "Baixa") {
       return (
         <Badge variant="outline" className="text-sky-600 border-sky-300 dark:border-sky-800 text-[10px] gap-1">
-          <Snowflake className="w-3 h-3" /> Baixa (-10%)
+          <Snowflake className="w-3 h-3" /> Baixa ({signStr})
         </Badge>
       );
     }
     return (
       <Badge variant="secondary" className="text-muted-foreground text-[10px] gap-1">
-        <Sun className="w-3 h-3" /> Média (1,00)
+        <Sun className="w-3 h-3" /> Média ({factor.toFixed(2).replace(".", ",")})
       </Badge>
     );
   };
@@ -76,7 +170,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
               Acréscimo de Fim de Semana
             </CardTitle>
             <CardDescription className="text-xs">
-              Sextas e sábados com markup configurável
+              Sextas e sábados com markup configurável (sincronizado com o Calendário)
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-2">
@@ -86,7 +180,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
                 min="0"
                 max="50"
                 value={weekendMarkup}
-                onChange={(e) => setWeekendMarkup(Number(e.target.value) || 0)}
+                onChange={(e) => handleWeekendChange(Number(e.target.value) || 0)}
                 className="w-24 text-xs font-bold text-right"
               />
               <span className="text-xs font-semibold text-muted-foreground">%</span>
@@ -121,23 +215,52 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-2 text-xs text-muted-foreground">
-            Ocupação histórica <strong>&lt; 55%</strong> aplica desconto de <strong>-10%</strong> (Abril, Maio) respeitando sempre o piso mínimo.
+            Ocupação histórica <strong>&lt; 55%</strong> aplica desconto de <strong>-10%</strong> (Abril, Maio) respeitando sempre o piso mínimo (R$ {(breakEvenFloor || 189.09).toFixed(2)}).
           </CardContent>
         </Card>
       </div>
 
       {/* 12 Months Seasonality Table */}
       <Card className="border-border shadow-xs">
-        <CardHeader className="pb-3 border-b border-border/60 bg-muted/20">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-primary" />
-            <CardTitle className="text-base font-bold text-foreground">
-              Curva Anual de Sazonalidade (12 Meses)
-            </CardTitle>
+        <CardHeader className="pb-3 border-b border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              <CardTitle className="text-base font-bold text-foreground">
+                Curva Anual de Sazonalidade (12 Meses)
+              </CardTitle>
+            </div>
+            <CardDescription className="text-xs">
+              Fatores aplicados sobre a tarifa mínima básica (R$ {baseRate.toFixed(2)}) e refletidos em tempo real no Calendário de Tarifas
+            </CardDescription>
           </div>
-          <CardDescription className="text-xs">
-            Fatores aplicados sobre a tarifa mínima básica (R$ {baseRate.toFixed(2)})
-          </CardDescription>
+          <div className="flex items-center gap-2">
+            {savedSuccess && (
+              <Badge className="bg-emerald-600 text-white text-xs gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Salvo no Motor SSOT!
+              </Badge>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleResetDefaults}
+              className="text-xs h-8 gap-1"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Restaurar Curva Padrão
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSaveSeasonality}
+              disabled={isSaving}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-8 gap-1.5"
+            >
+              <Save className="w-3.5 h-3.5" />
+              {isSaving ? "Salvando..." : "Salvar Sazonalidade & FDS"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -165,7 +288,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
                         {(m.occupancyRate * 100).toFixed(0)}%
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        {getSeasonBadge(m.season)}
+                        {getSeasonBadge(m.season, m.factor)}
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         <div className="inline-flex items-center gap-1.5 justify-center">
@@ -176,10 +299,10 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
                             max="2.0"
                             value={m.factor}
                             onChange={(e) => handleFactorChange(idx, Number(e.target.value) || 1)}
-                            className="w-16 h-7 text-xs text-center font-bold"
+                            className="w-20 h-7 text-xs text-center font-bold"
                           />
                           {m.isManualOverride && (
-                            <span className="text-[10px] text-amber-600" title="Override manual">
+                            <span className="text-[10px] text-amber-600 font-bold" title="Override manual">
                               *
                             </span>
                           )}
@@ -202,3 +325,4 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({ settings, baseRa
     </div>
   );
 };
+

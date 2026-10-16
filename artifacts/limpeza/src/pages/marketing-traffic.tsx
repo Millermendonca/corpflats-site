@@ -42,6 +42,18 @@ export default function MarketingTraffic() {
   const [campCopy, setCampCopy] = useState("")
   const [creatingCamp, setCreatingCamp] = useState(false)
 
+  // Ad Automation & Meta CAPI Settings State
+  const [adSettings, setAdSettings] = useState({
+    autoPilotEnabled: true,
+    lowOccupancyThresholdPct: 60,
+    highOccupancyPausePct: 85,
+    dailyBudgetLimit: 100,
+    metaPixelId: "",
+    metaApiToken: "",
+  })
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [settingsSavedMsg, setSettingsSavedMsg] = useState("")
+
   const fetchData = async () => {
     setLoading(true)
     try {
@@ -58,8 +70,42 @@ export default function MarketingTraffic() {
       setFunnelData(jsonFunnel)
       setCartsData(jsonCarts)
       setCampaignsData(jsonCamps)
+      if (jsonCamps?.settings) {
+        setAdSettings({
+          autoPilotEnabled: Boolean(jsonCamps.settings.autoPilotEnabled ?? true),
+          lowOccupancyThresholdPct: Number(jsonCamps.settings.lowOccupancyThresholdPct ?? 60),
+          highOccupancyPausePct: Number(jsonCamps.settings.highOccupancyPausePct ?? 85),
+          dailyBudgetLimit: Number(jsonCamps.settings.dailyBudgetLimit ?? 100),
+          metaPixelId: String(jsonCamps.settings.metaPixelId ?? ""),
+          metaApiToken: String(jsonCamps.settings.metaApiToken ?? ""),
+        })
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSaveAdSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    setSavingSettings(true)
+    setSettingsSavedMsg("")
+    try {
+      const res = await fetch("/api/marketing/ad-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(adSettings),
+        credentials: "include",
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data?.settings) {
+          setCampaignsData((prev: any) => prev ? { ...prev, settings: data.settings } : prev)
+        }
+        setSettingsSavedMsg("Configurações de Automação & Meta CAPI salvas com sucesso!")
+        setTimeout(() => setSettingsSavedMsg(""), 4000)
+      }
+    } finally {
+      setSavingSettings(false)
     }
   }
 
@@ -151,8 +197,8 @@ export default function MarketingTraffic() {
                 <Bot className="w-6 h-6 text-indigo-600" />
                 Tráfego Autônomo & Resgate de Carrinho com IA
               </h1>
-              <Badge className="bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-bold">
-                Piloto Automático Ativo
+              <Badge className={`text-[10px] font-bold ${adSettings.autoPilotEnabled ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300" : "bg-slate-200 text-slate-700"}`}>
+                {adSettings.autoPilotEnabled ? "Piloto Automático Ativo" : "Piloto Automático Pausado"}
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5 font-medium">
@@ -208,10 +254,10 @@ export default function MarketingTraffic() {
             <div className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-300 uppercase tracking-wider">Gatilho de Ocupação</div>
             <div className="text-2xl font-black text-indigo-600 mt-1 flex items-center gap-1.5">
               <Zap className="w-5 h-5 text-amber-500 fill-amber-500" />
-              <span>Otimizando</span>
+              <span>{adSettings.autoPilotEnabled ? "Otimizando" : "Manual"}</span>
             </div>
             <div className="text-[10px] text-indigo-700 dark:text-indigo-400 mt-0.5 font-medium">
-              Liga anúncios se ocupação &lt; 60%
+              Liga anúncios se ocupação &lt; {adSettings.lowOccupancyThresholdPct}% • Pausa &gt; {adSettings.highOccupancyPausePct}%
             </div>
           </Card>
         </div>
@@ -660,24 +706,46 @@ export default function MarketingTraffic() {
 
         {/* Tab 4: Settings Meta CAPI & Pixel */}
         {activeTab === "settings" && (
-          <div className="space-y-6 max-w-2xl">
+          <form onSubmit={handleSaveAdSettings} className="space-y-6 max-w-2xl">
             <Card className="rounded-2xl border p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Piloto Automático de Tráfego</h3>
                   <p className="text-xs text-muted-foreground">Liga/pausa anúncios conforme a ocupação real do PMS</p>
                 </div>
-                <Switch defaultChecked={campaignsData.settings.autoPilotEnabled} />
+                <Switch
+                  checked={adSettings.autoPilotEnabled}
+                  onCheckedChange={val => setAdSettings(prev => ({ ...prev, autoPilotEnabled: val }))}
+                />
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div className="space-y-1">
-                  <Label className="text-xs">Ligar se Ocupação for Menor que (%)</Label>
-                  <Input defaultValue={campaignsData.settings.lowOccupancyThresholdPct} type="number" className="text-xs" />
+                  <Label className="text-xs">Ligar se Ocupação &lt; (%)</Label>
+                  <Input
+                    value={adSettings.lowOccupancyThresholdPct}
+                    onChange={e => setAdSettings(prev => ({ ...prev, lowOccupancyThresholdPct: Number(e.target.value) || 0 }))}
+                    type="number"
+                    className="text-xs"
+                  />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Pausar se Ocupação Ultrapassar (%)</Label>
-                  <Input defaultValue={campaignsData.settings.highOccupancyPausePct} type="number" className="text-xs" />
+                  <Label className="text-xs">Pausar se Ocupação &gt; (%)</Label>
+                  <Input
+                    value={adSettings.highOccupancyPausePct}
+                    onChange={e => setAdSettings(prev => ({ ...prev, highOccupancyPausePct: Number(e.target.value) || 0 }))}
+                    type="number"
+                    className="text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Teto Diário de Verba (R$)</Label>
+                  <Input
+                    value={adSettings.dailyBudgetLimit}
+                    onChange={e => setAdSettings(prev => ({ ...prev, dailyBudgetLimit: Number(e.target.value) || 0 }))}
+                    type="number"
+                    className="text-xs"
+                  />
                 </div>
               </div>
             </Card>
@@ -694,15 +762,45 @@ export default function MarketingTraffic() {
               <div className="space-y-3 text-xs">
                 <div className="space-y-1">
                   <Label className="text-xs">Facebook Pixel ID</Label>
-                  <Input defaultValue={campaignsData.settings.metaPixelId} placeholder="Ex: 7489123891023" className="text-xs font-mono" />
+                  <Input
+                    value={adSettings.metaPixelId}
+                    onChange={e => setAdSettings(prev => ({ ...prev, metaPixelId: e.target.value }))}
+                    placeholder="Ex: 7489123891023"
+                    className="text-xs font-mono"
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Token de Acesso da API de Conversões (CAPI)</Label>
-                  <Input type="password" defaultValue={campaignsData.settings.metaApiToken} placeholder="EAABwz..." className="text-xs font-mono" />
+                  <Input
+                    type="password"
+                    value={adSettings.metaApiToken}
+                    onChange={e => setAdSettings(prev => ({ ...prev, metaApiToken: e.target.value }))}
+                    placeholder="EAABwz..."
+                    className="text-xs font-mono"
+                  />
                 </div>
               </div>
             </Card>
-          </div>
+
+            <div className="flex items-center justify-between">
+              {settingsSavedMsg ? (
+                <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                  {settingsSavedMsg}
+                </span>
+              ) : <div />}
+
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingSettings}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 h-9 px-5"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{savingSettings ? "Salvando..." : "Salvar Configurações de Automação"}</span>
+              </Button>
+            </div>
+          </form>
         )}
 
         {/* Create Campaign Modal */}

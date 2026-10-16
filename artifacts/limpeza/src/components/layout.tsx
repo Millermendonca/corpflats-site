@@ -295,11 +295,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {
         title: "💰 Financeiro & Vendas",
         items: [
-          { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "Contas a Pagar/Receber e DRE gerencial" },
-          { href: "/precificacao-sebrae", label: "Precificação SEBRAE", icon: Sparkles, description: "Custo por UH (R$ 149,38), tarifa mínima R$ 276,63 e travas" },
-          { href: "/tarifas", label: "Gestão de Tarifas & Taxas", icon: Coins, description: "Preços com/sem café, limpeza, pet e camas" },
-          { href: "/pagamentos", label: "Pagamentos & Conciliação PIX", icon: CreditCard, description: "PIX Inter automático, Mercado Pago e taxas" },
-          { href: "/trafego", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Pipeline de conversão, carrinhos e anúncios" },
+          { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "DRE Gerencial, Contas a Pagar/Receber, Long-Stay e Fluxo de Caixa" },
+          { href: "/tarifas", label: "Tarifas & Precificação SEBRAE", icon: Coins, description: "Calendário, Custo por UH (R$ 149,38), Tarifa Mínima R$ 276,63, Sazonalidade, Canais e WBP" },
+          { href: "/pagamentos", label: "Pagamentos, PIX & Cauções", icon: CreditCard, description: "Conciliação PIX Inter, Mercado Pago, Taxas e Cauções" },
+          { href: "/funil-vendas", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Funil 5 etapas, recuperação WhatsApp e anúncios Meta/Google IA" },
         ]
       },
       {
@@ -519,7 +518,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </span>
               <div className="space-y-0.5">
                 {cat.items.map(item => {
-                  const isActive = location === item.href
+                  const isActive = location === item.href ||
+                    (item.href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) ||
+                    (item.href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) ||
+                    (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao"))
                   return (
                     <Link key={item.href} href={item.href}>
                       <div className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
@@ -788,7 +790,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   </span>
                   <div className="space-y-1">
                     {cat.items.map(item => {
-                      const isActive = location === item.href
+                      const isActive = location === item.href ||
+                        (item.href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) ||
+                        (item.href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) ||
+                        (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao"))
                       return (
                         <Link key={item.href} href={item.href}>
                           <div className={`p-2.5 rounded-2xl border transition-all flex items-center justify-between ${

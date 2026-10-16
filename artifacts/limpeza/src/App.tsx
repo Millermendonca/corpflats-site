@@ -337,9 +337,11 @@ function Router() {
         <AdminRoute path="/recebiveis" component={Payments} moduleName="a Gestão de Recebíveis" />
         <AdminRoute path="/taxas" component={Payments} moduleName="a Gestão de Taxas" />
         <AdminRoute path="/financeiro" component={FinancialDashboard} moduleName="o ERP Financeiro & DRE" />
+        <AdminRoute path="/financial" component={FinancialDashboard} moduleName="o ERP Financeiro & DRE" />
         <AdminRoute path="/precificacao" component={FinancialDashboard} moduleName="a Precificação Financeira" />
         <AdminRoute path="/finance" component={FinancialDashboard} moduleName="o ERP Financeiro & DRE" />
-        <AdminRoute path="/trafego" component={MarketingTraffic} moduleName="o Tráfego Autônomo & IA" />
+        <AdminRoute path="/funil-vendas" component={MarketingTraffic} moduleName="o Funil de Vendas & Tráfego IA" />
+        <AdminRoute path="/trafego" component={MarketingTraffic} moduleName="o Funil de Vendas & Tráfego IA" />
         <AdminRoute path="/marketing" component={MarketingTraffic} moduleName="o Painel de Marketing" />
         <AdminRoute path="/ads" component={MarketingTraffic} moduleName="o Painel de Tráfego & Ads" />
         <AdminRoute path="/notas" component={FiscalInvoices} moduleName="o Hub de Notas Fiscais (NFS-e)" />
