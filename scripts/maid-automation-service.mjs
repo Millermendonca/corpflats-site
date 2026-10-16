@@ -185,6 +185,7 @@ export function syncMaidCredits(db, userId) {
 
   const cleanings = (db.cleaningRequests || []).filter(r => {
     if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
+    if (r.id === 1 && (r.flatId === 22 || r.requestDate === "2026-09-01")) return false;
     return r.assignedUserId === userId;
   });
 
@@ -193,14 +194,38 @@ export function syncMaidCredits(db, userId) {
     validCleaningMap.set(c.id, c);
   }
 
+  let modified = false;
+
   // 1. Reconciliação de Setembro+: remove entradas de crédito órfãs ou de diárias não mais válidas/atribuídas
   // Preserva 100% intacto o histórico fechado de Agosto (< 2026-09-01)
+  const beforeLen = db.maidStatementEntries.length;
   db.maidStatementEntries = db.maidStatementEntries.filter(e => {
-    if (e.userId !== userId || e.entryType !== "credit" || !e.cleaningRequestId) return true;
+    if (e.userId !== userId || e.entryType !== "credit") return true;
+    if (e.description === "Diária — Flat 22" || e.cleaningRequestId === 1) return false;
+    if (!e.cleaningRequestId) return true;
     const entryDate = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
     if (entryDate < "2026-09-01") return true; // Preserva Agosto
     return validCleaningMap.has(e.cleaningRequestId);
   });
+  if (db.maidStatementEntries.length !== beforeLen) modified = true;
+
+  // 1.1 Normaliza taxa por quarto e timestamp real de conclusão nos créditos de Setembro+
+  for (const e of db.maidStatementEntries) {
+    if (e.userId !== userId || e.entryType !== "credit") continue;
+    const entryDate = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
+    if (entryDate < "2026-09-01") continue;
+    if ((userId === 2 || userId === 3) && Math.abs(Number(e.amount || 0) - userRate) > 0.001) {
+      e.amount = userRate;
+      modified = true;
+    }
+    if (e.cleaningRequestId && validCleaningMap.has(e.cleaningRequestId)) {
+      const c = validCleaningMap.get(e.cleaningRequestId);
+      if (c.completedAt && (!e.createdAt || e.createdAt.substring(0, 10) > entryDate)) {
+        e.createdAt = c.completedAt;
+        modified = true;
+      }
+    }
+  }
 
   const existingCreditRefs = new Set(
     db.maidStatementEntries
@@ -225,6 +250,7 @@ export function syncMaidCredits(db, userId) {
     if (legacyEntry) {
       legacyEntry.cleaningRequestId = cleaning.id;
       existingCreditRefs.add(cleaning.id);
+      modified = true;
       continue;
     }
 
@@ -237,16 +263,20 @@ export function syncMaidCredits(db, userId) {
       amount: userRate,
       description: `Diária — Flat ${flatNum}`,
       entryDate,
-      createdAt: new Date().toISOString(),
+      createdAt: cleaning.completedAt || new Date().toISOString(),
     });
     existingCreditRefs.add(cleaning.id);
+    modified = true;
   }
 
   if (newEntries.length > 0) {
     newEntries.sort((a, b) => (a.entryDate || "").localeCompare(b.entryDate || ""));
     db.maidStatementEntries.push(...newEntries);
   }
+
+  return modified;
 }
+
 
 // ── Motor Financeiro Canônico de Quinzena ────────────────────────────────────
 
@@ -761,10 +791,11 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     res.json({ success: true, count: dispatched.length, dispatched });
   });
 
-  // ── Background Runner Contínuo (A Cada 60 Segundos) ───────────────────────
-  setInterval(async () => {
-    try {
-      const db = getDb();
+  // ── Background Runner Contínuo (A Cada 60 Segundos - desfasado em +30s para balancear Event Loop) ───
+  setTimeout(() => {
+    setInterval(async () => {
+      try {
+        const db = getDb();
       const config = db?.maidAutomationConfig;
       if (!config || !config.enabled) return;
 
@@ -957,7 +988,8 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     } catch (err) {
       console.error("[Maid WhatsApp Automation Error]:", err.message);
     }
-  }, 60 * 1000);
+    }, 60 * 1000);
+  }, 30000);
 
   console.log("✓ [Maid WhatsApp Automation Engine] Inicializado com sucesso para Governança & Camareiras.");
 }

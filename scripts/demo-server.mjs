@@ -924,6 +924,7 @@ app.post("/api/wbp/conflicts/check", (req, res) => {
 
 app.get("/api/wbp/pricing/settings", (req, res) => {
   try {
+    syncFinancialAndTariffSettings(db);
     const state = WbpPricingManager.getPricingState(db);
     const sebrae = calculateSebraeRate(state.settings);
     res.json({
@@ -950,7 +951,13 @@ export const DEFAULT_FEE_SETTINGS = {
 
 export function syncFinancialAndTariffSettings(db, partial = {}) {
   if (!db) return {};
-  if (!db.financialSettings) {
+  const isLegacySeed = db.financialSettings && !db.financialSettings._sebraeSsotMigratedV2 && (
+    Number(db.financialSettings.fixedRent) === 24000 ||
+    Number(db.financialSettings.fixedRent) === 22800 ||
+    Number(db.financialSettings.referenceBaseRate) === 237 ||
+    Number(db.financialSettings.varCleaningPerDay) === 15
+  );
+  if (!db.financialSettings || isLegacySeed) {
     db.financialSettings = {
       fixedRent: 38506.61,
       fixedSalaries: 0,
@@ -965,6 +972,7 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
       taxRatePct: 0.06,
       targetDirectMixPct: 0.45,
       referenceBaseRate: 276.63,
+      _sebraeSsotMigratedV2: true,
     };
   }
   if (!db.wbpPricing) {
@@ -7381,9 +7389,11 @@ function pruneDatabase() {
     garageAuthorizations: 500,
     reservationCommunications: 500,
     serviceOrders: 500,
-    auditLogs: 200,
-    notifications: 250,
-    nfseRetryQueue: 100
+    auditLogs: 150,
+    notifications: 200,
+    nfseRetryQueue: 100,
+    periodicExecutions: 100,
+    zapiRawWebhookLogs: 15
   };
 
   for (const [key, max] of Object.entries(LIMITS)) {
@@ -7392,8 +7402,8 @@ function pruneDatabase() {
       db[key] = db[key]
         .filter(Boolean)
         .sort((a, b) => {
-          const dateA = String(a?.createdAt || a?.sentAt || a?.date || a?.updatedAt || "");
-          const dateB = String(b?.createdAt || b?.sentAt || b?.date || b?.updatedAt || "");
+          const dateA = String(a?.createdAt || a?.executedAt || a?.sentAt || a?.date || a?.updatedAt || a?.timestamp || a?.id || "");
+          const dateB = String(b?.createdAt || b?.executedAt || b?.sentAt || b?.date || b?.updatedAt || b?.timestamp || b?.id || "");
           return dateB > dateA ? 1 : (dateB < dateA ? -1 : 0);
         })
         .slice(0, max);
@@ -16027,18 +16037,11 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Expires", "0");
 
   const now = Date.now();
-  if (lastCalendarReconcileTime === 0) {
+  if (now - lastCalendarReconcileTime > 15000) {
     lastCalendarReconcileTime = now;
     if (reconcileUniversalIntegrity()) {
       setImmediate(() => saveDatabase());
     }
-  } else if (now - lastCalendarReconcileTime > 60000) {
-    lastCalendarReconcileTime = now;
-    setImmediate(() => {
-      if (reconcileUniversalIntegrity()) {
-        saveDatabase();
-      }
-    });
   }
 
   const { startDate, endDate } = req.query;
@@ -26612,22 +26615,7 @@ app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
 
 // ── SEBRAE Financial & Pricing Intelligence Endpoints ──────────────────────
 export function getFinancialSettings() {
-  if (!db.financialSettings) {
-    db.financialSettings = {
-      fixedRent: 24000,
-      fixedSalaries: 8000,
-      fixedCondoIptu: 2500,
-      fixedSystemsMaintenance: 1000,
-      fixedOther: 500,
-      varCleaningPerDay: 15,
-      varUtilitiesPerDay: 5,
-      varCardBreakfastPerDay: 10,
-      targetProfitMarginPct: 0.25,
-      avgChannelCommissionPct: 0.18,
-      targetDirectMixPct: 0.45,
-      referenceBaseRate: 237,
-    };
-  }
+  syncFinancialAndTariffSettings(db);
   return db.financialSettings;
 }
 
@@ -26749,7 +26737,7 @@ app.get("/api/finance/overview", (req, res) => {
   const netRevenue = round2(grossRevenue - totalDeductions);
 
   // Custos Variáveis Operacionais (sem duplicar comissões!)
-  const varCostPerNight = (cfg.varCleaningPerDay || 23.25) + (cfg.varUtilitiesPerDay || 9.00) + (cfg.varCardBreakfastPerDay || 15.51);
+  const varCostPerNight = round2((cfg.varCleaningPerDay || 23.25) + (cfg.varUtilitiesPerDay || 9.00) + (cfg.varCardBreakfastPerDay || 15.51));
   const operationalVariableCosts = round2(soldNights * varCostPerNight);
   const totalVariableCosts = operationalVariableCosts;
 
@@ -26757,12 +26745,18 @@ app.get("/api/finance/overview", (req, res) => {
   const contributionMargin = round2(netRevenue - operationalVariableCosts);
 
   // Custos Fixos & Marketing
-  const totalMarketingSpent = (db.adCampaigns || []).reduce((acc, c) => acc + (Number(c.spent) || 0), 0);
-  const baseFixedCosts = (cfg.fixedRent || 0) + (cfg.fixedSalaries || 0) + (cfg.fixedCondoIptu || 0) + (cfg.fixedSystemsMaintenance || 0) + (cfg.fixedOther || 0);
-  const totalFixedCosts = round2((baseFixedCosts > 0 ? baseFixedCosts : 38906.61) + totalMarketingSpent);
+  const totalMarketingSpent = round2((db.adCampaigns || []).reduce((acc, c) => acc + (Number(c.spent) || 0), 0));
+  const baseFixedCosts = round2((cfg.fixedRent || 0) + (cfg.fixedSalaries || 0) + (cfg.fixedCondoIptu || 0) + (cfg.fixedSystemsMaintenance || 0) + (cfg.fixedOther || 0));
+  const structuralFixedCosts = baseFixedCosts > 0 ? baseFixedCosts : 38906.61;
+  const totalFixedCosts = round2(structuralFixedCosts + totalMarketingSpent);
 
-  const fixedCostPerAvailableNight = round2(totalFixedCosts / (availableNights || 1));
-  const fixedCostPerSoldNight = soldNights > 0 ? round2(totalFixedCosts / soldNights) : fixedCostPerAvailableNight;
+  // SEBRAE Rate Canonical
+  const sebraeState = WbpPricingManager.getPricingState(db);
+  const sebraeCanonical = calculateSebraeRate(sebraeState.settings);
+  const sustainableMinRate = sebraeCanonical.tarifaMinima;
+
+  const fixedCostPerAvailableNight = round2(structuralFixedCosts / (availableNights || 1));
+  const fixedCostPerSoldNight = soldNights > 0 ? round2(structuralFixedCosts / soldNights) : fixedCostPerAvailableNight;
   const totalCostPerOccupiedUH = round2(fixedCostPerSoldNight + varCostPerNight);
 
   // EBITDA
@@ -26775,11 +26769,6 @@ app.get("/api/finance/overview", (req, res) => {
   const revparGross = availableNights > 0 ? round2(grossRevenue / availableNights) : 0;
   const revparNet = availableNights > 0 ? round2(netRevenue / availableNights) : 0;
   const directMixPct = grossRevenue > 0 ? round2((revenueDirectShortStay + revenueLongStay) / grossRevenue) : 0.30;
-
-  // SEBRAE Rate Canonical
-  const sebraeState = WbpPricingManager.getPricingState(db);
-  const sebraeCanonical = calculateSebraeRate(sebraeState.settings);
-  const sustainableMinRate = sebraeCanonical.tarifaMinima;
 
   // Monthly Seasonality Curve
   const seasonalityMonths = [
@@ -26822,17 +26811,23 @@ app.get("/api/finance/overview", (req, res) => {
     period: period || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
     viewMode,
     settings: cfg,
+    sebraeCanonical,
+    feeSettings,
     totalUHs,
     availableNights,
     soldNights,
     occupancyPct,
     costs: {
+      structuralFixedCosts,
       totalFixedCosts,
       fixedCostPerAvailableNight,
       fixedCostPerSoldNight,
+      sebraeFixedPerSoldNight: sebraeCanonical.fixedCostPerSoldUnit,
       varCostPerNight,
       totalCostPerOccupiedUH,
+      sebraeCostUH: sebraeCanonical.custoUH,
       sustainableMinRate,
+      breakEvenFloor: sebraeCanonical.breakEvenFloor,
       marketingSpent: totalMarketingSpent
     },
     dre: {
@@ -26842,6 +26837,10 @@ app.get("/api/finance/overview", (req, res) => {
       revenueLongStay,
       revenueBooking,
       revenueAirbnb,
+      nightsDirect,
+      nightsBooking,
+      nightsAirbnb,
+      nightsLongStay,
       totalCommissionsPaid,
       commissionBooking,
       commissionAirbnb,
@@ -26853,6 +26852,7 @@ app.get("/api/finance/overview", (req, res) => {
       operationalVariableCosts,
       totalVariableCosts,
       contributionMargin,
+      structuralFixedCosts,
       totalFixedCosts,
       fixedRent: cfg.fixedRent,
       fixedSalaries: cfg.fixedSalaries,
@@ -39922,35 +39922,39 @@ app.post("/api/smart-flat/:target/simulate", (req, res) => {
   }
 });
 
-// 6.6 Rotina Periódica Smart Flat Hub - Avaliação de Fail-Safe e Playlist
-setInterval(() => {
-  try {
-    if (!db.smartFlats || typeof db.smartFlats !== "object") return;
-    const bNow = getBrasiliaNow();
-    let changed = false;
-    for (const flatNumber of Object.keys(db.smartFlats)) {
-      const sf = db.smartFlats[flatNumber];
-      if (!sf) continue;
-      const res = sf.reservationCode ? findReservationByLocatorOrContact(sf.reservationCode) : null;
-      const prevShutoff = sf.failSafe?.shutoffTriggered;
-      const prevPlaying = sf.devices?.welcomePlaylist?.isPlaying;
-      evaluateSmartFlatState(sf, res, bNow);
-      if (sf.failSafe?.shutoffTriggered !== prevShutoff || sf.devices?.welcomePlaylist?.isPlaying !== prevPlaying) {
-        changed = true;
+// 6.6 Rotina Periódica Smart Flat Hub - Avaliação de Fail-Safe e Playlist (desfasado em +15s para balancear Event Loop)
+setTimeout(() => {
+  setInterval(() => {
+    try {
+      if (!db.smartFlats || typeof db.smartFlats !== "object") return;
+      const bNow = getBrasiliaNow();
+      let changed = false;
+      for (const flatNumber of Object.keys(db.smartFlats)) {
+        const sf = db.smartFlats[flatNumber];
+        if (!sf) continue;
+        const res = sf.reservationCode ? findReservationByLocatorOrContact(sf.reservationCode) : null;
+        const prevShutoff = sf.failSafe?.shutoffTriggered;
+        const prevPlaying = sf.devices?.welcomePlaylist?.isPlaying;
+        evaluateSmartFlatState(sf, res, bNow);
+        if (sf.failSafe?.shutoffTriggered !== prevShutoff || sf.devices?.welcomePlaylist?.isPlaying !== prevPlaying) {
+          changed = true;
+        }
       }
-    }
-    if (changed) {
-      saveDatabase();
-    }
-  } catch (_) {}
-}, 60000);
+      if (changed) {
+        saveDatabase();
+      }
+    } catch (_) {}
+  }, 60000);
+}, 15000);
 
-// 6.7 Rotina Periódica - Verificação de Atrasos em Ordens de Serviço (Requirement 4)
-setInterval(() => {
-  try {
-    checkOverdueServiceFlats();
-  } catch (_) {}
-}, 60000);
+// 6.7 Rotina Periódica - Verificação de Atrasos em Ordens de Serviço (desfasado em +45s)
+setTimeout(() => {
+  setInterval(() => {
+    try {
+      checkOverdueServiceFlats();
+    } catch (_) {}
+  }, 60000);
+}, 45000);
 
 const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);

@@ -791,10 +791,11 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     res.json({ success: true, count: dispatched.length, dispatched });
   });
 
-  // ── Background Runner Contínuo (A Cada 60 Segundos) ───────────────────────
-  setInterval(async () => {
-    try {
-      const db = getDb();
+  // ── Background Runner Contínuo (A Cada 60 Segundos - desfasado em +30s para balancear Event Loop) ───
+  setTimeout(() => {
+    setInterval(async () => {
+      try {
+        const db = getDb();
       const config = db?.maidAutomationConfig;
       if (!config || !config.enabled) return;
 
@@ -987,7 +988,8 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     } catch (err) {
       console.error("[Maid WhatsApp Automation Error]:", err.message);
     }
-  }, 60 * 1000);
+    }, 60 * 1000);
+  }, 30000);
 
   console.log("✓ [Maid WhatsApp Automation Engine] Inicializado com sucesso para Governança & Camareiras.");
 }

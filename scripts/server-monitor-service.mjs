@@ -75,7 +75,7 @@ let renderContainerMetrics = {
   lastReceivedAt: null,
   containerCpuPercent: null,
   containerMemoryBytes: null,
-  containerMemoryLimitBytes: 512 * 1024 * 1024, // 512MB default Render Free/Starter
+  containerMemoryLimitBytes: Number(process.env.CONTAINER_MEMORY_LIMIT_BYTES) || (2048 * 1024 * 1024), // 2048MB default Render Standard (2GB RAM)
   containerMemoryPercent: null,
   restarts: 0,
   rawAttributes: {}

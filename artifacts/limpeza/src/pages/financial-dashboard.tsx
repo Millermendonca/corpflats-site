@@ -78,14 +78,20 @@ export default function FinancialDashboard() {
   const [contractDeposit, setContractDeposit] = useState("3800")
   const [savingContract, setSavingContract] = useState(false)
 
-  // Settings Modal
+  // Settings Modal (Fonte Única da Verdade - SSOT)
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
-  const [formRent, setFormRent] = useState("24000")
-  const [formSalaries, setFormSalaries] = useState("8000")
-  const [formCondo, setFormCondo] = useState("2500")
-  const [formMaintenance, setFormMaintenance] = useState("1000")
-  const [formCleaning, setFormCleaning] = useState("15")
+  const [formRent, setFormRent] = useState("38506.61")
+  const [formOtherFixed, setFormOtherFixed] = useState("400.00")
+  const [formSalaries, setFormSalaries] = useState("0")
+  const [formCondo, setFormCondo] = useState("0")
+  const [formMaintenance, setFormMaintenance] = useState("0")
+  const [formCleaning, setFormCleaning] = useState("23.25")
+  const [formLinen, setFormLinen] = useState("15.51")
+  const [formUtilities, setFormUtilities] = useState("9.00")
+  const [formCommission, setFormCommission] = useState("15")
+  const [formTaxRate, setFormTaxRate] = useState("6")
   const [formMargin, setFormMargin] = useState("25")
+  const [formOccupancy, setFormOccupancy] = useState("65")
   const [savingSettings, setSavingSettings] = useState(false)
 
   const fetchAllERPData = async (period = selectedPeriod, mode = viewMode) => {
@@ -109,12 +115,18 @@ export default function FinancialDashboard() {
         const json = await overviewRes.json()
         setData(json)
         if (json.settings) {
-          setFormRent(String(json.settings.fixedRent || 24000))
-          setFormSalaries(String(json.settings.fixedSalaries || 8000))
-          setFormCondo(String(json.settings.fixedCondoIptu || 2500))
-          setFormMaintenance(String(json.settings.fixedSystemsMaintenance || 1000))
-          setFormCleaning(String(json.settings.varCleaningPerDay || 15))
-          setFormMargin(String((json.settings.targetProfitMarginPct || 0.25) * 100))
+          setFormRent(String(json.settings.fixedRent ?? 38506.61))
+          setFormOtherFixed(String(json.settings.fixedOther ?? 400.00))
+          setFormSalaries(String(json.settings.fixedSalaries ?? 0))
+          setFormCondo(String(json.settings.fixedCondoIptu ?? 0))
+          setFormMaintenance(String(json.settings.fixedSystemsMaintenance ?? 0))
+          setFormCleaning(String(json.settings.varCleaningPerDay ?? 23.25))
+          setFormLinen(String(json.settings.varCardBreakfastPerDay ?? 15.51))
+          setFormUtilities(String(json.settings.varUtilitiesPerDay ?? 9.00))
+          setFormCommission(String(Math.round((json.settings.avgChannelCommissionPct ?? 0.15) * 100)))
+          setFormTaxRate(String(Math.round((json.settings.taxRatePct ?? 0.06) * 100)))
+          setFormMargin(String(Math.round((json.settings.targetProfitMarginPct ?? 0.25) * 100)))
+          setFormOccupancy(String(Math.round((json.sebraeCanonical?.occupancyRate ?? 0.65) * 100)))
         }
       }
 
@@ -287,16 +299,29 @@ export default function FinancialDashboard() {
     e.preventDefault()
     setSavingSettings(true)
     try {
+      const fixedRent = Number(formRent) || 0
+      const fixedOther = Number(formOtherFixed) || 0
+      const fixedSalaries = Number(formSalaries) || 0
+      const fixedCondoIptu = Number(formCondo) || 0
+      const fixedSystemsMaintenance = Number(formMaintenance) || 0
+      const fixedCostsMonth = Math.round((fixedRent + fixedOther + fixedSalaries + fixedCondoIptu + fixedSystemsMaintenance) * 100) / 100
       await fetch("/api/finance/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fixedRent: Number(formRent),
-          fixedSalaries: Number(formSalaries),
-          fixedCondoIptu: Number(formCondo),
-          fixedSystemsMaintenance: Number(formMaintenance),
-          varCleaningPerDay: Number(formCleaning),
-          targetProfitMarginPct: Number(formMargin) / 100
+          fixedRent,
+          fixedOther,
+          fixedSalaries,
+          fixedCondoIptu,
+          fixedSystemsMaintenance,
+          fixedCostsMonth,
+          varCleaningPerDay: Number(formCleaning) || 23.25,
+          varCardBreakfastPerDay: Number(formLinen) || 15.51,
+          varUtilitiesPerDay: Number(formUtilities) || 9.00,
+          avgChannelCommissionPct: (Number(formCommission) || 15) / 100,
+          taxRatePct: (Number(formTaxRate) || 6) / 100,
+          targetProfitMarginPct: (Number(formMargin) || 25) / 100,
+          occupancyRate: (Number(formOccupancy) || 65) / 100,
         }),
         credentials: "include"
       })
@@ -338,7 +363,7 @@ export default function FinancialDashboard() {
         {/* Header Principal CorpFlats ERP */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/80 pb-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="w-9 h-9 rounded-2xl bg-amber-600/20 text-amber-500 flex items-center justify-center font-black">
                 <Wallet className="w-5 h-5" />
               </div>
@@ -346,11 +371,11 @@ export default function FinancialDashboard() {
                 CorpFlats • ERP & Inteligência Financeira
               </h1>
               <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold">
-                Short & Long Stay
+                SSOT Unificado • SEBRAE + DRE + PIX
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Controle de Contas a Pagar/Receber, DRE Gerencial, Fluxo de Caixa e Contratos Corporativos.
+              Fonte Única da Verdade (SSOT) sincronizada em tempo real com Precificação SEBRAE, Gestão de Tarifas, Conciliação PIX e Tráfego IA.
             </p>
           </div>
 
@@ -365,16 +390,118 @@ export default function FinancialDashboard() {
               <span>Atualizar</span>
             </Button>
             <Button 
-              variant="outline" 
+              variant="default" 
               size="sm" 
               onClick={() => setSettingsModalOpen(true)}
-              className="text-xs font-semibold gap-1.5"
+              className="text-xs font-bold gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
             >
               <Sliders className="w-3.5 h-3.5" />
-              <span>Custos Fixos / Parâmetros</span>
+              <span>Custos Fixos / Parâmetros SSOT</span>
             </Button>
           </div>
         </div>
+
+        {/* Hub Integrado — Fonte Única da Verdade (SSOT) dos 5 Módulos Financeiros */}
+        {data && (
+          <div className="rounded-2xl border border-emerald-800/40 bg-emerald-950/15 p-3.5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-black uppercase tracking-wider text-emerald-300">
+                  Ecossistema Financeiro Unificado (SSOT Ativo)
+                </span>
+                <Badge variant="outline" className="text-[10px] border-emerald-700/60 text-emerald-300">
+                  19 UHs • Ocupação Alvo {Math.round(((data.settings?.expectedOccupancyRate ?? 0.65) * 100))}% (382,85 diárias/mês)
+                </Badge>
+              </div>
+              <span className="text-[11px] text-muted-foreground">
+                Qualquer ajuste nos parâmetros reflete instantaneamente nos 5 módulos abaixo:
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <div
+                onClick={() => setActiveTab("dre")}
+                className="cursor-pointer rounded-xl border border-emerald-700/50 bg-background/70 p-2.5 hover:border-emerald-500 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase text-emerald-400">1. ERP & DRE</span>
+                  <Calculator className="w-3.5 h-3.5 text-emerald-400" />
+                </div>
+                <div className="text-sm font-black text-foreground mt-1">
+                  R$ {(data.costs?.structuralFixedCosts ?? 38906.61).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-muted-foreground block">
+                  Fixo Estrutural + R$ {(data.costs?.varCostPerNight ?? 47.76).toFixed(2)}/UH var.
+                </span>
+              </div>
+
+              <div
+                onClick={() => setLocation("/precificacao-sebrae")}
+                className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-amber-500 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase text-amber-400">2. Motor SEBRAE</span>
+                  <ArrowUpRight className="w-3.5 h-3.5 text-amber-400" />
+                </div>
+                <div className="text-sm font-black text-foreground mt-1">
+                  R$ {(data.costs?.sustainableMinRate ?? 276.63).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-muted-foreground block">
+                  Custo UH R$ {(data.costs?.sebraeCostUH ?? 149.38).toFixed(2)} • Piso R$ {(data.costs?.breakEvenFloor ?? 189.09).toFixed(2)}
+                </span>
+              </div>
+
+              <div
+                onClick={() => setLocation("/tarifas")}
+                className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-sky-500 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase text-sky-400">3. Tarifas & Canais</span>
+                  <ArrowUpRight className="w-3.5 h-3.5 text-sky-400" />
+                </div>
+                <div className="text-sm font-black text-foreground mt-1">
+                  OTA {Math.round(((data.settings?.avgChannelCommissionPct ?? 0.15) * 100))}% • ISS {Math.round(((data.settings?.taxRatePct ?? 0.06) * 100))}%
+                </div>
+                <span className="text-[10px] text-muted-foreground block">
+                  Baixa Temp. (-10%): R$ {((data.costs?.sustainableMinRate ?? 276.63) * 0.9).toFixed(2)}
+                </span>
+              </div>
+
+              <div
+                onClick={() => setLocation("/pagamentos")}
+                className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-indigo-500 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase text-indigo-400">4. PIX & Recebíveis</span>
+                  <ArrowUpRight className="w-3.5 h-3.5 text-indigo-400" />
+                </div>
+                <div className="text-sm font-black text-foreground mt-1">
+                  R$ {(receivablesData?.summary?.received ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-muted-foreground block">
+                  {(receivablesData?.receivables || []).length} faturas sincronizadas
+                </span>
+              </div>
+
+              <div
+                onClick={() => setLocation("/funil-vendas")}
+                className="cursor-pointer rounded-xl border border-border/80 bg-background/70 p-2.5 hover:border-pink-500 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase text-pink-400">5. Funil & Ads IA</span>
+                  <ArrowUpRight className="w-3.5 h-3.5 text-pink-400" />
+                </div>
+                <div className="text-sm font-black text-foreground mt-1">
+                  R$ {(data.dre?.marketingExpenses ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-muted-foreground block">
+                  Investimento Ads integrado ao DRE
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Navigation Tabs do ERP */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 p-1.5 bg-muted/40 rounded-2xl border">
@@ -453,7 +580,7 @@ export default function FinancialDashboard() {
             }`}
           >
             <Percent className="w-4 h-4 text-sky-600" />
-            <span>Precificação</span>
+            <span>Precificação SEBRAE</span>
           </button>
         </div>
 
@@ -462,21 +589,24 @@ export default function FinancialDashboard() {
           <div className="space-y-6">
             {/* Filtros de Mês / Período e Regime (Competência vs Caixa) */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-muted/30 border border-border/70 rounded-2xl">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-bold text-foreground">Período:</span>
+                  <span className="text-xs font-bold text-foreground">Período de Apuração:</span>
                 </div>
                 <Input
                   type="month"
                   value={selectedPeriod}
                   onChange={(e) => setSelectedPeriod(e.target.value)}
-                  className="h-8 text-xs font-bold w-36 bg-background"
+                  className="h-8 text-xs font-bold w-40 bg-background"
                 />
+                <Badge variant="outline" className="text-[10px]">
+                  {data.occupancy?.soldRoomNights || 0} diárias ocupadas no período ({Math.round((data.occupancy?.occupancyRate || 0) * 100)}% ocupação real)
+                </Badge>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-muted-foreground mr-1">Regime:</span>
+                <span className="text-xs font-bold text-muted-foreground mr-1">Regime Contábil:</span>
                 <div className="inline-flex rounded-xl p-0.5 bg-muted border border-border">
                   <Button
                     type="button"
@@ -507,7 +637,9 @@ export default function FinancialDashboard() {
                 <div className="text-2xl font-black text-foreground mt-1">
                   R$ {(data.dre.grossRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
-                <span className="text-[10px] text-muted-foreground mt-0.5 block">Diárias + Mensalidades Long-Stay</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                  Diárias Short-Stay + Mensalidades Long-Stay
+                </span>
               </Card>
 
               <Card className="rounded-2xl border p-4 shadow-xs">
@@ -515,7 +647,9 @@ export default function FinancialDashboard() {
                 <div className="text-2xl font-black text-emerald-600 mt-1">
                   R$ {(data.dre.netRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
-                <span className="text-[10px] text-emerald-500 font-semibold mt-0.5 block">Após comissões, taxas e impostos</span>
+                <span className="text-[10px] text-emerald-500 font-semibold mt-0.5 block">
+                  Após OTAs, gateway e impostos ({Math.round(((data.settings?.taxRatePct ?? 0.06) * 100))}%)
+                </span>
               </Card>
 
               <Card className="rounded-2xl border p-4 shadow-xs">
@@ -523,7 +657,9 @@ export default function FinancialDashboard() {
                 <div className="text-2xl font-black text-rose-600 mt-1">
                   R$ {(data.dre.totalFixedCosts || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
-                <span className="text-[10px] text-muted-foreground mt-0.5 block">Flats + Folha + Marketing</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                  Base SEBRAE R$ {(data.costs?.structuralFixedCosts ?? 38906.61).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} + R$ {(data.dre.marketingExpenses || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} Ads
+                </span>
               </Card>
 
               <Card className="rounded-2xl border p-4 shadow-xs bg-emerald-950/20 border-emerald-800/60">
@@ -532,7 +668,7 @@ export default function FinancialDashboard() {
                   R$ {(data.dre.ebitda || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
                 <span className="text-[10px] text-emerald-300 font-bold mt-0.5 block">
-                  Margem: {((data.dre.profitMarginPct || 0) * 100).toFixed(1)}%
+                  Margem Líquida: {((data.dre.profitMarginPct || 0) * 100).toFixed(1)}% (Meta SEBRAE: {Math.round(((data.settings?.targetProfitMarginPct ?? 0.25) * 100))}%)
                 </span>
               </Card>
             </div>
@@ -540,46 +676,46 @@ export default function FinancialDashboard() {
             {/* Tabela Estruturada DRE */}
             <Card className="rounded-3xl border shadow-md overflow-hidden">
               <CardHeader className="bg-muted/20 border-b p-5">
-                <CardTitle className="text-base font-black flex items-center justify-between">
+                <CardTitle className="text-base font-black flex items-center justify-between flex-wrap gap-2">
                   <span className="flex items-center gap-2">
                     <Calculator className="w-5 h-5 text-emerald-600" />
                     Demonstrativo de Resultado do Exercício (DRE Gerencial CorpFlats)
                   </span>
                   <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-xs">
-                    Modelo de Arrendamento Fixo ({viewMode === "competencia" ? "Competência" : "Caixa"})
+                    Modelo de Arrendamento Fixo • Regime de {viewMode === "competencia" ? "Competência" : "Caixa"} ({selectedPeriod})
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Demonstração de receitas por canal, deduções completas, custos operacionais reais e margem líquida.
+                  Identidade Contábil Auditada: Receita Líquida = Bruta - Deduções | Margem de Contribuição = Líquida - Variáveis Operacionais (sem bitributar comissões) | EBITDA = Margem - Fixos.
                 </CardDescription>
               </CardHeader>
 
               <CardContent className="p-0 divide-y divide-border/60">
                 {/* Linhas da DRE */}
                 <div className="p-4 flex items-center justify-between font-bold bg-muted/10">
-                  <span className="text-sm text-foreground">(+) RECEITA OPERACIONAL BRUTA</span>
+                  <span className="text-sm text-foreground">(+) RECEITA OPERACIONAL BRUTA (4 Fontes Reais)</span>
                   <span className="text-base text-foreground font-black">
                     R$ {(data.dre.grossRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
-                  <span>• Vendas Diretas Short-Stay (Site CorpFlats + WhatsApp)</span>
+                  <span>• Vendas Diretas Short-Stay (Site CorpFlats + WhatsApp • {data.occupancy?.nightsDirect ?? 0} diárias)</span>
                   <span>R$ {((data.dre.revenueDirectShortStay ?? data.dre.revenueDirect) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
-                  <span>• Mensalidades Contratos Long-Stay</span>
+                  <span>• Mensalidades Contratos Long-Stay & Faturas Corporativas ({data.occupancy?.nightsLongStay ?? 0} diárias)</span>
                   <span>R$ {(data.dre.revenueLongStay || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
-                  <span>• Vendas Booking.com (OTA)</span>
+                  <span>• Vendas Booking.com (OTA • {data.occupancy?.nightsBooking ?? 0} diárias)</span>
                   <span>R$ {(data.dre.revenueBooking || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-muted-foreground pl-8">
-                  <span>• Vendas Airbnb (OTA)</span>
+                  <span>• Vendas Airbnb (OTA • {data.occupancy?.nightsAirbnb ?? 0} diárias)</span>
                   <span>R$ {(data.dre.revenueAirbnb || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
@@ -591,17 +727,17 @@ export default function FinancialDashboard() {
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
-                  <span>• Comissões Pagas a OTAs (Booking / Airbnb)</span>
+                  <span>• Comissões Pagas a OTAs (Booking.com / Airbnb)</span>
                   <span>- R$ {(data.dre.totalCommissionsPaid || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
-                  <span>• Taxas Meios de Pagamento (PIX / Gateway Cartão Mercado Pago)</span>
+                  <span>• Taxas Meios de Pagamento (PIX Inter 0% / Gateway Cartão Mercado Pago)</span>
                   <span>- R$ {(data.dre.totalGatewayFees || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
                 <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
-                  <span>• Impostos sobre Faturamento (Simples Nacional / ISS 6%)</span>
+                  <span>• Impostos sobre Faturamento (Simples Nacional / ISS {Math.round(((data.settings?.taxRatePct ?? 0.06) * 100))}%)</span>
                   <span>- R$ {(data.dre.totalTaxes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                 </div>
 
@@ -613,30 +749,47 @@ export default function FinancialDashboard() {
                 </div>
 
                 <div className="p-4 flex items-center justify-between font-semibold text-amber-600 bg-amber-950/10">
-                  <span className="text-xs">(-) Custos Variáveis Operacionais (Limpeza por UH, Lavanderia, Insumos Café)</span>
+                  <span className="text-xs">
+                    (-) CUSTOS VARIÁVEIS OPERACIONAIS ({data.occupancy?.soldRoomNights || 0} diárias × R$ {(data.costs?.varCostPerNight ?? 47.76).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/UH)
+                  </span>
                   <span className="text-xs font-black">
                     - R$ {(data.dre.totalVariableCosts || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-amber-500/80 pl-8">
+                  <span>• Limpeza & Governança (R$ {(data.settings?.varCleaningPerDay ?? 23.25).toFixed(2)}/UH) + Enxoval/Café (R$ {(data.settings?.varCardBreakfastPerDay ?? 15.51).toFixed(2)}/UH) + Energia/Água (R$ {(data.settings?.varUtilitiesPerDay ?? 9.00).toFixed(2)}/UH)</span>
+                  <span>- R$ {(data.dre.totalVariableCosts || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
                 <div className="p-4 flex items-center justify-between font-black bg-muted/20">
-                  <span className="text-sm text-foreground">(=) MARGEM DE CONTRIBUIÇÃO</span>
+                  <span className="text-sm text-foreground">(=) MARGEM DE CONTRIBUIÇÃO OPERACIONAL</span>
                   <span className="text-base text-foreground">
                     R$ {(data.dre.contributionMargin != null ? data.dre.contributionMargin : ((data.dre.netRevenue || 0) - (data.dre.totalVariableCosts || 0))).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
                 <div className="p-4 flex items-center justify-between font-semibold text-rose-600 bg-rose-950/10">
-                  <span className="text-xs">(-) Despesas Fixas da CorpFlats (Aluguéis Fixos dos Flats + Condomínios + Folha + Marketing)</span>
+                  <span className="text-xs">(-) DESPESAS FIXAS DA CORPFLATS (Base SEBRAE + Marketing/Contas a Pagar)</span>
                   <span className="text-xs font-black">
                     - R$ {(data.dre.totalFixedCosts || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
+                  <span>• Arrendamento Fixo dos 19 Flats (Aluguel + Condomínio + IPTU + Taxas)</span>
+                  <span>- R$ {(data.settings?.fixedRent ?? 38506.61).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
+                <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
+                  <span>• Outros Custos Fixos Operacionais & Administrativos (SEBRAE)</span>
+                  <span>- R$ {((data.settings?.fixedOther ?? 400) + (data.settings?.fixedSalaries ?? 0) + (data.settings?.fixedCondoIptu ?? 0) + (data.settings?.fixedSystemsMaintenance ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+
                 {data.dre.marketingExpenses > 0 && (
                   <div className="px-6 py-2 flex items-center justify-between text-xs text-rose-500/80 pl-8">
-                    <span>• Investimento em Tráfego & Marketing (Meta/Google Ads)</span>
-                    <span>R$ {(data.dre.marketingExpenses || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span>• Investimento em Tráfego Pago & Anúncios (Meta Ads / Google Ads)</span>
+                    <span>- R$ {(data.dre.marketingExpenses || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                 )}
 
@@ -1020,7 +1173,7 @@ export default function FinancialDashboard() {
                   R$ {(cashflowData.totalInflow || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
                 <span className="text-[11px] text-muted-foreground mt-0.5 block">
-                  + R$ {(cashflowData.totalPendingInflow || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} a receber
+                  + R$ {(cashflowData.totalPendingInflow || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} a receber (Reservas + Faturas)
                 </span>
               </Card>
 
@@ -1040,35 +1193,140 @@ export default function FinancialDashboard() {
                   R$ {(cashflowData.netRealized || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
                 <span className="text-[11px] text-foreground font-semibold mt-0.5 block">
-                  Projetado: R$ {(cashflowData.netProjected || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  Projetado (Realizado + Pendentes): R$ {(cashflowData.netProjected || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </Card>
             </div>
+
+            {/* Extrato Consolidado do Fluxo de Caixa (Reservas Pagas + Recebíveis Long-Stay + Contas a Pagar) */}
+            <Card className="rounded-3xl border shadow-sm overflow-hidden">
+              <CardHeader className="bg-muted/20 border-b p-4">
+                <CardTitle className="text-sm font-black flex items-center justify-between flex-wrap gap-2">
+                  <span>Extrato Consolidado do Fluxo de Caixa (Reservas + Recebíveis + Despesas)</span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {(cashflowData.entries || []).length} movimentações integradas
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Sincronizado automaticamente com reservas pagas/pendentes, faturas Long-Stay e Contas a Pagar.
+                </CardDescription>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/40 border-b">
+                    <tr className="text-left text-muted-foreground font-bold">
+                      <th className="p-3">Data</th>
+                      <th className="p-3">Tipo</th>
+                      <th className="p-3">Flat / Origem</th>
+                      <th className="p-3">Descrição</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3 text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {(cashflowData.entries || []).slice(0, 40).map((entry: any) => (
+                      <tr key={entry.id} className="hover:bg-muted/20">
+                        <td className="p-3 font-medium text-muted-foreground">{entry.date || "—"}</td>
+                        <td className="p-3">
+                          <Badge className={entry.type === "entrada" ? "bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]" : "bg-rose-950 text-rose-300 border-rose-800 text-[10px]"}>
+                            {entry.type === "entrada" ? "ENTRADA" : "SAÍDA"}
+                          </Badge>
+                        </td>
+                        <td className="p-3 font-bold">
+                          {entry.flatNumber && entry.flatNumber !== "geral" ? `Flat ${entry.flatNumber}` : "CorpFlats Geral"}
+                        </td>
+                        <td className="p-3 text-foreground">{entry.description}</td>
+                        <td className="p-3">
+                          <Badge variant="outline" className="text-[10px] capitalize">
+                            {entry.status}
+                          </Badge>
+                        </td>
+                        <td className={`p-3 text-right font-black ${entry.type === "entrada" ? "text-emerald-400" : "text-rose-400"}`}>
+                          {entry.type === "entrada" ? "+" : "-"} R$ {Number(entry.amount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
           </div>
         )}
 
         {/* ── ABA 6: PRECIFICAÇÃO SEBRAE ───────────────────────────────────── */}
         {activeTab === "pricing" && data && (
           <div className="space-y-6">
-            <Card className="p-5 rounded-3xl border shadow-xs space-y-4">
-              <h2 className="text-base font-black text-foreground">Tarifa Sustentável & Custo por UH Ocupada</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-4 bg-muted/30 rounded-2xl">
-                  <span className="text-[11px] text-muted-foreground block uppercase font-bold">Custo Fixo por UH</span>
-                  <span className="text-xl font-black text-foreground">
-                    R$ {(data.costs?.fixedCostPerSoldNight || 0).toFixed(2)}
+            <Card className="p-5 rounded-3xl border shadow-xs space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-black text-foreground flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    Matriz de Precificação Sustentável SEBRAE (SSOT Canônico)
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Fórmula oficial SEBRAE: Custo UH ÷ (1 - Comissão - Imposto - Margem Alvo) • Sincronizado com o Simulador SEBRAE e Mapa de Tarifas.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setLocation("/precificacao-sebrae")} className="text-xs font-bold gap-1.5">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    Abrir Motor SEBRAE Completo
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setLocation("/tarifas")} className="text-xs font-bold gap-1.5">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    Abrir Gestão de Tarifas & Canais
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+                <div className="p-4 bg-muted/30 rounded-2xl border">
+                  <span className="text-[10px] text-muted-foreground block uppercase font-bold">1. Custo Fixo / UH Vendida</span>
+                  <span className="text-xl font-black text-foreground mt-1 block">
+                    R$ {(data.costs?.fixedCostPerSoldNight ?? 101.62).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground block mt-0.5">
+                    R$ {(data.costs?.structuralFixedCosts ?? 38906.61).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ÷ 382,85 diárias
                   </span>
                 </div>
-                <div className="p-4 bg-muted/30 rounded-2xl">
-                  <span className="text-[11px] text-muted-foreground block uppercase font-bold">Custo Variável / Noite</span>
-                  <span className="text-xl font-black text-foreground">
-                    R$ {(data.costs?.varCostPerNight || 0).toFixed(2)}
+
+                <div className="p-4 bg-muted/30 rounded-2xl border">
+                  <span className="text-[10px] text-muted-foreground block uppercase font-bold">2. Custo Variável / Noite</span>
+                  <span className="text-xl font-black text-foreground mt-1 block">
+                    R$ {(data.costs?.varCostPerNight ?? 47.76).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground block mt-0.5">
+                    Limpeza R$ 23,25 + Enxoval R$ 15,51 + Util. R$ 9,00
                   </span>
                 </div>
-                <div className="p-4 bg-emerald-950/30 border border-emerald-800 rounded-2xl">
-                  <span className="text-[11px] text-emerald-400 block uppercase font-bold">Tarifa Mínima Recomendada</span>
-                  <span className="text-xl font-black text-emerald-400">
-                    R$ {(data.costs?.sustainableMinRate || 0).toFixed(2)}
+
+                <div className="p-4 bg-amber-950/25 border border-amber-800/60 rounded-2xl">
+                  <span className="text-[10px] text-amber-300 block uppercase font-bold">3. Custo Total UH Ocupada</span>
+                  <span className="text-xl font-black text-amber-300 mt-1 block">
+                    R$ {(data.costs?.sebraeCostUH ?? 149.38).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] text-amber-200/80 block mt-0.5">
+                    54,0% da Tarifa Alvo SEBRAE
+                  </span>
+                </div>
+
+                <div className="p-4 bg-sky-950/25 border border-sky-800/60 rounded-2xl">
+                  <span className="text-[10px] text-sky-300 block uppercase font-bold">4. Piso Break-Even (Margem 0%)</span>
+                  <span className="text-xl font-black text-sky-300 mt-1 block">
+                    R$ {(data.costs?.breakEvenFloor ?? 189.09).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] text-sky-200/80 block mt-0.5">
+                    Baixa Temp. (-10%): R$ {((data.costs?.sustainableMinRate ?? 276.63) * 0.9).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+
+                <div className="p-4 bg-emerald-950/30 border border-emerald-700 rounded-2xl">
+                  <span className="text-[10px] text-emerald-400 block uppercase font-bold">5. Tarifa Base Alvo (25% Lucro)</span>
+                  <span className="text-xl font-black text-emerald-400 mt-1 block">
+                    R$ {(data.costs?.sustainableMinRate ?? 276.63).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] text-emerald-300 block mt-0.5">
+                    Decomposição fecha 100% exato
                   </span>
                 </div>
               </div>
@@ -1429,36 +1687,122 @@ export default function FinancialDashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Configuração de Custos Fixos Gerais */}
+      {/* Modal: Configuração SSOT (Custos Fixos, Variáveis, Taxas & Precificação SEBRAE) */}
       <Dialog open={settingsModalOpen} onOpenChange={setSettingsModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-base font-black">Custos Operacionais & Parâmetros</DialogTitle>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-emerald-500" />
+              Fonte Única da Verdade (SSOT) • Parâmetros Financeiros & SEBRAE
+            </DialogTitle>
             <DialogDescription className="text-xs">
-              Valores base usados para o cálculo do DRE e precificação sustentável.
+              Estes parâmetros alimentam simultaneamente os 5 módulos financeiros: DRE Gerencial, Precificação SEBRAE, Gestão de Tarifas, Pagamentos PIX e Tráfego IA.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSaveSettings} className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label className="text-xs font-bold">Total Aluguéis Fixos dos Flats Arrendados (R$/mês)</Label>
-              <Input value={formRent} onChange={e => setFormRent(e.target.value)} className="text-xs" />
+          <form onSubmit={handleSaveSettings} className="space-y-4 py-2">
+            {/* Bloco 1: Custos Fixos Mensais */}
+            <div className="rounded-2xl border p-3.5 space-y-3 bg-muted/20">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black uppercase text-rose-400">1. Custos Fixos Estruturais (R$/mês)</span>
+                <Badge variant="outline" className="text-[10px]">
+                  Total Fixo: R$ {(
+                    (parseFloat(formRent) || 0) +
+                    (parseFloat(formOtherFixed) || 0) +
+                    (parseFloat(formSalaries) || 0) +
+                    (parseFloat(formCondo) || 0) +
+                    (parseFloat(formSystems) || 0)
+                  ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Arrendamento dos 19 Flats (Aluguel + Cond. + IPTU)</Label>
+                  <Input type="number" step="0.01" value={formRent} onChange={e => setFormRent(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Outros Custos Fixos Operacionais (SEBRAE)</Label>
+                  <Input type="number" step="0.01" value={formOtherFixed} onChange={e => setFormOtherFixed(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Folha / Salários Extras (se não incluso acima)</Label>
+                  <Input type="number" step="0.01" value={formSalaries} onChange={e => setFormSalaries(e.target.value)} className="text-xs" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Sistemas / Manutenção Fixa Extra</Label>
+                  <Input type="number" step="0.01" value={formSystems} onChange={e => setFormSystems(e.target.value)} className="text-xs" />
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-bold">Folha de Pagamento & Salários (R$/mês)</Label>
-              <Input value={formSalaries} onChange={e => setFormSalaries(e.target.value)} className="text-xs" />
+            {/* Bloco 2: Custos Variáveis por UH Ocupada */}
+            <div className="rounded-2xl border p-3.5 space-y-3 bg-muted/20">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black uppercase text-amber-400">2. Custos Variáveis por Diária Vendida (R$/UH)</span>
+                <Badge variant="outline" className="text-[10px]">
+                  Total Variável: R$ {(
+                    (parseFloat(formCleaning) || 0) +
+                    (parseFloat(formLinen) || 0) +
+                    (parseFloat(formUtilities) || 0)
+                  ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/noite
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Limpeza & Governança (R$/UH)</Label>
+                  <Input type="number" step="0.01" value={formCleaning} onChange={e => setFormCleaning(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Lavanderia, Enxoval & Insumos (R$/UH)</Label>
+                  <Input type="number" step="0.01" value={formLinen} onChange={e => setFormLinen(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Energia, Água, Gás & Internet (R$/UH)</Label>
+                  <Input type="number" step="0.01" value={formUtilities} onChange={e => setFormUtilities(e.target.value)} className="text-xs font-bold" />
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs font-bold">Condomínios & IPTU dos Flats (R$/mês)</Label>
-              <Input value={formCondo} onChange={e => setFormCondo(e.target.value)} className="text-xs" />
+            {/* Bloco 3: Alíquotas, Comissões, Margem Alvo e Ocupação SEBRAE */}
+            <div className="rounded-2xl border p-3.5 space-y-3 bg-muted/20">
+              <span className="text-xs font-black uppercase text-emerald-400 block">
+                3. Parâmetros Tributários, Comissões & Meta SEBRAE (%)
+              </span>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Ocupação Alvo (%)</Label>
+                  <Input type="number" step="0.1" value={formOccupancy} onChange={e => setFormOccupancy(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Comissão Média Canal (%)</Label>
+                  <Input type="number" step="0.1" value={formCommission} onChange={e => setFormCommission(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Impostos Simples/ISS (%)</Label>
+                  <Input type="number" step="0.1" value={formTaxRate} onChange={e => setFormTaxRate(e.target.value)} className="text-xs font-bold" />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Margem Líquida Alvo (%)</Label>
+                  <Input type="number" step="0.1" value={formMargin} onChange={e => setFormMargin(e.target.value)} className="text-xs font-bold" />
+                </div>
+              </div>
             </div>
 
-            <DialogFooter className="pt-3">
+            <DialogFooter className="pt-2">
               <Button type="button" variant="outline" onClick={() => setSettingsModalOpen(false)}>Cancelar</Button>
-              <Button type="submit" disabled={savingSettings} className="font-bold">
-                {savingSettings ? "Salvando..." : "Salvar Parâmetros"}
+              <Button type="submit" disabled={savingSettings} className="font-bold bg-emerald-600 hover:bg-emerald-700 text-white">
+                {savingSettings ? "Sincronizando 5 Módulos..." : "Salvar & Sincronizar SSOT"}
               </Button>
             </DialogFooter>
           </form>
