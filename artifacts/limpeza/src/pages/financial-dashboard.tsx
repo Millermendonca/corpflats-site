@@ -1711,7 +1711,7 @@ export default function FinancialDashboard() {
                     (parseFloat(formOtherFixed) || 0) +
                     (parseFloat(formSalaries) || 0) +
                     (parseFloat(formCondo) || 0) +
-                    (parseFloat(formSystems) || 0)
+                    (parseFloat(formMaintenance) || 0)
                   ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </Badge>
               </div>
@@ -1734,7 +1734,7 @@ export default function FinancialDashboard() {
 
                 <div className="space-y-1">
                   <Label className="text-xs font-bold">Sistemas / Manutenção Fixa Extra</Label>
-                  <Input type="number" step="0.01" value={formSystems} onChange={e => setFormSystems(e.target.value)} className="text-xs" />
+                  <Input type="number" step="0.01" value={formMaintenance} onChange={e => setFormMaintenance(e.target.value)} className="text-xs" />
                 </div>
               </div>
             </div>
