@@ -328,11 +328,36 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   // Atualização Instantânea da Calculadora SEBRAE
   const handleUpdateSebraeSettings = (partial: Partial<PricingSettings>) => {
     setSebraeSettings(prev => {
-      const merged = { ...prev, ...partial }
+      const merged: PricingSettings = { ...prev, ...partial }
+      if (partial.resetSeasonalityOverrides) {
+        merged.seasonalityOverrides = {}
+      }
+      if (partial.fixedSystems !== undefined && partial.fixedSystemsMaintenance === undefined) {
+        merged.fixedSystemsMaintenance = partial.fixedSystems
+      } else if (partial.fixedSystemsMaintenance !== undefined && partial.fixedSystems === undefined) {
+        merged.fixedSystems = partial.fixedSystemsMaintenance
+      }
+      const hasSpecificFixedUpdate =
+        partial.fixedRent !== undefined ||
+        partial.fixedSalaries !== undefined ||
+        partial.fixedCondoIptu !== undefined ||
+        partial.fixedSystems !== undefined ||
+        partial.fixedSystemsMaintenance !== undefined ||
+        partial.fixedOther !== undefined
+      const sumOfFiveFixed =
+        Number(merged.fixedRent ?? 38506.61) +
+        Number(merged.fixedSalaries ?? 0) +
+        Number(merged.fixedCondoIptu ?? 0) +
+        Number(merged.fixedSystems ?? merged.fixedSystemsMaintenance ?? 0) +
+        Number(merged.fixedOther ?? 400.00)
+      const fixos = (partial.fixedCostsMonth !== undefined && !hasSpecificFixedUpdate)
+        ? Number(partial.fixedCostsMonth)
+        : Math.round(sumOfFiveFixed * 100) / 100
+      merged.fixedCostsMonth = fixos
+
       const totalUHs = merged.totalUHs || 19
       const days = merged.daysInMonth || 31
       const occ = merged.occupancyRate || 0.65
-      const fixos = merged.fixedCostsMonth || ((merged.fixedRent ?? 38506.61) + (merged.fixedOther ?? 400.00))
       const soldUnits = totalUHs * days * occ
       const fixoPerSold = fixos / soldUnits
       const varPerUnit = (merged.varCleaning ?? 23.25) + (merged.varLinen ?? 15.51) + (merged.varUtilities ?? 9.00)
@@ -390,6 +415,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         ...ts,
         baseDailyRate: ts.mode === "manual" ? ts.baseDailyRate : roundedTarifa,
         weekendMarkupPct: merged.weekendMarkupPct ?? ts.weekendMarkupPct,
+        channelMarkups: partial.channelCommissionPct !== undefined ? {
+          ...ts.channelMarkups,
+          booking: { ...(ts.channelMarkups?.booking || {}), commissionPct: partial.channelCommissionPct },
+        } : ts.channelMarkups,
       }) : ts)
 
       return merged
@@ -729,15 +758,31 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(siteConfig)
-        })
+        }),
+        fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            petPolicy: siteConfig.petPolicy,
+            childPolicy: siteConfig.childPolicy,
+            cancellationPolicy: siteConfig.cancellationPolicy,
+            pricing: siteConfig.pricing,
+            ratePlans: siteConfig.ratePlans,
+            bedConfig: siteConfig.bedConfig,
+            extraBedConfig: siteConfig.extraBedConfig,
+          })
+        }).catch(() => null)
       ])
 
       if (tRes.ok && sRes.ok) {
         const tData = await tRes.json()
         if (tData?.settings) setTariffSettings(tData.settings)
+        if (tData?.sebraeCalculation) {
+          setCalculation(prev => ({ ...prev, ...tData.sebraeCalculation }))
+        }
         toast({
           title: "Parâmetros Salvos com Sucesso! 💰",
-          description: "Regras do SEBRAE, markups de canais, descontos progressivos e adicionais sincronizados com o motor."
+          description: "Regras do SEBRAE, markups de canais, descontos progressivos, corporativo B2B e políticas sincronizados com o motor."
         })
         loadCalendarData()
       } else {
@@ -793,6 +838,16 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         feeType: "per_stay",
         allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
         rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
+      },
+      childPolicy: {
+        freeUpToAge: 5,
+        maxFreeChildren: 1,
+        rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
+      },
+      cancellationPolicy: {
+        freeCancellationDays: 7,
+        noShowPenaltyPercent: 100,
+        rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
       },
       pricing: {
         directDiscountPercent: 15,
@@ -853,6 +908,16 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
     rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
   }
+  const childPolicy = siteConfig?.childPolicy || {
+    freeUpToAge: 5,
+    maxFreeChildren: 1,
+    rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
+  }
+  const cancellationPolicy = siteConfig?.cancellationPolicy || {
+    freeCancellationDays: 7,
+    noShowPenaltyPercent: 100,
+    rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
+  }
   const pricing = siteConfig?.pricing || {
     directDiscountPercent: 15,
     pixDiscountPercent: 5
@@ -861,6 +926,13 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     weeklyPct: 0.10,
     biweeklyPct: 0.15,
     monthlyPct: 0.25,
+  }
+  const corporateDiscounts = tariffSettings?.corporateDiscounts || {
+    singleDiscount: 10,
+    doubleDiscount: 15,
+    conventionDiscount: 20,
+    breakfastIncluded: true,
+    customNegotiation: true,
   }
 
   // Markups reais do SSOT para os botões e simuladores
@@ -1630,6 +1702,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                                 booking: { ...tariffSettings?.channelMarkups?.booking, commissionPct: val }
                               }
                             })
+                            handleUpdateSebraeSettings({ channelCommissionPct: val })
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1702,10 +1775,13 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                   {/* Expedia & Corporativo B2B */}
                   <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 bg-slate-50/40 dark:bg-slate-900/30">
-                    <span className="text-xs font-black text-slate-800 dark:text-slate-200 block">
-                      ✈️ Expedia & 🏢 Corporativo B2B
-                    </span>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                        ✈️ Expedia & 🏢 Corporativo B2B
+                      </span>
+                      <Badge variant="outline" className="text-[10px]">Empresas & Convênios</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="space-y-1">
                         <Label className="text-[11px] font-bold">Markup Expedia (%)</Label>
                         <Input
@@ -1726,24 +1802,83 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Desconto Corporativo B2B (%)</Label>
+                        <Label className="text-[11px] font-bold">B2B Single (%)</Label>
                         <Input
                           type="number"
                           step="1"
-                          value={corporateDiscountPct}
+                          value={corporateDiscounts.singleDiscount ?? corporateDiscountPct}
                           onChange={e => {
-                            const val = Number(e.target.value) / 100
+                            const pctVal = Number(e.target.value)
                             setTariffSettings({
                               ...tariffSettings,
                               channelMarkups: {
                                 ...tariffSettings?.channelMarkups,
-                                corporate: { ...tariffSettings?.channelMarkups?.corporate, discountPct: val }
-                              }
+                                corporate: { ...tariffSettings?.channelMarkups?.corporate, discountPct: pctVal / 100 }
+                              },
+                              corporateDiscounts: { ...corporateDiscounts, singleDiscount: pctVal }
                             })
                           }}
                           className="h-8 font-black text-xs"
                         />
                       </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">B2B Duplo (%)</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          value={corporateDiscounts.doubleDiscount ?? 15}
+                          onChange={e => {
+                            const pctVal = Number(e.target.value)
+                            setTariffSettings({
+                              ...tariffSettings,
+                              corporateDiscounts: { ...corporateDiscounts, doubleDiscount: pctVal }
+                            })
+                          }}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Convênio (%)</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          value={corporateDiscounts.conventionDiscount ?? 20}
+                          onChange={e => {
+                            const pctVal = Number(e.target.value)
+                            setTariffSettings({
+                              ...tariffSettings,
+                              corporateDiscounts: { ...corporateDiscounts, conventionDiscount: pctVal }
+                            })
+                          }}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 pt-1 text-xs">
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={corporateDiscounts.breakfastIncluded ?? true}
+                          onChange={e => setTariffSettings({
+                            ...tariffSettings,
+                            corporateDiscounts: { ...corporateDiscounts, breakfastIncluded: e.target.checked }
+                          })}
+                          className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <span>Café da Manhã Incluso B2B</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={corporateDiscounts.customNegotiation ?? true}
+                          onChange={e => setTariffSettings({
+                            ...tariffSettings,
+                            corporateDiscounts: { ...corporateDiscounts, customNegotiation: e.target.checked }
+                          })}
+                          className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <span>Acordo / Faturamento Customizado</span>
+                      </label>
                     </div>
                   </div>
 
@@ -2197,7 +2332,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       <Input
                         type="number"
                         value={petPolicy.feeAmount ?? 80}
-                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...siteConfig.petPolicy, feeAmount: Number(e.target.value) } })}
+                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeAmount: Number(e.target.value) } })}
                         className="h-8 font-black text-xs"
                       />
                     </div>
@@ -2205,14 +2340,99 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       <Label className="text-[11px] font-bold">Frequência</Label>
                       <select
                         value={petPolicy.feeType || "per_stay"}
-                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...siteConfig.petPolicy, feeType: e.target.value } })}
+                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeType: e.target.value } })}
                         className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
                       >
                         <option value="per_stay">Por Estadia (1x)</option>
                         <option value="per_night">Por Noite / Diária</option>
                       </select>
                     </div>
-                    <div className="text-[10.5px] text-slate-500">Cães até 15kg permitidos.</div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold">Espécies / Porte Permitido</Label>
+                      <Input
+                        type="text"
+                        value={petPolicy.allowedSpecies || "Cachorros (Cães) de pequeno e médio porte (até 15kg)"}
+                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, allowedSpecies: e.target.value } })}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Políticas de Hospedagem: Crianças e Cancelamento */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  {/* Política de Crianças */}
+                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5 bg-slate-50/40 dark:bg-slate-900/30">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs">👶 Política de Crianças (Cortesia Infantil)</span>
+                      <Badge variant="outline" className="text-[10px]">Até {childPolicy.freeUpToAge ?? 5} anos grátis</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Idade Máx. Cortesia (anos)</Label>
+                        <Input
+                          type="number"
+                          value={childPolicy.freeUpToAge ?? 5}
+                          onChange={e => setSiteConfig({ ...siteConfig, childPolicy: { ...childPolicy, freeUpToAge: Number(e.target.value) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Qtd. Crianças Grátis</Label>
+                        <Input
+                          type="number"
+                          value={childPolicy.maxFreeChildren ?? 1}
+                          onChange={e => setSiteConfig({ ...siteConfig, childPolicy: { ...childPolicy, maxFreeChildren: Number(e.target.value) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold">Regra da Cortesia Infantil</Label>
+                      <Input
+                        type="text"
+                        value={childPolicy.rules || "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."}
+                        onChange={e => setSiteConfig({ ...siteConfig, childPolicy: { ...childPolicy, rules: e.target.value } })}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Política de Cancelamento & No-Show */}
+                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5 bg-slate-50/40 dark:bg-slate-900/30">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs">📅 Política de Cancelamento & No-Show</span>
+                      <Badge variant="outline" className="text-[10px]">{cancellationPolicy.freeCancellationDays ?? 7} dias sem multa</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Prazo Cancel. Grátis (dias)</Label>
+                        <Input
+                          type="number"
+                          value={cancellationPolicy.freeCancellationDays ?? 7}
+                          onChange={e => setSiteConfig({ ...siteConfig, cancellationPolicy: { ...cancellationPolicy, freeCancellationDays: Number(e.target.value) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Multa No-Show (%)</Label>
+                        <Input
+                          type="number"
+                          value={cancellationPolicy.noShowPenaltyPercent ?? 100}
+                          onChange={e => setSiteConfig({ ...siteConfig, cancellationPolicy: { ...cancellationPolicy, noShowPenaltyPercent: Number(e.target.value) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold">Texto da Política de Cancelamento</Label>
+                      <Input
+                        type="text"
+                        value={cancellationPolicy.rules || "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."}
+                        onChange={e => setSiteConfig({ ...siteConfig, cancellationPolicy: { ...cancellationPolicy, rules: e.target.value } })}
+                        className="h-8 text-xs"
+                      />
+                    </div>
                   </div>
                 </div>
               </CardContent>

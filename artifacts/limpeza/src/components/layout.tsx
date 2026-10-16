@@ -520,8 +520,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 {cat.items.map(item => {
                   const isActive = location === item.href ||
                     (item.href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) ||
+                    (item.href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) ||
                     (item.href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) ||
-                    (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao"))
+                    (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa"))
                   return (
                     <Link key={item.href} href={item.href}>
                       <div className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
@@ -792,8 +793,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     {cat.items.map(item => {
                       const isActive = location === item.href ||
                         (item.href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) ||
+                        (item.href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) ||
                         (item.href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) ||
-                        (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao"))
+                        (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa"))
                       return (
                         <Link key={item.href} href={item.href}>
                           <div className={`p-2.5 rounded-2xl border transition-all flex items-center justify-between ${

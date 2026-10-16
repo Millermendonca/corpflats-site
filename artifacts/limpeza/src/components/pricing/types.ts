@@ -38,10 +38,14 @@ export interface PricingSettings {
   fixedSalaries?: number;
   fixedCondoIptu?: number;
   fixedSystems?: number;
+  fixedSystemsMaintenance?: number;
   fixedCostsMonth: number;
   varCleaning: number;
+  varCleaningPerDay?: number;
   varLinen: number;
+  varCardBreakfastPerDay?: number;
   varUtilities: number;
+  varUtilitiesPerDay?: number;
   channelCommissionPct: number;
   targetMarginPct: number;
   taxRatePct: number;
@@ -52,7 +56,8 @@ export interface PricingSettings {
   weekendMarkupPct: number;
   hasPlanCeiling?: boolean;
   planCeilingCount?: number;
-  seasonalityOverrides?: Record<string, { factor: number; season: "Alta" | "Média" | "Baixa"; occupancyRate?: number }>;
+  seasonalityOverrides?: Record<string | number, number | { factor: number; season?: "Alta" | "Média" | "Baixa" | string; occupancyRate?: number }>;
+  resetSeasonalityOverrides?: boolean;
   hasStagedChanges?: boolean;
   stagedChangesCount?: number;
 }

@@ -34,34 +34,24 @@ export const CostsTab: React.FC<CostsTabProps> = ({ settings, calculation }) => 
                 R$ {Number(settings.fixedRent ?? 38506.61).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
               </span>
             </div>
-            {(Number(settings.fixedSalaries) > 0 || Number(settings.fixedCondoIptu) > 0 || Number(settings.fixedSystems) > 0) && (
-              <>
-                {Number(settings.fixedSalaries) > 0 && (
-                  <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
-                    <span className="text-muted-foreground">Folha de Pagamento / Equipe Fixa</span>
-                    <span className="font-semibold text-foreground">
-                      R$ {Number(settings.fixedSalaries).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                )}
-                {Number(settings.fixedCondoIptu) > 0 && (
-                  <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
-                    <span className="text-muted-foreground">Condomínio + IPTU dos Flats</span>
-                    <span className="font-semibold text-foreground">
-                      R$ {Number(settings.fixedCondoIptu).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                )}
-                {Number(settings.fixedSystems) > 0 && (
-                  <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
-                    <span className="text-muted-foreground">Sistemas, Internet & Manutenção</span>
-                    <span className="font-semibold text-foreground">
-                      R$ {Number(settings.fixedSystems).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
+            <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
+              <span className="text-muted-foreground">Folha de Pagamento / Equipe Fixa</span>
+              <span className="font-semibold text-foreground">
+                R$ {Number(settings.fixedSalaries ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
+              <span className="text-muted-foreground">Condomínio + IPTU dos Flats</span>
+              <span className="font-semibold text-foreground">
+                R$ {Number(settings.fixedCondoIptu ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
+              <span className="text-muted-foreground">Sistemas, Internet & Manutenção</span>
+              <span className="font-semibold text-foreground">
+                R$ {Number(settings.fixedSystems ?? settings.fixedSystemsMaintenance ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
             <div className="flex justify-between items-center py-1.5 border-b border-border/40 text-xs">
               <span className="text-muted-foreground">Outros Custos Fixos Operacionais</span>
               <span className="font-semibold text-foreground">

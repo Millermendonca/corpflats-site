@@ -34,13 +34,13 @@ export const RestrictionsTab: React.FC = () => {
           const def = data.restrictions.defaults;
           setRestrictions((prev) => ({
             ...prev,
-            minStay: Number(def.minNights ?? prev.minStay),
-            maxStay: Number(def.maxNights ?? prev.maxStay),
-            stopSell: Boolean(def.stopSell ?? prev.stopSell),
-            closedToArrival: Boolean(def.closedToArrival ?? prev.closedToArrival),
-            closedToDeparture: Boolean(def.closedToDeparture ?? prev.closedToDeparture),
-            minAdvanceDays: Number(def.minAdvanceDays ?? prev.minAdvanceDays),
-            maxAdvanceDays: Number(def.maxAdvanceDays ?? prev.maxAdvanceDays),
+            minStay: Number(def.minStay ?? def.minNights ?? def.min_los_weekday ?? prev.minStay),
+            maxStay: Number(def.maxStay ?? def.maxNights ?? def.max_los ?? prev.maxStay),
+            stopSell: Boolean(def.stopSell ?? def.close ?? prev.stopSell),
+            closedToArrival: Boolean(def.closedToArrival ?? def.closearr ?? prev.closedToArrival),
+            closedToDeparture: Boolean(def.closedToDeparture ?? def.closedep ?? prev.closedToDeparture),
+            minAdvanceDays: Number(def.minAdvanceDays ?? def.min_advanced_offset ?? prev.minAdvanceDays),
+            maxAdvanceDays: Number(def.maxAdvanceDays ?? def.max_advanced_offset ?? prev.maxAdvanceDays),
           }));
         }
       })

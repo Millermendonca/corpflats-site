@@ -36,17 +36,30 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
   onUpdateSettings,
   onSaved,
 }) => {
-  const buildMonthsFromOverrides = (overrides?: Record<string | number, number>): SeasonalityMonth[] => {
+  const buildMonthsFromOverrides = (
+    overrides?: Record<string | number, number | { factor: number; season?: string; occupancyRate?: number }>
+  ): SeasonalityMonth[] => {
     return DEFAULT_MONTHS.map((m) => {
-      const customVal = overrides?.[m.month] ?? overrides?.[String(m.month)];
-      if (customVal !== undefined && customVal !== null && !Number.isNaN(Number(customVal))) {
-        const factor = Number(customVal);
-        return {
-          ...m,
-          factor,
-          isManualOverride: factor !== m.factor,
-          season: factor > 1.05 ? "Alta" : factor < 0.95 ? "Baixa" : "Média",
-        };
+      const rawVal = overrides?.[m.month] ?? overrides?.[String(m.month)];
+      if (rawVal !== undefined && rawVal !== null) {
+        const numFactor = typeof rawVal === "object" ? Number(rawVal.factor) : Number(rawVal);
+        if (!Number.isNaN(numFactor) && numFactor > 0) {
+          const factor = numFactor;
+          const resolvedSeason: "Alta" | "Média" | "Baixa" =
+            typeof rawVal === "object" && (rawVal.season === "Alta" || rawVal.season === "Média" || rawVal.season === "Baixa")
+              ? rawVal.season
+              : factor > 1.05
+              ? "Alta"
+              : factor < 0.95
+              ? "Baixa"
+              : "Média";
+          return {
+            ...m,
+            factor,
+            isManualOverride: Math.abs(factor - m.factor) > 0.001,
+            season: resolvedSeason,
+          };
+        }
       }
       return m;
     });
@@ -76,16 +89,17 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
   const handleFactorChange = (index: number, newFactor: number) => {
     setMonths((prev) => {
       const copy = [...prev];
+      const newSeason: "Alta" | "Média" | "Baixa" = newFactor > 1.05 ? "Alta" : newFactor < 0.95 ? "Baixa" : "Média";
       copy[index] = {
         ...copy[index],
         factor: newFactor,
-        isManualOverride: newFactor !== DEFAULT_MONTHS[index].factor,
-        season: newFactor > 1.05 ? "Alta" : newFactor < 0.95 ? "Baixa" : "Média",
+        isManualOverride: Math.abs(newFactor - DEFAULT_MONTHS[index].factor) > 0.001,
+        season: newSeason,
       };
-      const overridesMap: Record<number, number> = {};
+      const overridesMap: Record<number, { factor: number; season: "Alta" | "Média" | "Baixa" }> = {};
       copy.forEach((item) => {
-        if (item.isManualOverride) {
-          overridesMap[item.month] = item.factor;
+        if (item.isManualOverride || Math.abs(item.factor - DEFAULT_MONTHS[item.month].factor) > 0.001) {
+          overridesMap[item.month] = { factor: item.factor, season: item.season };
         }
       });
       onUpdateSettings?.({ seasonalityOverrides: overridesMap });
@@ -101,22 +115,23 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
   const handleResetDefaults = () => {
     setMonths(DEFAULT_MONTHS);
     setWeekendMarkup(15);
-    onUpdateSettings?.({ seasonalityOverrides: {}, weekendMarkupPct: 0.15 });
+    onUpdateSettings?.({ seasonalityOverrides: {}, resetSeasonalityOverrides: true, weekendMarkupPct: 0.15 });
   };
 
   const handleSaveSeasonality = async () => {
     setIsSaving(true);
     try {
-      const overridesMap: Record<number, number> = {};
+      const overridesMap: Record<number, { factor: number; season: "Alta" | "Média" | "Baixa" }> = {};
       months.forEach((m) => {
-        if (m.isManualOverride || m.factor !== DEFAULT_MONTHS[m.month].factor) {
-          overridesMap[m.month] = m.factor;
+        if (m.isManualOverride || Math.abs(m.factor - DEFAULT_MONTHS[m.month].factor) > 0.001) {
+          overridesMap[m.month] = { factor: m.factor, season: m.season };
         }
       });
       const payload = {
         ...settings,
         weekendMarkupPct: weekendMarkup / 100,
         seasonalityOverrides: overridesMap,
+        resetSeasonalityOverrides: Object.keys(overridesMap).length === 0,
       };
       const res = await fetch("/api/wbp/pricing/settings", {
         method: "POST",

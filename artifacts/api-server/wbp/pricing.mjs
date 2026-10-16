@@ -307,11 +307,18 @@ export function calculateHistoricalSeasonality(reservations = [], options = {}) 
       item.occupancyRate = standard.factor === 1.15 ? 0.78 : (standard.factor === 0.90 ? 0.48 : 0.65);
     }
 
-    // Apply manual override if present
-    if (manualOverrides[m] && manualOverrides[m].factor != null) {
-      item.factor = Number(manualOverrides[m].factor);
-      if (manualOverrides[m].season) {
-        item.season = manualOverrides[m].season;
+    // Apply manual override if present (supports both number and { factor, season } object)
+    const ov = manualOverrides[m] ?? manualOverrides[String(m)];
+    if (typeof ov === "number" && !Number.isNaN(ov)) {
+      item.factor = Number(ov);
+      item.season = item.factor > 1.02 ? "Alta" : item.factor < 0.98 ? "Baixa" : "Média";
+      item.isManualOverride = true;
+    } else if (ov && typeof ov === "object" && ov.factor != null) {
+      item.factor = Number(ov.factor);
+      if (ov.season) {
+        item.season = ov.season;
+      } else {
+        item.season = item.factor > 1.02 ? "Alta" : item.factor < 0.98 ? "Baixa" : "Média";
       }
       item.isManualOverride = true;
     }
@@ -578,10 +585,46 @@ export class WbpPricingManager {
       }
     }
     const state = this.getPricingState(db);
+    const { seasonalityOverrides, resetSeasonalityOverrides, ...restSettings } = newSettings || {};
     state.settings = {
       ...state.settings,
-      ...newSettings
+      ...restSettings
     };
+    const hasSpecificFixedUpdate =
+      restSettings.fixedRent !== undefined ||
+      restSettings.fixedSalaries !== undefined ||
+      restSettings.fixedCondoIptu !== undefined ||
+      restSettings.fixedSystems !== undefined ||
+      restSettings.fixedSystemsMaintenance !== undefined ||
+      restSettings.fixedOther !== undefined;
+    if (hasSpecificFixedUpdate && restSettings.fixedCostsMonth === undefined) {
+      const s = state.settings;
+      s.fixedCostsMonth = round2(
+        Number(s.fixedRent ?? 0) +
+        Number(s.fixedSalaries ?? 0) +
+        Number(s.fixedCondoIptu ?? 0) +
+        Number(s.fixedSystems ?? s.fixedSystemsMaintenance ?? 0) +
+        Number(s.fixedOther ?? 0)
+      );
+    }
+    if (resetSeasonalityOverrides) {
+      state.seasonalityOverrides = {};
+    } else if (seasonalityOverrides && typeof seasonalityOverrides === "object") {
+      if (!state.seasonalityOverrides) state.seasonalityOverrides = {};
+      for (const [k, v] of Object.entries(seasonalityOverrides)) {
+        if (v === null || v === undefined) {
+          delete state.seasonalityOverrides[k];
+        } else if (typeof v === "number") {
+          const f = Number(v);
+          const season = f > 1.02 ? "Alta" : f < 0.98 ? "Baixa" : "Média";
+          state.seasonalityOverrides[k] = { factor: f, season };
+        } else if (typeof v === "object" && v.factor != null) {
+          const f = Number(v.factor);
+          const season = v.season || (f > 1.02 ? "Alta" : f < 0.98 ? "Baixa" : "Média");
+          state.seasonalityOverrides[k] = { factor: f, season };
+        }
+      }
+    }
     state.status = "staged";
     return state.settings;
   }

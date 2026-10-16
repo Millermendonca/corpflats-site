@@ -75,7 +75,7 @@ export default function MarketingTraffic() {
           autoPilotEnabled: Boolean(jsonCamps.settings.autoPilotEnabled ?? true),
           lowOccupancyThresholdPct: Number(jsonCamps.settings.lowOccupancyThresholdPct ?? 60),
           highOccupancyPausePct: Number(jsonCamps.settings.highOccupancyPausePct ?? 85),
-          dailyBudgetLimit: Number(jsonCamps.settings.dailyBudgetLimit ?? 100),
+          dailyBudgetLimit: Number(jsonCamps.settings.dailyBudgetLimit ?? jsonCamps.settings.defaultDailyBudget ?? 100),
           metaPixelId: String(jsonCamps.settings.metaPixelId ?? ""),
           metaApiToken: String(jsonCamps.settings.metaApiToken ?? ""),
         })
@@ -93,7 +93,11 @@ export default function MarketingTraffic() {
       const res = await fetch("/api/marketing/ad-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(adSettings),
+        body: JSON.stringify({
+          ...adSettings,
+          dailyBudgetLimit: Number(adSettings.dailyBudgetLimit || 100),
+          defaultDailyBudget: Number(adSettings.dailyBudgetLimit || 100),
+        }),
         credentials: "include",
       })
       if (res.ok) {

@@ -42,19 +42,37 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
 
   const handleInputChange = (field: keyof PricingSettings, value: any) => {
     const updated: PricingSettings = { ...localSettings, [field]: value };
+    if (field === "fixedSystems" || field === "fixedSystemsMaintenance") {
+      updated.fixedSystems = Number(value) || 0;
+      updated.fixedSystemsMaintenance = Number(value) || 0;
+    }
+    if (field === "varCleaning" || field === "varCleaningPerDay") {
+      updated.varCleaning = Number(value) || 0;
+      updated.varCleaningPerDay = Number(value) || 0;
+    }
+    if (field === "varLinen" || field === "varCardBreakfastPerDay") {
+      updated.varLinen = Number(value) || 0;
+      updated.varCardBreakfastPerDay = Number(value) || 0;
+    }
+    if (field === "varUtilities" || field === "varUtilitiesPerDay") {
+      updated.varUtilities = Number(value) || 0;
+      updated.varUtilitiesPerDay = Number(value) || 0;
+    }
     if (
       field === "fixedRent" ||
       field === "fixedOther" ||
       field === "fixedSalaries" ||
       field === "fixedCondoIptu" ||
-      field === "fixedSystems"
+      field === "fixedSystems" ||
+      field === "fixedSystemsMaintenance"
     ) {
-      updated.fixedCostsMonth =
+      updated.fixedCostsMonth = Math.round((
         Number(updated.fixedRent ?? 38506.61) +
         Number(updated.fixedOther ?? 400.0) +
         Number(updated.fixedSalaries ?? 0) +
         Number(updated.fixedCondoIptu ?? 0) +
-        Number(updated.fixedSystems ?? 0);
+        Number(updated.fixedSystems ?? updated.fixedSystemsMaintenance ?? 0)
+      ) * 100) / 100;
     }
     setLocalSettings(updated);
     onUpdateSettings(updated);
@@ -70,10 +88,14 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
       fixedSalaries: 0,
       fixedCondoIptu: 0,
       fixedSystems: 0,
+      fixedSystemsMaintenance: 0,
       fixedCostsMonth: 38906.61,
       varCleaning: 23.25,
+      varCleaningPerDay: 23.25,
       varLinen: 15.51,
+      varCardBreakfastPerDay: 15.51,
       varUtilities: 9.00,
+      varUtilitiesPerDay: 9.00,
       channelCommissionPct: 0.15,
       targetMarginPct: 0.25,
       taxRatePct: 0.06,
@@ -132,6 +154,36 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   step="0.01"
                   value={localSettings.fixedRent ?? 38506.61}
                   onChange={(e) => handleInputChange("fixedRent", Number(e.target.value) || 0)}
+                  className="w-28 h-7 text-xs font-bold text-right"
+                />
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs gap-2">
+                <span className="text-muted-foreground">Folha de Pagamento / Equipe (R$)</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={localSettings.fixedSalaries ?? 0}
+                  onChange={(e) => handleInputChange("fixedSalaries", Number(e.target.value) || 0)}
+                  className="w-28 h-7 text-xs font-bold text-right"
+                />
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs gap-2">
+                <span className="text-muted-foreground">Condomínio + IPTU Mensal (R$)</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={localSettings.fixedCondoIptu ?? 0}
+                  onChange={(e) => handleInputChange("fixedCondoIptu", Number(e.target.value) || 0)}
+                  className="w-28 h-7 text-xs font-bold text-right"
+                />
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border/40 text-xs gap-2">
+                <span className="text-muted-foreground">Sistemas, Internet & Manut. (R$)</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={localSettings.fixedSystems ?? localSettings.fixedSystemsMaintenance ?? 0}
+                  onChange={(e) => handleInputChange("fixedSystems", Number(e.target.value) || 0)}
                   className="w-28 h-7 text-xs font-bold text-right"
                 />
               </div>

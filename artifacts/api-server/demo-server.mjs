@@ -989,10 +989,22 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
       currency: "BRL",
       minNights: 1,
       weekendMarkupPct: 0.15,
+      stayDiscounts: {
+        weeklyPct: 0.10,
+        biweeklyPct: 0.15,
+        monthlyPct: 0.25
+      },
+      corporateDiscounts: {
+        singleDiscount: 10,
+        doubleDiscount: 15,
+        conventionDiscount: 20,
+        breakfastIncluded: true,
+        customNegotiation: true
+      },
       channelMarkups: {
         direct: { channelName: "Venda Direta / Site / WhatsApp", markupPct: 0.0, commissionPct: 0.0, discountPct: 0.15 },
         booking: { channelName: "Booking.com", markupPct: 0.0, commissionPct: 0.15, discountPct: 0.0 },
-        airbnb: { channelName: "Airbnb", markupPct: 0.03, commissionPct: 0.18, discountPct: 0.0 }
+        airbnb: { channelName: "Airbnb", markupPct: 0.03, commissionPct: 0.15, discountPct: 0.0 }
       },
       updatedAt: new Date().toISOString()
     };
@@ -1029,10 +1041,17 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     fin.fixedOther = Number(partial.fixedOther);
     wbp.fixedOther = Number(partial.fixedOther);
   }
-  const calcTotalFixed = (fin.fixedRent || 0) + (fin.fixedSalaries || 0) + (fin.fixedCondoIptu || 0) + (fin.fixedSystemsMaintenance || 0) + (fin.fixedOther || 0);
-  if (partial.fixedCostsMonth !== undefined) {
+  const hasSpecificFixedUpdate =
+    partial.fixedRent !== undefined ||
+    partial.fixedSalaries !== undefined ||
+    partial.fixedCondoIptu !== undefined ||
+    partial.fixedSystemsMaintenance !== undefined ||
+    partial.fixedSystems !== undefined ||
+    partial.fixedOther !== undefined;
+  const calcTotalFixed = Math.round(((fin.fixedRent || 0) + (fin.fixedSalaries || 0) + (fin.fixedCondoIptu || 0) + (fin.fixedSystemsMaintenance || 0) + (fin.fixedOther || 0)) * 100) / 100;
+  if (partial.fixedCostsMonth !== undefined && !hasSpecificFixedUpdate) {
     wbp.fixedCostsMonth = Number(partial.fixedCostsMonth);
-  } else if (calcTotalFixed > 0) {
+  } else if (calcTotalFixed > 0 || hasSpecificFixedUpdate) {
     wbp.fixedCostsMonth = calcTotalFixed;
   }
 
@@ -1067,13 +1086,46 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     fee.issTaxRate = tRate;
   }
 
-  // 4. Comissões de Canais
-  if (partial.bookingCommissionRate !== undefined || partial.channelCommissionPct !== undefined || partial.avgChannelCommissionPct !== undefined || partial.bookingCommissionPct !== undefined) {
+  // 4. Comissões de Canais e Sincronização com channelMarkups / paymentMethods
+  if (partial.channelMarkups) {
+    tar.channelMarkups = { ...(tar.channelMarkups || {}), ...partial.channelMarkups };
+  }
+
+  const nestedBookingCommPct = partial.channelMarkups?.booking?.commissionPct;
+  const nestedAirbnbCommPct = partial.channelMarkups?.airbnb?.commissionPct;
+
+  let pmBookingRate;
+  let pmAirbnbRate;
+  let pmPixRate;
+  let pmCardRate;
+  if (Array.isArray(partial.paymentMethods)) {
+    const bPm = partial.paymentMethods.find(m => m.id === "booking");
+    const aPm = partial.paymentMethods.find(m => m.id === "airbnb");
+    const pPm = partial.paymentMethods.find(m => m.id === "pix");
+    const cPm = partial.paymentMethods.find(m => m.id === "cartao_credito");
+    if (bPm && bPm.commissionRate !== undefined) pmBookingRate = Number(bPm.commissionRate);
+    if (aPm && aPm.commissionRate !== undefined) pmAirbnbRate = Number(aPm.commissionRate);
+    if (pPm && pPm.gatewayFeeRate !== undefined) pmPixRate = Number(pPm.gatewayFeeRate);
+    if (cPm && cPm.gatewayFeeRate !== undefined) pmCardRate = Number(cPm.gatewayFeeRate);
+  }
+
+  if (
+    partial.bookingCommissionRate !== undefined ||
+    partial.channelCommissionPct !== undefined ||
+    partial.avgChannelCommissionPct !== undefined ||
+    partial.bookingCommissionPct !== undefined ||
+    nestedBookingCommPct !== undefined ||
+    pmBookingRate !== undefined
+  ) {
     const bPct = partial.channelCommissionPct !== undefined ? Number(partial.channelCommissionPct)
                : partial.bookingCommissionPct !== undefined ? Number(partial.bookingCommissionPct)
+               : nestedBookingCommPct !== undefined ? Number(nestedBookingCommPct)
                : partial.avgChannelCommissionPct !== undefined ? Number(partial.avgChannelCommissionPct)
-               : (Number(partial.bookingCommissionRate) / 100);
-    const bRate = partial.bookingCommissionRate !== undefined ? Number(partial.bookingCommissionRate) : (bPct * 100);
+               : partial.bookingCommissionRate !== undefined ? (Number(partial.bookingCommissionRate) / 100)
+               : (Number(pmBookingRate) / 100);
+    const bRate = partial.bookingCommissionRate !== undefined ? Number(partial.bookingCommissionRate)
+                : pmBookingRate !== undefined ? Number(pmBookingRate)
+                : Math.round(bPct * 10000) / 100;
     wbp.channelCommissionPct = bPct;
     fin.avgChannelCommissionPct = bPct;
     fee.bookingCommissionRate = bRate;
@@ -1081,27 +1133,55 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     if (!tar.channelMarkups.booking) tar.channelMarkups.booking = {};
     tar.channelMarkups.booking.commissionPct = bPct;
     tar.channelMarkups.booking.commissionRate = bPct;
+    if (Array.isArray(db.settings.paymentMethods)) {
+      const bItem = db.settings.paymentMethods.find(m => m.id === "booking");
+      if (bItem) bItem.commissionRate = bRate;
+    }
   }
 
-  if (partial.airbnbCommissionRate !== undefined || partial.airbnbCommissionPct !== undefined) {
-    const aPct = partial.airbnbCommissionPct !== undefined ? Number(partial.airbnbCommissionPct) : (Number(partial.airbnbCommissionRate) / 100);
-    const aRate = partial.airbnbCommissionRate !== undefined ? Number(partial.airbnbCommissionRate) : (aPct * 100);
+  if (
+    partial.airbnbCommissionRate !== undefined ||
+    partial.airbnbCommissionPct !== undefined ||
+    nestedAirbnbCommPct !== undefined ||
+    pmAirbnbRate !== undefined
+  ) {
+    const aPct = partial.airbnbCommissionPct !== undefined ? Number(partial.airbnbCommissionPct)
+               : nestedAirbnbCommPct !== undefined ? Number(nestedAirbnbCommPct)
+               : partial.airbnbCommissionRate !== undefined ? (Number(partial.airbnbCommissionRate) / 100)
+               : (Number(pmAirbnbRate) / 100);
+    const aRate = partial.airbnbCommissionRate !== undefined ? Number(partial.airbnbCommissionRate)
+                : pmAirbnbRate !== undefined ? Number(pmAirbnbRate)
+                : Math.round(aPct * 10000) / 100;
     fee.airbnbCommissionRate = aRate;
     if (!tar.channelMarkups) tar.channelMarkups = {};
     if (!tar.channelMarkups.airbnb) tar.channelMarkups.airbnb = {};
     tar.channelMarkups.airbnb.commissionPct = aPct;
     tar.channelMarkups.airbnb.commissionRate = aPct;
+    if (Array.isArray(db.settings.paymentMethods)) {
+      const aItem = db.settings.paymentMethods.find(m => m.id === "airbnb");
+      if (aItem) aItem.commissionRate = aRate;
+    }
   }
 
   // 5. Taxas de Meios de Pagamento
-  if (partial.pixInterRate !== undefined) {
-    fee.pixInterRate = Number(partial.pixInterRate);
+  if (partial.pixInterRate !== undefined || pmPixRate !== undefined) {
+    const pRate = Number(partial.pixInterRate ?? pmPixRate);
+    fee.pixInterRate = pRate;
     if (!tar.channelMarkups) tar.channelMarkups = {};
     if (!tar.channelMarkups.direct) tar.channelMarkups.direct = {};
-    tar.channelMarkups.direct.gatewayRate = Number(partial.pixInterRate) / 100;
+    tar.channelMarkups.direct.gatewayRate = pRate / 100;
+    if (Array.isArray(db.settings.paymentMethods)) {
+      const pItem = db.settings.paymentMethods.find(m => m.id === "pix");
+      if (pItem) pItem.gatewayFeeRate = pRate;
+    }
   }
-  if (partial.mpCreditSpotRate !== undefined) {
-    fee.mpCreditSpotRate = Number(partial.mpCreditSpotRate);
+  if (partial.mpCreditSpotRate !== undefined || pmCardRate !== undefined) {
+    const cRate = Number(partial.mpCreditSpotRate ?? pmCardRate);
+    fee.mpCreditSpotRate = cRate;
+    if (Array.isArray(db.settings.paymentMethods)) {
+      const cItem = db.settings.paymentMethods.find(m => m.id === "cartao_credito");
+      if (cItem) cItem.gatewayFeeRate = cRate;
+    }
   }
   if (partial.mpCreditInstallmentRate !== undefined) {
     fee.mpCreditInstallmentRate = Number(partial.mpCreditInstallmentRate);
@@ -1136,11 +1216,29 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     tar.directDiscountPercent = Number(partial.directDiscountPercent);
   }
   if (partial.targetDirectMixPct !== undefined) fin.targetDirectMixPct = Number(partial.targetDirectMixPct);
-  if (partial.seasonalityOverrides) {
-    db.wbpPricing.seasonalityOverrides = { ...(db.wbpPricing.seasonalityOverrides || {}), ...partial.seasonalityOverrides };
+  if (partial.stayDiscounts && typeof partial.stayDiscounts === "object") {
+    tar.stayDiscounts = { ...(tar.stayDiscounts || {}), ...partial.stayDiscounts };
   }
-  if (partial.channelMarkups) {
-    tar.channelMarkups = { ...(tar.channelMarkups || {}), ...partial.channelMarkups };
+  if (partial.corporateDiscounts && typeof partial.corporateDiscounts === "object") {
+    tar.corporateDiscounts = { ...(tar.corporateDiscounts || {}), ...partial.corporateDiscounts };
+  }
+  if (partial.resetSeasonalityOverrides) {
+    db.wbpPricing.seasonalityOverrides = {};
+  } else if (partial.seasonalityOverrides && typeof partial.seasonalityOverrides === "object") {
+    if (!db.wbpPricing.seasonalityOverrides) db.wbpPricing.seasonalityOverrides = {};
+    for (const [k, v] of Object.entries(partial.seasonalityOverrides)) {
+      if (v === null || v === undefined) {
+        delete db.wbpPricing.seasonalityOverrides[k];
+      } else if (typeof v === "number") {
+        const f = Number(v);
+        const season = f > 1.02 ? "Alta" : f < 0.98 ? "Baixa" : "Média";
+        db.wbpPricing.seasonalityOverrides[k] = { factor: f, season };
+      } else if (typeof v === "object" && v.factor != null) {
+        const f = Number(v.factor);
+        const season = v.season || (f > 1.02 ? "Alta" : f < 0.98 ? "Baixa" : "Média");
+        db.wbpPricing.seasonalityOverrides[k] = { factor: f, season };
+      }
+    }
   }
 
   // Recalcular SEBRAE canônico atualizado
@@ -1165,6 +1263,7 @@ app.post("/api/wbp/pricing/settings", (req, res) => {
     const newSettings = req.body || {};
     syncFinancialAndTariffSettings(db, newSettings);
     const updated = WbpPricingManager.updateSettings(newSettings, db);
+    const sebraeRate = calculateSebraeRate(updated);
     saveDatabase("wbp_pricing_settings_update");
     res.json({
       success: true,
@@ -1172,6 +1271,7 @@ app.post("/api/wbp/pricing/settings", (req, res) => {
         ...updated,
         seasonalityOverrides: db.wbpPricing?.seasonalityOverrides || {}
       },
+      sebraeRate,
       seasonalityOverrides: db.wbpPricing?.seasonalityOverrides || {},
       status: "staged"
     });
@@ -1324,14 +1424,32 @@ app.post("/api/wbp/restrictions", (req, res) => {
       state.overrides = { ...state.overrides, ...overrides };
     }
     if (!defaults && !planDefaults && !overrides && (body.minStay !== undefined || body.maxStay !== undefined || body.stopSell !== undefined)) {
+      const minStayVal = Number(body.minStay ?? state.defaults?.minStay ?? state.defaults?.min_los_weekday ?? 1);
+      const maxStayVal = Number(body.maxStay ?? state.defaults?.maxStay ?? state.defaults?.max_los ?? 30);
+      const stopSellVal = Boolean(body.stopSell);
+      const ctaVal = Boolean(body.closedToArrival);
+      const ctdVal = Boolean(body.closedToDeparture);
+      const minAdvVal = Number(body.minAdvanceDays ?? 0);
+      const maxAdvVal = Number(body.maxAdvanceDays ?? 365);
       const rulePayload = {
-        minStay: Number(body.minStay ?? state.defaults?.minStay ?? 1),
-        maxStay: Number(body.maxStay ?? state.defaults?.maxStay ?? 30),
-        stopSell: Boolean(body.stopSell),
-        closedToArrival: Boolean(body.closedToArrival),
-        closedToDeparture: Boolean(body.closedToDeparture),
-        minAdvanceDays: Number(body.minAdvanceDays ?? 0),
-        maxAdvanceDays: Number(body.maxAdvanceDays ?? 365)
+        minStay: minStayVal,
+        maxStay: maxStayVal,
+        minNights: minStayVal,
+        maxNights: maxStayVal,
+        min_los: minStayVal,
+        min_los_weekday: minStayVal,
+        min_los_weekend: Math.max(minStayVal, Number(state.defaults?.min_los_weekend ?? 2)),
+        max_los: maxStayVal,
+        stopSell: stopSellVal,
+        close: stopSellVal ? 1 : 0,
+        closedToArrival: ctaVal,
+        closearr: ctaVal ? 1 : 0,
+        closedToDeparture: ctdVal,
+        closedep: ctdVal ? 1 : 0,
+        minAdvanceDays: minAdvVal,
+        min_advanced_offset: minAdvVal,
+        maxAdvanceDays: maxAdvVal,
+        max_advanced_offset: maxAdvVal
       };
       state.defaults = { ...state.defaults, ...rulePayload };
       if (body.dateStart && body.dateEnd) {
@@ -1341,11 +1459,15 @@ app.post("/api/wbp/restrictions", (req, res) => {
         const pId = body.planId || "all";
         while (!isNaN(cur.getTime()) && !isNaN(end.getTime()) && cur <= end) {
           const dStr = cur.toISOString().substring(0, 10);
-          state.overrides[`${dStr}_${pId}`] = {
+          const entry = {
             ...rulePayload,
             date: dStr,
             planId: pId
           };
+          state.overrides[`${dStr}_${pId}`] = entry;
+          if (pId === "all") {
+            state.overrides[dStr] = entry;
+          }
           cur.setUTCDate(cur.getUTCDate() + 1);
         }
       }
@@ -14667,7 +14789,17 @@ app.get("/api/site-content", (req, res) => {
     ratePlans: current.ratePlans || DEFAULT_SITE_CONFIG.ratePlans,
     bedConfig: current.bedConfig || DEFAULT_SITE_CONFIG.bedConfig,
     extraBedConfig: current.extraBedConfig || DEFAULT_SITE_CONFIG.extraBedConfig,
-    petPolicy: current.petPolicy || DEFAULT_SITE_CONFIG.petPolicy,
+    petPolicy: current.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy,
+    childPolicy: current.childPolicy || db.settings?.childPolicy || {
+      freeUpToAge: 5,
+      maxFreeChildren: 1,
+      rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
+    },
+    cancellationPolicy: current.cancellationPolicy || db.settings?.cancellationPolicy || {
+      freeCancellationDays: 7,
+      noShowPenaltyPercent: 100,
+      rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
+    },
     pricing: current.pricing || DEFAULT_SITE_CONFIG.pricing,
     about: { ...DEFAULT_SITE_CONFIG.about, ...(current.about || {}) },
     amenities: Array.isArray(current.amenities) && current.amenities.length > 0 ? current.amenities : DEFAULT_SITE_CONFIG.amenities,
@@ -14677,6 +14809,19 @@ app.get("/api/site-content", (req, res) => {
   });
 });
 
+function syncSiteConfigToSettings(update) {
+  if (!db.settings) db.settings = {};
+  if (update.petPolicy) db.settings.petPolicy = db.siteConfig.petPolicy;
+  if (update.childPolicy) db.settings.childPolicy = db.siteConfig.childPolicy;
+  if (update.cancellationPolicy) db.settings.cancellationPolicy = db.siteConfig.cancellationPolicy;
+  if (update.pricing) {
+    syncFinancialAndTariffSettings(db, {
+      directDiscountPercent: update.pricing.directDiscountPercent,
+      pixDiscountPercent: update.pricing.pixDiscountPercent
+    });
+  }
+}
+
 app.post("/api/site-content", (req, res) => {
   const update = req.body || {};
   db.siteConfig = {
@@ -14684,6 +14829,7 @@ app.post("/api/site-content", (req, res) => {
     ...update,
     updatedAt: new Date().toISOString()
   };
+  syncSiteConfigToSettings(update);
   saveDatabase();
   res.json({ success: true, siteConfig: db.siteConfig });
 });
@@ -14695,6 +14841,7 @@ app.put("/api/site-content", (req, res) => {
     ...update,
     updatedAt: new Date().toISOString()
   };
+  syncSiteConfigToSettings(update);
   saveDatabase();
   res.json({ success: true, siteConfig: db.siteConfig });
 });
@@ -14706,6 +14853,7 @@ app.patch("/api/site-content", (req, res) => {
     ...update,
     updatedAt: new Date().toISOString()
   };
+  syncSiteConfigToSettings(update);
   saveDatabase();
   res.json({ success: true, siteConfig: db.siteConfig });
 });
@@ -14719,6 +14867,16 @@ app.post("/api/site-content/reset", (req, res) => {
 // ── Settings Endpoints ──────────────────────────────────────────────────────
 app.get("/api/settings", (req, res) => {
   const petPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
+  const childPolicy = db.siteConfig?.childPolicy || db.settings?.childPolicy || {
+    freeUpToAge: 5,
+    maxFreeChildren: 1,
+    rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
+  };
+  const cancellationPolicy = db.siteConfig?.cancellationPolicy || db.settings?.cancellationPolicy || {
+    freeCancellationDays: 7,
+    noShowPenaltyPercent: 100,
+    rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
+  };
   res.json({
     garageEmail: db.settings?.garageEmail || "millerpessanha@gmail.com",
     ...db.settings,
@@ -14730,6 +14888,8 @@ app.get("/api/settings", (req, res) => {
       env: db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao"
     },
     petPolicy,
+    childPolicy,
+    cancellationPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS,
     termsAndRules: db.settings.termsAndRules || DEFAULT_TERMS_AND_RULES
@@ -14737,7 +14897,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.patch("/api/settings", (req, res) => {
-  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, checkinProvider, serproConfig } = req.body;
+  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, childPolicy, cancellationPolicy, checkinProvider, serproConfig } = req.body;
   if (onedriveShareUrl !== undefined) db.settings.onedriveShareUrl = onedriveShareUrl;
   if (syncIntervalMinutes !== undefined) db.settings.syncIntervalMinutes = syncIntervalMinutes;
   if (sheetName !== undefined) db.settings.sheetName = sheetName;
@@ -14793,12 +14953,32 @@ app.patch("/api/settings", (req, res) => {
     };
     db.settings.petPolicy = db.siteConfig.petPolicy;
   }
+  if (childPolicy !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.childPolicy = {
+      ...(db.siteConfig.childPolicy || db.settings.childPolicy || {}),
+      ...childPolicy
+    };
+    db.settings.childPolicy = db.siteConfig.childPolicy;
+  }
+  if (cancellationPolicy !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.cancellationPolicy = {
+      ...(db.siteConfig.cancellationPolicy || db.settings.cancellationPolicy || {}),
+      ...cancellationPolicy
+    };
+    db.settings.cancellationPolicy = db.siteConfig.cancellationPolicy;
+  }
   saveDatabase("settings_update");
   const currentPetPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
+  const currentChildPolicy = db.siteConfig?.childPolicy || db.settings?.childPolicy;
+  const currentCancellationPolicy = db.siteConfig?.cancellationPolicy || db.settings?.cancellationPolicy;
   res.json({
     ...db.settings,
     checkinProvider: db.settings.checkinProvider || "proprio",
     petPolicy: currentPetPolicy,
+    childPolicy: currentChildPolicy,
+    cancellationPolicy: currentCancellationPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS
   });
@@ -15008,8 +15188,8 @@ export const DEFAULT_PAYMENT_METHODS = [
     channelDefault: "booking",
     gatewayFeeRate: 0.0,
     gatewayFeeFixed: 0.0,
-    commissionRate: 13.0,
-    description: "Pagamentos processados pela Booking.com (comissão padrão 13% a 15%)",
+    commissionRate: 15.0,
+    description: "Pagamentos processados pela Booking.com (comissão padrão 15%)",
     active: true,
     isSystem: true
   },
@@ -15019,8 +15199,8 @@ export const DEFAULT_PAYMENT_METHODS = [
     channelDefault: "airbnb",
     gatewayFeeRate: 0.0,
     gatewayFeeFixed: 0.0,
-    commissionRate: 3.0,
-    description: "Repasse direto Airbnb (taxa de serviço de anfitrião 3%)",
+    commissionRate: 15.0,
+    description: "Repasse direto Airbnb (taxa de serviço de anfitrião 15%)",
     active: true,
     isSystem: true
   },
@@ -15093,7 +15273,7 @@ export function ensurePaymentMethodExists(methodId, methodName) {
       channelDefault: isBooking ? "booking" : (isAirbnb ? "airbnb" : null),
       gatewayFeeRate: isCard ? 3.99 : 0.0,
       gatewayFeeFixed: 0.0,
-      commissionRate: isBooking ? 13.0 : (isAirbnb ? 3.0 : 0.0),
+      commissionRate: isBooking ? 15.0 : (isAirbnb ? 15.0 : 0.0),
       description: `Forma de pagamento ${methodName || cleanId} cadastrada automaticamente`,
       active: true,
       isSystem: false
@@ -26882,21 +27062,37 @@ app.get("/api/finance/overview", (req, res) => {
   const revparNet = availableNights > 0 ? round2(netRevenue / availableNights) : 0;
   const directMixPct = grossRevenue > 0 ? round2((revenueDirectShortStay + revenueLongStay) / grossRevenue) : 0.30;
 
-  // Monthly Seasonality Curve
-  const seasonalityMonths = [
-    { month: "Jan", occupancy: 0.88, factor: 0.15, season: "Alta", rate: round2(sustainableMinRate * 1.15) },
-    { month: "Fev", occupancy: 0.70, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Mar", occupancy: 0.58, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Abr", occupancy: 0.52, factor: -0.10, season: "Baixa", rate: round2(sustainableMinRate * 0.90) },
-    { month: "Mai", occupancy: 0.48, factor: -0.10, season: "Baixa", rate: round2(sustainableMinRate * 0.90) },
-    { month: "Jun", occupancy: 0.55, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Jul", occupancy: 0.82, factor: 0.15, season: "Alta", rate: round2(sustainableMinRate * 1.15) },
-    { month: "Ago", occupancy: 0.60, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Set", occupancy: 0.58, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Out", occupancy: 0.62, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Nov", occupancy: 0.68, factor: 0.00, season: "Média", rate: sustainableMinRate },
-    { month: "Dez", occupancy: 0.90, factor: 0.15, season: "Alta", rate: round2(sustainableMinRate * 1.15) },
+  // Monthly Seasonality Curve (sincronizado com sebraeState.seasonalityOverrides)
+  const baseMonths = [
+    { month: "Jan", occupancy: 0.88, factor: 0.15, season: "Alta" },
+    { month: "Fev", occupancy: 0.70, factor: 0.00, season: "Média" },
+    { month: "Mar", occupancy: 0.58, factor: 0.00, season: "Média" },
+    { month: "Abr", occupancy: 0.52, factor: -0.10, season: "Baixa" },
+    { month: "Mai", occupancy: 0.48, factor: -0.10, season: "Baixa" },
+    { month: "Jun", occupancy: 0.55, factor: 0.00, season: "Média" },
+    { month: "Jul", occupancy: 0.82, factor: 0.15, season: "Alta" },
+    { month: "Ago", occupancy: 0.60, factor: 0.00, season: "Média" },
+    { month: "Set", occupancy: 0.58, factor: 0.00, season: "Média" },
+    { month: "Out", occupancy: 0.62, factor: 0.00, season: "Média" },
+    { month: "Nov", occupancy: 0.68, factor: 0.00, season: "Média" },
+    { month: "Dez", occupancy: 0.90, factor: 0.15, season: "Alta" },
   ];
+  const seasonalityMonths = baseMonths.map((bm, idx) => {
+    const ov = sebraeState.seasonalityOverrides && (sebraeState.seasonalityOverrides[idx] ?? sebraeState.seasonalityOverrides[String(idx)]);
+    const rawFactor = typeof ov === "number" ? ov : (ov && ov.factor != null ? Number(ov.factor) : (1 + bm.factor));
+    const factorDelta = round2(rawFactor - 1);
+    const season = (ov && typeof ov === "object" && ov.season)
+      ? ov.season
+      : (rawFactor > 1.02 ? "Alta" : rawFactor < 0.98 ? "Baixa" : "Média");
+    return {
+      month: bm.month,
+      occupancy: bm.occupancy,
+      factor: factorDelta,
+      multiplier: rawFactor,
+      season,
+      rate: round2(sustainableMinRate * rawFactor)
+    };
+  });
 
   const simPrice = 400;
   const channelComparison = [
@@ -27008,6 +27204,18 @@ export function getTariffSettings() {
       currency: "BRL",
       minNights: 1,
       weekendMarkupPct: 0.15,
+      stayDiscounts: {
+        weeklyPct: 0.10,
+        biweeklyPct: 0.15,
+        monthlyPct: 0.25
+      },
+      corporateDiscounts: {
+        singleDiscount: 10,
+        doubleDiscount: 15,
+        conventionDiscount: 20,
+        breakfastIncluded: true,
+        customNegotiation: true
+      },
       channelMarkups: {
         direct: {
           channelName: "Venda Direta / Site / WhatsApp",
@@ -27024,11 +27232,23 @@ export function getTariffSettings() {
         airbnb: {
           channelName: "Airbnb",
           markupPct: 0.03,
-          commissionPct: 0.18,
+          commissionPct: 0.15,
           discountPct: 0.0
         }
       },
       updatedAt: new Date().toISOString()
+    };
+  }
+  if (!db.tariffSettings.stayDiscounts) {
+    db.tariffSettings.stayDiscounts = { weeklyPct: 0.10, biweeklyPct: 0.15, monthlyPct: 0.25 };
+  }
+  if (!db.tariffSettings.corporateDiscounts) {
+    db.tariffSettings.corporateDiscounts = {
+      singleDiscount: 10,
+      doubleDiscount: 15,
+      conventionDiscount: 20,
+      breakfastIncluded: true,
+      customNegotiation: true
     };
   }
   return db.tariffSettings;
@@ -27056,14 +27276,26 @@ export const SEBRAE_SEASONALITY_FACTORS = {
   11: { factor: 1.15, season: "Alta" }  // Dez (+15%)
 };
 
+export function resolveSeasonalityInfo(seasonalityOverrides, monthIdx) {
+  const manualOverride = seasonalityOverrides && (seasonalityOverrides[monthIdx] ?? seasonalityOverrides[String(monthIdx)]);
+  if (typeof manualOverride === "number" && !Number.isNaN(manualOverride)) {
+    const f = Number(manualOverride);
+    const season = f > 1.02 ? "Alta" : f < 0.98 ? "Baixa" : "Média";
+    return { factor: f, season };
+  }
+  if (manualOverride && typeof manualOverride === "object" && manualOverride.factor != null) {
+    const f = Number(manualOverride.factor);
+    const season = manualOverride.season || (f > 1.02 ? "Alta" : f < 0.98 ? "Baixa" : "Média");
+    return { factor: f, season };
+  }
+  return STANDARD_SEBRAE_SEASONALITY_FACTORS[monthIdx] || SEBRAE_SEASONALITY_FACTORS[monthIdx] || { factor: 1.0, season: "Média" };
+}
+
 export function calculateSebraeSustainableRate(customMonth = null) {
   const state = WbpPricingManager.getPricingState(db);
   const sebrae = calculateSebraeRate(state.settings);
   if (customMonth !== null && customMonth !== undefined) {
-    const manualOverride = state.seasonalityOverrides && (state.seasonalityOverrides[customMonth] || state.seasonalityOverrides[String(customMonth)]);
-    const seasonInfo = (manualOverride && manualOverride.factor != null)
-      ? manualOverride
-      : (STANDARD_SEBRAE_SEASONALITY_FACTORS[customMonth] || SEBRAE_SEASONALITY_FACTORS[customMonth] || { factor: 1.0, season: "Média" });
+    const seasonInfo = resolveSeasonalityInfo(state.seasonalityOverrides, customMonth);
     return Math.round(sebrae.tarifaMinima * Number(seasonInfo.factor) * 100) / 100;
   }
   return sebrae.tarifaMinima;
@@ -27182,15 +27414,18 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
 
 // ── Endpoints de Gestão de Tarifas ─────────────────────────────────────────
 app.get("/api/tariffs/settings", (req, res) => {
+  const sebraeState = WbpPricingManager.getPricingState(db);
+  const sebraeCalculation = calculateSebraeRate(sebraeState.settings);
   res.json({
     success: true,
-    settings: getTariffSettings()
+    settings: getTariffSettings(),
+    sebraeCalculation
   });
 });
 
 app.post("/api/tariffs/settings", (req, res) => {
   const current = getTariffSettings();
-  const { mode, baseDailyRate, weekendMarkupPct, channelMarkups } = req.body || {};
+  const { mode, baseDailyRate, weekendMarkupPct, channelMarkups, stayDiscounts, corporateDiscounts } = req.body || {};
 
   if (mode && (mode === "auto" || mode === "manual")) {
     current.mode = mode;
@@ -27207,15 +27442,31 @@ app.post("/api/tariffs/settings", (req, res) => {
       ...channelMarkups
     };
   }
+  if (stayDiscounts && typeof stayDiscounts === "object") {
+    current.stayDiscounts = {
+      ...(current.stayDiscounts || {}),
+      ...stayDiscounts
+    };
+  }
+  if (corporateDiscounts && typeof corporateDiscounts === "object") {
+    current.corporateDiscounts = {
+      ...(current.corporateDiscounts || {}),
+      ...corporateDiscounts
+    };
+  }
   current.updatedAt = new Date().toISOString();
   db.tariffSettings = current;
 
   syncFinancialAndTariffSettings(db, req.body || {});
   saveDatabase("tariff_settings_update");
 
+  const sebraeState = WbpPricingManager.getPricingState(db);
+  const sebraeCalculation = calculateSebraeRate(sebraeState.settings);
+
   res.json({
     success: true,
-    settings: current
+    settings: current,
+    sebraeCalculation
   });
 });
 
@@ -27263,10 +27514,7 @@ app.get("/api/tariffs/calendar", (req, res) => {
   const wbpState = WbpPricingManager.getPricingState(db);
   const sebraeObj = calculateSebraeRate(wbpState.settings);
   const monthIdx0 = m - 1;
-  const manualSeason = wbpState.seasonalityOverrides && (wbpState.seasonalityOverrides[monthIdx0] || wbpState.seasonalityOverrides[String(monthIdx0)]);
-  const seasonInfo = (manualSeason && manualSeason.factor != null)
-    ? manualSeason
-    : (STANDARD_SEBRAE_SEASONALITY_FACTORS[monthIdx0] || SEBRAE_SEASONALITY_FACTORS[monthIdx0] || { factor: 1.0, season: "Média" });
+  const seasonInfo = resolveSeasonalityInfo(wbpState.seasonalityOverrides, monthIdx0);
   const sebraeBaseRate = calculateSebraeSustainableRate(monthIdx0);
 
   res.json({
@@ -29026,10 +29274,13 @@ function getMarketingData() {
       lowOccupancyThresholdPct: 60,
       highOccupancyPausePct: 85,
       defaultDailyBudget: 35,
+      dailyBudgetLimit: 35,
       metaPixelId: "7489123891023",
       metaApiToken: "EAABwz...",
       googleAdsId: "AW-9481923"
     };
+  } else if (db.adSettings.dailyBudgetLimit === undefined) {
+    db.adSettings.dailyBudgetLimit = Number(db.adSettings.defaultDailyBudget ?? 35);
   }
 }
 
@@ -29377,12 +29628,16 @@ app.post("/api/marketing/ad-campaigns/:id/toggle", (req, res) => {
 // Save Marketing Settings
 app.post("/api/marketing/ad-settings", (req, res) => {
   getMarketingData();
-  const { autoPilotEnabled, lowOccupancyThresholdPct, highOccupancyPausePct, defaultDailyBudget, metaPixelId, metaApiToken, googleAdsId } = req.body;
+  const { autoPilotEnabled, lowOccupancyThresholdPct, highOccupancyPausePct, defaultDailyBudget, dailyBudgetLimit, metaPixelId, metaApiToken, googleAdsId } = req.body;
 
   if (autoPilotEnabled !== undefined) db.adSettings.autoPilotEnabled = Boolean(autoPilotEnabled);
   if (lowOccupancyThresholdPct !== undefined) db.adSettings.lowOccupancyThresholdPct = Number(lowOccupancyThresholdPct);
   if (highOccupancyPausePct !== undefined) db.adSettings.highOccupancyPausePct = Number(highOccupancyPausePct);
-  if (defaultDailyBudget !== undefined) db.adSettings.defaultDailyBudget = Number(defaultDailyBudget);
+  if (defaultDailyBudget !== undefined || dailyBudgetLimit !== undefined) {
+    const budgetVal = Number(dailyBudgetLimit ?? defaultDailyBudget);
+    db.adSettings.defaultDailyBudget = budgetVal;
+    db.adSettings.dailyBudgetLimit = budgetVal;
+  }
   if (metaPixelId !== undefined) db.adSettings.metaPixelId = metaPixelId;
   if (metaApiToken !== undefined) db.adSettings.metaApiToken = metaApiToken;
   if (googleAdsId !== undefined) db.adSettings.googleAdsId = googleAdsId;
@@ -37196,6 +37451,7 @@ app.put("/api/finance/payment-methods/:id", (req, res) => {
     if (req.body.channelDefault !== undefined) item.channelDefault = req.body.channelDefault;
     if (req.body.active !== undefined) item.active = Boolean(req.body.active);
 
+    syncFinancialAndTariffSettings(db, { paymentMethods: methods });
     saveDatabase();
     res.json({ success: true, paymentMethod: item, paymentMethods: methods });
   } catch (err) {
@@ -37308,9 +37564,9 @@ app.get("/api/finance/payments", (req, res) => {
       const resChannel = r.channel || (paymentMethod.includes("booking") ? "booking" : (paymentMethod.includes("airbnb") ? "airbnb" : "site"));
       if (channelCommissionPct === 0) {
         if (resChannel === "booking") {
-          channelCommissionPct = Number(feeConfig.bookingCommissionRate || 13.0);
+          channelCommissionPct = Number(feeConfig.bookingCommissionRate ?? 15.0);
         } else if (resChannel === "airbnb") {
-          channelCommissionPct = Number(feeConfig.airbnbCommissionRate || 3.0);
+          channelCommissionPct = Number(feeConfig.airbnbCommissionRate ?? 15.0);
         }
       }
 
