@@ -9406,7 +9406,14 @@ app.post("/api/public/checkout", async (req, res) => {
   }
 
   const todayStr = getTodayStr();
-  let existing = db.cleaningRequests.find(r => r.flatId === flat.id && r.requestDate === todayStr);
+  let existing = db.cleaningRequests.find(r =>
+    (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+    r.requestDate === todayStr &&
+    !r.isInstructionOnly &&
+    r.source !== "manual_instruction" &&
+    r.type !== "bed_adjustment_only" &&
+    r.type !== "instruction"
+  );
 
   const guestDisplayName = foundRes?.guestName || "Hóspede";
   const now = new Date().toISOString();
@@ -9452,13 +9459,14 @@ app.post("/api/public/checkout", async (req, res) => {
   const nowBrl = getBrasiliaNow();
   const timeStr = nowBrl.timeStr;
 
-  // Atualizar a reserva ativa deste flat ou a reserva identificada por código
-  const matchingResList = (db.reservations || []).filter(r =>
-    (foundRes && (r.id === foundRes.id || r.code === foundRes.code)) ||
-    ((r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
-    r.status !== "cancelada" && r.status !== "cancelado" &&
-    r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
-  );
+  // Atualizar a reserva identificada por código ou estritamente a reserva com saída prevista para hoje neste flat
+  const matchingResList = foundRes
+    ? [foundRes]
+    : (db.reservations || []).filter(r =>
+        (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+        r.status !== "cancelada" && r.status !== "cancelado" &&
+        r.checkoutDate === todayStr
+      );
   for (const r of matchingResList) {
     if (!r.actualCheckoutAt) {
       r.actualCheckoutAt = now;
@@ -11084,7 +11092,11 @@ function getRequestsForDate(dateStr, isNested = false) {
     // Prioriza o cleaningRequest específico da data consultada (checkout atual)
     const exactDateCleanings = (db.cleaningRequests || []).filter(c =>
       (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) &&
-      c.requestDate === dateStr
+      c.requestDate === dateStr &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.type !== "bed_adjustment_only" &&
+      c.type !== "instruction"
     );
     let existingCleaning = exactDateCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
       exactDateCleanings.find(c => c.status === "clean") ||
@@ -11153,6 +11165,11 @@ function getRequestsForDate(dateStr, isNested = false) {
     // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isVacant = false).
     // "Desocupado" apenas quando explicitamente confirmado manualmente via card, via link/WhatsApp (hóspede ou recepção) ou quando a limpeza já foi iniciada/concluída.
     const isCleaningStartedOrDone = !isFutureDate && (resolvedStatus === "cleaning_now" || resolvedStatus === "in_progress" || resolvedStatus === "clean");
+    const actualCheckoutBrlDate = pmsRes.actualCheckoutAt
+      ? new Date(new Date(pmsRes.actualCheckoutAt).getTime() - 3 * 3600 * 1000).toISOString().substring(0, 10)
+      : null;
+    // Blindagem temporal: ignora carimbos de check-out gravados em dias anteriores à data de saída (ex.: contaminação em turnover ou meio de estadia)
+    const isValidResCheckoutForDate = !actualCheckoutBrlDate || actualCheckoutBrlDate >= dateStr;
     const isExplicitlyVacantCheckout = Boolean(
       isCleaningStartedOrDone ||
       (existingCleaning && existingCleaning.isVacant && (
@@ -11169,7 +11186,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         existingCleaning.source === "whatsapp_concierge" ||
         existingCleaning.source === "whatsapp_guest"
       )) ||
-      (!isFutureDate && (!existingCleaning || !existingCleaning.isVacantExplicitlySet) && Boolean(
+      (!isFutureDate && (!existingCleaning || !existingCleaning.isVacantExplicitlySet) && isValidResCheckoutForDate && Boolean(
         pmsRes.checkoutDone || pmsRes.status === "completed" || pmsRes.status === "checked_out" || pmsRes.actualCheckoutAt
       ))
     );
@@ -16146,11 +16163,17 @@ app.get("/api/pms/calendar", (req, res) => {
         cleanStatus === "clean"
       )
     );
+    const actualCheckoutBrlDate = r.actualCheckoutAt
+      ? new Date(new Date(r.actualCheckoutAt).getTime() - 3 * 3600 * 1000).toISOString().substring(0, 10)
+      : null;
+    const isValidResCheckoutDate = !actualCheckoutBrlDate || actualCheckoutBrlDate >= r.checkoutDate;
     const isResMarkedCheckedOut = Boolean(
-      r.checkoutDone ||
-      r.status === "completed" ||
-      r.status === "checked_out" ||
-      r.actualCheckoutAt
+      isValidResCheckoutDate && (
+        r.checkoutDone ||
+        r.status === "completed" ||
+        r.status === "checked_out" ||
+        r.actualCheckoutAt
+      )
     );
 
     const isCheckingOutToday = r.checkoutDate === todayStr;
@@ -18142,6 +18165,16 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       c.type !== "instruction"
     );
 
+    if (oldCheckout && r.checkoutDate > oldCheckout && req.body.status !== "completed" && req.body.status !== "checked_out") {
+      r.checkoutDone = false;
+      r.actualCheckoutAt = null;
+      r.actualCheckoutTime = null;
+      r.checkoutMethod = null;
+      if (r.status === "completed" || r.status === "checked_out") {
+        r.status = (oldStatus && oldStatus !== "completed" && oldStatus !== "checked_out") ? oldStatus : "confirmed";
+      }
+    }
+
     if (existingCleanOnTarget) {
       // Se o flat já está limpo na data de destino, descarta qualquer pendência antiga da data anterior
       // para nunca sobrescrever nem recriar duplicatas sujas sobre um quarto já higienizado!
@@ -18164,9 +18197,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       } else {
         // Move a pendência para a nova data
         oldReq.requestDate = r.checkoutDate;
+        delete oldReq.effectiveDate;
         oldReq.flatId = r.flatId;
         oldReq.flatNumber = flatNum;
         oldReq.leavingGuest = r.guestName;
+        if (oldCheckout && r.checkoutDate > oldCheckout) {
+          oldReq.isVacant = false;
+          oldReq.isVacantExplicitlySet = false;
+          oldReq.vacantSource = null;
+          oldReq.vacantSetAt = null;
+          oldReq.willCleanAt = null;
+        }
         oldReq.updatedAt = new Date().toISOString();
       }
     } else {
@@ -18351,7 +18392,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  // Sincronização de pedidos de café da manhã e governança em alteração de datas/flat
+  // Sincronização de pedidos de café da manhã em alteração de datas/flat
   if (oldCheckin !== r.checkinDate || oldCheckout !== r.checkoutDate || (oldFlatId !== undefined && Number(oldFlatId) !== Number(r.flatId)) || (req.body.flatNumber !== undefined && String(req.body.flatNumber) !== String(r.flatNumber))) {
     if (!db.breakfastOrders) db.breakfastOrders = [];
     const nowBrl = getBrasiliaNow();
@@ -18372,19 +18413,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         if (r.flatId) o.flatId = Number(r.flatId) || r.flatId;
       }
     });
-
-    if (oldCheckout !== r.checkoutDate && Array.isArray(db.cleaningRequests)) {
-      const reqItem = db.cleaningRequests.find(c =>
-        (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber) || (oldFlatId !== undefined && c.flatId === oldFlatId)) &&
-        (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
-      );
-      if (reqItem) {
-        reqItem.requestDate = r.checkoutDate;
-        reqItem.effectiveDate = r.checkoutDate;
-        if (r.flatNumber) reqItem.flatNumber = String(r.flatNumber);
-        if (r.flatId) reqItem.flatId = Number(r.flatId) || r.flatId;
-      }
-    }
   }
 
   if (changes.length > 0) {
@@ -19942,14 +19970,35 @@ export async function commitPendingModification(r, pending, {
   }
 
   // C. Reconciliação de Governança
-  if (Array.isArray(db.cleaningRequests)) {
+  if (oldCheckout && targetCheckout > oldCheckout) {
+    r.checkoutDone = false;
+    r.actualCheckoutAt = null;
+    r.actualCheckoutTime = null;
+    r.checkoutMethod = null;
+    if (r.status === "completed" || r.status === "checked_out") {
+      r.status = "confirmed";
+    }
+  }
+  if (Array.isArray(db.cleaningRequests) && oldCheckout !== targetCheckout) {
     const reqItem = db.cleaningRequests.find(c =>
       (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
-      (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
+      c.requestDate === oldCheckout &&
+      c.status !== "clean" &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.type !== "bed_adjustment_only" &&
+      c.type !== "instruction"
     );
     if (reqItem) {
       reqItem.requestDate = targetCheckout;
-      reqItem.effectiveDate = targetCheckout;
+      delete reqItem.effectiveDate;
+      if (oldCheckout && targetCheckout > oldCheckout) {
+        reqItem.isVacant = false;
+        reqItem.isVacantExplicitlySet = false;
+        reqItem.vacantSource = null;
+        reqItem.vacantSetAt = null;
+        reqItem.willCleanAt = null;
+      }
       if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
         reqItem.flatNumber = targetFlatNumber;
         if (targetFlatId) reqItem.flatId = Number(targetFlatId) || targetFlatId;
@@ -21121,14 +21170,35 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   }
 
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
-  if (Array.isArray(db.cleaningRequests)) {
+  if (oldCheckout && newCheckoutDate > oldCheckout) {
+    r.checkoutDone = false;
+    r.actualCheckoutAt = null;
+    r.actualCheckoutTime = null;
+    r.checkoutMethod = null;
+    if (r.status === "completed" || r.status === "checked_out") {
+      r.status = "confirmed";
+    }
+  }
+  if (Array.isArray(db.cleaningRequests) && oldCheckout !== newCheckoutDate) {
     const reqItem = db.cleaningRequests.find(c =>
       (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber) || (oldFlatId !== undefined && c.flatId === oldFlatId) || String(c.flatNumber) === String(oldFlatNumber)) &&
-      (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
+      c.requestDate === oldCheckout &&
+      c.status !== "clean" &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.type !== "bed_adjustment_only" &&
+      c.type !== "instruction"
     );
     if (reqItem) {
       reqItem.requestDate = newCheckoutDate;
-      reqItem.effectiveDate = newCheckoutDate;
+      delete reqItem.effectiveDate;
+      if (oldCheckout && newCheckoutDate > oldCheckout) {
+        reqItem.isVacant = false;
+        reqItem.isVacantExplicitlySet = false;
+        reqItem.vacantSource = null;
+        reqItem.vacantSetAt = null;
+        reqItem.willCleanAt = null;
+      }
       if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
         reqItem.flatNumber = targetFlatNumber;
         if (targetFlatId) reqItem.flatId = Number(targetFlatId) || targetFlatId;

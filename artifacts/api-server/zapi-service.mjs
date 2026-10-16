@@ -4281,7 +4281,14 @@ export async function handleConciergeGroupMessage({
 
     // 2. Cria ou atualiza solicitação de limpeza no dashboard
     if (!db.cleaningRequests) db.cleaningRequests = [];
-    let cleanReq = db.cleaningRequests.find(r => r.flatId === flat.id && r.requestDate === todayStr);
+    let cleanReq = db.cleaningRequests.find(r =>
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.requestDate === todayStr &&
+      !r.isInstructionOnly &&
+      r.source !== "manual_instruction" &&
+      r.type !== "bed_adjustment_only" &&
+      r.type !== "instruction"
+    );
 
     if (cleanReq) {
       cleanReq.isVacant = true; // Quarto desocupado informado pela portaria
@@ -4320,11 +4327,11 @@ export async function handleConciergeGroupMessage({
       db.cleaningRequests.unshift(cleanReq);
     }
 
-    // 3. Atualiza reservas ativas correspondentes
+    // 3. Atualiza reservas com saída prevista para hoje (nunca marca hóspedes entrando hoje ou em meio de estadia)
     const matchingResList = (db.reservations || []).filter(r => 
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
-      r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+      r.checkoutDate === todayStr
     );
     for (const r of matchingResList) {
       if (!r.actualCheckoutAt) {
