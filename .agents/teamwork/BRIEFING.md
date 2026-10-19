@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-19T02:58:52Z
+# BRIEFING — 2026-10-19T14:10:30Z
 
 ## Mission
-Reorganizar a interface administrativa do Guest-Flow-Manager (CorpFlats): menu retrátil auto-hide para calendário em tela cheia, nova hierarquia de categorias com busca rápida, perfis dev vs admin com controle de acesso, página dedicada /equipe e exclusão total do manual WBP.
+Implementar controle visual e granular de permissões de acesso por usuário na página de Gestão de Equipe (/equipe) do Guest-Flow-Manager (CorpFlats), com allowedModules no backend e dinâmico no menu lateral e guardas de rota.
 
 ## 🔒 My Identity
 - Archetype: sentinel
@@ -19,7 +19,9 @@ Reorganizar a interface administrativa do Guest-Flow-Manager (CorpFlats): menu r
 - Orchestrator: 0a6a6ddb-09e4-44a9-a9b4-e57b243ea69c (orchestrator_12)
 - Victory Auditor: da4d96bd-6bad-4099-91a1-da47d600841a (victory_auditor_10)
 - Parent Caller (UI Reorganization & Permissions): c918ec21-d268-4082-bdd6-d0c3dc1d3481
-- Orchestrator (orchestrator_13): c4864abd-776b-4ad1-aef9-25c7af7463df
+- Orchestrator (orchestrator_13): c4864abd-776b-4ad1-aef9-25c7af7463df (completed, retired)
+- Victory Auditor (victory_auditor_11): 8208bf2a-33f9-4fb8-9ffd-72fea3816107 (completed, retired)
+- Active Orchestrator (swe_light_2): 17091fdb-497c-4bb6-83bb-cb42adbcc6db
 - Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
@@ -45,24 +47,24 @@ Reorganizar a interface administrativa do Guest-Flow-Manager (CorpFlats): menu r
 - Remoção completa do manual WBP (/ajuda-wbp) e exclusão dos arquivos wbp-manual.tsx e WbpHelpManualPage.tsx
 - Reorganização dos menus em 6 categorias por prioridade operacional com busca rápida no topo
 - Escopo estrito de testes (AGENTS.md): NUNCA rodar testes globais/varreduras
+- Granular permissions: allowedModules per user, presets per role, safe devOnly module stripping for non-dev editors
+- Route: SWE Light (teamwork_preview_swe)
 
 ## User Context
-- **Last user request**: Reorganização da interface administrativa (menu auto-hide, categorias por prioridade, perfis dev vs admin, página /equipe e exclusão manual WBP).
+- **Last user request**: Implementar controle visual e granular de permissões de acesso por usuário na página de Gestão de Equipe (/equipe) com allowedModules no backend e dinâmico no menu lateral e guardas de rota.
 - **Pending clarifications**: none
 - **Delivered results**:
-  - Solicitação registrada em ORIGINAL_REQUEST.md.
-  - BRIEFING.md atualizado.
-  - Project Orchestrator (orchestrator_13) despachado com ID c4864abd-776b-4ad1-aef9-25c7af7463df.
-  - Cron 1 (Progresso) e Cron 2 (Liveness) ativados.
+  - Task dispatched to swe_light_2 (17091fdb-497c-4bb6-83bb-cb42adbcc6db).
+  - Monitoring Crons 1 & 2 scheduled.
 
 ## Project Status
 - **Phase**: in progress
-- **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_13
-- **Active Orchestrator ID**: c4864abd-776b-4ad1-aef9-25c7af7463df
-- **Victory Auditor ID**: [to be spawned on victory claim]
-- **Cron 1 (Reporting)**: task-24
-- **Cron 2 (Liveness)**: task-26
+- **Route**: SWE Light (teamwork_preview_swe)
+- **Active Orchestrator Dir**: .agents/teamwork/swe_light_2
+- **Active Orchestrator ID**: 17091fdb-497c-4bb6-83bb-cb42adbcc6db
+- **Victory Auditor ID**: [TBD]
+- **Cron 1 (Reporting)**: e9abb18b-3068-432f-a9e7-82911d7b023d/task-22
+- **Cron 2 (Liveness)**: e9abb18b-3068-432f-a9e7-82911d7b023d/task-24
 
 ## Victory Audit Status
 - **Triggered**: no
@@ -71,6 +73,5 @@ Reorganizar a interface administrativa do Guest-Flow-Manager (CorpFlats): menu r
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative user request
-- .agents/teamwork/orchestrator_13/progress.md — Active orchestrator progress log
-- .agents/teamwork/orchestrator_13/handoff.md — Orchestrator handoff and victory claim
-- .agents/teamwork/handoff.md — Sentinel handoff report
+- .agents/teamwork/swe_light_2/context.md — Initial orchestrator context
+- .agents/teamwork/swe_light_2/progress.md — Active orchestrator progress log

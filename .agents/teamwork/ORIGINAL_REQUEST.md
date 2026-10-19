@@ -550,3 +550,65 @@ Reorganizar os menus da barra lateral (`layout.tsx`) com campo de busca rápida 
 - [ ] O usuário `"admin"` possui `role: "dev"` e visualiza todas as 6 categorias (incluindo "🛠️ Engenharia & Dev") e acessa `/configuracoes`, `/monitor-servidor`, `/logs`, `/zapi-conexao` e `/jornada-reservas`.
 - [ ] Um usuário com `role: "admin"` (ex.: `"gestor"`) visualiza as 5 categorias operacionais (sem "🛠️ Engenharia & Dev"), acessa `/reservas`, `/financeiro`, `/equipe`, etc., e recebe bloqueio (`AccessDenied`) se tentar acessar diretamente rotas exclusivas de `dev` (`/configuracoes`, `/monitor-servidor`, `/logs`, `/ia-status`, `/zapi-conexao`, `/jornada-reservas`).
 - [ ] A página `/equipe` permite que tanto `admin` quanto `dev` gerenciem usuários da equipe sem exibir chaves técnicas de API/nuvem.
+
+
+## 2026-10-19T17:08:01Z
+
+This is a single self-contained fix; keep it small and focused.
+Implementar controle visual e granular de permissões de acesso por usuário na página de Gestão de Equipe (`/equipe`) do Guest-Flow-Manager (CorpFlats), permitindo selecionar por checkboxes quais telas e categorias cada usuário tem acesso (com preenchimento padrão pelo perfil base `camareira`, `recepcao`, `admin`, `dev`), persistindo `allowedModules` no backend e aplicando dinamicamente no menu lateral e guardas de rota.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Catálogo Central de Módulos e Presets por Perfil (`permissions.ts` + Backend)
+Criar um módulo compartilhado (`artifacts/limpeza/src/lib/permissions.ts`) e espelhar a lógica no backend (`artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`) contendo as 6 categorias e todas as 34 telas do menu lateral:
+1. **📅 Reservas & Hospedagem (`reservas`)**: `/reservas`, `/caixa-entrada-ota`, `/relatorios-reservas`, `/crm`, `/portaria`, `/pedidos-cafe`, `/relatorios-cafe`, `/reservar`
+2. **💬 Comunicação & Atendimento (`comunicacao`)**: `/whatsapp-chat`, `/whatsapp`, `/emails`, `/notificacoes`
+3. **🧹 Governança & Manutenção (`governanca`)**: `/dashboard`, `/reports`, `/lista-compras`, `/observations`, `/tasks`, `/surveys`, `/servicos`, `/achados-perdidos`, `/automacoes-camareiras`
+4. **💰 Financeiro, Tarifas & Fiscal (`financeiro`)**: `/financeiro`, `/tarifas`, `/pagamentos`, `/notas`, `/funil-vendas`
+5. **🏨 Propriedade & Equipe (`propriedade`)**: `/equipe`, `/propriedade`, `/garagem`, `/avaliacoes-ia`, `/editor-site`
+6. **🛠️ Engenharia & Dev (`engenharia`, `devOnly: true`)**: `/configuracoes`, `/zapi-conexao`, `/jornada-reservas`, `/monitor-servidor`, `/ia-status`, `/logs`
+
+Definir os pacotes padrão (`getDefaultModulesForRole(role)`):
+- `camareira`: `["/dashboard", "/reports", "/lista-compras", "/observations", "/tasks", "/achados-perdidos"]`
+- `recepcao`: todos os itens de `reservas` + `["/dashboard", "/reports", "/lista-compras", "/observations", "/tasks", "/achados-perdidos"]`
+- `admin`: todas as 28 telas das 5 categorias operacionais (`reservas`, `comunicacao`, `governanca`, `financeiro`, `propriedade`), sem `engenharia`
+- `dev`: todas as 34 telas das 6 categorias (incluindo `engenharia`).
+
+### R2. Persistência e Segurança de `allowedModules` no Backend
+Atualizar `artifacts/api-server/demo-server.mjs` e manter paridade exata de SHA-256 com `scripts/demo-server.mjs`:
+- `getAuthUser(req)`, `GET /api/auth/me`, `POST /api/auth/login` e `GET /api/admin/users` devem retornar `allowedModules: string[]` (usando `user.allowedModules` se existir como array, ou `getDefaultModulesForRole(user.role)` como fallback).
+- `POST /api/admin/users` e `PATCH /api/admin/users/:id` devem aceitar `allowedModules` (array de rotas canônicas). Se `role` for alterado e `allowedModules` não for enviado explicitamente na requisição, atualizar `allowedModules` para o padrão do novo `role`.
+- **Regra de Segurança Estrita**: Apenas usuários autenticados com `role === "dev"` podem conceder ou manter módulos da categoria `🛠️ Engenharia & Dev` (`/configuracoes`, `/zapi-conexao`, `/jornada-reservas`, `/monitor-servidor`, `/ia-status`, `/logs`). Se um usuário `admin` (não-`dev`) criar ou editar qualquer usuário enviando `allowedModules`, o backend deve remover automaticamente qualquer módulo `devOnly` da lista salva.
+
+### R3. Seletor Visual de Telas e Categorias na Gestão de Equipe (`/equipe`)
+Atualizar `artifacts/limpeza/src/pages/equipe.tsx`:
+- Na listagem da equipe, exibir junto ao perfil quantos módulos o usuário possui liberados (indicando se é `Padrão do Perfil` ou `Personalizado`) e adicionar um botão rápido **"Acessos"** (`ShieldCheck`) na linha de cada colaborador para abrir diretamente um modal dedicado de edição de permissões daquele usuário.
+- Nos modais **Cadastrar Novo Colaborador**, **Editar Colaborador** e **Permissões de Acesso**:
+  - Ao selecionar ou trocar o **Perfil Base** (`camareira`, `recepcao`, `admin`, `dev`), pré-selecionar automaticamente os checkboxes do pacote padrão daquele perfil (incluindo botão *"Restaurar padrão do perfil"*, *"Marcar todos"* e *"Desmarcar todos"*).
+  - Exibir as categorias com checkbox/switch mestre por categoria (para marcar/desmarcar a categoria inteira) e checkboxes individuais para cada tela com nome e descrição.
+  - Ocultar a categoria `🛠️ Engenharia & Dev` no seletor de permissões quando o usuário logado não for `dev`.
+
+### R4. Aplicação Dinâmica no Menu Lateral (`layout.tsx`) e Guardas de Rota (`App.tsx`)
+- Em `artifacts/limpeza/src/components/layout.tsx`, filtrar os itens de `navCategories` usando `hasModuleAccess(user, item.href)` para que o menu lateral exiba exatamente as telas liberadas em `allowedModules` para o usuário logado (ocultando categorias que ficarem com 0 itens visíveis).
+- Em `artifacts/limpeza/src/App.tsx`, atualizar `AdminGuard`, `ReceptionGuard`, `StaffGuard` e `DevGuard` para consultar `hasModuleAccess(user, path)` (mapeando aliases como `/usuarios` -> `/equipe`, `/precificacao-sebrae` -> `/tarifas`, `/meu-extrato` -> `/reports`, etc.), permitindo o acesso se o módulo estiver em `allowedModules` e bloqueando com `<AccessDenied />` caso tenha sido desmarcado.
+
+### R5. Restrições Estritas de Testes, Build e Git (`AGENTS.md`)
+- Atualizar e executar EXCLUSIVAMENTE o teste pontual `node --test tests/auth-roles-permissions.test.mjs` (NUNCA rodar varreduras globais `tests/*.test.mjs`).
+- Executar `npm --prefix artifacts/limpeza run build` e garantir saída 0.
+- Fazer `git commit` e `git push origin main` incluindo `artifacts/limpeza/dist/`.
+
+## Acceptance Criteria
+
+### Backend & Segurança
+- [ ] `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` possuem hash SHA-256 idêntico.
+- [ ] `GET /api/auth/me` e `GET /api/admin/users` retornam `allowedModules` como array de strings para todos os usuários.
+- [ ] `PATCH /api/admin/users/:id` salva `allowedModules` customizados e bloqueia/remove módulos `devOnly` caso o autor da requisição não seja `dev`.
+- [ ] `node --test tests/auth-roles-permissions.test.mjs` passa 100%.
+
+### Frontend (`/equipe`, `layout.tsx`, `App.tsx`) & Build
+- [ ] Na página `/equipe`, é possível clicar em **"Acessos"** (ou criar/editar usuário), escolher o perfil base para preencher o padrão e marcar/desmarcar checkboxes individuais por tela ou por categoria inteira.
+- [ ] `layout.tsx` e `App.tsx` respeitam `allowedModules` dinamicamente via `hasModuleAccess`.
+- [ ] `npm --prefix artifacts/limpeza run build` compila com código 0 e as alterações + `dist/` são enviadas via `git push origin main`.

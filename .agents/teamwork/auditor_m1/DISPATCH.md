@@ -35,3 +35,13 @@ Realize a auditoria forense de integridade do Milestone 1:
 - Verifique a paridade estrita SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
 - Execute a suíte pontual `node --test tests/auth-roles-permissions.test.mjs` para validação em runtime.
 Seu veredito é um veto binário (CLEAN ou INTEGRITY VIOLATION). Registre em `handoff.md` e envie mensagem com `send_message` ao Project Orchestrator (c4864abd-776b-4ad1-aef9-25c7af7463df).
+
+
+## 2026-10-19T05:13:47Z
+**Context**: Re-auditoria Forense de Integridade pós-remediação.
+**Content**: O worker sincronizou `scripts/demo-server.mjs` para `artifacts/api-server/demo-server.mjs`, restabeleceu a paridade SHA-256 e executou o build e testes com sucesso.
+Execute a re-auditoria forense final:
+1. Verifique `Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"`.
+2. Execute `node --test tests/auth-roles-permissions.test.mjs`.
+3. Verifique a ausência de referências a `/ajuda-wbp` e a exclusão física dos arquivos `wbp-manual.tsx` e `WbpHelpManualPage.tsx`.
+4. Atualize seu veredito em `handoff.md` e responda via `send_message`.

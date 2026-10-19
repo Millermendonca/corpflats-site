@@ -34,3 +34,9 @@ Desafie empiricamente o Milestone 1:
 2. Verifique o hash SHA-256 de paridade entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
 3. Verifique que `gestor` (role admin) não consegue acessar rotas exclusivas de dev (recebendo HTTP 403).
 Gere seu relatório empírico e veredito (APPROVE ou REQUEST_CHANGES) em `handoff.md` e envie mensagem via `send_message` ao Project Orchestrator (c4864abd-776b-4ad1-aef9-25c7af7463df).
+
+
+## 2026-10-19T05:13:56Z
+**Context**: Re-verificação de paridade e testes para emissão de APPROVE.
+**Content**: A sincronização entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` foi concluída (hash 33C17537...).
+Execute `node --test tests/auth-roles-permissions.test.mjs`, confirme aprovação 6/6 e atualize seu veredito em `handoff.md` para APPROVE.

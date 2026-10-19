@@ -10,15 +10,15 @@
 
 ## Review Summary
 
-**Verdict**: **REQUEST_CHANGES**
+**Verdict**: **APPROVE**
 
-A implementação dos requisitos funcionais do Milestone 1 (migração `ensureSystemUsers`, proteção `requireDevAuth`, expansão operacional `admin || dev` e gestão de usuários `/api/admin/users` com `PATCH`/`POST` em reset de senha) está conceitualmente e funcionalmente correta e passou em todos os 5 subtestes de integração HTTP. No entanto, **a paridade estrita SHA-256 entre os servidores gêmeos está violada no branch `main`**: o commit `035c16e` alterou 247 linhas em `scripts/demo-server.mjs` sem espelhá-las em `artifacts/api-server/demo-server.mjs`, fazendo o subteste 1 de `tests/auth-roles-permissions.test.mjs` falhar com código de saída 1.
+A reconciliação dos arquivos gêmeos `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` foi confirmada com 100% de paridade criptográfica SHA-256 (`33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`). A execução do teste pontual `node --test tests/auth-roles-permissions.test.mjs` passou em todos os 6 testes (1 teste de paridade e 5 testes de integração HTTP/RBAC) com 0 falhas em ~3.4 segundos. Todos os critérios de aceite do Milestone 1 foram estritamente cumpridos.
 
 ---
 
 ## 1. Observation
 
-1. **Desparidade SHA-256 dos Arquivos Gêmeos**:
+1. **Paridade SHA-256 dos Arquivos Gêmeos (Restabelecida e Verificada)**:
    Comando executado:
    ```powershell
    Get-FileHash 'artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs' -Algorithm SHA256 | Format-List
@@ -26,28 +26,23 @@ A implementação dos requisitos funcionais do Milestone 1 (migração `ensureSy
    Resultado observado:
    ```text
    Algorithm : SHA256
-   Hash      : D9A25D2F78E89E9B38869AF6DCA00CEEBABDDA67EBB079B55AF319B899C05B29
+   Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
    Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
 
    Algorithm : SHA256
    Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
    Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
    ```
+   Comando adicional `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` retornou código de saída 0 e saída vazia (identidade total).
 
-2. **Causa Raiz da Desparidade (Commit `035c16e`)**:
-   `git show --stat 035c16e`:
-   ```text
-   commit 035c16e1b22260960f8f9f7d29b50ed6397e972e
-   Author: Millermendonca <miller.mendonca16@gmail.com>
-   Date:   Mon Oct 19 01:54:10 2026 -0300
-
-       fix(payments): prioritize credit card / mpPaymentId over pre-generated pixTxId in receipts and portal
-
-    scripts/demo-server.mjs | 247 +++++++++++++++------
+2. **Verificação de Compilação Sintática**:
+   Comando executado:
+   ```bash
+   node -c artifacts/api-server/demo-server.mjs; node -c scripts/demo-server.mjs
    ```
-   O commit `035c16e` alterou linhas 37600–38400 de `scripts/demo-server.mjs` (tratamento de pagamentos com cartão Mercado Pago) mas NÃO tocou `artifacts/api-server/demo-server.mjs`.
+   Resultado: Código de saída 0, sem erros de sintaxe em nenhum dos dois servidores.
 
-3. **Falha na Execução do Teste Pontual de M1**:
+3. **Execução da Suíte de Testes Pontuais (`tests/auth-roles-permissions.test.mjs`)**:
    Comando executado:
    ```bash
    node --test tests/auth-roles-permissions.test.mjs
@@ -57,140 +52,134 @@ A implementação dos requisitos funcionais do Milestone 1 (migração `ensureSy
    TAP version 13
    # Subtest: Milestone 1 — Auth, Roles & RBAC Separation Suite
        # Subtest: File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
-       not ok 1 - File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+       ok 1 - File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
          ---
-         duration_ms: 26.1238
-         location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/auth-roles-permissions.test.mjs:35:3'
-         failureType: 'testCodeFailure'
-         error: 'demo-server twin files must have matching SHA-256 hashes'
-         code: 'ERR_ASSERTION'
-         expected: '33c17537913a1f3b5509489c387106b8a0ffdbb959fddd3a9b0df578e310d9da'
-         actual: 'd9a25d2f78e89e9b38869af6dca00ceebabdda67ebb079b55af319b899c05b29'
-         operator: 'strictEqual'
+         duration_ms: 11.4891
          ...
        # Subtest: HTTP Integration & RBAC Tests
+           # Subtest: ensureSystemUsers migrated database: admin is dev, gestor is created as admin
            ok 1 - ensureSystemUsers migrated database: admin is dev, gestor is created as admin
+             ---
+             duration_ms: 16.3385
+             ...
+           # Subtest: /api/auth/me returns 'dev' for admin and 'admin' for gestor
            ok 2 - /api/auth/me returns 'dev' for admin and 'admin' for gestor
+             ---
+             duration_ms: 10.9422
+             ...
+           # Subtest: Operational Endpoints: both dev and admin can access business routes
            ok 3 - Operational Endpoints: both dev and admin can access business routes
+             ---
+             duration_ms: 72.6128
+             ...
+           # Subtest: Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
            ok 4 - Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
+             ---
+             duration_ms: 101.0217
+             ...
+           # Subtest: User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
            ok 5 - User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
+             ---
+             duration_ms: 166.0923
+             ...
            1..5
        ok 2 - HTTP Integration & RBAC Tests
          ---
-         duration_ms: 5891.5198
+         duration_ms: 3277.0302
          type: 'suite'
          ...
        1..2
-   not ok 1 - Milestone 1 — Auth, Roles & RBAC Separation Suite
+   ok 1 - Milestone 1 — Auth, Roles & RBAC Separation Suite
+     ---
+     duration_ms: 3291.2814
+     type: 'suite'
+     ...
+   1..1
    # tests 6
    # suites 2
-   # pass 5
-   # fail 1
-   # duration_ms 6236.2855
+   # pass 6
+   # fail 0
+   # cancelled 0
+   # skipped 0
+   # todo 0
+   # duration_ms 3440.5635
    ```
 
 4. **Verificação de `ensureSystemUsers` (`artifacts/api-server/demo-server.mjs:740-813`)**:
-   - Linhas 750-764: Localiza `admin`, preserva o `passwordHash` e atualiza `role = "dev"`. Se ausente, cria com `id: 1, role: "dev"`.
-   - Linhas 767-791: Localiza ou cria `gestor` (`role: "admin"`, `name: "Administração CorpFlats"`, senha `"admin123"`).
-   - Linhas 5648, 5864 e 8728: Executado no `loadDatabase()` e no startup com persistência imediata atômica via `saveDatabase("manual_migrate_system_users_dev_and_gestor")`.
+   - `adminUser`: migra `role: "dev"` sem tocar no hash de senha existente (`passwordHash`).
+   - `gestorUser`: instancia ou garante `username: "gestor"`, `role: "admin"`, `name: "Administração CorpFlats"`, e senha inicial `"admin123"`.
+   - Idempotência: chamadas subsequentes não causam alterações redundantes.
+   - Persistência imediata: aciona `saveDatabase("manual_migrate_system_users_dev_and_gestor")`, que grava imediatamente no disco através de `atomicWriteFileSync(DB_FILE, stateJson)`.
 
 5. **Verificação de `requireDevAuth` (`artifacts/api-server/demo-server.mjs:8693-8723`)**:
-   - Bloqueia com HTTP 403 qualquer usuário onde `!user || user.role !== "dev"`.
-   - Montado na raiz de 19 endpoints técnicos (`/api/whatsapp/config`, `/api/settings/gemini`, `/api/storage/config`, `/api/admin/server-monitor`, etc.).
-   - Rotas operacionais aceitam `admin || dev`.
+   - Intercepta com HTTP 403 `{"error": "Acesso restrito a desenvolvedores."}` qualquer tentativa de acesso por `role !== "dev"` ou desautenticado.
+   - Cobre 19 rotas técnicas de nuvem, IA, logs e telemetria: `/api/whatsapp/config`, `/api/whatsapp/qr-code`, `/api/whatsapp/sync-webhooks`, `/api/whatsapp/connection-logs`, `/api/whatsapp/concierge-logs`, `/api/whatsapp/test-disconnection-alert`, `/api/whatsapp/queue/cancel-real-guests`, `/api/settings/gemini`, `/api/settings/email`, `/api/storage/config`, `/api/storage/cleanup-old-docs`, `/api/integrations/microsoft-graph/config`, `/api/integrations/microsoft-graph/test-sync`, `/api/integrations/microsoft-graph/test`, `/api/integrations/inter/config`, `/api/integrations/inter/test-connection`, `/api/integrations/mercadopago/config`, `/api/admin/server-monitor`, `/api/shopping-list/ai-test`, além de `/api/audit-logs`, `/api/audit-logs/export`, `/api/reservations/clear-all` e `/api/admin/reset-cleaning-cache`.
 
-6. **Verificação de `/api/admin/users` (`artifacts/api-server/demo-server.mjs:9794-9954`)**:
-   - `GET /api/admin/users`: sanitiza e omite `passwordHash`.
-   - `POST /api/admin/users`: proíbe admin de cadastrar `dev` (linha 9825: 403 Forbidden).
-   - `PATCH /api/admin/users/:id`: proíbe admin de alterar conta `dev` ou promover para `dev` (linhas 9868 e 9881: 403 Forbidden).
-   - `PATCH` e `POST` `/api/admin/users/:id/reset-password`: ambos suportados via `handleResetPassword` (linhas 9937-9938), proibindo admin de alterar senha de `dev`.
-   - `DELETE /api/admin/users/:id`: proíbe exclusão do próprio usuário e exclusão de conta `dev` por admin.
+6. **Verificação das Rotas Operacionais (`artifacts/api-server/demo-server.mjs`)**:
+   - Todas as rotas operacionais do hotel (PMS, Governança, Financeiro, Fiscal, Copiloto IA) aceitam `admin || dev`.
+
+7. **Verificação de Gestão de Usuários (`artifacts/api-server/demo-server.mjs:9794-9954`)**:
+   - `GET /api/admin/users`: sanitiza e omite senhas.
+   - `POST /api/admin/users`: proíbe que `admin` cadastre usuários `dev`.
+   - `PATCH /api/admin/users/:id`: proíbe que `admin` promova usuários a `dev` ou altere dados de contas `dev`.
+   - `PATCH` e `POST /api/admin/users/:id/reset-password`: ambos suportados via `handleResetPassword`, proibindo `admin` de redefinir senha de `dev`.
+   - `DELETE /api/admin/users/:id`: proíbe auto-exclusão e exclusão de `dev` por `admin`.
 
 ---
 
 ## 2. Logic Chain
 
-1. O projeto `Guest-Flow-Manager` estabelece em `AGENTS.md` e em `PROJECT.md` a regra inegociável de paridade estrita byte a byte (SHA-256) entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-2. O subteste 1 de `tests/auth-roles-permissions.test.mjs` executa uma checagem criptográfica comparando `hashA` e `hashB`.
-3. Embora o commit `a2717eb` do Worker M1 estivesse com paridade idêntica (`D9A25D2F...`), o commit subsequente `035c16e` alterou 247 linhas em `scripts/demo-server.mjs` sem atualizar `artifacts/api-server/demo-server.mjs`.
-4. Em consequência, o teste pontual `node --test tests/auth-roles-permissions.test.mjs` falhou com erro de asserção no subteste 1 e código de saída 1.
-5. Por restrição mandatória do papel de Reviewer ("Review-only — do NOT modify implementation code"), o reviewer não pode corrigir os arquivos de código diretamente.
-6. Portanto, a emissão do veredito **REQUEST_CHANGES** é mandatória até que a sincronização entre os arquivos gêmeos seja restabelecida e todos os testes passem com 100% de sucesso.
+1. A única pendência que impediu a aprovação anterior foi a quebra de paridade SHA-256 causada pelo commit `035c16e`.
+2. A reconciliação entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` restabeleceu a paridade exata byte a byte (`33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
+3. Com a paridade restabelecida, o subteste 1 da suíte `tests/auth-roles-permissions.test.mjs` foi aprovado com sucesso.
+4. Os subtestes 2 a 6 (migração em disco, `/api/auth/me`, rotas operacionais, bloqueio de rotas técnicas e segurança em `/api/admin/users`) passaram com 100% de sucesso contra o servidor real em porta isolada com banco temporário.
+5. Nenhuma evidência de atalho, facade ou adulteração foi detectada (verificação de integridade aprovada).
+6. Portanto, a conclusão necessária e suficiente é a emissão do veredito **APPROVE**.
 
 ---
 
 ## 3. Caveats
 
-- **Integridade da Implementação Funcional**: O código de autenticação, migração e RBAC não contém facades, atalhos fraudulentos ou resultados hardcoded. Se os arquivos forem sincronizados, a funcionalidade atende 100% aos requisitos de M1.
-- **Origem da Divergência**: A alteração que quebrou a paridade decorreu de um commit independente de pagamentos (`035c16e`), não de um erro interno na lógica de autenticação de M1.
+- **Escopo Exclusivo de Backend**: As rotas e proteções do frontend (rotas em `App.tsx`, nova página `/equipe`, remoção do manual WBP) pertencem aos Milestones 2 e 3 e não foram avaliadas neste relatório.
+- **Rota `/api/whatsapp/raw-webhook-logs`**: Identificada como não autenticada no arquivo auxiliar `zapi-service.mjs:6667`. Não faz parte da interface visual e não afeta os critérios de aceite de M1, mas foi registrada como recomendação preventiva.
 
 ---
 
 ## 4. Conclusion
 
-O Milestone 1 atendeu aos requisitos funcionais de RBAC (`dev` vs `admin`), proteção de rotas técnicas, migração idempotente de usuários e segurança de credenciais. Contudo, **o gate de qualidade está bloqueado** devido à quebra de paridade SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+O Milestone 1 (Backend Auth, Roles & Dev Endpoints) atende integralmente a todos os requisitos técnicos, funcionais, de integridade e de repositório estabelecidos em `ORIGINAL_REQUEST.md`, `PROJECT.md` e `AGENTS.md`.
 
-**Ação Necessária**:
-1. Espelhar as alterações de `scripts/demo-server.mjs` em `artifacts/api-server/demo-server.mjs` (ou vice-versa, consolidando as alterações do commit `035c16e`).
-2. Validar que ambos os arquivos possuem exatamente o mesmo hash SHA-256.
-3. Reexecutar `node --test tests/auth-roles-permissions.test.mjs` confirmando 6/6 testes aprovados e saída 0.
-4. Realizar `git commit` e `git push origin main`.
+**Veredito Oficial**: **APPROVE**
 
 ---
 
 ## 5. Verification Method
 
-Para reproduzir e verificar a resolução:
+Para replicar independentemente a verificação:
 
-1. **Checagem de Paridade SHA-256**:
+1. **Paridade SHA-256**:
    ```powershell
    Get-FileHash 'artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs' -Algorithm SHA256 | Format-List
    ```
-   *Critério de Invalidação*: Qualquer caractere diferente nos hashes SHA-256 invalida o gate.
+   *Critério*: Ambos os hashes devem ser estritamente iguais a `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`.
 
-2. **Execução do Teste Pontual de M1**:
+2. **Diferença Binária / Texto**:
+   ```bash
+   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+   ```
+   *Critério*: Saída vazia com código 0.
+
+3. **Execução do Teste Pontual do M1**:
    ```bash
    node --test tests/auth-roles-permissions.test.mjs
    ```
-   *Critério de Invalidação*: Saída com qualquer teste com status `not ok` ou código de retorno diferente de 0.
-
-3. **Verificação de Compilação Sintática**:
-   ```bash
-   node -c artifacts/api-server/demo-server.mjs
-   node -c scripts/demo-server.mjs
-   ```
-   *Critério de Invalidação*: Qualquer erro de sintaxe.
+   *Critério*: Deve reportar 6 testes executados, 6 aprovados, 0 falhas, tempo < 10s.
 
 ---
 
-## Quality Review Findings
+## Adversarial Review Summary
 
-### [Critical] Finding 1: Quebra de Paridade SHA-256 entre Twin Servers
-- **What**: Os arquivos `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` possuem conteúdos divergentes (247 linhas alteradas em `scripts/` pelo commit `035c16e`).
-- **Where**: `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
-- **Why**: Viola a diretriz mandatória de paridade do projeto e quebra a suíte de testes `tests/auth-roles-permissions.test.mjs`.
-- **Suggestion**: Reconciliar as alterações do commit `035c16e` em `artifacts/api-server/demo-server.mjs` para que ambos fiquem 100% idênticos.
-
-### [Minor] Finding 2: Rota `/api/whatsapp/raw-webhook-logs` sem checagem de autenticação
-- **What**: A rota `GET /api/whatsapp/raw-webhook-logs` em `artifacts/api-server/zapi-service.mjs:6667` expõe logs de webhooks brutos sem verificar `requireDevAuth` ou `getAuthUser`.
-- **Where**: `artifacts/api-server/zapi-service.mjs:6667`
-- **Why**: Embora não seja consumida na UI, permite que qualquer cliente leia payloads brutos de webhooks.
-- **Suggestion**: Adicionar `requireDevAuth` ou incluir `/api/whatsapp/raw-webhook-logs` na lista protegida em `demo-server.mjs`.
-
----
-
-## Adversarial Review & Attack Surface
-
-### 1. Assumption Stress-Testing
-- **Premissa A**: `admin` pode tentar auto-promoção ou elevação de privilégio.
-  - *Cenário de Teste*: `PATCH /api/admin/users/:id` com `{ role: "dev" }` disparado por usuário `admin`.
-  - *Resultado*: Linha 9881 barra com HTTP 403 ("Apenas desenvolvedores podem promover usuários a dev."). **Aprovado.**
-- **Premissa B**: `admin` pode tentar alterar a senha ou excluir a conta `dev`.
-  - *Cenário de Teste*: `POST /api/admin/users/1/reset-password` e `DELETE /api/admin/users/1` disparados por `gestor` (`admin`).
-  - *Resultado*: Linhas 9927 e 9947 barram com HTTP 403 ("Apenas desenvolvedores podem..."). **Aprovado.**
-- **Premissa C**: Rotas técnicas de telemetria ou nuvem acessíveis via requisições diretas de `admin`.
-  - *Cenário de Teste*: Acesso a `/api/admin/server-monitor/live`, `/api/audit-logs`, `/api/storage/config`, `/api/whatsapp/config` com cookie de `gestor`.
-  - *Resultado*: `requireDevAuth` intercepta e retorna HTTP 403 ("Acesso restrito a desenvolvedores."). **Aprovado.**
-- **Premissa D**: Desligamento ou falha imediata após inicialização com usuários não persistidos.
-  - *Cenário de Teste*: `ensureSystemUsers` aciona `saveDatabase("manual_migrate_system_users_dev_and_gestor")`.
-  - *Resultado*: Prefixo `manual_` desvia do debounce de 500ms e grava sincronicamente via `atomicWriteFileSync(DB_FILE, stateJson)`, garantindo integridade imediata no disco. **Aprovado.**
+- **Tentativa de Escalação de Privilégios (Admin → Dev)**: Bloqueada com HTTP 403 em `POST`, `PATCH`, `reset-password` e `DELETE`.
+- **Tentativa de Acesso a Ferramentas Técnicas por Admin**: Bloqueada com HTTP 403 via middleware `requireDevAuth`.
+- **Falha de Persistência no Boot**: Mitigada com gravação síncrona atômica imediata via `manual_migrate_system_users_dev_and_gestor`.
+- **Risco de Falso Positivo**: Descartado; o teste utiliza HTTP real com cookies de sessão assinados e asserções diretas no arquivo de banco persistido.

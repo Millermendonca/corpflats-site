@@ -307,5 +307,158 @@ describe("Milestone 1 — Auth, Roles & RBAC Separation Suite", () => {
       });
       assert.strictEqual(delTemp.status, 200, "Admin should be able to delete temporary staff user");
     });
+
+    // ── 2.6. Granular Permissions: allowedModules returned on auth & user list ───────
+    it("Granular Permissions: /api/auth/me, /api/auth/login, and /api/admin/users return allowedModules", async () => {
+      // 1. Dev user me
+      const meDev = await fetch(`${BASE_URL}/api/auth/me`, {
+        headers: { Cookie: devCookie }
+      });
+      assert.strictEqual(meDev.status, 200);
+      const devData = await meDev.json();
+      assert.ok(Array.isArray(devData.allowedModules), "dev allowedModules must be an array");
+      assert.ok(devData.allowedModules.includes("/configuracoes"), "dev must have dev-only module /configuracoes");
+      assert.ok(devData.allowedModules.includes("/zapi-conexao"), "dev must have dev-only module /zapi-conexao");
+      assert.ok(devData.allowedModules.includes("/jornada-reservas"), "dev must have dev-only module /jornada-reservas");
+      assert.ok(devData.allowedModules.includes("/monitor-servidor"), "dev must have dev-only module /monitor-servidor");
+      assert.ok(devData.allowedModules.includes("/ia-status"), "dev must have dev-only module /ia-status");
+      assert.ok(devData.allowedModules.includes("/logs"), "dev must have dev-only module /logs");
+      assert.ok(devData.allowedModules.includes("/reservas"), "dev must have operational modules");
+
+      // 2. Admin user me (gestor)
+      const meGestor = await fetch(`${BASE_URL}/api/auth/me`, {
+        headers: { Cookie: gestorCookie }
+      });
+      assert.strictEqual(meGestor.status, 200);
+      const gestorData = await meGestor.json();
+      assert.ok(Array.isArray(gestorData.allowedModules), "gestor allowedModules must be an array");
+      assert.ok(!gestorData.allowedModules.includes("/configuracoes"), "admin must NOT have dev-only /configuracoes");
+      assert.ok(!gestorData.allowedModules.includes("/zapi-conexao"), "admin must NOT have dev-only /zapi-conexao");
+      assert.ok(!gestorData.allowedModules.includes("/logs"), "admin must NOT have dev-only /logs");
+      assert.ok(gestorData.allowedModules.includes("/reservas"), "admin must have operational /reservas");
+      assert.ok(gestorData.allowedModules.includes("/equipe"), "admin must have operational /equipe");
+
+      // 3. User list /api/admin/users
+      const usersRes = await fetch(`${BASE_URL}/api/admin/users`, {
+        headers: { Cookie: gestorCookie }
+      });
+      assert.strictEqual(usersRes.status, 200);
+      const usersList = await usersRes.json();
+      for (const u of usersList) {
+        assert.ok(Array.isArray(u.allowedModules), `User ${u.username} must have allowedModules array`);
+      }
+    });
+
+    // ── 2.7. Granular Permissions CRUD & Dev-Only Security Stripping ──────────────
+    it("Granular Permissions CRUD: Admin cannot grant dev-only modules; custom selections persist; role change defaults", async () => {
+      // 1. Admin creates user with custom operational modules
+      const createCustom = await fetch(`${BASE_URL}/api/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          username: "camareira_mod_test",
+          name: "Camareira Modulos",
+          role: "camareira",
+          password: "password123",
+          allowedModules: ["/dashboard", "/reports"]
+        })
+      });
+      assert.strictEqual(createCustom.status, 201);
+      const customUser = await createCustom.json();
+      assert.deepStrictEqual(customUser.allowedModules, ["/dashboard", "/reports"]);
+
+      // 2. Admin attempts to grant dev-only modules (security test)
+      const createSneaky = await fetch(`${BASE_URL}/api/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          username: "staff_sneaky_test",
+          name: "Staff Sneaky",
+          role: "recepcao",
+          password: "password123",
+          allowedModules: ["/reservas", "/configuracoes", "/logs", "/portaria"]
+        })
+      });
+      assert.strictEqual(createSneaky.status, 201);
+      const sneakyUser = await createSneaky.json();
+      // Dev-only modules MUST be stripped when created by admin
+      assert.ok(!sneakyUser.allowedModules.includes("/configuracoes"), "Backend must strip /configuracoes when created by non-dev");
+      assert.ok(!sneakyUser.allowedModules.includes("/logs"), "Backend must strip /logs when created by non-dev");
+      assert.ok(sneakyUser.allowedModules.includes("/reservas"), "Operational module /reservas must be retained");
+      assert.ok(sneakyUser.allowedModules.includes("/portaria"), "Operational module /portaria must be retained");
+
+      // 3. Admin attempts to add dev-only modules via PATCH
+      const patchSneaky = await fetch(`${BASE_URL}/api/admin/users/${sneakyUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          allowedModules: ["/reservas", "/zapi-conexao", "/ia-status"]
+        })
+      });
+      assert.strictEqual(patchSneaky.status, 200);
+      const patchedData = await patchSneaky.json();
+      assert.deepStrictEqual(patchedData.user.allowedModules, ["/reservas"], "Backend must strip dev-only modules on PATCH by non-dev");
+
+      // 4. Role change without allowedModules resets to new role defaults
+      const patchRole = await fetch(`${BASE_URL}/api/admin/users/${customUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          role: "recepcao"
+        })
+      });
+      assert.strictEqual(patchRole.status, 200);
+      const patchedRoleData = await patchRole.json();
+      assert.ok(patchedRoleData.user.allowedModules.includes("/reservas"), "Resetting role to recepcao must include /reservas default");
+      assert.ok(patchedRoleData.user.allowedModules.includes("/pedidos-cafe"), "Resetting role to recepcao must include /pedidos-cafe default");
+
+      // 5. Dev user CAN grant dev-only modules to a user
+      const devPatch = await fetch(`${BASE_URL}/api/admin/users/${customUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: devCookie },
+        body: JSON.stringify({
+          allowedModules: ["/dashboard", "/configuracoes", "/logs"]
+        })
+      });
+      assert.strictEqual(devPatch.status, 200);
+      const devPatchedData = await devPatch.json();
+      assert.ok(devPatchedData.user.allowedModules.includes("/configuracoes"), "Dev user CAN grant /configuracoes");
+      assert.ok(devPatchedData.user.allowedModules.includes("/logs"), "Dev user CAN grant /logs");
+
+      // 6. Non-dev admin updating user preserves operational modules but strips any dev-only modules
+      const adminTouch = await fetch(`${BASE_URL}/api/admin/users/${customUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          name: "Camareira Updated Name"
+        })
+      });
+      assert.strictEqual(adminTouch.status, 200);
+      const adminTouchData = await adminTouch.json();
+      assert.ok(!adminTouchData.user.allowedModules.includes("/configuracoes"), "Non-dev update strips dev-only modules from target user");
+      // 7. Explicitly empty allowedModules: [] is respected and not reverted to role defaults
+      const emptyPatch = await fetch(`${BASE_URL}/api/admin/users/${customUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          allowedModules: []
+        })
+      });
+      assert.strictEqual(emptyPatch.status, 200);
+      const emptyData = await emptyPatch.json();
+      assert.deepStrictEqual(emptyData.user.allowedModules, [], "Empty allowedModules must be preserved as []");
+
+      // Verify getAuthUser / login behavior for user with empty allowedModules
+      const listCheck = await fetch(`${BASE_URL}/api/admin/users`, {
+        headers: { Cookie: gestorCookie }
+      });
+      const listData = await listCheck.json();
+      const updatedInList = listData.find(u => u.id === customUser.id);
+      assert.deepStrictEqual(updatedInList.allowedModules, [], "List endpoint must return empty array when user has empty allowedModules");
+
+      // 8. Cleanup
+      await fetch(`${BASE_URL}/api/admin/users/${customUser.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
+      await fetch(`${BASE_URL}/api/admin/users/${sneakyUser.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
+    });
   });
 });

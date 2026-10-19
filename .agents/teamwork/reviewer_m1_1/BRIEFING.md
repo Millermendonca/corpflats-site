@@ -1,4 +1,4 @@
-# BRIEFING — 2026-10-19T05:05:00Z
+# BRIEFING — 2026-10-19T05:16:00Z
 
 ## Mission
 Review and adversarially stress-test Milestone 1 (Backend Auth, Roles & Dev Endpoints) in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
@@ -22,7 +22,7 @@ Review and adversarially stress-test Milestone 1 (Backend Auth, Roles & Dev Endp
 
 ## Current Parent
 - Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Updated: 2026-10-19T05:05:00Z
+- Updated: 2026-10-19T05:16:00Z
 
 ## Review Scope
 - **Files to review**:
@@ -34,29 +34,29 @@ Review and adversarially stress-test Milestone 1 (Backend Auth, Roles & Dev Endp
 
 ## Review Checklist
 - **Items reviewed**:
-  - Twin server parity: FAILED (Commit 035c16e updated scripts/demo-server.mjs without mirroring to artifacts/api-server/demo-server.mjs).
-  - `ensureSystemUsers(db)`: VERIFIED (migrates admin -> dev preserving passwordHash; creates gestor -> admin with admin123; immediate atomic persistence).
+  - Twin server parity: VERIFIED (Both `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` have matching SHA-256: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
+  - `ensureSystemUsers(db)`: VERIFIED (migrates admin -> dev preserving passwordHash; creates gestor -> admin with admin123; immediate atomic persistence via manual_ prefix).
   - `requireDevAuth`: VERIFIED (blocks non-dev with 403 on technical endpoints).
   - Operational endpoints: VERIFIED (all business routes accept admin || dev).
   - User management `/api/admin/users`: VERIFIED (supports CRUD, PATCH & POST password reset, blocks admin altering/deleting dev).
-  - Test suite `node --test tests/auth-roles-permissions.test.mjs`: FAILED on Subtest 1 (File Parity); PASSED subtests 2-6.
-- **Verdict**: REQUEST_CHANGES
-- **Unverified claims**: Parity claim invalidated due to commit 035c16e desynchronization.
+  - Test suite `node --test tests/auth-roles-permissions.test.mjs`: VERIFIED (All 6 tests passed in ~3.4s, exit code 0).
+- **Verdict**: APPROVE
+- **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
   - H1 (Integrity Violation): No facades or hardcoded values found; real HTTP tests with isolated DB.
-  - H2 (Privilege Escalation): Admin cannot promote itself, cannot alter dev, cannot reset dev password -> PASSED.
-  - H3 (Technical Leakage): Admin cannot access server-monitor, audit-logs, cloud config, Z-API config -> PASSED.
-  - H4 (Twin Parity): Tested SHA-256 identity -> FAILED (Hashes diverge: D9A2... vs 33C1...).
-- **Vulnerabilities found**:
-  - Critical: Broken SHA-256 twin parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-  - Minor: `/api/whatsapp/raw-webhook-logs` has no authentication check in `zapi-service.mjs:6667`.
+  - H2 (Privilege Escalation): Admin cannot promote itself, cannot alter dev, cannot reset dev password -> PASSED (HTTP 403).
+  - H3 (Technical Leakage): Admin cannot access server-monitor, audit-logs, cloud config, Z-API config -> PASSED (HTTP 403).
+  - H4 (Twin Parity): Tested SHA-256 identity -> PASSED (Identical SHA-256 `33C17537...`).
+  - H5 (Crash / Persistence Race): Verified synchronous write upon migration using `saveDatabase("manual_migrate_system_users_dev_and_gestor")` -> PASSED.
+- **Vulnerabilities found**: None in Milestone 1 scope. (Minor advisory note: `/api/whatsapp/raw-webhook-logs` in `zapi-service.mjs` flagged for future defense-in-depth).
 - **Untested angles**: Frontend integration (covered in M2 and M3).
 
 ## Key Decisions Made
-- Issued REQUEST_CHANGES due to broken twin parity causing failure in `node --test tests/auth-roles-permissions.test.mjs`.
-- Preserved strict reviewer constraint: did not modify implementation files.
+- Re-verified SHA-256 parity and executed `tests/auth-roles-permissions.test.mjs`.
+- Confirmed 100% compliance with requirements and criteria.
+- Issued APPROVE verdict.
 
 ## Artifact Index
 - DISPATCH.md — Task assignment and incoming messages

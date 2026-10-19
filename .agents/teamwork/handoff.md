@@ -1,103 +1,108 @@
-# Sentinel Delivery Handoff Report — Seção Financeiro & Vendas (CorpFlats)
+# Sentinel Final Handoff Report
 
-**Sentinel ID**: `0ce6a92c-172e-49b6-bdf7-f82f55fff9d7`  
-**Parent Caller ID**: `f7b34d3e-fa50-4436-8234-7f3e739c9c7e`  
-**Orchestrator**: `orchestrator_12` (`0a6a6ddb-09e4-44a9-a9b4-e57b243ea69c` - concluído e retirado)  
-**Independent Victory Auditor**: `victory_auditor_10` (`da4d96bd-6bad-4099-91a1-da47d600841a` - concluído e retirado)  
-**Data**: 2026-10-15T18:57:00Z  
-**Veredicto Oficial**: **VICTORY CONFIRMED**
+**Mission**: Reorganização da interface administrativa (backend) do Guest-Flow-Manager (CorpFlats), implementando menu lateral esquerdo retrátil (auto-hide flutuante ao tirar o mouse) para visualização do calendário em tela inteira, nova hierarquia de categorias recolhíveis com busca rápida, separação de perfis `dev` (acesso total + ferramentas técnicas) e `admin` (gestão hoteleira completa sem configurações técnicas de desenvolvimento), página dedicada de gestão de equipe e remoção completa do manual técnico WBP.
+
+**Recipient**: Parent Agent (`c918ec21-d268-4082-bdd6-d0c3dc1d3481`) / Human Operator  
+**Sentinel Conversation ID**: `0f672136-dbea-49ec-9239-b3653a86d047`  
+**Date**: 2026-10-19T05:28:00Z  
+**Verdict**: **VICTORY CONFIRMED**
 
 ---
 
 ## 1. Observation
 
-1. **R1. Fonte Única da Verdade (SSOT) para Custos, Taxas, Comissões e Impostos**:
-   - Função canônica bi-direcional `syncFinancialAndTariffSettings(db, partial)` criada e integrada em `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `artifacts/api-server/wbp/pricing.mjs` e `scripts/wbp/pricing.mjs`.
-   - Os 4 esquemas (`db.financialSettings`, `db.wbpPricing.settings`, `db.tariffSettings`, `db.settings.feeSettings`) permanecem sincronizados em todas as mutações de custos fixos, custos variáveis, alíquota de impostos (Simples Nacional/ISS 6%), comissões de canais e taxas de cartão/gateway.
+1. **R1 — Coluna Lateral Esquerda Auto-Hide (Tela Inteira para o Calendário PMS)**:
+   - `artifacts/limpeza/src/components/layout.tsx` foi reformulado no desktop (`>= 768px`). A barra lateral ocupa `0px` de largura no fluxo normal do layout (`w-0`), permitindo que a visualização do Mapa de Reservas (`/reservas`) e calendário ocupe 100% da viewport.
+   - Implementada borda esquerda sensível (`hover edge trigger`) e botão de menu flutuante no topo esquerdo. Ao aproximar o mouse ou acionar o botão, a coluna expande como camada flutuante (`overlay z-40`). Ao retirar o mouse, a coluna recolhe suavemente (com debounce de 280ms).
+   - Botão de fixar/desafixar (Pin/Unpin) com persistência de preferência em `localStorage` (`gfm_sidebar_pinned`).
 
-2. **R2. Correção Contábil e Matemática do DRE Gerencial, Contas a Pagar/Receber e Fluxo de Caixa**:
-   - **Remoção do Bug de +2 Diárias**: Cálculo dinâmico e real dos pernoites por reserva (`Math.max(1, Math.round((checkout - checkin) / 86400000))`), integrando também as diárias vendidas de contratos corporativos Long-Stay (`db.longStayContracts`).
-   - **Eliminação da Dupla Dedução de Comissões**: A margem de contribuição deduz exclusivamente custos variáveis operacionais (`netRevenue - operationalVariableCosts`), sem duplicar as comissões de OTAs que já são deduzidas na Receita Líquida.
-   - **Identidades Contábeis Canônicas Validadas**:
-     - $\text{Receita Líquida} = \text{Receita Bruta} - \text{Comissões de OTAs} - \text{Taxas de Gateway} - \text{Impostos}$
-     - $\text{Margem de Contribuição} = \text{Receita Líquida} - \text{Custos Variáveis Operacionais}$
-     - $\text{EBITDA} = \text{Margem de Contribuição} - \text{Despesas Fixas}$
-     - $\text{Receita Operacional Bruta} = \text{Vendas Diretas Short-Stay} + \text{Mensalidades Long-Stay} + \text{Booking.com} + \text{Airbnb}$
-   - **Filtro de Período e Visão Caixa vs Competência**: Suporte completo via parâmetros de consulta `?period=YYYY-MM` e `?viewMode=competencia|caixa`, com controles visuais reativos no dashboard (`financial-dashboard.tsx`).
-   - **Fluxo de Caixa Reconciliado**: O endpoint `/api/finance/cashflow` integra reservas pagas (`db.reservations`) e contas a receber/pagar (`db.accountsReceivable` e `db.accountsPayable`), com chave de de-duplicação sem colisão de IDs primários.
+2. **R2 — Novo Perfil `dev` vs `admin` & Reestruturação de Permissões**:
+   - Backend (`artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`):
+     - Executada a rotina `ensureSystemUsers(db)` que migra atomicamente o usuário `"admin"` existente para `role: "dev"` (preservando o hash de senha) e provisiona o novo usuário gestor hoteleiro `"gestor"` (`name: "Administração CorpFlats"`, `role: "admin"`, senha inicial `"admin123"`).
+     - O perfil `dev` possui acesso total irrestrito a todas as rotas e funcionalidades do sistema.
+     - Todas as checagens operacionais de permissão aceitam `role === "admin" || role === "dev"`.
+     - O perfil `admin` possui acesso total aos módulos operacionais, reservas, governança, financeiro e equipe, mas é rigorosamente barrado em rotas técnicas de desenvolvimento via `requireDevAuth` no backend (HTTP 403) e `DevRoute` / `DevGuard` no frontend (`<AccessDenied />`):
+       - `/monitor-servidor`, `/ia-status`, `/logs`, `/configuracoes`, `/zapi-conexao`, `/jornada-reservas`.
+   - Frontend: Mais de 18 páginas com guards internos atualizadas para admitir `dev`.
 
-3. **R3. Correção e Unificação da Precificação SEBRAE e Gestão de Tarifas**:
-   - **Fórmula Canônica SEBRAE**:
-     - 19 UHs × 31 dias × 65% ocupação = 382,85 noites esperadas.
-     - Custo fixo unitário: R$ 101,62; Custo variável unitário: R$ 47,76 $\rightarrow$ Custo total por UH: R$ 149,38.
-     - Divisor: $1 - (0,15 + 0,25 + 0,06) = 0,54 \rightarrow$ Tarifa mínima: R$ 276,63.
-     - Decomposição analítica (Custo R$ 149,38 + Comissão R$ 41,49 + Margem R$ 69,16 + Imposto R$ 16,60) fecha exatamente em 100% (R$ 276,63).
-   - **Baixa Temporada & Piso de Break-Even**:
-     - Piso Break-Even operacional: $149,38 / (1 - 0,15 - 0,06) = 149,38 / 0,79 = \text{R\$} 189,09$.
-     - Tarifa sazonal de baixa temporada (-10% / fator 0,90): $\text{R\$} 248,97$.
-     - Em `SeasonalityTab.tsx`, removido o `Math.max` indevido que anulava o desconto. Em `wbp/pricing.mjs`, as travas de variação ancoram no Break-Even de R$ 189,09, permitindo a publicação da baixa temporada (R$ 248,97) sem bloqueio por `FLOOR_LOCK`.
-   - **Contrato JSON Unificado**: `PricingContainer.tsx` consome os dados reais de preview (`items` / `diffList`, KPIs) e envia `{ itemId, date, planId }` nas ações de confirmação e descarte.
-   - **Repasse Líquido de Canais sem Bitributação**: Markups alinhados em `ChannelsTab.tsx` e `tarifas.tsx`.
+3. **R3 — Página Dedicada de Equipe (`/equipe`) e Exclusão Total do Manual WBP**:
+   - Criada a página `artifacts/limpeza/src/pages/equipe.tsx` (e `team.tsx`), acessível em `/equipe`, `/usuarios` e `/team` como `AdminRoute` para `admin` e `dev`.
+   - Permite listar colaboradores, filtrar por perfil/status, buscar, criar novo usuário, editar (nome, WhatsApp, PIX, perfil) e resetar senha, com botões para link direto do WhatsApp e copiar PIX com toast, sem expor chaves de API, certificados ou credenciais de nuvem.
+   - Exclusão física completa dos arquivos do Manual Técnico WBP (`artifacts/limpeza/src/pages/wbp-manual.tsx` e `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`).
+   - Remoção de todos os exports em `components/wbp/index.ts`, rotas em `App.tsx` e links em `layout.tsx`.
 
-4. **R4. Central de Pagamentos PIX, Contas a Receber e Funil de Vendas**:
-   - Em `/api/finance/payments`, corrigida a leitura de `db.receivables` (inexistente) para `db.accountsReceivable`, mapeando `receivedDate` e status `recebido`.
-   - Integrados os gastos de campanhas de anúncios (`db.adCampaigns` / `marketing-traffic.tsx`) no DRE gerencial como despesa de marketing da CorpFlats.
+4. **R4 — Reorganização da Navegação Lateral em 6 Categorias por Prioridade**:
+   - Menus reorganizados com campo de busca rápida no topo (desktop e mobile) com auto-expansão de acordeões ao digitar.
+   - 6 categorias ordenadas por prioridade operacional:
+     1. 📅 Reservas & Hospedagem (aberta por padrão)
+     2. 💬 Comunicação & Atendimento
+     3. 🧹 Governança & Manutenção
+     4. 💰 Financeiro, Tarifas & Fiscal
+     5. 🏨 Propriedade & Equipe
+     6. 🛠️ Engenharia & Dev (visível exclusivamente para `user?.role === "dev"`).
 
-5. **Paridade Twin-Server & Build de Produção**:
-   - SHA-256 100% idêntico byte a byte entre os servidores espelhados:
-     - `artifacts/api-server/demo-server.mjs` == `scripts/demo-server.mjs`: `df23e7410cd090d8c172588b843984cc0bb6fe409deb2dde3a71f1475b954d19`
-     - `artifacts/api-server/wbp/pricing.mjs` == `scripts/wbp/pricing.mjs`: `b0f38d633fde83c4f67901e63024f7dc8537345b54343ee805ad866739c72644`
-   - Build do frontend (`npm --prefix artifacts/limpeza run build`) executou com sucesso (código 0) e atualizou os pacotes em `artifacts/limpeza/dist`.
-   - Commits registrados e enviados para o repositório remoto (`origin/main`):
-     - `3ccb224`: Unificação SSOT financeira, DRE gerencial, precificação SEBRAE e fluxo de caixa.
-     - `310ee0c`: Teste de desafio empírico e estresse matemático.
-     - `89aecf6`: Import de `round2` em demo-server e resolução de colisão de PK no fluxo de caixa.
+5. **R5 — Integridade, Paridade Twin-Server, Build e Git**:
+   - Paridade 100% SHA-256 byte a byte restabelecida entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` (`33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
+   - Suíte de teste pontual `tests/auth-roles-permissions.test.mjs` executada e 100% aprovada (6/6 testes).
+   - Compilação `npm --prefix artifacts/limpeza run build` concluída com sucesso (código de saída 0).
+   - Commits enviados para o repositório remoto via `git push origin main`.
+   - Auditoria independente pós-vitória (`victory_auditor_11`) emitiu formalmente `VERDICT: VICTORY CONFIRMED`.
 
 ---
 
 ## 2. Logic Chain
 
-1. A solicitação do usuário exigiu uma auditoria profunda, correção e unificação de todos os módulos de Financeiro & Vendas sob regras estritas de `AGENTS.md` (proibição de testes globais/em lote para evitar disparos reais de WhatsApp, build pontual do frontend e paridade SHA-256).
-2. O Sentinel roteou a tarefa pela Rota Geral (`teamwork_preview_orchestrator`), despachando `orchestrator_12` e ativando os crons de monitoramento periódico.
-3. O orquestrador estruturou uma Fase 0 de diagnóstico com 3 exploradores, consolidou as especificações em `PROJECT.md` e despachou o implementador (`worker_finance_unification`).
-4. Na Fase 2 de Portão de Verificação, 5 agentes especializados avaliaram a entrega. O desafiador `challenger_finance_2` identificou que o helper `round2` precisava ser importado em `demo-server.mjs`. O orquestrador despachou `worker_fix_runtime_errors`, corrigiu o código, assegurou a paridade SHA-256 e o re-teste passou com 100% de aprovação (`GATE_STATUS: PASS`).
-5. Ao receber a reivindicação de vitória do orquestrador, o Sentinel acionou de forma bloqueante o auditor independente `victory_auditor_10`, com zero contexto compartilhado.
-6. O auditor executou independentemente a verificação em 3 fases (Linha do tempo, Anti-cheating forense e Execução de testes pontuais/build/paridade), emitindo o veredito oficial **VICTORY CONFIRMED**.
-7. O Sentinel procedeu com o cancelamento dos crons de monitoramento e o encerramento mandatório de todos os subagentes (`manage_subagents(action="kill_all")`).
+1. A demanda foi registrada verbatim sob timestamp no `ORIGINAL_REQUEST.md`.
+2. O Sentinel avaliou a demanda, selecionou a rota General e despachou o `teamwork_preview_orchestrator` (`orchestrator_13`), ativando crons de progresso (`*/8 * * * *`) e liveness (`*/10 * * * *`).
+3. O orquestrador conduziu uma fase preliminar de Survey com 3 Explorers, sintetizou o plano em `PROJECT.md` e dividiu em 3 marcos operacionais:
+   - M1: Backend Auth, Roles & Dev Endpoints
+   - M2: Frontend Route Guards, Team Page & WBP Purge
+   - M3: Layout Auto-Hide Sidebar, 6 Categories, Search & Build
+4. O portão de qualidade pericial identificou e remediou um descompasso de paridade decorrente de commit concorrente de pagamentos, restabelecendo a equivalência binária SHA-256.
+5. Ao término de todos os marcos e aprovação no build de produção, o orquestrador submeteu declaração de vitória.
+6. Em conformidade estrita com o protocolo do Sentinel, a alegação foi bloqueada até a conclusão da auditoria independente pelo `victory_auditor_11`.
+7. O auditor independente concluiu as 3 fases com resultado limpo e emitiu o veredito `VICTORY CONFIRMED`.
+8. Os crons e todos os subagentes foram devidamente cancelados e encerrados.
 
 ---
 
 ## 3. Caveats
 
-- Em observância estrita a `AGENTS.md`, nenhuma suíte global de testes (`tests/*.test.mjs`) foi executada, garantindo que nenhuma notificação externa via WhatsApp/Z-API fosse disparada indevidamente para contatos reais.
-- A verificação foi conduzida exclusivamente por meio de suites pontuais não-destrutivas (`tests/targeted-financial-math.test.mjs`, `tests/targeted-challenger-finance2.test.mjs`, `tests/reviewer-finance-audit.test.mjs`) e compilação de produção (`npm run build`).
+- **Diretriz AGENTS.md Estritamente Respeitada**: Nenhum teste global em lote (`tests/*.test.mjs`) foi disparado; executou-se unicamente a suíte pontual dedicada `tests/auth-roles-permissions.test.mjs`.
+- **Persistência de Usuários**: A migração de runtime executa síncronamente na inicialização do servidor, garantindo que mesmo se o banco estiver hidratado em disco ou nuvem, o usuário `"admin"` assumirá `role: "dev"` e o usuário `"gestor"` existirá com `role: "admin"`.
 
 ---
 
 ## 4. Conclusion
 
-A seção "FINANCEIRO & VENDAS" do sistema Guest-Flow-Manager (CorpFlats) está integralmente auditada, corrigida e unificada. Todos os critérios de aceite matemáticos, contábeis, de sincronização e de segurança foram satisfeitos com 100% de conformidade.
-
-**Veredicto Final: VICTORY CONFIRMED.**
+A reorganização da interface administrativa, segregação de perfis de acesso, criação da tela de equipe, auto-hide da barra lateral e expurgo do manual WBP foram integralmente concluídos com 100% de conformidade aos critérios de aceitação e aprovação independente.
 
 ---
 
 ## 5. Verification Method
 
-Para reproduzir os testes e auditorias de forma independente:
+Para replicação e validação por operadores humanos:
 
-```bash
-# 1. Testes de integridade matemática, DRE e precificação SEBRAE
-node tests/targeted-financial-math.test.mjs
-node tests/targeted-challenger-finance2.test.mjs
-node tests/reviewer-finance-audit.test.mjs
+1. **Paridade SHA-256 dos Servidores Twin**:
+   ```powershell
+   Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"
+   ```
+   Ambos os arquivos devem retornar o hash `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`.
 
-# 2. Verificação de Paridade SHA-256 entre servidores espelhados
-node -e "const fs=require('fs'), crypto=require('crypto'); function sha(p){return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');} console.log('server:', sha('artifacts/api-server/demo-server.mjs') === sha('scripts/demo-server.mjs')); console.log('pricing:', sha('artifacts/api-server/wbp/pricing.mjs') === sha('scripts/wbp/pricing.mjs'));"
+2. **Teste Pontual do Backend**:
+   ```bash
+   node --test tests/auth-roles-permissions.test.mjs
+   ```
+   Deve retornar 6/6 testes aprovados com código de saída 0.
 
-# 3. Compilação de Produção do Frontend
-npm --prefix artifacts/limpeza run build
+3. **Compilação do Frontend**:
+   ```bash
+   npm --prefix artifacts/limpeza run build
+   ```
+   Deve retornar código de saída 0 sem erros.
 
-# 4. Status do Git
-git status
-```
+4. **Verificação de Ausência dos Arquivos WBP**:
+   ```powershell
+   Test-Path "artifacts/limpeza/src/pages/wbp-manual.tsx", "artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx"
+   ```
+   Deve retornar `False` para ambos.

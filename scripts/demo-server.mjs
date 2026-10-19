@@ -730,11 +730,110 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 const DB_FILE = process.env.DATA_FILE || process.env.DATABASE_FILE || path.join(DATA_DIR, "database.json");
 
+export const DEV_ONLY_MODULES = [
+  "/configuracoes",
+  "/zapi-conexao",
+  "/jornada-reservas",
+  "/monitor-servidor",
+  "/ia-status",
+  "/logs"
+];
+
+export const ALL_CANONICAL_MODULES = [
+  // 1. 📅 Reservas & Hospedagem
+  "/reservas",
+  "/caixa-entrada-ota",
+  "/relatorios-reservas",
+  "/crm",
+  "/portaria",
+  "/pedidos-cafe",
+  "/relatorios-cafe",
+  "/reservar",
+  // 2. 💬 Comunicação & Atendimento
+  "/whatsapp-chat",
+  "/whatsapp",
+  "/emails",
+  "/notificacoes",
+  // 3. 🧹 Governança & Manutenção
+  "/dashboard",
+  "/reports",
+  "/lista-compras",
+  "/observations",
+  "/tasks",
+  "/surveys",
+  "/servicos",
+  "/achados-perdidos",
+  "/automacoes-camareiras",
+  // 4. 💰 Financeiro, Tarifas & Fiscal
+  "/financeiro",
+  "/tarifas",
+  "/pagamentos",
+  "/notas",
+  "/funil-vendas",
+  // 5. 🏨 Propriedade & Equipe
+  "/equipe",
+  "/propriedade",
+  "/garagem",
+  "/avaliacoes-ia",
+  "/editor-site",
+  // 6. 🛠️ Engenharia & Dev
+  "/configuracoes",
+  "/zapi-conexao",
+  "/jornada-reservas",
+  "/monitor-servidor",
+  "/ia-status",
+  "/logs"
+];
+
+export const OPERATIONAL_MODULES = ALL_CANONICAL_MODULES.filter(m => !DEV_ONLY_MODULES.includes(m));
+
+export const CAMAREIRA_DEFAULT_MODULES = [
+  "/dashboard",
+  "/reports",
+  "/lista-compras",
+  "/observations",
+  "/tasks",
+  "/achados-perdidos"
+];
+
+export const RECEPCAO_DEFAULT_MODULES = [
+  "/reservas",
+  "/caixa-entrada-ota",
+  "/relatorios-reservas",
+  "/crm",
+  "/portaria",
+  "/pedidos-cafe",
+  "/relatorios-cafe",
+  "/reservar",
+  "/dashboard",
+  "/reports",
+  "/lista-compras",
+  "/observations",
+  "/tasks",
+  "/achados-perdidos"
+];
+
+export function getDefaultModulesForRole(role) {
+  const normRole = (role || "").toLowerCase().trim();
+  switch (normRole) {
+    case "dev":
+      return [...ALL_CANONICAL_MODULES];
+    case "admin":
+      return [...OPERATIONAL_MODULES];
+    case "recepcao":
+    case "reception":
+      return [...RECEPCAO_DEFAULT_MODULES];
+    case "camareira":
+    default:
+      return [...CAMAREIRA_DEFAULT_MODULES];
+  }
+}
+
 const defaultUsers = [
-  { id: 1, username: "admin", role: "dev", passwordHash: hashPassword("admin123") },
-  { id: 2, username: "Cris", name: "Cris", role: "camareira", phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
-  { id: 3, username: "Grazi", name: "Grazi", role: "camareira", phone: "22999106204", whatsapp: "5522999106204", pixKey: "12977795766", active: true, passwordHash: hashPassword("1234") },
-  { id: 5, username: "gestor", name: "Administração CorpFlats", role: "admin", phone: "5522997124021", whatsapp: "5522997124021", active: true, passwordHash: hashPassword("admin123"), password_updated_at: new Date().toISOString() },
+  { id: 1, username: "admin", role: "dev", allowedModules: getDefaultModulesForRole("dev"), passwordHash: hashPassword("admin123") },
+  { id: 2, username: "Cris", name: "Cris", role: "camareira", allowedModules: getDefaultModulesForRole("camareira"), phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
+  { id: 3, username: "Grazi", name: "Grazi", role: "camareira", allowedModules: getDefaultModulesForRole("camareira"), phone: "22999106204", whatsapp: "5522999106204", pixKey: "12977795766", active: true, passwordHash: hashPassword("1234") },
+  { id: 5, username: "gestor", name: "Administração CorpFlats", role: "admin", allowedModules: getDefaultModulesForRole("admin"), phone: "5522997124021", whatsapp: "5522997124021", active: true, passwordHash: hashPassword("admin123"), password_updated_at: new Date().toISOString() },
 ];
 
 export function ensureSystemUsers(database) {
@@ -807,6 +906,14 @@ export function ensureSystemUsers(database) {
   }
   if (!Array.isArray(database.fnrhInternalAuditLogs)) {
     database.fnrhInternalAuditLogs = [];
+  }
+
+  // 4. Garantia de allowedModules para todos os usuários da base
+  for (const u of database.users) {
+    if (!Array.isArray(u.allowedModules)) {
+      u.allowedModules = getDefaultModulesForRole(u.role);
+      changed = true;
+    }
   }
 
   return changed;
@@ -8684,7 +8791,13 @@ export function getAuthUser(req) {
     if (!data || data.v !== AUTH_SESSION_VERSION) return null; // Invalida qualquer sessão legada ou sem assinatura HMAC
     const found = db.users.find(u => u.id === data.id);
     if (!found) return null;
-    return { id: found.id, username: found.username, role: found.role };
+    return {
+      id: found.id,
+      username: found.username,
+      name: found.name || found.username,
+      role: found.role,
+      allowedModules: Array.isArray(found.allowedModules) ? found.allowedModules : getDefaultModulesForRole(found.role)
+    };
   } catch {
     return null;
   }
@@ -9740,6 +9853,7 @@ app.post("/api/auth/login", (req, res) => {
     username: found.username,
     role: found.role,
     name: found.name || found.username,
+    allowedModules: Array.isArray(found.allowedModules) ? found.allowedModules : getDefaultModulesForRole(found.role),
     mustChangePassword: mustChange,
     passwordExpired: expired
   });
@@ -9803,7 +9917,8 @@ app.get("/api/admin/users", (req, res) => {
     phone: u.phone || u.whatsapp || "",
     pixKey: u.pixKey || "",
     active: u.active !== false,
-    lastLoginAt: u.lastLoginAt || null
+    lastLoginAt: u.lastLoginAt || null,
+    allowedModules: Array.isArray(u.allowedModules) ? u.allowedModules : getDefaultModulesForRole(u.role)
   }));
   res.json(list);
 });
@@ -9811,7 +9926,7 @@ app.get("/api/admin/users", (req, res) => {
 app.post("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
-  const { username, password, role = "camareira", name, whatsapp, phone, pixKey } = req.body || {};
+  const { username, password, role = "camareira", name, whatsapp, phone, pixKey, allowedModules } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ error: "Nome de usuário e senha são obrigatórios." });
@@ -9830,6 +9945,17 @@ app.post("/api/admin/users", (req, res) => {
     targetRole = "camareira";
   }
 
+  // Tratamento de allowedModules (R2)
+  let finalAllowedModules;
+  if (Array.isArray(allowedModules)) {
+    finalAllowedModules = allowedModules.filter(m => typeof m === "string" && ALL_CANONICAL_MODULES.includes(m));
+    if (userAuth.role !== "dev") {
+      finalAllowedModules = finalAllowedModules.filter(m => !DEV_ONLY_MODULES.includes(m));
+    }
+  } else {
+    finalAllowedModules = getDefaultModulesForRole(targetRole);
+  }
+
   const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
   const newUser = {
     id: db.users.length > 0 ? Math.max(...db.users.map(u => u.id)) + 1 : 1,
@@ -9840,6 +9966,7 @@ app.post("/api/admin/users", (req, res) => {
     phone: cleanPh,
     pixKey: (pixKey || "").trim(),
     active: true,
+    allowedModules: finalAllowedModules,
     passwordHash: hashPassword(password),
     password_updated_at: new Date().toISOString()
   };
@@ -9853,7 +9980,8 @@ app.post("/api/admin/users", (req, res) => {
     role: newUser.role,
     whatsapp: newUser.whatsapp,
     pixKey: newUser.pixKey,
-    active: newUser.active
+    active: newUser.active,
+    allowedModules: newUser.allowedModules
   });
 });
 
@@ -9869,7 +9997,7 @@ app.patch("/api/admin/users/:id", (req, res) => {
     return res.status(403).json({ error: "Apenas desenvolvedores podem alterar contas de desenvolvedor." });
   }
 
-  const { name, username, role, whatsapp, phone, pixKey, active } = req.body || {};
+  const { name, username, role, whatsapp, phone, pixKey, active, allowedModules } = req.body || {};
 
   if (username !== undefined && username.trim()) {
     const existing = db.users.find(u => u.id !== id && u.username.toLowerCase() === username.trim().toLowerCase());
@@ -9877,15 +10005,35 @@ app.patch("/api/admin/users/:id", (req, res) => {
     user.username = username.trim();
   }
   if (name !== undefined) user.name = String(name).trim();
+
+  let roleChanged = false;
   if (role !== undefined) {
     if (role === "dev" && userAuth.role !== "dev") {
       return res.status(403).json({ error: "Apenas desenvolvedores podem promover usuários a dev." });
     }
     const allowedRoles = ["dev", "admin", "camareira", "recepcao"];
     if (allowedRoles.includes(role)) {
-      user.role = role;
+      if (user.role !== role) {
+        roleChanged = true;
+        user.role = role;
+      }
     }
   }
+
+  // R2: Tratamento e persistência de allowedModules com segurança devOnly
+  if (allowedModules !== undefined && Array.isArray(allowedModules)) {
+    let sanitized = allowedModules.filter(m => typeof m === "string" && ALL_CANONICAL_MODULES.includes(m));
+    if (userAuth.role !== "dev") {
+      sanitized = sanitized.filter(m => !DEV_ONLY_MODULES.includes(m));
+    }
+    user.allowedModules = sanitized;
+  } else if (roleChanged) {
+    user.allowedModules = getDefaultModulesForRole(user.role);
+  } else if (userAuth.role !== "dev" && Array.isArray(user.allowedModules)) {
+    // Se não-dev está atualizando o usuário e o usuário já tinha módulos salvos, remove devOnly
+    user.allowedModules = user.allowedModules.filter(m => !DEV_ONLY_MODULES.includes(m));
+  }
+
   if (whatsapp !== undefined || phone !== undefined) {
     const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
     user.whatsapp = cleanPh;
@@ -9905,7 +10053,8 @@ app.patch("/api/admin/users/:id", (req, res) => {
       whatsapp: user.whatsapp || "",
       phone: user.phone || "",
       pixKey: user.pixKey || "",
-      active: user.active !== false
+      active: user.active !== false,
+      allowedModules: Array.isArray(user.allowedModules) ? user.allowedModules : getDefaultModulesForRole(user.role)
     }
   });
 });

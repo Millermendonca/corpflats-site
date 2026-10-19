@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-19T04:56:00Z
+# BRIEFING — 2026-10-19T05:17:00Z
 
 ## Mission
-Forensic integrity audit of Milestone 1: Backend Auth, Roles (dev vs admin) and Dev Endpoints protection in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
+Forensic integrity re-audit of Milestone 1: Backend Auth, Roles (dev vs admin), Dev Endpoints protection, Twin Parity, and WBP Manual Exclusions in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
@@ -24,10 +24,10 @@ Forensic integrity audit of Milestone 1: Backend Auth, Roles (dev vs admin) and 
 
 ## Current Parent
 - Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Updated: 2026-10-19T04:56:00Z
+- Updated: 2026-10-19T05:17:00Z
 
 ## Audit Scope
-- **Work product**: Milestone 1 changes in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
+- **Work product**: Milestone 1 changes in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/auth-roles-permissions.test.mjs`, and physical purge of WBP manual from `artifacts/limpeza/src/`.
 - **Profile loaded**: General Project (Integrity Forensics)
 - **Audit type**: forensic integrity check
 - **Integrity mode**: development (per ORIGINAL_REQUEST.md 2026-10-19T02:58:52Z)
@@ -35,27 +35,29 @@ Forensic integrity audit of Milestone 1: Backend Auth, Roles (dev vs admin) and 
 ## Audit Progress
 - **Phase**: reporting
 - **Checks completed**:
-  1. Source code inspection of `ensureSystemUsers`, `hashPassword`, `requireDevAuth`: PASS (genuine, secure scrypt+salt hashing, robust RBAC).
-  2. SHA-256 Twin Parity Check: FAIL (violates twin-server parity; hashes differ between artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs due to commit 035c16e).
-  3. Pontual Test Suite Execution `node --test tests/auth-roles-permissions.test.mjs`: FAIL (Exit Code 1, parity subtest failed).
-  4. Database isolation check: PASS (data/database.json untouched).
+  1. SHA-256 Twin Parity Check: PASS (both hashes match `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
+  2. Pontual Test Suite Execution `node --test tests/auth-roles-permissions.test.mjs`: PASS (6/6 tests passing, exit code 0).
+  3. Physical exclusion of `wbp-manual.tsx` and `WbpHelpManualPage.tsx`: PASS (both files deleted, 0 references in src/).
+  4. Frontend Build (`npm --prefix artifacts/limpeza run build`): PASS (built in 20.47s, exit code 0).
+  5. Cryptographic & Auth Implementation: PASS (genuine scrypt+salt hashing, timing-safe equality, robust RBAC).
+  6. Database isolation: PASS (`data/database.json` untouched).
 - **Checks remaining**: none.
-- **Findings so far**: INTEGRITY VIOLATION (Twin parity broken; punctual test suite failed with exit code 1).
+- **Findings so far**: CLEAN (All integrity checks verified empirically and passed).
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: Fake / facade implementation of role checks or password hashing -> Refuted. Implementation is genuine.
-  - H2: Desync in twin files between artifacts and scripts -> Confirmed. Hashes differ (D9A25D... vs 33C175...).
-  - H3: Hardcoded test mocks or bypasses in `demo-server.mjs` -> Refuted. Real RBAC checks and real token signatures.
-  - H4: Database state pollution in `data/database.json` -> Refuted. Real database untouched.
-- **Vulnerabilities found**: Desynchronization between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` breaks build/test invariants.
+  - H1: Fake / facade implementation of role checks or password hashing -> Refuted. Genuine implementation.
+  - H2: Desync in twin files between artifacts and scripts -> Refuted. Hashes 100% synchronized (`33C175...`).
+  - H3: Lingering routes or references to WBP manual -> Refuted. Zero references in `src/`, files physically removed.
+  - H4: Database state pollution in `data/database.json` -> Refuted. Database intact.
+- **Vulnerabilities found**: None.
 - **Untested angles**: None within M1 scope.
 
 ## Loaded Skills
 - None specified by orchestrator.
 
 ## Key Decisions Made
-- Binary verdict: INTEGRITY VIOLATION based on empirical parity failure and test suite exit code 1.
+- Binary verdict updated: CLEAN (Approved).
 
 ## Artifact Index
 - DISPATCH.md — audit assignment

@@ -1,4 +1,4 @@
-# BRIEFING — 2026-10-19T05:00:00Z
+# BRIEFING — 2026-10-19T05:15:00Z
 
 ## Mission
 Empirically challenge Milestone 1: RBAC separation (dev vs admin), route protection, privilege escalation barriers, and twin server SHA-256 parity.
@@ -22,7 +22,7 @@ Empirically challenge Milestone 1: RBAC separation (dev vs admin), route protect
 
 ## Current Parent
 - Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Updated: 2026-10-19T04:50:17Z
+- Updated: 2026-10-19T05:13:56Z
 
 ## Review Scope
 - **Files to review**:
@@ -39,30 +39,30 @@ Empirically challenge Milestone 1: RBAC separation (dev vs admin), route protect
   - Execution of `node --test tests/auth-roles-permissions.test.mjs` passes 100%
 
 ## Key Decisions Made
-- Executed pinpoint test `node --test tests/auth-roles-permissions.test.mjs`: Test exited with code 1 (5 passed, 1 failed: SHA-256 mismatch).
-- Calculated SHA-256 hashes independently:
-  - `artifacts/api-server/demo-server.mjs`: `d9a25d2f78e89e9b38869af6dca00ceebabdda67ebb079b55af319b899c05b29`
-  - `scripts/demo-server.mjs`: `33c17537913a1f3b5509489c387106b8a0ffdbb959fddd3a9b0df578e310d9da`
-  - Root cause: Commit `035c16e1b22260960f8f9f7d29b50ed6397e972e` applied changes to `scripts/demo-server.mjs` without syncing `artifacts/api-server/demo-server.mjs`.
-- Conducted exhaustive adversarial testing across 22 technical routes, privilege escalation paths, unauthenticated probing, and path traversal:
-  - RBAC and privilege escalation defenses are robust (100% pass on security barriers).
-- Final Verdict: REQUEST_CHANGES due to broken SHA-256 twin server parity and test suite failure.
+- Re-verified SHA-256 hashes independently after sync commit `bf6aded`:
+  - `artifacts/api-server/demo-server.mjs`: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`
+  - `scripts/demo-server.mjs`: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`
+  - Parity is 100% bit-for-bit identical.
+- Re-executed pinpoint test `node --test tests/auth-roles-permissions.test.mjs`:
+  - 6/6 tests passed with 0 failures in 2.9s.
+- Adversarial security checks across 22 technical routes and all privilege escalation vectors confirmed fully operational and impenetrable for `gestor` (`admin`).
+- Final Verdict updated to: **APPROVE**.
 
 ## Artifact Index
 - `DISPATCH.md` — Current dispatch instructions
 - `BRIEFING.md` — Situational awareness and state
 - `progress.md` — Liveness heartbeat and execution log
-- `handoff.md` — Empirical evaluation and verdict report
+- `handoff.md` — Final empirical evaluation and verdict report (APPROVE)
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Twin server SHA-256 parity is genuine bit-for-bit identical -> FAILED (MISMATCH).
-  2. `tests/auth-roles-permissions.test.mjs` executes cleanly with zero failures -> FAILED (1 failure: subtest 1).
+  1. Twin server SHA-256 parity is genuine bit-for-bit identical -> PASSED (Identical SHA-256: `33C17537...`).
+  2. `tests/auth-roles-permissions.test.mjs` executes cleanly with zero failures -> PASSED (6/6 tests passed).
   3. `gestor` cannot access `/api/audit-logs`, `/api/admin/server-monitor/*`, `/api/storage/config`, `/api/settings/gemini`, etc. (HTTP 403) -> PASSED (22/22 routes returned 403).
   4. `gestor` cannot elevate users to `dev` or tamper with existing `dev` users -> PASSED (create dev, promote to dev, alter dev, reset password, delete dev all blocked with 403).
   5. Operational routes remain accessible to `gestor` and `admin` -> PASSED (PMS calendar, finance overview, users list, nfse retry queue, cleaning history all returned 200).
   6. Unauthenticated requests blocked -> PASSED (returned 403/401).
-- **Vulnerabilities found**: Desynchronization between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` introduced in commit `035c16e`, breaking the twin server parity invariant and causing test suite failure.
+- **Vulnerabilities found**: None remaining.
 - **Untested angles**: None within Milestone 1 scope.
 
 ## Loaded Skills
