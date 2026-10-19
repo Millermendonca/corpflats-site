@@ -19,6 +19,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
 } from "./ui/dialog"
 import { Input } from "./ui/input"
+import { Label } from "./ui/label"
 import { QuickShoppingModal } from "./quick-shopping-modal"
 import { hasModuleAccess } from "@/lib/permissions"
 
