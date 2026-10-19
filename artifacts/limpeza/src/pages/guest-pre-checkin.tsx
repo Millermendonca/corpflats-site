@@ -139,7 +139,13 @@ export default function GuestPreCheckin() {
   // Reservation & Guest info
   const [reservation, setReservation] = useState<any | null>(null)
   const [guestList, setGuestList] = useState<any[]>([])
-  const [selectedGuestIndex, setSelectedGuestIndex] = useState(1)
+  const [selectedGuestIndex, setSelectedGuestIndex] = useState(() => {
+    if (typeof window !== "undefined") {
+      const gParam = new URLSearchParams(window.location.search).get("guest")
+      if (gParam) return Number(gParam) || 1
+    }
+    return 1
+  })
   const [completedTimestamp, setCompletedTimestamp] = useState<string | null>(null)
   const [guestCode, setGuestCode] = useState<string>("")
   const [isReturningGuest, setIsReturningGuest] = useState<boolean>(false)
@@ -563,6 +569,7 @@ export default function GuestPreCheckin() {
     setAiDocResult(null)
     setSelfiePhoto(null)
     setSignatureData(null)
+    setGeneratedPdfInfo(null)
     setMinorAuthDocPhoto(null)
     setMinorKinship("filho")
 
@@ -718,6 +725,7 @@ export default function GuestPreCheckin() {
     // Hóspede 1: pode ler do cadastro titular
     // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
     const selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
+    const doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || guest.docPhotoUrl || null) : null)
     // Avaliação estritamente individual da necessidade de re-assinatura
     const isGuestPendingReSign = currentG?.needsReSignature !== undefined
       ? Boolean(currentG.needsReSignature)
@@ -733,8 +741,11 @@ export default function GuestPreCheckin() {
     // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito nesta reserva e não precisar re-assinar!
     const fnhrDone = Boolean(
       !isReSignatureNeeded && (
-        currentG?.hasCompletedCheckin || 
-        (isTitular && res.fnhrCompleted && (sig || res.signatureUrl) && selfie)
+        currentG?.hasCompletedCheckin ||
+        currentG?.status === "CHECKED_IN" ||
+        Boolean(currentG?.fnrhSignedAt) ||
+        Boolean(currentG?.fnrhDocumentUuid) ||
+        (isTitular && (res.fnhrCompleted || res.preCheckinCompleted) && (sig || res.signatureUrl || res.fnrhDocumentUuid) && selfie)
       )
     )
 
@@ -1424,11 +1435,12 @@ export default function GuestPreCheckin() {
   // MODO 1: FICHA DIGITAL DE HOSPEDAGEM (FNHR) CONCLUÍDA & CERTIFICADA
   // ══════════════════════════════════════════════════════════════════════════════
   if (isCompleted && !isEditing) {
-    const currentGuestRecord = guestList[selectedGuestIndex - 1] || guestList[0] || {}
-    const targetUuid = generatedPdfInfo?.documentUuid || currentGuestRecord?.fnrhDocumentUuid || reservation?.fnrhDocumentUuid
+    const isCurrentTitular = selectedGuestIndex === 1
+    const currentGuestRecord = guestList.find((g: any) => Number(g.index) === Number(selectedGuestIndex)) || guestList[selectedGuestIndex - 1] || (isCurrentTitular ? guestList[0] : {}) || {}
+    const targetUuid = generatedPdfInfo?.documentUuid || currentGuestRecord?.fnrhDocumentUuid || (isCurrentTitular ? reservation?.fnrhDocumentUuid : "")
     const resCodeParam = encodeURIComponent(reservation?.code || code || "")
 
-    let targetViewUrl = generatedPdfInfo?.fileUrl || currentGuestRecord?.fnrhPdfUrl || reservation?.fnrhPdfUrl || ""
+    let targetViewUrl = generatedPdfInfo?.fileUrl || currentGuestRecord?.fnrhPdfUrl || (isCurrentTitular ? reservation?.fnrhPdfUrl : "") || ""
     if (targetViewUrl) {
       if (!targetViewUrl.includes("code=")) {
         targetViewUrl += (targetViewUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
@@ -1437,7 +1449,7 @@ export default function GuestPreCheckin() {
       targetViewUrl = `/api/pms/fnrh/${targetUuid}/view?code=${resCodeParam}`
     }
 
-    let targetDownloadUrl = generatedPdfInfo?.downloadUrl || currentGuestRecord?.fnrhDownloadUrl || reservation?.fnrhDownloadUrl || ""
+    let targetDownloadUrl = generatedPdfInfo?.downloadUrl || currentGuestRecord?.fnrhDownloadUrl || (isCurrentTitular ? reservation?.fnrhDownloadUrl : "") || ""
     if (targetDownloadUrl) {
       if (!targetDownloadUrl.includes("code=")) {
         targetDownloadUrl += (targetDownloadUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
@@ -1702,6 +1714,37 @@ export default function GuestPreCheckin() {
                       >
                         <PenTool className="w-3 h-3" />
                         <span>Assinar por {pg.name || `Hóspede ${pg.index}`}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!guestList.some((g: any) => Boolean(g.needsReSignature)) && guestList.some((g: any) => !g.hasCompletedCheckin) && (
+                <div className="p-3.5 rounded-xl bg-sky-50/90 border border-sky-200 space-y-1.5 print:hidden animate-in fade-in">
+                  <span className="text-xs font-bold text-sky-950 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>O seu check-in já está concluído e assinado!</span>
+                  </span>
+                  <p className="text-xs text-sky-900 leading-snug">
+                    Caso deseje preencher agora os dados do(s) acompanhante(s) pendente(s), selecione abaixo:
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {guestList.filter((g: any) => !g.hasCompletedCheckin).map((pg: any) => (
+                      <Button
+                        key={pg.index}
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedGuestIndex(pg.index)
+                          setStep(1)
+                          if (reservation) {
+                            loadGuestData({ reservation, guests: guestList }, pg.index)
+                          }
+                        }}
+                        className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs gap-1.5 rounded-xl h-8 px-3 shadow-xs cursor-pointer"
+                      >
+                        <User className="w-3 h-3" />
+                        <span>Preencher Check-in de {pg.name || `Hóspede ${pg.index}`}</span>
                       </Button>
                     ))}
                   </div>
