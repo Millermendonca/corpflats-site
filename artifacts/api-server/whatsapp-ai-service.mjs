@@ -316,6 +316,23 @@ export function getBrasiliaDateParts(d = new Date()) {
 }
 
 /**
+ * Retorna os códigos canônicos possíveis de uma reserva (incluindo RES-{flat}-{id pad 4})
+ */
+function getCanonicalReservationCodes(reservation) {
+  if (!reservation || typeof reservation !== "object") return [];
+  const codes = new Set();
+  const rawCode = String(reservation.code || reservation.reservationCode || "").trim().toLowerCase();
+  if (rawCode) codes.add(rawCode);
+  const flatNum = reservation.flatNumber ? String(reservation.flatNumber).trim() : "";
+  const rawId = reservation.id != null ? String(reservation.id).trim() : "";
+  if (flatNum && rawId) {
+    codes.add(`res-${flatNum}-${rawId.padStart(4, "0")}`.toLowerCase());
+    codes.add(`res-${flatNum}-${rawId}`.toLowerCase());
+  }
+  return Array.from(codes);
+}
+
+/**
  * Verifica se uma reserva já teve o seu check-out concluído/confirmado
  * (via status/flags da reserva, card de limpeza com desocupação confirmada,
  * disparo automático de "Check-out Concluído" em whatsappHistory ou no histórico da conversa).
@@ -338,20 +355,37 @@ export function isReservationCheckoutCompleted(reservation, db = null, phone = n
     return true;
   }
 
-  const resCode = String(reservation.code || reservation.reservationCode || "").trim().toLowerCase();
+  const canonicalCodes = getCanonicalReservationCodes(reservation);
   const resId = String(reservation.id || "").trim().toLowerCase();
   const flatNum = reservation.flatNumber ? String(reservation.flatNumber).trim() : null;
   const flatId = reservation.flatId ? String(reservation.flatId).trim() : null;
   const cleanP = normalizePhone(phone || reservation.guestPhone || reservation.phone || "");
+  const todayStr = getBrasiliaDateParts().todayStr;
+  const inDate = String(reservation.checkinDate || "").slice(0, 10);
+  const outDate = String(reservation.checkoutDate || "").slice(0, 10);
+
+  // Guarda de ciclo de vida para sinais indiretos (sem vínculo explícito de código/ID da reserva):
+  // - Reserva futura (inDate > todayStr) ainda não iniciou
+  // - Reserva entrando hoje com saída futura (inDate === todayStr && outDate > todayStr) está iniciando hoje
+  const disallowUnlinkedIndirectSignal = Boolean(
+    (inDate && inDate > todayStr) ||
+    (inDate && outDate && inDate === todayStr && outDate > todayStr)
+  );
 
   // 2. Governança / Card de Limpeza com desocupação explicitamente confirmada na data de saída
   if ((flatNum || flatId) && Array.isArray(db?.cleaningRequests)) {
-    const outDate = reservation.checkoutDate || "";
     const vacantReq = db.cleaningRequests.find(c => {
       if (!c) return false;
+      const cResCode = String(c.reservationCode || c.reservationId || "").trim().toLowerCase();
+      if (cResCode) {
+        const matchesThisRes = canonicalCodes.includes(cResCode) || (resId && cResCode === resId);
+        if (!matchesThisRes) return false;
+        return c.isVacant === true && (c.isVacantExplicitlySet === true || Boolean(c.vacantSource));
+      }
+      if (disallowUnlinkedIndirectSignal) return false;
       const sameFlat = (flatNum && String(c.flatNumber) === flatNum) || (flatId && String(c.flatId) === flatId);
       if (!sameFlat) return false;
-      const cDate = c.requestDate || c.effectiveDate || c.date || "";
+      const cDate = String(c.requestDate || c.effectiveDate || c.date || "").slice(0, 10);
       const sameDate = !outDate || !cDate || cDate === outDate;
       return sameDate && c.isVacant === true && (c.isVacantExplicitlySet === true || Boolean(c.vacantSource));
     });
@@ -376,16 +410,34 @@ export function isReservationCheckoutCompleted(reservation, db = null, phone = n
       if (!isCheckoutCompletedMsg) return false;
 
       const hCode = String(h.reservationCode || h.reservationId || "").trim().toLowerCase();
-      if ((resCode && hCode === resCode) || (resId && hCode === resId)) return true;
-      if (resCode && txt.toLowerCase().includes(resCode)) return true;
+      const txtCodes = (txt.match(/\b(?:res-\d+(?:-\d+)?|cf-\d+)\b/gi) || []).map(s => s.toLowerCase());
 
-      const hPhone = normalizePhone(h.phone || h.recipientPhone || h.to || "");
+      // Match explícito por código ou ID da reserva
+      if (hCode && (canonicalCodes.includes(hCode) || (resId && hCode === resId))) return true;
+      if (txtCodes.length > 0 && txtCodes.some(tc => canonicalCodes.includes(tc))) return true;
+
+      // Guarda de conflito: se o disparo pertence explicitamente a OUTRA reserva, jamais contamina esta
+      if (hCode && (canonicalCodes.length > 0 || resId) && !canonicalCodes.includes(hCode) && (!resId || hCode !== resId)) {
+        return false;
+      }
+      if (txtCodes.length > 0 && canonicalCodes.length > 0 && !txtCodes.some(tc => canonicalCodes.includes(tc))) {
+        return false;
+      }
+
+      if (disallowUnlinkedIndirectSignal) return false;
+
+      const hDate = String(h.sentAt || h.createdAt || h.timestamp || "").slice(0, 10);
+      if (hDate && inDate && hDate < inDate) return false;
+
+      const hPhone = normalizePhone(h.guestPhone || h.phone || h.recipientPhone || h.to || "");
       const phoneMatches = Boolean(hPhone && cleanP && (hPhone.endsWith(cleanP.slice(-8)) || cleanP.endsWith(hPhone.slice(-8))));
       const flatMatches = Boolean(flatNum && (String(h.flatNumber || "") === flatNum || new RegExp(`\\bflat\\s*\\*?${flatNum}\\*?\\b`, "i").test(txt)));
 
+      if (h.flatNumber && flatNum && String(h.flatNumber) !== flatNum) return false;
+      const mentionedFlat = txt.match(/\bflat\s*\*?(\d{2,4})\*?\b/i)?.[1];
+      if (mentionedFlat && flatNum && String(mentionedFlat) !== flatNum) return false;
+
       if (phoneMatches || flatMatches) {
-        const mentionedFlat = txt.match(/\bflat\s*\*?(\d{2,4})\*?\b/i)?.[1];
-        if (mentionedFlat && flatNum && String(mentionedFlat) !== flatNum) return false;
         return true;
       }
       return false;
@@ -415,9 +467,27 @@ export function isReservationCheckoutCompleted(reservation, db = null, phone = n
         String(m.templateId || "").toLowerCase() === "tpl_checkout_completed";
       if (!isCheckoutCompletedText) return false;
 
-      if (resCode && txt.toLowerCase().includes(resCode)) return true;
+      const mCode = String(m.reservationCode || m.reservationId || "").trim().toLowerCase();
+      const txtCodes = (txt.match(/\b(?:res-\d+(?:-\d+)?|cf-\d+)\b/gi) || []).map(s => s.toLowerCase());
+
+      if (mCode && (canonicalCodes.includes(mCode) || (resId && mCode === resId))) return true;
+      if (txtCodes.length > 0 && txtCodes.some(tc => canonicalCodes.includes(tc))) return true;
+
+      if (mCode && (canonicalCodes.length > 0 || resId) && !canonicalCodes.includes(mCode) && (!resId || mCode !== resId)) {
+        return false;
+      }
+      if (txtCodes.length > 0 && canonicalCodes.length > 0 && !txtCodes.some(tc => canonicalCodes.includes(tc))) {
+        return false;
+      }
+
       const mentionedFlat = txt.match(/\bflat\s*\*?(\d{2,4})\*?\b/i)?.[1];
       if (mentionedFlat && flatNum && String(mentionedFlat) !== flatNum) return false;
+
+      if (disallowUnlinkedIndirectSignal) return false;
+
+      const mDate = String(m.timestamp || m.createdAt || "").slice(0, 10);
+      if (mDate && inDate && mDate < inDate) return false;
+
       return true;
     });
     if (hasCheckoutMsgInConv) return true;
@@ -432,16 +502,17 @@ export function isReservationCheckoutCompleted(reservation, db = null, phone = n
  */
 export function getRecentAutomatedTriggers(db = null, phone = null, history = [], reservation = null) {
   const cleanP = normalizePhone(phone || reservation?.guestPhone || reservation?.phone || "");
-  const resCode = String(reservation?.code || reservation?.reservationCode || "").trim().toLowerCase();
+  const canonicalCodes = getCanonicalReservationCodes(reservation);
+  const resId = String(reservation?.id || "").trim().toLowerCase();
   const triggers = [];
 
   if (Array.isArray(db?.whatsappHistory)) {
     for (const h of db.whatsappHistory.slice(-15)) {
       if (!h) continue;
-      const hPhone = normalizePhone(h.phone || h.recipientPhone || h.to || "");
+      const hPhone = normalizePhone(h.guestPhone || h.phone || h.recipientPhone || h.to || "");
       const hCode = String(h.reservationCode || h.reservationId || "").trim().toLowerCase();
       const phoneMatches = Boolean(hPhone && cleanP && (hPhone.endsWith(cleanP.slice(-8)) || cleanP.endsWith(hPhone.slice(-8))));
-      const codeMatches = Boolean(resCode && hCode === resCode);
+      const codeMatches = Boolean(hCode && (canonicalCodes.includes(hCode) || (resId && hCode === resId)));
       if (!phoneMatches && !codeMatches) continue;
 
       triggers.push({
@@ -632,8 +703,11 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
   const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
   const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
+  const canonicalResCode = matchedReservation
+    ? (matchedReservation.code || matchedReservation.reservationCode || (flatNumber && matchedReservation.id != null ? `RES-${flatNumber}-${String(matchedReservation.id).padStart(4, "0")}` : `RES-${flatNumber}`))
+    : null;
   const checkoutUrl = (matchedReservation && !isCheckoutCompleted && stayStatus !== "estadia_passada")
-    ? `${appOrigin}/checkout/${matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`}`
+    ? `${appOrigin}/checkout/${canonicalResCode}`
     : null;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
   const recentTriggers = getRecentAutomatedTriggers(db, cleanPhone, convMessages, matchedReservation);
@@ -643,6 +717,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     timeStr,
     phone: cleanPhone,
     guestName,
+    reservationCode: canonicalResCode,
     hasReservation: Boolean(matchedReservation && matchedReservation.status !== "cancelada" && matchedReservation.status !== "cancelled" && stayStatus !== "estadia_passada"),
     checkinUrl,
     rawCheckinUrl,
@@ -653,7 +728,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     isHosted,
     recentTriggers,
     reservation: matchedReservation ? {
-      code: matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`,
+      code: canonicalResCode,
       guestName: matchedReservation.guestName,
       checkinDate: matchedReservation.checkinDate,
       checkoutDate: matchedReservation.checkoutDate,
@@ -2798,42 +2873,70 @@ export function handleGetReservationDetails(db, args = {}) {
   const targetName = String(args.guestName || args.name || "").trim().toLowerCase();
   const targetPhone = normalizePhone(args.phone || args.guestPhone || "");
   const targetFlat = String(args.flatNumber || args.flatId || "").trim();
+  const todayStr = getBrasiliaDateParts().todayStr;
 
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
   let matched = null;
 
+  const pickBestReservation = (candidates) => {
+    if (!Array.isArray(candidates) || candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+    const activeList = candidates.filter(r => r && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada");
+    const pool = activeList.length > 0 ? activeList : candidates;
+
+    const todayMatches = pool.filter(r =>
+      r.checkinDate === todayStr || r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
+    );
+    const activeToday = todayMatches.find(r => !isReservationCheckoutCompleted(r, db, targetPhone || r.guestPhone || r.phone, args.history || []));
+    if (activeToday) return activeToday;
+
+    const futureMatches = pool
+      .filter(r => (r.checkinDate || "") > todayStr && !isReservationCheckoutCompleted(r, db, targetPhone || r.guestPhone || r.phone, args.history || []))
+      .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""));
+    if (futureMatches.length > 0) return futureMatches[0];
+
+    if (todayMatches.length > 0) return todayMatches[0];
+
+    const sortedPast = [...pool].sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
+    return sortedPast[0] || candidates[0];
+  };
+
   // 1. Busca por código de reserva
   if (targetCode) {
+    const codeLower = targetCode.toLowerCase();
     matched = reservations.find(r =>
-      r && (String(r.code || "").toLowerCase() === targetCode.toLowerCase() ||
-            String(r.id || "") === targetCode)
+      r && (getCanonicalReservationCodes(r).includes(codeLower) || String(r.id || "") === targetCode)
     );
   }
 
   // 2. Busca por telefone
   if (!matched && targetPhone) {
-    matched = reservations.find(r => {
+    const phoneMatches = reservations.filter(r => {
       if (!r) return false;
       const rPhone = normalizePhone(r.guestPhone || r.phone || "");
-      return rPhone && (targetPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(targetPhone.slice(-8)));
+      const reqPhone = normalizePhone(r.requesterInfo?.phone || r.requesterInfo?.whatsapp || r.requesterPhone || "");
+      return (rPhone && (targetPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(targetPhone.slice(-8)))) ||
+             (reqPhone && (targetPhone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(targetPhone.slice(-8))));
     });
+    matched = pickBestReservation(phoneMatches);
   }
 
   // 3. Busca por nome do hóspede
   if (!matched && targetName) {
-    matched = reservations.find(r =>
+    const nameMatches = reservations.filter(r =>
       r && r.guestName && r.guestName.toLowerCase().includes(targetName)
     );
+    matched = pickBestReservation(nameMatches);
   }
 
   // 4. Busca por número do flat
   if (!matched && targetFlat) {
-    const todayStr = getBrasiliaDateParts().todayStr;
-    matched = reservations.find(r =>
+    const flatMatches = reservations.filter(r =>
       r && (String(r.flatNumber) === targetFlat || String(r.flatId) === targetFlat) &&
       r.status !== "cancelada" && r.status !== "expirada" &&
       (r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
     );
+    matched = pickBestReservation(flatMatches);
   }
 
   if (!matched) {
@@ -2847,7 +2950,6 @@ export function handleGetReservationDetails(db, args = {}) {
   const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
   const rawCheckinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
 
-  const todayStr = getBrasiliaDateParts().todayStr;
   const isCheckoutCompleted = isReservationCheckoutCompleted(
     matched,
     db,
@@ -2870,12 +2972,13 @@ export function handleGetReservationDetails(db, args = {}) {
     stayStatus = "estadia_passada";
   }
 
+  const canonicalCode = matched.code || matched.reservationCode || (matched.flatNumber && matched.id != null ? `RES-${matched.flatNumber}-${String(matched.id).padStart(4, "0")}` : `RES-${matched.flatNumber}`);
   const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
   const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
   const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
   const checkoutUrl = isCheckoutCompleted
     ? null
-    : `${appOrigin}/checkout/${matched.code || matched.reservationCode || `RES-${matched.flatNumber}`}`;
+    : `${appOrigin}/checkout/${canonicalCode}`;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
   let operationalGuidance = "";
@@ -2894,7 +2997,7 @@ export function handleGetReservationDetails(db, args = {}) {
     found: true,
     reservation: {
       id: matched.id,
-      code: matched.code || matched.reservationCode || `RES-${matched.flatNumber}`,
+      code: canonicalCode,
       guestName: matched.guestName,
       guestPhone: matched.guestPhone || matched.phone,
       checkinDate: matched.checkinDate,
@@ -2951,7 +3054,8 @@ export function handleGetFlatStatus(db, args = {}) {
     (String(r.flatNumber) === String(flat.number) || String(r.flatId) === String(flat.id)) &&
     r.checkoutDate === todayStr &&
     r.status !== "cancelada" && r.status !== "expirada" &&
-    r.status !== "checkout" && r.status !== "checked_out" && r.status !== "finalizada"
+    r.status !== "completed" && r.status !== "checkout" && r.status !== "checked_out" && r.status !== "finalizada" &&
+    !isReservationCheckoutCompleted(r, db)
   );
 
   const allPastOrTodayCleanings = (db?.cleaningRequests || [])
@@ -2987,7 +3091,8 @@ export function handleGetFlatStatus(db, args = {}) {
   const activeReservation = (db?.reservations || []).find(r =>
     (String(r.flatNumber) === String(flat.number) || String(r.flatId) === String(flat.id)) &&
     r.status !== "cancelada" && r.status !== "expirada" &&
-    r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+    r.checkinDate <= todayStr && r.checkoutDate >= todayStr &&
+    !isReservationCheckoutCompleted(r, db)
   );
 
   const amenities = getFlatAmenitiesInfo(flat);
@@ -5908,8 +6013,24 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     };
   }
 
-  // 3. Status de Reserva Existente / Confirmação (VIA 2 - Leitura do Sistema)
-  const isResInquiry = (
+  // 3. Demanda Operacional Sem Acesso Autônomo (Ações, Trocas, Manutenção, Chamados, Comunicação de Check-out, Cancelamento)
+  const demandClassification = classifyUnmetDemand(text);
+  if (demandClassification && demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas") {
+    return {
+      type: "OPERATIONAL_DEMAND",
+      primaryTopic: demandClassification.category,
+      demandClassification,
+      rawText: text
+    };
+  }
+
+  // 4. Status de Reserva Existente / Confirmação (VIA 2 - Leitura do Sistema)
+  const mentionsSpecificFaqTopicOnly = (
+    /wifi|wi-fi|internet|senha|caf[eé]|desjejum|garagem|estacionamento|placa|endere[cç]o|localiza[cç][aã]o|piscina|jacuzzi|academia|pet|cachorro|fumar|cigarro|sil[eê]ncio|visita|esquec|perdi/i.test(text) &&
+    !/(?:confirmad[ao]|aprovad[ao]|status|verificar|consultar|conferir|tenho\s+(?:alguma\s+)?reserva)/i.test(text)
+  );
+
+  const isResInquiry = !mentionsSpecificFaqTopicOnly && (
     /(?:minhas?\s+reservas?|minhas?\s+di[aá]rias?|minha\s+estadia)/i.test(text) ||
     /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
     /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
@@ -5923,17 +6044,6 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     return {
       type: "EXISTING_RESERVATION",
       primaryTopic: "consulta_reserva",
-      rawText: text
-    };
-  }
-
-  // 4. Demanda Operacional Sem Acesso Autônomo (Ações, Trocas, Manutenção, Chamados, Comunicação de Check-out)
-  const demandClassification = classifyUnmetDemand(text);
-  if (demandClassification && demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas") {
-    return {
-      type: "OPERATIONAL_DEMAND",
-      primaryTopic: demandClassification.category,
-      demandClassification,
       rawText: text
     };
   }
@@ -6037,6 +6147,7 @@ export function prepareAgenticPreAnalysis({
   );
 
   let unmetDemand = null;
+  let pendingFaq = null;
   let missingDataOrCapability = false;
   let shouldHandover = false;
   let requiresHandover = false;
@@ -6139,7 +6250,7 @@ export function prepareAgenticPreAnalysis({
       (classifyDeveloperMessage(queryText, db).type !== "guest_simulation");
 
     if (!isDevCaller) {
-      autoCreatePendingFaq({
+      pendingFaq = autoCreatePendingFaq({
         db,
         questionText: queryText,
         senderPhone: guestContext?.phone,
@@ -6179,6 +6290,7 @@ ${preAnalysisDirective ? `${preAnalysisDirective}\n` : ""}`;
     recentTriggers,
     isCheckoutDone,
     unmetDemand,
+    pendingFaq,
     missingDataOrCapability,
     shouldHandover,
     requiresHandover,
@@ -6204,7 +6316,9 @@ export function validateAndRefineResponse({
   saveDatabase = null,
   createNotification = null,
   history = [],
-  preRecordedUnmetDemand = null
+  preRecordedUnmetDemand = null,
+  preExecutedCheckoutResult = null,
+  preRecordedPendingFaq = null
 }) {
   const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
     ? history
@@ -6383,8 +6497,8 @@ export function validateAndRefineResponse({
     const isCheckoutActionEnabled = botActionsSettings?.apiActionsEnabled !== false && botActionsSettings?.allowedActions?.informCheckout === true;
 
     if (cat === "checkout_comunicacao" && isCheckoutActionEnabled && db) {
-      // Se a ação informCheckout estiver habilitada pelo admin, Sofia atua com autonomia total!
-      const actionResult = handleInformCheckout(db, {
+      // Se a ação informCheckout estiver habilitada pelo admin, Sofia atua com autonomia total (reaproveita resultado da pré-análise se já executado)
+      const actionResult = preExecutedCheckoutResult || handleInformCheckout(db, {
         flatNumber: extractedFlat,
         phone: guestContext?.phone,
         guestName: guestContext?.guestName
@@ -6392,7 +6506,7 @@ export function validateAndRefineResponse({
       if (actionResult && actionResult.success) {
         missingDataOrCapability = false;
         unmetDemand = null;
-        if (typeof saveDatabase === "function") {
+        if (!preExecutedCheckoutResult && typeof saveDatabase === "function") {
           try { saveDatabase("bot_action_inform_checkout_auto"); } catch (_) {}
         }
       } else {
@@ -6469,7 +6583,7 @@ export function validateAndRefineResponse({
       const isDevCaller = isDeveloperPhone(guestContext?.phone, db) &&
         (classifyDeveloperMessage(queryText, db).type !== "guest_simulation");
 
-      if (!isDevCaller) {
+      if (!isDevCaller && !preRecordedPendingFaq) {
         autoCreatePendingFaq({
           db,
           questionText: queryText,
@@ -6562,8 +6676,8 @@ export function validateAndRefineResponse({
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  if (isCheckoutDone) {
-    // Se o check-out já foi concluído, NUNCA permite cobrança de saída até 12h, link de /checkout/ ou link de /pre-checkin/
+  if (isCheckoutDone || analysis.primaryTopic === "checkout_comunicacao") {
+    // Se o check-out já foi concluído ou está sendo comunicado pelo hóspede agora, NUNCA permite cobrança de saída até 12h, link de /checkout/ ou link de /pre-checkin/
     if (/pr[eé]-?check-?in|pre-checkin/i.test(replyText)) {
       replyText = stripPreCheckinFromText(replyText);
     }
@@ -6589,11 +6703,12 @@ export function validateAndRefineResponse({
       replyText = stripPreCheckinFromText(replyText);
     }
     // Apenas complementa dados de check-out se o candidato tinha link errado de pré-check-in removido
-    // ou se o hóspede perguntou sobre sua reserva/estadia/check-out (NUNCA por match de "CorpFlats"!)
-    const guestAskedReservaOrCheckout = analysis.type === "EXISTING_RESERVATION" ||
-      /\b(?:reserva|estadia|sa[ií]da|checkout|check-out)\b/i.test(queryText);
+    // ou se for consulta de reserva existente / FAQ de check-out que omitiu o horário de 12:00h
+    const guestAskedReservaOrCheckoutFaq =
+      analysis.type === "EXISTING_RESERVATION" ||
+      (analysis.type === "GENERIC_FAQ" && analysis.primaryTopic === "checkout");
     const hasCheckoutDetails = /12:00|12h|hor[aá]rio\s+limite/i.test(replyText);
-    if ((hadPreCheckinRemoved || guestAskedReservaOrCheckout) && !hasCheckoutDetails) {
+    if ((hadPreCheckinRemoved || guestAskedReservaOrCheckoutFaq) && !hasCheckoutDetails) {
       const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
       const checkoutUrl = guestContext.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
       const checkoutLinkMsg = checkoutUrl && !replyText.includes(checkoutUrl) ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
@@ -7060,7 +7175,14 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   // 0.7 Consulta sobre Reserva Existente / Confirmação de Reserva (Prioridade para quem já tem reserva)
-  const isExistingReservationInquiry = (
+  const hasSpecificTopicOrOperationalDemand = (
+    queryAnalysis.type === "OPERATIONAL_DEMAND" ||
+    queryAnalysis.type === "HANDOVER_REQUIRED" ||
+    queryAnalysis.type === "PRICING_QUOTE" ||
+    queryAnalysis.type === "RESERVATION_REQUEST" ||
+    Boolean(queryAnalysis.primaryTopic && !["pre_checkin", "checkin", "checkout"].includes(queryAnalysis.primaryTopic))
+  );
+  const isExistingReservationInquiry = !hasSpecificTopicOrOperationalDemand && (
     /(?:m[ij]nhas?\s+reservas?|minhas?\s+di[aá]rias?|minha\s+estadia)/i.test(text) ||
     /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
     /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
@@ -7409,7 +7531,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   // 7.9 Comodidades e Estrutura Geral dos Flats
-  if (/micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
+  if (queryAnalysis.type !== "OPERATIONAL_DEMAND" && /micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
     return ret(`${greetingSalutation} ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
   }
 
@@ -7912,7 +8034,9 @@ ${systemActionsNotice}
           db,
           aiConfig,
           history: effectiveHistory,
-          preRecordedUnmetDemand: preAnalysis.unmetDemand
+          preRecordedUnmetDemand: preAnalysis.unmetDemand,
+          preExecutedCheckoutResult: preAnalysis.autoCheckoutActionResult,
+          preRecordedPendingFaq: preAnalysis.pendingFaq
         });
 
         const finalReply = geminiRes.requiresHandover ? geminiRes.text : (validation.replyText || geminiRes.text);
@@ -7945,7 +8069,9 @@ ${systemActionsNotice}
     db,
     aiConfig,
     history: effectiveHistory,
-    preRecordedUnmetDemand: preAnalysis.unmetDemand
+    preRecordedUnmetDemand: preAnalysis.unmetDemand,
+    preExecutedCheckoutResult: preAnalysis.autoCheckoutActionResult,
+    preRecordedPendingFaq: preAnalysis.pendingFaq
   });
 
   return {
@@ -9261,9 +9387,9 @@ export async function processAiInboundMessage({
   const isFallback = aiResult.modelUsed === "heuristic_fallback" || aiResult.source === "heuristic";
   const needsHandoverOrFallback = Boolean(aiResult.shouldHandover || aiResult.requiresHandover || isFallback);
 
-  let unmappedFaq = null;
+  let unmappedFaq = aiResult.preAnalysis?.pendingFaq || null;
   const isDevCoaching = isDev && classifyDeveloperMessage(incomingInfo.text, db)?.type !== "guest_simulation";
-  if (isQuestion && !isMapped && needsHandoverOrFallback && !isDevCoaching) {
+  if (!unmappedFaq && isQuestion && !isMapped && needsHandoverOrFallback && !isDevCoaching) {
     unmappedFaq = autoCreatePendingFaq({
       db,
       questionText: incomingInfo.text,

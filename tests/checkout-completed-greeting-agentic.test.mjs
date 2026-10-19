@@ -8,12 +8,14 @@ import {
   buildGuestContext,
   isReservationCheckoutCompleted,
   getRecentAutomatedTriggers,
+  analyzeGuestQuery,
   prepareAgenticPreAnalysis,
   validateAndRefineResponse,
   generateHeuristicResponse,
   generateAiWhatsAppResponse,
   processAiInboundMessage,
-  handleGetReservationDetails
+  handleGetReservationDetails,
+  handleGetFlatStatus
 } from "../scripts/whatsapp-ai-service.mjs";
 
 const prevGeminiKey = process.env.GEMINI_API_KEY;
@@ -30,6 +32,10 @@ const todayStr = `${yyyy}-${mm}-${dd}`;
 const yesterdayDate = new Date(nowBr);
 yesterdayDate.setDate(yesterdayDate.getDate() - 2);
 const checkinPastStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, "0")}-${String(yesterdayDate.getDate()).padStart(2, "0")}`;
+
+const tomorrowDate = new Date(nowBr);
+tomorrowDate.setDate(tomorrowDate.getDate() + 2);
+const checkoutFutureStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
 
 console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & Arquitetura Agêntica ===");
 
@@ -135,7 +141,7 @@ console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & 
   assert.ok(sentPayload && sentPayload.message, "Deve ter enviado a resposta via sendZapiMessage mockada");
   assert.ok(!sentPayload.message.includes("/checkout/RES-116-0449"), "processAiInboundMessage não deve anexar link de check-out");
   assert.ok(!/hor[aá]rio\s+limite\s+de\s+desocupa/i.test(sentPayload.message), "processAiInboundMessage não deve cobrar saída até 12h");
-  console.log("✅ [1/6] Incidente RES-116-0449 (Gatilho 01:06 + 'olá' 01:14) validado com sucesso!");
+  console.log("✅ [1/11] Incidente RES-116-0449 (Gatilho 01:06 + 'olá' 01:14) validado com sucesso!");
 }
 
 // 2. Detecção de Check-out Concluído via Governança (isVacant + isVacantExplicitlySet) e via Flags da Reserva
@@ -176,7 +182,7 @@ console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & 
   assert.equal(toolRes.reservation.stayStatus, "checkout_concluido", "Tool getReservationDetails deve retornar stayStatus='checkout_concluido'");
   assert.equal(toolRes.reservation.isCheckoutCompleted, true, "Tool getReservationDetails deve retornar isCheckoutCompleted=true");
   assert.equal(toolRes.reservation.checkoutUrl, null, "Tool getReservationDetails não deve retornar checkoutUrl quando já concluído");
-  console.log("✅ [2/6] Detecção multimodal de check-out concluído (Governança & Tool Calling) validada!");
+  console.log("✅ [2/11] Detecção multimodal de check-out concluído (Governança & Tool Calling) validada!");
 }
 
 // 3. Postura Reativa Contextual (Memória Silenciosa): Saudação simples em dia de check-out pendente ("checkout_hoje")
@@ -226,7 +232,7 @@ console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & 
   });
   assert.ok(askRes.replyText.includes("12:00h"), "Ao perguntar da reserva em dia de saída pendente, deve informar o horário de 12:00h");
   assert.ok(askRes.replyText.includes("/checkout/RES-211-0500"), "Ao perguntar da reserva em dia de saída pendente, deve incluir o link de check-out");
-  console.log("✅ [3/6] Postura de Memória Silenciosa em saudações ('Bom dia' vs consulta explícita) validada!");
+  console.log("✅ [3/11] Postura de Memória Silenciosa em saudações ('Bom dia' vs consulta explícita) validada!");
 }
 
 // 4. Consulta de reserva após check-out concluído ("como está minha reserva?" / "meu check-out já foi feito?")
@@ -261,7 +267,7 @@ console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & 
   assert.ok(/check-?out\s+conclu[ií]do/i.test(askDoneRes.replyText), "Deve informar claramente que o check-out já foi concluído");
   assert.ok(!askDoneRes.replyText.includes("/checkout/"), "Não deve enviar link para fazer check-out novamente");
   assert.ok(!/hor[aá]rio\s+limite\s+de\s+desocupa/i.test(askDoneRes.replyText), "Não deve cobrar desocupação até 12h");
-  console.log("✅ [4/6] Consulta explícita de reserva após check-out concluído validada!");
+  console.log("✅ [4/11] Consulta explícita de reserva após check-out concluído validada!");
 }
 
 // 5. Pré-Análise Agêntica (prepareAgenticPreAnalysis): pré-registro de demandas e FAQs antes da redação
@@ -309,7 +315,7 @@ console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & 
   });
   assert.equal(dbDemand.unmetDemands.length, 1, "Não deve duplicar a demanda na validação pós-resposta");
   assert.equal(val.unmetDemand?.id, pre.unmetDemand?.id, "Deve preservar a mesma demanda pré-registrada");
-  console.log("✅ [5/6] Pré-análise agêntica (prepareAgenticPreAnalysis) sem duplicação validada!");
+  console.log("✅ [5/11] Pré-análise agêntica (prepareAgenticPreAnalysis) sem duplicação validada!");
 }
 
 // 6. Compatibilidade com sanitização de link /pre-checkin/ indevido quando em checkout_hoje real
@@ -344,10 +350,258 @@ console.log("=== Iniciando Teste Pontual: Check-out Concluído (RES-116-0449) & 
   assert.ok(!sanitized.replyText.includes("pre-checkin"), "Deve remover link incorreto de pre-checkin em dia de checkout_hoje");
   assert.ok(sanitized.replyText.includes("12:00h"), "Deve incluir orientação de 12:00h quando perguntou da reserva em checkout_hoje");
   assert.ok(sanitized.replyText.includes("/checkout/RES-211-0500"), "Deve incluir link correto de checkout quando perguntou da reserva em checkout_hoje");
-  console.log("✅ [6/6] Sanitização de pré-check-in indevido em checkout_hoje validada!");
+  console.log("✅ [6/11] Sanitização de pré-check-in indevido em checkout_hoje validada!");
+}
+
+// 7. Proteção contra Falso Positivo em Reservas Back-to-Back (Check-out concluído da reserva antiga + Check-in hoje de nova reserva)
+{
+  const phoneRepeat = "5522999990700";
+  const oldCheckoutMsg = `🏢 *CorpFlats • Check-out Concluído*\n\nOlá, *Miller*!\nConfirmamos o encerramento da sua hospedagem referente à reserva *RES-116-0449* (Flat 116).`;
+
+  const dbRepeat = {
+    settings: { baseUrl: "https://corpflats.onrender.com" },
+    flats: [{ id: "f116", number: "116" }, { id: "f215", number: "215" }],
+    reservations: [
+      {
+        id: "449",
+        code: "RES-116-0449",
+        guestName: "Miller",
+        guestPhone: phoneRepeat,
+        flatNumber: "116",
+        checkinDate: checkinPastStr,
+        checkoutDate: todayStr,
+        status: "confirmada"
+      },
+      {
+        id: "888",
+        code: "RES-215-0888",
+        guestName: "Miller",
+        guestPhone: phoneRepeat,
+        flatNumber: "215",
+        checkinDate: todayStr,
+        checkoutDate: checkoutFutureStr,
+        status: "confirmada"
+      }
+    ],
+    whatsappHistory: [
+      {
+        id: "wh_old",
+        guestPhone: phoneRepeat,
+        templateId: "tpl_checkout_completed",
+        triggerEvent: "checkout_completed",
+        reservationCode: "RES-116-0449",
+        status: "sent",
+        sentAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+        message: oldCheckoutMsg
+      }
+    ],
+    whatsappConversations: [
+      {
+        id: "conv_repeat",
+        phone: phoneRepeat,
+        messages: [
+          {
+            id: "msg_old_co",
+            fromMe: true,
+            triggerEvent: "checkout_completed",
+            text: oldCheckoutMsg,
+            timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString()
+          }
+        ]
+      }
+    ],
+    cleaningRequests: []
+  };
+
+  const ctxRepeat = buildGuestContext({ db: dbRepeat, phone: phoneRepeat, history: dbRepeat.whatsappConversations[0].messages });
+  assert.equal(ctxRepeat.reservationCode, "RES-215-0888", "Deve selecionar a reserva ativa de check-in hoje (RES-215-0888) em vez da que já concluiu check-out");
+  assert.equal(ctxRepeat.stayStatus, "checkin_hoje", "A nova reserva que inicia hoje NÃO pode ser contaminada como checkout_concluido pelo gatilho da reserva anterior");
+  assert.equal(ctxRepeat.isCheckoutCompleted, false, "isCheckoutCompleted da nova reserva deve ser false");
+  assert.ok(ctxRepeat.checkinUrl && ctxRepeat.checkinUrl.includes("RES-215-0888"), "A nova reserva de checkin_hoje deve preservar seu link de pré-check-in");
+
+  // Verifica handleGetReservationDetails por telefone (deve priorizar a reserva ativa e não a que concluiu check-out)
+  const detailsByPhone = handleGetReservationDetails(dbRepeat, { phone: phoneRepeat });
+  assert.equal(detailsByPhone.found, true);
+  assert.equal(detailsByPhone.reservation.code, "RES-215-0888", "handleGetReservationDetails deve priorizar reserva ativa sobre reserva com check-out concluído");
+  assert.equal(detailsByPhone.reservation.stayStatus, "checkin_hoje");
+
+  // Verifica handleGetFlatStatus para o Flat 116 (cujo check-out já foi concluído hoje)
+  const flat116Status = handleGetFlatStatus(dbRepeat, { flatNumber: "116" });
+  assert.equal(flat116Status.success, true);
+  assert.equal(flat116Status.isOccupied, false, "Flat 116 com check-out já concluído não deve constar como ocupado");
+  assert.equal(flat116Status.currentGuestName, null, "Flat 116 com check-out já concluído não deve constar com hóspede atual");
+  console.log("✅ [7/11] Proteção contra falso positivo em reservas back-to-back e precisão de tools validadas!");
+}
+
+// 8. Compatibilidade com Schema Real do Z-API (whatsappHistory.guestPhone + Código Canônico RES-{flat}-{id} sem r.code explícito)
+{
+  const phoneSchema = "5522999990449";
+  const dbSchema = {
+    reservations: [
+      {
+        id: "449", // Sem propriedade 'code' explícita no objeto da reserva
+        guestName: "Miller",
+        guestPhone: phoneSchema,
+        flatNumber: "116",
+        checkinDate: checkinPastStr,
+        checkoutDate: todayStr,
+        status: "confirmada"
+      }
+    ],
+    whatsappHistory: [
+      {
+        id: "wh_real_zapi",
+        guestPhone: phoneSchema, // Propriedade real gravada pelo zapi-service.mjs
+        templateId: "tpl_checkout_completed",
+        triggerEvent: "checkout_completed",
+        reservationCode: "RES-116-0449",
+        status: "sent",
+        sentAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        message: "🏢 *CorpFlats • Check-out Concluído*\nConfirmamos o encerramento da reserva *RES-116-0449*."
+      }
+    ],
+    whatsappConversations: []
+  };
+
+  const ctxSchema = buildGuestContext({ db: dbSchema, phone: phoneSchema });
+  assert.equal(ctxSchema.reservationCode, "RES-116-0449", "Deve derivar o código canônico RES-116-0449 mesmo quando r.code está ausente");
+  assert.equal(ctxSchema.isCheckoutCompleted, true, "Deve detectar check-out concluído via whatsappHistory.guestPhone + código canônico");
+  assert.equal(ctxSchema.stayStatus, "checkout_concluido");
+  assert.equal(ctxSchema.recentTriggers.length, 1, "getRecentAutomatedTriggers deve encontrar gatilhos usando h.guestPhone");
+  console.log("✅ [8/11] Compatibilidade com whatsappHistory.guestPhone e código canônico RES-{flat}-{id} validada!");
+}
+
+// 9. Comunicação de Check-out pelo Hóspede em checkout_hoje: Sem colagem contraditória da Regra 6 e sem execução duplicada
+{
+  const phoneCoMsg = "5522999990800";
+  const dbCoMsg = {
+    settings: {
+      baseUrl: "https://corpflats.onrender.com"
+    },
+    botActionsSettings: {
+      apiActionsEnabled: true,
+      allowedActions: { informCheckout: true }
+    },
+    flats: [{ id: "f509", number: "509" }],
+    reservations: [
+      {
+        id: "800",
+        code: "RES-509-0800",
+        guestName: "Lucas Mendes",
+        guestPhone: phoneCoMsg,
+        flatNumber: "509",
+        checkinDate: checkinPastStr,
+        checkoutDate: todayStr,
+        status: "confirmada"
+      }
+    ],
+    cleaningRequests: [],
+    whatsappConversations: []
+  };
+
+  const coRes = await generateAiWhatsAppResponse({
+    db: dbCoMsg,
+    phone: phoneCoMsg,
+    messageText: "Bom dia! Já fiz o check-out e deixei a chave na portaria.",
+    history: []
+  });
+
+  assert.ok(!/hor[aá]rio\s+limite\s+de\s+desocupa/i.test(coRes.replyText), "NÃO deve colar lembrete de desocupação até 12h quando o hóspede avisa que já saiu");
+  assert.ok(!coRes.replyText.includes("/checkout/RES-509-0800"), "NÃO deve colar link /checkout/ quando o hóspede avisa que já fez o check-out");
+  assert.equal(dbCoMsg.cleaningRequests.length, 1, "Deve criar/atualizar apenas 1 registro de governança (sem duplicação entre pré-análise e validação)");
+  assert.equal(dbCoMsg.cleaningRequests[0].isVacant, true, "Deve marcar o flat 509 como vago na governança");
+  console.log("✅ [9/11] Comunicação de check-out sem colagem contraditória da Regra 6 e sem dupla execução validada!");
+}
+
+// 10. Prioridade de Classificação: Demandas Operacionais e FAQs com palavras "minha estadia" / "minha reserva" / "estou hospedado"
+{
+  const phoneInStay = "5522999990900";
+  const dbInStay = {
+    settings: { baseUrl: "https://corpflats.onrender.com" },
+    reservations: [
+      {
+        id: "900",
+        code: "RES-605-0900",
+        guestName: "Patrícia Lima",
+        guestPhone: phoneInStay,
+        flatNumber: "605",
+        checkinDate: checkinPastStr,
+        checkoutDate: todayStr,
+        status: "confirmada"
+      }
+    ],
+    unmetDemands: [],
+    whatsappConversations: []
+  };
+
+  const ctxInStay = buildGuestContext({ db: dbInStay, phone: phoneInStay });
+
+  // Caso A: Demanda operacional mencionando "minha estadia" / "estou hospedada" em dia de checkout_hoje
+  const towelQuery = "Estou hospedada no flat 605 e preciso de uma toalha extra para minha estadia";
+  const towelAnalysis = analyzeGuestQuery(towelQuery, ctxInStay, dbInStay);
+  assert.equal(towelAnalysis.type, "OPERATIONAL_DEMAND", "Pedido de toalha extra com 'estou hospedada'/'minha estadia' deve ser OPERATIONAL_DEMAND e não EXISTING_RESERVATION");
+
+  const towelRes = await generateAiWhatsAppResponse({
+    db: dbInStay,
+    phone: phoneInStay,
+    messageText: towelQuery,
+    history: []
+  });
+  assert.equal(dbInStay.unmetDemands.length, 1, "Deve registrar a demanda operacional de toalha extra");
+  assert.ok(!/hor[aá]rio\s+limite\s+de\s+desocupa/i.test(towelRes.replyText), "Não deve despejar lembrete de check-out 12h ao responder demanda de toalha");
+  assert.ok(!/Todos os nossos flats dispõem de:/i.test(towelRes.replyText), "Não deve responder com lista genérica de comodidades quando é uma demanda operacional de toalha");
+
+  // Caso B: Pergunta específica de Wi-Fi mencionando "minha reserva"
+  const wifiQuery = "Qual a senha do wi-fi da minha reserva?";
+  const wifiAnalysis = analyzeGuestQuery(wifiQuery, ctxInStay, dbInStay);
+  assert.equal(wifiAnalysis.type, "GENERIC_FAQ", "Pergunta de Wi-Fi mencionando 'minha reserva' deve ser GENERIC_FAQ");
+  assert.equal(wifiAnalysis.primaryTopic, "wifi_tecnologia");
+  console.log("✅ [10/11] Prioridade de classificação (OPERATIONAL_DEMAND & FAQ específico sobre EXISTING_RESERVATION) validada!");
+}
+
+// 11. Deduplicação de autoCreatePendingFaq entre prepareAgenticPreAnalysis, validateAndRefineResponse e processAiInboundMessage
+{
+  const phoneFaq = "5522999990950";
+  const dbFaq = {
+    settings: { baseUrl: "https://corpflats.onrender.com" },
+    reservations: [],
+    faqItems: [],
+    unmetDemands: [],
+    whatsappConversations: [
+      {
+        id: "conv_faq",
+        phone: phoneFaq,
+        contactName: "Visitante",
+        aiEnabled: true,
+        messages: []
+      }
+    ]
+  };
+
+  let saveCount = 0;
+  const prevNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
+  await processAiInboundMessage({
+    db: dbFaq,
+    incomingInfo: {
+      text: "Vocês possuem heliporto privativo para helicópteros no prédio?",
+      fromMe: false,
+      isGroup: false,
+      senderName: "Visitante",
+      senderPhone: phoneFaq
+    },
+    cleanTarget: phoneFaq,
+    saveDatabase: () => { saveCount++; },
+    sendZapiMessage: async () => ({ ok: true })
+  });
+  process.env.NODE_ENV = prevNodeEnv;
+
+  assert.equal(dbFaq.faqItems.length, 1, "Deve criar exatamente 1 item de FAQ pendente para pergunta inédita");
+  console.log("✅ [11/11] Deduplicação de autoCreatePendingFaq no ciclo completo validada!");
 }
 
 if (prevGeminiKey !== undefined) process.env.GEMINI_API_KEY = prevGeminiKey;
 if (prevGoogleKey !== undefined) process.env.GOOGLE_AI_API_KEY = prevGoogleKey;
 
-console.log("🎉 TODOS OS TESTES PONTUAIS PASSARAM COM SUCESSO!");
+console.log("🎉 TODOS OS 11 TESTES PONTUAIS PASSARAM COM SUCESSO!");
+

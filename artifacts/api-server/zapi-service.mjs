@@ -4764,6 +4764,7 @@ export function appendMessageToConversation(db, {
     caption: caption || null,
     buttons: Array.isArray(buttons) ? buttons : [],
     triggerEvent: triggerEvent || null,
+    reservationCode: reservationCode || null,
     timestamp: nowIso,
     status: fromMe ? (status || "read") : "delivered"
   };
