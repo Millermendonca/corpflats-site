@@ -8,6 +8,7 @@ import { cancelGoogleOneTap } from '@/lib/auth-client';
 import { useGetMe } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
 import { AdminAiCopilot } from '@/components/admin-ai-copilot';
+import { hasModuleAccess } from '@/lib/permissions';
 
 // Páginas públicas do Hóspede, Portaria, Governança e Prestadores (Carregamento Imediato)
 import Login from '@/pages/login';
@@ -82,6 +83,7 @@ function Redirect({ to }: { to: string }) {
 
 function AdminGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
   const { data: user, isLoading } = useGetMe();
+  const [location] = useLocation();
 
   if (isLoading) {
     return (
@@ -98,7 +100,7 @@ function AdminGuard({ component: Component, moduleName, params }: { component: R
     return <Redirect to="/login" />;
   }
 
-  if (user.role !== "admin" && user.role !== "dev") {
+  if (!hasModuleAccess(user as any, location)) {
     return <AccessDenied moduleName={moduleName} />;
   }
 
@@ -115,6 +117,7 @@ function AdminRoute({ path, component, moduleName }: { path: string; component: 
 
 function DevGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
   const { data: user, isLoading } = useGetMe();
+  const [location] = useLocation();
 
   if (isLoading) {
     return (
@@ -131,7 +134,7 @@ function DevGuard({ component: Component, moduleName, params }: { component: Rea
     return <Redirect to="/login" />;
   }
 
-  if (user.role !== "dev") {
+  if (user.role !== "dev" || !hasModuleAccess(user as any, location)) {
     return <AccessDenied moduleName={moduleName} />;
   }
 
@@ -148,6 +151,7 @@ function DevRoute({ path, component, moduleName }: { path: string; component: Re
 
 function ReceptionGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
   const { data: user, isLoading } = useGetMe();
+  const [location] = useLocation();
 
   if (isLoading) {
     return (
@@ -164,7 +168,7 @@ function ReceptionGuard({ component: Component, moduleName, params }: { componen
     return <Redirect to="/login" />;
   }
 
-  if (user.role !== "admin" && user.role !== "dev" && user.role !== "recepcao" && user.role !== "reception") {
+  if (!hasModuleAccess(user as any, location)) {
     return <AccessDenied moduleName={moduleName} />;
   }
 
@@ -179,8 +183,9 @@ function ReceptionRoute({ path, component, moduleName }: { path: string; compone
   );
 }
 
-function StaffGuard({ component: Component, params }: { component: React.ComponentType<any>; params?: any }) {
+function StaffGuard({ component: Component, moduleName = "o módulo de governança", params }: { component: React.ComponentType<any>; moduleName?: string; params?: any }) {
   const { data: user, isLoading } = useGetMe();
+  const [location] = useLocation();
 
   if (isLoading) {
     return (
@@ -197,13 +202,17 @@ function StaffGuard({ component: Component, params }: { component: React.Compone
     return <Redirect to="/login" />;
   }
 
+  if (!hasModuleAccess(user as any, location)) {
+    return <AccessDenied moduleName={moduleName} />;
+  }
+
   return <Component {...params} />;
 }
 
-function StaffRoute({ path, component }: { path: string; component: React.ComponentType<any> }) {
+function StaffRoute({ path, component, moduleName }: { path: string; component: React.ComponentType<any>; moduleName?: string }) {
   return (
     <Route path={path}>
-      {(params) => <StaffGuard component={component} params={params} />}
+      {(params) => <StaffGuard component={component} moduleName={moduleName} params={params} />}
     </Route>
   );
 }

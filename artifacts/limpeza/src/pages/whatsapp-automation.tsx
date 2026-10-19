@@ -393,6 +393,9 @@ export default function WhatsappAutomation() {
 
   // State: Templates
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([])
+  const [savedTemplateMessages, setSavedTemplateMessages] = useState<Record<string, string>>({})
+  const [savingCardId, setSavingCardId] = useState<string | null>(null)
+  const [qmInlineDrafts, setQmInlineDrafts] = useState<Record<string, string>>({})
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("")
   const [currentTemplate, setCurrentTemplate] = useState<WhatsAppTemplate | null>(null)
 
@@ -975,10 +978,18 @@ export default function WhatsappAutomation() {
     try {
       const res = await fetch("/api/whatsapp/templates")
       if (res.ok) {
-        const data = await res.json()
+        const data: WhatsAppTemplate[] = await res.json()
         setTemplates(data)
+        const map: Record<string, string> = {}
+        data.forEach(t => {
+          map[t.id] = t.message || ""
+        })
+        setSavedTemplateMessages(map)
         if (data.length > 0 && !selectedTemplateId) {
           selectTemplateForEditing(data[0])
+        } else if (selectedTemplateId) {
+          const updatedSelected = data.find(t => t.id === selectedTemplateId)
+          if (updatedSelected) selectTemplateForEditing(updatedSelected)
         }
       }
     } catch (e) {
@@ -1220,6 +1231,55 @@ export default function WhatsappAutomation() {
     setEditingButtons(updated)
   }
 
+  // Inline edit message directly inside the trigger card
+  const handleInlineTemplateMessageChange = (tplId: string, newMessage: string) => {
+    setTemplates(prev => prev.map(t => t.id === tplId ? { ...t, message: newMessage } : t))
+    if (currentTemplate?.id === tplId) {
+      setEditingMessage(newMessage)
+      setCurrentTemplate(prev => prev ? { ...prev, message: newMessage } : prev)
+    }
+  }
+
+  // Save template message directly from the trigger card
+  const handleSaveCardTemplate = async (tpl: WhatsAppTemplate) => {
+    setSavingCardId(tpl.id)
+    try {
+      const res = await fetch("/api/whatsapp/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tpl)
+      })
+      if (res.ok) {
+        setSavedTemplateMessages(prev => ({ ...prev, [tpl.id]: tpl.message }))
+        if (currentTemplate?.id === tpl.id) {
+          setCurrentTemplate(tpl)
+          setEditingMessage(tpl.message)
+        }
+        toast({
+          title: "✓ Mensagem salva com sucesso!",
+          description: `O texto da regra "${tpl.title}" foi atualizado.`
+        })
+      } else {
+        toast({ title: "Erro ao salvar mensagem", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingCardId(null)
+    }
+  }
+
+  // Revert inline edits on a trigger card
+  const handleRevertCardTemplate = (tplId: string) => {
+    const originalMsg = savedTemplateMessages[tplId]
+    if (originalMsg === undefined) return
+    setTemplates(prev => prev.map(t => t.id === tplId ? { ...t, message: originalMsg } : t))
+    if (currentTemplate?.id === tplId) {
+      setEditingMessage(originalMsg)
+      setCurrentTemplate(prev => prev ? { ...prev, message: originalMsg } : prev)
+    }
+  }
+
   // Save Current Template
   const handleSaveTemplate = async () => {
     if (!currentTemplate) return
@@ -1259,6 +1319,7 @@ export default function WhatsappAutomation() {
           description: `Régua atualizada com ${editingChannels.length} canal(is) configurado(s).` 
         })
         setTemplates(prev => prev.map(t => t.id === updatedTemplate.id ? updatedTemplate : t))
+        setSavedTemplateMessages(prev => ({ ...prev, [updatedTemplate.id]: updatedTemplate.message }))
         setCurrentTemplate(updatedTemplate)
       } else {
         toast({ title: "Erro ao salvar template", variant: "destructive" })
@@ -2798,6 +2859,8 @@ export default function WhatsappAutomation() {
                 const isAfter = tpl.triggerTiming === "after_event"
                 const isFixedDayOf = tpl.triggerTiming === "fixed_time_day_of"
                 const isFixedBefore = tpl.triggerTiming === "fixed_time_day_before"
+                const isCardModified = savedTemplateMessages[tpl.id] !== undefined && savedTemplateMessages[tpl.id] !== tpl.message
+                const messageLineCount = Math.max(8, (tpl.message || "").split("\n").length + 1)
 
                 let timingLabel = "⚡ Disparo Imediato"
                 if (isBefore) timingLabel = `⏱️ ${tpl.offsetValue} ${tpl.offsetUnit === "days" ? "dias" : "horas"} antes`
@@ -2864,14 +2927,61 @@ export default function WhatsappAutomation() {
                       <CardTitle className="text-base font-bold mt-2 text-foreground leading-snug">
                         {tpl.title}
                       </CardTitle>
-                      <CardDescription className="text-xs line-clamp-2">
+                      <CardDescription className="text-xs leading-relaxed">
                         {tpl.description || "Gatilho de notificação automática via WhatsApp."}
                       </CardDescription>
                     </CardHeader>
 
                     <CardContent className="space-y-3 pt-0">
-                      <div className="p-3 rounded-xl bg-muted/50 text-xs text-muted-foreground line-clamp-3 font-mono border">
-                        {tpl.message}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label
+                            htmlFor={`tpl-msg-${tpl.id}`}
+                            className="text-[11px] font-bold text-foreground flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3 text-emerald-600" />
+                            Mensagem do WhatsApp (Clique para editar):
+                          </Label>
+                          {isCardModified && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] py-0 px-1.5 bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 font-bold"
+                            >
+                              Alterado • Não salvo
+                            </Badge>
+                          )}
+                        </div>
+                        <Textarea
+                          id={`tpl-msg-${tpl.id}`}
+                          value={tpl.message}
+                          onChange={(e) => handleInlineTemplateMessageChange(tpl.id, e.target.value)}
+                          rows={messageLineCount}
+                          placeholder="Digite o texto da mensagem..."
+                          className="w-full p-3 rounded-xl bg-muted/40 focus:bg-background text-xs text-foreground font-mono leading-relaxed border border-border focus-visible:ring-2 focus-visible:ring-emerald-500 resize-y whitespace-pre-wrap"
+                        />
+                        {isCardModified && (
+                          <div className="flex items-center justify-end gap-1.5 pt-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-[11px] px-2 text-muted-foreground hover:text-foreground"
+                              onClick={() => handleRevertCardTemplate(tpl.id)}
+                            >
+                              Descartar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={savingCardId === tpl.id}
+                              className="h-7 text-[11px] px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1 shadow-xs"
+                              onClick={() => handleSaveCardTemplate(tpl)}
+                            >
+                              {savingCardId === tpl.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                              Salvar Mensagem
+                            </Button>
+                          </div>
+                        )}
                       </div>
 
                       {/* Botões anexados */}
@@ -2921,7 +3031,7 @@ export default function WhatsappAutomation() {
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t flex items-center justify-between">
+                      <div className="pt-2 border-t flex items-center justify-between gap-1.5 flex-wrap">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -2929,28 +3039,51 @@ export default function WhatsappAutomation() {
                           onClick={() => {
                             selectTemplateForEditing(tpl)
                             setActiveTab("editor")
-                            editorRef.current?.scrollIntoView({ behavior: "smooth" })
+                            setTimeout(() => {
+                              if (editorRef.current) {
+                                editorRef.current.scrollIntoView({ behavior: "smooth", block: "start" })
+                              } else {
+                                window.scrollTo({ top: 0, behavior: "smooth" })
+                              }
+                            }, 60)
                           }}
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                           Editar Mensagem & Botões
                         </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-[11px] px-2"
-                          onClick={() => {
-                            selectTemplateForEditing(tpl)
-                            setTestMessage(renderPreviewText(tpl.message))
-                            setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
-                            setTestIncludeDocument(Boolean(tpl.hasAttachment || tpl.documentUrl))
-                            setTestModalOpen(true)
-                          }}
-                        >
-                          <Send className="w-3 h-3 text-emerald-600 mr-1" />
-                          Testar
-                        </Button>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant={isCardModified ? "default" : "outline"}
+                            size="sm"
+                            disabled={savingCardId === tpl.id}
+                            className={`h-7 text-[11px] px-2.5 gap-1 ${
+                              isCardModified
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs"
+                                : "text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
+                            }`}
+                            onClick={() => handleSaveCardTemplate(tpl)}
+                          >
+                            {savingCardId === tpl.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            Salvar
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] px-2"
+                            onClick={() => {
+                              selectTemplateForEditing(tpl)
+                              setTestMessage(renderPreviewText(tpl.message))
+                              setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
+                              setTestIncludeDocument(Boolean(tpl.hasAttachment || tpl.documentUrl))
+                              setTestModalOpen(true)
+                            }}
+                          >
+                            <Send className="w-3 h-3 text-emerald-600 mr-1" />
+                            Testar
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -2963,7 +3096,7 @@ export default function WhatsappAutomation() {
               ABA 2: EDITOR DE MENSAGENS COM INSERÇÃO DE TAGS NO CURSOR & PREVIEW
           ════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="editor" className="space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div ref={editorRef} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               
               {/* Lado Esquerdo: Formulário & Tags (Col 7) */}
               <div className="lg:col-span-7 space-y-4">
@@ -3398,11 +3531,16 @@ export default function WhatsappAutomation() {
                       </div>
                       <Textarea 
                         ref={textareaRef}
-                        rows={10}
+                        rows={Math.max(12, (editingMessage || "").split("\n").length + 2)}
                         value={editingMessage}
-                        onChange={(e) => setEditingMessage(e.target.value)}
+                        onChange={(e) => {
+                          setEditingMessage(e.target.value)
+                          if (selectedTemplateId) {
+                            setTemplates(prev => prev.map(t => t.id === selectedTemplateId ? { ...t, message: e.target.value } : t))
+                          }
+                        }}
                         placeholder="Digite sua mensagem aqui e clique nas tags acima..."
-                        className="text-xs leading-relaxed font-sans font-medium"
+                        className="text-xs leading-relaxed font-sans font-medium resize-y min-h-[240px]"
                       />
                     </div>
 
@@ -3729,10 +3867,10 @@ export default function WhatsappAutomation() {
                       </div>
 
                       {/* Chat Wallpaper Container */}
-                      <div className="bg-[#EFEAE2] dark:bg-[#0B141A] min-h-[380px] max-h-[480px] overflow-y-auto p-3 rounded-b-2xl flex flex-col justify-end space-y-2 text-neutral-800 dark:text-neutral-200 font-sans">
+                      <div className="bg-[#EFEAE2] dark:bg-[#0B141A] min-h-[380px] p-3 rounded-b-2xl flex flex-col space-y-2 text-neutral-800 dark:text-neutral-200 font-sans">
                         
                         {/* Data Pill */}
-                        <div className="text-center my-1">
+                        <div className="text-center my-1 mt-auto">
                           <span className="bg-white/80 dark:bg-neutral-800/80 text-[10px] font-semibold text-neutral-600 dark:text-neutral-400 px-2 py-0.5 rounded-md shadow-2xs">
                             HOJE
                           </span>
@@ -3954,33 +4092,96 @@ export default function WhatsappAutomation() {
                           </p>
                         )}
 
-                        {/* Visualizador de mensagem WhatsApp */}
-                        <div className="p-3 rounded-2xl bg-[#E7FFDB] dark:bg-[#005C4B]/35 border border-emerald-200 dark:border-emerald-800/80 space-y-2 text-xs text-neutral-900 dark:text-neutral-100">
-                          <div className="whitespace-pre-wrap font-sans leading-relaxed text-[11.5px]">
-                            {renderPreviewText(qm.message)}
-                          </div>
-
-                          {qm.buttons && qm.buttons.length > 0 && (
-                            <div className="pt-1.5 border-t border-emerald-300/40 dark:border-emerald-700/50 space-y-1">
-                              <span className="text-[9.5px] uppercase font-bold text-emerald-900/70 dark:text-emerald-300/70">
-                                Botões Integrados (Z-API):
-                              </span>
-                              <div className="flex flex-wrap gap-1">
-                                {qm.buttons.map(b => (
-                                  <span key={b.id} className="text-[10px] px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border font-bold text-emerald-800 dark:text-emerald-300 shadow-2xs">
-                                    {b.label}
-                                  </span>
-                                ))}
+                        {/* Editor Direto de Mensagem Rápida (Sem corte de texto) */}
+                        {(() => {
+                          const draftVal = qmInlineDrafts[qm.id] !== undefined ? qmInlineDrafts[qm.id] : qm.message
+                          const isQmModified = qmInlineDrafts[qm.id] !== undefined && qmInlineDrafts[qm.id] !== qm.message
+                          return (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-bold text-emerald-900 dark:text-emerald-300 uppercase tracking-wider flex items-center gap-1">
+                                  <Edit3 className="w-3 h-3 text-emerald-600" />
+                                  Mensagem Rápida (Editável Direto no Card):
+                                </span>
+                                {isQmModified && (
+                                  <div className="flex items-center gap-1.5">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => {
+                                        setQmInlineDrafts(prev => {
+                                          const next = { ...prev }
+                                          delete next[qm.id]
+                                          return next
+                                        })
+                                      }}
+                                      className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                                    >
+                                      Descartar
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      onClick={async () => {
+                                        await saveQuickMessage({ ...qm, message: draftVal })
+                                        setQmInlineDrafts(prev => {
+                                          const next = { ...prev }
+                                          delete next[qm.id]
+                                          return next
+                                        })
+                                        toast({
+                                          title: "Mensagem rápida salva!",
+                                          description: `O texto de "${qm.title}" foi atualizado.`
+                                        })
+                                      }}
+                                      className="h-6 px-2.5 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-2xs"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                      Salvar Mensagem
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          )}
 
-                          {qm.footer && (
-                            <div className="text-[10px] text-muted-foreground italic pt-0.5">
-                              {qm.footer}
+                              <Textarea
+                                value={draftVal}
+                                onChange={(e) => {
+                                  const val = e.target.value
+                                  setQmInlineDrafts(prev => ({ ...prev, [qm.id]: val }))
+                                }}
+                                rows={Math.max(8, (draftVal || "").split("\n").length + 1)}
+                                className={`w-full rounded-2xl text-xs font-mono leading-relaxed resize-y min-h-[160px] transition-colors ${
+                                  isQmModified
+                                    ? "bg-emerald-50/70 dark:bg-emerald-950/40 border-emerald-400 dark:border-emerald-600 text-foreground ring-1 ring-emerald-500/30"
+                                    : "bg-[#E7FFDB]/70 dark:bg-[#005C4B]/30 border-emerald-200 dark:border-emerald-800/80 text-neutral-900 dark:text-neutral-100 focus:bg-background"
+                                }`}
+                                placeholder="Digite o texto da mensagem rápida..."
+                              />
+
+                              {qm.buttons && qm.buttons.length > 0 && (
+                                <div className="pt-1.5 border-t border-emerald-300/40 dark:border-emerald-700/50 space-y-1">
+                                  <span className="text-[9.5px] uppercase font-bold text-emerald-900/70 dark:text-emerald-300/70">
+                                    Botões Integrados (Z-API):
+                                  </span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {qm.buttons.map(b => (
+                                      <span key={b.id} className="text-[10px] px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border font-bold text-emerald-800 dark:text-emerald-300 shadow-2xs">
+                                        {b.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {qm.footer && (
+                                <div className="text-[10px] text-muted-foreground italic pt-0.5">
+                                  {qm.footer}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          )
+                        })()}
                       </div>
 
                       {/* Barra Inferior com Prévia ao Passar Mouse e Ações */}
@@ -4010,8 +4211,8 @@ export default function WhatsappAutomation() {
                                   Janelinha Flutuante
                                 </span>
                               </div>
-                              <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-36 overflow-y-auto pr-1">
-                                {renderPreviewText(qm.message)}
+                              <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+                                {renderPreviewText(qmInlineDrafts[qm.id] !== undefined ? qmInlineDrafts[qm.id] : qm.message)}
                               </div>
                               <div className="mt-2 pt-1 border-t border-slate-800/80 text-[9.5px] text-emerald-400 font-bold">
                                 ⚡ Disparo instantâneo com 1 clique
@@ -4027,7 +4228,8 @@ export default function WhatsappAutomation() {
                             size="sm" 
                             className="h-7 text-[11px] gap-1 rounded-xl"
                             onClick={() => {
-                              setTestMessage(renderPreviewText(qm.message))
+                              const currentMsg = qmInlineDrafts[qm.id] !== undefined ? qmInlineDrafts[qm.id] : qm.message
+                              setTestMessage(renderPreviewText(currentMsg))
                               setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
                               setTestModalOpen(true)
                             }}
@@ -4037,13 +4239,38 @@ export default function WhatsappAutomation() {
                           </Button>
 
                           <Button 
+                            variant="default" 
+                            size="sm" 
+                            className="h-7 text-[11px] gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                            onClick={async () => {
+                              const draftVal = qmInlineDrafts[qm.id] !== undefined ? qmInlineDrafts[qm.id] : qm.message
+                              await saveQuickMessage({ ...qm, message: draftVal })
+                              setQmInlineDrafts(prev => {
+                                const next = { ...prev }
+                                delete next[qm.id]
+                                return next
+                              })
+                              toast({
+                                title: "Mensagem rápida salva!",
+                                description: `O texto de "${qm.title}" foi atualizado.`
+                              })
+                            }}
+                          >
+                            <Check className="w-3 h-3" />
+                            Salvar
+                          </Button>
+
+                          <Button 
                             variant="outline" 
                             size="sm" 
                             className="h-7 text-[11px] gap-1 rounded-xl"
-                            onClick={() => handleOpenEditQm(qm)}
+                            onClick={() => handleOpenEditQm({
+                              ...qm,
+                              message: qmInlineDrafts[qm.id] !== undefined ? qmInlineDrafts[qm.id] : qm.message
+                            })}
                           >
                             <Edit3 className="w-3 h-3 text-sky-600" />
-                            Editar
+                            Opções
                           </Button>
 
                           <Button 
@@ -4329,7 +4556,7 @@ export default function WhatsappAutomation() {
                               {hist.status === "sent" ? "✓ Entregue" : "✕ Erro"}
                             </Badge>
                           </div>
-                          <p className="text-muted-foreground line-clamp-1">{hist.message}</p>
+                          <p className="text-muted-foreground whitespace-pre-wrap leading-relaxed">{hist.message}</p>
                         </div>
                         <div className="text-right shrink-0 text-muted-foreground">
                           <div>{new Date(hist.sentAt).toLocaleString("pt-BR")}</div>
@@ -4500,10 +4727,10 @@ export default function WhatsappAutomation() {
               <div className="space-y-1">
                 <Label className="text-xs font-bold">Mensagem que será enviada</Label>
                 <Textarea 
-                  rows={5}
+                  rows={Math.max(8, (testMessage || "").split("\n").length + 1)}
                   value={testMessage}
                   onChange={(e) => setTestMessage(e.target.value)}
-                  className="text-xs leading-relaxed font-mono text-[11px]"
+                  className="text-xs leading-relaxed font-mono text-[11px] resize-y"
                 />
               </div>
 
@@ -4868,10 +5095,10 @@ export default function WhatsappAutomation() {
               <div className="space-y-1">
                 <Label className="text-[11px] font-bold">Texto da Mensagem (Suporta *negrito* e _itálico_)</Label>
                 <Textarea 
-                  rows={5}
+                  rows={Math.max(10, (qmMessage || "").split("\n").length + 2)}
                   value={qmMessage}
                   onChange={(e) => setQmMessage(e.target.value)}
-                  className="text-xs font-mono leading-relaxed rounded-xl"
+                  className="text-xs font-mono leading-relaxed rounded-xl resize-y min-h-[180px]"
                   placeholder="Digite a mensagem..."
                 />
               </div>

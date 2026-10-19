@@ -19,8 +19,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
 } from "./ui/dialog"
 import { Input } from "./ui/input"
-import { Label } from "./ui/label"
 import { QuickShoppingModal } from "./quick-shopping-modal"
+import { hasModuleAccess } from "@/lib/permissions"
 
 interface NavItem {
   href: string
@@ -330,9 +330,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   }
 
   // Estrutura Categorizada dos Módulos do Sistema em 6 Categorias por Prioridade de Uso
-  const navCategories: NavCategory[] = [
-    // 1. 📅 Reservas & Hospedagem (Admin, Dev e Recepção) - Aberta por padrão
-    ...(isAdminOrDev || isRecepcao ? [{
+  const rawNavCategories: NavCategory[] = [
+    // 1. 📅 Reservas & Hospedagem
+    {
       id: "reservas",
       title: "📅 Reservas & Hospedagem",
       items: [
@@ -345,10 +345,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/relatorios-cafe", label: "Relatórios & Histórico do Café", icon: BarChart3, description: "Insights de consumo, custos e histórico geral" },
         { href: "/reservar", label: "Site de Reservas Diretas", icon: Globe, description: "Página pública de vendas" },
       ]
-    }] : []),
+    },
 
-    // 2. 💬 Comunicação & Atendimento (Admin e Dev)
-    ...(isAdminOrDev ? [{
+    // 2. 💬 Comunicação & Atendimento
+    {
       id: "comunicacao",
       title: "💬 Comunicação & Atendimento",
       items: [
@@ -357,9 +357,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/emails", label: "Gerenciador de E-mails", icon: Mail, description: "E-mails enviados, agendados, redator e controle do motor" },
         { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos, chamados e auditoria" },
       ]
-    }] : []),
+    },
 
-    // 3. 🧹 Governança & Manutenção (Operacional / Todos)
+    // 3. 🧹 Governança & Manutenção
     {
       id: "governanca",
       title: "🧹 Governança & Manutenção",
@@ -369,15 +369,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, badge: pendingShoppingCount > 0 ? pendingShoppingCount : null, description: "Itens para reposição, compras e governança" },
         { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
         { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
-        ...(isAdminOrDev ? [{ href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" }] : []),
-        ...(isAdminOrDev ? [{ title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" }] : []),
+        { href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" },
+        { title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" },
         { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
-        ...(isAdminOrDev ? [{ href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" }] : []),
+        { href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" },
       ]
     },
 
-    // 4. 💰 Financeiro, Tarifas & Fiscal (Admin e Dev)
-    ...(isAdminOrDev ? [{
+    // 4. 💰 Financeiro, Tarifas & Fiscal
+    {
       id: "financeiro",
       title: "💰 Financeiro, Tarifas & Fiscal",
       items: [
@@ -387,10 +387,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/notas", label: "Hub de Notas Fiscais (NFS-e)", icon: FileText, description: "Chat IA, formulário, livro fiscal e templates" },
         { href: "/funil-vendas", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Funil 5 etapas, recuperação WhatsApp e anúncios Meta/Google IA" },
       ]
-    }] : []),
+    },
 
-    // 5. 🏨 Propriedade & Equipe (Admin e Dev)
-    ...(isAdminOrDev ? [{
+    // 5. 🏨 Propriedade & Equipe
+    {
       id: "propriedade",
       title: "🏨 Propriedade & Equipe",
       items: [
@@ -400,23 +400,31 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/avaliacoes-ia", label: "Avaliações & Satisfação IA", icon: ThumbsUp, description: "Análise de sentimentos e reviews do Google" },
         { href: "/editor-site", label: "Editor Visual do Site", icon: Palette, description: "Fotos, comodidades, slogans e textos" },
       ]
-    }] : []),
+    },
 
-    // 6. 🛠️ Engenharia & Dev (ESTRITAMENTE EXCLUSIVO Dev)
-    ...(isDev ? [{
+    // 6. 🛠️ Engenharia & Dev (devOnly: true)
+    {
       id: "engenharia",
       title: "🛠️ Engenharia & Dev",
       devOnly: true,
       items: [
-        { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, chaves de API e certificados" },
-        { href: "/zapi-conexao", label: "Conexão Z-API (WhatsApp)", icon: Smartphone, description: "Instância, QR Code, credenciais e status de conexão" },
-        { href: "/jornada-reservas", label: "Mapa da Jornada (Fluxograma)", icon: Workflow, description: "Fluxograma completo de mensagens WhatsApp e e-mails por etapa da reserva" },
-        { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream" },
-        { href: "/ia-status", label: "Status da IA", icon: Bot, description: "Monitoramento dos modelos Gemini, OpenAI e latências" },
-        { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros" },
+        { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, chaves de API e certificados", devOnly: true },
+        { href: "/zapi-conexao", label: "Conexão Z-API (WhatsApp)", icon: Smartphone, description: "Instância, QR Code, credenciais e status de conexão", devOnly: true },
+        { href: "/jornada-reservas", label: "Mapa da Jornada (Fluxograma)", icon: Workflow, description: "Fluxograma completo de mensagens WhatsApp e e-mails por etapa da reserva", devOnly: true },
+        { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream", devOnly: true },
+        { href: "/ia-status", label: "Status da IA", icon: Bot, description: "Monitoramento dos modelos Gemini, OpenAI e latências", devOnly: true },
+        { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros", devOnly: true },
       ]
-    }] : [])
+    }
   ]
+
+  // R4: Filtragem dinâmica de itens pelo catálogo granular allowedModules (ocultando categorias vazias)
+  const navCategories: NavCategory[] = rawNavCategories
+    .map(cat => ({
+      ...cat,
+      items: cat.items.filter(item => hasModuleAccess(user as any, item.href))
+    }))
+    .filter(cat => cat.items.length > 0)
 
   // Auto-expande categoria ativa na navegação
   useEffect(() => {
