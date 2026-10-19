@@ -105,7 +105,7 @@ export function FlatCard({
   currentUserId = 1,
 }: FlatCardProps) {
   const { data: currentUser } = useGetMe()
-  const isAdmin = userRole === "admin" || currentUser?.role === "admin"
+  const isAdmin = userRole === "admin" || userRole === "dev" || currentUser?.role === "admin" || currentUser?.role === "dev"
   const queryClient = useQueryClient()
   const { toast } = useToast()
 

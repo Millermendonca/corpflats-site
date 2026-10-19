@@ -146,7 +146,7 @@ export default function PmsCalendar() {
   const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { data: settings } = useGetSettings()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -3654,7 +3654,7 @@ export default function PmsCalendar() {
     return true
   })
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied moduleName="o Livro de Reservas & Mapa de Ocupação" />
   }
 

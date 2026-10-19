@@ -140,7 +140,7 @@ export default function FinancialDashboard() {
   }
 
   useEffect(() => {
-    if (!loadingUser && user?.role === "admin") {
+    if (!loadingUser && (user?.role === "admin" || user?.role === "dev")) {
       fetchAllERPData(selectedPeriod, viewMode)
     }
   }, [loadingUser, user?.role, selectedPeriod, viewMode])
@@ -340,7 +340,7 @@ export default function FinancialDashboard() {
     )
   }
 
-  if (user?.role !== "admin") {
+  if (user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied moduleName="o ERP Financeiro & Contratos CorpFlats" />
   }
 

@@ -62,7 +62,8 @@ const ServerMonitorPage = lazy(() => import('@/pages/server-monitor'));
 const SmartFlatPreview = lazy(() => import('@/pages/smart-flat-preview'));
 const PricingSebraePage = lazy(() => import('@/pages/precificacao-sebrae'));
 const OtaInboxPage = lazy(() => import('@/pages/ota-inbox'));
-const WbpManualPage = lazy(() => import('@/pages/wbp-manual'));
+const EquipePage = lazy(() => import('@/pages/equipe'));
+
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -97,7 +98,7 @@ function AdminGuard({ component: Component, moduleName, params }: { component: R
     return <Redirect to="/login" />;
   }
 
-  if (user.role !== "admin") {
+  if (user.role !== "admin" && user.role !== "dev") {
     return <AccessDenied moduleName={moduleName} />;
   }
 
@@ -108,6 +109,39 @@ function AdminRoute({ path, component, moduleName }: { path: string; component: 
   return (
     <Route path={path}>
       {(params) => <AdminGuard component={component} moduleName={moduleName} params={params} />}
+    </Route>
+  );
+}
+
+function DevGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
+  const { data: user, isLoading } = useGetMe();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-muted-foreground font-semibold">Verificando permissões de desenvolvedor...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Redirect to="/login" />;
+  }
+
+  if (user.role !== "dev") {
+    return <AccessDenied moduleName={moduleName} />;
+  }
+
+  return <Component {...params} />;
+}
+
+function DevRoute({ path, component, moduleName }: { path: string; component: React.ComponentType<any>; moduleName: string }) {
+  return (
+    <Route path={path}>
+      {(params) => <DevGuard component={component} moduleName={moduleName} params={params} />}
     </Route>
   );
 }
@@ -130,7 +164,7 @@ function ReceptionGuard({ component: Component, moduleName, params }: { componen
     return <Redirect to="/login" />;
   }
 
-  if (user.role !== "admin" && user.role !== "recepcao") {
+  if (user.role !== "admin" && user.role !== "dev" && user.role !== "recepcao" && user.role !== "reception") {
     return <AccessDenied moduleName={moduleName} />;
   }
 
@@ -296,12 +330,17 @@ function Router() {
         <StaffRoute path="/history" component={History} />
         <StaffRoute path="/historico" component={History} />
 
-        {/* Administrative Only Routes (Strictly Forbidden to Maids) */}
-        <AdminRoute path="/jornada-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
-        <AdminRoute path="/jornada-comunicacao" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
-        <AdminRoute path="/fluxo-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
-        <AdminRoute path="/mapa-jornada" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
-        <AdminRoute path="/jornada" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        {/* Gestão de Equipe & Níveis de Acesso (Admin e Dev) */}
+        <AdminRoute path="/equipe" component={EquipePage} moduleName="a Gestão de Equipe & Níveis de Acesso" />
+        <AdminRoute path="/usuarios" component={EquipePage} moduleName="a Gestão de Equipe & Níveis de Acesso" />
+        <AdminRoute path="/team" component={EquipePage} moduleName="a Gestão de Equipe & Níveis de Acesso" />
+
+        {/* Administrative & Technical Dev Routes */}
+        <DevRoute path="/jornada-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <DevRoute path="/jornada-comunicacao" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <DevRoute path="/fluxo-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <DevRoute path="/mapa-jornada" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <DevRoute path="/jornada" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
         <AdminRoute path="/emails" component={EmailHub} moduleName="o Gerenciador de E-mails" />
         <AdminRoute path="/email-hub" component={EmailHub} moduleName="o Gerenciador de E-mails" />
         <AdminRoute path="/gerenciador-emails" component={EmailHub} moduleName="o Gerenciador de E-mails" />
@@ -315,10 +354,10 @@ function Router() {
         <AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
-        <AdminRoute path="/zapi-conexao" component={ZapiConnection} moduleName="a Conexão Z-API" />
-        <AdminRoute path="/conexao-zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
-        <AdminRoute path="/sistema/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
-        <AdminRoute path="/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <DevRoute path="/zapi-conexao" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <DevRoute path="/conexao-zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <DevRoute path="/sistema/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <DevRoute path="/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
         <AdminRoute path="/notificacoes" component={NotificationsHub} moduleName="a Central de Notificações" />
         <AdminRoute path="/notifications" component={NotificationsHub} moduleName="a Central de Notificações" />
         <AdminRoute path="/alertas" component={NotificationsHub} moduleName="a Central de Notificações" />
@@ -354,10 +393,10 @@ function Router() {
         <AdminRoute path="/propriedade" component={PropertySettings} moduleName="as Regras & Configurações da Propriedade" />
         <AdminRoute path="/hotel" component={PropertySettings} moduleName="as Regras & Configurações do Hotel" />
         <AdminRoute path="/regras" component={PropertySettings} moduleName="as Regras da Casa" />
-        <AdminRoute path="/settings" component={Settings} moduleName="as Configurações do Sistema" />
-        <AdminRoute path="/configuracoes" component={Settings} moduleName="as Configurações do Sistema" />
-        <AdminRoute path="/configuracao" component={Settings} moduleName="as Configurações do Sistema" />
-        <AdminRoute path="/ajustes" component={Settings} moduleName="os Ajustes do Sistema" />
+        <DevRoute path="/settings" component={Settings} moduleName="as Configurações Técnicas do Sistema" />
+        <DevRoute path="/configuracoes" component={Settings} moduleName="as Configurações Técnicas do Sistema" />
+        <DevRoute path="/configuracao" component={Settings} moduleName="as Configurações Técnicas do Sistema" />
+        <DevRoute path="/ajustes" component={Settings} moduleName="os Ajustes Técnicos do Sistema" />
         <AdminRoute path="/editor-site" component={SiteEditor} moduleName="o Editor Visual do Site" />
         <AdminRoute path="/configurar-site" component={SiteEditor} moduleName="o Editor Visual do Site" />
         <AdminRoute path="/personalizar-site" component={SiteEditor} moduleName="o Editor Visual do Site" />
@@ -367,16 +406,16 @@ function Router() {
         <AdminRoute path="/gestao-tarifas" component={TarifasEditor} moduleName="a Gestão de Tarifas & Políticas" />
         <AdminRoute path="/tabela-tarifas" component={TarifasEditor} moduleName="a Tabela de Tarifas" />
         <AdminRoute path="/precos" component={TarifasEditor} moduleName="a Gestão de Preços" />
-        <AdminRoute path="/logs" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
-        <AdminRoute path="/auditoria" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
-        <AdminRoute path="/system-logs" component={SystemLogsPage} moduleName="os Logs do Sistema" />
-        <AdminRoute path="/audit" component={SystemLogsPage} moduleName="a Auditoria do Sistema" />
-        <AdminRoute path="/ia-status" component={AiStatusPage} moduleName="o Status da IA" />
-        <AdminRoute path="/ai-status" component={AiStatusPage} moduleName="o Status da IA" />
-        <AdminRoute path="/status-ia" component={AiStatusPage} moduleName="o Status da IA" />
-        <AdminRoute path="/monitor-servidor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
-        <AdminRoute path="/servidor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
-        <AdminRoute path="/server-monitor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
+        <DevRoute path="/logs" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
+        <DevRoute path="/auditoria" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
+        <DevRoute path="/system-logs" component={SystemLogsPage} moduleName="os Logs do Sistema" />
+        <DevRoute path="/audit" component={SystemLogsPage} moduleName="a Auditoria do Sistema" />
+        <DevRoute path="/ia-status" component={AiStatusPage} moduleName="o Status da IA" />
+        <DevRoute path="/ai-status" component={AiStatusPage} moduleName="o Status da IA" />
+        <DevRoute path="/status-ia" component={AiStatusPage} moduleName="o Status da IA" />
+        <DevRoute path="/monitor-servidor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
+        <DevRoute path="/servidor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
+        <DevRoute path="/server-monitor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
 
         {/* External Service Orders Management (Admin Only) */}
         <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
@@ -390,11 +429,6 @@ function Router() {
         <ReceptionRoute path="/caixa-entrada-ota" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
         <ReceptionRoute path="/ota-inbox" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
         <ReceptionRoute path="/quarentena" component={OtaInboxPage} moduleName="a Quarentena de Reservas" />
-
-        {/* Feature 30: Manual em Sistema da Integração WebBookingPro (Recepção e Admin) */}
-        <ReceptionRoute path="/ajuda-wbp" component={WbpManualPage} moduleName="o Manual da Integração WebBookingPro" />
-        <ReceptionRoute path="/manual-wbp" component={WbpManualPage} moduleName="o Manual da Integração WebBookingPro" />
-        <ReceptionRoute path="/manual-integracao" component={WbpManualPage} moduleName="o Manual da Integração WebBookingPro" />
 
         <Route path="/"><Redirect to="/reservar" /></Route>
         <Route component={NotFound} />

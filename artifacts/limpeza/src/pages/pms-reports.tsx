@@ -62,7 +62,7 @@ export default function PmsReportsPage() {
     }
   }
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <Shell><AccessDenied /></Shell>
   }
 

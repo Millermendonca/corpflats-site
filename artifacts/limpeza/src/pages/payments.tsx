@@ -190,7 +190,7 @@ export default function Payments() {
     )
   }
 
-  if (user?.role !== "admin") {
+  if (user?.role !== "admin" && user?.role !== "dev") {
     return (
       <Shell>
         <AccessDenied />

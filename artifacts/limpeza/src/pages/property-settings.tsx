@@ -122,7 +122,7 @@ export default function PropertySettings() {
   }, [settings])
 
   if (loadingUser) return null
-  if (user?.role !== "admin") return <Shell><AccessDenied /></Shell>
+  if (user?.role !== "admin" && user?.role !== "dev") return <Shell><AccessDenied /></Shell>
 
   const handleSaveTerms = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -154,19 +154,19 @@ export default function VerifyFnrh() {
                 </h3>
 
                 <div className="text-[11px] space-y-1.5 text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200/70">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 font-medium">Endereço IP:</span>
-                    <span className="font-mono font-bold text-slate-800">{data.document.signerIp || "Registrado"}</span>
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500 font-medium shrink-0">Endereço IP:</span>
+                    <span className="font-mono font-bold text-slate-800 truncate min-w-0">{data.document.signerIp || "Registrado"}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 font-medium">Dispositivo / User-Agent:</span>
-                    <span className="font-mono text-[10px] text-slate-700 truncate max-w-[240px]" title={data.document.signerUserAgent}>
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500 font-medium shrink-0">Dispositivo / User-Agent:</span>
+                    <span className="font-mono text-[10px] text-slate-700 truncate min-w-0 max-w-[180px] sm:max-w-[240px]" title={data.document.signerUserAgent}>
                       {data.document.signerUserAgent || "Navegador Web do Hóspede"}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 font-medium">ID Único (UUID v4):</span>
-                    <span className="font-mono text-[10px] text-slate-700 truncate max-w-[240px]">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500 font-medium shrink-0">ID Único (UUID v4):</span>
+                    <span className="font-mono text-[10px] text-slate-700 truncate min-w-0 max-w-[180px] sm:max-w-[240px]">
                       {data.document.documentUuid}
                     </span>
                   </div>
@@ -175,14 +175,14 @@ export default function VerifyFnrh() {
 
               {/* Hash SHA-256 */}
               <div className="space-y-1.5 border-t border-slate-100 pt-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <Hash className="w-3.5 h-3.5 text-emerald-600" />
+                    <Hash className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     <span>Hash Criptográfico de Integridade (SHA-256)</span>
                   </span>
                   <button 
                     onClick={copySha256}
-                    className="text-[11px] text-sky-600 hover:text-sky-700 font-bold flex items-center gap-1 hover:underline"
+                    className="text-[11px] text-sky-600 hover:text-sky-700 font-bold flex items-center gap-1 hover:underline shrink-0"
                   >
                     {copiedHash ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
                     <span>{copiedHash ? "Copiado!" : "Copiar Hash"}</span>

@@ -608,7 +608,7 @@ export default function BreakfastProduction() {
     }
   }
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied moduleName="o Painel de Produção do Café da Manhã" />
   }
 

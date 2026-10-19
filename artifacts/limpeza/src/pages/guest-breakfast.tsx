@@ -750,10 +750,10 @@ export default function GuestBreakfast() {
 
             {/* Hub Interativo dos Dias de Café da Estadia */}
             <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                 <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-sky-600" />
-                  1. Dias de Café da Manhã da sua Estadia
+                  <Calendar className="w-4 h-4 text-sky-600 shrink-0" />
+                  <span>1. Dias de Café da Manhã da sua Estadia</span>
                 </span>
                 <span className="text-[10px] text-slate-500 font-medium">Clique no dia para montar ou visualizar</span>
               </div>
@@ -784,7 +784,7 @@ export default function GuestBreakfast() {
                               : "bg-white border-slate-200 hover:border-sky-300"
                       }`}
                     >
-                      <div className="flex items-center justify-between w-full">
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 w-full">
                         <span className={`font-black text-xs ${isSelected ? 'text-sky-950 font-black' : 'text-slate-800'}`}>
                           {formatDateDisplay(d.date)}
                         </span>
@@ -944,12 +944,12 @@ export default function GuestBreakfast() {
         ) : (
           /* Card 1: Identificação Manual (Fallback para pedidos avulsos sem reserva vinculada) */
           <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
               <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
                   <HomeIcon className="w-4 h-4" />
                 </div>
-                1. Apartamento & Identificação
+                <span>1. Apartamento & Identificação</span>
               </span>
               <Badge className="bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
                 1 a 3 Pessoas
@@ -959,7 +959,7 @@ export default function GuestBreakfast() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <HomeIcon className="w-3.5 h-3.5 text-sky-600" />
+                  <HomeIcon className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   Número do Apartamento *
                 </Label>
                 <Input 
@@ -973,7 +973,7 @@ export default function GuestBreakfast() {
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-sky-600" />
+                  <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   Quantidade de Pessoas *
                 </Label>
                 <div className="grid grid-cols-3 gap-1.5">
@@ -1001,7 +1001,7 @@ export default function GuestBreakfast() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-sky-600" />
+                  <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   Nome do Hóspede Titular *
                 </Label>
                 <Input 
@@ -1015,7 +1015,7 @@ export default function GuestBreakfast() {
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-sky-600" />
+                  <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   Data da Entrega *
                 </Label>
                 <Input 
@@ -1030,7 +1030,7 @@ export default function GuestBreakfast() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 WhatsApp para Notificação (Opcional)
               </Label>
               <Input 
@@ -1046,12 +1046,12 @@ export default function GuestBreakfast() {
         {/* ── Distribuição do Pedido (Apenas quando a reserva for para mais de 1 pessoa) ── */}
         {guestCount > 1 && (
           <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
               <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
-                Como deseja montar o café para os {guestCount} hóspedes?
+                <span>Como deseja montar o café para os {guestCount} hóspedes?</span>
               </span>
               <Badge className="bg-sky-50 text-sky-700 border-sky-200 text-[10px] font-bold">
                 {guestCount} Hóspedes na Reserva
@@ -1115,12 +1115,12 @@ export default function GuestBreakfast() {
 
         {/* ── Opções de Café da Manhã & Cardápio (ANTES DO HORÁRIO!) ───────── */}
         <Card id="breakfast-options-section" className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
             <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
                 <Utensils className="w-4 h-4" />
               </div>
-              Opções de Café da Manhã
+              <span>Opções de Café da Manhã</span>
             </span>
             {guestCount > 1 && orderDistribution === "individual" ? (
               <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
@@ -1132,7 +1132,7 @@ export default function GuestBreakfast() {
           {/* Abas para alternar entre os hóspedes quando modo individual */}
           {guestCount > 1 && orderDistribution === "individual" && (
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1">
                 <span className="text-xs font-bold text-slate-700">
                   Selecione para qual hóspede está montando o pedido:
                 </span>
@@ -1141,7 +1141,7 @@ export default function GuestBreakfast() {
                 </span>
               </div>
 
-              <div className="p-1.5 bg-slate-100 rounded-2xl flex gap-1.5">
+              <div className="p-1.5 bg-slate-100 rounded-2xl grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                 {Array.from({ length: guestCount }).map((_, i) => {
                   const idx = (i + 1) as 1 | 2 | 3
                   const isActive = activeGuestTab === idx
@@ -1153,17 +1153,17 @@ export default function GuestBreakfast() {
                       key={idx}
                       type="button"
                       onClick={() => setActiveGuestTab(idx)}
-                      className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between sm:justify-center gap-1.5 min-w-0 ${
                         isActive
                           ? "bg-white text-sky-900 shadow-xs border border-slate-200 font-black ring-2 ring-sky-500/20"
                           : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 truncate">
+                      <div className="flex items-center gap-1.5 min-w-0 truncate">
                         <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                         <span className="truncate">{nameLabel}</span>
                       </div>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
                         curType === 'standard' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'
                       }`}>
                         {curType === 'standard' ? '☕ Padrão' : '🎨 Personalizado'}
@@ -1175,7 +1175,7 @@ export default function GuestBreakfast() {
 
               {/* Botão para copiar escolhas do 1º hóspede se estiver no 2º */}
               {activeGuestTab > 1 && (
-                <div className="flex items-center justify-between p-2.5 bg-sky-50/80 border border-sky-100 rounded-xl text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-sky-50/80 border border-sky-100 rounded-xl text-xs">
                   <span className="text-sky-900 font-medium text-[11px]">
                     Deseja copiar o mesmo café escolhido para {g1Label}?
                   </span>
@@ -1186,7 +1186,7 @@ export default function GuestBreakfast() {
                     onClick={handleCopyGuest1To2}
                     className="text-sky-700 hover:text-sky-900 hover:bg-sky-100 font-bold text-xs h-7 px-2.5 rounded-lg flex items-center gap-1 shrink-0"
                   >
-                    <Copy className="w-3 h-3" />
+                    <Copy className="w-3 h-3 shrink-0" />
                     <span>Copiar de {g1Label}</span>
                   </Button>
                 </div>
@@ -1260,12 +1260,12 @@ export default function GuestBreakfast() {
         {/* Bloco quando selecionado: Café Personalizado */}
         {getCurrentType() === "custom" && (
           <Card id="menu-section" className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-6">
-            <div className="border-b border-slate-100 pb-3.5 flex items-center justify-between">
+            <div className="border-b border-slate-100 pb-3.5 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
                   <Utensils className="w-4 h-4" />
                 </div>
-                Itens do Cardápio {guestCount > 1 ? `(Hóspede ${activeGuestTab} de ${guestCount})` : ''}
+                <span>Itens do Cardápio {guestCount > 1 ? `(Hóspede ${activeGuestTab} de ${guestCount})` : ''}</span>
               </span>
               <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold uppercase tracking-wider">
                 {guestCount > 1 ? `Etapa ${activeGuestTab} de ${guestCount}` : 'Cardápio'}
@@ -1275,7 +1275,7 @@ export default function GuestBreakfast() {
             {/* Campo de Nome do Hóspede da Aba Ativa */}
             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1.5">
               <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-sky-600" />
+                <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                 Nome do {activeGuestTab}º Hóspede {activeGuestTab === 1 ? '(Titular)' : '(Acompanhante)'} *
               </Label>
               <Input 
@@ -1290,7 +1290,7 @@ export default function GuestBreakfast() {
             {/* 1. Café (1 opção) */}
             <div className="space-y-2">
               <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Coffee className="w-3.5 h-3.5 text-amber-600" /> Café (Escolha 1 opção)
+                <Coffee className="w-3.5 h-3.5 text-amber-600 shrink-0" /> Café (Escolha 1 opção)
               </Label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {[
@@ -1302,7 +1302,7 @@ export default function GuestBreakfast() {
                     key={opt}
                     type="button"
                     onClick={() => updateCurrentPref({ coffee: opt })}
-                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.coffee === opt
                         ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1317,7 +1317,7 @@ export default function GuestBreakfast() {
             {/* 2. Outras Bebidas (1 opção) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Milk className="w-3.5 h-3.5 text-sky-600" /> Outras Bebidas (Escolha 1 opção)
+                <Milk className="w-3.5 h-3.5 text-sky-600 shrink-0" /> Outras Bebidas (Escolha 1 opção)
               </Label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
@@ -1331,7 +1331,7 @@ export default function GuestBreakfast() {
                     key={opt}
                     type="button"
                     onClick={() => updateCurrentPref({ otherBeverage: opt })}
-                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.otherBeverage === opt
                         ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1345,7 +1345,7 @@ export default function GuestBreakfast() {
 
             {/* 3. Pães (até 2 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1">
                 <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   🍞 Pães (Escolha até 2 opções)
                 </Label>
@@ -1364,7 +1364,7 @@ export default function GuestBreakfast() {
                       key={opt}
                       type="button"
                       onClick={() => toggleArrayItem("breads", opt, 2)}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
                           ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1379,7 +1379,7 @@ export default function GuestBreakfast() {
 
             {/* 4. Acompanhamentos (até 4 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1">
                 <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   🧈 Acompanhamentos (Escolha até 4 opções)
                 </Label>
@@ -1402,7 +1402,7 @@ export default function GuestBreakfast() {
                       key={opt}
                       type="button"
                       onClick={() => toggleArrayItem("accompaniments", opt, 4)}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
                           ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1417,7 +1417,7 @@ export default function GuestBreakfast() {
 
             {/* 5. Complementos (até 2 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1">
                 <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   Complementos (Escolha até 2 opções)
                 </Label>
@@ -1436,7 +1436,7 @@ export default function GuestBreakfast() {
                       key={opt}
                       type="button"
                       onClick={() => toggleArrayItem("complements", opt, 2)}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
                           ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1451,9 +1451,9 @@ export default function GuestBreakfast() {
 
             {/* 6. Doces e Biscoitos (até 2 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1">
                 <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Cookie className="w-3.5 h-3.5 text-amber-600" /> Doces e Biscoitos (Escolha até 2 opções)
+                  <Cookie className="w-3.5 h-3.5 text-amber-600 shrink-0" /> Doces e Biscoitos (Escolha até 2 opções)
                 </Label>
                 <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
                   {currentPref.sweets.length}/2 selecionados
@@ -1472,7 +1472,7 @@ export default function GuestBreakfast() {
                       key={opt}
                       type="button"
                       onClick={() => toggleArrayItem("sweets", opt, 2)}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
                           ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1488,7 +1488,7 @@ export default function GuestBreakfast() {
             {/* 7. Frutas (1 opção + Condicionais) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Apple className="w-3.5 h-3.5 text-emerald-600" /> Frutas (Escolha 1 opção)
+                <Apple className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> Frutas (Escolha 1 opção)
               </Label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {[
@@ -1505,7 +1505,7 @@ export default function GuestBreakfast() {
                       fruit: opt,
                       ...(opt === "Salada de frutas" && !currentPref.fruitSaladOption ? { fruitSaladOption: "Salada pura" } : {})
                     })}
-                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.fruit === opt
                         ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-400"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1520,7 +1520,7 @@ export default function GuestBreakfast() {
               {currentPref.fruit === "Mamão" && (
                 <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl space-y-2 animate-in fade-in">
                   <span className="text-xs font-bold text-amber-900 block">Deseja mel no seu Mamão?</span>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => updateCurrentPref({ fruitHoney: true })}
@@ -1551,7 +1551,7 @@ export default function GuestBreakfast() {
               {currentPref.fruit === "Salada de frutas" && (
                 <div className="p-3.5 bg-sky-50/80 border border-sky-200/80 rounded-2xl space-y-2 animate-in fade-in">
                   <span className="text-xs font-bold text-sky-900 block">Como prefere sua Salada de Frutas?</span>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {[
                       { id: "Salada pura", label: "Salada pura", icon: "🥣" },
                       { id: "Mel", label: "Mel", icon: "🍯" },
@@ -1563,13 +1563,13 @@ export default function GuestBreakfast() {
                           key={item.id}
                           type="button"
                           onClick={() => updateCurrentPref({ fruitSaladOption: item.id })}
-                          className={`p-2.5 rounded-xl text-xs font-bold border truncate transition-all flex items-center justify-center gap-1.5 ${
+                          className={`p-2.5 rounded-xl text-xs font-bold border whitespace-normal leading-snug transition-all flex items-center justify-center gap-1.5 ${
                             isSelected 
                               ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400" 
                               : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                           }`}
                         >
-                          <span>{item.icon}</span>
+                          <span className="shrink-0">{item.icon}</span>
                           <span>{isSelected ? "✓ " : ""}{item.label}</span>
                         </button>
                       )
@@ -1593,7 +1593,7 @@ export default function GuestBreakfast() {
                     key={opt}
                     type="button"
                     onClick={() => updateCurrentPref({ sweetener: opt })}
-                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.sweetener === opt
                         ? "bg-slate-800 text-white border-slate-800 shadow-xs ring-1 ring-slate-700 font-bold"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
@@ -1609,12 +1609,12 @@ export default function GuestBreakfast() {
 
         {/* Card 2: Horário Único de Entrega */}
         <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
             <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
                 <Clock className="w-4 h-4" />
               </div>
-              2. Horário de Entrega
+              <span>2. Horário de Entrega</span>
             </span>
             <span className="text-[11px] text-slate-500 font-medium">05:00 às 09:30</span>
           </div>
@@ -1682,13 +1682,13 @@ export default function GuestBreakfast() {
             type="button" 
             onClick={handleSubmitOrder}
             disabled={submitting}
-            className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-sm sm:text-base h-14 rounded-2xl shadow-lg shadow-sky-600/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
+            className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs sm:text-base h-auto min-h-14 py-3 px-4 whitespace-normal leading-snug text-center rounded-2xl shadow-lg shadow-sky-600/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
           >
             {submitting ? (
               <span>Agendando com a cozinha...</span>
             ) : (
               <>
-                <Coffee className="w-5 h-5 text-white" />
+                <Coffee className="w-5 h-5 text-white shrink-0" />
                 <span>Confirmar Pedido de Café da Manhã ({guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}) 🚀</span>
               </>
             )}

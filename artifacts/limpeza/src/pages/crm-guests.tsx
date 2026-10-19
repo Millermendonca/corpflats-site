@@ -643,7 +643,7 @@ export default function CrmGuests() {
   const vipCount = guests.filter(g => (g.tags || []).includes("VIP")).length
   const totalCompanies = companies.length
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <Shell><AccessDenied /></Shell>
   }
 

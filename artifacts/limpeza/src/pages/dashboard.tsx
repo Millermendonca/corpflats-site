@@ -54,7 +54,7 @@ function getDefaultDate(userRole?: string) {
 export default function Dashboard() {
   const { data: user } = useGetMe()
   const queryClient = useQueryClient()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
   
   const defaultDate = useMemo(() => getDefaultDate(user?.role), [user?.role])
   const [selectedDateStr, setSelectedDateStr] = useState<string>(defaultDate)

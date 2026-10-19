@@ -107,7 +107,7 @@ function ObservationCard({ obs, isAdmin, onResolve }: { obs: Observation; isAdmi
 
 export default function Observations() {
   const { data: user } = useGetMe()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
   const qc = useQueryClient()
 
   // Filtros Observações

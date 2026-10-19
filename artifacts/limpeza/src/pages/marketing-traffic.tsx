@@ -176,7 +176,7 @@ export default function MarketingTraffic() {
     }
   }
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied moduleName="o Tráfego Autônomo & IA" />
   }
 

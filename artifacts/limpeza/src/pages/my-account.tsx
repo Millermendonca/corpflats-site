@@ -477,16 +477,16 @@ export default function MyAccount() {
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white flex items-center justify-center font-black text-xl shadow-md">
               {user?.name ? user.name.charAt(0).toUpperCase() : <User className="w-7 h-7" />}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight break-words">
                   {user?.name || "Minha Conta"}
                 </h1>
-                <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold">
+                <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold shrink-0">
                   ✓ Hóspede Verificado
                 </Badge>
               </div>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 break-all">
                 {user?.email || "Sem e-mail vinculado"}
               </p>
             </div>
@@ -499,7 +499,7 @@ export default function MyAccount() {
               onClick={() => setLocation("/reservar")}
               className="text-xs font-bold gap-1.5 h-9 rounded-xl flex-1 sm:flex-none border-slate-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300"
             >
-              <Calendar className="w-3.5 h-3.5 text-sky-600" />
+              <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
               <span>Fazer Reserva</span>
             </Button>
 
@@ -507,9 +507,9 @@ export default function MyAccount() {
               variant="outline"
               size="sm"
               onClick={handleLogout}
-              className="text-xs font-bold gap-1.5 h-9 rounded-xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
+              className="text-xs font-bold gap-1.5 h-9 rounded-xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors shrink-0"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
               <span>Sair</span>
             </Button>
           </div>
@@ -517,21 +517,21 @@ export default function MyAccount() {
 
         {/* Abas Principais */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 inline-flex gap-1 h-auto w-full sm:w-auto overflow-x-auto">
-            <TabsTrigger value="profile" className="rounded-xl py-2 px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5">
-              <User className="w-3.5 h-3.5" />
+          <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 grid grid-cols-2 sm:inline-flex gap-1 h-auto w-full sm:w-auto">
+            <TabsTrigger value="profile" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
+              <User className="w-3.5 h-3.5 shrink-0" />
               <span>Meu Perfil</span>
             </TabsTrigger>
-            <TabsTrigger value="security" className="rounded-xl py-2 px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5">
-              <Shield className="w-3.5 h-3.5" />
+            <TabsTrigger value="security" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
+              <Shield className="w-3.5 h-3.5 shrink-0" />
               <span>Segurança & Passkeys</span>
             </TabsTrigger>
-            <TabsTrigger value="reservations" className="rounded-xl py-2 px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5">
-              <Calendar className="w-3.5 h-3.5" />
+            <TabsTrigger value="reservations" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
+              <Calendar className="w-3.5 h-3.5 shrink-0" />
               <span>Minhas Reservas</span>
             </TabsTrigger>
-            <TabsTrigger value="privacy" className="rounded-xl py-2 px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5">
-              <Lock className="w-3.5 h-3.5" />
+            <TabsTrigger value="privacy" className="rounded-xl py-2 px-3 sm:px-4 text-xs font-bold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:text-sky-700 data-[state=active]:shadow-xs gap-1.5 whitespace-normal leading-tight">
+              <Lock className="w-3.5 h-3.5 shrink-0" />
               <span>Privacidade & LGPD</span>
             </TabsTrigger>
           </TabsList>
@@ -1078,7 +1078,7 @@ export default function MyAccount() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div>
                       <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100">Exportar Meus Dados</h4>
                       <p className="text-[11px] text-slate-500">
@@ -1089,7 +1089,7 @@ export default function MyAccount() {
                       variant="outline"
                       size="sm"
                       onClick={exportUserData}
-                      className="text-xs font-bold gap-1.5 h-8 rounded-xl shrink-0"
+                      className="text-xs font-bold gap-1.5 h-8 rounded-xl shrink-0 w-full sm:w-auto"
                     >
                       <Download className="w-3.5 h-3.5 text-sky-600" />
                       <span>Baixar Dados</span>
@@ -1098,7 +1098,7 @@ export default function MyAccount() {
                 </div>
 
                 <div className="p-4 rounded-2xl border border-rose-200 dark:border-rose-950 bg-rose-50/50 dark:bg-rose-950/20 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div>
                       <h4 className="font-bold text-xs text-rose-900 dark:text-rose-200">Exclusão Definitiva da Conta</h4>
                       <p className="text-[11px] text-rose-600 dark:text-rose-400">
@@ -1109,7 +1109,7 @@ export default function MyAccount() {
                       variant="destructive"
                       size="sm"
                       onClick={() => setDeleteModalOpen(true)}
-                      className="text-xs font-bold gap-1.5 h-8 rounded-xl shrink-0"
+                      className="text-xs font-bold gap-1.5 h-8 rounded-xl shrink-0 w-full sm:w-auto"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>Excluir Conta</span>

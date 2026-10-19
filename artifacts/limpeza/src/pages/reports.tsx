@@ -649,7 +649,7 @@ export default function Reports() {
   const [location] = useLocation()
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { toast } = useToast()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
 
   // Se o usuário entrou por /extrato, inicia na aba de Extrato; caso contrário, no Fechamento Quinzenal
   const defaultTab = location.includes("extrato") ? "statement" : location.includes("history") ? "history" : "payroll"

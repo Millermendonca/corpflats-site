@@ -1594,7 +1594,7 @@ export default function WhatsappAutomation() {
       })
   }
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied moduleName="Automação de WhatsApp" />
   }
 

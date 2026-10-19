@@ -95,7 +95,7 @@ function formatTime(isoStr?: string) {
 export default function MaidStatementPage() {
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { toast } = useToast()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
 
   const [statementData, setStatementData] = useState<MaidStatementData | null>(null)
   const [loading, setLoading] = useState(true)

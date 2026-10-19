@@ -368,7 +368,7 @@ function overdueBadge(item: any) {
 export default function Tasks() {
   const { toast } = useToast()
   const { data: user } = useGetMe()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
   const qc = useQueryClient()
   const [roleFilter, setRoleFilter] = useState<"all" | "camareira" | "manutencao">("all")
 

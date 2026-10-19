@@ -329,7 +329,7 @@ export default function SystemSettings() {
   }, [])
 
   if (loadingUser) return null
-  if (user?.role !== "admin") return <Shell><AccessDenied /></Shell>
+  if (user?.role !== "dev") return <Shell><AccessDenied /></Shell>
 
   useEffect(() => {
     if (settings?.serproConfig) {
@@ -1348,7 +1348,7 @@ export default function SystemSettings() {
                               <Key className="w-3 h-3 mr-1" />
                               <span>Redefinir Senha</span>
                             </Button>
-                            {u.role !== "admin" && (
+                            {u.role !== "admin" && u.role !== "dev" && (
                               <Button 
                                 size="icon"
                                 variant="ghost"

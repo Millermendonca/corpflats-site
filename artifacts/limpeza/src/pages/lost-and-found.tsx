@@ -52,7 +52,7 @@ interface LostItem {
 export default function LostAndFoundPage() {
   const { data: user } = useGetMe()
   const { toast } = useToast()
-  const isAdmin = user?.role === "admin"
+  const isAdmin = user?.role === "admin" || user?.role === "dev"
   const [items, setItems] = useState<LostItem[]>([])
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState<string>("all")

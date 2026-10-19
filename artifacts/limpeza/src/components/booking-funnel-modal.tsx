@@ -1282,22 +1282,22 @@ export function BookingFunnelModal({
             </div>
 
             {/* Navegação */}
-            <div className="flex justify-between items-center pt-2">
+            <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2 pt-2">
               <Button
                 variant="outline"
                 onClick={handleCloseModal}
-                className="text-xs font-bold rounded-xl h-10 px-4"
+                className="text-xs font-bold rounded-xl h-10 px-4 w-full sm:w-auto"
               >
-                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                <ArrowLeft className="w-3.5 h-3.5 mr-1 shrink-0" />
                 Voltar ao site
               </Button>
 
               <Button
                 onClick={handleNextStep}
-                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-10 px-6 rounded-xl shadow-md gap-1.5"
+                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <span>Avançar para Seus Dados</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4 h-4 shrink-0" />
               </Button>
             </div>
           </div>
@@ -1690,22 +1690,22 @@ export function BookingFunnelModal({
             </div>
 
             {/* Navegação */}
-            <div className="flex justify-between items-center pt-2">
+            <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2 pt-2">
               <Button
                 variant="outline"
                 onClick={() => setCurrentStep(1)}
-                className="text-xs font-bold rounded-xl h-10 px-4"
+                className="text-xs font-bold rounded-xl h-10 px-4 w-full sm:w-auto"
               >
-                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                <ArrowLeft className="w-3.5 h-3.5 mr-1 shrink-0" />
                 Voltar
               </Button>
 
               <Button
                 onClick={handleNextStep}
-                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-10 px-6 rounded-xl shadow-md gap-1.5"
+                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <span>Avançar para Pagamento</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4 h-4 shrink-0" />
               </Button>
             </div>
           </div>
@@ -1716,7 +1716,7 @@ export function BookingFunnelModal({
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Comparador de Formas de Pagamento */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <Label className="text-xs font-bold text-slate-900 dark:text-slate-100">
                   Forma de Pagamento:
                 </Label>
@@ -1783,35 +1783,35 @@ export function BookingFunnelModal({
 
             {/* Resumo Financeiro Consolidado */}
             <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
-              <div className="flex justify-between text-slate-600 dark:text-slate-400">
+              <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
                 <span>Diárias ({nights} noites • {flatsCount} {flatsCount === 1 ? "flat" : "flats"} • {ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}):</span>
-                <span>R$ {subtotal.toLocaleString("pt-BR")}</span>
+                <span className="shrink-0">R$ {subtotal.toLocaleString("pt-BR")}</span>
               </div>
 
-              <div className="flex justify-between text-emerald-600 font-bold">
+              <div className="flex justify-between gap-2 text-emerald-600 font-bold">
                 <span>Desconto Reserva Direta ({discountPercent}%):</span>
-                <span>- R$ {discountAmount.toLocaleString("pt-BR")}</span>
+                <span className="shrink-0">- R$ {discountAmount.toLocaleString("pt-BR")}</span>
               </div>
 
               {cleaningFee > 0 ? (
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
                   <span>Taxa de Higienização Completa:</span>
-                  <span>+ R$ {cleaningFee.toLocaleString("pt-BR")}</span>
+                  <span className="shrink-0">+ R$ {cleaningFee.toLocaleString("pt-BR")}</span>
                 </div>
               ) : (
-                <div className="flex justify-between text-emerald-600 font-bold">
+                <div className="flex justify-between gap-2 text-emerald-600 font-bold">
                   <span>Taxa de Limpeza:</span>
-                  <span>✓ Isenta (Inclusa no plano)</span>
+                  <span className="shrink-0">✓ Isenta (Inclusa no plano)</span>
                 </div>
               )}
 
               {lateCheckout && (
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
                   <span>Late Check-out no Domingo (saída às {lateCheckoutTime}):</span>
                   {lateCheckoutFee === 0 ? (
-                    <span className="text-emerald-600 font-bold">✓ Cortesia (R$ 0)</span>
+                    <span className="text-emerald-600 font-bold shrink-0">✓ Cortesia (R$ 0)</span>
                   ) : (
-                    <span>
+                    <span className="shrink-0">
                       + R$ {lateCheckoutFee.toLocaleString("pt-BR")}
                       {lateCheckoutTier.isDailyRate && (
                         <span className="text-[10px] text-slate-400 font-normal ml-1">(+1 diária)</span>
@@ -1822,29 +1822,29 @@ export function BookingFunnelModal({
               )}
 
               {petFee > 0 && (
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
                   <span>Taxa de Higienização Pet:</span>
-                  <span>+ R$ {petFee}</span>
+                  <span className="shrink-0">+ R$ {petFee}</span>
                 </div>
               )}
 
               {twinFee > 0 && (
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
                   <span>Configuração 2 Camas Solteiro:</span>
-                  <span>+ R$ {twinFee}</span>
+                  <span className="shrink-0">+ R$ {twinFee}</span>
                 </div>
               )}
 
               {paymentMethod === "pix" && (
-                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-black pt-1 border-t border-slate-200 dark:border-slate-700">
+                <div className="flex justify-between gap-2 text-emerald-700 dark:text-emerald-400 font-black pt-1 border-t border-slate-200 dark:border-slate-700">
                   <span>⚡ Desconto Especial PIX ({pixDiscountPercent}%):</span>
-                  <span>- R$ {pixDiscountAmount.toLocaleString("pt-BR")}</span>
+                  <span className="shrink-0">- R$ {pixDiscountAmount.toLocaleString("pt-BR")}</span>
                 </div>
               )}
 
-              <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center text-sm font-black text-slate-900 dark:text-white">
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
                 <span>Valor Final a Pagar:</span>
-                <span className={paymentMethod === "pix" ? "text-emerald-600 text-xl" : "text-sky-600 text-xl"}>
+                <span className={paymentMethod === "pix" ? "text-emerald-600 text-xl shrink-0" : "text-sky-600 text-xl shrink-0"}>
                   R$ {totalAmount.toLocaleString("pt-BR")}
                 </span>
               </div>
@@ -1852,12 +1852,12 @@ export function BookingFunnelModal({
 
             {/* Política de Cancelamento */}
             <div className="p-3 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
-              <div className="flex items-center justify-between font-bold text-slate-800 dark:text-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 font-bold text-slate-800 dark:text-slate-200">
                 <span className="flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                  Política de Cancelamento: {cancellationPolicy.policyType === "flexivel" ? "Cancelamento Flexível" : "Rigorosa"}
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Política de Cancelamento: {cancellationPolicy.policyType === "flexivel" ? "Cancelamento Flexível" : "Rigorosa"}</span>
                 </span>
-                <Badge className={cancellationPolicy.policyType === "flexivel" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}>
+                <Badge className={cancellationPolicy.policyType === "flexivel" ? "bg-emerald-600 text-white shrink-0" : "bg-rose-600 text-white shrink-0"}>
                   {cancellationPolicy.isEligibleForRefund ? "Reembolso Elegível" : "Sem Reembolso"}
                 </Badge>
               </div>
@@ -1865,13 +1865,13 @@ export function BookingFunnelModal({
             </div>
 
             {/* Navegação & Botão de Confirmação */}
-            <div className="flex justify-between items-center pt-2">
+            <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2 pt-2">
               <Button
                 variant="outline"
                 onClick={() => setCurrentStep(2)}
-                className="text-xs font-bold rounded-xl h-10 px-4"
+                className="text-xs font-bold rounded-xl h-10 px-4 w-full sm:w-auto"
               >
-                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                <ArrowLeft className="w-3.5 h-3.5 mr-1 shrink-0" />
                 Voltar
               </Button>
 
@@ -1879,11 +1879,11 @@ export function BookingFunnelModal({
                 onClick={handleConfirmReservation}
                 disabled={isProcessing}
                 className={paymentMethod === "pix"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-11 px-6 rounded-xl shadow-lg shadow-emerald-600/20 gap-2"
-                  : "bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-11 px-6 rounded-xl shadow-lg shadow-sky-600/20 gap-2"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-auto min-h-11 py-2.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                  : "bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-11 py-2.5 px-6 rounded-xl shadow-lg shadow-sky-600/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
                 }
               >
-                <Lock className="w-4 h-4" />
+                <Lock className="w-4 h-4 shrink-0" />
                 <span>
                   {isProcessing ? "Confirmando..." : (paymentMethod === "pix" ? `Pagar com PIX: R$ ${totalAmount.toLocaleString("pt-BR")}` : `Pagar com Cartão: R$ ${totalAmount.toLocaleString("pt-BR")}`)}
                 </span>
@@ -1915,33 +1915,33 @@ export function BookingFunnelModal({
               </h3>
               <p className="text-xs text-slate-500">
                 {paymentMethod === "pix" && !isPixPaid ? (
-                  <>Sua pré-reserva foi registrada. Realize o pagamento abaixo em até 24h para liberação automática do seu voucher definitivo em <strong>{guestEmail}</strong>.</>
+                  <>Sua pré-reserva foi registrada. Realize o pagamento abaixo em até 24h para liberação automática do seu voucher definitivo em <strong className="break-all">{guestEmail}</strong>.</>
                 ) : (
-                  <>Seu voucher oficial foi emitido e encaminhado para <strong>{guestEmail}</strong>.</>
+                  <>Seu voucher oficial foi emitido e encaminhado para <strong className="break-all">{guestEmail}</strong>.</>
                 )}
               </p>
             </div>
 
             <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-left space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">Código da Reserva:</span>
-                <span className="font-mono font-black text-sky-700 text-sm">
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Código da Reserva:</span>
+                <span className="font-mono font-black text-sky-700 text-sm text-right">
                   {confirmedReservation.code || confirmedReservation.reservationCode}
                 </span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">Hóspede Principal:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">{guestName}</span>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Hóspede Principal:</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">{guestName}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">Período:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">{formatDisplayDate(checkin)} até {formatDisplayDate(checkout)} ({nights} noites)</span>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Período:</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">{formatDisplayDate(checkin)} até {formatDisplayDate(checkout)} ({nights} noites)</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">Acomodação:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">Flat Studio ({confirmedReservation.flatNumber})</span>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Acomodação:</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">Flat Studio ({confirmedReservation.flatNumber})</span>
               </div>
-              <div className="flex justify-between items-center pt-1 border-t border-slate-200 dark:border-slate-700">
+              <div className="flex flex-wrap justify-between items-center gap-2 pt-1 border-t border-slate-200 dark:border-slate-700">
                 <span className="text-slate-500">Status da Reserva:</span>
                 {paymentMethod === "pix" && !isPixPaid ? (
                   <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 font-bold text-[10px]">
@@ -1973,7 +1973,7 @@ export function BookingFunnelModal({
                 ) : (
                   <>
                     <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                      <QrCode className="w-4 h-4 text-emerald-600" />
+                      <QrCode className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span>Pagamento PIX Banco Inter (5% de Desconto Incluso)</span>
                     </div>
 
@@ -1995,7 +1995,7 @@ export function BookingFunnelModal({
                             <Input
                               readOnly
                               value={pixData.pixCopiaECola}
-                              className="text-[11px] font-mono bg-white dark:bg-slate-900 h-9"
+                              className="text-[11px] font-mono bg-white dark:bg-slate-900 h-9 min-w-0"
                             />
                             <Button
                               size="sm"
@@ -2015,7 +2015,7 @@ export function BookingFunnelModal({
                     )}
 
                     {/* Chave Pix Direta CNPJ como alternativa */}
-                    <div className="pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80 flex items-center justify-between text-xs bg-white/70 dark:bg-slate-900/60 p-2.5 rounded-xl">
+                    <div className="pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80 flex flex-wrap items-center justify-between gap-2 text-xs bg-white/70 dark:bg-slate-900/60 p-2.5 rounded-xl">
                       <div className="text-left">
                         <span className="text-[10px] text-slate-500 font-semibold block">Chave PIX Oficial (CNPJ Banco Inter):</span>
                         <span className="font-mono font-bold text-slate-800 dark:text-slate-100 text-xs">47.964.813/0001-65</span>
@@ -2047,11 +2047,11 @@ export function BookingFunnelModal({
                 </p>
                 <Button
                   onClick={() => window.open(mpInitPoint, "_blank")}
-                  className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-10 rounded-xl shadow-md gap-2"
+                  className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-10 py-2.5 rounded-xl shadow-md gap-2 whitespace-normal leading-tight text-center"
                 >
-                  <CreditCard className="w-4 h-4" />
+                  <CreditCard className="w-4 h-4 shrink-0" />
                   <span>Pagar com Cartão no Mercado Pago</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                 </Button>
               </div>
             )}
@@ -2069,12 +2069,12 @@ export function BookingFunnelModal({
               if (hasCompleteRegistration || postRegistrationSaved) {
                 return (
                   <div className="p-3.5 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-left space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span>Cadastro de Hóspede Completo & Salvo</span>
                       </span>
-                      <Badge className="bg-emerald-600 text-white font-bold text-[10px]">
+                      <Badge className="bg-emerald-600 text-white font-bold text-[10px] shrink-0">
                         100% Pronto
                       </Badge>
                     </div>
@@ -2089,9 +2089,9 @@ export function BookingFunnelModal({
                           const resCode = confirmedReservation.code || confirmedReservation.reservationCode || confirmedReservation.id;
                           window.open(`/pre-checkin/${resCode}`, "_blank");
                         }}
-                        className="text-xs h-8 bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-50 rounded-xl"
+                        className="text-xs h-auto min-h-8 py-1.5 bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-50 rounded-xl whitespace-normal leading-tight"
                       >
-                        <FileText className="w-3.5 h-3.5 mr-1" />
+                        <FileText className="w-3.5 h-3.5 mr-1 shrink-0" />
                         <span>Acessar Pré Check-in Digital</span>
                       </Button>
                     </div>
@@ -2101,7 +2101,7 @@ export function BookingFunnelModal({
 
               return (
                 <div className="p-4 bg-gradient-to-br from-sky-50/90 via-indigo-50/30 to-slate-50 dark:from-slate-800 dark:to-slate-900 border-2 border-sky-200 dark:border-slate-700 rounded-2xl text-left space-y-3 shadow-xs">
-                  <div className="flex items-start justify-between gap-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center font-bold shadow-xs shrink-0">
                         <FileText className="w-4 h-4" />
@@ -2341,7 +2341,7 @@ export function BookingFunnelModal({
               setMinorNoticeAcknowledged(true)
               setShowMinorNoticeModal(false)
             }}
-            className="w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 text-white font-bold text-xs h-10 rounded-xl"
+            className="w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 text-white font-bold text-xs h-auto min-h-10 py-2.5 px-4 rounded-xl whitespace-normal leading-snug text-center"
           >
             Estou Ciente e Apresentarei a Autorização com Firma Reconhecida
           </Button>

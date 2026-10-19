@@ -595,7 +595,7 @@ export default function MaidWhatsappAutomation() {
     )
   }
 
-  if (user?.role !== "admin") {
+  if (user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied />
   }
 

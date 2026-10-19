@@ -1681,20 +1681,20 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         <Button
                           onClick={() => handleRequestEntry(flat)}
                           disabled={!canStart || requestEntryMutation.isPending}
-                          className={`w-full font-bold text-xs h-10 shadow-xs flex items-center justify-center gap-1.5 ${
+                          className={`w-full font-bold text-xs h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center shadow-xs flex items-center justify-center gap-1.5 ${
                             canStart
                               ? "bg-amber-600 hover:bg-amber-700 text-white"
                               : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400 cursor-not-allowed opacity-80"
                           }`}
                         >
                           {requestEntryMutation.isPending && requestEntryMutation.variables === flat.flatId ? (
-                            <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                           ) : !isStatusAllowed ? (
-                            <Lock className="w-4 h-4 mr-1.5" />
+                            <Lock className="w-4 h-4 shrink-0" />
                           ) : (
-                            <KeyRound className="w-4 h-4 mr-1.5" />
+                            <KeyRound className="w-4 h-4 shrink-0" />
                           )}
-                          {!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "🔑 1. Solicitar Entrada"}
+                          <span>{!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "🔑 1. Solicitar Entrada"}</span>
                         </Button>
                       ) : (
                         <>
@@ -1707,20 +1707,20 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           <Button
                             onClick={() => handleStartFlatClick(flat)}
                             disabled={!canStart || startMutation.isPending}
-                            className={`w-full font-bold text-xs h-10 shadow-xs ${
+                            className={`w-full font-bold text-xs h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center shadow-xs ${
                               canStart
                                 ? "bg-primary hover:bg-primary/90 text-primary-foreground"
                                 : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400 cursor-not-allowed opacity-80"
                             }`}
                           >
                             {startMutation.isPending && startMutation.variables === flat.flatId ? (
-                              <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                              <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
                             ) : !isStatusAllowed ? (
-                              <Lock className="w-4 h-4 mr-1.5" />
+                              <Lock className="w-4 h-4 mr-1.5 shrink-0" />
                             ) : (
-                              <Play className="w-4 h-4 mr-1.5 fill-current" />
+                              <Play className="w-4 h-4 mr-1.5 fill-current shrink-0" />
                             )}
-                            {!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "▶️ Iniciar Apartamento (2. Iniciar Serviço)"}
+                            <span>{!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "▶️ Iniciar Apartamento (2. Iniciar Serviço)"}</span>
                           </Button>
                         </>
                       )}
@@ -1978,14 +1978,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 }
               }}
               disabled={registerMutation.isPending || !mainWorkerName.trim() || cleanCpfDigits(mainWorkerCpf).length !== 11}
-              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 shadow-xs"
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center shadow-xs"
             >
               {registerMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
               ) : (
-                <Check className="w-4 h-4 mr-1.5" />
+                <Check className="w-4 h-4 mr-1.5 shrink-0" />
               )}
-              {pendingAction?.type === "request_entry" ? "Salvar Identificação e Solicitar Entrada" : "Salvar Identificação e Continuar"}
+              <span>{pendingAction?.type === "request_entry" ? "Salvar Identificação e Solicitar Entrada" : "Salvar Identificação e Continuar"}</span>
             </Button>
             <Button
               variant="outline"

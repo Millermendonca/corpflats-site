@@ -514,7 +514,7 @@ export default function ZapiConnection() {
     }
   }
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (!loadingUser && user?.role !== "dev") {
     return <AccessDenied moduleName="Conexão Z-API" />
   }
 

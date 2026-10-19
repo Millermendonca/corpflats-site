@@ -72,7 +72,7 @@ export default function History() {
                     <th className="px-4 py-3 font-medium">Data/Hora</th>
                     <th className="px-4 py-3 font-medium">Flat</th>
                     <th className="px-4 py-3 font-medium">Status Final</th>
-                    {user?.role === "admin" && (
+                    {(user?.role === "admin" || user?.role === "dev") && (
                       <th className="px-4 py-3 font-medium">Camareira</th>
                     )}
                     <th className="px-4 py-3 font-medium">Observação</th>
@@ -95,7 +95,7 @@ export default function History() {
                             {conf.label}
                           </Badge>
                         </td>
-                        {user?.role === "admin" && (
+                        {(user?.role === "admin" || user?.role === "dev") && (
                           <td className="px-4 py-3 capitalize">
                             {entry.assignedUsername || "-"}
                           </td>

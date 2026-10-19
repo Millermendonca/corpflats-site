@@ -4,4 +4,4 @@ export * from "./OtaInboxTable";
 export * from "./QuarantineDrawer";
 export * from "./SecureCardModal";
 export * from "./OtaInboxContainer";
-export * from "./WbpHelpManualPage";
+
