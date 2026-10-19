@@ -703,8 +703,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     const result = await sendZapiMessage(db.zapiConfig, {
       phone: cleanPh,
       message: renderedMessage,
+      channelId: "maids",
       recipientRole: "camareira",
-      bypassTestMode: true
+      triggerEvent: `maid_test_${trigger.id}`,
+      db
     });
 
     const logEntry = {
@@ -762,8 +764,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
       const result = await sendZapiMessage(db.zapiConfig, {
         phone: cleanPh,
         message: renderedMessage,
+        channelId: "maids",
         recipientRole: "camareira",
-        bypassTestMode: true
+        triggerEvent: `maid_manual_${trigger.id}`,
+        db
       });
 
       const logEntry = {
@@ -838,8 +842,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
               const sendRes = await sendZapiMessage(db.zapiConfig, {
                 phone: cleanPh,
                 message: renderedMsg,
+                channelId: "maids",
                 recipientRole: "camareira",
-                bypassTestMode: true
+                triggerEvent: overtimeTrigger.id,
+                db
               });
 
               reqItem.overtimeAlertSentAt = nowIso;
@@ -898,8 +904,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
             const sendRes = await sendZapiMessage(db.zapiConfig, {
               phone: cleanPh,
               message: renderedMsg,
+              channelId: "maids",
               recipientRole: "camareira",
-              bypassTestMode: true
+              triggerEvent: closingTrigger.id,
+              db
             });
 
             config.history.unshift({
@@ -958,8 +966,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
             const sendRes = await sendZapiMessage(db.zapiConfig, {
               phone: cleanPh,
               message: renderedMsg,
+              channelId: "maids",
               recipientRole: "camareira",
-              bypassTestMode: true
+              triggerEvent: dailyTrigger.id,
+              db
             });
 
             config.history.unshift({

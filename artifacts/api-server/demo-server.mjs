@@ -74,6 +74,7 @@ import {
   cleanWhatsAppPhone,
   sendZapiMessage,
   sendZapiOtpButton,
+  evaluateZapiChannelPolicy,
   scheduleUpcomingReservationTriggers,
   triggerCheckoutWhatsApp,
   resolveWhatsAppTags,
@@ -10961,8 +10962,10 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         sendZapiMessage(db.zapiConfig, {
           phone: cleanWp,
           message: workerPromptMsg,
-          bypassTestMode: true,
-          recipientRole: "service_worker"
+          channelId: "service_providers",
+          recipientRole: "service_worker",
+          triggerEvent: "service_order_overdue_alert",
+          db
         }).then(waRes => {
           if (!db.whatsappHistory) db.whatsappHistory = [];
           db.whatsappHistory.push({
@@ -10985,8 +10988,10 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         sendZapiMessage(db.zapiConfig, {
           phone,
           message,
-          bypassTestMode: true,
-          recipientRole: "service_worker"
+          channelId: "reception",
+          recipientRole: "reception",
+          triggerEvent: `service_order_${action}`,
+          db
         }).then(waRes => {
           if (!db.whatsappHistory) db.whatsappHistory = [];
           db.whatsappHistory.push({
@@ -11012,7 +11017,15 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       const clientToken = zapiCfg?.clientToken?.trim();
       const baseUrl = (zapiCfg?.baseUrl || "https://api.z-api.io").replace(/\/+$/, "");
       const sendImageToPhone = async (phone, photoUrl, caption) => {
-        if (!instanceId || !token || !phone) return;
+        if (!phone) return;
+        const policy = evaluateZapiChannelPolicy(zapiCfg, {
+          channelId: "reception",
+          phone,
+          message: caption || "",
+          db
+        });
+        if (!policy.allowed) return;
+        if (!instanceId || !token) return;
         const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
         const headers = { "Content-Type": "application/json" };
         if (clientToken) headers["Client-Token"] = clientToken;
@@ -11020,10 +11033,14 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
           await fetch(url, {
             method: "POST",
             headers,
-            body: JSON.stringify({ phone, image: photoUrl, caption: caption || "" })
+            body: JSON.stringify({
+              phone: policy.targetPhone || phone,
+              image: photoUrl,
+              caption: policy.finalMessage || caption || ""
+            })
           });
         } catch (imgErr) {
-          console.warn(`[ServiceOrder] Falha ao enviar foto ${photoUrl} via WhatsApp para ${phone}:`, imgErr.message);
+          console.warn(`[ServiceOrder] Falha ao enviar foto ${photoUrl} via WhatsApp para ${policy.targetPhone || phone}:`, imgErr.message);
         }
       };
 
@@ -11264,8 +11281,10 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
           sendZapiMessage(db.zapiConfig, {
             phone: cleanWp,
             message: msgText,
-            bypassTestMode: true,
-            recipientRole: "service_worker"
+            channelId: "service_providers",
+            recipientRole: "service_worker",
+            triggerEvent: "service_order_room_available",
+            db
           }).then(waRes => {
             if (!db.whatsappHistory) db.whatsappHistory = [];
             db.whatsappHistory.push({
@@ -11313,8 +11332,10 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
             sendZapiMessage(db.zapiConfig, {
               phone: cleanWp,
               message: welcomeMsg,
-              bypassTestMode: true,
-              recipientRole: "service_worker"
+              channelId: "service_providers",
+              recipientRole: "service_worker",
+              triggerEvent: "service_order_worker_registered",
+              db
             }).then(waRes => {
               if (!db.whatsappHistory) db.whatsappHistory = [];
               db.whatsappHistory.push({
@@ -20714,7 +20735,10 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
         title: "Lembrete de Check-in Digital",
         footer: "CorpFlats • Recepção & Portaria",
         buttons,
-        bypassTestMode: true
+        channelId: "guest_schedule",
+        recipientRole: "guest",
+        triggerEvent: "resend_checkin_link",
+        db
       });
     }
 
@@ -22917,8 +22941,11 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
         phone: cleanGuestPhone,
         message: msg,
         buttons,
+        channelId: "stay_operations",
         recipientRole: "guest",
-        bypassTestMode: Boolean(bypassTestMode)
+        triggerEvent: "lost_item_registered",
+        bypassTestMode: Boolean(bypassTestMode),
+        db
       });
     }
   } catch (err) {
@@ -27113,17 +27140,24 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
         phone: cleanPhone,
         message: otpMessage,
         code: otpCode,
-        buttonText: "Copiar código"
+        buttonText: "Copiar código",
+        channelId: "transactional_chat",
+        recipientRole: "guest",
+        triggerEvent: "whatsapp_otp",
+        db
       });
 
       if (!sendResult.success && (!db.zapiConfig?.instanceId || !db.zapiConfig?.token)) {
         console.log(`[WhatsApp OTP Simulado] Código ${otpCode} gerado para ${cleanPhone}`);
         sendResult = { success: true, simulated: true };
-      } else if (!sendResult.success) {
+      } else if (!sendResult.success && !sendResult.blockedByTestMode && !sendResult.blockedByChannelDisabled && !sendResult.blockedByBlacklist) {
         sendResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
           message: otpMessage,
-          bypassTestMode: true
+          channelId: "transactional_chat",
+          recipientRole: "guest",
+          triggerEvent: "whatsapp_otp",
+          db
         });
       }
     } catch (err) {
@@ -29181,8 +29215,13 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
 
     // 2. Mapeamento de Conflitos no PMS (Reservas ativas e RoomBlocks)
     const busyFlatSet = new Set();
+    const INACTIVE_OR_CHECKED_OUT_STATUSES = new Set([
+      "cancelada", "cancelled", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"
+    ]);
     (db.reservations || []).forEach(r => {
-      if (r.status === "cancelada" || r.status === "expirada") return;
+      const rStatus = String(r.status || "").toLowerCase();
+      if (INACTIVE_OR_CHECKED_OUT_STATUSES.has(rStatus)) return;
+      if (r.checkoutDone === true || r.checkedOut === true || r.checkoutConfirmed === true || Boolean(r.actualCheckoutAt) || Boolean(r.checkoutAt)) return;
       if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
 
       if (r.checkinDate < outDate && r.checkoutDate > inDate) {
@@ -29215,17 +29254,19 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
       }
     });
 
-    // 3. Unidades Habitacionais Disponíveis
+    // 3. Unidades Habitacionais Disponíveis (ordenadas numericamente por número do flat)
     const allFlats = (db.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
     const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
     const maxCapacity = (siteCfg?.extraBedConfig?.enabled) ? (siteCfg.extraBedConfig.maxGuests || 3) : 2;
 
-    const availableFlats = allFlats.filter(f => {
-      const isBusy = busyFlatSet.has(String(f.id)) || busyFlatSet.has(String(f.number));
-      if (isBusy) return false;
-      if (guests > maxCapacity) return false;
-      return true;
-    });
+    const availableFlats = allFlats
+      .filter(f => {
+        const isBusy = busyFlatSet.has(String(f.id)) || busyFlatSet.has(String(f.number));
+        if (isBusy) return false;
+        if (guests > maxCapacity) return false;
+        return true;
+      })
+      .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
 
     res.json({
       success: true,
@@ -29456,8 +29497,13 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
 
     // 1. Verificação SÍNCRONA de conflito no PMS (Reservas ativas, RoomBlocks e Holds Provisórios)
     const nowMs = Date.now();
+    const INACTIVE_PRE_STATUSES = new Set([
+      "cancelada", "cancelled", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"
+    ]);
     const hasConflict = (db.reservations || []).some(r => {
-      if (r.status === "cancelada" || r.status === "expirada") return false;
+      const rStatus = String(r.status || "").toLowerCase();
+      if (INACTIVE_PRE_STATUSES.has(rStatus)) return false;
+      if (r.checkoutDone === true || r.checkedOut === true || r.checkoutConfirmed === true || Boolean(r.actualCheckoutAt) || Boolean(r.checkoutAt)) return false;
       if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
       const matchesFlat = String(r.flatId) === String(flat.id) || String(r.flatNumber) === String(flat.number);
       if (matchesFlat && r.checkinDate < outDate && r.checkoutDate > inDate) return true;
@@ -34150,7 +34196,10 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
     apiResult = await sendZapiMessage(db.zapiConfig, {
       phone: cleanPhone,
       message: msgText,
-      bypassTestMode: true
+      channelId: "stay_operations",
+      recipientRole: "guest",
+      triggerEvent: type === "in_production" ? "breakfast_in_production" : "breakfast_on_the_way",
+      db
     });
   } catch (err) {
     console.error("[Breakfast WhatsApp Dispatch Error]", err);
@@ -40866,8 +40915,10 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
       const sendResult = await sendZapiMessage(db.zapiConfig, {
         phone: cleanPh,
         message: msg,
+        channelId: "maids",
         recipientRole: "camareira",
-        bypassTestMode: true
+        triggerEvent: isAdvance ? "maid_advance_paid" : "maid_pix_paid",
+        db
       });
       payment.whatsappSent = sendResult.success || false;
       payment.whatsappSentAt = new Date().toISOString();
@@ -40968,8 +41019,10 @@ async function handlePaymentReversal(req, res) {
       const waRes = await sendZapiMessage(db.zapiConfig, {
         phone: cleanPh,
         message: msg,
+        channelId: "maids",
         recipientRole: "camareira",
-        bypassTestMode: true
+        triggerEvent: "maid_payment_reversed",
+        db
       });
       waDispatched = waRes.success || false;
     } catch (err) {
@@ -41046,8 +41099,10 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
     const sendResult = await sendZapiMessage(db.zapiConfig, {
       phone,
       message: msg,
+      channelId: "maids",
       recipientRole: "camareira",
-      bypassTestMode: true
+      triggerEvent: "maid_statement_whatsapp",
+      db
     });
     res.json({
       success: sendResult.success,

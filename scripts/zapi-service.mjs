@@ -1501,6 +1501,483 @@ export function setZapiGlobalDbGetter(getter) {
   globalDbGetter = typeof getter === "function" ? getter : () => getter;
 }
 
+// ── Governança dos 7 Canais Independentes Z-API ─────────────────────────────
+export const VALID_ZAPI_CHANNEL_IDS = [
+  "guest_schedule",
+  "ai_agent",
+  "maids",
+  "service_providers",
+  "reception",
+  "stay_operations",
+  "transactional_chat"
+];
+
+export const DEFAULT_ZAPI_CHANNELS = {
+  guest_schedule: {
+    id: "guest_schedule",
+    name: "Régua de Envios de Hóspedes",
+    description: "Confirmações, instruções de check-in, senhas de Wi-Fi, quarto pronto, avisos de saída e pesquisa NPS",
+    category: "hospedes",
+    enabled: true,
+    testMode: true,
+    redirectToWhitelistOnTest: false,
+    whitelist: ["22998505276", "21997142513"],
+    blacklist: [],
+    communications: [
+      "Confirmação de reserva (Direta / Site / WhatsApp)",
+      "Confirmação de reserva (OTA / Booking.com / Airbnb)",
+      "Pré-Reserva & Cobrança PIX com código copia-e-cola",
+      "Confirmação de Pagamento Recebido",
+      "Lembrete de Pré-Check-in Digital (24h antes e reenvio manual)",
+      "Instruções de Chegada & Senhas no dia do check-in (07:00)",
+      "Quarto Liberado — Early Check-in Antecipado (Site/WhatsApp)",
+      "Quarto Liberado — Informação de Flat às 12:00 (Booking/Airbnb)",
+      "Quarto Liberado — Entrada Regular às 14:00",
+      "Alerta de higienização em andamento às 14:00 com previsão de chegada",
+      "Boas-vindas ao Quarto (Check-in Concluído)",
+      "Lembrete de Escolha do Café da Manhã (18:00 da véspera)",
+      "Lembrete de Check-out e orientações de saída (09:30)",
+      "Check-out Concluído & Agradecimento",
+      "Pesquisa de Satisfação NPS (24h pós-saída)",
+      "Convite de Avaliação no Google (apenas hóspedes nota 5)",
+      "Notificação de Alteração de Reserva (De ➔ Para)",
+      "Notificação de Cancelamento de Reserva"
+    ]
+  },
+
+  ai_agent: {
+    id: "ai_agent",
+    name: "Agente IA Sofia & Assistente Fiscal",
+    description: "Respostas autônomas da Sofia, cotações, pré-reserva, fluxo fiscal NFS-e e transbordo humano",
+    category: "ia",
+    enabled: true,
+    testMode: true,
+    redirectToWhitelistOnTest: false,
+    whitelist: ["22998505276"],
+    blacklist: [],
+    communications: [
+      "Respostas autônomas inteligentes da Sofia no WhatsApp",
+      "Cotações de tarifas e cálculo dinâmico de diárias",
+      "Consulta em tempo real de vagas e flats disponíveis",
+      "Pré-reserva conversacional no WhatsApp",
+      "Fluxo fiscal automático de coleta de CPF/CNPJ para emissão de NFS-e",
+      "Mensagens acolhedoras de transbordo para atendente humano",
+      "Mensagens de retificação de dados enviados pelo bot",
+      "Coaching contextual do desenvolvedor via WhatsApp (Tom e Diretrizes)"
+    ]
+  },
+
+  maids: {
+    id: "maids",
+    name: "Camareiras — Limpeza & Extrato",
+    description: "Alertas de limpeza prolongada, resumo diário às 18h, fechamento quinzenal, pagamentos PIX e extrato",
+    category: "governanca",
+    enabled: true,
+    testMode: false,
+    redirectToWhitelistOnTest: true,
+    whitelist: ["22998505276"],
+    blacklist: [],
+    communications: [
+      "Alerta de limpeza prolongada no quarto (>40 min em andamento)",
+      "Resumo diário de produtividade às 18:00 com total de quartos",
+      "Relatório de fechamento quinzenal (dia 15 e último dia do mês às 18:00)",
+      "Comprovante de pagamento PIX e registro de vales (adiantamentos)",
+      "Aviso imediato de estorno de pagamento ou vale cancelado",
+      "Demonstrativo de extrato financeiro enviado sob demanda"
+    ]
+  },
+
+  service_providers: {
+    id: "service_providers",
+    name: "Prestadores de Serviço (OS)",
+    description: "Boas-vindas ao vincular OS, aviso de apartamentos liberados e alerta de serviço atrasado",
+    category: "manutencao",
+    enabled: true,
+    testMode: false,
+    redirectToWhitelistOnTest: true,
+    whitelist: ["22998505276"],
+    blacklist: [],
+    communications: [
+      "Mensagem de boas-vindas com link do portal ao vincular OS",
+      "Aviso automático de apartamento(s) liberado(s) para execução do serviço",
+      "Alerta de serviço atrasado e solicitação de nova previsão de término"
+    ]
+  },
+
+  reception: {
+    id: "reception",
+    name: "Recepção, Portaria & Administração",
+    description: "Avisos de entrada/garagem de prestadores, início e conclusão de OS com fotos, e monitoramento da portaria",
+    category: "portaria",
+    enabled: true,
+    testMode: false,
+    redirectToWhitelistOnTest: true,
+    whitelist: ["22998505276"],
+    blacklist: [],
+    communications: [
+      "Solicitação de liberação de entrada de prestador no condomínio",
+      "Solicitação de liberação de vaga de garagem para prestador",
+      "Aviso de início de serviço com previsão informada pelo prestador",
+      "Aviso de atraso e atualização de previsão de término de serviço",
+      "Aviso de conclusão de serviço pelo prestador com necessidades de limpeza",
+      "Envio de fotos anexadas na conclusão do serviço via WhatsApp",
+      "Monitoramento do Grupo da Portaria para check-out automático de flats"
+    ]
+  },
+
+  stay_operations: {
+    id: "stay_operations",
+    name: "Operações de Estadia (Café & Achados)",
+    description: "Avisos de café em preparo e a caminho do quarto, e notificações de objetos esquecidos",
+    category: "operacoes",
+    enabled: true,
+    testMode: false,
+    redirectToWhitelistOnTest: true,
+    whitelist: ["22998505276"],
+    blacklist: [],
+    communications: [
+      "Aviso da cozinha de café da manhã em preparo para entrega no flat",
+      "Aviso da cozinha de café da manhã a caminho do quarto",
+      "Notificação de objeto esquecido ao hóspede com contato da camareira / recepção"
+    ]
+  },
+
+  transactional_chat: {
+    id: "transactional_chat",
+    name: "Chat Ao Vivo & OTP Check-in",
+    description: "Códigos OTP de verificação do check-in digital, mensagens do chat ao vivo pelo operador e testes",
+    category: "chat",
+    enabled: true,
+    testMode: false,
+    redirectToWhitelistOnTest: false,
+    whitelist: ["22998505276"],
+    blacklist: [],
+    communications: [
+      "Envio de código OTP de segurança para validação do Check-in Digital / FNRH",
+      "Mensagens manuais enviadas pelo operador humano no Chat Ao Vivo",
+      "Disparos de teste direto de conexão e botões no painel Z-API"
+    ]
+  }
+};
+
+export function matchPhoneNumber(p1, p2) {
+  if (!p1 || !p2) return false;
+  const d1 = String(p1).replace(/\D/g, "");
+  const d2 = String(p2).replace(/\D/g, "");
+  if (!d1 || !d2) return false;
+  if (d1 === d2) return true;
+  const without55_1 = d1.startsWith("55") && d1.length >= 12 ? d1.slice(2) : d1;
+  const without55_2 = d2.startsWith("55") && d2.length >= 12 ? d2.slice(2) : d2;
+  if (without55_1 === without55_2) return true;
+  if (without55_1.length >= 10 && without55_2.length >= 10) {
+    const area1 = without55_1.slice(0, 2);
+    const area2 = without55_2.slice(0, 2);
+    if (area1 !== area2) return false;
+    const rest1 = without55_1.slice(2);
+    const rest2 = without55_2.slice(2);
+    if (rest1 === rest2) return true;
+    if (rest1.slice(-8) === rest2.slice(-8)) return true;
+  }
+  if ((d1.length < 10 || d2.length < 10) && d1.slice(-8) === d2.slice(-8)) {
+    return true;
+  }
+  return false;
+}
+
+export function isPhoneInList(phone, list) {
+  if (!phone || !Array.isArray(list) || list.length === 0) return false;
+  return list.some(item => matchPhoneNumber(phone, item));
+}
+
+export function evaluateZapiChannelPolicy(configOrOptions, maybeOptions = {}) {
+  const isSingleObjectCall = Boolean(
+    configOrOptions &&
+    typeof configOrOptions === "object" &&
+    !maybeOptions?.phone &&
+    (configOrOptions.phone !== undefined || configOrOptions.channelId !== undefined || configOrOptions.config !== undefined)
+  );
+  const config = isSingleObjectCall ? (configOrOptions.config || configOrOptions.db?.zapiConfig || configOrOptions) : configOrOptions;
+  const options = isSingleObjectCall ? configOrOptions : (maybeOptions || {});
+
+  const {
+    phone,
+    channelId,
+    recipientRole = "",
+    triggerEvent = "",
+    message = "",
+    db = null,
+    bypassTestMode = false
+  } = options;
+
+  const rawPhone = phone || "";
+  let cleanPhone = cleanWhatsAppPhone(rawPhone) || String(rawPhone).replace(/\D/g, "");
+  if (cleanPhone && !cleanPhone.startsWith("55") && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
+    cleanPhone = `55${cleanPhone}`;
+  }
+  if (!cleanPhone) {
+    return {
+      allowed: false,
+      reason: "Número de WhatsApp do destinatário inválido ou ausente.",
+      reasonCode: "invalid_phone",
+      targetPhone: "",
+      effectivePhone: ""
+    };
+  }
+
+  // 1. Resolver canal correspondente
+  let resolvedChannelId = channelId;
+  if (!resolvedChannelId || !VALID_ZAPI_CHANNEL_IDS.includes(resolvedChannelId)) {
+    const roleLower = String(recipientRole || "").toLowerCase();
+    const eventLower = String(triggerEvent || "").toLowerCase();
+
+    if (roleLower === "camareira" || roleLower === "cleaner") {
+      resolvedChannelId = "maids";
+    } else if (roleLower === "service_worker" || roleLower === "prestador") {
+      resolvedChannelId = (eventLower.startsWith("service_order_") && !eventLower.includes("overdue") && !eventLower.includes("worker") && !eventLower.includes("room_available")) ? "reception" : "service_providers";
+    } else if (roleLower === "reception" || roleLower === "recepcao" || roleLower === "portaria" || roleLower === "garagem" || roleLower === "admin") {
+      resolvedChannelId = "reception";
+    } else if (roleLower === "developer" || roleLower === "ia") {
+      resolvedChannelId = "ai_agent";
+    } else if (roleLower === "operator") {
+      resolvedChannelId = "transactional_chat";
+    } else if (eventLower.startsWith("maid_")) {
+      resolvedChannelId = "maids";
+    } else if (eventLower.includes("overdue_alert") || eventLower.includes("worker_registered") || eventLower.includes("room_available")) {
+      resolvedChannelId = "service_providers";
+    } else if (eventLower.startsWith("service_order_")) {
+      resolvedChannelId = "reception";
+    } else if (eventLower.startsWith("breakfast_") || eventLower.startsWith("lost_item")) {
+      resolvedChannelId = "stay_operations";
+    } else if (eventLower.startsWith("pre_checkin_otp") || eventLower.startsWith("otp_") || eventLower.startsWith("chat_")) {
+      resolvedChannelId = "transactional_chat";
+    } else if (eventLower.startsWith("ai_")) {
+      resolvedChannelId = "ai_agent";
+    } else {
+      resolvedChannelId = "guest_schedule";
+    }
+  }
+
+  // 2. Obter configurações do canal
+  const activeChannels = config?.channels || db?.zapiConfig?.channels || null;
+  const defaultChannel = DEFAULT_ZAPI_CHANNELS[resolvedChannelId] || {
+    id: resolvedChannelId,
+    name: resolvedChannelId,
+    enabled: true,
+    testMode: false,
+    redirectToWhitelistOnTest: false,
+    whitelist: ["22998505276"],
+    blacklist: []
+  };
+
+  let fallbackOverrides = {};
+  if (!activeChannels || !activeChannels[resolvedChannelId]) {
+    const legacyPhones = String(config?.testAllowedPhones || db?.zapiConfig?.testAllowedPhones || "")
+      .split(/[,\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (resolvedChannelId === "guest_schedule") {
+      const legacyEnabled = config?.enabled ?? db?.zapiConfig?.enabled;
+      const legacyTest = config?.testModeOnly ?? db?.zapiConfig?.testModeOnly;
+      fallbackOverrides = {
+        enabled: legacyEnabled !== undefined ? Boolean(legacyEnabled) : defaultChannel.enabled,
+        testMode: legacyTest !== undefined ? Boolean(legacyTest) : false,
+        whitelist: legacyPhones.length > 0 ? Array.from(new Set([...defaultChannel.whitelist, ...legacyPhones])) : defaultChannel.whitelist
+      };
+    } else if (resolvedChannelId === "ai_agent") {
+      const aiAgentCfg = config?.aiAgent || db?.zapiConfig?.aiAgent || {};
+      const legacyTest = aiAgentCfg.testMode !== undefined
+        ? Boolean(aiAgentCfg.testMode)
+        : (config?.testModeOnly ?? db?.zapiConfig?.testModeOnly ?? false);
+      fallbackOverrides = {
+        enabled: aiAgentCfg.enabled !== undefined ? Boolean(aiAgentCfg.enabled) : defaultChannel.enabled,
+        testMode: Boolean(legacyTest),
+        whitelist: legacyPhones.length > 0 ? Array.from(new Set([...defaultChannel.whitelist, ...legacyPhones])) : defaultChannel.whitelist
+      };
+    }
+  }
+
+  const channel = {
+    ...defaultChannel,
+    ...fallbackOverrides,
+    ...(activeChannels?.[resolvedChannelId] || {})
+  };
+
+  // 3. Regra 1: Canal desativado / pausado
+  if (channel.enabled === false) {
+    return {
+      allowed: false,
+      reason: `Canal ${channel.name || resolvedChannelId} está pausado.`,
+      reasonCode: "channel_paused",
+      blockedByChannelPause: true,
+      channelId: resolvedChannelId,
+      targetPhone: cleanPhone,
+      effectivePhone: cleanPhone
+    };
+  }
+
+  // 4. Regra 2: Blacklist (bloqueio absoluto, mesmo em produção)
+  if (Array.isArray(channel.blacklist) && channel.blacklist.length > 0) {
+    if (isPhoneInList(cleanPhone, channel.blacklist)) {
+      return {
+        allowed: false,
+        reason: `Telefone ${cleanPhone} está na lista de bloqueio (Blacklist) do canal ${channel.name || resolvedChannelId}.`,
+        reasonCode: "blacklisted",
+        blockedByBlacklist: true,
+        channelId: resolvedChannelId,
+        targetPhone: cleanPhone,
+        effectivePhone: cleanPhone
+      };
+    }
+  }
+
+  // 5. Regra 3: Modo de Teste
+  if (channel.testMode === true && !bypassTestMode) {
+    const isWhitelisted = isPhoneInList(cleanPhone, channel.whitelist);
+    if (isWhitelisted) {
+      return {
+        allowed: true,
+        testMode: true,
+        redirected: false,
+        testRedirect: false,
+        targetPhone: cleanPhone,
+        effectivePhone: cleanPhone,
+        effectiveMessage: message,
+        channelId: resolvedChannelId
+      };
+    }
+
+    // Se não está na Whitelist, verifica se tem redirecionamento ativado
+    if (channel.redirectToWhitelistOnTest === true && Array.isArray(channel.whitelist) && channel.whitelist.length > 0) {
+      const rawTarget = channel.whitelist[0];
+      let targetPhone = cleanWhatsAppPhone(rawTarget) || String(rawTarget).replace(/\D/g, "");
+      if (!targetPhone.startsWith("55") && targetPhone.length <= 11) {
+        targetPhone = `55${targetPhone}`;
+      }
+
+      const displayOriginal = typeof formatPhoneDisplay === "function" ? formatPhoneDisplay(cleanPhone) : cleanPhone;
+      const channelName = channel.name || resolvedChannelId;
+      const redirectHeader = `🧪 *[MODO TESTE • Canal: ${channelName}]*\n📍 *Destinatário original:* ${displayOriginal} (não enviado ao nº real)\n─────────────────────\n`;
+
+      return {
+        allowed: true,
+        testMode: true,
+        redirected: true,
+        testRedirect: true,
+        targetPhone,
+        effectivePhone: targetPhone,
+        originalPhone: cleanPhone,
+        redirectHeader,
+        effectiveMessage: message ? `${redirectHeader}${message}` : redirectHeader,
+        channelId: resolvedChannelId
+      };
+    }
+
+    // Bloqueado pela Whitelist
+    return {
+      allowed: false,
+      reason: `Disparo bloqueado: Canal ${channel.name || resolvedChannelId} em Modo de Teste e telefone ${cleanPhone} não está na Whitelist.`,
+      reasonCode: "not_in_whitelist",
+      blockedByWhitelist: true,
+      blockedByTestMode: true,
+      channelId: resolvedChannelId,
+      targetPhone: cleanPhone,
+      effectivePhone: cleanPhone
+    };
+  }
+
+  // 6. Regra 4: Modo Produção (testMode: false)
+  return {
+    allowed: true,
+    testMode: false,
+    redirected: false,
+    testRedirect: false,
+    targetPhone: cleanPhone,
+    effectivePhone: cleanPhone,
+    effectiveMessage: message,
+    channelId: resolvedChannelId
+  };
+}
+
+export function ensureZapiChannels(dbOrConfig) {
+  if (!dbOrConfig) return {};
+  const isDirectConfig = !dbOrConfig.zapiConfig && (
+    dbOrConfig.channels !== undefined ||
+    dbOrConfig.testModeOnly !== undefined ||
+    dbOrConfig.testAllowedPhones !== undefined ||
+    dbOrConfig.instanceId !== undefined ||
+    (!dbOrConfig.reservations && !dbOrConfig.whatsappConversations && !dbOrConfig.whatsappAiSettings && dbOrConfig.enabled !== undefined)
+  );
+  const cfg = isDirectConfig ? dbOrConfig : (dbOrConfig.zapiConfig || (dbOrConfig.zapiConfig = {}));
+  if (!cfg.channels) cfg.channels = {};
+
+  for (const [chId, defCh] of Object.entries(DEFAULT_ZAPI_CHANNELS)) {
+    if (!cfg.channels[chId]) {
+      cfg.channels[chId] = JSON.parse(JSON.stringify(defCh));
+    } else {
+      const ch = cfg.channels[chId];
+      if (ch.enabled === undefined) ch.enabled = defCh.enabled;
+      if (ch.testMode === undefined) ch.testMode = defCh.testMode;
+      if (ch.redirectToWhitelistOnTest === undefined) ch.redirectToWhitelistOnTest = defCh.redirectToWhitelistOnTest;
+      if (!Array.isArray(ch.whitelist)) ch.whitelist = [...defCh.whitelist];
+      if (!Array.isArray(ch.blacklist)) ch.blacklist = [...defCh.blacklist];
+      if (!ch.name) ch.name = defCh.name;
+      if (!ch.description) ch.description = defCh.description;
+      if (!ch.category) ch.category = defCh.category;
+      if (!Array.isArray(ch.communications)) ch.communications = [...defCh.communications];
+    }
+  }
+  return cfg.channels;
+}
+
+export function syncChannelsBidirectional(db, source = "channels") {
+  if (!db || !db.zapiConfig) return;
+  ensureZapiChannels(db);
+  const channels = db.zapiConfig.channels;
+
+  if (source === "root") {
+    if (db.zapiConfig.enabled !== undefined) {
+      channels.guest_schedule.enabled = Boolean(db.zapiConfig.enabled);
+    }
+    if (db.zapiConfig.testModeOnly !== undefined) {
+      channels.guest_schedule.testMode = Boolean(db.zapiConfig.testModeOnly);
+    }
+    if (db.zapiConfig.testAllowedPhones !== undefined) {
+      const phones = String(db.zapiConfig.testAllowedPhones)
+        .split(/[,;\s\n]+/)
+        .map(p => cleanWhatsAppPhone(p))
+        .filter(Boolean);
+      if (phones.length > 0) {
+        channels.guest_schedule.whitelist = Array.from(new Set([...channels.guest_schedule.whitelist, ...phones]));
+      }
+    }
+    if (db.whatsappAiSettings) {
+      if (db.whatsappAiSettings.enabled !== undefined) {
+        channels.ai_agent.enabled = Boolean(db.whatsappAiSettings.enabled);
+      }
+      if (db.whatsappAiSettings.testModeOnly !== undefined) {
+        channels.ai_agent.testMode = Boolean(db.whatsappAiSettings.testModeOnly);
+      }
+    }
+  } else {
+    if (channels.guest_schedule) {
+      db.zapiConfig.enabled = Boolean(channels.guest_schedule.enabled);
+      db.zapiConfig.testModeOnly = Boolean(channels.guest_schedule.testMode);
+      if (Array.isArray(channels.guest_schedule.whitelist) && channels.guest_schedule.whitelist.length > 0) {
+        db.zapiConfig.testAllowedPhones = channels.guest_schedule.whitelist.join(", ");
+      }
+    }
+    if (channels.ai_agent) {
+      if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
+      db.whatsappAiSettings.enabled = Boolean(channels.ai_agent.enabled);
+      db.whatsappAiSettings.testModeOnly = Boolean(channels.ai_agent.testMode);
+      if (db.zapiConfig.aiAgent) {
+        db.zapiConfig.aiAgent.enabled = Boolean(channels.ai_agent.enabled);
+        db.zapiConfig.aiAgent.testModeOnly = Boolean(channels.ai_agent.testMode);
+      }
+    }
+  }
+}
+
 // ── Verificação de Whitelist / Modo de Teste (Sandbox) ─────────────────────────
 // Números sempre liberados no Modo de Teste (além de testAllowedPhones e camareiras):
 // - 22998505276: Miller Mendonça (gestor / desenvolvedor)
@@ -2710,31 +3187,48 @@ export async function sendZapiDocument(config, {
   fileName = "Manual_do_Hospede_CorpFlats.pdf",
   caption = "",
   bypassTestMode = false,
-  recipientRole = ""
+  recipientRole = "",
+  channelId = "",
+  triggerEvent = "",
+  db = null
 }) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
   }
 
-  const isStaffRecipient = Boolean(
-    bypassTestMode || 
-    recipientRole === "camareira" || 
-    recipientRole === "cleaner" || 
-    recipientRole === "staff" ||
-    recipientRole === "service_worker" ||
-    recipientRole === "prestador"
-  );
+  const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+  const policy = evaluateZapiChannelPolicy(config, {
+    phone: cleanPhone,
+    channelId,
+    recipientRole,
+    triggerEvent,
+    db: activeDb,
+    bypassTestMode
+  });
 
-  // Trava de Segurança: Modo de Teste / Sandbox
-  if (!isStaffRecipient && !isPhoneAllowedInTestMode(cleanPhone, config)) {
-    console.warn(`[Z-API Sandbox] Documento para ${cleanPhone} BLOQUEADO pelo Modo de Teste. Permitido apenas para: ${config?.testAllowedPhones || "22998505276"}`);
+  if (!policy.allowed) {
+    console.warn(`[Z-API Channel Policy] Documento para ${cleanPhone} BLOQUEADO pelo canal ${policy.channelId}. Motivo: ${policy.reason}`);
     return {
       success: false,
-      blockedByTestMode: true,
-      error: `Disparo bloqueado: O WhatsApp está em Modo de Teste / Sandbox e o telefone ${cleanPhone} não está na lista de números autorizados.`
+      blockedByChannelPause: Boolean(policy.blockedByChannelPause),
+      blockedByBlacklist: Boolean(policy.blockedByBlacklist),
+      blockedByWhitelist: Boolean(policy.blockedByWhitelist),
+      blockedByTestMode: Boolean(policy.blockedByWhitelist || policy.blockedByTestMode),
+      channelId: policy.channelId,
+      error: policy.reason || "Disparo bloqueado pela governança de canais Z-API."
     };
   }
+
+  let targetPhone = cleanPhone;
+  let finalCaption = caption;
+
+  if (policy.redirected) {
+    targetPhone = policy.targetPhone;
+    const header = policy.redirectHeader || "";
+    finalCaption = finalCaption ? `${header}${finalCaption}` : header.trim();
+  }
+
   if (!document) {
     return { success: false, error: "Arquivo ou link do documento não especificado." };
   }
@@ -2745,13 +3239,16 @@ export async function sendZapiDocument(config, {
 
   // Simulação para desenvolvimento se credenciais não estiverem configuradas
   if (!instanceId || !token) {
-    console.warn(`[Z-API Mock] Credenciais não configuradas. Documento '${fileName}' para ${cleanPhone} simulado.`);
+    console.warn(`[Z-API Mock] Credenciais não configuradas. Documento '${fileName}' para ${targetPhone} simulado.`);
     return {
       success: true,
       simulated: true,
       messageId: `mock_doc_${Date.now()}`,
-      phone: cleanPhone,
-      fileName
+      phone: targetPhone,
+      originalPhone: cleanPhone,
+      redirected: Boolean(policy.redirected),
+      fileName,
+      channelId: policy.channelId
     };
   }
 
@@ -2799,14 +3296,14 @@ export async function sendZapiDocument(config, {
   if (clientToken) headers["Client-Token"] = clientToken;
 
   const payload = {
-    phone: cleanPhone,
+    phone: targetPhone,
     document: finalDocument,
     fileName: fileName || `Documento.${extension}`,
-    caption: caption || ""
+    caption: finalCaption || ""
   };
 
   try {
-    console.log(`[Z-API] Enviando documento (${fileName}) para ${cleanPhone}...`);
+    console.log(`[Z-API] Enviando documento (${fileName}) para ${targetPhone}...`);
     const res = await fetch(docUrl, {
       method: "POST",
       headers,
@@ -2815,11 +3312,15 @@ export async function sendZapiDocument(config, {
     const data = await res.json().catch(() => ({}));
 
     if (res.ok && (data.zaapId || data.id || data.messageId)) {
-      console.log(`[Z-API ✓] Documento ${fileName} entregue para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
+      console.log(`[Z-API ✓] Documento ${fileName} entregue para ${targetPhone}. ID: ${data.zaapId || data.id}`);
       return {
         success: true,
         messageId: data.zaapId || data.id,
         fileName,
+        phone: targetPhone,
+        originalPhone: cleanPhone,
+        redirected: Boolean(policy.redirected),
+        channelId: policy.channelId,
         data
       };
     }
@@ -2849,43 +3350,74 @@ export async function sendZapiMessage(config, {
   documentCaption = "",
   fileBase64 = "",
   bypassTestMode = false,
-  recipientRole = ""
+  recipientRole = "",
+  channelId = "",
+  triggerEvent = "",
+  db = null
 }) {
   let cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
   }
 
-  const isStaffRecipient = Boolean(
-    bypassTestMode || 
-    recipientRole === "camareira" || 
-    recipientRole === "cleaner" || 
-    recipientRole === "staff" ||
-    recipientRole === "service_worker" ||
-    recipientRole === "prestador"
-  );
+  const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+  const policy = evaluateZapiChannelPolicy(config, {
+    phone: cleanPhone,
+    channelId,
+    recipientRole,
+    triggerEvent,
+    db: activeDb,
+    bypassTestMode
+  });
 
-  // Trava de Segurança: Modo de Teste / Sandbox
-  if (!isStaffRecipient && !isPhoneAllowedInTestMode(cleanPhone, config)) {
-    console.warn(`[Z-API Sandbox] Disparo para ${cleanPhone} BLOQUEADO pelo Modo de Teste / Sandbox. Permitido apenas para: ${config?.testAllowedPhones || "22998505276"}`);
+  if (!policy.allowed) {
+    console.warn(`[Z-API Channel Policy] Disparo para ${cleanPhone} BLOQUEADO pelo canal ${policy.channelId}. Motivo: ${policy.reason}`);
     return {
       success: false,
-      blockedByTestMode: true,
-      error: `Disparo bloqueado: O WhatsApp está em Modo de Teste / Sandbox e o telefone ${cleanPhone} não está na lista de números autorizados.`
+      blockedByChannelPause: Boolean(policy.blockedByChannelPause),
+      blockedByBlacklist: Boolean(policy.blockedByBlacklist),
+      blockedByWhitelist: Boolean(policy.blockedByWhitelist),
+      blockedByTestMode: Boolean(policy.blockedByWhitelist || policy.blockedByTestMode),
+      channelId: policy.channelId,
+      error: policy.reason || "Disparo bloqueado pela governança de canais Z-API."
     };
+  }
+
+  let targetPhone = cleanPhone;
+  let finalMessage = message;
+  let finalDocumentCaption = documentCaption;
+  let finalTitle = title;
+
+  if (policy.redirected) {
+    targetPhone = policy.targetPhone;
+    const header = policy.redirectHeader || "";
+    console.log(`[Z-API Test Redirect] Mensagem do canal ${policy.channelId} redirecionada de ${cleanPhone} para ${targetPhone}`);
+    if (finalMessage) {
+      finalMessage = `${header}${finalMessage}`;
+    } else if (finalTitle) {
+      finalTitle = `${header}${finalTitle}`;
+    }
+    if (finalDocumentCaption) {
+      finalDocumentCaption = `${header}${finalDocumentCaption}`;
+    } else if (!finalMessage && !finalTitle) {
+      finalDocumentCaption = header.trim();
+    }
   }
 
   const hasDoc = Boolean(documentUrl || fileBase64);
 
   // Se não há texto na mensagem mas há documento, envia diretamente o documento
-  if (!message && hasDoc) {
+  if (!finalMessage && hasDoc) {
     return await sendZapiDocument(config, {
-      phone: cleanPhone,
+      phone: targetPhone,
       document: fileBase64 || documentUrl,
       fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
-      caption: documentCaption || "",
+      caption: finalDocumentCaption || "",
       bypassTestMode,
-      recipientRole
+      recipientRole,
+      channelId: policy.channelId,
+      triggerEvent,
+      db: activeDb
     });
   }
 
@@ -2897,13 +3429,16 @@ export async function sendZapiMessage(config, {
 
   // Se não configurado, simula sucesso em ambiente de desenvolvimento/teste sem travar
   if (!instanceId || !token) {
-    console.warn(`[Z-API Mock] Credenciais não configuradas. Mensagem para ${cleanPhone} simulada.`);
+    console.warn(`[Z-API Mock] Credenciais não configuradas. Mensagem para ${targetPhone} simulada.`);
     const mockResult = {
       success: true,
       simulated: true,
       messageId: `mock_${Date.now()}`,
-      phone: cleanPhone,
-      message: message
+      phone: targetPhone,
+      originalPhone: cleanPhone,
+      redirected: Boolean(policy.redirected),
+      message: finalMessage,
+      channelId: policy.channelId
     };
     if (hasDoc) {
       mockResult.hasDocument = true;
@@ -2926,7 +3461,7 @@ export async function sendZapiMessage(config, {
   }
 
   // Sanitização de segurança de botões em mensagens de check-out, pós-estadia ou cancelamento
-  const msgContext = `${title || ""} ${message || ""}`.toLowerCase();
+  const msgContext = `${finalTitle || ""} ${finalMessage || ""}`.toLowerCase();
   const isCheckoutOrEndMessage = msgContext.includes("check-out") || 
                                  msgContext.includes("checkout") || 
                                  msgContext.includes("encerramento da sua estadia") || 
@@ -2953,27 +3488,31 @@ export async function sendZapiMessage(config, {
 
   // 1. Envio Direto via Texto Formatado com Links (/send-text)
   if (shouldSendText) {
-    const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
+    const textWithLinks = formatMessageWithLinks(finalMessage, footer, validButtons);
     const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
 
     try {
-      console.log(`[Z-API] Enviando mensagem em texto formatado para ${cleanPhone}...`);
+      console.log(`[Z-API] Enviando mensagem em texto formatado para ${targetPhone}...`);
       const res = await fetch(textUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
+        body: JSON.stringify({ phone: targetPhone, message: textWithLinks })
       });
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && (data.zaapId || data.id || data.messageId)) {
-        console.log(`[Z-API ✓] Texto entregue para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
+        console.log(`[Z-API ✓] Texto entregue para ${targetPhone}. ID: ${data.zaapId || data.id}`);
         primaryResult = {
           success: true,
           method: "text_links",
           messageId: data.zaapId || data.id,
+          phone: targetPhone,
+          originalPhone: cleanPhone,
+          redirected: Boolean(policy.redirected),
+          channelId: policy.channelId,
           data
         };
-        recordBotSentMessage({ messageId: primaryResult.messageId, phone: cleanPhone, text: message });
+        recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
       } else {
         primaryResult = {
           success: false,
@@ -3024,15 +3563,15 @@ export async function sendZapiMessage(config, {
     });
 
     const buttonActionsPayload = {
-      phone: cleanPhone,
-      message: message,
+      phone: targetPhone,
+      message: finalMessage,
       // Omitido 'title' para que a mensagem inicie direto com a saudação, sem cabeçalho com o nome interno do template
       ...(footer ? { footer } : {}),
       buttonActions: formattedActions
     };
 
     try {
-      console.log(`[Z-API] Enviando mensagem com botões para ${cleanPhone}...`);
+      console.log(`[Z-API] Enviando mensagem com botões para ${targetPhone}...`);
       const res = await fetch(buttonActionsUrl, {
         method: "POST",
         headers,
@@ -3041,26 +3580,30 @@ export async function sendZapiMessage(config, {
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
-        console.log(`[Z-API ✓] Mensagem com botões aceita para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
+        console.log(`[Z-API ✓] Mensagem com botões aceita para ${targetPhone}. ID: ${data.zaapId || data.id}`);
         primaryResult = {
           success: true,
           method: "buttons",
           messageId: data.zaapId || data.id || "ok",
+          phone: targetPhone,
+          originalPhone: cleanPhone,
+          redirected: Boolean(policy.redirected),
+          channelId: policy.channelId,
           data
         };
-        recordBotSentMessage({ messageId: primaryResult.messageId, phone: cleanPhone, text: message });
+        recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
       } else {
         console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
 
         // Fallback para texto formatado se configurado
         if (fallbackToText) {
-          console.log(`[Z-API Fallback] Reenviando como texto formatado para ${cleanPhone}...`);
-          const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
+          console.log(`[Z-API Fallback] Reenviando como texto formatado para ${targetPhone}...`);
+          const textWithLinks = formatMessageWithLinks(finalMessage, footer, validButtons);
           const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
           const textRes = await fetch(textUrl, {
             method: "POST",
             headers,
-            body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
+            body: JSON.stringify({ phone: targetPhone, message: textWithLinks })
           });
           const textData = await textRes.json().catch(() => ({}));
 
@@ -3071,9 +3614,13 @@ export async function sendZapiMessage(config, {
               warning: "Mensagem entregue via texto com links diretos após recusa de botões pela Z-API.",
               buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
               messageId: textData.zaapId || textData.id,
+              phone: targetPhone,
+              originalPhone: cleanPhone,
+              redirected: Boolean(policy.redirected),
+              channelId: policy.channelId,
               data: textData
             };
-            recordBotSentMessage({ messageId: primaryResult.messageId, phone: cleanPhone, text: message });
+            recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
           } else {
             primaryResult = {
               success: false,
@@ -3096,15 +3643,18 @@ export async function sendZapiMessage(config, {
   // Se o envio principal teve sucesso (ou simulação) E há documento anexo configurado:
   if ((primaryResult?.success || primaryResult?.simulated) && hasDoc) {
     try {
-      console.log(`[Z-API] Anexando documento ${documentName || 'PDF'} para ${cleanPhone}...`);
+      console.log(`[Z-API] Anexando documento ${documentName || 'PDF'} para ${targetPhone}...`);
       await new Promise(r => setTimeout(r, 1200)); // Pequena pausa para garantir ordem cronológica no WhatsApp
       const docResult = await sendZapiDocument(config, {
-        phone: cleanPhone,
+        phone: targetPhone,
         document: fileBase64 || documentUrl,
         fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
-        caption: documentCaption || "",
+        caption: finalDocumentCaption || "",
         bypassTestMode,
-        recipientRole
+        recipientRole,
+        channelId: policy.channelId,
+        triggerEvent,
+        db: activeDb
       });
       primaryResult.documentResult = docResult;
       primaryResult.hasDocument = true;
@@ -3120,21 +3670,25 @@ export async function sendZapiMessage(config, {
 
   if (pixCodeToCopy && typeof pixCodeToCopy === "string" && pixCodeToCopy.startsWith("000201") && (primaryResult?.success || primaryResult?.simulated)) {
     try {
-      console.log(`[Z-API PIX Companion] Enviando código PIX para cópia em 1 toque para ${cleanPhone}...`);
+      console.log(`[Z-API PIX Companion] Enviando código PIX para cópia em 1 toque para ${targetPhone}...`);
       await new Promise(r => setTimeout(r, 800)); // Pequena pausa para garantir ordem cronológica no WhatsApp
 
       // 1. Tenta botão OTP nativo da Z-API (/send-button-otp)
       let otpSent = false;
       try {
         const otpRes = await sendZapiOtpButton(config, {
-          phone: cleanPhone,
+          phone: targetPhone,
           message: `📋 *PIX Copia e Cola:*\nToque no botão abaixo para copiar o código e pagar no app do seu banco:`,
           code: pixCodeToCopy,
-          buttonText: "Copiar Código PIX"
+          buttonText: "Copiar Código PIX",
+          channelId: policy.channelId,
+          recipientRole,
+          triggerEvent: "pix_companion_otp",
+          db: activeDb
         });
         if (otpRes?.success) {
           otpSent = true;
-          console.log(`[Z-API PIX Companion ✓] Botão OTP entregue com sucesso para ${cleanPhone}`);
+          console.log(`[Z-API PIX Companion ✓] Botão OTP entregue com sucesso para ${targetPhone}`);
         }
       } catch (otpErr) {
         console.warn(`[Z-API PIX Companion] Botão OTP falhou:`, otpErr.message);
@@ -3147,15 +3701,22 @@ export async function sendZapiMessage(config, {
           method: "POST",
           headers,
           body: JSON.stringify({
-            phone: cleanPhone,
+            phone: targetPhone,
             message: `${pixCodeToCopy}`
           })
         }).catch(() => {});
-        console.log(`[Z-API PIX Companion ✓] Código PIX puro entregue para ${cleanPhone}`);
+        console.log(`[Z-API PIX Companion ✓] Código PIX puro entregue para ${targetPhone}`);
       }
     } catch (pixErr) {
       console.warn(`[Z-API PIX Companion] Erro ao enviar código PIX complementar:`, pixErr.message);
     }
+  }
+
+  if (primaryResult) {
+    if (primaryResult.phone === undefined) primaryResult.phone = targetPhone;
+    if (primaryResult.originalPhone === undefined) primaryResult.originalPhone = cleanPhone;
+    if (primaryResult.redirected === undefined) primaryResult.redirected = Boolean(policy.redirected);
+    if (primaryResult.channelId === undefined) primaryResult.channelId = policy.channelId;
   }
 
   return primaryResult;
@@ -3200,14 +3761,62 @@ export async function sendZapiLocation(config, { phone, title, address, latitude
 /**
  * Enviar Botão OTP de Cópia com 1 Toque (/send-button-otp)
  */
-export async function sendZapiOtpButton(config, { phone, message, code, buttonText = "Copiar código" }) {
+export async function sendZapiOtpButton(config, {
+  phone,
+  message,
+  code,
+  buttonText = "Copiar código",
+  channelId = "transactional_chat",
+  recipientRole = "guest",
+  triggerEvent = "pre_checkin_otp",
+  db = null
+}) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) return { success: false, error: "Telefone inválido" };
+
+  const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+  const policy = evaluateZapiChannelPolicy(config, {
+    phone: cleanPhone,
+    channelId: channelId || "transactional_chat",
+    recipientRole,
+    triggerEvent,
+    db: activeDb
+  });
+
+  if (!policy.allowed) {
+    console.warn(`[Z-API Channel Policy] OTP Button para ${cleanPhone} BLOQUEADO pelo canal ${policy.channelId}. Motivo: ${policy.reason}`);
+    return {
+      success: false,
+      blockedByChannelPause: Boolean(policy.blockedByChannelPause),
+      blockedByBlacklist: Boolean(policy.blockedByBlacklist),
+      blockedByWhitelist: Boolean(policy.blockedByWhitelist),
+      blockedByTestMode: Boolean(policy.blockedByWhitelist || policy.blockedByTestMode),
+      channelId: policy.channelId,
+      error: policy.reason || "Disparo bloqueado pela governança de canais Z-API."
+    };
+  }
+
+  let targetPhone = cleanPhone;
+  let finalMessage = message;
+  if (policy.redirected) {
+    targetPhone = policy.targetPhone;
+    const header = policy.redirectHeader || "";
+    finalMessage = `${header}${finalMessage}`;
+  }
 
   const instanceId = config?.instanceId?.trim();
   const token = config?.token?.trim();
   const clientToken = config?.clientToken?.trim();
-  if (!instanceId || !token) return { success: true, simulated: true };
+  if (!instanceId || !token) {
+    return {
+      success: true,
+      simulated: true,
+      phone: targetPhone,
+      originalPhone: cleanPhone,
+      redirected: Boolean(policy.redirected),
+      channelId: policy.channelId
+    };
+  }
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
   const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`;
@@ -3215,8 +3824,8 @@ export async function sendZapiOtpButton(config, { phone, message, code, buttonTe
   if (clientToken) headers["Client-Token"] = clientToken;
 
   const payload = {
-    phone: cleanPhone,
-    message,
+    phone: targetPhone,
+    message: finalMessage,
     code,
     buttonText
   };
@@ -3224,7 +3833,14 @@ export async function sendZapiOtpButton(config, { phone, message, code, buttonTe
   try {
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
-    return { success: res.ok, data };
+    return {
+      success: res.ok,
+      data,
+      phone: targetPhone,
+      originalPhone: cleanPhone,
+      redirected: Boolean(policy.redirected),
+      channelId: policy.channelId
+    };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -3233,14 +3849,49 @@ export async function sendZapiOtpButton(config, { phone, message, code, buttonTe
 /**
  * Enviar Botão Nativo de Chave PIX (/send-button-pix)
  */
-export async function sendZapiPixButton(config, { phone, pixKey, type = "EVP", merchantName = "CorpFlats" }) {
+export async function sendZapiPixButton(config, {
+  phone,
+  pixKey,
+  type = "EVP",
+  merchantName = "CorpFlats",
+  channelId = "guest_schedule",
+  recipientRole = "guest",
+  triggerEvent = "pix_button",
+  db = null
+}) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) return { success: false, error: "Telefone inválido" };
+
+  const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+  const policy = evaluateZapiChannelPolicy(config, {
+    phone: cleanPhone,
+    channelId,
+    recipientRole,
+    triggerEvent,
+    db: activeDb
+  });
+
+  if (!policy.allowed) {
+    return {
+      success: false,
+      blockedByChannelPause: Boolean(policy.blockedByChannelPause),
+      blockedByBlacklist: Boolean(policy.blockedByBlacklist),
+      blockedByWhitelist: Boolean(policy.blockedByWhitelist),
+      blockedByTestMode: Boolean(policy.blockedByWhitelist || policy.blockedByTestMode),
+      channelId: policy.channelId,
+      error: policy.reason || "Disparo bloqueado pela governança de canais Z-API."
+    };
+  }
+
+  let targetPhone = cleanPhone;
+  if (policy.redirected) {
+    targetPhone = policy.targetPhone;
+  }
 
   const instanceId = config?.instanceId?.trim();
   const token = config?.token?.trim();
   const clientToken = config?.clientToken?.trim();
-  if (!instanceId || !token) return { success: true, simulated: true };
+  if (!instanceId || !token) return { success: true, simulated: true, phone: targetPhone, redirected: Boolean(policy.redirected), channelId: policy.channelId };
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
   const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-pix`;
@@ -3248,7 +3899,7 @@ export async function sendZapiPixButton(config, { phone, pixKey, type = "EVP", m
   if (clientToken) headers["Client-Token"] = clientToken;
 
   const payload = {
-    phone: cleanPhone,
+    phone: targetPhone,
     pixKey,
     type,
     merchantName
@@ -3257,7 +3908,7 @@ export async function sendZapiPixButton(config, { phone, pixKey, type = "EVP", m
   try {
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
-    return { success: res.ok, data };
+    return { success: res.ok, data, phone: targetPhone, redirected: Boolean(policy.redirected), channelId: policy.channelId };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -4223,6 +4874,12 @@ export async function handleConciergeGroupMessage({
   if (!db) return { success: false, error: "Database not available" };
   const config = db.zapiConfig || {};
 
+  // Governança de canal: se canal reception estiver pausado (enabled === false) e não for teste
+  const receptionChannel = config.channels?.reception;
+  if (receptionChannel && receptionChannel.enabled === false && !isTest) {
+    return { success: false, ignored: true, reason: "Monitoramento do grupo da portaria pausado pela governança do canal reception" };
+  }
+
   // Se monitoramento estiver desativado nas configs e não for teste
   if (config.conciergeMonitoringEnabled === false && !isTest) {
     return { success: false, ignored: true, reason: "Monitoramento do grupo da portaria desativado" };
@@ -4308,6 +4965,16 @@ export async function handleConciergeGroupMessage({
     );
 
     if (cleanReq) {
+      if (cleanReq.isDeleted || cleanReq.status === "deleted") {
+        cleanReq.isDeleted = false;
+        cleanReq.status = "dirty";
+        cleanReq.completedAt = null;
+        cleanReq.cleaningStartedAt = null;
+        cleanReq.willCleanAt = null;
+        delete cleanReq.deletedAt;
+        delete cleanReq.deletedBy;
+        delete cleanReq.deletedReservationId;
+      }
       cleanReq.isVacant = true; // Quarto desocupado informado pela portaria
       cleanReq.isVacantExplicitlySet = true;
       cleanReq.vacantSource = "reception_checkout";
@@ -4981,7 +5648,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         conciergeRequireKeywords: false,
         testModeOnly: true,
         testAllowedPhones: "22998505276",
-        allowMaidsInTestMode: true
+        allowMaidsInTestMode: true,
+        channels: JSON.parse(JSON.stringify(DEFAULT_ZAPI_CHANNELS))
       };
     } else {
       if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl")) {
@@ -5045,6 +5713,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         db.zapiConfig.allowMaidsInTestMode = true;
       }
     }
+
+    ensureZapiChannels(db);
+    syncChannelsBidirectional(db, "channels");
 
     if (!db.zapiConnectionLogs) {
       db.zapiConnectionLogs = [];
@@ -5358,20 +6029,98 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json(db?.zapiConfig || {});
   });
 
-  // 2. Salvar Configurações
-  app.post("/api/whatsapp/config", (req, res) => {
+  // 1.1 Listar os 7 Canais Independentes Z-API
+  app.get("/api/whatsapp/channels", (req, res) => {
     const db = getDb();
     ensureDbDefaults();
+    res.json({
+      success: true,
+      channels: db?.zapiConfig?.channels || DEFAULT_ZAPI_CHANNELS
+    });
+  });
+
+  // 1.2 Atualizar Canal Específico
+  app.put("/api/whatsapp/channels/:channelId", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const { channelId } = req.params;
+    if (!VALID_ZAPI_CHANNEL_IDS.includes(channelId)) {
+      return res.status(404).json({ success: false, error: `Canal '${channelId}' não encontrado.` });
+    }
+    const currentChannel = db.zapiConfig.channels[channelId] || { ...DEFAULT_ZAPI_CHANNELS[channelId] };
+    const { enabled, testMode, redirectToWhitelistOnTest, whitelist, blacklist } = req.body || {};
+
+    if (enabled !== undefined) currentChannel.enabled = Boolean(enabled);
+    if (testMode !== undefined) currentChannel.testMode = Boolean(testMode);
+    if (redirectToWhitelistOnTest !== undefined) currentChannel.redirectToWhitelistOnTest = Boolean(redirectToWhitelistOnTest);
+
+    if (Array.isArray(whitelist)) {
+      currentChannel.whitelist = whitelist
+        .map(p => cleanWhatsAppPhone(p))
+        .filter(Boolean);
+    }
+    if (Array.isArray(blacklist)) {
+      currentChannel.blacklist = blacklist
+        .map(p => cleanWhatsAppPhone(p))
+        .filter(Boolean);
+    }
+    currentChannel.updatedAt = new Date().toISOString();
+    db.zapiConfig.channels[channelId] = currentChannel;
+
+    syncChannelsBidirectional(db, "channels");
+    saveDatabase();
+
+    res.json({
+      success: true,
+      channel: currentChannel
+    });
+  });
+
+  // 2. Salvar Configurações (POST e PUT)
+  const saveWhatsappConfigHandler = (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const incoming = req.body || {};
+
+    if (incoming.channels && typeof incoming.channels === "object") {
+      ensureZapiChannels(db);
+      for (const [chId, chData] of Object.entries(incoming.channels)) {
+        if (VALID_ZAPI_CHANNEL_IDS.includes(chId) && chData && typeof chData === "object") {
+          db.zapiConfig.channels[chId] = {
+            ...(db.zapiConfig.channels[chId] || DEFAULT_ZAPI_CHANNELS[chId]),
+            ...chData,
+            updatedAt: new Date().toISOString()
+          };
+          if (Array.isArray(chData.whitelist)) {
+            db.zapiConfig.channels[chId].whitelist = chData.whitelist.map(p => cleanWhatsAppPhone(p)).filter(Boolean);
+          }
+          if (Array.isArray(chData.blacklist)) {
+            db.zapiConfig.channels[chId].blacklist = chData.blacklist.map(p => cleanWhatsAppPhone(p)).filter(Boolean);
+          }
+        }
+      }
+      syncChannelsBidirectional(db, "channels");
+    }
+
     db.zapiConfig = {
       ...(db.zapiConfig || {}),
-      ...req.body
+      ...incoming,
+      channels: db.zapiConfig.channels
     };
+
+    if (incoming.enabled !== undefined || incoming.testModeOnly !== undefined) {
+      syncChannelsBidirectional(db, incoming.channels ? "channels" : "root");
+    }
+
     if (db.zapiConfig.testModeOnly !== false) {
       cancelRealGuestsFromQueue(db, saveDatabase);
     }
     saveDatabase();
     res.json({ success: true, config: db.zapiConfig });
-  });
+  };
+
+  app.post("/api/whatsapp/config", saveWhatsappConfigHandler);
+  app.put("/api/whatsapp/config", saveWhatsappConfigHandler);
 
   // 3. Status Z-API (com suporte a force=true para refresh manual)
   app.get("/api/whatsapp/status", async (req, res) => {
@@ -5733,7 +6482,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       documentUrl: finalDocUrl,
       documentName: finalDocName,
       documentCaption: hasDocTest ? documentCaption : undefined,
-      bypassTestMode: true
+      channelId: "transactional_chat",
+      recipientRole: "operator",
+      triggerEvent: "manual_test_send"
     });
 
     const resolvedTrigger = req.body?.triggerEvent || "manual_button_dispatch";
@@ -5911,7 +6662,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const renderedMessage = resolveWhatsAppTags(baseMsgText, reservation, db, baseUrl, d.type, template);
       const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type, template);
 
-      // Disparo manual intencional pelo operador (PMS ou CRM): sempre bypassTestMode para enviar via Z-API
+      // Disparo de template da régua de comunicação com hóspedes
       const sendRes = await sendZapiMessage(db?.zapiConfig, {
         phone: d.phone,
         message: renderedMessage,
@@ -5920,7 +6671,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         buttons: renderedButtons,
         documentUrl: docUrl,
         documentName: docName,
-        bypassTestMode: req.body.bypassTestMode !== false
+        channelId: "guest_schedule",
+        recipientRole: "guest",
+        triggerEvent: "manual_template_dispatch"
       });
 
       results.push({
@@ -6845,7 +7598,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       phone: cleanPhone,
       message: finalMessage,
       buttons: Array.isArray(buttons) ? buttons : [],
-      bypassTestMode: true
+      channelId: "transactional_chat",
+      recipientRole: "operator",
+      triggerEvent: "live_chat_manual_message"
     };
 
     if (mediaType === "document" || fileName || (mediaUrl && mediaUrl.endsWith(".pdf"))) {
@@ -7120,13 +7875,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     ensureDbDefaults();
     const aiConfig = getWhatsAppAiConfig(db);
     const geminiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+    const aiCh = db.zapiConfig?.channels?.ai_agent;
+    const resolvedModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.settings?.geminiModel || "gemini-2.5-pro";
     res.json({
       success: true,
-      aiConfig,
+      aiConfig: {
+        ...aiConfig,
+        preferredModel: resolvedModel,
+        testModeOnly: aiCh ? Boolean(aiCh.testMode) : (aiConfig.testModeOnly ?? true),
+        testAllowedPhones: aiCh && Array.isArray(aiCh.whitelist) ? aiCh.whitelist.join(", ") : (aiConfig.testAllowedPhones || "22998505276")
+      },
       geminiConfigured: Boolean(geminiKey),
-      geminiModel: db.settings?.geminiModel || "gemini-2.0-flash",
-      testModeOnly: db.zapiConfig?.testModeOnly ?? true,
-      testAllowedPhones: db.zapiConfig?.testAllowedPhones || ""
+      geminiModel: resolvedModel,
+      preferredModel: resolvedModel,
+      testModeOnly: aiCh ? Boolean(aiCh.testMode) : (aiConfig.testModeOnly ?? true),
+      testAllowedPhones: aiCh && Array.isArray(aiCh.whitelist) ? aiCh.whitelist.join(", ") : (aiConfig.testAllowedPhones || "22998505276")
     });
   });
 
@@ -7137,7 +7900,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const current = getWhatsAppAiConfig(db);
     const updates = req.body || {};
 
-    if (updates.enabled !== undefined) current.enabled = Boolean(updates.enabled);
+    if (updates.enabled !== undefined) {
+      current.enabled = Boolean(updates.enabled);
+      if (db.whatsappAiSettings) db.whatsappAiSettings.enabled = Boolean(updates.enabled);
+      if (db.zapiConfig?.channels?.ai_agent) {
+        db.zapiConfig.channels.ai_agent.enabled = Boolean(updates.enabled);
+      }
+    }
     if (updates.mode) current.mode = updates.mode;
     if (updates.agentName) current.agentName = String(updates.agentName).trim();
     if (updates.agentRole) current.agentRole = String(updates.agentRole).trim();
@@ -7146,15 +7915,40 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (updates.offHoursEnd) current.offHoursEnd = String(updates.offHoursEnd);
     if (Array.isArray(updates.handoverKeywords)) current.handoverKeywords = updates.handoverKeywords;
     if (updates.systemPrompt) current.systemPrompt = String(updates.systemPrompt);
+    if (updates.preferredModel || updates.geminiModel) {
+      const modelVal = String(updates.preferredModel || updates.geminiModel).trim();
+      current.preferredModel = modelVal;
+      if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
+      db.whatsappAiSettings.preferredModel = modelVal;
+      db.whatsappAiSettings.geminiModel = modelVal;
+      if (db.settings) db.settings.geminiModel = modelVal;
+    }
     if (updates.knowledgeBase && typeof updates.knowledgeBase === "object") {
       current.knowledgeBase = { ...current.knowledgeBase, ...updates.knowledgeBase };
     }
 
-    if (updates.testModeOnly !== undefined && db.zapiConfig) {
-      db.zapiConfig.testModeOnly = Boolean(updates.testModeOnly);
+    // Atualiza EXCLUSIVAMENTE o canal ai_agent, sem sobrescrever o testModeOnly da Régua (guest_schedule)
+    if (updates.testModeOnly !== undefined) {
+      current.testModeOnly = Boolean(updates.testModeOnly);
+      if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
+      db.whatsappAiSettings.testModeOnly = Boolean(updates.testModeOnly);
+      ensureZapiChannels(db);
+      if (db.zapiConfig?.channels?.ai_agent) {
+        db.zapiConfig.channels.ai_agent.testMode = Boolean(updates.testModeOnly);
+      }
     }
-    if (updates.testAllowedPhones !== undefined && db.zapiConfig) {
-      db.zapiConfig.testAllowedPhones = String(updates.testAllowedPhones);
+    if (updates.testAllowedPhones !== undefined) {
+      current.testAllowedPhones = String(updates.testAllowedPhones);
+      if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
+      db.whatsappAiSettings.testAllowedPhones = String(updates.testAllowedPhones);
+      ensureZapiChannels(db);
+      if (db.zapiConfig?.channels?.ai_agent) {
+        const parsedPhones = String(updates.testAllowedPhones)
+          .split(/[,;\s\n]+/)
+          .map(p => cleanWhatsAppPhone(p))
+          .filter(Boolean);
+        db.zapiConfig.channels.ai_agent.whitelist = parsedPhones.length > 0 ? parsedPhones : ["22998505276"];
+      }
     }
 
     saveDatabase();
@@ -7323,7 +8117,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         sendResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
           message: messageToSend,
-          bypassTestMode: true
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          triggerEvent: "ai_rectification_message"
         });
       } catch (sendErr) {
         console.warn("[Z-API Rectification] Falha ao enviar mensagem de retificação:", sendErr.message);
@@ -7353,8 +8149,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     });
   });
 
-  // 5.2. Listar Diretrizes do Desenvolvedor (/api/whatsapp/developer-guidelines)
-  app.get(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines"], (req, res) => {
+  // 5.2. Listar Diretrizes do Desenvolvedor (/api/whatsapp/developer-guidelines e /api/whatsapp/ai-guidelines)
+  app.get(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines", "/api/whatsapp/ai-guidelines"], (req, res) => {
     const db = getDb();
     ensureDbDefaults();
     let list = Array.isArray(db.whatsappAiSettings?.developerGuidelines) ? [...db.whatsappAiSettings.developerGuidelines] : [];
@@ -7373,8 +8169,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json({ success: true, guidelines: list });
   });
 
-  // 5.3. Criar Diretriz do Desenvolvedor Manualmente (/api/whatsapp/developer-guidelines)
-  app.post(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines"], (req, res) => {
+  // 5.3. Criar Diretriz do Desenvolvedor Manualmente (/api/whatsapp/developer-guidelines e /api/whatsapp/ai-guidelines)
+  app.post(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines", "/api/whatsapp/ai-guidelines"], (req, res) => {
     const db = getDb();
     ensureDbDefaults();
     const text = (req.body.text || req.body.correctionText || "").trim();
@@ -7383,7 +8179,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     const newGuideline = saveDeveloperGuideline(db, {
       text,
-      category: req.body.category || inferFaqCategory(text) || "geral",
+      category: req.body.category || inferFaqCategory(text) || "factual",
       targetFlat: req.body.targetFlat || req.body.flatNumber || null,
       active: req.body.active !== undefined ? Boolean(req.body.active) : true,
       source: req.body.source || "manual_admin"
@@ -7392,7 +8188,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.status(201).json({ success: true, guideline: newGuideline });
   });
 
-  // 5.4. Atualizar Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id)
+  // 5.4. Atualizar Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id e /api/whatsapp/ai-guidelines/:id)
   const handleUpdateGuideline = (req, res) => {
     const db = getDb();
     ensureDbDefaults();
@@ -7411,12 +8207,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json({ success: true, guideline: item });
   };
   if (typeof app.patch === "function") {
-    app.patch(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
+    app.patch(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id", "/api/whatsapp/ai-guidelines/:id"], handleUpdateGuideline);
   }
-  app.put(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
+  app.put(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id", "/api/whatsapp/ai-guidelines/:id"], handleUpdateGuideline);
 
-  // 5.5. Excluir Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id)
-  app.delete(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], (req, res) => {
+  // 5.5. Excluir Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id e /api/whatsapp/ai-guidelines/:id)
+  app.delete(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id", "/api/whatsapp/ai-guidelines/:id"], (req, res) => {
     const db = getDb();
     ensureDbDefaults();
     const id = req.params.id;
@@ -7863,13 +8659,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
-        // Trava de Segurança: Modo de Teste / Sandbox (bloqueia apenas o WhatsApp; o e-mail espelho segue)
-        const waBlockedByTestMode = Boolean(item.guestPhone) && !isPhoneAllowedInTestMode(item.guestPhone, db.zapiConfig);
+        // Trava de Segurança: Política do Canal guest_schedule (bloqueia apenas o WhatsApp; o e-mail espelho segue)
+        const queuePolicy = item.guestPhone
+          ? evaluateZapiChannelPolicy(db.zapiConfig, {
+              channelId: "guest_schedule",
+              phone: item.guestPhone,
+              message: item.renderedMessage || "",
+              db
+            })
+          : { allowed: false, reason: "no_phone" };
+        const waBlockedByTestMode = Boolean(item.guestPhone) && !queuePolicy.allowed;
         if ((!item.guestPhone || waBlockedByTestMode) && !item.guestEmail) {
-          console.log(`[Auto-WhatsApp Sandbox] Agendamento para ${item.guestPhone} (${item.recipientName || item.guestName}) CANCELADO da fila: Modo de Teste ativo.`);
+          console.log(`[Auto-WhatsApp Sandbox] Agendamento para ${item.guestPhone} (${item.recipientName || item.guestName}) CANCELADO da fila: ${queuePolicy.error || "Modo de Teste ativo"}.`);
           item.status = "cancelled";
           item.error = item.guestPhone
-            ? "Cancelado pelo Modo de Teste: destinatário não está na lista autorizada."
+            ? (queuePolicy.error || "Cancelado pelo Modo de Teste: destinatário não está na lista autorizada.")
             : "Cancelado: destinatário sem WhatsApp ou e-mail.";
           item.updatedAt = nowIso;
           saveDatabase();
@@ -8091,7 +8895,11 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
         title: item.title,
         footer: item.footer,
         buttons: sendButtons,
-        bypassTestMode: Boolean(bypassTestMode || method === "manual"),
+        channelId: "guest_schedule",
+        recipientRole: item.recipientType || "guest",
+        triggerEvent: item.triggerEvent || item.triggerType || "queue_delivery",
+        bypassTestMode,
+        db,
         ...(shouldSendDoc ? { documentUrl: item.documentUrl, documentName: item.documentName } : {})
       });
     } finally {
@@ -8200,8 +9008,14 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
   let emailLog = null;
 
   if (target.phone) {
-    if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(target.phone, db?.zapiConfig)) {
-      console.warn(`[WhatsApp Sandbox] Envio imediato de '${tpl.title}' para ${target.phone} (${target.name}) IGNORADO: Modo de Teste ativo.`);
+    const channelPolicy = evaluateZapiChannelPolicy(db?.zapiConfig, {
+      channelId: "guest_schedule",
+      phone: target.phone,
+      message: renderedMessage,
+      db
+    });
+    if (!channelPolicy.allowed) {
+      console.warn(`[WhatsApp Sandbox] Envio imediato de '${tpl.title}' para ${target.phone} (${target.name}) IGNORADO: ${channelPolicy.error || channelPolicy.reason}.`);
     } else if (lockKey && inFlightDispatches.has(lockKey)) {
       console.warn(`[Z-API Anti-Dup Lock] Disparo concorrente de '${eventName}' (${eventGroup}) para ${target.phone} na reserva ${resCode} BLOQUEADO (já em andamento).`);
     } else {
@@ -8226,7 +9040,11 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
           buttons: renderedButtons,
           documentUrl: docUrl,
           documentName: docName,
-          documentCaption: hasAttachment ? tpl.documentCaption : undefined
+          documentCaption: hasAttachment ? tpl.documentCaption : undefined,
+          channelId: "guest_schedule",
+          recipientRole: target.type || "guest",
+          triggerEvent: eventName,
+          db
         });
 
         if (!db.whatsappHistory) db.whatsappHistory = [];

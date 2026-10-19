@@ -547,6 +547,8 @@ export default function WhatsappAutomation() {
   // ─── Agente de IA para WhatsApp State & Handlers ─────────────────────────
   const [aiConfig, setAiConfig] = useState<any>({
     enabled: true,
+    testMode: true,
+    preferredModel: "gemini-2.5-pro",
     mode: "autonomous",
     agentName: "Sofia",
     agentRole: "Concierge Virtual CorpFlats",
@@ -557,9 +559,9 @@ export default function WhatsappAutomation() {
     systemPrompt: "",
     knowledgeBase: {}
   })
-  const [geminiStatus, setGeminiStatus] = useState<{ configured: boolean; model: string }>({ configured: false, model: "" })
+  const [geminiStatus, setGeminiStatus] = useState<{ configured: boolean; model: string }>({ configured: false, model: "gemini-2.5-pro" })
   const [aiTestModeOnly, setAiTestModeOnly] = useState(true)
-  const [aiTestAllowedPhones, setAiTestAllowedPhones] = useState("")
+  const [aiTestAllowedPhones, setAiTestAllowedPhones] = useState("22998505276")
   const [loadingAiConfig, setLoadingAiConfig] = useState(false)
   const [savingAiConfig, setSavingAiConfig] = useState(false)
   const [simMessage, setSimMessage] = useState("Olá, qual a senha do wifi?")
@@ -567,14 +569,93 @@ export default function WhatsappAutomation() {
   const [simulatingAi, setSimulatingAi] = useState(false)
   const [simResult, setSimResult] = useState<any>(null)
 
-  // Developer Guidelines & Tone Management States
+  // ─── Central dos 7 Canais Independentes Z-API ────────────────────────────
+  const [zapiChannels, setZapiChannels] = useState<Record<string, any>>({
+    guest_schedule: {
+      id: "guest_schedule",
+      name: "📅 Régua de Envios de Hóspedes",
+      description: "Disparos programados de reservas: confirmação, pré-check-in, boas-vindas, check-out e avaliação.",
+      enabled: true,
+      testMode: true,
+      redirectToWhitelistOnTest: false,
+      whitelist: ["22998505276", "21997142513"],
+      blacklist: []
+    },
+    ai_agent: {
+      id: "ai_agent",
+      name: "🤖 Agente IA Sofia & Assistente Fiscal",
+      description: "Respostas autônomas da Sofia, orçamentos, disponibilidade, pré-reserva e fluxo fiscal PJ/PF.",
+      enabled: true,
+      testMode: true,
+      redirectToWhitelistOnTest: false,
+      whitelist: ["22998505276"],
+      blacklist: []
+    },
+    maids: {
+      id: "maids",
+      name: "🧹 Camareiras — Limpeza & Extrato",
+      description: "Escala diária às 18:00, notificações de check-out liberado, conclusão de faxina e extrato quinzenal.",
+      enabled: true,
+      testMode: false,
+      redirectToWhitelistOnTest: true,
+      whitelist: ["22998505276"],
+      blacklist: []
+    },
+    service_providers: {
+      id: "service_providers",
+      name: "🔧 Prestadores de Serviço (OS)",
+      description: "Abertura, encaminhamento, aprovação e acompanhamento de Ordens de Serviço de manutenção.",
+      enabled: true,
+      testMode: false,
+      redirectToWhitelistOnTest: true,
+      whitelist: ["22998505276"],
+      blacklist: []
+    },
+    reception: {
+      id: "reception",
+      name: "🏢 Recepção, Portaria & Administração",
+      description: "Avisos de chegada de hóspede, liberação de placa na garagem, novas reservas e alertas operacionais.",
+      enabled: true,
+      testMode: false,
+      redirectToWhitelistOnTest: true,
+      whitelist: ["22998505276"],
+      blacklist: []
+    },
+    stay_operations: {
+      id: "stay_operations",
+      name: "☕ Operações de Estadia (Café & Achados)",
+      description: "Comunicações de pedidos de bandeja de café da manhã e avisos de Achados e Perdidos.",
+      enabled: true,
+      testMode: false,
+      redirectToWhitelistOnTest: true,
+      whitelist: ["22998505276"],
+      blacklist: []
+    },
+    transactional_chat: {
+      id: "transactional_chat",
+      name: "🔐 Chat Ao Vivo & OTP Check-in",
+      description: "Mensagens enviadas manualmente pelo operador no Chat Web e código OTP de segurança no Pré-Check-in.",
+      enabled: true,
+      testMode: false,
+      redirectToWhitelistOnTest: false,
+      whitelist: ["22998505276"],
+      blacklist: []
+    }
+  })
+  const [loadingChannels, setLoadingChannels] = useState(false)
+  const [savingChannelId, setSavingChannelId] = useState<string | null>(null)
+  const [channelPhoneInputs, setChannelPhoneInputs] = useState<Record<string, { whitelist: string; blacklist: string }>>({})
+
+  // Developer Guidelines & WhatsApp Business AI 4-Category States
   const [developerGuidelines, setDeveloperGuidelines] = useState<any[]>([])
   const [loadingGuidelines, setLoadingGuidelines] = useState<boolean>(false)
   const [addGuidelineModalOpen, setAddGuidelineModalOpen] = useState<boolean>(false)
+  const [editingGuidelineId, setEditingGuidelineId] = useState<string | null>(null)
   const [newGuidelineRule, setNewGuidelineRule] = useState<string>("")
-  const [newGuidelineCategory, setNewGuidelineCategory] = useState<"factual" | "tone">("factual")
+  const [newGuidelineCategory, setNewGuidelineCategory] = useState<"always_do" | "never_do" | "persona_treatment" | "factual" | "tone">("always_do")
   const [newGuidelineSample, setNewGuidelineSample] = useState<string>("")
   const [savingGuideline, setSavingGuideline] = useState<boolean>(false)
+  const [guidelineFilterCategory, setGuidelineFilterCategory] = useState<string>("all")
 
   // Estado das Chaves de Ação do Bot (Bot Actions API)
   const [botActionsSettings, setBotActionsSettings] = useState<BotActionsSettings>({
@@ -593,6 +674,109 @@ export default function WhatsappAutomation() {
   const [loadingBotActions, setLoadingBotActions] = useState<boolean>(false)
   const [savingBotActions, setSavingBotActions] = useState<boolean>(false)
   const [showAdvancedActions, setShowAdvancedActions] = useState<boolean>(false)
+
+  const fetchZapiChannels = async () => {
+    try {
+      setLoadingChannels(true)
+      const res = await fetch("/api/whatsapp/channels")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.channels) {
+          setZapiChannels(prev => ({ ...prev, ...data.channels }))
+          if (data.channels.ai_agent) {
+            setAiTestModeOnly(Boolean(data.channels.ai_agent.testMode))
+            if (Array.isArray(data.channels.ai_agent.whitelist)) {
+              setAiTestAllowedPhones(data.channels.ai_agent.whitelist.join(", "))
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn("Erro ao buscar canais Z-API:", err.message)
+    } finally {
+      setLoadingChannels(false)
+    }
+  }
+
+  const handleUpdateZapiChannel = async (channelId: string, patch: Record<string, any>) => {
+    setSavingChannelId(channelId)
+    const prevChannel = zapiChannels[channelId] || {}
+    setZapiChannels(prev => ({
+      ...prev,
+      [channelId]: {
+        ...prev[channelId],
+        ...patch
+      }
+    }))
+    try {
+      const res = await fetch(`/api/whatsapp/channels/${channelId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.allChannels) {
+          setZapiChannels(prev => ({ ...prev, ...data.allChannels }))
+        } else if (data.channel) {
+          setZapiChannels(prev => ({ ...prev, [channelId]: data.channel }))
+        }
+        if (channelId === "guest_schedule") {
+          fetchConfig()
+        }
+        if (channelId === "ai_agent") {
+          fetchAiConfig()
+        }
+        const chName = zapiChannels[channelId]?.name || channelId
+        toast({
+          title: `Canal Atualizado! ✨`,
+          description: `${chName} salvo com sucesso de forma independente.`
+        })
+      } else {
+        setZapiChannels(prev => ({ ...prev, [channelId]: prevChannel }))
+        toast({ title: "Erro ao atualizar canal", variant: "destructive" })
+      }
+    } catch (err: any) {
+      setZapiChannels(prev => ({ ...prev, [channelId]: prevChannel }))
+      toast({ title: "Falha de conexão", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingChannelId(null)
+    }
+  }
+
+  const handleAddChannelPhone = async (channelId: string, listType: "whitelist" | "blacklist") => {
+    const rawVal = channelPhoneInputs[channelId]?.[listType] || ""
+    const digits = rawVal.replace(/\D/g, "")
+    if (digits.length < 8) {
+      toast({ title: "Número inválido", description: "Informe um telefone com DDD (mínimo 8 dígitos).", variant: "destructive" })
+      return
+    }
+    const currentList: string[] = Array.isArray(zapiChannels[channelId]?.[listType])
+      ? zapiChannels[channelId][listType]
+      : []
+    if (currentList.includes(digits)) {
+      toast({ title: "Número já cadastrado nesta lista" })
+      return
+    }
+    const nextList = [...currentList, digits]
+    setChannelPhoneInputs(prev => ({
+      ...prev,
+      [channelId]: {
+        whitelist: prev[channelId]?.whitelist || "",
+        blacklist: prev[channelId]?.blacklist || "",
+        [listType]: ""
+      }
+    }))
+    await handleUpdateZapiChannel(channelId, { [listType]: nextList })
+  }
+
+  const handleRemoveChannelPhone = async (channelId: string, listType: "whitelist" | "blacklist", phoneToRemove: string) => {
+    const currentList: string[] = Array.isArray(zapiChannels[channelId]?.[listType])
+      ? zapiChannels[channelId][listType]
+      : []
+    const nextList = currentList.filter(p => p !== phoneToRemove)
+    await handleUpdateZapiChannel(channelId, { [listType]: nextList })
+  }
 
   const fetchBotActionsSettings = async () => {
     try {
@@ -765,17 +949,28 @@ export default function WhatsappAutomation() {
       if (res.ok) {
         const data = await res.json()
         if (data.aiConfig) {
-          setAiConfig(data.aiConfig)
+          setAiConfig((prev: any) => ({
+            ...prev,
+            ...data.aiConfig,
+            preferredModel: data.aiConfig.preferredModel || data.geminiModel || "gemini-2.5-pro"
+          }))
           if (Array.isArray(data.aiConfig.developerGuidelines)) {
             setDeveloperGuidelines(data.aiConfig.developerGuidelines)
           }
         }
         setGeminiStatus({
           configured: Boolean(data.geminiConfigured),
-          model: data.geminiModel || "gemini-2.0-flash"
+          model: data.aiConfig?.preferredModel || data.geminiModel || "gemini-2.5-pro"
         })
-        setAiTestModeOnly(data.testModeOnly ?? true)
-        setAiTestAllowedPhones(data.testAllowedPhones || "")
+        const aiCh = data.aiChannel
+        if (aiCh) {
+          setAiTestModeOnly(Boolean(aiCh.testMode))
+          setAiTestAllowedPhones(Array.isArray(aiCh.whitelist) ? aiCh.whitelist.join(", ") : (data.testAllowedPhones || "22998505276"))
+          setZapiChannels(prev => ({ ...prev, ai_agent: aiCh }))
+        } else {
+          setAiTestModeOnly(data.aiConfig?.testMode ?? data.testModeOnly ?? true)
+          setAiTestAllowedPhones(data.testAllowedPhones || "22998505276")
+        }
       }
     } catch (e: any) {
       console.warn("Erro ao carregar configurações da IA:", e.message)
@@ -787,7 +982,7 @@ export default function WhatsappAutomation() {
   const fetchDeveloperGuidelines = async () => {
     try {
       setLoadingGuidelines(true)
-      const res = await fetch("/api/whatsapp/developer-guidelines")
+      const res = await fetch("/api/whatsapp/ai-guidelines")
       if (res.ok) {
         const data = await res.json()
         if (Array.isArray(data.guidelines)) {
@@ -801,10 +996,20 @@ export default function WhatsappAutomation() {
     }
   }
 
-  const handleOpenAddGuidelineModal = () => {
+  const handleOpenAddGuidelineModal = (defaultCat: "always_do" | "never_do" | "persona_treatment" | "factual" = "always_do") => {
+    setEditingGuidelineId(null)
     setNewGuidelineRule("")
-    setNewGuidelineCategory("factual")
+    setNewGuidelineCategory(defaultCat)
     setNewGuidelineSample("")
+    setAddGuidelineModalOpen(true)
+  }
+
+  const handleOpenEditGuidelineModal = (guide: any) => {
+    setEditingGuidelineId(guide.id)
+    setNewGuidelineRule(guide.rule || guide.text || "")
+    const cat = guide.category === "tone" ? "persona_treatment" : (guide.category || "factual")
+    setNewGuidelineCategory(cat)
+    setNewGuidelineSample(guide.sample || guide.sampleResponse || "")
     setAddGuidelineModalOpen(true)
   }
 
@@ -816,8 +1021,14 @@ export default function WhatsappAutomation() {
 
     try {
       setSavingGuideline(true)
-      const res = await fetch("/api/whatsapp/developer-guidelines", {
-        method: "POST",
+      const isEditing = Boolean(editingGuidelineId)
+      const url = isEditing
+        ? `/api/whatsapp/ai-guidelines/${editingGuidelineId}`
+        : "/api/whatsapp/ai-guidelines"
+      const method = isEditing ? "PUT" : "POST"
+
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rule: newGuidelineRule.trim(),
@@ -825,16 +1036,19 @@ export default function WhatsappAutomation() {
           correctionText: newGuidelineRule.trim(),
           category: newGuidelineCategory,
           sample: newGuidelineSample.trim() || undefined,
+          enabled: true,
+          active: true,
           source: "manual"
         })
       })
 
       if (res.ok) {
         toast({
-          title: "Diretriz Adicionada com Sucesso! 🧠✨",
-          description: "A regra agora faz parte da base ativa de conhecimento da Sofia."
+          title: isEditing ? "Diretriz Atualizada com Sucesso! ✏️✨" : "Diretriz Adicionada com Sucesso! 🧠✨",
+          description: "A regra está ativa no prompt dinâmico da Sofia."
         })
         setAddGuidelineModalOpen(false)
+        setEditingGuidelineId(null)
         fetchDeveloperGuidelines()
         fetchAiConfig()
       } else {
@@ -848,9 +1062,66 @@ export default function WhatsappAutomation() {
     }
   }
 
+  const handleToggleGuidelineActive = async (guide: any, newEnabled: boolean) => {
+    const id = guide.id
+    if (!id) return
+    setDeveloperGuidelines(prev =>
+      prev.map(g => g.id === id ? { ...g, enabled: newEnabled, active: newEnabled } : g)
+    )
+    try {
+      const res = await fetch(`/api/whatsapp/ai-guidelines/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled, active: newEnabled })
+      })
+      if (res.ok) {
+        toast({
+          title: newEnabled ? "Diretriz Ativada ✅" : "Diretriz Pausada ⏸️",
+          description: newEnabled
+            ? "A Sofia voltará a aplicar esta regra nas conversas."
+            : "A regra foi desativada temporariamente sem ser excluída."
+        })
+        fetchDeveloperGuidelines()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao alternar diretriz", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleQuickAddFormalVocative = async () => {
+    try {
+      setSavingGuideline(true)
+      const res = await fetch("/api/whatsapp/ai-guidelines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rule: "Sempre chamar os hóspedes pelo nome precedido de Sr. ou Sra. (ex: Sr. Miller, Sra. Ana) em todas as interações.",
+          text: "Sempre chamar os hóspedes pelo nome precedido de Sr. ou Sra. (ex: Sr. Miller, Sra. Ana) em todas as interações.",
+          category: "persona_treatment",
+          sample: "Olá! Qual o horário de check-in?",
+          enabled: true,
+          active: true,
+          source: "manual"
+        })
+      })
+      if (res.ok) {
+        toast({
+          title: "🎩 Tratamento Formal (Sr. / Sra.) Ativado!",
+          description: "A Sofia agora tratará os hóspedes como Sr. / Sra. em todas as respostas."
+        })
+        fetchDeveloperGuidelines()
+        fetchAiConfig()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao ativar regra", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingGuideline(false)
+    }
+  }
+
   const handleDeleteGuideline = async (id: string) => {
     try {
-      const res = await fetch(`/api/whatsapp/developer-guidelines/${id}`, {
+      const res = await fetch(`/api/whatsapp/ai-guidelines/${id}`, {
         method: "DELETE"
       })
       if (res.ok) {
@@ -873,6 +1144,7 @@ export default function WhatsappAutomation() {
   const handleTestGuidelineInSimulator = (guide: any) => {
     const textToTest = guide.sample || guide.rule || guide.text || ""
     setSimMessage(textToTest)
+    setAiSubTab("simulator")
     toast({
       title: "Diretriz Carregada no Simulador! 🎯",
       description: `Pergunta preenchida para teste: "${textToTest.slice(0, 60)}${textToTest.length > 60 ? '...' : ''}"`
@@ -884,6 +1156,7 @@ export default function WhatsappAutomation() {
       setSavingAiConfig(true)
       const payload = {
         ...aiConfig,
+        testMode: aiTestModeOnly,
         testModeOnly: aiTestModeOnly,
         testAllowedPhones: aiTestAllowedPhones
       }
@@ -895,9 +1168,10 @@ export default function WhatsappAutomation() {
       if (res.ok) {
         toast({
           title: "Configurações da IA Salvas! 🤖✨",
-          description: "O Agente de IA está atualizado com os novos parâmetros."
+          description: `Modelo ${aiConfig.preferredModel || "gemini-2.5-pro"} e canal da IA atualizados com sucesso.`
         })
         fetchAiConfig()
+        fetchZapiChannels()
         fetchDeveloperGuidelines()
       } else {
         const err = await res.json()
@@ -951,6 +1225,8 @@ export default function WhatsappAutomation() {
         } else if (tabParam === "simulator") {
           setActiveTab("ai_hub")
           setAiSubTab("simulator")
+        } else if (tabParam === "channels" || tabParam === "whitelist") {
+          setActiveTab("channels")
         } else {
           setActiveTab(tabParam)
         }
@@ -959,6 +1235,7 @@ export default function WhatsappAutomation() {
     fetchTemplates()
     fetchQueue()
     fetchConfig()
+    fetchZapiChannels()
     fetchReservations()
     checkStatus()
     fetchAiConfig()
@@ -966,11 +1243,14 @@ export default function WhatsappAutomation() {
     fetchBotActionsSettings()
   }, [])
 
-  // Auto-refresh guidelines when switching to ai_agent tab
+  // Auto-refresh guidelines & channels when switching tabs
   useEffect(() => {
     if (activeTab === "ai_hub" || activeTab === "ai_agent") {
       fetchAiConfig()
       fetchDeveloperGuidelines()
+      fetchZapiChannels()
+    } else if (activeTab === "channels") {
+      fetchZapiChannels()
     }
   }, [activeTab])
 
@@ -1906,10 +2186,79 @@ export default function WhatsappAutomation() {
           </div>
         )}
 
-        {/* Tabs Principais */}
-        {/* Tabs Principais Unificadas (5 Abas Limpas) */}
+        {/* Barra Resumo de Status dos 7 Canais Independentes Z-API */}
+        <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-card/90 shadow-2xs space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span className="text-xs font-black tracking-tight text-foreground">
+                Governança Independente por Canal Z-API (7 Canais Isolados)
+              </span>
+              <Badge variant="outline" className="text-[10px] font-bold border-indigo-300 text-indigo-700 dark:text-indigo-300">
+                Isolamento de Modo Teste & Whitelist
+              </Badge>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setActiveTab("channels")}
+              className="h-7 text-[11px] font-bold rounded-xl gap-1.5 border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:text-indigo-300 dark:border-indigo-800"
+            >
+              <Sliders className="w-3 h-3" />
+              Gerenciar os 7 Canais, Whitelist & Blacklist
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            {[
+              { id: "guest_schedule", short: "📅 Régua Hóspedes" },
+              { id: "ai_agent", short: "🤖 IA Sofia & Fiscal" },
+              { id: "maids", short: "🧹 Camareiras" },
+              { id: "service_providers", short: "🔧 Prestadores (OS)" },
+              { id: "reception", short: "🏢 Recepção" },
+              { id: "stay_operations", short: "☕ Café & Achados" },
+              { id: "transactional_chat", short: "🔐 Chat & OTP" }
+            ].map(item => {
+              const ch = zapiChannels[item.id] || {}
+              const isEnabled = ch.enabled !== false
+              const isTest = Boolean(ch.testMode)
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab("channels")}
+                  className={`p-2 rounded-xl border text-left transition-all cursor-pointer hover:shadow-xs ${
+                    !isEnabled
+                      ? "bg-slate-100/80 dark:bg-slate-900/60 border-slate-300 dark:border-slate-800 opacity-75"
+                      : isTest
+                      ? "bg-blue-50/70 dark:bg-blue-950/30 border-blue-300 dark:border-blue-800"
+                      : "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800"
+                  }`}
+                >
+                  <div className="text-[11px] font-bold truncate text-foreground">{item.short}</div>
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      !isEnabled ? "bg-slate-400" : isTest ? "bg-blue-600 animate-pulse" : "bg-emerald-600"
+                    }`} />
+                    <span className={`text-[10px] font-bold ${
+                      !isEnabled
+                        ? "text-slate-600 dark:text-slate-400"
+                        : isTest
+                        ? "text-blue-700 dark:text-blue-300"
+                        : "text-emerald-700 dark:text-emerald-300"
+                    }`}>
+                      {!isEnabled ? "Pausado" : isTest ? "Modo Teste" : "Produção"}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Tabs Principais Unificadas (6 Abas Limpas) */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 w-full md:w-auto rounded-xl p-1 bg-muted/60">
             <TabsTrigger value="ai_hub" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <Bot className="w-3.5 h-3.5 text-blue-500" />
               <span>🤖 Agente Sofia (IA)</span>
@@ -1918,6 +2267,13 @@ export default function WhatsappAutomation() {
                   {pendingDemandsCount}
                 </span>
               )}
+            </TabsTrigger>
+            <TabsTrigger value="channels" className="rounded-lg text-xs font-bold gap-1.5 relative">
+              <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+              <span>🎛️ Canais & Whitelist</span>
+              <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-indigo-600 text-white font-black">
+                7
+              </span>
             </TabsTrigger>
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
@@ -1946,6 +2302,369 @@ export default function WhatsappAutomation() {
           </TabsList>
 
           {/* ════════════════════════════════════════════════════════════════════
+              ABA NOVA: CENTRAL DE GOVERNANÇA DOS 7 CANAIS, WHITELIST & BLACKLIST
+          ════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="channels" className="space-y-6 animate-in fade-in-50 duration-200">
+            <Card className="border-indigo-200 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/50 via-background to-background shadow-xs">
+              <CardHeader className="pb-3 border-b">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base sm:text-lg font-black flex items-center gap-2 text-indigo-950 dark:text-indigo-100">
+                      <ShieldCheck className="w-5 h-5 text-indigo-600" />
+                      Central de Governança dos 7 Canais Independentes Z-API
+                    </CardTitle>
+                    <CardDescription className="text-xs leading-relaxed">
+                      Cada canal possui seu próprio interruptor <strong>Ativo/Pausado</strong>, seu próprio <strong>Modo Teste vs. Produção</strong>, sua <strong>Whitelist</strong> e sua <strong>Blacklist</strong>. Colocar a <em>Régua de Hóspedes</em> ou a <em>IA Sofia</em> em Modo Teste <strong>não bloqueia</strong> os envios de <em>Camareiras</em> ou <em>Prestadores de Serviço</em>.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchZapiChannels}
+                    disabled={loadingChannels}
+                    className="h-8 text-xs font-bold gap-1.5 shrink-0"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingChannels ? "animate-spin" : ""}`} />
+                    Atualizar Canais
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4 sm:p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                  {[
+                    {
+                      id: "guest_schedule",
+                      title: "1. 📅 Régua de Envios de Hóspedes",
+                      subtitle: "Disparos programados de reservas (confirmação, pré-check-in, boas-vindas, check-out e avaliação).",
+                      dispatches: [
+                        "Confirmação de Reserva & PIX",
+                        "Lembrete de Pré-Check-in Digital",
+                        "Instruções de Chegada & Senha da Porta",
+                        "Lembrete de Check-out (12:00h)",
+                        "Agradecimento Pós-Check-out"
+                      ]
+                    },
+                    {
+                      id: "ai_agent",
+                      title: "2. 🤖 Agente IA Sofia & Assistente Fiscal",
+                      subtitle: "Respostas autônomas da Sofia no WhatsApp, cotações, disponibilidade, pré-reserva e fluxo fiscal PJ/PF.",
+                      dispatches: [
+                        "Atendimento Conversacional IA Sofia",
+                        "Cotações, Disponibilidade e Pré-Reservas",
+                        "Fluxo Fiscal Automático (CNPJ/CPF p/ NFS-e)",
+                        "Modo Treinador / Desenvolvedor (22998505276)",
+                        "Retificações de Mensagens via Chat Web"
+                      ]
+                    },
+                    {
+                      id: "maids",
+                      title: "3. 🧹 Camareiras — Limpeza & Extrato",
+                      subtitle: "Comunicações operacionais exclusivas da equipe de governança e camareiras.",
+                      dispatches: [
+                        "Resumo Diário de Escala às 18:00h",
+                        "Aviso Imediato de Check-out Concluído (Quarto Liberado)",
+                        "Confirmação de Conclusão de Faxina",
+                        "Fechamento e Extrato Quinzenal de Limpezas",
+                        "Alertas de Atraso de Higienização"
+                      ]
+                    },
+                    {
+                      id: "service_providers",
+                      title: "4. 🔧 Prestadores de Serviço (OS)",
+                      subtitle: "Acionamento de técnicos e prestadores externos para manutenção preventiva e corretiva.",
+                      dispatches: [
+                        "Abertura e Encaminhamento de Ordem de Serviço (OS)",
+                        "Aprovação de Orçamento de Manutenção",
+                        "Notificação de Urgência / Interdição de Flat"
+                      ]
+                    },
+                    {
+                      id: "reception",
+                      title: "5. 🏢 Recepção, Portaria & Administração",
+                      subtitle: "Avisos internos para a portaria 24h do condomínio Soho e equipe administrativa.",
+                      dispatches: [
+                        "Ficha de Pré-Check-in e Liberação na Portaria",
+                        "Autorização de Placa de Veículo na Garagem",
+                        "Avisos de Nova Reserva / Early Check-in",
+                        "Alertas Operacionais da Administração"
+                      ]
+                    },
+                    {
+                      id: "stay_operations",
+                      title: "6. ☕ Operações de Estadia (Café & Achados)",
+                      subtitle: "Comunicações transacionais de serviços durante ou logo após a estadia.",
+                      dispatches: [
+                        "Confirmação e Cardápio de Bandeja de Café da Manhã",
+                        "Avisos de Entrega de Café no Quarto",
+                        "Notificações de Achados e Perdidos (Itens Esquecidos)"
+                      ]
+                    },
+                    {
+                      id: "transactional_chat",
+                      title: "7. 🔐 Chat Ao Vivo & OTP Check-in",
+                      subtitle: "Mensagens digitadas manualmente por operadores humanos e códigos de verificação imediata.",
+                      dispatches: [
+                        "Mensagens Manuais do Operador no Chat Web",
+                        "Código OTP de Segurança no Pré-Check-in Digital",
+                        "Disparos Manuais Diretos de Reserva"
+                      ]
+                    }
+                  ].map((meta) => {
+                    const ch = zapiChannels[meta.id] || {
+                      id: meta.id,
+                      name: meta.title,
+                      enabled: true,
+                      testMode: false,
+                      redirectToWhitelistOnTest: false,
+                      whitelist: ["22998505276"],
+                      blacklist: []
+                    }
+                    const isEnabled = ch.enabled !== false
+                    const isTest = Boolean(ch.testMode)
+                    const isRedirect = Boolean(ch.redirectToWhitelistOnTest)
+                    const whitelist: string[] = Array.isArray(ch.whitelist) ? ch.whitelist : []
+                    const blacklist: string[] = Array.isArray(ch.blacklist) ? ch.blacklist : []
+                    const inputState = channelPhoneInputs[meta.id] || { whitelist: "", blacklist: "" }
+
+                    return (
+                      <Card
+                        key={meta.id}
+                        className={`border-2 transition-all rounded-2xl overflow-hidden ${
+                          !isEnabled
+                            ? "border-slate-300 dark:border-slate-800 bg-muted/30 opacity-85"
+                            : isTest
+                            ? "border-blue-300 dark:border-blue-800 bg-blue-50/20 dark:bg-blue-950/10"
+                            : "border-emerald-300 dark:border-emerald-800 bg-emerald-50/15 dark:bg-emerald-950/10"
+                        }`}
+                      >
+                        <CardHeader className="p-4 pb-3 border-b bg-card/80">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <CardTitle className="text-sm font-black text-foreground">
+                                  {meta.title}
+                                </CardTitle>
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[10px] font-bold ${
+                                    !isEnabled
+                                      ? "bg-slate-200 text-slate-700 border-slate-300"
+                                      : isTest
+                                      ? "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950 dark:text-blue-200"
+                                      : "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200"
+                                  }`}
+                                >
+                                  {!isEnabled ? "⏸️ Canal Pausado" : isTest ? "🧪 Modo Teste (Whitelist)" : "🟢 Modo Produção"}
+                                </Badge>
+                              </div>
+                              <CardDescription className="text-[11px] leading-snug">
+                                {meta.subtitle}
+                              </CardDescription>
+                            </div>
+                            {savingChannelId === meta.id && (
+                              <RefreshCw className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+                            )}
+                          </div>
+                        </CardHeader>
+
+                        <CardContent className="p-4 space-y-4 text-xs">
+                          {/* 3 Controles Independentes do Canal */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            {/* Switch 1: Canal Ativo */}
+                            <div className="p-2.5 rounded-xl border bg-background flex items-center justify-between gap-2">
+                              <div>
+                                <div className="font-bold text-[11px]">Status do Canal</div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {isEnabled ? "Ativo para envios" : "Pausado (Bloqueado)"}
+                                </div>
+                              </div>
+                              <Switch
+                                checked={isEnabled}
+                                onCheckedChange={(val) => handleUpdateZapiChannel(meta.id, { enabled: val })}
+                                className="data-[state=checked]:bg-emerald-600 scale-90"
+                              />
+                            </div>
+
+                            {/* Switch 2: Modo Teste vs Produção */}
+                            <div className="p-2.5 rounded-xl border bg-background flex items-center justify-between gap-2">
+                              <div>
+                                <div className="font-bold text-[11px]">Modo Teste</div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {isTest ? "Restrito à Whitelist" : "Produção (Liberado)"}
+                                </div>
+                              </div>
+                              <Switch
+                                checked={isTest}
+                                onCheckedChange={(val) => handleUpdateZapiChannel(meta.id, { testMode: val })}
+                                className="data-[state=checked]:bg-blue-600 scale-90"
+                              />
+                            </div>
+
+                            {/* Switch 3: Redirecionar p/ Whitelist no Teste */}
+                            <div className="p-2.5 rounded-xl border bg-background flex items-center justify-between gap-2">
+                              <div>
+                                <div className="font-bold text-[11px]" title="Quando em Modo Teste, redireciona a mensagem para o 1º número da Whitelist com cabeçalho de auditoria em vez de enviar ao destinatário real.">
+                                  Redirecionar Teste
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {isRedirect ? "Desvia p/ Whitelist" : "Bloqueia fora da lista"}
+                                </div>
+                              </div>
+                              <Switch
+                                checked={isRedirect}
+                                onCheckedChange={(val) => handleUpdateZapiChannel(meta.id, { redirectToWhitelistOnTest: val })}
+                                className="data-[state=checked]:bg-indigo-600 scale-90"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Explicação Dinâmica do Comportamento Atual */}
+                          <div className="p-2.5 rounded-xl bg-muted/50 border text-[11px] text-muted-foreground leading-relaxed">
+                            {!isEnabled ? (
+                              <span>⏸️ <strong>Canal Pausado:</strong> Nenhum disparo deste grupo será enviado pelo WhatsApp.</span>
+                            ) : isTest ? (
+                              isRedirect ? (
+                                <span>🧪 <strong>Modo Teste com Redirecionamento Ativo:</strong> Disparos para números fora da Whitelist <strong>não vão para o destinatário real</strong>; são redirecionados para <strong>{whitelist[0] || "22998505276"}</strong> com o cabeçalho <code>[MODO TESTE • Canal: {meta.title}]</code>.</span>
+                              ) : (
+                                <span>🛡️ <strong>Modo Teste Estrito (Sandbox):</strong> Apenas os números cadastrados na Whitelist abaixo recebem mensagens deste canal. Os demais são bloqueados com segurança.</span>
+                              )
+                            ) : (
+                              <span>🟢 <strong>Modo Produção Ativo:</strong> Todos os destinatários reais deste canal recebem mensagens normalmente (exceto números na Blacklist).</span>
+                            )}
+                          </div>
+
+                          {/* Comunicações Mapeadas neste Canal */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Comunicações Mapeadas neste Canal:
+                            </span>
+                            <div className="flex flex-wrap gap-1">
+                              {meta.dispatches.map((d, i) => (
+                                <Badge key={i} variant="secondary" className="text-[10px] font-medium py-0 px-2">
+                                  {d}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Whitelist & Blacklist Editor */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            {/* Whitelist */}
+                            <div className="p-2.5 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-blue-900 dark:text-blue-200">
+                                  ✅ Whitelist ({whitelist.length})
+                                </span>
+                                <span className="text-[9px] text-blue-700/80 dark:text-blue-300/80">Autorizados no Teste</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1 min-h-[24px]">
+                                {whitelist.length === 0 ? (
+                                  <span className="text-[10px] text-muted-foreground italic">Nenhum número na Whitelist</span>
+                                ) : (
+                                  whitelist.map(phone => (
+                                    <Badge
+                                      key={phone}
+                                      variant="outline"
+                                      className="bg-white dark:bg-slate-900 border-blue-300 text-blue-900 dark:text-blue-200 text-[10px] font-mono gap-1 pr-1"
+                                    >
+                                      {phone}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveChannelPhone(meta.id, "whitelist", phone)}
+                                        className="hover:text-rose-600 font-bold px-0.5 cursor-pointer"
+                                        title="Remover da Whitelist"
+                                      >
+                                        ×
+                                      </button>
+                                    </Badge>
+                                  ))
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={inputState.whitelist}
+                                  onChange={e => setChannelPhoneInputs(prev => ({
+                                    ...prev,
+                                    [meta.id]: { ...inputState, whitelist: e.target.value }
+                                  }))}
+                                  placeholder="Ex: 22998505276"
+                                  className="h-7 text-[11px] font-mono bg-white dark:bg-slate-900"
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleAddChannelPhone(meta.id, "whitelist")}
+                                  className="h-7 px-2 text-[10px] font-bold bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+                                >
+                                  + Adicionar
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Blacklist */}
+                            <div className="p-2.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/30 dark:bg-rose-950/20 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-rose-900 dark:text-rose-200">
+                                  🚫 Blacklist ({blacklist.length})
+                                </span>
+                                <span className="text-[9px] text-rose-700/80 dark:text-rose-300/80">Sempre Bloqueados</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1 min-h-[24px]">
+                                {blacklist.length === 0 ? (
+                                  <span className="text-[10px] text-muted-foreground italic">Nenhum número bloqueado</span>
+                                ) : (
+                                  blacklist.map(phone => (
+                                    <Badge
+                                      key={phone}
+                                      variant="outline"
+                                      className="bg-white dark:bg-slate-900 border-rose-300 text-rose-900 dark:text-rose-200 text-[10px] font-mono gap-1 pr-1"
+                                    >
+                                      {phone}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveChannelPhone(meta.id, "blacklist", phone)}
+                                        className="hover:text-rose-600 font-bold px-0.5 cursor-pointer"
+                                        title="Remover da Blacklist"
+                                      >
+                                        ×
+                                      </button>
+                                    </Badge>
+                                  ))
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={inputState.blacklist}
+                                  onChange={e => setChannelPhoneInputs(prev => ({
+                                    ...prev,
+                                    [meta.id]: { ...inputState, blacklist: e.target.value }
+                                  }))}
+                                  placeholder="Bloquear nº..."
+                                  className="h-7 text-[11px] font-mono bg-white dark:bg-slate-900"
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleAddChannelPhone(meta.id, "blacklist")}
+                                  className="h-7 px-2 text-[10px] font-bold shrink-0"
+                                >
+                                  + Bloquear
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ════════════════════════════════════════════════════════════════════
               ABA 0: HUB CENTRAL UNIFICADO DO AGENTE SOFIA (IA)
           ════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="ai_hub" className="space-y-6">
@@ -1956,10 +2675,10 @@ export default function WhatsappAutomation() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
                       <Bot className="w-4 h-4 text-blue-600" />
-                      Motor de IA
+                      1. Motor IA Sofia
                     </span>
                     <Badge variant={aiConfig.enabled ? "default" : "secondary"} className={aiConfig.enabled ? "bg-emerald-600 text-white" : ""}>
-                      {aiConfig.enabled ? "Ativo" : "Desativado"}
+                      {aiConfig.enabled ? "Ativo" : "Pausado"}
                     </Badge>
                   </div>
                 </CardHeader>
@@ -1968,7 +2687,7 @@ export default function WhatsappAutomation() {
                     {aiConfig.agentName || "Sofia"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {aiConfig.agentRole || "Concierge Virtual CorpFlats"}
+                    Canal #2 • Independente da Régua
                   </p>
                 </CardContent>
               </Card>
@@ -1978,7 +2697,7 @@ export default function WhatsappAutomation() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
                       <Sparkles className="w-4 h-4 text-purple-600" />
-                      Modelo LLM
+                      Modelo LLM Principal
                     </span>
                     <Badge variant="outline" className={geminiStatus.configured ? "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60" : "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60"}>
                       {geminiStatus.configured ? "Google Gemini" : "Heurístico Local"}
@@ -1987,10 +2706,10 @@ export default function WhatsappAutomation() {
                 </CardHeader>
                 <CardContent className="p-4 pt-1">
                   <p className="text-sm font-black text-slate-900 dark:text-slate-100">
-                    {geminiStatus.configured ? geminiStatus.model : "Contingência Ativa"}
+                    {aiConfig.preferredModel || geminiStatus.model || "gemini-2.5-pro"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {geminiStatus.configured ? "Respostas dinâmicas em linguagem natural" : "Respostas de alta precisão via base interna"}
+                    Raciocínio avançado + Fallback automático
                   </p>
                 </CardContent>
               </Card>
@@ -2000,19 +2719,19 @@ export default function WhatsappAutomation() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
                       <ShieldCheck className="w-4 h-4 text-amber-600" />
-                      Ambiente de Disparo
+                      2. Ambiente da IA
                     </span>
                     <Badge variant={aiTestModeOnly ? "outline" : "default"} className={aiTestModeOnly ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 font-bold" : "bg-emerald-600 text-white font-bold"}>
-                      {aiTestModeOnly ? "Modo Teste" : "Produção"}
+                      {aiTestModeOnly ? "Modo Teste (IA)" : "Produção (IA)"}
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="p-4 pt-1">
                   <p className="text-sm font-black text-slate-900 dark:text-slate-100">
-                    {aiTestModeOnly ? "Números Autorizados" : "Todos os Contatos"}
+                    {aiTestModeOnly ? "Apenas Whitelist da IA" : "Todos os Contatos"}
                   </p>
                   <p className="text-xs text-muted-foreground truncate" title={aiTestAllowedPhones}>
-                    {aiTestModeOnly ? (aiTestAllowedPhones || "Nenhum número cadastrado") : "Hóspedes e novos clientes autorizados"}
+                    {aiTestModeOnly ? (aiTestAllowedPhones || "22998505276") : "Hóspedes e leads reais liberados"}
                   </p>
                 </CardContent>
               </Card>
@@ -2091,7 +2810,7 @@ export default function WhatsappAutomation() {
                   }`}
                 >
                   <Sliders className="w-3.5 h-3.5" />
-                  ⚙️ Comportamento & Prompt
+                  ⚙️ Comportamento, Modelo & Diretrizes
                   {developerGuidelines.length > 0 && (
                     <span className="ml-0.5 px-1.5 py-0.2 text-[9px] rounded-full bg-purple-500 text-white font-black">
                       {developerGuidelines.length}
@@ -2398,25 +3117,25 @@ export default function WhatsappAutomation() {
           </div>
         )}
 
-        {/* SUB-ABA 2: COMPORTAMENTO, IDENTIDADE & PROMPT */}
+        {/* SUB-ABA 2: COMPORTAMENTO, MODELO LLM & DIRETRIZES WHATSAPP BUSINESS AI */}
         {aiSubTab === "behavior" && (
           <div className="space-y-6 animate-in fade-in-50 duration-200">
             <div className="space-y-6">
               <Card className="border shadow-xs">
                 <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
                         <CardTitle className="text-base font-bold flex items-center gap-2">
                           <Bot className="w-4 h-4 text-blue-600" />
-                          Modo de Atuação & Parâmetros Principais
+                          Modo de Atuação, Motor LLM & Controle de Canal da IA
                         </CardTitle>
                         <CardDescription className="text-xs">
-                          Defina como o agente de IA interage com as conversas recebidas via WhatsApp.
+                          Configure os 2 interruptores independentes da Sofia (Canal #2) e escolha o modelo Gemini de raciocínio.
                         </CardDescription>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="ai-master-toggle" className="text-xs font-bold">
-                          {aiConfig.enabled ? "IA Ativada" : "IA Pausada"}
+                      <div className="flex items-center gap-2 bg-blue-50/80 dark:bg-blue-950/40 px-3 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800">
+                        <Label htmlFor="ai-master-toggle" className="text-xs font-black text-blue-900 dark:text-blue-200 cursor-pointer">
+                          Botão 1 • Motor IA Sofia: {aiConfig.enabled ? "ATIVADO" : "PAUSADO"}
                         </Label>
                         <Switch
                           id="ai-master-toggle"
@@ -2425,8 +3144,73 @@ export default function WhatsappAutomation() {
                         />
                       </div>
                     </div>
+
+                    {/* Banner Explicativo da Independência dos 2 Botões da IA */}
+                    <div className="mt-3 p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 text-[11px] text-indigo-950 dark:text-indigo-200 leading-relaxed">
+                      💡 <strong>Como funcionam os 2 botões da IA Sofia (Canal #2 Independente):</strong>
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                        <li><strong>Botão 1 (Motor IA Sofia):</strong> Liga ou pausa exclusivamente as respostas conversacionais da Sofia.</li>
+                        <li><strong>Botão 2 (Modo de Teste da IA):</strong> Controla se a Sofia responde apenas à Whitelist da IA (<code>{aiTestAllowedPhones || "22998505276"}</code>) ou a todos os hóspedes em Produção — <strong>100% independente</strong> do Modo Teste da <em>📅 Régua de Envios de Hóspedes</em> e das <em>🧹 Camareiras</em>.</li>
+                      </ul>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-2">
+                    {/* Seletor de Modelo de IA (R3: Upgrade para Gemini 2.5 Pro / Gemini 4 Argon) */}
+                    <div className="p-3.5 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/30 dark:bg-purple-950/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-black text-purple-950 dark:text-purple-200 flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-purple-600" />
+                          Motor de Inteligência Artificial (Modelo Principal Gemini)
+                        </Label>
+                        <Badge variant="outline" className="text-[10px] font-bold border-purple-400 text-purple-800 dark:text-purple-200">
+                          Fallback Automático Ativo
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        {[
+                          {
+                            id: "gemini-2.5-pro",
+                            title: "Gemini 2.5 Pro",
+                            badge: "Recomendado • Padrão",
+                            desc: "Máxima inteligência contextual, interpretação de reservas e zero alucinação."
+                          },
+                          {
+                            id: "gemini-4-argon",
+                            title: "Gemini 4 Argon",
+                            badge: "Experimental • Ultra",
+                            desc: "Raciocínio de última geração com fallback transparente para Gemini 2.5 Pro."
+                          },
+                          {
+                            id: "gemini-2.5-flash",
+                            title: "Gemini 2.5 Flash",
+                            badge: "Rápido • Econômico",
+                            desc: "Respostas de baixa latência para triagem rápida."
+                          }
+                        ].map(m => {
+                          const selected = (aiConfig.preferredModel || "gemini-2.5-pro") === m.id
+                          return (
+                            <div
+                              key={m.id}
+                              onClick={() => setAiConfig((prev: any) => ({ ...prev, preferredModel: m.id }))}
+                              className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                                selected
+                                  ? "border-purple-600 bg-purple-100/70 dark:bg-purple-950/60 ring-1 ring-purple-600 shadow-xs"
+                                  : "border-slate-200 dark:border-slate-800 bg-background hover:bg-slate-50"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="text-xs font-black text-foreground">{m.title}</span>
+                                <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-purple-400 text-purple-700 dark:text-purple-300">
+                                  {m.badge}
+                                </Badge>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground leading-snug">{m.desc}</p>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
                     {/* Modo de Operação */}
                     <div className="space-y-2">
                       <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">Modo de Operação</Label>
@@ -2482,7 +3266,7 @@ export default function WhatsappAutomation() {
                       </div>
                     </div>
 
-                    {/* Delay & Modo de Teste */}
+                    {/* Delay & Botão 2: Modo de Teste Independente da IA */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                       <div className="space-y-1.5">
                         <Label htmlFor="response-delay" className="text-xs font-semibold">
@@ -2500,9 +3284,11 @@ export default function WhatsappAutomation() {
                         <p className="text-[10px] text-muted-foreground">Simula digitação natural para evitar respostas mecânicas.</p>
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 p-3 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20">
                         <div className="flex items-center justify-between">
-                          <Label htmlFor="test-mode-toggle" className="text-xs font-semibold">Modo de Teste</Label>
+                          <Label htmlFor="test-mode-toggle" className="text-xs font-black text-amber-950 dark:text-amber-200">
+                            Botão 2 • Modo de Teste da IA (Whitelist Canal #2)
+                          </Label>
                           <Switch
                             id="test-mode-toggle"
                             checked={aiTestModeOnly}
@@ -2510,13 +3296,17 @@ export default function WhatsappAutomation() {
                           />
                         </div>
                         <Input
-                          placeholder="Ex: 22998505276, 22988486446"
+                          placeholder="Ex: 22998505276"
                           value={aiTestAllowedPhones}
                           onChange={e => setAiTestAllowedPhones(e.target.value)}
-                          className="h-9 text-xs font-mono"
+                          className="h-8 text-xs font-mono bg-white dark:bg-slate-900"
                           disabled={!aiTestModeOnly}
                         />
-                        <p className="text-[10px] text-muted-foreground">Telefones autorizados a interagir com a IA em modo teste.</p>
+                        <p className="text-[10px] text-amber-900/80 dark:text-amber-300/80">
+                          {aiTestModeOnly
+                            ? "🧪 Ativo: Sofia responde apenas aos números acima (não afeta Camareiras nem Régua)."
+                            : "🟢 Desligado: Sofia em Modo Produção respondendo a todos os hóspedes."}
+                        </p>
                       </div>
                     </div>
 
@@ -2577,124 +3367,199 @@ export default function WhatsappAutomation() {
                         className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-2"
                       >
                         {savingAiConfig ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                        Salvar Configurações do Agente
+                        Salvar Configurações do Agente & Modelo
                       </Button>
                     </div>
                   </CardContent>
                 </Card>
 
-                {/* Card: Diretrizes & Calibrações Aprendidas (developerGuidelines) */}
+                {/* Card: Central de Diretrizes Estilo WhatsApp Business AI (4 Categorias + CRUD Completo) */}
                 <Card className="border border-purple-200/80 dark:border-purple-900/60 bg-gradient-to-br from-purple-50/40 via-white to-indigo-50/30 dark:from-slate-900 dark:to-purple-950/20 shadow-xs">
                   <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CardTitle className="text-base font-bold flex items-center gap-2 text-purple-950 dark:text-purple-200">
-                          <Sparkles className="w-4 h-4 text-purple-600" />
-                          Diretrizes & Calibrações Aprendidas
-                        </CardTitle>
-                        <Badge variant="outline" className="bg-purple-100 text-purple-800 dark:bg-purple-950 border-purple-200 text-[10px] font-bold">
-                          {developerGuidelines.length} Ativas
-                        </Badge>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <CardTitle className="text-base font-black flex items-center gap-2 text-purple-950 dark:text-purple-200">
+                            <Sparkles className="w-4 h-4 text-purple-600" />
+                            Central de Diretrizes da IA (Estilo WhatsApp Business AI)
+                          </CardTitle>
+                          <Badge variant="outline" className="bg-purple-100 text-purple-800 dark:bg-purple-950 border-purple-200 text-[10px] font-bold">
+                            {developerGuidelines.filter((g: any) => g.enabled !== false && g.active !== false).length} Ativas de {developerGuidelines.length}
+                          </Badge>
+                        </div>
+                        <CardDescription className="text-xs text-purple-900/70 dark:text-purple-300/70">
+                          Gerencie o que a Sofia <strong>SEMPRE deve fazer</strong>, <strong>NUNCA deve fazer</strong>, <strong>Tom & Tratamento (ex: Sr. / Sra.)</strong> e <strong>Fatos Operacionais</strong>. Você pode criar, editar, pausar ou excluir qualquer regra a qualquer momento.
+                        </CardDescription>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={handleOpenAddGuidelineModal}
-                        className="h-7 text-xs font-bold border-purple-300 text-purple-700 hover:bg-purple-100/60 dark:hover:bg-purple-950 gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Nova Diretriz
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={handleQuickAddFormalVocative}
+                          disabled={savingGuideline}
+                          className="h-8 text-xs font-bold border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100 gap-1.5 cursor-pointer"
+                          title="Adiciona ou ativa a diretriz para chamar hóspedes pelo nome precedido de Sr. ou Sra."
+                        >
+                          🎩 + Regra "Sr. / Sra."
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleOpenAddGuidelineModal("always_do")}
+                          className="h-8 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Nova Diretriz
+                        </Button>
+                      </div>
                     </div>
-                    <CardDescription className="text-xs text-purple-900/70 dark:text-purple-300/70">
-                      Regras de tom, estilo e correções factuais ensinadas via WhatsApp pelo Desenvolvedor (22998505276) ou pelo Web Chat.
-                    </CardDescription>
+
+                    {/* Filtros por Categoria Estilo WhatsApp Business AI */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-3">
+                      {[
+                        { id: "all", label: `Todas (${developerGuidelines.length})` },
+                        { id: "always_do", label: "✅ O que SEMPRE fazer" },
+                        { id: "never_do", label: "🚫 O que NUNCA fazer" },
+                        { id: "persona_treatment", label: "🎩 Tom & Tratamento (Sr./Sra.)" },
+                        { id: "factual", label: "📌 Fatos & Regras" }
+                      ].map(cat => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setGuidelineFilterCategory(cat.id)}
+                          className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                            guidelineFilterCategory === cat.id
+                              ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                              : "bg-white/80 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-purple-300"
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-3 pt-1">
                     {loadingGuidelines ? (
                       <div className="p-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Carregando diretrizes aprendidas...
+                        Carregando diretrizes da IA...
                       </div>
                     ) : developerGuidelines.length === 0 ? (
                       <div className="p-4 text-center rounded-xl border border-dashed border-purple-200 dark:border-purple-800 text-xs text-muted-foreground space-y-1">
-                        <p className="font-semibold text-purple-800 dark:text-purple-300">Nenhuma diretriz aprendida registrada</p>
+                        <p className="font-semibold text-purple-800 dark:text-purple-300">Nenhuma diretriz cadastrada</p>
                         <p className="text-[11px]">
-                          Envie comandos via WhatsApp para a Sofia do número 22998505276 (ex: <em>"responda de forma mais curta por favor"</em>) ou utilize o botão <strong>✏️ Corrigir / Ensinar Sofia</strong> no Web Chat.
+                          Clique em <strong>+ Nova Diretriz</strong> ou em <strong>🎩 + Regra "Sr. / Sra."</strong> acima para orientar o comportamento da Sofia.
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                        {developerGuidelines.map((guide: any, idx: number) => {
-                          const guideId = guide.id || String(idx)
-                          const ruleText = guide.rule || guide.text || ""
-                          const isTone = guide.category === "tone"
-                          const sourceLabel =
-                            guide.source === "whatsapp_developer"
-                              ? "📱 WhatsApp Dev"
-                              : (guide.source === "web_chat_operator" || guide.source === "web_chat_rectification")
-                              ? "🖥️ Chat Web"
-                              : "⚙️ Manual"
+                      <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                        {developerGuidelines
+                          .filter((g: any) => {
+                            if (guidelineFilterCategory === "all") return true
+                            const normCat = g.category === "tone" ? "persona_treatment" : (g.category || "factual")
+                            return normCat === guidelineFilterCategory
+                          })
+                          .map((guide: any, idx: number) => {
+                            const guideId = guide.id || String(idx)
+                            const ruleText = guide.rule || guide.text || ""
+                            const isGuideActive = guide.enabled !== false && guide.active !== false
+                            const normCat = guide.category === "tone" ? "persona_treatment" : (guide.category || "factual")
+                            const catBadge =
+                              normCat === "always_do"
+                                ? { label: "✅ Sempre Fazer", cls: "bg-emerald-100 text-emerald-800 border-emerald-200" }
+                                : normCat === "never_do"
+                                ? { label: "🚫 Nunca Fazer", cls: "bg-rose-100 text-rose-800 border-rose-200" }
+                                : normCat === "persona_treatment"
+                                ? { label: "🎩 Tom & Tratamento", cls: "bg-amber-100 text-amber-900 border-amber-200" }
+                                : { label: "📌 Fato / Regra", cls: "bg-blue-100 text-blue-800 border-blue-200" }
 
-                          return (
-                            <div
-                              key={guideId}
-                              className="p-3 rounded-xl bg-white/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 flex items-start justify-between gap-3 shadow-2xs hover:border-purple-400 transition-colors"
-                            >
-                              <div className="space-y-1 flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <Badge className={
-                                    isTone 
-                                      ? "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 text-[9px] font-bold"
-                                      : "bg-blue-100 text-blue-800 border-blue-200 text-[9px] font-bold"
-                                  }>
-                                    {isTone ? "🎨 Tom & Estilo" : "📌 Fato / Regra"}
-                                  </Badge>
-                                  <Badge variant="outline" className="text-[9px] text-slate-500">
-                                    {sourceLabel}
-                                  </Badge>
-                                  {guide.createdAt && (
-                                    <span className="text-[10px] text-slate-400">
-                                      {new Date(guide.createdAt).toLocaleDateString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                                    </span>
+                            const sourceLabel =
+                              guide.source === "whatsapp_developer"
+                                ? "📱 WhatsApp Dev"
+                                : (guide.source === "web_chat_operator" || guide.source === "web_chat_rectification")
+                                ? "🖥️ Chat Web"
+                                : "⚙️ Painel Admin"
+
+                            return (
+                              <div
+                                key={guideId}
+                                className={`p-3 rounded-xl border flex items-start justify-between gap-3 shadow-2xs transition-all ${
+                                  isGuideActive
+                                    ? "bg-white/95 dark:bg-slate-800/90 border-slate-200/80 dark:border-slate-700/80 hover:border-purple-400"
+                                    : "bg-slate-100/60 dark:bg-slate-900/40 border-dashed border-slate-300 opacity-65"
+                                }`}
+                              >
+                                <div className="space-y-1 flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <Badge className={`${catBadge.cls} text-[9px] font-bold`}>
+                                      {catBadge.label}
+                                    </Badge>
+                                    <Badge variant="outline" className="text-[9px] text-slate-500">
+                                      {sourceLabel}
+                                    </Badge>
+                                    {!isGuideActive && (
+                                      <Badge variant="secondary" className="text-[9px]">
+                                        Pausada
+                                      </Badge>
+                                    )}
+                                    {guide.createdAt && (
+                                      <span className="text-[10px] text-slate-400">
+                                        {new Date(guide.createdAt).toLocaleDateString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed">
+                                    {ruleText}
+                                  </p>
+                                  {guide.sample && (
+                                    <p className="text-[11px] text-slate-500 italic">
+                                      Amostra: "{guide.sample}"
+                                    </p>
                                   )}
                                 </div>
-                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed">
-                                  {ruleText}
-                                </p>
-                                {guide.sample && (
-                                  <p className="text-[11px] text-slate-500 italic">
-                                    Amostra: "{guide.sample}"
-                                  </p>
-                                )}
-                              </div>
 
-                              <div className="flex items-center gap-1 shrink-0">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleTestGuidelineInSimulator(guide)}
-                                  className="h-7 w-7 p-0 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 cursor-pointer"
-                                  title="Testar no Simulador"
-                                >
-                                  <Play className="w-3.5 h-3.5" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteGuideline(guideId)}
-                                  className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 cursor-pointer"
-                                  title="Excluir Diretriz"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <Switch
+                                    checked={isGuideActive}
+                                    onCheckedChange={(val) => handleToggleGuidelineActive(guide, val)}
+                                    className="scale-75 data-[state=checked]:bg-emerald-600"
+                                    title={isGuideActive ? "Pausar Diretriz" : "Ativar Diretriz"}
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleOpenEditGuidelineModal(guide)}
+                                    className="h-7 w-7 p-0 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950 cursor-pointer"
+                                    title="Editar Diretriz"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleTestGuidelineInSimulator(guide)}
+                                    className="h-7 w-7 p-0 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 cursor-pointer"
+                                    title="Testar no Simulador"
+                                  >
+                                    <Play className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleDeleteGuideline(guideId)}
+                                    className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 cursor-pointer"
+                                    title="Excluir Diretriz"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
                               </div>
-                            </div>
-                          )
-                        })}
+                            )
+                          })}
                       </div>
                     )}
                   </CardContent>
@@ -5130,60 +5995,82 @@ export default function WhatsappAutomation() {
           </DialogContent>
         </Dialog>
 
-        {/* MODAL: NOVA DIRETRIZ MANUAL PARA A SOFIA */}
+        {/* MODAL: NOVA / EDITAR DIRETRIZ ESTILO WHATSAPP BUSINESS AI */}
         <Dialog open={addGuidelineModalOpen} onOpenChange={setAddGuidelineModalOpen}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base font-black text-purple-950 dark:text-purple-200">
                 <Sparkles className="w-5 h-5 text-purple-600" />
-                Nova Diretriz para a Sofia
+                {editingGuidelineId ? "Editar Diretriz da Sofia" : "Nova Diretriz para a Sofia (WhatsApp Business AI)"}
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Adicione manualmente uma regra factual ou ajuste de tom que a Sofia deve seguir ao responder.
+                Escolha a categoria estruturada e defina como a Sofia deve agir, tratar o hóspede ou qual regra operacional deve seguir.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-3 py-2 text-xs">
-              {/* Categoria */}
-              <div className="space-y-1">
+              {/* 4 Categorias Estruturadas */}
+              <div className="space-y-1.5">
                 <Label className="text-xs font-bold">Categoria da Diretriz:</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNewGuidelineCategory("factual")}
-                    className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      newGuidelineCategory === "factual"
-                        ? "bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-950/50 dark:border-blue-500 dark:text-blue-200 shadow-2xs"
-                        : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-                    }`}
-                  >
-                    <span>📌</span> Fato / Regra
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewGuidelineCategory("tone")}
-                    className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      newGuidelineCategory === "tone"
-                        ? "bg-fuchsia-50 border-fuchsia-500 text-fuchsia-700 dark:bg-fuchsia-950/50 dark:border-fuchsia-500 dark:text-fuchsia-200 shadow-2xs"
-                        : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-                    }`}
-                  >
-                    <span>🎨</span> Tom & Estilo
-                  </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[
+                    {
+                      id: "always_do",
+                      icon: "✅",
+                      label: "O que SEMPRE deve fazer",
+                      activeCls: "bg-emerald-50 border-emerald-500 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-500 dark:text-emerald-200"
+                    },
+                    {
+                      id: "never_do",
+                      icon: "🚫",
+                      label: "O que NUNCA deve fazer",
+                      activeCls: "bg-rose-50 border-rose-500 text-rose-800 dark:bg-rose-950/50 dark:border-rose-500 dark:text-rose-200"
+                    },
+                    {
+                      id: "persona_treatment",
+                      icon: "🎩",
+                      label: "Tom & Tratamento (Sr. / Sra.)",
+                      activeCls: "bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-950/50 dark:border-amber-500 dark:text-amber-200"
+                    },
+                    {
+                      id: "factual",
+                      icon: "📌",
+                      label: "Fato / Regra de Negócio",
+                      activeCls: "bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-950/50 dark:border-blue-500 dark:text-blue-200"
+                    }
+                  ].map(cat => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setNewGuidelineCategory(cat.id as any)}
+                      className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all cursor-pointer text-left ${
+                        newGuidelineCategory === cat.id
+                          ? `${cat.activeCls} shadow-2xs ring-1 ring-current`
+                          : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      <span>{cat.icon}</span>
+                      <span>{cat.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 
               {/* Texto da Regra */}
               <div className="space-y-1">
-                <Label className="text-xs font-bold">Texto da Diretriz / Regra:</Label>
+                <Label className="text-xs font-bold">Instrução / Regra para a IA:</Label>
                 <Textarea
                   rows={3}
                   value={newGuidelineRule}
                   onChange={e => setNewGuidelineRule(e.target.value)}
                   placeholder={
-                    newGuidelineCategory === "factual"
-                      ? "Ex: O flat 905 possui cafeteira Nespresso e o checkout é impreterivelmente às 11:00."
-                      : "Ex: Responda de forma mais concisa em 2 a 3 frases, usando menos emojis."
+                    newGuidelineCategory === "always_do"
+                      ? "Ex: Sempre perguntar a quantidade de hóspedes e o período desejado ao fazer uma cotação."
+                      : newGuidelineCategory === "never_do"
+                      ? "Ex: Nunca oferecer serviço de carregador de malas ou buffet presencial de café."
+                      : newGuidelineCategory === "persona_treatment"
+                      ? "Ex: Sempre chamar os hóspedes pelo nome precedido de Sr. ou Sra. (ex: Sr. Miller, Sra. Ana)."
+                      : "Ex: O flat 905 possui cafeteira Nespresso e vista panorâmica."
                   }
                   className="text-xs"
                 />
@@ -5191,15 +6078,15 @@ export default function WhatsappAutomation() {
 
               {/* Amostra / Pergunta de Teste */}
               <div className="space-y-1">
-                <Label className="text-xs font-bold">Pergunta de Teste / Exemplo (Opcional):</Label>
+                <Label className="text-xs font-bold">Pergunta de Teste / Exemplo para o Simulador (Opcional):</Label>
                 <Input
                   value={newGuidelineSample}
                   onChange={e => setNewGuidelineSample(e.target.value)}
-                  placeholder="Ex: Qual o horário de checkout do 905?"
+                  placeholder="Ex: Olá, qual o horário de check-in?"
                   className="text-xs h-8 rounded-xl"
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Facilita o teste rápido no simulador ao lado.
+                  Permite testar o comportamento desta regra com 1 clique no Simulador.
                 </p>
               </div>
             </div>
@@ -5215,7 +6102,7 @@ export default function WhatsappAutomation() {
                 className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 shadow-xs cursor-pointer"
               >
                 {savingGuideline ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                Salvar Diretriz
+                {editingGuidelineId ? "Salvar Alterações" : "Criar Diretriz"}
               </Button>
             </DialogFooter>
           </DialogContent>

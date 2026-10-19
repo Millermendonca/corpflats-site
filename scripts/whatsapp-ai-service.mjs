@@ -11,7 +11,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels } from "./zapi-service.mjs";
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
 import {
   lookupCep,
@@ -37,6 +37,8 @@ export {
   doesReservationMatchPhone,
   findAllReservationsByPhone,
   formatPhoneDisplay,
+  evaluateZapiChannelPolicy,
+  ensureZapiChannels,
   lookupCep,
   lookupCnpj,
   toTitleCase,
@@ -77,6 +79,8 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
 
 export const DEFAULT_AI_CONFIG = {
   enabled: true,
+  testMode: true,
+  preferredModel: "gemini-2.5-pro",
   mode: "autonomous", // "autonomous" | "copilot" | "off_hours"
   agentName: "Sofia",
   agentRole: "Concierge Virtual CorpFlats",
@@ -171,11 +175,30 @@ export function getWhatsAppAiConfig(db) {
     db.zapiConfig = {};
   }
   if (!db.zapiConfig.aiAgent) {
-    db.zapiConfig.aiAgent = JSON.parse(JSON.stringify(DEFAULT_AI_CONFIG));
+    const cloned = JSON.parse(JSON.stringify(DEFAULT_AI_CONFIG));
+    cloned.enabled = db.zapiConfig?.channels?.ai_agent?.enabled !== undefined
+      ? Boolean(db.zapiConfig.channels.ai_agent.enabled)
+      : DEFAULT_AI_CONFIG.enabled;
+    cloned.testMode = db.zapiConfig?.channels?.ai_agent?.testMode !== undefined
+      ? Boolean(db.zapiConfig.channels.ai_agent.testMode)
+      : Boolean(db.zapiConfig?.testModeOnly);
+    db.zapiConfig.aiAgent = cloned;
   } else {
     // Mescla campos faltantes
     const current = db.zapiConfig.aiAgent;
-    if (current.enabled === undefined) current.enabled = DEFAULT_AI_CONFIG.enabled;
+    if (current.enabled === undefined) {
+      current.enabled = db.zapiConfig?.channels?.ai_agent?.enabled !== undefined
+        ? Boolean(db.zapiConfig.channels.ai_agent.enabled)
+        : DEFAULT_AI_CONFIG.enabled;
+    }
+    if (current.testMode === undefined) {
+      current.testMode = db.zapiConfig?.channels?.ai_agent?.testMode !== undefined
+        ? Boolean(db.zapiConfig.channels.ai_agent.testMode)
+        : Boolean(db.zapiConfig?.testModeOnly);
+    }
+    if (!current.preferredModel) {
+      current.preferredModel = db.whatsappAiSettings?.geminiModel || db.settings?.geminiModel || DEFAULT_AI_CONFIG.preferredModel;
+    }
     if (!current.mode) current.mode = DEFAULT_AI_CONFIG.mode;
     if (!current.agentName) current.agentName = DEFAULT_AI_CONFIG.agentName;
     if (!current.agentRole) current.agentRole = DEFAULT_AI_CONFIG.agentRole;
@@ -2444,15 +2467,18 @@ function handleCheckAvailability(db, args = {}) {
     }
   });
 
-  // 2. Mapeamento de conflitos
+  // 2. Mapeamento de conflitos (exclui reservas com check-out já concluído)
   const busyFlatSet = new Set();
   (db?.reservations || []).forEach(r => {
-    if (r.status === "cancelada" || r.status === "expirada") return;
+    const statusNorm = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelled", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"].includes(statusNorm)) return;
+    if (isReservationCheckoutCompleted(r, db)) return;
     if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
 
     if (r.checkinDate < outDate && r.checkoutDate > inDate) {
       if (r.flatId != null) busyFlatSet.add(String(r.flatId));
       if (r.flatNumber != null) busyFlatSet.add(String(r.flatNumber));
+      if (r.roomNumber != null) busyFlatSet.add(String(r.roomNumber));
     }
   });
 
@@ -2460,20 +2486,24 @@ function handleCheckAvailability(db, args = {}) {
     if (b.startDate < outDate && b.endDate > inDate) {
       if (b.flatId != null) busyFlatSet.add(String(b.flatId));
       if (b.flatNumber != null) busyFlatSet.add(String(b.flatNumber));
+      if (b.roomNumber != null) busyFlatSet.add(String(b.roomNumber));
     }
   });
 
-  // 3. Unidades habitacionais disponíveis
-  const allFlats = (db?.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
+  // 3. Unidades habitacionais disponíveis (ordenadas numericamente)
+  const rawUnits = (Array.isArray(db?.flats) && db.flats.length > 0) ? db.flats : (db?.rooms || []);
+  const allFlats = rawUnits.filter(f => !f.status || f.status !== "manutencao_bloqueada");
   const siteCfg = db?.siteConfig || {};
   const maxCapacity = siteCfg?.extraBedConfig?.enabled ? (siteCfg.extraBedConfig.maxGuests || 3) : 2;
 
-  const availableFlats = allFlats.filter(f => {
-    const isBusy = busyFlatSet.has(String(f.id)) || busyFlatSet.has(String(f.number));
-    if (isBusy) return false;
-    if (guests > maxCapacity) return false;
-    return true;
-  });
+  const availableFlats = allFlats
+    .filter(f => {
+      const isBusy = (f.id != null && busyFlatSet.has(String(f.id))) || (f.number != null && busyFlatSet.has(String(f.number)));
+      if (isBusy) return false;
+      if (guests > maxCapacity) return false;
+      return true;
+    })
+    .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
 
   return {
     success: true,
@@ -2621,10 +2651,12 @@ function createPreReservationSync(db, args = {}) {
     };
   }
 
-  // Verificação de conflito
+  // Verificação de conflito (exclui reservas com check-out já concluído)
   const nowMs = Date.now();
   const hasConflict = (db?.reservations || []).some(r => {
-    if (r.status === "cancelada" || r.status === "expirada") return false;
+    const statusNorm = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelled", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout", "no_show"].includes(statusNorm)) return false;
+    if (isReservationCheckoutCompleted(r, db)) return false;
     if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
     if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
     return r.checkinDate < outDate && r.checkoutDate > inDate;
@@ -4536,13 +4568,16 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
     db.whatsappAiSettings.developerGuidelines = [];
   }
 
-  const rawText = String(guidelineData.text || "").trim();
+  const rawText = String(guidelineData.text || guidelineData.rule || "").trim();
   const cat = guidelineData.category || inferFaqCategory(rawText) || "geral";
+  const isStructuredCategory = ["always_do", "never_do", "persona_treatment", "factual"].includes(cat);
   const isPreFormulated = guidelineData.synthesized ||
+    isStructuredCategory ||
+    guidelineData.source === "admin_panel" ||
     guidelineData.source === "operator_response" ||
     guidelineData.source === "faq_approval" ||
     Boolean(guidelineData.question) ||
-    /^(?:é\s+poss[ií]vel|o\s+hor[aá]rio|todos\s+os|dispomos|aceitamos|n[aã]o\s+[eé]\s+permitid|n[aã]o\s+dispomos|fornecemos|a\s+voltagem)/i.test(rawText);
+    /^(?:sempre|nunca|jamais|é\s+poss[ií]vel|o\s+hor[aá]rio|todos\s+os|dispomos|aceitamos|n[aã]o\s+[eé]\s+permitid|n[aã]o\s+dispomos|fornecemos|a\s+voltagem|chame|trate)/i.test(rawText);
   const synthesizedText = isPreFormulated
     ? rawText
     : synthesizeGuidelineFromText(rawText, cat);
@@ -4560,13 +4595,15 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
       const updated = {
         ...existing,
         text: synthesizedText,
+        rule: synthesizedText,
         category: cat,
         targetFlat: guidelineData.targetFlat !== undefined ? guidelineData.targetFlat : existing.targetFlat,
         sample,
         sampleResponse: sample,
         question: guidelineData.question !== undefined ? guidelineData.question : existing.question,
         operatorText: guidelineData.operatorText !== undefined ? guidelineData.operatorText : existing.operatorText,
-        active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : existing.active,
+        active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : (guidelineData.enabled !== undefined ? Boolean(guidelineData.enabled) : existing.active),
+        enabled: guidelineData.enabled !== undefined ? Boolean(guidelineData.enabled) : (guidelineData.active !== undefined ? Boolean(guidelineData.active) : existing.active),
         updatedAt: new Date().toISOString(),
         source: guidelineData.source || existing.source
       };
@@ -4583,31 +4620,37 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
   });
   if (matchIndex >= 0) {
     const existing = db.whatsappAiSettings.developerGuidelines[matchIndex];
+    const isAct = guidelineData.active !== undefined ? Boolean(guidelineData.active) : (guidelineData.enabled !== undefined ? Boolean(guidelineData.enabled) : true);
     const updated = {
       ...existing,
       text: synthesizedText,
+      rule: synthesizedText,
       category: cat,
       sample,
       sampleResponse: sample,
       question: guidelineData.question || existing.question,
       operatorText: guidelineData.operatorText || existing.operatorText,
-      active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : true,
+      active: isAct,
+      enabled: isAct,
       updatedAt: new Date().toISOString()
     };
     db.whatsappAiSettings.developerGuidelines[matchIndex] = updated;
     return updated;
   }
 
+  const isActiveInit = guidelineData.active !== undefined ? Boolean(guidelineData.active) : (guidelineData.enabled !== undefined ? Boolean(guidelineData.enabled) : true);
   const newGuideline = {
     id: guidelineData.id || `guideline_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     text: synthesizedText,
+    rule: synthesizedText,
     category: cat,
     targetFlat: guidelineData.targetFlat || null,
     sample,
     sampleResponse: sample,
     question: guidelineData.question || null,
     operatorText: guidelineData.operatorText || null,
-    active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : true,
+    active: isActiveInit,
+    enabled: isActiveInit,
     createdAt: guidelineData.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     source: guidelineData.source || "whatsapp_developer"
@@ -4684,12 +4727,18 @@ export function formatDeveloperCoachingConfirmation({ newGuideline, sampleRespon
 }
 
 /**
- * Monta os blocos dinâmicos de instruções de tom e diretrizes para o Gemini
+ * Monta os blocos dinâmicos de instruções de tom e diretrizes para o Gemini (Estilo WhatsApp Business AI)
  */
-export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
+export function buildDynamicSystemInstruction(aiConfig, dbOrContext, contextOrDb) {
+  const isSecondArgDb = Boolean(
+    dbOrContext && (dbOrContext.whatsappAiSettings !== undefined || dbOrContext.zapiConfig !== undefined || dbOrContext.reservations !== undefined || dbOrContext.flats !== undefined)
+  );
+  const db = isSecondArgDb ? dbOrContext : (contextOrDb || dbOrContext);
+  const guestContext = isSecondArgDb ? contextOrDb : dbOrContext;
+
   const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
   const activeGuidelines = (db?.whatsappAiSettings?.developerGuidelines || [])
-    .filter(g => g && g.active !== false);
+    .filter(g => g && g.active !== false && g.enabled !== false);
 
   let toneSection = "";
   if (toneSettings) {
@@ -4721,7 +4770,26 @@ export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
   const antiCopyPasteRule = `\n[REGRA ANTI-COPIA-E-COLA & GERAÇÃO MULTITÓPICO CONTEXTUAL]\n- NUNCA use respostas prontas, engessadas ou cópia-e-cola de mensagens anteriores.\n- Use os fatos e diretrizes aprendidos como base de conhecimento vivo para sintetizar uma resposta inédita, humanizada e personalizada ao contexto do hóspede.\n- Se o hóspede enviar saudações (ex: "bom dia", "boa tarde", "olá"), retribua a saudação cordialmente pelo nome do hóspede.\n- Se a mensagem contiver múltiplas dúvidas juntas (ex: horário de checkout + se pode estender a reserva pelo WhatsApp), responda a TODOS os pontos de forma clara, acolhedora e integrada na mesma mensagem.\n`;
 
   if (activeGuidelines.length > 0) {
-    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${activeGuidelines.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text}`).join("\n")}\n${antiCopyPasteRule}`;
+    const alwaysDo = activeGuidelines.filter(g => g.category === "always_do");
+    const neverDo = activeGuidelines.filter(g => g.category === "never_do");
+    const personaTreatment = activeGuidelines.filter(g => g.category === "persona_treatment");
+    const factual = activeGuidelines.filter(g => !["always_do", "never_do", "persona_treatment"].includes(g.category));
+
+    const blocks = [];
+    if (alwaysDo.length > 0) {
+      blocks.push(`[✅ SEMPRE FAZER (OBRIGATÓRIO EM TODA RESPOSTA)]\n${alwaysDo.map(g => `• ${g.text || g.rule}`).join("\n")}`);
+    }
+    if (neverDo.length > 0) {
+      blocks.push(`[🚫 NUNCA FAZER (PROIBIÇÃO ESTRITA)]\n${neverDo.map(g => `• ${g.text || g.rule}`).join("\n")}`);
+    }
+    if (personaTreatment.length > 0) {
+      blocks.push(`[🎩 TRATAMENTO & POSTURA COM O CLIENTE]\n${personaTreatment.map(g => `• ${g.text || g.rule}`).join("\n")}`);
+    }
+    if (factual.length > 0) {
+      blocks.push(`[📌 REGRAS DE NEGÓCIO & DIRETRIZES APRENDIDAS]\n${factual.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text || g.rule}`).join("\n")}`);
+    }
+
+    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${blocks.join("\n\n")}\n${antiCopyPasteRule}`;
   } else {
     guidelinesSection = antiCopyPasteRule;
   }
@@ -4740,11 +4808,64 @@ export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
 }
 
 /**
- * Ajusta a resposta heurística para respeitar a calibração de tom
+ * Ajusta a resposta para respeitar a calibração de tom e diretrizes de tratamento (ex: Sr. / Sra.)
  */
-export function applyToneFormatting(text, toneSettings) {
-  if (!text || !toneSettings) return text;
+export function applyToneFormatting(text, toneSettingsOrDb, db = null, guestContext = null) {
+  if (!text) return text;
   let result = text;
+
+  const isSecondArgDb = Boolean(
+    toneSettingsOrDb &&
+    typeof toneSettingsOrDb === "object" &&
+    (toneSettingsOrDb.whatsappAiSettings !== undefined || toneSettingsOrDb.zapiConfig !== undefined || toneSettingsOrDb.reservations !== undefined)
+  );
+  const resolvedDb = isSecondArgDb ? toneSettingsOrDb : (db || (typeof globalThis !== "undefined" ? globalThis.db : null));
+  const resolvedGuestContext = isSecondArgDb ? (db || guestContext) : guestContext;
+  const toneSettings = isSecondArgDb ? (resolvedDb?.whatsappAiSettings?.toneSettings || null) : toneSettingsOrDb;
+
+  const activeDb = resolvedDb;
+  const activeGuidelines = (activeDb?.whatsappAiSettings?.developerGuidelines || [])
+    .filter(g => g && g.active !== false && g.enabled !== false);
+
+  // 0. Diretrizes de Tratamento / Vocativo ("Sempre chame por Sr. ou Sra.")
+  const requiresSrSra = activeGuidelines.some(g =>
+    /\b(?:chame|trate|dirija-se|sempre\s+chame|sempre\s+trate).*?\b(?:sr\.?|sra\.?|senhor|senhora)\b/i.test(String(g.text || g.rule || "")) ||
+    ((g.category === "persona_treatment" || g.category === "always_do") && /\b(?:sr\.?|sra\.?|senhor|senhora)\b/i.test(String(g.text || g.rule || "")))
+  );
+
+  if (requiresSrSra && !/\b(?:Sr\.|Sra\.|Sr\(a\)\.)/i.test(result)) {
+    const rawFirstName = (resolvedGuestContext?.guestName || "").trim().split(/\s+/)[0] || "";
+    const inferHonorific = (firstName) => {
+      if (!firstName) return "Sr(a).";
+      const clean = firstName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (["luca", "joshua", "nikita", "mustafa", "akira", "birajara", "ubirajara"].includes(clean)) return "Sr.";
+      if (clean.endsWith("a") || ["beatriz", "raquel", "ester", "rute", "iris", "ines", "lais", "thais", "liz", "alice", "clarice", "elenice", "simone", "ivone", "solange", "monique", "jacqueline", "caroline", "aline", "elaine", "viviane", "tatiane", "cristiane", "ariane", "daiane", "ingrid", "astrid", "edith", "judith"].includes(clean)) {
+        return "Sra.";
+      }
+      return "Sr.";
+    };
+
+    if (rawFirstName) {
+      const honorific = inferHonorific(rawFirstName);
+      const escapedName = rawFirstName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const nameSalutationRegex = new RegExp(`(Olá|Oi|Bom dia|Boa tarde|Boa noite|Perfeito|Com certeza|Ótima notícia|Dados recebidos com sucesso|Entendido),\\s*(?!Sr\\.|Sra\\.|Sr\\(a\\)\\.)(${escapedName})`, "i");
+      if (nameSalutationRegex.test(result)) {
+        result = result.replace(nameSalutationRegex, `$1, ${honorific} $2`);
+      } else {
+        result = result.replace(/^(Olá|Oi|Bom dia|Boa tarde|Boa noite)!/i, `$1, ${honorific} ${rawFirstName}!`);
+      }
+    } else {
+      result = result.replace(/^(Olá|Oi|Bom dia|Boa tarde|Boa noite),\s*([A-ZÀ-Ú][a-zà-ú]+)!/, (_, greet, detectedName) => {
+        const hon = inferHonorific(detectedName);
+        return `${greet}, ${hon} ${detectedName}!`;
+      });
+      if (!/\b(?:Sr\.|Sra\.|Sr\(a\)\.)/i.test(result)) {
+        result = result.replace(/^(Olá|Oi|Bom dia|Boa tarde|Boa noite)!/i, "$1, Sr(a).!");
+      }
+    }
+  }
+
+  if (!toneSettings) return result;
 
   // 1. Concisão: compact
   if (toneSettings.conciseness === "compact") {
@@ -5438,7 +5559,7 @@ export function executeConversationalBookingStep({
   const convState = extractConversationState(messageText, history, guestContext, db);
   const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
   const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
-  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+  const ret = (msg) => applyToneFormatting(msg, toneSettings, db, guestContext);
 
   const botSettings = getBotActionsSettings(db);
   const canAutoReserve = botSettings.apiActionsEnabled !== false && (
@@ -5492,6 +5613,7 @@ export function executeConversationalBookingStep({
           const hasOtherConflict = (db.reservations || []).some(r => {
             if (r.id === convState.activePreReservation.id) return false;
             if (!["confirmada", "checkin", "pre_reserva"].includes(r.status)) return false;
+            if (isReservationCheckoutCompleted(r, db)) return false;
             if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowCheckMs && r.paymentStatus !== "pago_total") return false;
             const sameFlat = (r.flatId && String(r.flatId) === String(heldFlatObj.id)) ||
                              (r.flatNumber && String(r.flatNumber) === String(heldFlatObj.number));
@@ -5657,7 +5779,10 @@ export function executeConversationalBookingStep({
       }
 
       // 2.B: Hóspede informou datas para consulta de disponibilidade / orçamento (sem ter pedido fechamento ainda)
-      const flatNumbersList = avail.flats.slice(0, 6).map(f => f.number).join(", ");
+      const flatNumbersList = [...avail.flats]
+        .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0))
+        .map(f => f.number)
+        .join(", ");
       const totalRoomOnlyStr = Number(quoteRoomOnly?.total || (237 * convState.nights + 70)).toFixed(2).replace(".", ",");
       const totalWithBfStr = Number(quoteWithBf?.total || ((237 + 35) * convState.nights)).toFixed(2).replace(".", ",");
       const cleaningStr = Number(quoteRoomOnly?.cleaningFee ?? 70).toFixed(2).replace(".", ",");
@@ -6355,7 +6480,7 @@ export function validateAndRefineResponse({
 
   const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
   const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
-  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+  const ret = (msg) => applyToneFormatting(msg, toneSettings, db, guestContext);
 
   const isCheckoutDone = Boolean(
     guestContext?.isCheckoutCompleted ||
@@ -6751,6 +6876,8 @@ export function validateAndRefineResponse({
     }
   }
 
+  replyText = applyToneFormatting(replyText, toneSettings, db, guestContext);
+
   return {
     replyText,
     analysis,
@@ -6784,7 +6911,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   const activeDb = dbParam || (dbOrFaqs && typeof dbOrFaqs === "object" && !Array.isArray(dbOrFaqs) ? dbOrFaqs : (typeof globalThis !== "undefined" ? globalThis.db : null));
   const activeGuidelines = (activeDb?.whatsappAiSettings?.developerGuidelines || []).filter(g => g && g.active !== false);
   const toneSettings = activeDb?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
-  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+  const ret = (msg) => applyToneFormatting(msg, toneSettings, activeDb, guestContext);
 
   const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
     ? history
@@ -7610,17 +7737,32 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "" }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
-  const customModel = db?.settings?.geminiModel || db?.whatsappAiSettings?.geminiModel || null;
-  const candidateModels = [
-    ...(customModel ? [{ ver: "v1beta", model: String(customModel).trim() }] : []),
+  const preferredModel = String(
+    db?.zapiConfig?.aiAgent?.preferredModel ||
+    db?.settings?.geminiModel ||
+    db?.whatsappAiSettings?.geminiModel ||
+    "gemini-2.5-pro"
+  ).trim();
+
+  const rawCandidates = [
+    ...(preferredModel ? [{ ver: "v1beta", model: preferredModel }] : []),
+    { ver: "v1beta", model: "gemini-2.5-pro" },
     { ver: "v1beta", model: "gemini-2.5-flash" },
     { ver: "v1beta", model: "gemini-2.5-flash-lite" },
     { ver: "v1beta", model: "gemini-2.0-flash" },
     { ver: "v1beta", model: "gemini-2.0-flash-lite" },
+    { ver: "v1beta", model: "gemini-1.5-pro" },
     { ver: "v1beta", model: "gemini-1.5-flash" },
-    { ver: "v1", model: "gemini-1.5-flash" },
-    { ver: "v1beta", model: "gemini-1.5-pro" }
+    { ver: "v1", model: "gemini-1.5-flash" }
   ];
+
+  const seenModels = new Set();
+  const candidateModels = rawCandidates.filter(c => {
+    const key = `${c.ver}:${c.model}`;
+    if (seenModels.has(key)) return false;
+    seenModels.add(key);
+    return true;
+  });
 
   // Remove duplicação caso a mensagem atual já tenha sido anexada ao final do histórico pelo webhook
   const rawHistory = Array.isArray(history) ? history.slice(-8) : [];
@@ -7698,6 +7840,9 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
       });
 
       if (!response.ok) {
+        if (model === "gemini-4-argon") {
+          console.log(`[WhatsApp AI] Modelo experimental "${model}" retornou HTTP ${response.status}; realizando fallback automático para gemini-2.5-pro.`);
+        }
         continue;
       }
 
@@ -8714,7 +8859,9 @@ export async function handleWhatsAppFiscalFlow({
       await sendZapiMessage(db.zapiConfig, {
         phone: cleanTarget,
         message: replyText,
-        bypassTestMode: true
+        channelId: "ai_agent",
+        recipientRole: "guest",
+        db
       });
     }
 
@@ -9164,21 +9311,41 @@ export async function processAiInboundMessage({
   }
 
   const aiConfig = getWhatsAppAiConfig(db);
+  const aiChannel = db?.zapiConfig?.channels?.ai_agent || null;
 
-  // 1. Verifica se a IA está habilitada globalmente
-  if (aiConfig.enabled === false) {
+  // 1. Verifica se a IA está habilitada globalmente ou no canal ai_agent
+  if (aiConfig.enabled === false || aiChannel?.enabled === false) {
     return { skipped: true, reason: "ai_disabled" };
   }
 
-  // 2. Verifica se está em Modo de Teste
-  if (db?.zapiConfig?.testModeOnly === true) {
-    const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
+  // 1.5. Verifica Blacklist do canal ai_agent
+  const targetNorm = cleanWhatsAppPhone(cleanTarget);
+  if (Array.isArray(aiChannel?.blacklist) && aiChannel.blacklist.length > 0) {
+    const isBlacklisted = aiChannel.blacklist
+      .map(p => cleanWhatsAppPhone(p))
+      .filter(Boolean)
+      .some(b => targetNorm.endsWith(b.slice(-8)) || b.endsWith(targetNorm.slice(-8)));
+    if (isBlacklisted) {
+      console.log(`[WhatsApp AI] Número ${cleanTarget} na Blacklist do canal ai_agent. Ignorado.`);
+      return { skipped: true, reason: "blacklisted" };
+    }
+  }
+
+  // 2. Verifica se o canal ai_agent está em Modo de Teste (independente de guest_schedule)
+  const isAiTestMode = aiChannel
+    ? Boolean(aiChannel.testMode)
+    : (db?.zapiConfig?.aiAgent?.testMode !== undefined ? Boolean(db.zapiConfig.aiAgent.testMode) : Boolean(db?.zapiConfig?.testModeOnly));
+
+  if (isAiTestMode) {
+    const rawWhitelist = Array.isArray(aiChannel?.whitelist) && aiChannel.whitelist.length > 0
+      ? aiChannel.whitelist
+      : [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db?.zapiConfig?.testAllowedPhones || "").split(/[,\s]+/)];
+    const allowed = rawWhitelist
       .map(p => cleanWhatsAppPhone(p))
       .filter(Boolean);
-    const targetNorm = cleanWhatsAppPhone(cleanTarget);
     const isAllowed = allowed.some(a => targetNorm.endsWith(a.slice(-8)) || a.endsWith(targetNorm.slice(-8)));
-    if (!isAllowed) {
-      console.log(`[WhatsApp AI] Modo de Teste ativo: mensagem de ${cleanTarget} ignorada pela IA.`);
+    if (!isAllowed && aiChannel?.redirectToWhitelistOnTest !== true) {
+      console.log(`[WhatsApp AI] Modo de Teste da IA ativo: mensagem de ${cleanTarget} ignorada pela IA.`);
       return { skipped: true, reason: "test_mode_not_allowed" };
     }
   }
@@ -9256,7 +9423,9 @@ export async function processAiInboundMessage({
         await sendZapiMessage(db.zapiConfig, {
           phone: cleanTarget,
           message: confirmationText,
-          bypassTestMode: true
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          db
         });
       }
 
@@ -9323,7 +9492,9 @@ export async function processAiInboundMessage({
         await sendZapiMessage(db.zapiConfig, {
           phone: cleanTarget,
           message: confirmationText,
-          bypassTestMode: true
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          db
         });
       }
 
@@ -9476,7 +9647,9 @@ export async function processAiInboundMessage({
       await sendZapiMessage(db.zapiConfig, {
         phone: cleanTarget,
         message: aiResult.replyText,
-        bypassTestMode: true
+        channelId: "ai_agent",
+        recipientRole: "guest",
+        db
       });
     }
 
@@ -9528,7 +9701,9 @@ export async function processAiInboundMessage({
     await sendZapiMessage(db.zapiConfig, {
       phone: cleanTarget,
       message: aiResult.replyText,
-      bypassTestMode: true
+      channelId: "ai_agent",
+      recipientRole: "guest",
+      db
     });
   }
 
