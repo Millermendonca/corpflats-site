@@ -5646,7 +5646,7 @@ async function loadDatabase() {
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
       if (ensureSystemUsers(db)) {
-        saveDatabase("migrate_system_users_dev_and_gestor");
+        saveDatabase("manual_migrate_system_users_dev_and_gestor");
       }
     }
     if (pgPool) {
@@ -5862,7 +5862,7 @@ async function loadDatabase() {
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     if (ensureSystemUsers(db)) {
-      saveDatabase("migrate_system_users_dev_and_gestor");
+      saveDatabase("manual_migrate_system_users_dev_and_gestor");
     }
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
@@ -8725,7 +8725,9 @@ app.use([
 await loadDatabase();
 ensureUniqueRequestIds();
 reconcileCleaningRequests();
-ensureSystemUsers(db);
+if (ensureSystemUsers(db)) {
+  saveDatabase("manual_migrate_system_users_dev_and_gestor");
+}
 initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
 initMaidAutomationEngine(app, () => db, saveDatabase);
 
