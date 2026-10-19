@@ -1,156 +1,196 @@
-# Review & Adversarial Critic Report: Milestone 1 (Operational Safety, Storage & WBP Simulator)
+# Handoff Report: Milestone 1 — Backend Auth, Roles & Dev Endpoints
 
-**Reviewer**: Reviewer & Critic 1 (`reviewer_m1_1`)  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1`  
-**Target Milestone**: Milestone 1 (Operational Safety, Storage & WBP Simulator)  
-**Recipient**: Orchestrator (`84d9f696-67d5-4529-bec4-c0232e9abea0`)  
-**Verdict**: **APPROVE**  
-**Date**: 2026-10-13T22:46:00Z  
+**Agent**: `reviewer_m1_1` (teamwork_preview_reviewer)  
+**Roles**: Reviewer, Critic  
+**Date**: 2026-10-19  
+**Working Directory**: `.agents/teamwork/reviewer_m1_1/`  
+**Recipient**: Project Orchestrator (`c4864abd-776b-4ad1-aef9-25c7af7463df`)  
 
 ---
 
 ## Review Summary
 
-**Verdict**: **APPROVE**  
-**Integrity Attestation**: **VERIFIED — ZERO INTEGRITY VIOLATIONS**.
-No hardcoded test outputs, no facade implementations, no shortcuts bypassing intended tasks, and no fabricated logs or self-certifying mock shortcuts were detected. All components implement genuine logic, real I/O, authentic HTTP networking, and robust schema validation.
+**Verdict**: **REQUEST_CHANGES**
+
+A implementação dos requisitos funcionais do Milestone 1 (migração `ensureSystemUsers`, proteção `requireDevAuth`, expansão operacional `admin || dev` e gestão de usuários `/api/admin/users` com `PATCH`/`POST` em reset de senha) está conceitualmente e funcionalmente correta e passou em todos os 5 subtestes de integração HTTP. No entanto, **a paridade estrita SHA-256 entre os servidores gêmeos está violada no branch `main`**: o commit `035c16e` alterou 247 linhas em `scripts/demo-server.mjs` sem espelhá-las em `artifacts/api-server/demo-server.mjs`, fazendo o subteste 1 de `tests/auth-roles-permissions.test.mjs` falhar com código de saída 1.
 
 ---
 
 ## 1. Observation
 
-1. **Git Branch & Commit Hygiene:**
-   - Command: `git branch --show-current` executed in Guest-Flow-Manager root returned `feature/wbp-integration`.
-   - Command: `git status` confirmed `On branch feature/wbp-integration`, `Your branch is up to date with 'origin/feature/wbp-integration'`.
-   - Command: `git log -n 1 --oneline` confirmed commit `13d5043 feat(wbp): implement Milestone 1 operational safety, durable storage & WBP simulator`.
-   - Working tree has zero unstaged modifications in project source files; 11 audit log lines in `artifacts/api-server/audit_logs.jsonl` were preserved intact.
+1. **Desparidade SHA-256 dos Arquivos Gêmeos**:
+   Comando executado:
+   ```powershell
+   Get-FileHash 'artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs' -Algorithm SHA256 | Format-List
+   ```
+   Resultado observado:
+   ```text
+   Algorithm : SHA256
+   Hash      : D9A25D2F78E89E9B38869AF6DCA00CEEBABDDA67EBB079B55AF319B899C05B29
+   Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
 
-2. **SHA-256 Byte-for-Byte Twin Parity:**
-   - Evaluated checksums across all twin pairs between `artifacts/api-server/` and `scripts/`:
-     - `demo-server.mjs`: `94ab58374d761261d04c217523ec363450bc6ece570d223b66fb8caeee99d657` -> **MATCH**
-     - `wbp/callbacks.mjs`: `6204e1e9df3fc236ac57c5e6436b69b61187928efb78b5eab0730e605730a5b8` -> **MATCH**
-     - `wbp/client.mjs`: `faaae4b595d543d137b48467fadcbfe33457f38087dafa2e83a405d9f8250115` -> **MATCH**
-     - `wbp/config.mjs`: `4d90469c16804acb06779600811bb222a0460bdefc9d04ed8051ee66686d0d84` -> **MATCH**
-     - `wbp/storage.mjs`: `97df9d7d507b46518ac751684a1e17b04da76ab0bd26d182bf9cce6d2a06fb91` -> **MATCH**
-   - Directory contents between `artifacts/api-server/wbp` and `scripts/wbp` are identical: `['callbacks.mjs', 'client.mjs', 'config.mjs', 'storage.mjs']`.
+   Algorithm : SHA256
+   Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
+   Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
+   ```
 
-3. **Operational Safety Switch Implementation:**
-   - `artifacts/api-server/wbp/config.mjs` (lines 27-37): `getIntegrationMode(db)` prioritizes `process.env.WBP_INTEGRATION_MODE` -> `db.settings.wbp_integration_mode` -> defaults to `'off'`.
-   - `artifacts/api-server/wbp/client.mjs` (lines 118-124): Outbound call guard checks `mode === WBP_MODES.OFF && !options.bypassSwitch` and throws `WbpApiError` with code `1031`, making 0 outbound network requests.
-   - `artifacts/api-server/wbp/callbacks.mjs` (lines 44-56): Inbound callback middleware intercepts all `/api/callback/wbp/*` requests when `mode === 'off'` and responds with HTTP 200 `{ ErrorCode: 1031, Error: "Integration disabled" }` without storing any payloads or mutating state.
-   - `artifacts/api-server/wbp/callbacks.mjs` (lines 234-237): `WbpBackgroundWorker.start()` verifies `isWbpEnabled(this.db)` and returns immediately without registering any `setInterval` timers if mode is `'off'`.
+2. **Causa Raiz da Desparidade (Commit `035c16e`)**:
+   `git show --stat 035c16e`:
+   ```text
+   commit 035c16e1b22260960f8f9f7d29b50ed6397e972e
+   Author: Millermendonca <miller.mendonca16@gmail.com>
+   Date:   Mon Oct 19 01:54:10 2026 -0300
 
-4. **Durable Storage & Idempotency Engine:**
-   - `artifacts/api-server/wbp/storage.mjs`:
-     - Creates isolated relational tables `wbp_raw_payloads` and `wbp_idempotency` outside PostgreSQL `system_store` blob (lines 47-75).
-     - When PostgreSQL is unavailable (local/test mode), creates insert-only `data/wbp_raw_payloads.jsonl` and atomic `data/wbp_idempotency.json` (lines 82-96).
-     - `recordRawPayload()` is strictly insert-only and executes prior to any business logic processing (lines 151-191).
-     - `claimForProcessing()` implements in-memory mutex locking (`_inFlightLocks`) and persistence checking to ensure exactly-once processing (lines 230-281).
-     - `getUnprocessedPayloads()` detects unacknowledged payloads on startup to resume processing after process crashes (lines 345-392).
+       fix(payments): prioritize credit card / mpPaymentId over pre-generated pixTxId in receipts and portal
 
-5. **Local WBP Simulator & Schema Validation:**
-   - `e2e/wbp-simulator/schemas/index.mjs`: Implements regex-based UUID v4 (`UUID_V4_REGEX`), ISO dates (`ISO_DATE_REGEX`), and WBP version timestamp validation against `wbpAPI.yaml`, while tolerating documented Errata E1-E10.
-   - `e2e/wbp-simulator/server.mjs`: Full Express mock server listening on dynamic ports with programmable failure injection (`setFailureMode`: 1001, 1002, 1102, delays, timeouts, drop connection) and callback dispatchers (`sendBookingCreate`, `sendNotifyBooking` with form-urlencoded, `sendARIFullRefresh`, `sendRoomInfo`).
+    scripts/demo-server.mjs | 247 +++++++++++++++------
+   ```
+   O commit `035c16e` alterou linhas 37600–38400 de `scripts/demo-server.mjs` (tratamento de pagamentos com cartão Mercado Pago) mas NÃO tocou `artifacts/api-server/demo-server.mjs`.
 
-6. **Targeted Test Execution:**
-   - Command executed strictly in accordance with AGENTS.md:
-     `node --test tests/wbp-integration/m1-safety-simulator.test.mjs`
-   - Test Results:
-     - Tests: 13 passed, 0 failed, 0 skipped, 0 cancelled.
-     - Suites: 7 passed.
-     - Exit Code: 0.
-     - Duration: ~6.5s.
+3. **Falha na Execução do Teste Pontual de M1**:
+   Comando executado:
+   ```bash
+   node --test tests/auth-roles-permissions.test.mjs
+   ```
+   Resultado observado:
+   ```text
+   TAP version 13
+   # Subtest: Milestone 1 — Auth, Roles & RBAC Separation Suite
+       # Subtest: File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+       not ok 1 - File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+         ---
+         duration_ms: 26.1238
+         location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/auth-roles-permissions.test.mjs:35:3'
+         failureType: 'testCodeFailure'
+         error: 'demo-server twin files must have matching SHA-256 hashes'
+         code: 'ERR_ASSERTION'
+         expected: '33c17537913a1f3b5509489c387106b8a0ffdbb959fddd3a9b0df578e310d9da'
+         actual: 'd9a25d2f78e89e9b38869af6dca00ceebabdda67ebb079b55af319b899c05b29'
+         operator: 'strictEqual'
+         ...
+       # Subtest: HTTP Integration & RBAC Tests
+           ok 1 - ensureSystemUsers migrated database: admin is dev, gestor is created as admin
+           ok 2 - /api/auth/me returns 'dev' for admin and 'admin' for gestor
+           ok 3 - Operational Endpoints: both dev and admin can access business routes
+           ok 4 - Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
+           ok 5 - User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
+           1..5
+       ok 2 - HTTP Integration & RBAC Tests
+         ---
+         duration_ms: 5891.5198
+         type: 'suite'
+         ...
+       1..2
+   not ok 1 - Milestone 1 — Auth, Roles & RBAC Separation Suite
+   # tests 6
+   # suites 2
+   # pass 5
+   # fail 1
+   # duration_ms 6236.2855
+   ```
+
+4. **Verificação de `ensureSystemUsers` (`artifacts/api-server/demo-server.mjs:740-813`)**:
+   - Linhas 750-764: Localiza `admin`, preserva o `passwordHash` e atualiza `role = "dev"`. Se ausente, cria com `id: 1, role: "dev"`.
+   - Linhas 767-791: Localiza ou cria `gestor` (`role: "admin"`, `name: "Administração CorpFlats"`, senha `"admin123"`).
+   - Linhas 5648, 5864 e 8728: Executado no `loadDatabase()` e no startup com persistência imediata atômica via `saveDatabase("manual_migrate_system_users_dev_and_gestor")`.
+
+5. **Verificação de `requireDevAuth` (`artifacts/api-server/demo-server.mjs:8693-8723`)**:
+   - Bloqueia com HTTP 403 qualquer usuário onde `!user || user.role !== "dev"`.
+   - Montado na raiz de 19 endpoints técnicos (`/api/whatsapp/config`, `/api/settings/gemini`, `/api/storage/config`, `/api/admin/server-monitor`, etc.).
+   - Rotas operacionais aceitam `admin || dev`.
+
+6. **Verificação de `/api/admin/users` (`artifacts/api-server/demo-server.mjs:9794-9954`)**:
+   - `GET /api/admin/users`: sanitiza e omite `passwordHash`.
+   - `POST /api/admin/users`: proíbe admin de cadastrar `dev` (linha 9825: 403 Forbidden).
+   - `PATCH /api/admin/users/:id`: proíbe admin de alterar conta `dev` ou promover para `dev` (linhas 9868 e 9881: 403 Forbidden).
+   - `PATCH` e `POST` `/api/admin/users/:id/reset-password`: ambos suportados via `handleResetPassword` (linhas 9937-9938), proibindo admin de alterar senha de `dev`.
+   - `DELETE /api/admin/users/:id`: proíbe exclusão do próprio usuário e exclusão de conta `dev` por admin.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Safety Switch Effectiveness (Observation 3):**
-   - Step 1: Default mode evaluates to `'off'` in absence of explicit configuration.
-   - Step 2: In `'off'` mode, `WBPClient.request()` aborts with `WbpApiError(code 1031)` before network dispatch, guaranteeing 0 outbound calls.
-   - Step 3: In `'off'` mode, callback router intercepts calls before storage insertion and returns `{ ErrorCode: 1031 }`.
-   - Step 4: Background polling timer is not registered (`worker.intervalId === null`).
-   - Conclusion: Operational safety switch is 100% inert when `'off'`, satisfying Requirement R1 and Acceptance Criterion 1.
-
-2. **Storage Durability & Isolation (Observation 4):**
-   - Step 1: Raw payloads are written to dedicated tables (`wbp_raw_payloads`) or dedicated files (`wbp_raw_payloads.jsonl`).
-   - Step 2: The PMS main state is stored in `db` (JSONB `system_store` / `data/database.json`), which is pruned by `pruneDatabase()`.
-   - Step 3: Test 4 directly verified that pruning `oversizedDb` truncated reservations to 800 and logs to 500, while `wbp_raw_payloads` retained all 25 raw payloads (100% immune).
-   - Conclusion: Raw storage is isolated, insert-only, and completely immune to `pruneDatabase()`, satisfying R1 and Acceptance Criterion 4.
-
-3. **Concurrency & Idempotency (Observation 4 & Test Suite):**
-   - Step 1: 5 webhook deliveries and 3 polling deliveries for the same `OrderId` were dispatched concurrently via `Promise.all`.
-   - Step 2: `claimForProcessing` allowed the first delivery to acquire the lock (`shouldProcess: true`), while the other 7 were rejected with `IN_FLIGHT` or `ALREADY_PROCESSED`.
-   - Step 3: Exactly 1 reservation processing execution occurred, and all 8 raw payloads were preserved in the audit log.
-   - Conclusion: Idempotency under multi-channel concurrent delivery is verified, satisfying R1 and Acceptance Criterion 2.
-
-4. **WBP Client Spec Conformance (Observation 5 & Test Suite):**
-   - Step 1: All 8 outbound methods (`healthCheck`, `setupProperty`, `getRoomTypes`, `getRatePlans`, `sendARIUpdate`, `getBookingList`, `getBookingId`, `ackBooking`) pass OpenAPI validation against the simulator.
-   - Step 2: `adjustBookingVersion()` subtracts 5 minutes from `wbp_booking_version` per specification.
-   - Step 3: Retry mechanism reuses the exact same UUID v4 `guid` across retry attempts upon transient timeouts or error code 1003. Non-retryable errors (1001, 1002, 1102) terminate immediately.
-   - Conclusion: WBP client and simulator satisfy Requirement R2 and Acceptance Criteria.
-
-5. **Memory & Parity Conformance (Observations 1 & 2):**
-   - Step 1: `render.yaml`, `package.json`, and `server.mjs` configure `--max-old-space-size=1536`, leaving 512MB headroom on Render's 2GB plan.
-   - Step 2: SHA-256 hashes of all twin files in `artifacts/api-server/` and `scripts/` are 100% identical.
-   - Conclusion: System complies with AGENTS.md and R10.
+1. O projeto `Guest-Flow-Manager` estabelece em `AGENTS.md` e em `PROJECT.md` a regra inegociável de paridade estrita byte a byte (SHA-256) entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+2. O subteste 1 de `tests/auth-roles-permissions.test.mjs` executa uma checagem criptográfica comparando `hashA` e `hashB`.
+3. Embora o commit `a2717eb` do Worker M1 estivesse com paridade idêntica (`D9A25D2F...`), o commit subsequente `035c16e` alterou 247 linhas em `scripts/demo-server.mjs` sem atualizar `artifacts/api-server/demo-server.mjs`.
+4. Em consequência, o teste pontual `node --test tests/auth-roles-permissions.test.mjs` falhou com erro de asserção no subteste 1 e código de saída 1.
+5. Por restrição mandatória do papel de Reviewer ("Review-only — do NOT modify implementation code"), o reviewer não pode corrigir os arquivos de código diretamente.
+6. Portanto, a emissão do veredito **REQUEST_CHANGES** é mandatória até que a sincronização entre os arquivos gêmeos seja restabelecida e todos os testes passem com 100% de sucesso.
 
 ---
 
-## 3. Adversarial Challenges & Stress-Testing
+## 3. Caveats
 
-| # | Assumption / Scenario Challenged | Adversarial Test Applied | Result | Blast Radius / Defense |
-|---|----------------------------------|--------------------------|--------|------------------------|
-| **C1** | Invalid integration mode in env (e.g., `WBP_INTEGRATION_MODE="true"`) | Tested `getIntegrationMode()` with arbitrary and malformed string values | **PASSED** | Defaults safely to `'off'`, preventing unintended activation |
-| **C2** | Outbound leakage when switch is `'off'` | Invoked `client.healthCheck()` and `sendARIUpdate()` while `'off'` | **PASSED** | Client throws code 1031 prior to `fetch()`; simulator request history remained exactly 0 |
-| **C3** | Raw storage truncation by database housekeeping | Ran simulated `pruneDatabase()` on bloated database collections | **PASSED** | Raw payloads stored in dedicated file/table; 0 payload loss |
-| **C4** | Race condition under 8 concurrent webhook + polling deliveries | Dispatched 5x `BookingCreate` + 3x `GetBookingId` simultaneously | **PASSED** | Exactly 1 execution processed, 7 deduplicated, all 8 raw logs saved |
-| **C5** | Process termination between raw storage and processing | Wrote unacknowledged payload, instantiated fresh storage instance | **PASSED** | `getUnprocessedPayloads()` recovered unacknowledged item for resumption |
-| **C6** | GUID drift across retry attempts | Simulated delay > timeout on `GetBookingList` triggering 2 retries | **PASSED** | All 3 HTTP attempts sent to simulator contained the exact same `guid` |
-| **C7** | NotifyBooking webhook content encoding | Simulator dispatched NotifyBooking via `application/x-www-form-urlencoded` | **PASSED** | Ingested and parsed correctly by PMS callback router |
+- **Integridade da Implementação Funcional**: O código de autenticação, migração e RBAC não contém facades, atalhos fraudulentos ou resultados hardcoded. Se os arquivos forem sincronizados, a funcionalidade atende 100% aos requisitos de M1.
+- **Origem da Divergência**: A alteração que quebrou a paridade decorreu de um commit independente de pagamentos (`035c16e`), não de um erro interno na lógica de autenticação de M1.
 
 ---
 
-## 4. Caveats
+## 4. Conclusion
 
-1. **Live Channel Manager Credentials:** No live production credentials exist yet; all verifications were conducted against the local OpenAPI-compliant WBP Simulator, which accurately reflects `wbpAPI.yaml` and documented errata.
-2. **Pre-existing minor divergence in mail-service.mjs:** As documented in the codebase exploration, `scripts/mail-service.mjs` had an existing 2-line difference on lines 939-940 prior to this milestone. This was intentionally left untouched to prevent out-of-scope regressions.
+O Milestone 1 atendeu aos requisitos funcionais de RBAC (`dev` vs `admin`), proteção de rotas técnicas, migração idempotente de usuários e segurança de credenciais. Contudo, **o gate de qualidade está bloqueado** devido à quebra de paridade SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
 
----
-
-## 5. Conclusion
-
-Milestone 1 satisfies all functional, architectural, safety, and integrity requirements.
-- Branch `feature/wbp-integration` is clean, committed, and pushed.
-- Operational safety switch is 100% inert when `'off'`.
-- Raw storage is durable, insert-only, and completely immune to pruning.
-- WBP Client and Simulator adhere to Build-To-Us v1.0 specifications.
-- Memory limit is upgraded to 1536MB.
-- Twin file parity is 100% byte-for-byte identical.
-- Targeted test suite passes with 13/13 tests and 0 failures.
-
-Explicit Verdict: **APPROVE**.
+**Ação Necessária**:
+1. Espelhar as alterações de `scripts/demo-server.mjs` em `artifacts/api-server/demo-server.mjs` (ou vice-versa, consolidando as alterações do commit `035c16e`).
+2. Validar que ambos os arquivos possuem exatamente o mesmo hash SHA-256.
+3. Reexecutar `node --test tests/auth-roles-permissions.test.mjs` confirmando 6/6 testes aprovados e saída 0.
+4. Realizar `git commit` e `git push origin main`.
 
 ---
 
-## 6. Verification Method
+## 5. Verification Method
 
-To independently reproduce this verification:
+Para reproduzir e verificar a resolução:
 
-1. **Verify Git Branch and Clean Working Tree:**
+1. **Checagem de Paridade SHA-256**:
    ```powershell
-   git branch --show-current
-   # Output: feature/wbp-integration
-   git status -s
+   Get-FileHash 'artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs' -Algorithm SHA256 | Format-List
    ```
+   *Critério de Invalidação*: Qualquer caractere diferente nos hashes SHA-256 invalida o gate.
 
-2. **Verify SHA-256 Twin Parity:**
-   ```powershell
-   node -e "const fs = require('fs'), crypto = require('crypto'); const h = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); ['demo-server.mjs', 'wbp/config.mjs', 'wbp/storage.mjs', 'wbp/client.mjs', 'wbp/callbacks.mjs'].forEach(f => { const a = h('artifacts/api-server/' + f); const b = h('scripts/' + f); console.log(f + ': ' + (a === b ? 'MATCH' : 'MISMATCH')); });"
+2. **Execução do Teste Pontual de M1**:
+   ```bash
+   node --test tests/auth-roles-permissions.test.mjs
    ```
+   *Critério de Invalidação*: Saída com qualquer teste com status `not ok` ou código de retorno diferente de 0.
 
-3. **Run Strictly Targeted Milestone 1 Test Suite:**
-   ```powershell
-   node --test tests/wbp-integration/m1-safety-simulator.test.mjs
+3. **Verificação de Compilação Sintática**:
+   ```bash
+   node -c artifacts/api-server/demo-server.mjs
+   node -c scripts/demo-server.mjs
    ```
-   *Expected result: 13 passed, 7 suites passed, 0 failed.*
+   *Critério de Invalidação*: Qualquer erro de sintaxe.
+
+---
+
+## Quality Review Findings
+
+### [Critical] Finding 1: Quebra de Paridade SHA-256 entre Twin Servers
+- **What**: Os arquivos `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` possuem conteúdos divergentes (247 linhas alteradas em `scripts/` pelo commit `035c16e`).
+- **Where**: `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
+- **Why**: Viola a diretriz mandatória de paridade do projeto e quebra a suíte de testes `tests/auth-roles-permissions.test.mjs`.
+- **Suggestion**: Reconciliar as alterações do commit `035c16e` em `artifacts/api-server/demo-server.mjs` para que ambos fiquem 100% idênticos.
+
+### [Minor] Finding 2: Rota `/api/whatsapp/raw-webhook-logs` sem checagem de autenticação
+- **What**: A rota `GET /api/whatsapp/raw-webhook-logs` em `artifacts/api-server/zapi-service.mjs:6667` expõe logs de webhooks brutos sem verificar `requireDevAuth` ou `getAuthUser`.
+- **Where**: `artifacts/api-server/zapi-service.mjs:6667`
+- **Why**: Embora não seja consumida na UI, permite que qualquer cliente leia payloads brutos de webhooks.
+- **Suggestion**: Adicionar `requireDevAuth` ou incluir `/api/whatsapp/raw-webhook-logs` na lista protegida em `demo-server.mjs`.
+
+---
+
+## Adversarial Review & Attack Surface
+
+### 1. Assumption Stress-Testing
+- **Premissa A**: `admin` pode tentar auto-promoção ou elevação de privilégio.
+  - *Cenário de Teste*: `PATCH /api/admin/users/:id` com `{ role: "dev" }` disparado por usuário `admin`.
+  - *Resultado*: Linha 9881 barra com HTTP 403 ("Apenas desenvolvedores podem promover usuários a dev."). **Aprovado.**
+- **Premissa B**: `admin` pode tentar alterar a senha ou excluir a conta `dev`.
+  - *Cenário de Teste*: `POST /api/admin/users/1/reset-password` e `DELETE /api/admin/users/1` disparados por `gestor` (`admin`).
+  - *Resultado*: Linhas 9927 e 9947 barram com HTTP 403 ("Apenas desenvolvedores podem..."). **Aprovado.**
+- **Premissa C**: Rotas técnicas de telemetria ou nuvem acessíveis via requisições diretas de `admin`.
+  - *Cenário de Teste*: Acesso a `/api/admin/server-monitor/live`, `/api/audit-logs`, `/api/storage/config`, `/api/whatsapp/config` com cookie de `gestor`.
+  - *Resultado*: `requireDevAuth` intercepta e retorna HTTP 403 ("Acesso restrito a desenvolvedores."). **Aprovado.**
+- **Premissa D**: Desligamento ou falha imediata após inicialização com usuários não persistidos.
+  - *Cenário de Teste*: `ensureSystemUsers` aciona `saveDatabase("manual_migrate_system_users_dev_and_gestor")`.
+  - *Resultado*: Prefixo `manual_` desvia do debounce de 500ms e grava sincronicamente via `atomicWriteFileSync(DB_FILE, stateJson)`, garantindo integridade imediata no disco. **Aprovado.**

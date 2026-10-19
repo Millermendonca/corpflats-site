@@ -1,85 +1,87 @@
-# BRIEFING — 2026-10-14T10:25:00Z
+# BRIEFING — 2026-10-19T05:10:00Z
 
 ## Mission
-M2: Implement CRM 360° Alignment & Fiscal Invoices UI (Features F6 to F11): Company & Guest Address/Fiscal Persistence, CRM Modals UI Expansion, and Fiscal Invoices Multi-Entity Selector with PF/PJ Tomador Toggle.
+Milestone 2: Frontend Guards, Team Page (`/equipe`), WBP Manual Purge, and In-Page Guards Update (`dev` vs `admin`).
 
 ## 🔒 My Identity
 - Archetype: implementer
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
-- Original parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Milestone: Milestone 2 (CRM 360° Alignment & Fiscal Invoices UI)
+- Original parent: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Milestone: Milestone 2 (Frontend Guards, Team Page & WBP Purge)
 
 ## 🔒 Key Constraints
 - DO NOT CHEAT: Genuine implementations only, no dummy/facade implementations, no hardcoded test results.
 - STRICT TEST SCOPE: NEVER run global tests (`tests/*.test.mjs` or test sweeps). Run EXCLUSIVELY the designated spot test if needed.
-- TWIN SERVER PARITY: 100% byte-for-byte SHA-256 parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+- EXCLUSIVELY OWNED FILES:
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/equipe.tsx`
+  - `artifacts/limpeza/src/components/wbp/index.ts`
+  - Deletion of `artifacts/limpeza/src/pages/wbp-manual.tsx`
+  - Deletion of `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`
+  - In-page role guards across `artifacts/limpeza/src/pages/*.tsx`
 - BUILD OF FRONTEND: Build `artifacts/limpeza` (`npm run build`) and update `artifacts/limpeza/dist/`.
 - GIT PUSH: Always git push after committing.
-- EXCLUSIVE WRITE SCOPE:
-  - `artifacts/api-server/demo-server.mjs` (endpoints `/api/companies` and `/api/pms/guests`)
-  - `scripts/demo-server.mjs` (100% identical copy)
-  - `artifacts/limpeza/src/pages/crm-guests.tsx`
-  - `artifacts/limpeza/src/pages/fiscal-invoices.tsx`
-  - `artifacts/limpeza/dist/` (via build)
 
 ## Current Parent
-- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Updated: 2026-10-14T10:25:00Z
+- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Updated: 2026-10-19T05:10:00Z
 
 ## Task Summary
 - **What to build**:
-  1. Backend Address & Fiscal Persistence in `demo-server.mjs` (twin mirror):
-     - `POST /api/companies` and `PATCH /api/companies/:id`: accept & persist address & fiscal fields with bilingual tolerance.
-     - `POST /api/pms/guests` and `PUT/PATCH /api/pms/guests/:id`: whitelist & persist address & fiscal fields, `companyId`, `autoEmitInvoice`.
-     - `mergeGuestRecords`: preserve `cep`, `number`, `neighborhood`, `companyId`, `companyName`, `autoEmitInvoice`.
-  2. Frontend CRM Modals in `crm-guests.tsx`:
-     - Company modal: inputs for CEP, address, number, complement, neighborhood, city, UF, IBGE, state/municipal reg, phone, contact.
-     - Save/edit company handling and CNPJ lookup enrichment.
-     - Quick shortcut "Emitir NFS-e" in companies table.
-     - Guest modal: inputs for CEP, address, number, complement, neighborhood, UF, IBGE.
-     - Save/edit guest handling with address persistence.
-  3. Frontend Fiscal Invoices UI in `fiscal-invoices.tsx`:
-     - Multi-entity CRM selector: Guests (PF), Companies (PJ), active/recent Reservations.
-     - Auto-fill company as tomador when guest has `companyId`, preserving guest/stay in service description.
-     - Quick toggle button between PJ (linked company) and PF (guest).
-     - Stay data prefill from reservation (flat, dates, value, daily rates).
-     - Full URL query params handling (`flat`, `checkin`, `checkout`, `valor`, `diarias`, `resCode`, `doc`, `nome`, `companyId`, `guestId`).
-  4. Twin parity verification & `npm run build` in `artifacts/limpeza`.
-- **Success criteria**: All F6 to F11 features working, frontend builds cleanly (exit code 0), twin server has 100% SHA-256 match.
+  1. Purge WBP Manual:
+     - Deleted `artifacts/limpeza/src/pages/wbp-manual.tsx` and `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`.
+     - In `components/wbp/index.ts`: removed export of `WbpHelpManualPage`.
+     - In `App.tsx`: removed lazy import and `/ajuda-wbp`, `/manual-wbp`, `/manual-integracao` routes.
+  2. Created Dedicated Team & Access Page:
+     - Created `artifacts/limpeza/src/pages/equipe.tsx` and alias `artifacts/limpeza/src/pages/team.tsx`.
+     - Full CRUD for team members with zero exposure of cloud secrets or API keys.
+     - Role indicators: `dev`, `admin`, `recepcao`, `camareira`.
+     - Direct WhatsApp link (`https://wa.me/...`) and single-click copy PIX button with toast.
+     - Strict role safeguards: Non-dev admins cannot grant `dev` role or delete/edit `dev` accounts. Self-deletion is prevented.
+  3. Route Guards in `App.tsx`:
+     - Created `DevGuard` & `DevRoute` checking `user.role === "dev"`.
+     - Updated `AdminGuard` & `AdminRoute` to accept `user.role === "admin" || user.role === "dev"`.
+     - Updated `ReceptionGuard` & `ReceptionRoute` to accept `user.role === "admin" || user.role === "dev" || user.role === "recepcao" || user.role === "reception"`.
+     - Protected exclusively technical routes with `DevRoute`: `/configuracoes`, `/monitor-servidor`, `/logs`, `/ia-status`, `/zapi-conexao`, `/jornada-reservas`.
+     - Mounted routes `/equipe`, `/usuarios`, `/team` with `AdminRoute`.
+  4. In-Page Role Guards:
+     - Updated all hardcoded checks (`user?.role !== "admin"` and `isAdmin`) to allow `dev` in 18 pages/components.
+  5. Build & Verification:
+     - Ran `npm --prefix artifacts/limpeza run build` successfully with exit code 0 in 26.47s.
+     - Committed and pushed to `origin main` (commit `c098329`).
+- **Success criteria**: Clean compilation, zero broken references, proper access control.
 - **Interface contracts**: `PROJECT.md` § Interface Contracts
 - **Code layout**: `PROJECT.md` § Code Layout
 
 ## Key Decisions Made
-- Backend Address & Fiscal Normalization: Whitelisted all address/fiscal fields in `demo-server.mjs` with bilingual fallback support (`address`/`logradouro`, `number`/`numero`, `neighborhood`/`bairro`, `city`/`cidade`/`municipio`, `state`/`uf`, `ibgeCode`/`codigoMunicipio`).
-- In `mergeGuestRecords`, preserved address, companyId, companyName, and autoEmitInvoice across record deduplication.
-- In `crm-guests.tsx`, expanded Company and Guest dialogs with CEP lookup integration, address fields, and added quick action shortcut "Emitir NFS-e" in the Companies table linking to `/notas?doc=...&nome=...&companyId=...`.
-- In `fiscal-invoices.tsx`, implemented multi-entity CRM selector grouping Hóspedes (PF), Empresas (PJ), and Reservas (Estadias) with visual badges and rich search.
-- Added corporate Tomador auto-fill when a guest has a linked company, preserving the guest/stay in service description.
-- Added a high-visibility PJ/PF Tomador Toggle Banner allowing seamless switching between corporate PJ and collaborator PF without losing stay dates, apartment, or values.
-- Integrated full URL parameter pre-filling supporting `flat`, `checkin`, `checkout`, `valor`, `diarias`, `resCode`, `doc`, `nome`, `companyId`, `guestId`.
+- `equipe.tsx` provides full team management capabilities without any risk of exposing infrastructure/cloud credentials to hotel administrators.
+- `team.tsx` serves as a clean re-export of `equipe.tsx` to handle any alternate import paths.
+- Technical dev routes (`/configuracoes`, `/monitor-servidor`, `/logs`, `/ia-status`, `/zapi-conexao`, `/jornada-reservas`) are strictly protected by `DevRoute`, throwing `<AccessDenied />` for non-dev users while `AdminRoute` accommodates both `admin` and `dev`.
 
 ## Artifact Index
-- `artifacts/api-server/demo-server.mjs` — Backend server with company & guest fiscal persistence
-- `scripts/demo-server.mjs` — Twin mirror of demo-server.mjs (100% SHA-256 match)
-- `artifacts/limpeza/src/pages/crm-guests.tsx` — CRM guest & company modals with full address fields and invoice shortcut
-- `artifacts/limpeza/src/pages/fiscal-invoices.tsx` — Fiscal hub with multi-entity selector, PJ/PF toggle banner, and URL prefill
-- `artifacts/limpeza/dist/` — Production build assets verified clean (exit code 0)
+- `artifacts/limpeza/src/pages/equipe.tsx` — Team management page
+- `artifacts/limpeza/src/pages/team.tsx` — Re-export alias
+- `artifacts/limpeza/src/App.tsx` — Updated routes and guards
+- `artifacts/limpeza/dist/` — Built frontend production bundle
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/demo-server.mjs`: Added address and fiscal fields persistence to `/api/companies` and `/api/pms/guests`, updated `mergeGuestRecords`.
-  - `scripts/demo-server.mjs`: Synchronized 1:1 mirror of `demo-server.mjs`.
-  - `artifacts/limpeza/src/pages/crm-guests.tsx`: Added address form fields, CEP lookup, and "Emitir NFS-e" shortcut.
-  - `artifacts/limpeza/src/pages/fiscal-invoices.tsx`: Added multi-entity CRM selector (PF, PJ, Reservas), PJ/PF toggle banner, and URL parameters prefill.
-  - `artifacts/limpeza/dist/`: Built production artifacts.
-- **Build status**: Pass (exit code 0 in 26.38s)
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/equipe.tsx` (created)
+  - `artifacts/limpeza/src/pages/team.tsx` (created)
+  - `artifacts/limpeza/src/components/wbp/index.ts`
+  - Deleted `artifacts/limpeza/src/pages/wbp-manual.tsx`
+  - Deleted `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`
+  - 18 pages with updated in-page guards
+  - `artifacts/limpeza/dist/` production assets
+- **Build status**: Pass (exit code 0, 26.47s)
 - **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: Frontend build passed (exit code 0); SHA-256 twin match verified (`BF6361FC217B2A7BD21CB709368C43128EC989A04D1BB3A57DA5A721D060FC29`).
+- **Build/test result**: Pass (code 0)
 - **Lint status**: Clean
-- **Tests added/modified**: Scope-compliant; strict rule followed (no global test sweeps executed).
+- **Tests added/modified**: Strict scope followed (no global test sweeps executed).
 
 ## Loaded Skills
 - None

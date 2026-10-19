@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-13T22:45:00Z
+# BRIEFING — 2026-10-19T05:00:00Z
 
 ## Mission
-Empirically verify concurrency and idempotency of Milestone 1 storage and webhook processing under 50+ simultaneous concurrent deliveries.
+Empirically challenge Milestone 1: RBAC separation (dev vs admin), route protection, privilege escalation barriers, and twin server SHA-256 parity.
 
 ## 🔒 My Identity
 - Archetype: empirical challenger
@@ -10,45 +10,60 @@ Empirically verify concurrency and idempotency of Milestone 1 storage and webhoo
 - Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
 - Milestone: Milestone 1
 - Instance: 1 of 1
+- Current parent: c4864abd-776b-4ad1-aef9-25c7af7463df (Project Orchestrator)
+- Active Instance: 1 of 1 (M1 Auth, Roles & Dev Endpoints)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
 - Run exclusively targeted test: node --test tests/wbp-integration/challenger-m1-concurrency.test.mjs (NEVER run global sweeps)
 - Strictly comply with AGENTS.md rules
+- Do NOT run global test sweeps (`tests/*.test.mjs`), only strictly targeted test for Milestone 1 (`tests/auth-roles-permissions.test.mjs` and isolated challenger probes)
+- Do NOT modify production code or twin server implementations
 
 ## Current Parent
-- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Updated: 2026-10-13T22:45:00Z
+- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Updated: 2026-10-19T04:50:17Z
 
 ## Review Scope
-- **Files to review**: Milestone 1 implementation (`artifacts/api-server/wbp/storage.mjs`, `callbacks.mjs`)
-- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
-- **Review criteria**: Concurrency, idempotency, lock acquisition, race condition prevention
+- **Files to review**:
+  - `artifacts/api-server/demo-server.mjs`
+  - `scripts/demo-server.mjs`
+  - `tests/auth-roles-permissions.test.mjs`
+  - `worker_m1/handoff.md`
+- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md` (section `## 2026-10-19T02:58:52Z`)
+- **Review criteria**:
+  - SHA-256 exact parity between twin servers
+  - Strict RBAC enforcement: `dev` gets access to technical routes, `admin` (`gestor`) gets HTTP 403 on technical routes
+  - Operational routes accessible to both `dev` and `admin`
+  - Privilege escalation resistance (admin cannot elevate to dev, admin cannot reset dev password or delete dev account)
+  - Execution of `node --test tests/auth-roles-permissions.test.mjs` passes 100%
 
 ## Key Decisions Made
-- Created comprehensive adversarial stress test in `tests/wbp-integration/challenger-m1-concurrency.test.mjs` with 7 test suites.
-- Validated 50 concurrent deliveries across 30 HTTP callbacks and 20 polling deliveries: exactly 1 acquired lock, exactly 49 deduplicated, 50 raw payloads recorded, 0 duplicate IDs.
-- Validated post-processing flood, multi-order bursts, failure lock release, concurrent crash recovery, polymorphic payload schemas, and ultra-concurrency burst (100 simultaneous requests).
-- Verdict: APPROVE.
+- Executed pinpoint test `node --test tests/auth-roles-permissions.test.mjs`: Test exited with code 1 (5 passed, 1 failed: SHA-256 mismatch).
+- Calculated SHA-256 hashes independently:
+  - `artifacts/api-server/demo-server.mjs`: `d9a25d2f78e89e9b38869af6dca00ceebabdda67ebb079b55af319b899c05b29`
+  - `scripts/demo-server.mjs`: `33c17537913a1f3b5509489c387106b8a0ffdbb959fddd3a9b0df578e310d9da`
+  - Root cause: Commit `035c16e1b22260960f8f9f7d29b50ed6397e972e` applied changes to `scripts/demo-server.mjs` without syncing `artifacts/api-server/demo-server.mjs`.
+- Conducted exhaustive adversarial testing across 22 technical routes, privilege escalation paths, unauthenticated probing, and path traversal:
+  - RBAC and privilege escalation defenses are robust (100% pass on security barriers).
+- Final Verdict: REQUEST_CHANGES due to broken SHA-256 twin server parity and test suite failure.
 
 ## Artifact Index
-- DISPATCH.md — Initial dispatch message
-- BRIEFING.md — Persistent working memory
-- progress.md — Heartbeat and status
-- tests/wbp-integration/challenger-m1-concurrency.test.mjs — Isolated empirical stress test
-- handoff.md — Final handoff report
+- `DISPATCH.md` — Current dispatch instructions
+- `BRIEFING.md` — Situational awareness and state
+- `progress.md` — Liveness heartbeat and execution log
+- `handoff.md` — Empirical evaluation and verdict report
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. 50 concurrent requests competing for the same booking lock/processing -> PASSED (exactly 1 lock acquired, 49 deduplicated).
-  2. Post-completion duplicate flood of 50 requests -> PASSED (0 locks acquired, 100% deduplicated with ALREADY_PROCESSED).
-  3. Burst across 5 distinct orders (50 requests total) -> PASSED (exactly 5 locks acquired, 45 deduplicated, no cross-talk).
-  4. Failure in worker processing holding lock -> PASSED (lock cleanly released, retry succeeds, no deadlock).
-  5. Crash recovery race across 5 worker threads for 50 items -> PASSED (10 distinct orders processed once, 0 duplicate processing).
-  6. Heterogeneous/polymorphic casing and types (OrderId number vs string, Booking vs reservation) -> PASSED (all normalized, exactly 1 lock).
-  7. Ultra-burst (100 simultaneous requests) -> PASSED (1 lock, 99 deduplications, 0 file corruption).
-- **Vulnerabilities found**: None in single-process / file mode. Storage and mutex hold robustly under high concurrency.
-- **Untested angles**: Multi-process clustering with PostgreSQL `pgPool` (when active in production with multiple containers, `wbp_idempotency` unique constraint protects commits, but in-flight lock is in-memory). Documented as caveat.
+  1. Twin server SHA-256 parity is genuine bit-for-bit identical -> FAILED (MISMATCH).
+  2. `tests/auth-roles-permissions.test.mjs` executes cleanly with zero failures -> FAILED (1 failure: subtest 1).
+  3. `gestor` cannot access `/api/audit-logs`, `/api/admin/server-monitor/*`, `/api/storage/config`, `/api/settings/gemini`, etc. (HTTP 403) -> PASSED (22/22 routes returned 403).
+  4. `gestor` cannot elevate users to `dev` or tamper with existing `dev` users -> PASSED (create dev, promote to dev, alter dev, reset password, delete dev all blocked with 403).
+  5. Operational routes remain accessible to `gestor` and `admin` -> PASSED (PMS calendar, finance overview, users list, nfse retry queue, cleaning history all returned 200).
+  6. Unauthenticated requests blocked -> PASSED (returned 403/401).
+- **Vulnerabilities found**: Desynchronization between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` introduced in commit `035c16e`, breaking the twin server parity invariant and causing test suite failure.
+- **Untested angles**: None within Milestone 1 scope.
 
 ## Loaded Skills
 - None

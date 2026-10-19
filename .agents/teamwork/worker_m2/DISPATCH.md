@@ -1,43 +1,38 @@
-# Task Assignment: Worker M2 (CRM 360° Alignment & Fiscal Invoices UI)
-Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
-Role: teamwork_preview_worker
+# Task Assignment: Worker M2 (Frontend Guards, Team Page & WBP Purge)
 
-## Escopo e Instruções
-Você deve implementar as funcionalidades de M2 (Features F6 a F11) conforme especificado em `ORIGINAL_REQUEST.md`, `PROJECT.md` e no relatório de `survey_explorer_2`:
+## Mandatory Integrity Warning
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-1. **Persistência de Campos Fiscais e de Endereço em Empresas (`demo-server.mjs`)**:
-   - Em `POST /api/companies` e `PATCH /api/companies/:id`:
-     - Aceitar e persistir: `address`, `logradouro`, `number`, `complement`, `neighborhood`, `bairro`, `cep`, `city`, `cidade`, `state`, `uf`, `ibgeCode`, `codigoMunicipio`, `stateRegistration`, `municipalRegistration`, `financialEmail`, `phone`, `contactPerson`, `billingTerms`, `notes`.
-     - Normalizar para aceitar tanto chaves em português quanto em inglês (`address` / `logradouro`, `neighborhood` / `bairro`, etc.).
+## Authoritative References
+- ORIGINAL_REQUEST.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read section `## 2026-10-19T02:58:52Z`)
+- PROJECT.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_13\PROJECT.md`
+- Explorer Team & WBP Report: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_team_wbp\analysis.md`
+- Explorer Team & WBP Handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_team_wbp\handoff.md`
+- Explorer Auth Report: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_auth_roles\analysis.md`
 
-2. **Persistência de Campos Fiscais e de Endereço em Hóspedes (`demo-server.mjs`)**:
-   - Em `POST /api/pms/guests` e `PUT/PATCH /api/pms/guests/:id`:
-     - Adicionar à whitelist e persistir: `address`, `logradouro`, `number`, `complement`, `neighborhood`, `bairro`, `cep`, `city`, `state`, `uf`, `ibgeCode`, `companyId`, `autoEmitInvoice`.
-   - Em `mergeGuestRecords` (linhas 5604–5682), garantir preservação de `cep`, `number`, `neighborhood`, `companyId`, `companyName`, `autoEmitInvoice`.
+## Exclusively Owned Files
+- `artifacts/limpeza/src/App.tsx`
+- `artifacts/limpeza/src/pages/equipe.tsx`
+- `artifacts/limpeza/src/components/wbp/index.ts`
+- Deletion of: `artifacts/limpeza/src/pages/wbp-manual.tsx`
+- Deletion of: `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`
+- In-page role guards across `artifacts/limpeza/src/pages/*.tsx` (updating `user?.role !== "admin"` to allow `dev`)
 
-3. **Expansão dos Modais de CRM em `artifacts/limpeza/src/pages/crm-guests.tsx`**:
-   - **Modal de Empresa (`companyModalOpen`)**:
-     - Adicionar inputs para: CEP, Logradouro, Número, Complemento, Bairro, Cidade, UF, Código IBGE, Inscrição Estadual, Inscrição Municipal, Telefone, Contato.
-     - Garantir que `handleSaveCompany` envie todos esses campos para `/api/companies`.
-     - Na tabela de empresas, adicionar atalho "Emitir NFS-e" direcionando para `/notas?doc=${c.cnpj}&nome=${encodeURIComponent(c.corporateName)}&companyId=${c.id}`.
-   - **Modal de Hóspede (`guestModalOpen`)**:
-     - Adicionar inputs para: CEP, Logradouro, Número, Complemento, Bairro, UF, IBGE.
-     - Garantir que `handleSaveGuest` envie esses campos para `/api/pms/guests`.
-
-4. **Seletor Unificado do CRM e Alternância de Tomador em `artifacts/limpeza/src/pages/fiscal-invoices.tsx`**:
-   - Atualizar a busca do CRM para carregar e pesquisar tanto **Hóspedes (PF)** quanto **Empresas (PJ)** e Reservas ativas/recentes.
-   - Quando um Hóspede selecionado possuir `companyId` (empresa vinculada no CRM):
-     - Preencher automaticamente os dados da **Empresa** como Tomador da NFS-e (CNPJ, Razão Social, Endereço completo, CEP, Cidade, UF, E-mail Financeiro, Telefone).
-     - Manter na **Discriminação do Serviço** o nome do hóspede, flat, check-in, check-out e diárias.
-     - Disponibilizar na interface um botão/toggle rápido para alternar o Tomador entre a *Empresa Vinculada (PJ)* e o *Próprio Hóspede (PF)*.
-   - Preencher dados da estadia a partir da reserva (flat, datas, valor, diárias).
-   - Capturar parâmetros da URL (`flat`, `checkin`, `checkout`, `valor`, `diarias`, `resCode`, `doc`, `nome`, `companyId`, `guestId`) e preencher o formulário.
-
-5. **Paridade Twin-Server & Build**:
-   - Manter paridade 100% SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-   - Executar `npm run build` em `artifacts/limpeza` para assegurar compilação com saída 0.
-
-MANDATORY INTEGRITY WARNING:
-DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
-
-Ao concluir, atualize seu `progress.md`, crie seu `handoff.md` e envie mensagem para o orquestrador.
+## Scope of Work
+1. **Purge WBP Manual completely**:
+   - Delete `artifacts/limpeza/src/pages/wbp-manual.tsx` and `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`.
+   - In `artifacts/limpeza/src/components/wbp/index.ts`: remove export of `WbpHelpManualPage`.
+   - In `artifacts/limpeza/src/App.tsx`: remove import of `WbpManualPage` and `/ajuda-wbp` route.
+2. **Create Dedicated Team & Access Page**:
+   - Create `artifacts/limpeza/src/pages/equipe.tsx` (export default `TeamPage`).
+   - Accessible by both `admin` and `dev`.
+   - CRUD interface for team members: list users, add new user, edit user (nome, WhatsApp, PIX, role: `dev`, `admin`, `camareira`, `recepcao`, `manutencao`), and reset password.
+   - Do NOT expose any API keys, cloud secrets, or developer configurations (those remain in `/configuracoes` restricted to `dev`).
+3. **Route Guards in `App.tsx`**:
+   - Create `DevGuard` / `DevRoute` that checks `user?.role === "dev"`. If not, renders `<AccessDenied />` or redirects.
+   - Update `AdminGuard` / `AdminRoute` to accept `user?.role === "admin" || user?.role === "dev"`.
+   - Protect with `DevRoute`: `/configuracoes`, `/monitor-servidor`, `/logs`, `/ia-status`, `/zapi-conexao`, `/jornada-reservas`.
+   - Mount routes for `/equipe`, `/usuarios`, `/team` using `AdminRoute`.
+4. **Update In-Page Role Guards**:
+   - In pages where `if (user?.role !== "admin")` was hardcoded, update to `if (user?.role !== "admin" && user?.role !== "dev")` so that `dev` accounts retain full administrative access.
+5. Report results in `handoff.md`.

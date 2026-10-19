@@ -1,126 +1,144 @@
-# Forensic Audit Report: Milestone 1 Integrity Audit
+# Forensic Integrity Audit Report: Milestone 1 — Backend Auth, Roles & Dev Endpoints
 
-**Work Product**: Milestone 1 (Operational Safety, Storage & WBP Simulator)  
-**Profile**: General Project  
-**Integrity Mode**: Development (per `ORIGINAL_REQUEST.md`)  
-**Verdict**: **CLEAN**  
-**Auditor**: Forensic Integrity Auditor (`auditor_m1`)  
-**Recipient**: Orchestrator (`84d9f696-67d5-4529-bec4-c0232e9abea0`)  
-**Date**: 2026-10-13T22:48:00Z  
+**Agent**: `auditor_m1` (TypeName: teamwork_preview_auditor)  
+**Date**: 2026-10-19T04:56:00Z  
+**Workspace**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1`  
+**Recipient**: Project Orchestrator (`c4864abd-776b-4ad1-aef9-25c7af7463df`)  
+**Verdict**: **INTEGRITY VIOLATION** (Veto Binário)
 
 ---
 
 ## 1. Observation
 
-1. **Git & Branch Integrity:**
-   - Command: `git branch --show-current` returned `feature/wbp-integration`.
-   - Command: `git log -n 1 main --oneline` returned `0501d02 build: update production dist bundle and action buttons`.
-   - Command: `git rev-parse origin/main` returned `0501d02ea20ef7662015b1cf49d567ed012cdf01`. Branch `main` was completely untouched (0 commits ahead of origin/main).
-   - Milestone 1 commit `13d5043` ("feat(wbp): implement Milestone 1 operational safety, durable storage & WBP simulator") was created on `feature/wbp-integration` and pushed to `origin/feature/wbp-integration` (`git status -sb` returned `## feature/wbp-integration...origin/feature/wbp-integration`).
-   - The 11 uncommitted audit log lines at the bottom of `artifacts/api-server/audit_logs.jsonl` (timestamps `2026-10-13T21:15:37.999Z` to `2026-10-13T21:15:48.907Z`) were preserved and committed in `13d5043` (`git show 13d5043 -- artifacts/api-server/audit_logs.jsonl` confirmed lines 1453 to 1464 were appended intact).
+### 1.1. Verificação de Paridade SHA-256 dos Servidores Gêmeos (Twin Servers)
+- **Comando executado**:
+  ```powershell
+  Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs" | Format-List
+  ```
+- **Saída bruta**:
+  ```
+  Algorithm : SHA256
+  Hash      : D9A25D2F78E89E9B38869AF6DCA00CEEBABDDA67EBB079B55AF319B899C05B29
+  Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
 
-2. **Twin Files Parity (SHA-256 byte-for-byte identity):**
-   - Verified via `crypto.createHash('sha256')` across all 5 twin file pairs:
-     - `demo-server.mjs`:
-       - `artifacts/api-server/demo-server.mjs`: `94ab58374d761261d04c217523ec363450bc6ece570d223b66fb8caeee99d657`
-       - `scripts/demo-server.mjs`: `94ab58374d761261d04c217523ec363450bc6ece570d223b66fb8caeee99d657`
-       - Status: **MATCH** (100% byte-for-byte identical)
-     - `wbp/callbacks.mjs`:
-       - `artifacts/api-server/wbp/callbacks.mjs`: `6204e1e9df3fc236ac57c5e6436b69b61187928efb78b5eab0730e605730a5b8`
-       - `scripts/wbp/callbacks.mjs`: `6204e1e9df3fc236ac57c5e6436b69b61187928efb78b5eab0730e605730a5b8`
-       - Status: **MATCH** (100% byte-for-byte identical)
-     - `wbp/client.mjs`:
-       - `artifacts/api-server/wbp/client.mjs`: `faaae4b595d543d137b48467fadcbfe33457f38087dafa2e83a405d9f8250115`
-       - `scripts/wbp/client.mjs`: `faaae4b595d543d137b48467fadcbfe33457f38087dafa2e83a405d9f8250115`
-       - Status: **MATCH** (100% byte-for-byte identical)
-     - `wbp/config.mjs`:
-       - `artifacts/api-server/wbp/config.mjs`: `4d90469c16804acb06779600811bb222a0460bdefc9d04ed8051ee66686d0d84`
-       - `scripts/wbp/config.mjs`: `4d90469c16804acb06779600811bb222a0460bdefc9d04ed8051ee66686d0d84`
-       - Status: **MATCH** (100% byte-for-byte identical)
-     - `wbp/storage.mjs`:
-       - `artifacts/api-server/wbp/storage.mjs`: `97df9d7d507b46518ac751684a1e17b04da76ab0bd26d182bf9cce6d2a06fb91`
-       - `scripts/wbp/storage.mjs`: `97df9d7d507b46518ac751684a1e17b04da76ab0bd26d182bf9cce6d2a06fb91`
-       - Status: **MATCH** (100% byte-for-byte identical)
+  Algorithm : SHA256
+  Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
+  Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
+  ```
+- **Resultado**: **FALHA (DESYNC)**. Os hashes SHA-256 NÃO são idênticos.
 
-3. **Test Isolation:**
-   - In `tests/wbp-integration/m1-safety-simulator.test.mjs`, line 9: `delete process.env.DATABASE_URL;`.
-   - In `tests/wbp-integration/harness/test-env.mjs`, line 138: `DATABASE_URL: ""` strictly unset.
-   - In `artifacts/api-server/demo-server.mjs`, lines 268-290: Postgres pool is only instantiated when `process.env.DATABASE_URL` is truthy; when empty/unset, `pgPool` remains `null`.
-   - Temporary database files are stored in `tmp/` or unique random file paths (`data/test-wbp-env-...`) and cleaned up on teardown. No connections to production Postgres are opened.
+### 1.2. Execução da Suíte Pontual `node --test tests/auth-roles-permissions.test.mjs`
+- **Comando executado**:
+  ```bash
+  node --test tests/auth-roles-permissions.test.mjs
+  ```
+- **Código de saída**: `1` (Erro / Falha)
+- **Saída bruta do test runner**:
+  ```
+  TAP version 13
+  # Subtest: Milestone 1 — Auth, Roles & RBAC Separation Suite
+      # Subtest: File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+      not ok 1 - File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+        ---
+        duration_ms: 19.0127
+        location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/auth-roles-permissions.test.mjs:35:3'
+        failureType: 'testCodeFailure'
+        error: 'demo-server twin files must have matching SHA-256 hashes'
+        code: 'ERR_ASSERTION'
+        name: 'AssertionError'
+        expected: '33c17537913a1f3b5509489c387106b8a0ffdbb959fddd3a9b0df578e310d9da'
+        actual: 'd9a25d2f78e89e9b38869af6dca00ceebabdda67ebb079b55af319b899c05b29'
+        operator: 'strictEqual'
+      ...
+      # Subtest: HTTP Integration & RBAC Tests
+          ok 1 - ensureSystemUsers migrated database: admin is dev, gestor is created as admin
+          ok 2 - /api/auth/me returns 'dev' for admin and 'admin' for gestor
+          ok 3 - Operational Endpoints: both dev and admin can access business routes
+          ok 4 - Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
+          ok 5 - User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
+      ok 2 - HTTP Integration & RBAC Tests
+      ...
+  not ok 1 - Milestone 1 — Auth, Roles & RBAC Separation Suite
+  # tests 6
+  # suites 2
+  # pass 5
+  # fail 1
+  # duration_ms 4330.6638
+  ```
 
-4. **Source Code & Cheating / Facade Analysis:**
-   - `artifacts/api-server/wbp/storage.mjs`: Contains genuine Postgres table generation (`wbp_raw_payloads`, `wbp_idempotency`) and durable JSONL fallback (`storageFilePath`), deterministic SHA-256 payload hashing / orderId extraction (`deriveKeys`), atomic `_inFlightLocks` mutex via Promises, and recovery queue (`getUnprocessedPayloads`). Zero constant-return dummy methods.
-   - `artifacts/api-server/wbp/client.mjs`: Implements genuine outbound HTTP requests with UUID v4 GUID generation, error code discrimination (transient: 3, 1003, 1004 vs terminal: 1001, 1002, 1102), exponential backoff retrying with the **exact same GUID**, and timestamp 5-minute subtraction (`adjustBookingVersion`).
-   - `artifacts/api-server/wbp/callbacks.mjs`: Implements timing-safe shared secret verification (`crypto.timingSafeEqual`), general switch checking (returning HTTP 200 `{ ErrorCode: 1031 }` when off), raw payload recording before any processing, and background recovery worker.
-   - `e2e/wbp-simulator/server.mjs` & `schemas/index.mjs`: Fully implemented OpenAPI specification validator with tolerant errata handling, programmable failure modes (1001, 1002, 1102, timeout, disconnect), booking repository, and webhook dispatchers.
-   - No pre-populated test result files, logs, or attestation files exist in the repository.
+### 1.3. Origem Forense da Divergência (Git Log & Diff)
+- No commit `a2717eb` ("fix(auth): ensure immediate synchronous persistence upon ensureSystemUsers migration"), os gêmeos estavam sincronizados com o hash `D9A25D...`.
+- No entanto, o commit subsequente `035c16e` ("fix(payments): prioritize credit card / mpPaymentId over pre-generated pixTxId in receipts and portal") foi commitado na branch `main` alterando exclusivamente `scripts/demo-server.mjs` (+247, -75 linhas) sem espelhar as alterações em `artifacts/api-server/demo-server.mjs`:
+  ```
+  commit 035c16e1b22260960f8f9f7d29b50ed6397e972e
+  Author: Millermendonca <miller.mendonca16@gmail.com>
+  Date:   Mon Oct 19 01:54:10 2026 -0300
 
-5. **Empirical Targeted Test Suite Execution:**
-   - Command: `node --test tests/wbp-integration/m1-safety-simulator.test.mjs`
-   - Exit code: 0
-   - Output: 13 passed, 0 failed, 7 suites passed, duration ~6.0s.
-   - Challenger test suites also independently executed:
-     - `node --test tests/wbp-integration/challenger-m1-concurrency.test.mjs`: 7/7 suites passed (50-100 concurrent deliveries, polymorphic casing, failure release).
-     - `node --test tests/wbp-integration/challenger-m1-faults.test.mjs`: 15/15 passed (OpenAPI schema rejection, terminal errors non-retry, transient retry with identical GUID).
+      fix(payments): prioritize credit card / mpPaymentId over pre-generated pixTxId in receipts and portal
+  ...
+   scripts/demo-server.mjs                            | 247 +++++++++++++++------
+  ```
+  Isso introduziu uma discrepância direta de 100+ linhas de diff em endpoints de pagamento entre os dois servidores gêmeos.
+
+### 1.4. Análise da Implementação Funcional em `artifacts/api-server/demo-server.mjs`
+- **`ensureSystemUsers`** (linhas 740–813):
+  - Lógica genuína: migra `admin` para `role: "dev"` preservando o hash de senha preexistente.
+  - Instancia usuário `gestor` (`role: "admin"`, `name: "Administração CorpFlats"`, senha inicial `hashPassword("admin123")`).
+  - Sem atalhos falsos ou hardcoded returns.
+- **Segurança Criptográfica de Senhas (`hashPassword` e `verifyPassword`)** (linhas 690–715):
+  - `hashPassword`: Gera salt de 16 bytes aleatórios (`crypto.randomBytes(16)`) e deriva chave com `crypto.scryptSync(password, salt, 32)`. Formato de armazenamento `${salt}:${hash}`.
+  - `verifyPassword`: Utiliza `crypto.scryptSync` e `crypto.timingSafeEqual` para mitigação de timing attacks.
+- **Middleware `requireDevAuth`** (linhas 8693–8723):
+  - Montado em 19 rotas técnicas (`/api/whatsapp/*`, `/api/settings/*`, `/api/storage/*`, `/api/integrations/*`, `/api/admin/server-monitor`, etc.).
+  - Retorna HTTP 403 `res.status(403).json({ error: "Acesso restrito a desenvolvedores." })` quando `user.role !== "dev"`.
+- **Rotas de Gestão de Usuários** (linhas 9811–9954):
+  - Operam autenticadas para `admin` e `dev`.
+  - Contêm proteções ativas impedindo que usuários não-dev promovam contas para `dev`, editem contas `dev`, resetem senhas de `dev` ou excluam usuários `dev`.
+  - O endpoint `/api/admin/users/:id/reset-password` aceita tanto `PATCH` quanto `POST`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Integrity Mode Compliance:** Per `ORIGINAL_REQUEST.md` line 8, the integrity mode is `development`. The core prohibitions under development mode are: hardcoded test expectations, dummy facades, fabricated verification outputs, and circumvented requirements.
-2. **Authenticity of Implementation:** Inspection of all M1 codebase components demonstrates genuine logic across all endpoints and modules:
-   - Concurrency deduplication is achieved through in-memory and relational mutexes rather than hardcoded order IDs.
-   - The OpenAPI simulator actually validates request envelopes and payload schemas using regex and type checks.
-   - The API client performs genuine HTTP requests, retries with exponential backoff, and preserves GUIDs across attempts.
-3. **Twin Parity Preservation:** All 5 twin pairs between `artifacts/` and `scripts/` have identical SHA-256 hashes, satisfying R10 and ensuring no deployment desynchronization.
-4. **Zero Impact on Production Environment:** Tests run with `DATABASE_URL` completely unset/removed, on isolated ephemeral ports and temporary JSON files. Branch `main` was not touched, and git commits were pushed to `origin/feature/wbp-integration`.
-5. **Preservation of Audit History:** The 11 uncommitted audit log lines from 2026-10-13 were preserved intact in commit `13d5043`.
+1. **Premissa de Integridade**: Conforme `ORIGINAL_REQUEST.md` (R10) e as diretrizes permanentes de governança do projeto, a paridade SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` é uma invariante arquitetural obrigatória. Qualquer divergência entre os arquivos gêmeos é uma violação de integridade.
+2. **Falha na Execução de Testes**: A suíte pontual de validação do Milestone 1 (`tests/auth-roles-permissions.test.mjs`) possui como primeiro subteste a checagem explícita de paridade SHA-256 dos arquivos gêmeos. Ao ser executada em runtime, a suíte falhou e abortou com código de saída 1 (`ERR_ASSERTION: demo-server twin files must have matching SHA-256 hashes`).
+3. **Regra de Veto Forense**: As instruções do papel de auditor forense estipulam: *"If ANY check fails, your verdict is INTEGRITY VIOLATION and you MUST reject the work product."* Como a paridade SHA-256 falhou e a suíte de testes falhou na execução empírica, o trabalho não pode ser aprovado em seu estado atual.
 
 ---
 
 ## 3. Caveats
 
-No caveats. All four forensic checkpoints were independently verified empirically.
+- A implementação de autenticação, separação RBAC (`dev` vs `admin`), proteção de rotas técnicas e persistência criptográfica (`scryptSync`) em si é **genuína, robusta e livre de atalhos ou mocks fraudulentos** (os 5 subtestes de integração HTTP passaram com sucesso).
+- O motivo exclusivo do veto foi a quebra de paridade SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`, causada pelo commit `035c16e` que modificou apenas um dos gêmeos.
 
 ---
 
 ## 4. Conclusion
 
-**Verdict: CLEAN**
+**Veredito**: **INTEGRITY VIOLATION**  
+O Milestone 1 é **REJEITADO** devido à quebra de paridade SHA-256 entre os servidores gêmeos e consequente falha na suíte de testes `tests/auth-roles-permissions.test.mjs` (código de saída 1).
 
-Milestone 1 work product satisfies all forensic integrity criteria:
-- **Zero Cheating / Facades**: Genuine logic, real OpenAPI validation, genuine concurrency mutex locks.
-- **Twin Parity**: 100% SHA-256 parity across all twin file pairs.
-- **Git & Branch Integrity**: Active branch `feature/wbp-integration`, `main` untouched at `0501d02`, 11 audit log lines preserved.
-- **Test Isolation**: `DATABASE_URL` unset, zero connection to production database.
-- **Test Verification**: Targeted test suite passes 100% (13/13 tests).
+**Ação de Remediação Necessária**:
+1. Sincronizar as alterações de `scripts/demo-server.mjs` em `artifacts/api-server/demo-server.mjs` (ou garantir que ambos tenham conteúdo 100% idêntico).
+2. Confirmar a paridade SHA-256 com `Get-FileHash`.
+3. Reexecutar `node --test tests/auth-roles-permissions.test.mjs` comprovando 6/6 testes passando com código 0.
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce the forensic verification:
+Para reproduzir empiricamente a violação:
 
-1. **Verify Git Branch and Main Integrity:**
+1. **Checagem de Hash SHA-256**:
    ```powershell
-   git branch --show-current
-   git log -n 1 main --oneline
+   Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"
    ```
-   *Expected: `feature/wbp-integration` and `0501d02`.*
+   *Resultado observado*:
+   - `artifacts/api-server/demo-server.mjs`: `D9A25D2F78E89E9B38869AF6DCA00CEEBABDDA67EBB079B55AF319B899C05B29`
+   - `scripts/demo-server.mjs`: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`
 
-2. **Verify SHA-256 Twin Parity:**
-   ```powershell
-   node -e "const fs = require('fs'), crypto = require('crypto'); const files = ['demo-server.mjs', 'wbp/callbacks.mjs', 'wbp/client.mjs', 'wbp/config.mjs', 'wbp/storage.mjs']; files.forEach(f => { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); console.log(f + ': ' + (h1 === h2 ? 'MATCH' : 'MISMATCH')); });"
+2. **Execução do Teste Pontual**:
+   ```bash
+   node --test tests/auth-roles-permissions.test.mjs
    ```
-   *Expected: All 5 files report MATCH.*
-
-3. **Execute Pontual Milestone 1 Test Suite:**
-   ```powershell
-   node --test tests/wbp-integration/m1-safety-simulator.test.mjs
-   ```
-   *Expected: 13 passed, 0 failed.*
-
-4. **Invalidation Conditions:**
-   - Any mismatch between twin files in `artifacts/api-server/` and `scripts/`.
-   - Any commit pushed to the `main` branch.
-   - Any connection leakage to production PostgreSQL during test execution.
+   *Resultado observado*: Falha no subteste 1 com código de saída 1.

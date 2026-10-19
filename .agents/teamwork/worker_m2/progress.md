@@ -1,15 +1,25 @@
-# Progress - Milestone 2 (CRM 360° Alignment & Fiscal Invoices UI)
+# Progress — Worker M2 (Milestone 2)
 
-Last visited: 2026-10-14T10:50:00Z
-Status: Completed - All F6 to F11 features implemented, twin parity verified, frontend build exit 0
+Last visited: 2026-10-19T05:10:00Z
 
-## Checklist
-- [x] Read DISPATCH.md, ORIGINAL_REQUEST.md, survey_explorer_2/handoff.md, orchestrator_9/PROJECT.md
-- [x] Setup BRIEFING.md and progress.md
-- [x] Inspect existing `artifacts/api-server/demo-server.mjs` lines around `/api/companies`, `/api/pms/guests`, `mergeGuestRecords`
-- [x] Implement backend persistence for companies and guests in `artifacts/api-server/demo-server.mjs` (F6, F7)
-- [x] Inspect and update `artifacts/limpeza/src/pages/crm-guests.tsx` (modals and table shortcuts) (F8)
-- [x] Inspect and update `artifacts/limpeza/src/pages/fiscal-invoices.tsx` (multi-entity selector F9, tomador toggle F10, stay prefill, URL params F11)
-- [x] Mirror changes to `scripts/demo-server.mjs` and verify 100% SHA-256 parity
-- [x] Run `npm --prefix artifacts/limpeza run build` and ensure exit 0
-- [x] Update `progress.md`, write `handoff.md`, and notify orchestrator
+## Status
+Completed
+
+## Steps
+1. [x] Read DISPATCH.md, ORIGINAL_REQUEST.md, and explorer analyses.
+2. [x] Update BRIEFING.md and progress.md.
+3. [x] Step 1: Purge WBP Manual completely:
+   - Deleted `artifacts/limpeza/src/pages/wbp-manual.tsx`
+   - Deleted `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`
+   - Removed export from `artifacts/limpeza/src/components/wbp/index.ts`
+4. [x] Step 2: Create `artifacts/limpeza/src/pages/equipe.tsx` (and `team.tsx` alias) with full CRUD, zero secret exposure, PIX copy, WhatsApp link, and role protections.
+5. [x] Step 3: Update `artifacts/limpeza/src/App.tsx`:
+   - Implemented `DevGuard` & `DevRoute`
+   - Updated `AdminGuard` & `ReceptionGuard` to include `dev`
+   - Mounted `/equipe`, `/usuarios`, `/team` with `AdminRoute`
+   - Protected technical routes with `DevRoute`
+   - Removed `/ajuda-wbp`, `/manual-wbp`, `/manual-integracao`
+6. [x] Step 4: Scan and update in-page role guards (`user?.role !== "admin"`) across `artifacts/limpeza/src/pages/*.tsx`.
+7. [x] Step 5: Run `npm --prefix artifacts/limpeza run build` and verify (passed in 26.47s with exit code 0).
+8. [x] Step 6: Commit and git push to `origin main` (commit `c098329`).
+9. [x] Step 7: Create handoff.md and notify Orchestrator.

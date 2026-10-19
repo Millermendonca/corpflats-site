@@ -1,15 +1,17 @@
-# Progress — Challenger 1 (Concurrency & Idempotency)
+# Progress — Challenger M1-1 (Milestone 1 RBAC & Parity)
 
-- Status: Completed (APPROVE)
-- Last visited: 2026-10-13T22:45:00Z
+- Status: Completed (REQUEST_CHANGES)
+- Last visited: 2026-10-19T05:01:00Z
 - Steps completed:
-  - [x] Received dispatch
-  - [x] Initialized DISPATCH.md, BRIEFING.md, progress.md
-  - [x] Read mandatory documents (ORIGINAL_REQUEST.md, PROJECT.md, AGENTS.md, worker_m1/handoff.md)
-  - [x] Inspected worker_m1 implementation & handoff
-  - [x] Wrote `tests/wbp-integration/challenger-m1-concurrency.test.mjs` (7 stress suites)
-  - [x] Executed targeted test via `node --test tests/wbp-integration/challenger-m1-concurrency.test.mjs` (7/7 tests passed, 0 failed)
-  - [x] Evaluated results: 50 concurrent deliveries resulted in exactly 1 lock acquired, 49 deduplications, 0 duplicate IDs, 100% raw payload retention
-  - [x] Updated BRIEFING.md, progress.md
-  - [ ] Write handoff.md with 5 components and explicit verdict
-  - [ ] Send verdict to orchestrator via send_message
+  - [x] Received dispatch for Milestone 1 RBAC & Parity
+  - [x] Appended dispatch to DISPATCH.md
+  - [x] Initialized and updated BRIEFING.md
+  - [x] Read worker_m1 handoff.md, ORIGINAL_REQUEST.md, DISPATCH.md
+  - [x] Executed empirical tests:
+    - [x] Run `node --test tests/auth-roles-permissions.test.mjs` -> FAILED (Exit code 1, subtest 1 AssertionError on parity)
+    - [x] Verify SHA-256 parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` -> FAILED (MISMATCH)
+    - [x] Verify `admin` receives `role: "dev"` and can access dev-only routes -> PASSED
+    - [x] Verify `gestor` receives `role: "admin"` and gets HTTP 403 on dev-only routes -> PASSED (22/22 routes verified)
+    - [x] Adversarial probing (privilege escalation, path tampering, anonymous access) -> PASSED
+  - [/] Write handoff.md with 5 components and explicit verdict (REQUEST_CHANGES)
+  - [ ] Send verdict to Project Orchestrator via `send_message`

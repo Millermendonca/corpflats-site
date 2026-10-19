@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-15T18:57:00Z
+# BRIEFING — 2026-10-19T02:58:52Z
 
 ## Mission
-Auditar, corrigir e unificar todos os módulos da seção "FINANCEIRO & VENDAS" do sistema Guest-Flow-Manager (CorpFlats): ERP Financeiro & DRE, Precificação SEBRAE, Gestão de Tarifas & Taxas, Pagamentos & Conciliação PIX e Funil de Vendas & Tráfego IA.
+Reorganizar a interface administrativa do Guest-Flow-Manager (CorpFlats): menu retrátil auto-hide para calendário em tela cheia, nova hierarquia de categorias com busca rápida, perfis dev vs admin com controle de acesso, página dedicada /equipe e exclusão total do manual WBP.
 
 ## 🔒 My Identity
 - Archetype: sentinel
@@ -18,6 +18,9 @@ Auditar, corrigir e unificar todos os módulos da seção "FINANCEIRO & VENDAS" 
 - Parent Caller: f7b34d3e-fa50-4436-8234-7f3e739c9c7e
 - Orchestrator: 0a6a6ddb-09e4-44a9-a9b4-e57b243ea69c (orchestrator_12)
 - Victory Auditor: da4d96bd-6bad-4099-91a1-da47d600841a (victory_auditor_10)
+- Parent Caller (UI Reorganization & Permissions): c918ec21-d268-4082-bdd6-d0c3dc1d3481
+- Orchestrator (orchestrator_13): c4864abd-776b-4ad1-aef9-25c7af7463df
+- Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
@@ -36,34 +39,38 @@ Auditar, corrigir e unificar todos os módulos da seção "FINANCEIRO & VENDAS" 
 - Build verification: npm run build in artifacts/limpeza
 - No Live WhatsApp Test Spam: strictly avoid tests that trigger live Z-API WhatsApp messages to real phone numbers
 - Verification scope: targeted financial verification and npm run build in artifacts/limpeza
+- Coluna Lateral Esquerda Auto-Hide (zero px no fluxo desktop, hover edge trigger/overlay com fixar/desafixar)
+- Separação de perfis: dev (acesso total + DevRoute) vs admin (gestão hoteleira sem rotas técnicas)
+- Página dedicada de Equipe & Usuários (/equipe e /usuarios) acessível para admin e dev sem expor chaves/nuvem
+- Remoção completa do manual WBP (/ajuda-wbp) e exclusão dos arquivos wbp-manual.tsx e WbpHelpManualPage.tsx
+- Reorganização dos menus em 6 categorias por prioridade operacional com busca rápida no topo
+- Escopo estrito de testes (AGENTS.md): NUNCA rodar testes globais/varreduras
 
 ## User Context
-- **Last user request**: Auditoria, unificação e correção dos módulos Financeiro & Vendas (DRE, SEBRAE, Tarifas, Pagamentos PIX, Funil IA).
+- **Last user request**: Reorganização da interface administrativa (menu auto-hide, categorias por prioridade, perfis dev vs admin, página /equipe e exclusão manual WBP).
 - **Pending clarifications**: none
 - **Delivered results**:
-  - Implementação completa dos marcos M1 a M4 por orchestrator_12 e sua equipe.
-  - Portão de revisão interna e desafio empírico concluído com êxito (GATE_STATUS: PASS).
-  - Auditoria independente de vitória concluída com veredicto VICTORY CONFIRMED.
-  - Crons encerrados e subagentes limpos conforme o protocolo.
+  - Solicitação registrada em ORIGINAL_REQUEST.md.
+  - BRIEFING.md atualizado.
+  - Project Orchestrator (orchestrator_13) despachado com ID c4864abd-776b-4ad1-aef9-25c7af7463df.
+  - Cron 1 (Progresso) e Cron 2 (Liveness) ativados.
 
 ## Project Status
-- **Phase**: complete
+- **Phase**: in progress
 - **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_12
-- **Active Orchestrator ID**: 0a6a6ddb-09e4-44a9-a9b4-e57b243ea69c (retired)
-- **Victory Auditor ID**: da4d96bd-6bad-4099-91a1-da47d600841a (victory_auditor_10 - retired)
-- **Cron 1 (Reporting)**: cancelled
-- **Cron 2 (Liveness)**: cancelled
+- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_13
+- **Active Orchestrator ID**: c4864abd-776b-4ad1-aef9-25c7af7463df
+- **Victory Auditor ID**: [to be spawned on victory claim]
+- **Cron 1 (Reporting)**: task-24
+- **Cron 2 (Liveness)**: task-26
 
 ## Victory Audit Status
-- **Triggered**: yes
-- **Verdict**: VICTORY CONFIRMED
+- **Triggered**: no
+- **Verdict**: pending
 - **Retry count**: 0
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative user request
-- .agents/teamwork/orchestrator_12/progress.md — Active orchestrator progress log
-- .agents/teamwork/orchestrator_12/handoff.md — Orchestrator handoff and victory claim
-- .agents/teamwork/orchestrator_12/GATE_STATUS.md — Verification gate report
-- .agents/teamwork/victory_auditor_10/handoff.md — Independent post-victory audit report
-- .agents/teamwork/handoff.md — Sentinel final handoff report
+- .agents/teamwork/orchestrator_13/progress.md — Active orchestrator progress log
+- .agents/teamwork/orchestrator_13/handoff.md — Orchestrator handoff and victory claim
+- .agents/teamwork/handoff.md — Sentinel handoff report

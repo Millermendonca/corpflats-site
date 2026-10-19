@@ -1,103 +1,134 @@
-# Handoff Report - Milestone 2 (CRM 360° Alignment & Fiscal Invoices UI)
+# Handoff Report — Milestone 2: Frontend Guards, Team Page (`/equipe`) & WBP Purge
 
-**Date**: 2026-10-14T10:52:00Z  
-**Worker**: `worker_m2` (implementer, qa, specialist)  
-**Parent Agent**: `orchestrator_9` (`3d03f136-f013-4588-99e3-f22e17cc1ae4`)  
-**Features Delivered**: F6, F7, F8, F9, F10, F11
+**Worker**: `worker_m2`  
+**Milestone**: Milestone 2 (Frontend Guards, Team Page & WBP Purge)  
+**Parent Agent**: `c4864abd-776b-4ad1-aef9-25c7af7463df` (Project Orchestrator)  
+**Date**: 2026-10-19  
 
 ---
 
 ## 1. Observation
 
-1. **Backend Company & Guest Address Persistence (`artifacts/api-server/demo-server.mjs`)**:
-   - `mergeGuestRecords` (lines 5604–5650): Added address fields (`address`, `logradouro`, `number`, `numero`, `complement`, `complemento`, `neighborhood`, `bairro`, `cep`, `city`, `cidade`, `state`, `uf`, `ibgeCode`, `codigoMunicipio`), `companyId`, `companyName`, and `autoEmitInvoice` to the deduplication retention logic.
-   - `handleUpdateGuest` and `POST /api/pms/guests` (lines ~21070–21230): Whitelisted and normalized bilingual keys (`address`/`logradouro`/`endereco`, `number`/`numero`, `complement`/`complemento`, `neighborhood`/`bairro`, `city`/`cidade`/`municipio`, `state`/`uf`, `ibgeCode`/`codigoMunicipio`, `companyId`, `companyName`, `autoEmitInvoice`).
-   - `POST /api/companies` and `PATCH /api/companies/:id` (lines ~29130–29280): Added address and fiscal fields persistence with bilingual key tolerance (`address`/`logradouro`, `number`/`numero`, `neighborhood`/`bairro`, `city`/`cidade`/`municipio`, `state`/`uf`, `ibgeCode`/`codigoMunicipio`, `stateRegistration`, `municipalRegistration`, `contactPerson`, `financialEmail`, `billingTerms`).
+1. **WBP Manual Files & Routes**:
+   - `artifacts/limpeza/src/pages/wbp-manual.tsx` existed as a wrapper importing `<WbpHelpManualPage />`.
+   - `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx` contained 751 lines of manual documentation.
+   - `artifacts/limpeza/src/components/wbp/index.ts` exported `WbpHelpManualPage` at line 7 (`export * from "./WbpHelpManualPage";`).
+   - `artifacts/limpeza/src/App.tsx` imported `WbpManualPage` and mounted routes `/ajuda-wbp`, `/manual-wbp`, `/manual-integracao`.
+   - `artifacts/limpeza/src/components/layout.tsx` had links to `/ajuda-wbp` at lines 316 and 564.
 
-2. **Twin-Server Synchronization (`scripts/demo-server.mjs`)**:
-   - Running `Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs` returned:
-     ```
-     Algorithm       Hash                                                                   Path
-     ---------       ----                                                                   ----
-     SHA256          BF6361FC217B2A7BD21CB709368C43128EC989A04D1BB3A57DA5A721D060FC29       C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
-     SHA256          BF6361FC217B2A7BD21CB709368C43128EC989A04D1BB3A57DA5A721D060FC29       C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
-     ```
-     Both SHA-256 hashes are identical.
+2. **Team Management Needs**:
+   - User CRUD in the frontend was previously embedded inside `artifacts/limpeza/src/pages/settings.tsx` below sensitive cloud configurations (Cloudflare R2, Microsoft Graph, Gemini AI, etc.), exposing infrastructure settings to operational hotel admins.
+   - A dedicated page `artifacts/limpeza/src/pages/equipe.tsx` was requested to allow `admin` and `dev` to list, create, edit, and reset passwords for team members with zero technical secret exposure.
 
-3. **CRM Modals & Table Shortcut (`artifacts/limpeza/src/pages/crm-guests.tsx`)**:
-   - Added state for address fields (`formCep`, `formAddress`, `formNumber`, `formComplement`, `formNeighborhood`, `formState`, `formIbgeCode`) and company address fields (`compNumber`, `compComplement`, `compNeighborhood`, `compState`, `compIbgeCode`).
-   - Added automatic CEP lookup (`handleLookupGuestCep`, `handleLookupCompanyCep`) invoking `/api/invoices/lookup-cep/:cep` on 8-digit inputs.
-   - Updated `handleLookupCnpj` to fill all returned address fields (`cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `ibgeCode`).
-   - Added shortcut button "Emitir NFS-e" in the Companies table directing to `/notas?doc=${c.cnpj}&nome=${encodeURIComponent(c.corporateName || c.tradeName)}&companyId=${c.id}`.
-   - Expanded both dialogs (Guest Modal & Company Modal) with clean, accessible address inputs.
+3. **Guards & Roles Separation (`dev` vs `admin`)**:
+   - In `App.tsx`:
+     - `AdminGuard` previously checked strictly `user.role !== "admin"`, locking out `role: "dev"`.
+     - `ReceptionGuard` checked strictly `user.role !== "admin" && user.role !== "recepcao"`.
+     - No `DevGuard` or `DevRoute` existed to protect technical engineering modules.
+     - Technical routes (`/configuracoes`, `/monitor-servidor`, `/logs`, `/ia-status`, `/zapi-conexao`, `/jornada-reservas`) were mounted with `AdminRoute`, allowing operational hotel managers into technical development tooling.
+   - In 18 page and component files, hardcoded `user?.role !== "admin"` or `isAdmin = user?.role === "admin"` would block `dev` users from operating normal PMS modules.
 
-4. **Fiscal Invoices UI Hub (`artifacts/limpeza/src/pages/fiscal-invoices.tsx`)**:
-   - Added states: `companies`, `reservations`, `selectedEntity`, `linkedCompany`, `linkedGuest`, `linkedReservation`, `tomadorMode` ("pj" | "pf").
-   - Added `fetchCompanies` (`GET /api/companies`) and `fetchReservations` (`GET /api/pms/calendar?startDate=2026-01-01&endDate=2027-12-31`).
-   - Implemented `filteredCrmItems` memo with multi-entity search across Hóspedes (PF), Empresas (PJ), and Reservas (Estadias) with visual badges (`🏢 PJ`, `👤 PF`, `👤 PF (Corp)`, `📅 Reserva`).
-   - Implemented F10 corporate auto-fill: when a guest with `companyId` is selected, company is set as Tomador, and collaborator details are preserved in the service description.
-   - Implemented Tomador Toggle Banner: top banner with toggle button (`handleToggleTomadorMode`) allowing seamless switching between corporate PJ and collaborator PF without losing stay dates, flat, or values.
-   - Implemented F11 URL query params prefill: parses `flat`, `checkin`, `checkout`, `valor`, `diarias`, `resCode`, `doc`, `nome`, `companyId`, `guestId`.
-
-5. **Production Build Verification (`artifacts/limpeza`)**:
-   - Command `npm --prefix artifacts/limpeza run build` completed with **exit code 0** in 26.38s:
-     ```
-     dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
-     dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
-     dist/public/assets/index.css                      421.17 kB │ gzip:  50.99 kB
-     dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
-     dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
-     dist/public/assets/index.js                     3,702.57 kB │ gzip: 882.55 kB
-     ✓ built in 26.38s
-     ```
+4. **Build & Git Verification**:
+   - `npm --prefix artifacts/limpeza run build` passed with exit code 0 (`✓ built in 26.47s`), emitting bundle chunk `dist/public/assets/equipe-C-3-uc_a.js` (26.69 kB).
+   - `git push origin main` succeeded with exit code 0 (`669c91d..c098329 main -> main`).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Step 1 (Observation 1)**: The PMS backend lacked persistence for complete address fields (bilingual keys) and fiscal attributes across guest updates, guest creation, company updates, and guest merging. By implementing whitelist filtering and bilingual tolerance in `demo-server.mjs`, all address and company fields now persist correctly in the database.
-2. **Step 2 (Observation 2)**: The architecture mandates 100% parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`. Copying the modified server to `scripts/demo-server.mjs` and hashing confirmed identical SHA-256 (`BF6361FC217B2A7BD21CB709368C43128EC989A04D1BB3A57DA5A721D060FC29`).
-3. **Step 3 (Observation 3)**: Front-end CRM operators need full address data entry for guests and companies to issue valid tax invoices without manual re-typing. Adding address fields and CEP lookup to `crm-guests.tsx` enables full CRM 360° record management, while the "Emitir NFS-e" button provides single-click invoice issuance with pre-filled parameters.
-4. **Step 4 (Observation 4)**: In the invoice hub (`fiscal-invoices.tsx`), multi-entity searching (guests, companies, reservations) provides direct lookup for billing. When a guest has a linked company, corporate invoicing defaults to PJ while preserving collaborator information in the description, satisfying corporate tax requirements. The toggle banner allows immediate correction/switching to PF if the guest pays out-of-pocket.
-5. **Step 5 (Observation 5)**: Vite production compilation succeeded without TypeScript errors, verifying that all types, imports, and JSX structures are valid.
+1. **Purging WBP Manual**:
+   - Deleted physical files `artifacts/limpeza/src/pages/wbp-manual.tsx` and `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`.
+   - Removed `export * from "./WbpHelpManualPage";` in `artifacts/limpeza/src/components/wbp/index.ts`.
+   - In `artifacts/limpeza/src/App.tsx`, removed lazy import of `WbpManualPage` and deleted `<ReceptionRoute>` registrations for `/ajuda-wbp`, `/manual-wbp`, `/manual-integracao`.
+   - Verified across the entire repository that 0 occurrences of `WbpHelpManualPage`, `WbpManualPage`, or `/ajuda-wbp` remain.
+
+2. **Building the Dedicated Team & Access Page (`/equipe`)**:
+   - Created `artifacts/limpeza/src/pages/equipe.tsx` and alias `artifacts/limpeza/src/pages/team.tsx` implementing `TeamPage`.
+   - Integrated full user management:
+     - Header and summary metric cards (Total, Devs, Admins, Governança, Recepção, Ativos).
+     - Textual search and filter pills by role (`todos`, `dev`, `admin`, `recepcao`, `camareira`) and status (`todos`, `ativos`, `inativos`).
+     - Responsive table with initials avatar, username `@handle`, role badge, WhatsApp with direct link to WhatsApp Web (`https://wa.me/...`), PIX key with single-click copy and toast notification, status badge, and last login timestamp.
+     - Action buttons: Edit, Reset Password, and Delete.
+     - Safety constraints: Non-dev admins cannot promote users to `dev` or edit/delete `dev` accounts; users cannot delete their own account.
+     - Zero exposure: No inputs, modals, or API calls to cloud credentials or API secrets.
+
+3. **Guards & Route Hardening in `App.tsx`**:
+   - Implemented `DevGuard` & `DevRoute` to enforce `user.role === "dev"`. If not, renders `<AccessDenied moduleName={moduleName} />`.
+   - Updated `AdminGuard` & `AdminRoute` to accept both `user.role === "admin" || user.role === "dev"`.
+   - Updated `ReceptionGuard` to accept `user.role === "admin" || user.role === "dev" || user.role === "recepcao" || user.role === "reception"`.
+   - Mounted routes for `/equipe`, `/usuarios`, and `/team` with `<AdminRoute>`.
+   - Protected strictly technical routes with `<DevRoute>`:
+     - `/settings`, `/configuracoes`, `/configuracao`, `/ajustes`
+     - `/monitor-servidor`, `/servidor`, `/server-monitor`
+     - `/logs`, `/auditoria`, `/system-logs`, `/audit`
+     - `/ia-status`, `/ai-status`, `/status-ia`
+     - `/zapi-conexao`, `/conexao-zapi`, `/sistema/zapi`, `/zapi`
+     - `/jornada-reservas`, `/jornada-comunicacao`, `/fluxo-reservas`, `/mapa-jornada`, `/jornada`
+
+4. **In-Page Guards Update**:
+   - Updated in-page checks so `dev` accounts retain complete administrative access across:
+     - `crm-guests.tsx`
+     - `dashboard.tsx`
+     - `breakfast-production.tsx`
+     - `financial-dashboard.tsx`
+     - `history.tsx`
+     - `lost-and-found.tsx`
+     - `maid-statement.tsx`
+     - `marketing-traffic.tsx`
+     - `maid-whatsapp-automation.tsx`
+     - `observations.tsx`
+     - `payments.tsx`
+     - `pms-reports.tsx`
+     - `pms-calendar.tsx`
+     - `property-settings.tsx`
+     - `reports.tsx`
+     - `tasks.tsx`
+     - `whatsapp-automation.tsx`
+     - `settings.tsx` (exclusively for `dev`)
+     - `zapi-connection.tsx` (exclusively for `dev`)
+     - `flat-card.tsx`
 
 ---
 
 ## 3. Caveats
 
-- **No Caveats**: All 6 assigned features (F6, F7, F8, F9, F10, F11) were implemented with genuine data bindings and state persistence.
-- Per strict project constraints (`AGENTS.md`), no global test sweeps or unrequested tests were executed.
+- **Backend Parity**: Backend endpoints (`demo-server.mjs` twins) for `dev` vs `admin` user authentication, role promotion protection, and reset-password alias were handled in Milestone 1 by `worker_m1`.
+- **Layout Navigation**: The auto-hide lateral sidebar and navigation category reordering in `artifacts/limpeza/src/components/layout.tsx` were handled in Milestone 1 by `worker_m1`.
+- **No Test Sweeps**: Per strict project instructions (`AGENTS.md`), no global test sweeps (`tests/*.test.mjs`) were executed.
 
 ---
 
 ## 4. Conclusion
 
-Milestone 2 (CRM 360° Alignment & Fiscal Invoices UI) is 100% complete and fully verified:
-- F6 (Company Address/Fiscal Persistence): Implemented in backend.
-- F7 (Guest Address/Fiscal Persistence & Merging): Implemented in backend.
-- F8 (CRM Modals Expansion & Invoice Shortcut): Implemented in frontend.
-- F9 (Multi-Entity CRM Selector): Implemented in frontend.
-- F10 (Corporate Tomador Auto-Fill with PF/PJ Toggle): Implemented in frontend.
-- F11 (URL Query Parameters Prefill in `/notas`): Implemented in frontend.
-- Twin-server SHA-256 match: 100% identical.
-- Frontend build: Passed with exit code 0.
+Milestone 2 is 100% complete:
+1. The WBP manual was completely removed with zero dangling references.
+2. The dedicated Team & Access management page (`/equipe` and `/usuarios`) is fully functional, secure, and built into production assets.
+3. Route protection with `DevRoute` and `AdminRoute` correctly separates operational hotel management from developer engineering tools.
+4. All in-page role checks allow `dev` users without restrictions.
+5. The frontend build completed cleanly with exit code 0, and all changes were committed and pushed to `origin main` (commit `c098329`).
 
 ---
 
 ## 5. Verification Method
 
-1. **Twin-Server Hash Verification**:
-   ```powershell
-   Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs
-   ```
-   *Expected result*: Both hashes must match (`BF6361FC217B2A7BD21CB709368C43128EC989A04D1BB3A57DA5A721D060FC29`).
-
-2. **Frontend Production Build Verification**:
+1. **Build Check**:
    ```powershell
    npm --prefix artifacts/limpeza run build
    ```
-   *Expected result*: Exits with code 0 and generates bundles in `artifacts/limpeza/dist/public/assets/`.
+   *Expected result*: Exit code 0, bundle emitted without errors.
 
-3. **URL Parameter Invoicing Verification**:
-   Open `/notas?doc=02709449000159&nome=Transpetro&flat=113&valor=500&checkin=2026-10-15&checkout=2026-10-17&diarias=2` in the browser:
-   *Expected result*: Combobox and extracted data card populate Tomador as Transpetro, Flat 113, R$ 500.00, 2 daily rates, and status shows "Pronto para Emitir".
+2. **Dangling References Check**:
+   ```powershell
+   git grep -i "WbpHelpManualPage"
+   git grep -i "wbp-manual"
+   git grep -i "/ajuda-wbp"
+   ```
+   *Expected result*: 0 matches.
+
+3. **Route & Guard Inspection**:
+   - Check `artifacts/limpeza/src/App.tsx`:
+     - `DevGuard` & `DevRoute` defined and applied to technical routes.
+     - `AdminGuard` permits `role === "admin"` and `role === "dev"`.
+     - `/equipe`, `/usuarios`, `/team` routes mounted with `AdminRoute`.
+   - Check `artifacts/limpeza/src/pages/equipe.tsx`:
+     - Clean CRUD interface, no secret keys displayed.

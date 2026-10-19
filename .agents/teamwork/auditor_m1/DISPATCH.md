@@ -1,18 +1,37 @@
-## 2026-10-13T22:40:54Z
-You are the Forensic Integrity Auditor for Milestone 1.
-Your dedicated working directory is:
+# Forensic Auditor Task Assignment: Milestone 1 Integrity Audit
+
+## Objective
+Forensic integrity audit of Milestone 1 changes in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
+
+## Authoritative References
+- ORIGINAL_REQUEST.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read section `## 2026-10-19T02:58:52Z`)
+- PROJECT.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_13\PROJECT.md`
+- Worker M1 handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
+
+## Forensic Audit Protocol
+1. Static analysis: Check for fake/hardcoded test mocks, shortcut facades, or bypasses.
+2. Runtime verification: Run `node --test tests/auth-roles-permissions.test.mjs` directly.
+3. Database persistence check: Verify genuine data operations and hashing (`hashPassword`, `atomicWriteFileSync`).
+4. Twin server parity: Verify exact SHA-256 match between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+5. Binary veto: Deliver verdict (CLEAN or INTEGRITY VIOLATION) in `handoff.md` and message the orchestrator.
+
+
+## 2026-10-19T04:50:18Z
+Você é o subagente auditor_m1 (TypeName: teamwork_preview_auditor).
+Seu diretório de trabalho é:
 `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-Read these documents before auditing:
-1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
-2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
-3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
+Leia com atenção o arquivo de tarefas:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1\DISPATCH.md`
+e as referências:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seção `## 2026-10-19T02:58:52Z`)
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
 
-Your Mission:
-Execute systematic forensic integrity checks for Milestone 1:
-1. Check for Cheating: Search code for hardcoded test expectations, dummy facades, mocked responses masking missing logic, or circumvented requirements.
-2. Check Twin Parity: Verify SHA-256 byte-for-byte identity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`, and between all corresponding files in `artifacts/api-server/wbp/` and `scripts/wbp/`.
-3. Check Git & Branch Integrity: Verify active branch is `feature/wbp-integration`, no commits touched `main`, and the 11 uncommitted audit log lines in `artifacts/api-server/audit_logs.jsonl` were preserved.
-4. Check Test Isolation: Verify tests run with `DATABASE_URL` removed/unset and do not connect to production Postgres.
-5. Provide a binary verdict in `handoff.md`: **CLEAN** or **INTEGRITY VIOLATION**. (Note: INTEGRITY VIOLATION is a hard binary veto). Send message to orchestrator.
+Realize a auditoria forense de integridade do Milestone 1:
+- Verifique se a implementação em `artifacts/api-server/demo-server.mjs` é genuína e livre de hardcoded bypasses, mocks enganosos ou atalhos falsos.
+- Verifique a integridade criptográfica da persistência de senhas (`hashPassword`).
+- Verifique a paridade estrita SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+- Execute a suíte pontual `node --test tests/auth-roles-permissions.test.mjs` para validação em runtime.
+Seu veredito é um veto binário (CLEAN ou INTEGRITY VIOLATION). Registre em `handoff.md` e envie mensagem com `send_message` ao Project Orchestrator (c4864abd-776b-4ad1-aef9-25c7af7463df).

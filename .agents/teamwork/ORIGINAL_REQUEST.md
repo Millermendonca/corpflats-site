@@ -498,3 +498,55 @@ O usuário iniciou outra conversa paralela no mesmo diretório (`orchestrator_9`
 Portanto:
 1. **NUNCA** descarte nem reverta alterações de `giss-soap.mjs`, `national-nfse.mjs` ou `.agents/teamwork/orchestrator_9/`.
 2. Ao despachar o `victory_auditor`, instrua-o explicitamente a auditar o escopo da integração WebBookingPro (`wbp/`, `scripts/wbp/`, `demo-server.mjs`, `tests/wbp-integration/`, `artifacts/limpeza/`, `docs/wbp/`, `docs/integracoes/webbookingpro/`) e a **ignorar** modificações não-relacionadas em andamento da tarefa paralela de NFS-e (`giss-soap.mjs`, `national-nfse.mjs`, `orchestrator_9`, `worker_m1` da outra sessão).
+
+
+## 2026-10-19T02:58:52Z
+
+Reorganização da interface administrativa (backend) do Guest-Flow-Manager (CorpFlats), implementando menu lateral esquerdo retrátil (auto-hide flutuante ao tirar o mouse) para visualização do calendário em tela inteira, nova hierarquia de categorias recolhíveis com busca rápida, separação de perfis `dev` (acesso total + ferramentas técnicas) e `admin` (gestão hoteleira completa sem configurações técnicas de desenvolvimento), página dedicada de gestão de equipe e remoção completa do manual técnico WBP.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Coluna Lateral Esquerda Auto-Hide (Calendário em Tela Inteira)
+A barra lateral esquerda (`Shell` em `artifacts/limpeza/src/components/layout.tsx`) no desktop deve ficar oculta por padrão (largura zero no fluxo de layout) para que o Mapa de Reservas (`/reservas`) e demais telas ocupem 100% da largura da janela. Deve existir uma zona sensível na borda esquerda da tela (hover edge trigger) e um discreto gatilho visual para revelar a coluna flutuando sobre o conteúdo (`overlay`) ao aproximar o mouse, e recolhê-la automaticamente com transição suave quando o mouse sair da coluna (com opção de fixar/desafixar).
+
+### R2. Novo Perfil `dev` vs `admin` e Reestruturação de Permissões
+Implementar o perfil de usuário `dev` (Desenvolvedor) no backend (`artifacts/api-server/demo-server.mjs` e rotas de API) e no frontend (`artifacts/limpeza/src/`):
+- Transformar o usuário padrão `"admin"` existente em `role: "dev"` e criar um novo usuário padrão para administração hoteleira (`username: "gestor"`, `name: "Administração CorpFlats"`, `role: "admin"`, senha inicial `"admin123"`).
+- O perfil `dev` possui acesso irrestrito a todas as rotas e funcionalidades do sistema (tudo que `admin` acessa + módulos de engenharia/desenvolvimento). Todas as checagens operacionais de permissão administrativa no backend e frontend devem aceitar `role === "admin" || role === "dev"`.
+- O perfil `admin` possui acesso completo a todos os módulos operacionais, financeiros, reservas, governança, comunicação e gestão de equipe, mas NÃO vê nem acessa módulos estritamente técnicos de desenvolvimento (`DevRoute` / exclusivo `dev`): Monitor do Servidor (`/monitor-servidor`), Status da IA (`/ia-status`), Logs & Auditoria (`/logs`), Integrações Técnicas & Chaves de Nuvem/API (`/configuracoes`), Conexão Técnica Z-API (`/zapi-conexao`) e Fluxograma Técnico da Jornada (`/jornada-reservas`).
+
+### R3. Separação da Gestão de Equipe (`/equipe`) e Exclusão do Manual WBP (`/ajuda-wbp`)
+- Criar uma rota e página dedicada de **Equipe & Níveis de Acesso** (`/equipe` e `/usuarios`) acessível tanto para `admin` quanto para `dev`, permitindo listar, criar, editar (nome, WhatsApp, PIX, perfil) e redefinir senha de usuários sem expor chaves de API, certificados ou configurações de nuvem (que permanecem em `/configuracoes` restritas ao perfil `dev`).
+- Excluir completamente o Manual Técnico de Integração WebBookingPro (`/ajuda-wbp`, `/manual-wbp`, `/manual-integracao`), removendo as rotas em `App.tsx`, os links/botões em `layout.tsx`, o export em `components/wbp/index.ts` e os arquivos `wbp-manual.tsx` e `WbpHelpManualPage.tsx`.
+
+### R4. Reorganização da Navegação Lateral por Prioridade Operacional
+Reorganizar os menus da barra lateral (`layout.tsx`) com campo de busca rápida no topo (desktop e mobile) e categorias recolhíveis (accordion) ordenadas por prioridade de uso diário:
+1. **📅 Reservas & Hospedagem** (aberta por padrão, liderada pelo Mapa de Reservas PMS e Caixa de Entrada OTA)
+2. **💬 Comunicação & Atendimento** (WhatsApp Chat, Automação WhatsApp, Gerenciador de E-mails, Central de Notificações)
+3. **🧹 Governança & Manutenção** (Painel de Limpeza, Fechamento & Diárias, Lista de Compras, Ocorrências, Preventivas, Vistorias, Serviços Externos, Achados & Perdidos, Automação Camareiras)
+4. **💰 Financeiro, Tarifas & Fiscal** (ERP Financeiro & DRE, Tarifas & Precificação SEBRAE, Pagamentos PIX & Cauções, Hub de Notas Fiscais NFS-e, Funil de Vendas)
+5. **🏨 Propriedade & Equipe** (Equipe & Usuários `/equipe`, Flats & Regras, Garagem, Avaliações IA, Editor do Site)
+6. **🛠️ Engenharia & Dev** (visível apenas para `role === "dev"`: Integrações Técnicas & Nuvem, Conexão Z-API, Mapa da Jornada, Monitor do Servidor, Status da IA, Logs & Auditoria).
+
+### R5. Restrições de Ambiente e Build
+- Executar `npm run build` em `artifacts/limpeza` ao final para validar a compilação TypeScript/Vite e atualizar os artefatos de build (`artifacts/limpeza/dist/`).
+- Respeitar estritamente as diretrizes do projeto (`AGENTS.md`): NUNCA executar varreduras globais de testes (`tests/*.test.mjs`) ou testes de outros módulos; executar apenas verificação pontual da funcionalidade alterada.
+
+## Acceptance Criteria
+
+### Compilação e Integridade
+- [ ] `npm --prefix artifacts/limpeza run build` executa com código de saída 0 sem erros de TypeScript ou bundle.
+- [ ] Arquivos `artifacts/limpeza/src/pages/wbp-manual.tsx` e `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx` foram removidos e não há referências quebradas a `/ajuda-wbp`.
+
+### Comportamento do Menu Lateral (Auto-Hide & Reorganização)
+- [ ] Em viewport desktop (`>= 768px`), a barra lateral fica recolhida/oculta por padrão (`0px` ocupados no fluxo principal), permitindo que o calendário (`/reservas`) ocupe toda a largura da tela.
+- [ ] Encostar o mouse na borda esquerda da tela ou acionar o botão de menu no topo esquerdo exibe a barra lateral flutuante (`overlay`), e retirar o mouse da barra lateral a oculta novamente de forma suave.
+- [ ] A barra lateral possui busca rápida funcional no desktop e categorias recolhíveis na nova ordem operacional, com "Reservas & Hospedagem" em primeiro lugar.
+
+### Controle de Acesso `dev` vs `admin`
+- [ ] O usuário `"admin"` possui `role: "dev"` e visualiza todas as 6 categorias (incluindo "🛠️ Engenharia & Dev") e acessa `/configuracoes`, `/monitor-servidor`, `/logs`, `/zapi-conexao` e `/jornada-reservas`.
+- [ ] Um usuário com `role: "admin"` (ex.: `"gestor"`) visualiza as 5 categorias operacionais (sem "🛠️ Engenharia & Dev"), acessa `/reservas`, `/financeiro`, `/equipe`, etc., e recebe bloqueio (`AccessDenied`) se tentar acessar diretamente rotas exclusivas de `dev` (`/configuracoes`, `/monitor-servidor`, `/logs`, `/ia-status`, `/zapi-conexao`, `/jornada-reservas`).
+- [ ] A página `/equipe` permite que tanto `admin` quanto `dev` gerenciem usuários da equipe sem exibir chaves técnicas de API/nuvem.

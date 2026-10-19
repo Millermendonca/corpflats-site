@@ -1,67 +1,63 @@
-# BRIEFING — 2026-10-14T10:25:00Z
+# BRIEFING — 2026-10-19T04:48:00Z
 
 ## Mission
-Implementar correções e melhorias no motor de emissão de NFS-e (Dual Engine: Municipal GISS e Nacional ADN), unificar dispatcher em `POST /api/nfse/emit`, corrigir bug de variáveis indefinidas, repassar e persistir endereços do tomador, auto-emissão em check-out priorizando empresa vinculada no CRM, integrar Chat Fiscal ao cadastro de PJ em `db.companies` com validação Módulo 11 e manter paridade twin-server em `scripts/`.
+Implementar requisitos de backend do Milestone 1: migração de usuários de sistema em `ensureSystemUsers(db)` (`admin` -> `dev`, criação de `gestor` como `admin`), aceitar `role === "admin" || role === "dev"` em todas as operações administrativas, proteger rotas técnicas estritamente com `role === "dev"`, suportar `PATCH`/`POST` em reset-password e manter paridade SHA-256 byte-a-byte com `scripts/demo-server.mjs`.
 
 ## 🔒 My Identity
 - Archetype: teamwork_preview_worker
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
-- Original parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Milestone: M1 (NFS-e Backend Engine Fixes & Unified Emission)
+- Original parent: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Milestone: M1 (Backend Auth, Roles & Dev Endpoints)
 
 ## 🔒 Key Constraints
 - Arquivos sob responsabilidade exclusiva:
   - `artifacts/api-server/demo-server.mjs`
-  - `artifacts/api-server/giss-soap.mjs`
-  - `artifacts/api-server/national-nfse.mjs`
-  - `artifacts/api-server/chat-service.mjs`
-  - Cópia espelho idêntica em `scripts/` (`scripts/demo-server.mjs`, `scripts/giss-soap.mjs`, `scripts/national-nfse.mjs`, `scripts/chat-service.mjs`, `scripts/lookup.mjs`).
-- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs`).
+  - `scripts/demo-server.mjs`
+  - `tests/auth-roles-permissions.test.mjs`
+- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs`), estritamente respeitar AGENTS.md.
 - Manter paridade estrita 100% SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
 - DO NOT CHEAT: All implementations must be genuine, maintain real state, and produce real behavior.
 
 ## Current Parent
-- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Updated: 2026-10-14T10:25:00Z
+- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Updated: 2026-10-19T04:48:00Z
 
 ## Task Summary
 - **What to build**:
-  - F1: Corrigir ReferenceError de `numNfseReal` / `codVerifReal` em `POST /api/nfse/emit`.
-  - F2: Suporte completo ao motor Dual (`giss_prefeitura` e `padrao_nacional`) com fallback resiliente para testes/indisponibilidade.
-  - F3: Repassar e persistir dados completos de endereço do Tomador em `POST /api/nfse/emit` e nos motores.
-  - F4: Auto-emissão no checkout priorizando empresa vinculada (`companyId`) com Tomador PJ e discriminação detalhada com template.
-  - F5: Chat Fiscal cadastrando PJ em `db.companies`, persistindo endereços e validando dígitos verificadores por Módulo 11.
-  - Paridade Twin-Server em `scripts/`.
+  - `ensureSystemUsers(db)` para migrar `"admin"` para `role: "dev"` e criar `"gestor"` com `role: "admin"` e senha `"admin123"`.
+  - Atualizar `defaultUsers` no início do arquivo para refletir `"admin"` com `role: "dev"` e `"gestor"` com `role: "admin"`.
+  - Atualizar checagens de permissão operacional para `role === "admin" || role === "dev"`.
+  - Proteger endpoints técnicos estritamente com `role === "dev"` via `requireDevAuth`.
+  - Permitir `role === "dev"` em `/api/admin/users*` e suportar tanto `PATCH` quanto `POST` em `/api/admin/users/:id/reset-password`.
+  - Sincronizar byte a byte `scripts/demo-server.mjs` com `artifacts/api-server/demo-server.mjs` garantindo o mesmo hash SHA-256.
+  - Teste pontual de verificação dedicado (`tests/auth-roles-permissions.test.mjs`).
 - **Success criteria**:
-  - `POST /api/nfse/emit` emite sem ReferenceError para ambos os motores, com dados completos de endereço e retorno consistente.
-  - Check-out faturando para PJ vinculada no CRM quando houver `companyId`.
-  - Chat Fiscal cadastrando PJ em `db.companies` com validação Módulo 11.
-  - SHA-256 idêntico entre arquivos gêmeos.
-- **Interface contracts**: `orchestrator_9/PROJECT.md`
-- **Code layout**: `artifacts/api-server/` e espelho em `scripts/`
+  - `ensureSystemUsers` migra `admin` para `dev` e cria `gestor` como `admin`.
+  - `admin` acessa endpoints operacionais e endpoints técnicos.
+  - `gestor` acessa endpoints operacionais e recebe 403 em endpoints técnicos.
+  - `POST` e `PATCH` funcionam em reset-password.
+  - SHA-256 idêntico entre arquivos gêmeos (`D9A25D2F78E89E9B38869AF6DCA00CEEBABDDA67EBB079B55AF319B899C05B29`).
+- **Interface contracts**: `orchestrator_13/PROJECT.md` & `explorer_auth_roles/analysis.md`
+- **Code layout**: `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`
 
 ## Key Decisions Made
-- Unificado o dispatch de emissão em `POST /api/nfse/emit` chaveado por `sistemaEmissor` (`padrao_nacional` vs `giss_prefeitura`), com extração limpa de `numeroNfse` e `codigoVerificacao`.
-- Resolvido bug crítico em `getFiscalData()` (linha 27208) onde condição `db.invoices[0].prestadorCnpj !== "47.964.813/0001-65"` sobrescrevia notas reais emitidas a cada chamada da rota fiscal.
-- Rota de checkout duplicada para atender tanto `/api/reception/checkout/:reservationId` quanto `/api/pms/reservations/:id/checkout` com priorização automática de `companyId` para Tomador PJ e discriminação detalhada via `formatarDescricaoComTemplate`.
-- Chat Fiscal aprimorado para registrar diretamente em `db.companies` quando CNPJ de 14 dígitos for detectado e validado via Módulo 11, suportando ainda resolução autônoma de CEP via `lookupCep`.
-- Paridade estrita 100% SHA-256 mantida entre os 5 arquivos de `artifacts/api-server/` e `scripts/`.
+- Migração de usuários síncrona com `saveDatabase("manual_migrate_system_users_dev_and_gestor")` para garantir persistência atômica imediata em disco sem esperar timeout de debounce.
+- Rotas técnicas protegidas via middleware `requireDevAuth` montado no topo do Express para cobrir todos os verbos e sub-rotas correspondentes.
+- Rota `POST /api/audit-logs/client` mantida aberta para recepção de erros dos navegadores de hóspedes e camareiras, enquanto `GET /api/audit-logs` e `GET /api/audit-logs/export` são estritamente restritas a `dev`.
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/giss-soap.mjs` & `scripts/giss-soap.mjs`: Added crypto import, address fields in RPS XML, return mapping `numeroNfse: numeroNota`, and test mode fallback.
-  - `artifacts/api-server/national-nfse.mjs` & `scripts/national-nfse.mjs`: Added address and ibge code handling in DPS payload, return mapping `numeroNota: numNfse`, and test mode fallback.
-  - `artifacts/api-server/chat-service.mjs` & `scripts/chat-service.mjs`: Added Módulo 11 check on CPF/CNPJ candidates, standalone CEP regex extraction and lookupCep enrichment, and user messaging for invalid docs.
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: Fixed ReferenceError in `POST /api/nfse/emit`, unified dual-engine dispatch, persisted full address fields in invoices, fixed `getFiscalData` re-seed overwrite, extracted unified checkout handler with company PJ prioritization, and integrated Chat Fiscal to `db.companies`.
-  - `scripts/lookup.mjs`: Twin copy synchronized.
-- **Build status**: PASS (node --check passed on all 10 files with 0 syntax errors)
-- **Pending issues**: none
+  - `artifacts/api-server/demo-server.mjs`: `ensureSystemUsers`, `requireDevAuth`, expansão operacional `role === "admin" || role === "dev"`.
+  - `scripts/demo-server.mjs`: cópia gêmea em paridade 100% SHA-256.
+  - `tests/auth-roles-permissions.test.mjs`: teste pontual completo do Milestone 1.
+- **Build status**: Pass (6/6 testes pontuais passando em 5.3s).
+- **Pending issues**: None.
 
 ## Quality Status
-- **Build/test result**: PASS. All twin files verified byte-by-byte (SHA-256 match 100%). Dynamic API smoke test confirmed 201 responses without ReferenceError, complete address persistence, PJ company prioritization in checkout, and Chat Fiscal company creation.
-- **Lint status**: PASS (0 syntax errors).
-- **Tests added/modified**: Targeted dynamic API smoke tests run via isolated ephemeral process. No global tests executed per AGENTS.md rules.
+- **Build/test result**: Pass (6/6 tests passing).
+- **Lint status**: Clean (validado via `node -c`).
+- **Tests added/modified**: `tests/auth-roles-permissions.test.mjs`.
 
 ## Loaded Skills
 - None loaded.
