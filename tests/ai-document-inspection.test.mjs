@@ -3,7 +3,16 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { inspectDocumentWithAI, isCamposDosGoytacazes, checkYouthLocalRisk } from '../artifacts/api-server/demo-server.mjs';
+import zlib from 'node:zlib';
+import {
+  inspectDocumentWithAI,
+  isCamposDosGoytacazes,
+  checkYouthLocalRisk,
+  comparePersonNames,
+  compareCpfDigits,
+  compareBirthDates,
+  syncBidirectionalGuestProfile
+} from '../artifacts/api-server/demo-server.mjs';
 
 describe('Inspeção de Documentos com Foto por Inteligência Artificial', () => {
   const serverPath = path.resolve('artifacts/api-server/demo-server.mjs');
@@ -281,7 +290,120 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(riskCep.isCampos, true);
   });
 
-  it('16. Limpeza de processo pós-testes', () => {
+  it('16. comparePersonNames valida se documento pertence à mesma pessoa (com e sem preposições/abreviações) e bloqueia terceiros', () => {
+    assert.strictEqual(comparePersonNames('MILLER PESSANHA MENDONÇA', 'Miller Pessanha Mendonca'), true);
+    assert.strictEqual(comparePersonNames('CARLOS EDUARDO DA SILVA OLIVEIRA', 'Carlos Oliveira'), true);
+    assert.strictEqual(comparePersonNames('MARIA CLARA DE SOUZA', 'Maria Clara Souza'), true);
+    // Pessoas diferentes (mesmo sobrenome, primeiro nome diferente)
+    assert.strictEqual(comparePersonNames('JOÃO PEDRO DA SILVA', 'Maria Clara da Silva'), false);
+    // Pessoas completamente diferentes
+    assert.strictEqual(comparePersonNames('ROBERTO ALMEIDA SANTOS', 'Lucas Peçanha'), false);
+  });
+
+  it('17. Robô pericial detecta divergência de titularidade (nome ou CPF no documento diferente da reserva/ficha)', async () => {
+    const rawStream = 'BT /F1 12 Tf (NOME: ROBERTO ALMEIDA SANTOS) Tj (CPF: 999.888.777-66) Tj (DATA DE NASCIMENTO: 15/04/1988) Tj (NATURALIDADE: CAMPOS DOS GOYTACAZES - RJ) Tj ET';
+    const compressed = zlib.deflateSync(Buffer.from(rawStream, 'latin1'));
+    const pdfBuf = Buffer.concat([
+      Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length ' + compressed.length + ' /Filter /FlateDecode >>\nstream\r\n', 'latin1'),
+      compressed,
+      Buffer.from('\r\nendstream\nendobj\n%%EOF', 'latin1')
+    ]);
+    const pdfBase64 = 'data:application/pdf;base64,' + pdfBuf.toString('base64');
+
+    // Caso A: Reserva em nome de "Miller Mendonça" (CPF 111.222.333-44), mas anexou documento de "Roberto Almeida Santos" (CPF 999.888.777-66)
+    const mismatchRes = await inspectDocumentWithAI({
+      fileBase64: pdfBase64,
+      fileName: 'cnh_digital.pdf',
+      providedName: 'Miller Mendonça',
+      providedCpf: '111.222.333-44',
+      reservationName: 'Miller Mendonça',
+      reservationCpf: '11122233344',
+      providedBirthDate: '1992-10-10'
+    });
+
+    assert.strictEqual(mismatchRes.extractedName, 'ROBERTO ALMEIDA SANTOS');
+    assert.strictEqual(mismatchRes.extractedCpf, '99988877766');
+    assert.strictEqual(mismatchRes.nameMatches, false, 'Deve reprovar quando nome no documento diverge do titular');
+    assert.strictEqual(mismatchRes.reservationNameMatches, false, 'Deve reprovar quando nome no documento diverge do nome na reserva');
+    assert.strictEqual(mismatchRes.cpfMatches, false, 'Deve reprovar quando CPF no documento diverge do CPF informado');
+    assert.strictEqual(mismatchRes.birthDateMatches, false, 'Deve detectar divergência na data de nascimento');
+    assert.strictEqual(mismatchRes.identityMatches, false, 'identityMatches deve ser false quando não é a mesma pessoa');
+    assert.strictEqual(mismatchRes.isCamposResident, true, 'Deve extrair cidade mesmo em stream FlateDecode comprimido');
+    assert.ok(Array.isArray(mismatchRes.mismatchReasons) && mismatchRes.mismatchReasons.length >= 2, 'Deve detalhar motivos da divergência');
+
+    // Caso B: Reserva e ficha da mesma pessoa do documento ("Roberto Almeida Santos")
+    const matchRes = await inspectDocumentWithAI({
+      fileBase64: pdfBase64,
+      fileName: 'cnh_digital.pdf',
+      providedName: 'Roberto Almeida Santos',
+      providedCpf: '999.888.777-66',
+      reservationName: 'Roberto Santos',
+      reservationCpf: '99988877766',
+      providedBirthDate: '1988-04-15'
+    });
+
+    assert.strictEqual(matchRes.nameMatches, true);
+    assert.strictEqual(matchRes.reservationNameMatches, true);
+    assert.strictEqual(matchRes.cpfMatches, true);
+    assert.strictEqual(matchRes.birthDateMatches, true);
+    assert.strictEqual(matchRes.identityMatches, true);
+    assert.strictEqual(matchRes.mismatchReasons.length, 0);
+  });
+
+  it('18. Persistência e pré-carregamento automático do documento anexado (syncBidirectionalGuestProfile)', () => {
+    const sampleDocUrl = 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=';
+    const sampleSelfieUrl = 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=';
+
+    const mockDb = {
+      guests: [
+        {
+          id: 101,
+          guestCode: 'G-101',
+          name: 'Miller Pessanha',
+          fullName: 'Miller Pessanha',
+          email: 'miller@exemplo.com',
+          phone: '22999112233',
+          document: '12345678901',
+          documentNumber: '12345678901',
+          docPhotoUrl: sampleDocUrl,
+          photoUrl: sampleSelfieUrl
+        }
+      ],
+      guestAccounts: [
+        {
+          id: 501,
+          name: 'Miller Pessanha',
+          email: 'miller@exemplo.com',
+          phone: '22999112233',
+          document: '12345678901'
+        }
+      ],
+      reservations: [
+        {
+          id: 9001,
+          code: 'RES-9001',
+          guestId: 101,
+          guestName: 'Miller Pessanha',
+          guestEmail: 'miller@exemplo.com',
+          guestPhone: '22999112233',
+          guestDocument: '12345678901',
+          guests: [
+            { index: 1, name: 'Miller Pessanha', cpf: '12345678901' }
+          ]
+        }
+      ]
+    };
+
+    // Ao sincronizar o perfil em uma nova reserva ou login, a conta e a reserva herdam automaticamente o docPhotoUrl salvo anteriormente
+    syncBidirectionalGuestProfile(mockDb, mockDb.guestAccounts[0], {});
+
+    assert.strictEqual(mockDb.guestAccounts[0].docPhotoUrl, sampleDocUrl, 'Conta do hóspede deve herdar docPhotoUrl salvo no CRM');
+    assert.strictEqual(mockDb.reservations[0].docPhotoUrl, sampleDocUrl, 'Reserva do hóspede deve herdar docPhotoUrl salvo');
+    assert.strictEqual(mockDb.reservations[0].guests[0].docPhotoUrl, sampleDocUrl, 'Slot 1 da reserva deve pré-carregar docPhotoUrl para não pedir anexo novamente');
+    assert.strictEqual(mockDb.reservations[0].guests[0].selfieUrl, sampleSelfieUrl, 'Slot 1 da reserva deve pré-carregar selfieUrl salva');
+  });
+
+  it('19. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

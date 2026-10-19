@@ -40,6 +40,8 @@ export interface UserProfile {
   } | null
   googleConnected?: boolean
   passkeysCount?: number
+  docPhotoUrl?: string | null
+  photoUrl?: string | null
   createdAt?: string
   lastLoginAt?: string
 }

@@ -188,9 +188,11 @@ export default function GuestPreCheckin() {
 
   // Photos, Signature, Terms & Vehicle
   const [docPhoto, setDocPhoto] = useState<string | null>(null)
+  const [isSavedDocFromProfile, setIsSavedDocFromProfile] = useState(false)
   const [aiInspectingDoc, setAiInspectingDoc] = useState(false)
   const [aiDocResult, setAiDocResult] = useState<{
     isOfficialDocument?: boolean
+    documentType?: string
     isLegible?: boolean
     legibilityReason?: string
     isCamposResident?: boolean
@@ -201,6 +203,15 @@ export default function GuestPreCheckin() {
     extractedCity?: string
     extractedState?: string
     extractedBirthDate?: string
+    nameMatches?: boolean | null
+    providedNameMatches?: boolean | null
+    reservationName?: string
+    reservationNameMatches?: boolean | null
+    cpfMatches?: boolean | null
+    reservationCpfMatches?: boolean | null
+    birthDateMatches?: boolean | null
+    identityMatches?: boolean
+    mismatchReasons?: string[]
     summary?: string
   } | null>(null)
   const [selfiePhoto, setSelfiePhoto] = useState<string | null>(null)
@@ -566,6 +577,7 @@ export default function GuestPreCheckin() {
 
     // Limpeza completa para evitar vazamento de estado entre hóspedes
     setDocPhoto(null)
+    setIsSavedDocFromProfile(false)
     setAiDocResult(null)
     setSelfiePhoto(null)
     setSignatureData(null)
@@ -658,6 +670,57 @@ export default function GuestPreCheckin() {
     setMinorKinship(currentG?.minorKinship || "filho")
     setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
 
+    // Isolamento estrito de veículo: titular lê da reserva; acompanhante lê SOMENTE de currentG.vehicle
+    const v = isTitular 
+      ? (res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
+          plate: guest.vehiclePlate,
+          brand: guest.vehicleBrand || "",
+          model: guest.vehicleModel || "",
+          color: guest.vehicleColor || ""
+        } : null))
+      : (currentG?.vehicle || null)
+
+    if (v && v.plate) {
+      setVehiclePlate(v.plate)
+      setVehicleModel(v.model || "")
+      setVehicleBrand(v.brand || "")
+      setVehicleColor(v.color || "")
+      if (!transportVal) {
+        setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
+      }
+    } else {
+      setVehiclePlate("")
+      setVehicleModel("")
+      setVehicleBrand("")
+      setVehicleColor("")
+    }
+
+    // Isolamento estrito de fotos e biometria:
+    // Hóspede 1: pode ler do cadastro titular
+    // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
+    let selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
+    let doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || res.documentPhotoUrl || guest.docPhotoUrl || guest.documentPhotoUrl || null) : null)
+
+    if (!doc && isTitular && typeof window !== "undefined") {
+      try {
+        const rawProf = localStorage.getItem("corpflats_guest_profile")
+        if (rawProf) {
+          const prof = JSON.parse(rawProf)
+          const profCpf = String(prof?.document || "").replace(/\D/g, "")
+          const resCpf = String(gDoc || "").replace(/\D/g, "")
+          const profEmail = String(prof?.email || "").trim().toLowerCase()
+          const resEmail = String(gEmail || "").trim().toLowerCase()
+          const isSamePersonCache = (profCpf && resCpf && profCpf === resCpf) || (profEmail && resEmail && profEmail === resEmail) || (!resCpf && !resEmail)
+          if (isSamePersonCache && prof?.docPhotoUrl) {
+            doc = prof.docPhotoUrl
+          }
+          if (isSamePersonCache && !selfie && prof?.photoUrl) {
+            selfie = prof.photoUrl
+          }
+        }
+      } catch {}
+    }
+
     // Sincronização direta com perfil permanente do hóspede autenticado
     if (isTitular) {
       getCurrentSession().then((sessionUser) => {
@@ -693,39 +756,21 @@ export default function GuestPreCheckin() {
           setVehicleColor(sessionUser.vehicle.color || "")
           setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
         }
+        const sessCpf = String(sessionUser.document || "").replace(/\D/g, "")
+        const resCpf = String(gDoc || "").replace(/\D/g, "")
+        const sessEmail = String(sessionUser.email || "").trim().toLowerCase()
+        const resEmail = String(gEmail || "").trim().toLowerCase()
+        const isSameSess = (sessCpf && resCpf && sessCpf === resCpf) || (sessEmail && resEmail && sessEmail === resEmail) || (!resCpf && !resEmail)
+        if (isSameSess && !doc && sessionUser.docPhotoUrl) {
+          setDocPhoto(sessionUser.docPhotoUrl)
+          setIsSavedDocFromProfile(true)
+        }
+        if (isSameSess && !selfie && sessionUser.photoUrl) {
+          setSelfiePhoto(sessionUser.photoUrl)
+        }
       }).catch(() => {})
     }
 
-    // Isolamento estrito de veículo: titular lê da reserva; acompanhante lê SOMENTE de currentG.vehicle
-    const v = isTitular 
-      ? (res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
-          plate: guest.vehiclePlate,
-          brand: guest.vehicleBrand || "",
-          model: guest.vehicleModel || "",
-          color: guest.vehicleColor || ""
-        } : null))
-      : (currentG?.vehicle || null)
-
-    if (v && v.plate) {
-      setVehiclePlate(v.plate)
-      setVehicleModel(v.model || "")
-      setVehicleBrand(v.brand || "")
-      setVehicleColor(v.color || "")
-      if (!transportVal) {
-        setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
-      }
-    } else {
-      setVehiclePlate("")
-      setVehicleModel("")
-      setVehicleBrand("")
-      setVehicleColor("")
-    }
-
-    // Isolamento estrito de fotos e biometria:
-    // Hóspede 1: pode ler do cadastro titular
-    // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
-    const selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
-    const doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || guest.docPhotoUrl || null) : null)
     // Avaliação estritamente individual da necessidade de re-assinatura
     const isGuestPendingReSign = currentG?.needsReSignature !== undefined
       ? Boolean(currentG.needsReSignature)
@@ -736,6 +781,7 @@ export default function GuestPreCheckin() {
 
     setSelfiePhoto(selfie || null)
     setDocPhoto(doc || null)
+    setIsSavedDocFromProfile(Boolean(doc))
     setSignatureData(sig || null)
 
     // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito nesta reserva e não precisar re-assinar!
@@ -982,6 +1028,14 @@ export default function GuestPreCheckin() {
   const runAiDocInspection = async (base64String: string, fileNameStr: string) => {
     setAiInspectingDoc(true)
     try {
+      const currentGuestSlot = (guestList || []).find((g: any) => Number(g.index) === Number(selectedGuestIndex))
+      const expectedResName = selectedGuestIndex === 1
+        ? (reservation?.guestName || currentGuestSlot?.name || "")
+        : (currentGuestSlot?.name && !String(currentGuestSlot.name).startsWith("Hóspede") ? currentGuestSlot.name : "")
+      const expectedResCpf = selectedGuestIndex === 1
+        ? (reservation?.guestDocument || currentGuestSlot?.cpf || currentGuestSlot?.document || "")
+        : (currentGuestSlot?.cpf || currentGuestSlot?.document || "")
+
       const res = await fetch("/api/ai/inspect-document", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -990,6 +1044,9 @@ export default function GuestPreCheckin() {
           fileName: fileNameStr,
           providedName: fullName,
           providedCpf: document,
+          reservationName: expectedResName,
+          reservationCpf: expectedResCpf,
+          guestIndex: selectedGuestIndex,
           providedCity: city,
           providedAddress: address,
           providedBirthDate: birthDate,
@@ -1052,6 +1109,11 @@ export default function GuestPreCheckin() {
     if (file.size > 5 * 1024 * 1024) {
       alert("O arquivo selecionado possui " + (file.size / (1024 * 1024)).toFixed(1) + " MB e excede o limite máximo permitido de 5 MB. Por favor, envie um arquivo de até 5 MB.")
       return
+    }
+
+    if (type === "doc") {
+      setIsSavedDocFromProfile(false)
+      setAiDocResult(null)
     }
 
     setCompressing(true)
@@ -1210,9 +1272,9 @@ export default function GuestPreCheckin() {
       }
 
       if (res.ok && resData) {
-        // Atualiza perfil permanente local em cache para sincronização imediata
+        // Atualiza perfil permanente local em cache para sincronização imediata (incluindo documento e foto para próximos check-ins)
         try {
-          if (typeof window !== "undefined") {
+          if (typeof window !== "undefined" && selectedGuestIndex === 1) {
             const rawProfile = localStorage.getItem("corpflats_guest_profile")
             const currentProf = rawProfile ? JSON.parse(rawProfile) : {}
             saveSessionLocally({
@@ -1231,6 +1293,8 @@ export default function GuestPreCheckin() {
               city: city || currentProf.city,
               state: state || currentProf.state,
               cep: cep || currentProf.cep,
+              docPhotoUrl: resData.guest?.docPhotoUrl || resData.reservation?.docPhotoUrl || docPhoto || currentProf.docPhotoUrl || null,
+              photoUrl: resData.guest?.photoUrl || resData.reservation?.selfieUrl || selfiePhoto || currentProf.photoUrl || null,
               vehicle: cleanPlate ? {
                 plate: cleanPlate,
                 brand: cleanBrand,
@@ -3052,6 +3116,9 @@ export default function GuestPreCheckin() {
                       }
                     }
                     setStep(2)
+                    if (docPhoto) {
+                      runAiDocInspection(docPhoto, "documento_hospede")
+                    }
                   }}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
                 >
@@ -3065,46 +3132,98 @@ export default function GuestPreCheckin() {
           {/* ── Passo 2: Foto do Documento ─────────────────────────────────── */}
           {step === 2 && (
             <div className="space-y-4 sm:space-y-5">
-              <div className="border-b border-slate-100 pb-3">
+              <div className="border-b border-slate-100 pb-3 flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                   <FileText className="w-4 h-4 text-sky-600" />
                   <span>2. Foto do Documento (RG / CNH / Passaporte)</span>
                 </h3>
+                {docPhoto && isSavedDocFromProfile && (
+                  <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] py-0.5 px-2.5 shadow-none">
+                    ✓ Recuperado do seu cadastro
+                  </Badge>
+                )}
               </div>
 
               <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-                Tire uma foto nítida da frente ou verso do seu documento oficial de identificação para validação segura na portaria.
+                {docPhoto && isSavedDocFromProfile
+                  ? "Seu documento enviado anteriormente já foi recuperado automaticamente do seu cadastro. Confira a validação pericial abaixo ou substitua se desejar."
+                  : "Tire uma foto nítida ou anexe o PDF do seu documento oficial de identificação para validação pericial de titularidade e segurança na portaria."}
               </p>
 
               <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
                 {docPhoto ? (
                   <div className="space-y-3">
-                    <img src={docPhoto} alt="Documento" className="max-h-52 mx-auto rounded-xl object-contain border border-slate-200 shadow-sm bg-white" />
-                    <div>
+                    {isSavedDocFromProfile && (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Documento salvo em estadias anteriores carregado automaticamente</span>
+                      </div>
+                    )}
+
+                    {(docPhoto.startsWith("data:application/pdf") || docPhoto.toLowerCase().includes(".pdf")) ? (
+                      <div className="max-w-xs mx-auto p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex items-center gap-3 text-left">
+                        <div className="w-11 h-11 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-xs text-slate-900 truncate">Documento Oficial (PDF)</div>
+                          <div className="text-[11px] text-emerald-700 font-medium">✓ Arquivo digital anexado</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <img src={docPhoto} alt="Documento" className="max-h-52 mx-auto rounded-xl object-contain border border-slate-200 shadow-sm bg-white" />
+                    )}
+
+                    <div className="flex items-center justify-center gap-2">
                       <Button 
                         type="button" 
                         variant="outline" 
                         size="sm" 
                         onClick={() => {
                           setDocPhoto(null)
+                          setIsSavedDocFromProfile(false)
                           setAiDocResult(null)
                         }}
                         className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
-                        Trocar Foto do Documento
+                        Trocar Documento
                       </Button>
+                      {!aiInspectingDoc && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => runAiDocInspection(docPhoto, "documento_hospede")}
+                          className="text-xs font-semibold text-sky-700 hover:bg-sky-50 rounded-xl gap-1"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Revalidar</span>
+                        </Button>
+                      )}
                     </div>
 
-                    {/* Feedback e Análise por Inteligência Artificial */}
+                    {/* Feedback e Análise por Inteligência Artificial (Robô Pericial) */}
                     {aiInspectingDoc && (
                       <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl flex items-center justify-center gap-2 text-xs text-sky-800 animate-pulse">
                         <RefreshCw className="w-4 h-4 animate-spin text-sky-600 shrink-0" />
-                        <span className="font-semibold">Robô pericial CorpFlats analisando documento e dados cadastrais...</span>
+                        <span className="font-semibold">Robô pericial CorpFlats conferindo titularidade (mesma pessoa), CPF, nascimento e cidade...</span>
                       </div>
                     )}
 
                     {aiDocResult && !aiInspectingDoc && (
-                      <div className="space-y-2 text-left pt-1">
+                      <div className="space-y-2.5 text-left pt-1">
+                        {aiDocResult.isOfficialDocument === false && (
+                          <div className="p-3 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-1 text-xs text-rose-900">
+                            <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                              <span>Documento Oficial Não Identificado</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed">
+                              O arquivo anexado não foi reconhecido como um documento oficial com foto (RG, CNH ou Passaporte). Por favor, anexe um documento válido.
+                            </p>
+                          </div>
+                        )}
+
                         {aiDocResult.isLegible === false && (
                           <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1 text-xs text-rose-900">
                             <div className="font-bold flex items-center gap-1.5 text-rose-800">
@@ -3116,6 +3235,110 @@ export default function GuestPreCheckin() {
                             </p>
                           </div>
                         )}
+
+                        {(aiDocResult.identityMatches === false ||
+                          aiDocResult.nameMatches === false ||
+                          aiDocResult.reservationNameMatches === false ||
+                          aiDocResult.cpfMatches === false ||
+                          aiDocResult.reservationCpfMatches === false) && (
+                          <div className="p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-2 text-xs text-rose-950 shadow-2xs">
+                            <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                              <span>⚠️ Alerta Pericial: Divergência de Titularidade (Pessoa Diferente)</span>
+                            </div>
+                            {Array.isArray(aiDocResult.mismatchReasons) && aiDocResult.mismatchReasons.length > 0 ? (
+                              <ul className="list-disc pl-4 space-y-1 text-[11px] text-rose-900 font-medium">
+                                {aiDocResult.mismatchReasons.map((reason, idx) => (
+                                  <li key={idx}>{reason}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-[11px] text-rose-900 leading-relaxed">
+                                Os dados identificados no documento ({aiDocResult.extractedName || "Nome divergente"}) não correspondem ao hóspede titular desta ficha ({aiDocResult.reservationName || fullName}).
+                              </p>
+                            )}
+                            <p className="text-[11px] text-rose-800 font-semibold pt-0.5">
+                              Por segurança, o documento anexado deve pertencer à mesma pessoa da reserva. Clique em "Trocar Documento" para anexar o documento correto ou volte ao Passo 1 para corrigir os dados digitados.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Checklist Completo do Robô Pericial */}
+                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 text-xs shadow-2xs">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                              <ShieldCheck className="w-4 h-4 text-sky-600" />
+                              <span>Laudo do Robô Pericial CorpFlats</span>
+                            </span>
+                            {aiDocResult.documentType && aiDocResult.documentType !== "desconhecido" && (
+                              <Badge variant="outline" className="text-[10px] uppercase font-bold border-slate-300 text-slate-700">
+                                {aiDocResult.documentType}
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                            {/* 1. Titularidade / Mesma Pessoa */}
+                            <div className={`p-2 rounded-lg border ${
+                              aiDocResult.nameMatches === false || aiDocResult.reservationNameMatches === false
+                                ? "bg-rose-50/70 border-rose-200 text-rose-900"
+                                : "bg-emerald-50/60 border-emerald-200 text-emerald-900"
+                            }`}>
+                              <div className="text-[10px] uppercase font-bold opacity-75">Titularidade / Mesma Pessoa</div>
+                              <div className="font-bold text-[11px] mt-0.5 flex items-center gap-1">
+                                {aiDocResult.nameMatches === false || aiDocResult.reservationNameMatches === false ? (
+                                  <span>❌ Divergente ({aiDocResult.extractedName || "Outro titular"})</span>
+                                ) : (
+                                  <span>✓ {aiDocResult.extractedName || fullName || "Confirmada"}</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* 2. CPF */}
+                            <div className={`p-2 rounded-lg border ${
+                              aiDocResult.cpfMatches === false || aiDocResult.reservationCpfMatches === false
+                                ? "bg-rose-50/70 border-rose-200 text-rose-900"
+                                : "bg-emerald-50/60 border-emerald-200 text-emerald-900"
+                            }`}>
+                              <div className="text-[10px] uppercase font-bold opacity-75">Conferência de CPF</div>
+                              <div className="font-bold text-[11px] mt-0.5">
+                                {aiDocResult.cpfMatches === false || aiDocResult.reservationCpfMatches === false
+                                  ? `❌ Divergente (${aiDocResult.extractedCpf || "CPF diferente"})`
+                                  : `✓ ${aiDocResult.extractedCpf || document || "Compatível"}`}
+                              </div>
+                            </div>
+
+                            {/* 3. Data de Nascimento / Idade */}
+                            <div className={`p-2 rounded-lg border ${
+                              aiDocResult.birthDateMatches === false
+                                ? "bg-amber-50 border-amber-200 text-amber-900"
+                                : "bg-slate-50 border-slate-200 text-slate-800"
+                            }`}>
+                              <div className="text-[10px] uppercase font-bold opacity-75">Nascimento / Faixa Etária</div>
+                              <div className="font-bold text-[11px] mt-0.5">
+                                {aiDocResult.birthDateMatches === false
+                                  ? `⚠️ Divergente (${aiDocResult.extractedBirthDate || "Verificar"})`
+                                  : (aiDocResult.calculatedAge !== null && aiDocResult.calculatedAge !== undefined
+                                      ? `${aiDocResult.isMinor ? "👶 Menor" : "✓ Maior"} (${aiDocResult.calculatedAge} anos)`
+                                      : `✓ ${birthDateInput || "Validada"}`)}
+                              </div>
+                            </div>
+
+                            {/* 4. Cidade / Origem */}
+                            <div className={`p-2 rounded-lg border ${
+                              aiDocResult.isCamposResident
+                                ? "bg-purple-50 border-purple-200 text-purple-900"
+                                : "bg-slate-50 border-slate-200 text-slate-800"
+                            }`}>
+                              <div className="text-[10px] uppercase font-bold opacity-75">Cidade / Naturalidade</div>
+                              <div className="font-bold text-[11px] mt-0.5">
+                                {aiDocResult.isCamposResident
+                                  ? "📍 Campos dos Goytacazes/RJ"
+                                  : `✓ ${aiDocResult.extractedCity ? `${aiDocResult.extractedCity}${aiDocResult.extractedState ? `/${aiDocResult.extractedState}` : ""}` : (city ? `${city}/${state}` : "Verificada")}`}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
 
                         {aiDocResult.isCamposResident && (
                           <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center justify-between gap-2 text-xs text-purple-900 shadow-2xs">
@@ -3140,10 +3363,17 @@ export default function GuestPreCheckin() {
                           </div>
                         )}
 
-                        {aiDocResult.isLegible !== false && !aiDocResult.isCamposResident && !aiDocResult.isMinor && (
+                        {aiDocResult.isLegible !== false &&
+                          aiDocResult.isOfficialDocument !== false &&
+                          aiDocResult.identityMatches !== false &&
+                          aiDocResult.nameMatches !== false &&
+                          aiDocResult.reservationNameMatches !== false &&
+                          aiDocResult.cpfMatches !== false && (
                           <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                            <span className="font-medium">Documento oficial analisado com sucesso pela Inteligência Artificial.</span>
+                            <span className="font-medium">
+                              {aiDocResult.summary || "Identidade, titularidade da reserva e documento oficial validados com sucesso pela Inteligência Artificial."}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -3157,7 +3387,7 @@ export default function GuestPreCheckin() {
                     <span className="font-bold text-sm text-slate-900 mt-1">
                       {compressing ? "Processando imagem..." : "Tirar Foto ou Enviar Arquivo"}
                     </span>
-                    <span className="text-xs text-slate-400">Foto nítida da frente ou verso do seu documento</span>
+                    <span className="text-xs text-slate-400">Foto nítida ou PDF do documento oficial do hóspede</span>
                     <input 
                       type="file" 
                       accept="image/*,application/pdf" 
@@ -3180,10 +3410,39 @@ export default function GuestPreCheckin() {
                 </Button>
                 <Button 
                   onClick={async () => {
+                    if (!docPhoto) {
+                      alert("Por favor, anexe a foto ou PDF do seu documento oficial de identificação (RG, CNH ou Passaporte) para continuar.")
+                      return
+                    }
+                    if (aiInspectingDoc) {
+                      alert("Aguarde alguns instantes enquanto o robô pericial conclui a conferência do seu documento.")
+                      return
+                    }
+                    if (aiDocResult?.isOfficialDocument === false) {
+                      alert("O arquivo enviado não foi reconhecido como documento oficial de identificação com foto (RG, CNH ou Passaporte). Por favor, anexe um documento válido.")
+                      return
+                    }
+                    if (aiDocResult?.isLegible === false) {
+                      alert(aiDocResult.legibilityReason || "O documento anexado está ilegível. Por favor, envie outra foto mais nítida ou o PDF original.")
+                      return
+                    }
+                    if (
+                      aiDocResult?.identityMatches === false ||
+                      aiDocResult?.nameMatches === false ||
+                      aiDocResult?.reservationNameMatches === false ||
+                      aiDocResult?.cpfMatches === false ||
+                      aiDocResult?.reservationCpfMatches === false
+                    ) {
+                      const reasons = Array.isArray(aiDocResult?.mismatchReasons) && aiDocResult.mismatchReasons.length > 0
+                        ? aiDocResult.mismatchReasons.join("\n• ")
+                        : "O nome ou CPF constante no documento não corresponde ao titular desta reserva."
+                      alert(`⚠️ Bloqueio Pericial de Titularidade:\n\n• ${reasons}\n\nO documento anexado deve pertencer à mesma pessoa titular da ficha. Anexe o documento correto ou volte ao Passo 1 para corrigir seus dados.`)
+                      return
+                    }
                     setStep(3)
                     await ensureOrRefreshToken()
                   }} 
-                  disabled={isRefreshingToken}
+                  disabled={isRefreshingToken || aiInspectingDoc}
                   className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md"
                 >
                   <span>{isRefreshingToken ? "Gerando Sessão de Assinatura..." : "Avançar para Assinatura Eletrônica"}</span>

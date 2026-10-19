@@ -61,6 +61,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import https from "https";
+import zlib from "zlib";
 import { fileURLToPath } from "url";
 import pg from "pg";
 import QRCode from "qrcode";
@@ -539,7 +540,7 @@ app.get("/api/system/postgres-tables", async (req, res) => {
 // ── No Show (Admin only) ───────────────────────────────────────────────────
 app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem marcar No Show." });
   }
 
@@ -683,23 +684,7 @@ app.post("/api/admin/restore-historical-cleanings", (req, res) => {
 // ── Password Hashing Helper ──────────────────────────────────────────────────
 
 function ensureReceptionUser(database) {
-  if (!database.users) database.users = defaultUsers;
-  const found = database.users.find(u => u.username.toLowerCase() === "soho@promenade.com.br");
-  if (!found) {
-    const defaultRecPass = process.env.RECEPTION_DEFAULT_PASSWORD || crypto.randomBytes(16).toString("hex");
-    database.users.push({
-      id: 4,
-      username: "Soho@promenade.com.br",
-      name: "Recepção Soho",
-      role: "recepcao",
-      passwordHash: hashPassword(defaultRecPass),
-      must_change_password: true,
-      password_updated_at: new Date().toISOString()
-    });
-  }
-  if (!Array.isArray(database.fnrhInternalAuditLogs)) {
-    database.fnrhInternalAuditLogs = [];
-  }
+  return ensureSystemUsers(database);
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -746,10 +731,86 @@ if (!fs.existsSync(DATA_DIR)) {
 const DB_FILE = process.env.DATA_FILE || process.env.DATABASE_FILE || path.join(DATA_DIR, "database.json");
 
 const defaultUsers = [
-  { id: 1, username: "admin", role: "admin", passwordHash: hashPassword("admin123") },
+  { id: 1, username: "admin", role: "dev", passwordHash: hashPassword("admin123") },
   { id: 2, username: "Cris", name: "Cris", role: "camareira", phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
   { id: 3, username: "Grazi", name: "Grazi", role: "camareira", phone: "22999106204", whatsapp: "5522999106204", pixKey: "12977795766", active: true, passwordHash: hashPassword("1234") },
+  { id: 5, username: "gestor", name: "Administração CorpFlats", role: "admin", phone: "5522997124021", whatsapp: "5522997124021", active: true, passwordHash: hashPassword("admin123"), password_updated_at: new Date().toISOString() },
 ];
+
+export function ensureSystemUsers(database) {
+  if (!database) return false;
+  if (!database.users || !Array.isArray(database.users)) {
+    database.users = [...defaultUsers];
+    return true;
+  }
+
+  let changed = false;
+
+  // 1. Migração do usuário 'admin' existente para role: 'dev' (preservando senha existente)
+  const adminUser = database.users.find(u => u.username && u.username.toLowerCase() === "admin");
+  if (adminUser) {
+    if (adminUser.role !== "dev") {
+      adminUser.role = "dev";
+      changed = true;
+    }
+  } else {
+    database.users.unshift({
+      id: 1,
+      username: "admin",
+      role: "dev",
+      passwordHash: hashPassword("admin123")
+    });
+    changed = true;
+  }
+
+  // 2. Criação/Garantia do usuário 'gestor' (Administração CorpFlats) com role: 'admin'
+  const gestorUser = database.users.find(u => u.username && u.username.toLowerCase() === "gestor");
+  if (!gestorUser) {
+    const maxId = database.users.length > 0 ? Math.max(...database.users.map(u => Number(u.id) || 0)) : 0;
+    database.users.push({
+      id: Math.max(5, maxId + 1),
+      username: "gestor",
+      name: "Administração CorpFlats",
+      role: "admin",
+      passwordHash: hashPassword("admin123"),
+      active: true,
+      whatsapp: "5522997124021",
+      phone: "5522997124021",
+      password_updated_at: new Date().toISOString()
+    });
+    changed = true;
+  } else {
+    if (gestorUser.role !== "admin") {
+      gestorUser.role = "admin";
+      changed = true;
+    }
+    if (!gestorUser.name) {
+      gestorUser.name = "Administração CorpFlats";
+      changed = true;
+    }
+  }
+
+  // 3. Garantia do usuário da recepção Soho e fnrhInternalAuditLogs
+  const receptionUser = database.users.find(u => u.username && u.username.toLowerCase() === "soho@promenade.com.br");
+  if (!receptionUser) {
+    const defaultRecPass = process.env.RECEPTION_DEFAULT_PASSWORD || crypto.randomBytes(16).toString("hex");
+    database.users.push({
+      id: 4,
+      username: "Soho@promenade.com.br",
+      name: "Recepção Soho",
+      role: "recepcao",
+      passwordHash: hashPassword(defaultRecPass),
+      must_change_password: true,
+      password_updated_at: new Date().toISOString()
+    });
+    changed = true;
+  }
+  if (!Array.isArray(database.fnrhInternalAuditLogs)) {
+    database.fnrhInternalAuditLogs = [];
+  }
+
+  return changed;
+}
 
 let db = {
   users: defaultUsers,
@@ -1920,7 +1981,7 @@ app.post("/api/wbp/vault/reauth", (req, res) => {
       return res.status(400).json({ success: false, error: "Usuário e senha são obrigatórios." });
     }
 
-    const user = (db.users || []).find(u => u.username === targetUsername && u.role === "admin");
+    const user = (db.users || []).find(u => u.username === targetUsername && (u.role === "admin" || u.role === "dev"));
     if (!user) {
       logAuditEvent({
         action: "WBP_VAULT_REAUTH_FAILED",
@@ -5584,6 +5645,9 @@ async function loadDatabase() {
       if (!db.smartFlats || typeof db.smartFlats !== "object" || Array.isArray(db.smartFlats)) db.smartFlats = {};
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
+      if (ensureSystemUsers(db)) {
+        saveDatabase("migrate_system_users_dev_and_gestor");
+      }
     }
     if (pgPool) {
       try {
@@ -5797,7 +5861,9 @@ async function loadDatabase() {
     if (!db.reservationCommunications) db.reservationCommunications = [];
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-    ensureReceptionUser(db);
+    if (ensureSystemUsers(db)) {
+      saveDatabase("migrate_system_users_dev_and_gestor");
+    }
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
     if (db.nfseConfig?.certificadoA1?.pfxBase64) {
@@ -6681,11 +6747,12 @@ async function getGeminiCandidateEndpoints(apiKey) {
 
   // 2. Fallbacks padrões estáveis em ordem de preferência
   const defaultFallbacks = [
+    { ver: "v1beta", model: "gemini-2.5-flash" },
+    { ver: "v1beta", model: "gemini-2.0-flash" },
+    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
     { ver: "v1beta", model: "gemini-1.5-flash" },
     { ver: "v1", model: "gemini-1.5-flash" },
     { ver: "v1beta", model: "gemini-1.5-flash-8b" },
-    { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
     { ver: "v1beta", model: "gemini-1.5-pro" },
     { ver: "v1beta", model: "gemini-pro" }
   ];
@@ -6709,7 +6776,7 @@ async function callGeminiGenerateContent(apiKey, contents) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents }),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (response.ok) {
@@ -6737,6 +6804,81 @@ async function callGeminiGenerateContent(apiKey, contents) {
   }
 
   return { ok: false, error: lastError || "Não foi possível conectar a nenhum modelo Gemini." };
+}
+
+// ── Helpers Periciais Determinísticos de Comparação de Identidade ────────────
+export function comparePersonNames(docName, expectedName) {
+  if (!expectedName || typeof expectedName !== "string") return true;
+  const cleanExp = expectedName.trim();
+  if (!cleanExp || /^h[oó]spede(\s*\d+)?$/i.test(cleanExp)) return true;
+  if (!docName || typeof docName !== "string" || !docName.trim()) return false;
+
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "e"]);
+  const tokenize = (str) =>
+    str
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 0 && !stopWords.has(t));
+
+  const docTokens = tokenize(docName);
+  const expTokens = tokenize(cleanExp);
+  if (expTokens.length === 0) return true;
+  if (docTokens.length === 0) return false;
+
+  if (docTokens.join(" ") === expTokens.join(" ")) return true;
+
+  const tokensMatch = (a, b) => {
+    if (a === b) return true;
+    if (a.length === 1 && b.startsWith(a)) return true;
+    if (b.length === 1 && a.startsWith(b)) return true;
+    if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) return true;
+    return false;
+  };
+
+  // O primeiro nome precisa ser compatível
+  if (!tokensMatch(docTokens[0], expTokens[0])) return false;
+
+  // Se apenas o primeiro nome foi informado na reserva/formulário, basta o primeiro nome bater
+  if (expTokens.length === 1 || docTokens.length === 1) return true;
+
+  // Se todos os tokens de um nome estão contidos no outro (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha")
+  const expAllInDoc = expTokens.every((et) => docTokens.some((dt) => tokensMatch(et, dt)));
+  const docAllInExp = docTokens.every((dt) => expTokens.some((et) => tokensMatch(dt, et)));
+  if (expAllInDoc || docAllInExp) return true;
+
+  // Verifica se o último sobrenome bate
+  const lastDoc = docTokens[docTokens.length - 1];
+  const lastExp = expTokens[expTokens.length - 1];
+  if (tokensMatch(lastDoc, lastExp)) return true;
+
+  return false;
+}
+
+export function compareCpfDigits(docCpf, expectedCpf) {
+  const cleanExp = String(expectedCpf || "").replace(/\D/g, "");
+  if (!cleanExp) return true;
+  const cleanDoc = String(docCpf || "").replace(/\D/g, "");
+  if (!cleanDoc) return false;
+  return cleanDoc === cleanExp;
+}
+
+export function normalizeBirthDateToIso(bStr) {
+  if (!bStr || typeof bStr !== "string") return "";
+  const trimmed = bStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const m = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return "";
+}
+
+export function compareBirthDates(docBirthDate, expectedBirthDate) {
+  const isoExp = normalizeBirthDateToIso(expectedBirthDate);
+  const isoDoc = normalizeBirthDateToIso(docBirthDate);
+  if (!isoExp || !isoDoc) return true;
+  return isoDoc === isoExp;
 }
 
 async function evaluateGuestIdentityWithAI({ fullName, document, birthDate, selfieBase64, docPhotoBase64, selfieUrl, docPhotoUrl }) {
@@ -6842,6 +6984,9 @@ export async function inspectDocumentWithAI({
   fileName = "", 
   providedName = "", 
   providedCpf = "",
+  reservationName = "",
+  reservationCpf = "",
+  guestIndex = 1,
   providedCity = "",
   providedAddress = "",
   providedBirthDate = "",
@@ -6878,6 +7023,9 @@ export async function inspectDocumentWithAI({
 
   const cleanProvidedCpf = String(effectiveCpf || "").replace(/\D/g, "");
   const cleanProvidedName = String(effectiveName || "").trim();
+  const rawResName = String(reservationName || "").trim();
+  const cleanReservationName = /^h[oó]spede(\s*\d+)?$/i.test(rawResName) ? "" : rawResName;
+  const cleanReservationCpf = String(reservationCpf || "").replace(/\D/g, "");
 
   // Helper para cálculo preciso de idade
   const calculateAge = (bStr) => {
@@ -6901,6 +7049,114 @@ export async function inspectDocumentWithAI({
     return age >= 0 ? age : null;
   };
 
+  // Helper consolidado para avaliação determinística de titularidade, CPF, nascimento e autenticidade
+  const buildIdentityVerdict = ({
+    isOfficialDoc,
+    isLegibleDoc,
+    legibilityReasonStr,
+    extName,
+    extCpf,
+    extBirthDate,
+    aiNameMatches,
+    aiCpfMatches,
+    aiBirthDateMatches
+  }) => {
+    const cleanExtName = String(extName || "").trim();
+    const cleanExtCpf = String(extCpf || "").replace(/\D/g, "");
+    const cleanExtBirth = String(extBirthDate || "").trim();
+
+    const providedNameMatchDet = cleanProvidedName
+      ? comparePersonNames(cleanExtName, cleanProvidedName)
+      : Boolean(cleanExtName.length > 0);
+    const reservationNameMatchDet = cleanReservationName
+      ? comparePersonNames(cleanExtName, cleanReservationName)
+      : true;
+    const formVsResNameMatch = (cleanProvidedName && cleanReservationName)
+      ? comparePersonNames(cleanProvidedName, cleanReservationName)
+      : true;
+
+    const finalReservationNameMatches = Boolean(reservationNameMatchDet && formVsResNameMatch);
+    const finalProvidedNameMatches = Boolean(
+      providedNameMatchDet && (aiNameMatches !== false || (cleanExtName && providedNameMatchDet))
+    );
+    const finalNameMatches = Boolean(finalProvidedNameMatches && finalReservationNameMatches);
+
+    const providedCpfMatchDet = cleanProvidedCpf
+      ? (cleanExtCpf.length === 11 && compareCpfDigits(cleanExtCpf, cleanProvidedCpf))
+      : (cleanExtCpf.length === 11);
+    const reservationCpfMatchDet = cleanReservationCpf
+      ? compareCpfDigits(cleanExtCpf || cleanProvidedCpf, cleanReservationCpf)
+      : true;
+    const formVsResCpfMatch = (cleanProvidedCpf && cleanReservationCpf)
+      ? compareCpfDigits(cleanProvidedCpf, cleanReservationCpf)
+      : true;
+    const finalReservationCpfMatches = Boolean(reservationCpfMatchDet && formVsResCpfMatch);
+    const finalCpfMatches = Boolean(
+      providedCpfMatchDet && finalReservationCpfMatches && (aiCpfMatches !== false || (cleanExtCpf.length === 11 && providedCpfMatchDet))
+    );
+
+    const birthDateMatchDet = (effectiveBirthDate && cleanExtBirth)
+      ? compareBirthDates(cleanExtBirth, effectiveBirthDate)
+      : true;
+    const finalBirthDateMatches = Boolean(
+      birthDateMatchDet && (aiBirthDateMatches !== false || (cleanExtBirth && birthDateMatchDet))
+    );
+
+    const mismatchReasons = [];
+    if (!isOfficialDoc) {
+      mismatchReasons.push("O arquivo enviado não foi reconhecido como um documento oficial de identificação com foto (RG, CNH, CIN ou Passaporte).");
+    } else if (!isLegibleDoc) {
+      mismatchReasons.push(legibilityReasonStr || "O documento anexado está ilegível, cortado ou muito escuro. Por favor, envie uma foto nítida ou o PDF original.");
+    } else {
+      if (!finalReservationNameMatches) {
+        mismatchReasons.push(
+          `Divergência de Titularidade: O nome no documento (${cleanExtName || cleanProvidedName || "Não identificado"}) não corresponde ao titular registrado na reserva (${cleanReservationName}). Verifique se o documento pertence à mesma pessoa da reserva.`
+        );
+      } else if (!finalProvidedNameMatches) {
+        mismatchReasons.push(
+          `Divergência de Nome: O nome extraído do documento (${cleanExtName || "Não identificado"}) não confere com o nome informado no check-in (${cleanProvidedName}).`
+        );
+      }
+      if (!finalReservationCpfMatches && cleanReservationCpf) {
+        mismatchReasons.push(
+          `Divergência de CPF na Reserva: O CPF do documento (${cleanExtCpf || cleanProvidedCpf || "Não identificado"}) não confere com o CPF da reserva (${cleanReservationCpf}).`
+        );
+      } else if (!finalCpfMatches && cleanProvidedCpf) {
+        mismatchReasons.push(
+          `Divergência de CPF: O CPF identificado no documento (${cleanExtCpf || "Não identificado"}) não confere com o CPF digitado (${cleanProvidedCpf}).`
+        );
+      }
+      if (!finalBirthDateMatches) {
+        mismatchReasons.push(
+          `Divergência na Data de Nascimento: A data de nascimento no documento (${cleanExtBirth}) difere da data informada (${effectiveBirthDate}).`
+        );
+      }
+    }
+
+    const identityMatches = Boolean(
+      isOfficialDoc &&
+      isLegibleDoc &&
+      finalNameMatches &&
+      finalReservationNameMatches &&
+      finalCpfMatches &&
+      finalBirthDateMatches
+    );
+
+    return {
+      cleanExtName,
+      cleanExtCpf,
+      cleanExtBirth,
+      providedNameMatches: finalProvidedNameMatches,
+      reservationNameMatches: finalReservationNameMatches,
+      nameMatches: finalNameMatches,
+      reservationCpfMatches: finalReservationCpfMatches,
+      cpfMatches: finalCpfMatches,
+      birthDateMatches: finalBirthDateMatches,
+      identityMatches,
+      mismatchReasons
+    };
+  };
+
   // 1. Validação básica de entrada
   if (!effectiveFile || typeof effectiveFile !== "string") {
     return {
@@ -6910,14 +7166,21 @@ export async function inspectDocumentWithAI({
       legibilityReason: "Nenhum arquivo de documento oficial foi enviado.",
       extractedName: "",
       nameMatches: false,
+      providedNameMatches: false,
+      reservationName: cleanReservationName,
+      reservationNameMatches: false,
       extractedCpf: "",
       cpfMatches: false,
+      reservationCpfMatches: false,
       extractedBirthDate: "",
+      birthDateMatches: false,
       calculatedAge: null,
       isMinor: false,
       extractedCity: "",
       extractedState: "",
       isCamposResident: false,
+      identityMatches: false,
+      mismatchReasons: ["Nenhum arquivo de documento oficial foi enviado."],
       summary: "Documento ausente.",
       status: "invalid_input"
     };
@@ -6968,25 +7231,63 @@ export async function inspectDocumentWithAI({
       legibilityReason: "Arquivo corrompido, cortado ou em branco. Por favor, envie uma foto nítida ou o PDF original do seu documento oficial.",
       extractedName: "",
       nameMatches: false,
+      providedNameMatches: false,
+      reservationName: cleanReservationName,
+      reservationNameMatches: false,
       extractedCpf: "",
       cpfMatches: false,
+      reservationCpfMatches: false,
       extractedBirthDate: "",
+      birthDateMatches: false,
       calculatedAge: null,
       isMinor: false,
       extractedCity: "",
       extractedState: "",
       isCamposResident: false,
+      identityMatches: false,
+      mismatchReasons: ["Arquivo corrompido, cortado ou em branco. Por favor, envie uma foto nítida ou o PDF original do seu documento oficial."],
       summary: "Arquivo inválido ou corrompido.",
       status: "file_corrupted"
     };
   }
 
-  // Inspeção pericial do stream de texto (decodificação de streams de PDF / metadados para busca de cidades locais)
+  // Inspeção pericial do stream de texto (decodificação de streams de PDF / FlateDecode / metadados para extração de nome, CPF, nascimento e cidade)
   let textStreamMentionsCampos = false;
+  let streamExtractedName = "";
+  let streamExtractedCpf = "";
+  let streamExtractedBirthDate = "";
+  let streamExtractedCity = "";
+
   if (rawBase64 && rawBase64.length > 100) {
     try {
       const decodedBuf = Buffer.from(rawBase64, "base64");
-      const latinText = decodedBuf.toString("latin1").toLowerCase();
+      const rawLatin = decodedBuf.toString("latin1");
+      const rawUtf8 = decodedBuf.toString("utf8");
+      const chunks = [rawLatin, rawUtf8];
+
+      if (rawLatin.includes("%PDF") || mimeType.includes("pdf")) {
+        const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+        let match;
+        let count = 0;
+        while ((match = streamRegex.exec(rawLatin)) !== null && count < 25) {
+          count++;
+          const binBuf = Buffer.from(match[1], "latin1");
+          try {
+            const inflated = zlib.inflateSync(binBuf);
+            chunks.push(inflated.toString("latin1"));
+            chunks.push(inflated.toString("utf8"));
+          } catch {
+            try {
+              const unzipped = zlib.unzipSync(binBuf);
+              chunks.push(unzipped.toString("latin1"));
+              chunks.push(unzipped.toString("utf8"));
+            } catch {}
+          }
+        }
+      }
+
+      const combinedStreamText = chunks.join("\n");
+      const latinText = combinedStreamText.toLowerCase();
       if (
         latinText.includes("goytacazes") || 
         latinText.includes("goitacazes") || 
@@ -6995,11 +7296,35 @@ export async function inspectDocumentWithAI({
       ) {
         textStreamMentionsCampos = true;
       }
+
+      const nameMatch = combinedStreamText.match(/(?:Nome(?:\s+Completo|\s+Civil)?|Titular|Portador)\s*[:=-]\s*([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s.'-]{3,70})/i);
+      if (nameMatch && nameMatch[1]) {
+        const candName = nameMatch[1].split(/[\r\n()/<>]/)[0].trim();
+        if (candName.length >= 4 && !/^(cpf|rg|cnh|data|naturalidade|filiacao)$/i.test(candName)) {
+          streamExtractedName = candName;
+        }
+      }
+
+      const cpfExplicitMatch = combinedStreamText.match(/CPF\s*[:=-]?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})/i);
+      if (cpfExplicitMatch && cpfExplicitMatch[1]) {
+        streamExtractedCpf = cpfExplicitMatch[1].replace(/\D/g, "");
+      }
+
+      const birthExplicitMatch = combinedStreamText.match(/(?:Data\s+de\s+Nascimento|Nascimento|Nasc\.?)\s*[:=-]?\s*(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i);
+      if (birthExplicitMatch && birthExplicitMatch[1]) {
+        streamExtractedBirthDate = birthExplicitMatch[1].trim();
+      }
+
+      const cityExplicitMatch = combinedStreamText.match(/(?:Naturalidade|Local|Munic[ií]pio|Cidade)\s*[:=-]\s*([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s.'/-]{2,50})/i);
+      if (cityExplicitMatch && cityExplicitMatch[1]) {
+        streamExtractedCity = cityExplicitMatch[1].split(/[\r\n()/<>]/)[0].trim();
+      }
     } catch {}
   }
 
   // Cálculo heurístico de suporte prévio
-  const parsedAgeFromInput = calculateAge(effectiveBirthDate);
+  const effectiveBirthForAge = streamExtractedBirthDate || effectiveBirthDate;
+  const parsedAgeFromInput = calculateAge(effectiveBirthForAge);
   const isMinorFromFileName = /menor|underage|1[0-7]anos|_menor/i.test(fileName || "");
   const initialCalculatedAge = parsedAgeFromInput !== null ? parsedAgeFromInput : (isMinorFromFileName ? 16 : 28);
   const initialIsMinor = parsedAgeFromInput !== null ? (parsedAgeFromInput < 18) : isMinorFromFileName;
@@ -7009,6 +7334,7 @@ export async function inspectDocumentWithAI({
   const isCamposFromInput = Boolean(
     isCamposDosGoytacazes(effectiveCity, effectiveAddress, effectiveState, effectiveCep) ||
     isCamposDosGoytacazes(effectiveOrigin, "", effectiveState, effectiveCep) ||
+    isCamposDosGoytacazes(streamExtractedCity, "", effectiveState, effectiveCep) ||
     textStreamMentionsCampos ||
     lowFileName.includes("campos_dos_goytacazes") ||
     lowFileName.includes("cnh_campos") ||
@@ -7023,26 +7349,30 @@ export async function inspectDocumentWithAI({
 
   if (apiKey) {
     try {
-      const prompt = `Você é um perito em verificação e autenticação de documentos oficiais de identificação (RG, CNH, Passaporte, CTPS, DNI, etc.) para o sistema da CorpFlats.
-Analise com rigor o documento oficial fornecido (${mimeType}) e compare com os dados informados pelo hóspede:
-- Nome completo informado: "${cleanProvidedName || 'Não informado'}"
-- CPF informado: "${cleanProvidedCpf || 'Não informado'}"
+      const prompt = `Você é um perito em verificação e autenticação de documentos oficiais de identificação (RG, CNH, CIN, Passaporte, CTPS, DNI, etc.) para o sistema da CorpFlats.
+Analise com rigor o documento oficial fornecido (${mimeType}) e compare com os dados informados pelo hóspede e pela reserva:
+- Nome completo informado no formulário: "${cleanProvidedName || 'Não informado'}"
+- Nome registrado na reserva (titular/hóspede esperado): "${cleanReservationName || cleanProvidedName || 'Não informado'}"
+- CPF informado no formulário: "${cleanProvidedCpf || 'Não informado'}"
+- CPF registrado na reserva: "${cleanReservationCpf || cleanProvidedCpf || 'Não informado'}"
+- Data de nascimento informada: "${effectiveBirthDate || 'Não informada'}"
 - Cidade / Endereço informado: "${effectiveCity || effectiveOrigin || effectiveAddress || 'Não informado'}"
 - Origem / Procedência informada: "${effectiveOrigin || 'Não informada'}"
 
 Diretrizes Estritas de Análise:
-1. 'isOfficialDocument': Confirme se o arquivo é de fato um documento oficial de identificação com foto (RG, CNH, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI). Caso seja uma foto genérica, selfie sem documento, comprovante de residência, foto de paisagem ou objeto, defina 'isOfficialDocument': false e 'isLegible': false.
+1. 'isOfficialDocument': Confirme se o arquivo é de fato um documento oficial de identificação com foto (RG, CNH, CIN, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI). Caso seja uma foto genérica, selfie sem documento, comprovante de residência, foto de paisagem ou objeto, defina 'isOfficialDocument': false e 'isLegible': false.
 2. 'isLegible': Verifique se as informações textuais do documento estão legíveis. Se a imagem estiver extremamente embaçada, escura, com reflexo que impeça a leitura do nome/CPF, ou cortada faltando os dados principais, defina 'isLegible': false e explique em 'legibilityReason' de maneira clara, educada e amigável em português (ex: "A foto do documento está muito escura ou embaçada, impossibilitando a leitura do nome e CPF. Por favor, anexe uma foto mais nítida e bem iluminada ou o PDF original.").
-3. 'extractedName': Extraia o nome completo que consta no documento.
-4. 'nameMatches': Compare o nome extraído com o nome informado. Seja tolerante a pequenas abreviações ou acentos. Se for a mesma pessoa, retorne true; se for pessoa claramente diferente, retorne false.
-5. 'extractedCpf': Extraia o número de CPF do documento (apenas dígitos).
-6. 'cpfMatches': Compare os dígitos com o CPF informado. Se os dígitos coincidirem, retorne true; caso contrário false.
-7. 'extractedBirthDate': Extraia a data de nascimento no formato DD/MM/AAAA ou AAAA-MM-DD.
-8. 'calculatedAge': Calcule a idade aproximada da pessoa com base na data de nascimento e a data atual (ano de referência 2026).
-9. 'isMinor': Se calculatedAge for menor que 18 anos, marque true; caso contrário false.
-10. 'extractedCity' e 'extractedState': Identifique o local de nascimento (naturalidade), cidade do órgão emissor ou endereço impresso no documento.
-11. 'isCamposResident': Se a cidade identificada for "Campos dos Goytacazes", "Campos", "Campos dos Goitacazes", município de Campos dos Goytacazes/RJ ou se a cidade informada for Campos dos Goytacazes, defina true; caso contrário false. ATENÇÃO: NUNCA considere residente de Campos apenas porque o sobrenome da pessoa contém "Campos".
-12. 'summary': Frase síntese do resultado da análise pericial.
+3. 'extractedName': Extraia EXATAMENTE o nome completo que consta impresso no documento anexado. NUNCA copie o nome informado se o documento mostrar o nome de outra pessoa.
+4. 'nameMatches': Compare o nome extraído do documento com o nome informado e com o nome da reserva. Seja tolerante a acentos ou nomes do meio abreviados/omitidos (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha" = true). Porém, se o documento pertencer a outra pessoa (nome ou sobrenome principal diferente), retorne false!
+5. 'extractedCpf': Extraia o número de CPF que consta impresso no documento (apenas os 11 dígitos).
+6. 'cpfMatches': Compare os dígitos extraídos do documento com o CPF informado. Se os dígitos coincidirem, retorne true; se pertencer a outro CPF, retorne false.
+7. 'extractedBirthDate': Extraia a data de nascimento que consta no documento no formato DD/MM/AAAA ou AAAA-MM-DD.
+8. 'birthDateMatches': Compare a data de nascimento do documento com a data informada (true se coincidir ou se não houver divergência).
+9. 'calculatedAge': Calcule a idade aproximada da pessoa com base na data de nascimento e a data atual (ano de referência 2026).
+10. 'isMinor': Se calculatedAge for menor que 18 anos, marque true; caso contrário false.
+11. 'extractedCity' e 'extractedState': Identifique o local de nascimento (naturalidade), cidade do órgão emissor ou endereço impresso no documento.
+12. 'isCamposResident': Se a cidade identificada for "Campos dos Goytacazes", "Campos", "Campos dos Goitacazes", município de Campos dos Goytacazes/RJ ou se a cidade informada for Campos dos Goytacazes, defina true; caso contrário false. ATENÇÃO: NUNCA considere residente de Campos apenas porque o sobrenome da pessoa contém "Campos".
+13. 'summary': Frase síntese do resultado da análise pericial, apontando claramente se a identidade confere ou se há divergência de nome/CPF.
 
 Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código com crases):
 {
@@ -7054,6 +7384,7 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
   "extractedCpf": "",
   "cpfMatches": true,
   "extractedBirthDate": "",
+  "birthDateMatches": true,
   "calculatedAge": 28,
   "isMinor": false,
   "extractedCity": "",
@@ -7078,32 +7409,61 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          const aiCalculatedAge = typeof parsed.calculatedAge === "number" ? parsed.calculatedAge : initialCalculatedAge;
-          const aiIsMinor = typeof parsed.isMinor === "boolean" ? parsed.isMinor : initialIsMinor;
+          const extBirth = parsed.extractedBirthDate || streamExtractedBirthDate || effectiveBirthDate;
+          const ageFromExt = calculateAge(extBirth);
+          const aiCalculatedAge = ageFromExt !== null ? ageFromExt : (typeof parsed.calculatedAge === "number" ? parsed.calculatedAge : initialCalculatedAge);
+          const aiIsMinor = ageFromExt !== null ? (ageFromExt < 18) : (typeof parsed.isMinor === "boolean" ? parsed.isMinor : initialIsMinor);
           const aiIsCampos = Boolean(
             parsed.isCamposResident ||
             isCamposFromInput ||
             isCamposDosGoytacazes(parsed.extractedCity, parsed.extractedAddress || "", parsed.extractedState || "")
           );
 
+          const isOfficial = Boolean(parsed.isOfficialDocument !== false);
+          const isLegible = Boolean(parsed.isLegible !== false);
+          const legReason = parsed.legibilityReason || (parsed.isLegible === false ? "Documento ilegível. Por favor, envie uma foto mais nítida ou o PDF original." : "");
+
+          const verdict = buildIdentityVerdict({
+            isOfficialDoc: isOfficial,
+            isLegibleDoc: isLegible,
+            legibilityReasonStr: legReason,
+            extName: parsed.extractedName || streamExtractedName || cleanProvidedName,
+            extCpf: parsed.extractedCpf || streamExtractedCpf || cleanProvidedCpf,
+            extBirthDate: extBirth,
+            aiNameMatches: parsed.nameMatches,
+            aiCpfMatches: parsed.cpfMatches,
+            aiBirthDateMatches: parsed.birthDateMatches
+          });
+
+          const defaultSummary = !verdict.identityMatches && verdict.mismatchReasons.length > 0
+            ? verdict.mismatchReasons[0]
+            : (aiIsCampos
+              ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ identificado."
+              : "Documento analisado com sucesso por Inteligência Artificial.");
+
           return {
             success: true,
-            isOfficialDocument: Boolean(parsed.isOfficialDocument !== false),
-            isLegible: Boolean(parsed.isLegible !== false),
-            legibilityReason: parsed.legibilityReason || (parsed.isLegible === false ? "Documento ilegível. Por favor, envie uma foto mais nítida ou o PDF original." : ""),
-            extractedName: parsed.extractedName || cleanProvidedName,
-            nameMatches: Boolean(parsed.nameMatches !== false),
-            extractedCpf: parsed.extractedCpf || cleanProvidedCpf,
-            cpfMatches: Boolean(parsed.cpfMatches !== false),
-            extractedBirthDate: parsed.extractedBirthDate || effectiveBirthDate,
+            isOfficialDocument: isOfficial,
+            isLegible,
+            legibilityReason: legReason,
+            extractedName: verdict.cleanExtName,
+            nameMatches: verdict.nameMatches,
+            providedNameMatches: verdict.providedNameMatches,
+            reservationName: cleanReservationName,
+            reservationNameMatches: verdict.reservationNameMatches,
+            extractedCpf: verdict.cleanExtCpf,
+            cpfMatches: verdict.cpfMatches,
+            reservationCpfMatches: verdict.reservationCpfMatches,
+            extractedBirthDate: verdict.cleanExtBirth,
+            birthDateMatches: verdict.birthDateMatches,
             calculatedAge: aiCalculatedAge,
             isMinor: aiIsMinor,
-            extractedCity: parsed.extractedCity || (aiIsCampos ? "Campos dos Goytacazes" : effectiveCity),
-            extractedState: parsed.extractedState || (aiIsCampos ? "RJ" : ""),
+            extractedCity: parsed.extractedCity || streamExtractedCity || (aiIsCampos ? "Campos dos Goytacazes" : effectiveCity),
+            extractedState: parsed.extractedState || (aiIsCampos ? "RJ" : effectiveState),
             isCamposResident: aiIsCampos,
-            summary: parsed.summary || (aiIsCampos 
-              ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ identificado." 
-              : "Documento analisado com sucesso por Inteligência Artificial."),
+            identityMatches: verdict.identityMatches,
+            mismatchReasons: verdict.mismatchReasons,
+            summary: !verdict.identityMatches && verdict.mismatchReasons.length > 0 ? verdict.mismatchReasons[0] : (parsed.summary || defaultSummary),
             status: "ai_evaluated"
           };
         }
@@ -7113,31 +7473,55 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
     }
   }
 
-  // 3. Fallback Heurístico Robusto (quando chave de API ausente ou limite temporário atingido)
+  // 3. Fallback Heurístico / Perícia de Stream PDF (quando chave de API ausente ou limite temporário atingido)
   const isPdf = mimeType.includes("pdf");
   const isImage = mimeType.includes("image") || mimeType.includes("jpeg") || mimeType.includes("png") || mimeType.includes("webp");
   const isPotentiallyValidDoc = (isPdf || isImage) && rawBase64.length > 200;
+  const legibilityReasonFallback = isPotentiallyValidDoc ? "" : "Documento ilegível ou formato não suportado. Por favor, envie imagem ou PDF válido.";
+
+  const fallbackVerdict = buildIdentityVerdict({
+    isOfficialDoc: isPotentiallyValidDoc,
+    isLegibleDoc: isPotentiallyValidDoc,
+    legibilityReasonStr: legibilityReasonFallback,
+    extName: streamExtractedName || cleanProvidedName,
+    extCpf: streamExtractedCpf || cleanProvidedCpf,
+    extBirthDate: streamExtractedBirthDate || effectiveBirthDate,
+    aiNameMatches: undefined,
+    aiCpfMatches: undefined,
+    aiBirthDateMatches: undefined
+  });
+
+  const fallbackSummary = !fallbackVerdict.identityMatches && fallbackVerdict.mismatchReasons.length > 0
+    ? fallbackVerdict.mismatchReasons[0]
+    : (isCamposFromInput
+      ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ identificado."
+      : (isMinorFromFileName 
+        ? "Documento analisado: Atenção à hospedagem de menor de idade (ECA Art. 82)." 
+        : "Validação estrutural realizada com sucesso. Documento pronto para conferência da equipe."));
 
   return {
     success: true,
     isOfficialDocument: isPotentiallyValidDoc,
     isLegible: isPotentiallyValidDoc,
-    legibilityReason: isPotentiallyValidDoc ? "" : "Documento ilegível ou formato não suportado. Por favor, envie imagem ou PDF válido.",
-    extractedName: cleanProvidedName,
-    nameMatches: Boolean(cleanProvidedName.length > 0),
-    extractedCpf: cleanProvidedCpf,
-    cpfMatches: cleanProvidedCpf.length === 11,
-    extractedBirthDate: effectiveBirthDate,
+    legibilityReason: legibilityReasonFallback,
+    extractedName: fallbackVerdict.cleanExtName,
+    nameMatches: fallbackVerdict.nameMatches,
+    providedNameMatches: fallbackVerdict.providedNameMatches,
+    reservationName: cleanReservationName,
+    reservationNameMatches: fallbackVerdict.reservationNameMatches,
+    extractedCpf: fallbackVerdict.cleanExtCpf,
+    cpfMatches: fallbackVerdict.cpfMatches,
+    reservationCpfMatches: fallbackVerdict.reservationCpfMatches,
+    extractedBirthDate: fallbackVerdict.cleanExtBirth,
+    birthDateMatches: fallbackVerdict.birthDateMatches,
     calculatedAge: initialCalculatedAge,
     isMinor: initialIsMinor,
-    extractedCity: isCamposFromInput ? "Campos dos Goytacazes" : effectiveCity,
+    extractedCity: isCamposFromInput ? "Campos dos Goytacazes" : (streamExtractedCity || effectiveCity),
     extractedState: "RJ",
     isCamposResident: isCamposFromInput,
-    summary: isCamposFromInput
-      ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ identificado."
-      : (isMinorFromFileName 
-        ? "Documento analisado: Atenção à hospedagem de menor de idade (ECA Art. 82)." 
-        : "Validação estrutural realizada com sucesso. Documento pronto para conferência da equipe."),
+    identityMatches: fallbackVerdict.identityMatches,
+    mismatchReasons: fallbackVerdict.mismatchReasons,
+    summary: fallbackSummary,
     status: "heuristic_fallback"
   };
 }
@@ -7149,7 +7533,10 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       fileBase64, 
       fileName, 
       providedName, 
-      providedCpf, 
+      providedCpf,
+      reservationName,
+      reservationCpf,
+      guestIndex,
       providedCity,
       providedAddress,
       providedBirthDate,
@@ -7178,7 +7565,10 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       fileBase64, 
       fileName, 
       providedName, 
-      providedCpf, 
+      providedCpf,
+      reservationName,
+      reservationCpf,
+      guestIndex,
       providedCity,
       providedAddress,
       providedBirthDate,
@@ -8254,15 +8644,6 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
 globalThis.getCheckinUrl = getCheckinUrl;
 globalThis.getCheckinUrlSync = getCheckinUrlSync;
 
-await loadDatabase();
-ensureUniqueRequestIds();
-reconcileCleaningRequests();
-initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
-initMaidAutomationEngine(app, () => db, saveDatabase);
-
-let checkinsList = [];
-let existingManualRequests = [];
-
 // ── Session Auth Helper (with Global Session Revocation Version & HMAC-SHA256) ──
 const AUTH_COOKIE_NAME = "gfm_session_v2";
 const AUTH_SESSION_VERSION = 2;
@@ -8295,7 +8676,7 @@ function verifyAuthToken(token) {
   }
 }
 
-function getAuthUser(req) {
+export function getAuthUser(req) {
   const token = req.cookies?.[AUTH_COOKIE_NAME] || req.headers?.["authorization"]?.replace("Bearer ", "");
   if (!token) return null;
   try {
@@ -8308,6 +8689,48 @@ function getAuthUser(req) {
     return null;
   }
 }
+
+export function requireDevAuth(req, res, next) {
+  const user = getAuthUser(req);
+  if (!user || user.role !== "dev") {
+    res.status(403).json({ error: "Acesso restrito a desenvolvedores." });
+    return false;
+  }
+  if (typeof next === "function") next();
+  return true;
+}
+
+app.use([
+  "/api/whatsapp/config",
+  "/api/whatsapp/qr-code",
+  "/api/whatsapp/sync-webhooks",
+  "/api/whatsapp/connection-logs",
+  "/api/whatsapp/concierge-logs",
+  "/api/whatsapp/test-disconnection-alert",
+  "/api/whatsapp/queue/cancel-real-guests",
+  "/api/settings/gemini",
+  "/api/settings/email",
+  "/api/storage/config",
+  "/api/storage/cleanup-old-docs",
+  "/api/integrations/microsoft-graph/config",
+  "/api/integrations/microsoft-graph/test-sync",
+  "/api/integrations/microsoft-graph/test",
+  "/api/integrations/inter/config",
+  "/api/integrations/inter/test-connection",
+  "/api/integrations/mercadopago/config",
+  "/api/admin/server-monitor",
+  "/api/shopping-list/ai-test"
+], requireDevAuth);
+
+await loadDatabase();
+ensureUniqueRequestIds();
+reconcileCleaningRequests();
+ensureSystemUsers(db);
+initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
+initMaidAutomationEngine(app, () => db, saveDatabase);
+
+let checkinsList = [];
+let existingManualRequests = [];
 
 // ── Reservation Audit Log Engine ─────────────────────────────────────────────
 function addReservationAuditLog(reservation, {
@@ -9368,7 +9791,7 @@ app.get("/api/staff", (req, res) => {
 
 app.get("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
   const list = (db.users || []).map(u => ({
     id: u.id,
     username: u.username,
@@ -9385,7 +9808,7 @@ app.get("/api/admin/users", (req, res) => {
 
 app.post("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
   const { username, password, role = "camareira", name, whatsapp, phone, pixKey } = req.body || {};
 
   if (!username || !password) {
@@ -9395,17 +9818,28 @@ app.post("/api/admin/users", (req, res) => {
     return res.status(409).json({ error: "Já existe um usuário com esse nome." });
   }
 
+  // Apenas quem é dev pode criar outro dev
+  let targetRole = role;
+  if (targetRole === "dev" && userAuth.role !== "dev") {
+    return res.status(403).json({ error: "Apenas desenvolvedores podem cadastrar usuários com perfil dev." });
+  }
+  const allowedRoles = ["dev", "admin", "recepcao", "camareira"];
+  if (!allowedRoles.includes(targetRole)) {
+    targetRole = "camareira";
+  }
+
   const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
   const newUser = {
     id: db.users.length > 0 ? Math.max(...db.users.map(u => u.id)) + 1 : 1,
     username: username.trim(),
     name: (name || username).trim(),
-    role: role === "admin" ? "admin" : (role === "recepcao" ? "recepcao" : "camareira"),
+    role: targetRole,
     whatsapp: cleanPh,
     phone: cleanPh,
     pixKey: (pixKey || "").trim(),
     active: true,
-    passwordHash: hashPassword(password)
+    passwordHash: hashPassword(password),
+    password_updated_at: new Date().toISOString()
   };
 
   db.users.push(newUser);
@@ -9423,10 +9857,15 @@ app.post("/api/admin/users", (req, res) => {
 
 app.patch("/api/admin/users/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
   const id = Number(req.params.id);
   const user = (db.users || []).find(u => u.id === id);
   if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  // Apenas dev pode alterar dados de usuário dev
+  if (user.role === "dev" && userAuth.role !== "dev") {
+    return res.status(403).json({ error: "Apenas desenvolvedores podem alterar contas de desenvolvedor." });
+  }
 
   const { name, username, role, whatsapp, phone, pixKey, active } = req.body || {};
 
@@ -9436,8 +9875,14 @@ app.patch("/api/admin/users/:id", (req, res) => {
     user.username = username.trim();
   }
   if (name !== undefined) user.name = String(name).trim();
-  if (role !== undefined && (role === "admin" || role === "camareira" || role === "recepcao")) {
-    user.role = role;
+  if (role !== undefined) {
+    if (role === "dev" && userAuth.role !== "dev") {
+      return res.status(403).json({ error: "Apenas desenvolvedores podem promover usuários a dev." });
+    }
+    const allowedRoles = ["dev", "admin", "camareira", "recepcao"];
+    if (allowedRoles.includes(role)) {
+      user.role = role;
+    }
   }
   if (whatsapp !== undefined || phone !== undefined) {
     const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
@@ -9463,9 +9908,9 @@ app.patch("/api/admin/users/:id", (req, res) => {
   });
 });
 
-app.patch("/api/admin/users/:id/reset-password", (req, res) => {
+const handleResetPassword = (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
   const id = Number(req.params.id);
   const { newPassword } = req.body || {};
 
@@ -9476,16 +9921,30 @@ app.patch("/api/admin/users/:id/reset-password", (req, res) => {
   const user = db.users.find(u => u.id === id);
   if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
 
+  // Apenas dev pode alterar senhas de contas dev
+  if (user.role === "dev" && userAuth.role !== "dev") {
+    return res.status(403).json({ error: "Apenas desenvolvedores podem alterar senhas de contas de desenvolvedor." });
+  }
+
   user.passwordHash = hashPassword(newPassword);
+  user.password_updated_at = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, message: `Senha do usuário ${user.username} redefinida com sucesso!` });
-});
+};
+
+app.patch("/api/admin/users/:id/reset-password", handleResetPassword);
+app.post("/api/admin/users/:id/reset-password", handleResetPassword);
 
 app.delete("/api/admin/users/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
   const id = Number(req.params.id);
   if (id === userAuth.id) return res.status(400).json({ error: "Você não pode excluir seu próprio usuário." });
+
+  const targetUser = db.users.find(u => u.id === id);
+  if (targetUser && targetUser.role === "dev" && userAuth.role !== "dev") {
+    return res.status(403).json({ error: "Apenas desenvolvedores podem excluir contas de desenvolvedor." });
+  }
 
   db.users = db.users.filter(u => u.id !== id);
   saveDatabase();
@@ -10688,7 +11147,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
   }
 
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem prorrogar estadia de hóspede." });
   }
   const now = new Date().toISOString();
@@ -10970,7 +11429,7 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
 app.get("/api/cleaners", (req, res) => {
   sanitizeMaidUsers();
   const cleaners = (db.users || [])
-    .filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin")
+    .filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin" || u.role === "dev")
     .map(u => ({
       id: u.id,
       username: u.username,
@@ -10987,7 +11446,7 @@ app.get("/api/cleaners", (req, res) => {
 // ── Manual Cleaning Request ─────────────────────────────────────────────────
 app.post("/api/cleaning/requests/manual", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem lançar solicitações manuais de limpeza." });
   }
   const {
@@ -11568,23 +12027,13 @@ function getRequestsForDate(dateStr, isNested = false) {
   return requestsForDate;
 }
 
-app.post("/api/admin/reset-cleaning-cache", (req, res) => {
-  const userAuth = getAuthUser(req);
-  const isLocalDev = process.env.NODE_ENV !== "production" && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1");
-  if ((!userAuth || userAuth.role !== "admin") && !isLocalDev && process.env.NODE_ENV !== "test") {
-    return res.status(403).json({ error: "Acesso restrito a administradores." });
-  }
+app.post("/api/admin/reset-cleaning-cache", requireDevAuth, (req, res) => {
   db.cleaningRequests = [];
   saveDatabase();
   res.json({ success: true, count: 0 });
 });
 
-app.post("/api/reservations/clear-all", (req, res) => {
-  const userAuth = getAuthUser(req);
-  const isLocalDev = process.env.NODE_ENV !== "production" && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1");
-  if ((!userAuth || userAuth.role !== "admin") && !isLocalDev && process.env.NODE_ENV !== "test") {
-    return res.status(403).json({ error: "Acesso restrito a administradores." });
-  }
+app.post("/api/reservations/clear-all", requireDevAuth, (req, res) => {
   const count = (db.reservations || []).length;
   db.reservations = [];
   if (db.guestBreakfastOrders) db.guestBreakfastOrders = [];
@@ -12254,7 +12703,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   if (typeof isVacant === "boolean") {
     item.isVacant = isVacant;
     item.isVacantExplicitlySet = true;
-    item.vacantSource = userAuth?.role === "admin" ? "admin" : "manual_card";
+    item.vacantSource = (userAuth?.role === "admin" || userAuth?.role === "dev") ? "admin" : "manual_card";
     item.vacantSetAt = now;
     item.vacantSetBy = userAuth?.username || "card";
 
@@ -12296,7 +12745,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest) {
     const started = new Date(item.cleaningStartedAt).getTime();
     const elapsedMinutes = (Date.now() - started) / 60000;
-    if (elapsedMinutes < 10 && userAuth?.role !== "admin") {
+    if (elapsedMinutes < 10 && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
       return res.status(400).json({
         error: "Não é possível finalizar a limpeza ainda. Tempo insuficiente de higienização (mínimo de 10 minutos)."
       });
@@ -12401,7 +12850,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
 
       if (status === "clean") {
-        const isAdmin = Boolean((userAuth && userAuth.role === "admin") || bodyMarkedByAdmin);
+        const isAdmin = Boolean((userAuth && (userAuth.role === "admin" || userAuth.role === "dev")) || bodyMarkedByAdmin);
         if (isAdmin) {
           item.markedByAdmin = true;
         }
@@ -12544,7 +12993,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   logAuditEvent({
     level: "info",
     category: "cleaning",
-    action: userAuth?.role === "admin" && status === "clean" && assignedUserId
+    action: (userAuth?.role === "admin" || userAuth?.role === "dev") && status === "clean" && assignedUserId
       ? "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID"
       : `CLEANING_STATUS_${(status || "UPDATED").toUpperCase()}`,
     actor: { name: userAuth ? (userAuth.name || userAuth.username) : "Sistema", role: userAuth?.role || "admin" },
@@ -12554,7 +13003,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       status: item.status,
       assignedUserId: item.assignedUserId,
       assignedMaidName: assignedUser ? (assignedUser.name || assignedUser.username) : "Camareira",
-      markedByAdmin: userAuth?.role === "admin"
+      markedByAdmin: userAuth?.role === "admin" || userAuth?.role === "dev"
     },
     source: "cleaning_dashboard"
   });
@@ -12683,7 +13132,7 @@ app.get("/api/cleaning/history", (req, res) => {
 // ── Admin Housekeeping Report Management (Add/Remove records with Audit) ────
 app.post("/api/cleaning/admin/record", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem adicionar diárias de limpeza." });
   }
 
@@ -12749,7 +13198,7 @@ app.post("/api/cleaning/admin/record", (req, res) => {
 
 app.delete("/api/cleaning/admin/record/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem remover diárias do relatório." });
   }
 
@@ -12772,7 +13221,7 @@ app.delete("/api/cleaning/admin/record/:id", (req, res) => {
     level: "info",
     category: "cleaning",
     action: "CLEANING_RECORD_REMOVED_BY_ADMIN",
-    actor: { name: userAuth.username || "admin", role: "admin" },
+    actor: { name: userAuth.username || "admin", role: userAuth.role || "admin" },
     details: {
       requestId: id,
       flatNumber: removed.flatNumber,
@@ -12788,7 +13237,7 @@ app.delete("/api/cleaning/admin/record/:id", (req, res) => {
 
 app.delete("/api/cleaning/requests/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem excluir solicitações." });
   }
 
@@ -12812,7 +13261,7 @@ app.delete("/api/cleaning/requests/:id", (req, res) => {
 
 app.patch("/api/cleaning/admin/record/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth?.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem editar registros de limpeza." });
   }
 
@@ -13023,7 +13472,7 @@ app.get("/api/periodic-tasks", (req, res) => {
 
 app.post("/api/admin/restore-periodic-tasks", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem restaurar tarefas preventivas." });
   }
   if (req.body?.tasks && Array.isArray(req.body.tasks)) {
@@ -13043,7 +13492,7 @@ app.post("/api/admin/restore-periodic-tasks", (req, res) => {
 
 app.post("/api/periodic-tasks", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem cadastrar tarefas preventivas." });
   }
   const { name, description, periodDays = 7, periodType = "occupied_days", firstDueDate, assignToHousekeeping = true, flatIds = [] } = req.body;
@@ -13070,7 +13519,7 @@ app.post("/api/periodic-tasks", (req, res) => {
 
 app.put("/api/periodic-tasks/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem gerenciar tarefas preventivas." });
   }
   const id = Number(req.params.id);
@@ -13108,7 +13557,7 @@ app.patch("/api/periodic-tasks/:id", (req, res) => {
 
 app.delete("/api/periodic-tasks/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem gerenciar tarefas preventivas." });
   }
   const id = Number(req.params.id);
@@ -13141,7 +13590,7 @@ app.post("/api/periodic-tasks/:id/execute", (req, res) => {
 
 const handleRegularizeHousekeeping = (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem regularizar tarefas preventivas." });
   }
   const didChange = regularizeHousekeepingPreventiveTasks();
@@ -13183,7 +13632,7 @@ app.get("/api/periodic-tasks/pending", (req, res) => {
 app.get("/api/service-orders", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
   const list = [...db.serviceOrders].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(o => {
@@ -13254,7 +13703,7 @@ function syncServiceOrderRoomBlocks(order, isDeleted = false) {
 app.post("/api/service-orders", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const {
     title,
@@ -13409,7 +13858,7 @@ app.post("/api/service-orders", (req, res) => {
 app.get("/api/service-orders/:id", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -13430,7 +13879,7 @@ app.get("/api/service-orders/:id", (req, res) => {
 app.patch("/api/service-orders/:id", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -13621,7 +14070,7 @@ app.patch("/api/service-orders/:id", (req, res) => {
 app.delete("/api/service-orders/:id/worker", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -13662,7 +14111,7 @@ app.delete("/api/service-orders/:id/worker", (req, res) => {
 app.delete("/api/service-orders/:id", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id } = req.params;
   const idx = (db.serviceOrders || []).findIndex(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -13690,7 +14139,7 @@ app.delete("/api/service-orders/:id", (req, res) => {
 app.get("/api/service-orders/:id/progress", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -13761,7 +14210,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
 app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id, flatId } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -13810,7 +14259,7 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
 app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
   const { id, flatId } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
@@ -14500,7 +14949,7 @@ app.get("/api/cleaning/rates", (req, res) => {
     };
     saveDatabase();
   }
-  const cleaners = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin");
+  const cleaners = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin" || u.role === "dev");
   const list = cleaners.map(u => ({
     userId: u.id,
     username: u.username,
@@ -14518,7 +14967,7 @@ app.get("/api/cleaning/rates", (req, res) => {
 
 app.post("/api/cleaning/rates", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem configurar taxas e diárias." });
   }
   const { defaultRatePerRoom, userRates } = req.body;
@@ -14560,7 +15009,7 @@ app.get("/api/analytics/report", (req, res) => {
   }
 
   // Camareiras / Usuários
-  const candidateUsers = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin");
+  const candidateUsers = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin" || u.role === "dev");
   const cleaningsByUser = candidateUsers.map(u => {
     syncMaidCredits(u.id);
     const currentBalance = Math.round(getMaidBalance(u.id) * 100) / 100;
@@ -15386,7 +15835,23 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     const cleanDoc = String(guestDocument || "").replace(/\D/g, "");
     const cleanPhone = String(guestPhone || "").replace(/\D/g, "");
-    const hasDocFile = Boolean(req.body.guestDocumentFile || req.body.docPhotoBase64 || req.body.docPhotoUrl);
+    const cleanEmailEarly = String(guestEmail || "").trim().toLowerCase();
+    const existingGuestWithDoc = (db.guests || []).find(g =>
+      (g.docPhotoUrl || g.documentPhotoUrl) && (
+        (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
+        (cleanEmailEarly && (g.email || "").trim().toLowerCase() === cleanEmailEarly)
+      )
+    );
+    const existingAccWithDoc = (db.guestAccounts || []).find(a =>
+      (a.docPhotoUrl || a.documentPhotoUrl) && (
+        (cleanDoc && (a.document || "").replace(/\D/g, "") === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && (a.phone || "").replace(/\D/g, "") === cleanPhone) ||
+        (cleanEmailEarly && (a.email || "").trim().toLowerCase() === cleanEmailEarly)
+      )
+    );
+    const savedDocUrlFromProfile = existingGuestWithDoc?.docPhotoUrl || existingGuestWithDoc?.documentPhotoUrl || existingAccWithDoc?.docPhotoUrl || existingAccWithDoc?.documentPhotoUrl || null;
+    const hasDocFile = Boolean(req.body.guestDocumentFile || req.body.docPhotoBase64 || req.body.docPhotoUrl || savedDocUrlFromProfile);
 
     if (!guestName || !String(guestName).trim()) {
       return res.status(400).json({ error: "Nome completo é obrigatório para finalizar a reserva." });
@@ -15649,9 +16114,9 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       if (guestCep && !guest.cep) guest.cep = guestCep.trim();
     }
 
-    let docPhotoUrl = req.body.docPhotoUrl || null;
+    let docPhotoUrl = req.body.docPhotoUrl || savedDocUrlFromProfile || guest.docPhotoUrl || null;
     const docPhotoBase64 = req.body.guestDocumentFile || req.body.docPhotoBase64;
-    if (docPhotoBase64 && !docPhotoUrl) {
+    if (docPhotoBase64 && !req.body.docPhotoUrl) {
       try {
         docPhotoUrl = await uploadImageToStorage(docPhotoBase64, `doc_res_${Date.now()}`, db, "guests");
       } catch (uploadErr) {
@@ -15695,6 +16160,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       city: (guestCity || "").trim(),
       state: (guestState || "").trim() || "RJ",
       cep: (guestCep || "").trim(),
+      docPhotoUrl: docPhotoUrl || guest.docPhotoUrl || undefined,
       vehicle: vehicle || undefined,
       companyData: isWorkTrip && companyData ? companyData : undefined
     });
@@ -16322,7 +16788,7 @@ app.all(["/api/pms/reservations/restore-all", "/api/system/restore-all"], async 
 app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-incident-sept30"], async (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate");
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso restrito a administradores." });
   }
   const changed = repairIncidentSept30(db);
@@ -16339,7 +16805,7 @@ let lastCalendarReconcileTime = 0;
 
 app.get("/api/pms/calendar", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso ao calendário PMS." });
   }
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -17276,7 +17742,7 @@ app.post("/api/pms/reservations", async (req, res) => {
 // ── Exportação de Reservas em CSV ───────────────────────────────────────────
 app.get("/api/pms/reservations/export-csv", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção podem exportar reservas." });
   }
 
@@ -17558,7 +18024,7 @@ function mapRowToReservationData(row) {
 // ── Preview de Importação de Reservas via CSV ───────────────────────────────
 app.post("/api/pms/reservations/preview-csv", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso negado." });
   }
 
@@ -17686,7 +18152,7 @@ app.post("/api/pms/reservations/preview-csv", (req, res) => {
 // ── Importação Definitiva de Reservas via CSV ────────────────────────────────
 app.post("/api/pms/reservations/import-csv", async (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem importar reservas via CSV." });
   }
 
@@ -22208,7 +22674,7 @@ app.post("/api/lost-and-found/:id/notify-guest", async (req, res) => {
 
 app.delete("/api/lost-and-found/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem excluir registros de achados e perdidos." });
   }
   const id = Number(req.params.id);
@@ -22405,7 +22871,7 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
 // ── Central de Relatórios de Reservas & Hospedagem (PMS Analytics) ──────────
 app.get("/api/pms/analytics/reports", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores têm acesso a relatórios analíticos do PMS." });
   }
   const startDate = req.query.startDate || new Date(Date.now() - 30 * 86400000).toISOString().substring(0, 10);
@@ -22587,7 +23053,7 @@ app.get("/api/pms/analytics/reports", (req, res) => {
 
 app.get("/api/pms/guests", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso à base de hóspedes." });
   }
   if (!db.guests) db.guests = [];
@@ -22910,7 +23376,7 @@ app.get("/api/pms/guests/:id", (req, res) => {
 // Exportação da base de Hóspedes em CSV
 app.get("/api/pms/guests/export/csv", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
     return res.status(403).json({ error: "Acesso restrito à administração e recepção." });
   }
   if (!db.guests) db.guests = [];
@@ -25334,6 +25800,9 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   const finalNeighborhood = pickVal(["neighborhood", "bairro"], guest.neighborhood || guest.bairro || account?.neighborhood || "");
   const finalCity = pickVal(["city", "cidade", "municipio"], guest.city || guest.cidade || account?.city || "");
   const finalState = String(pickVal(["state", "uf", "estado"], guest.state || guest.uf || account?.state || "RJ")).toUpperCase();
+  let finalDocPhotoUrl = pickVal(["docPhotoUrl", "documentPhotoUrl"], guest.docPhotoUrl || guest.documentPhotoUrl || account?.docPhotoUrl || "");
+  let finalPhotoUrl = pickVal(["photoUrl", "selfieUrl"], guest.photoUrl || guest.selfieUrl || account?.photoUrl || account?.selfieUrl || "");
+  let finalSignatureUrl = pickVal(["signatureUrl"], guest.signatureUrl || account?.signatureUrl || "");
 
   // Resolução de Veículo (preservando subcampos se update for parcial, ou limpando se vehicle === null)
   let finalVehicle = null;
@@ -25466,8 +25935,9 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   } else if (hasExplicit("companyData") && updates.companyData === null) {
     guest.companyData = null;
   }
-  if (updates.docPhotoUrl) guest.docPhotoUrl = updates.docPhotoUrl;
-  if (updates.signatureUrl) guest.signatureUrl = updates.signatureUrl;
+  if (finalDocPhotoUrl) guest.docPhotoUrl = finalDocPhotoUrl;
+  if (finalPhotoUrl) guest.photoUrl = finalPhotoUrl;
+  if (finalSignatureUrl) guest.signatureUrl = finalSignatureUrl;
   if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
 
   // 5. Atualiza ou cria account em db.guestAccounts
@@ -25496,6 +25966,8 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
       neighborhood: finalNeighborhood,
       city: finalCity,
       state: finalState || "RJ",
+      docPhotoUrl: finalDocPhotoUrl || null,
+      photoUrl: finalPhotoUrl || null,
       vehicle: finalVehicle ? { ...finalVehicle } : null,
       companyData: finalCompanyData ? { ...finalCompanyData } : null,
       passkeys: [],
@@ -25524,6 +25996,8 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     account.neighborhood = finalNeighborhood;
     account.city = finalCity;
     account.state = finalState || "RJ";
+    if (finalDocPhotoUrl) account.docPhotoUrl = finalDocPhotoUrl;
+    if (finalPhotoUrl) account.photoUrl = finalPhotoUrl;
     account.vehicle = finalVehicle ? { ...finalVehicle } : null;
     account.companyData = finalCompanyData ? { ...finalCompanyData } : null;
   }
@@ -25546,6 +26020,30 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     return false;
   });
 
+  // Se o hóspede já anexou documento/selfie em alguma reserva anterior, recupera para a ficha permanente
+  if (!finalDocPhotoUrl) {
+    for (const r of reservations) {
+      const rDocPhoto = r.docPhotoUrl || r.documentPhotoUrl || r.guests?.[0]?.docPhotoUrl;
+      if (rDocPhoto) {
+        finalDocPhotoUrl = rDocPhoto;
+        guest.docPhotoUrl = rDocPhoto;
+        if (account) account.docPhotoUrl = rDocPhoto;
+        break;
+      }
+    }
+  }
+  if (!finalPhotoUrl) {
+    for (const r of reservations) {
+      const rSelfie = r.selfieUrl || r.photoUrl || r.guests?.[0]?.selfieUrl;
+      if (rSelfie) {
+        finalPhotoUrl = rSelfie;
+        guest.photoUrl = rSelfie;
+        if (account) account.photoUrl = rSelfie;
+        break;
+      }
+    }
+  }
+
   for (const r of reservations) {
     if (guest) {
       r.guestId = guest.id;
@@ -25565,6 +26063,8 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     if (finalCep) r.guestCep = finalCep;
     if (finalBirthDate) r.birthDate = finalBirthDate;
     if (finalCompanyData) r.companyData = { ...finalCompanyData };
+    if (finalDocPhotoUrl && !r.docPhotoUrl) r.docPhotoUrl = finalDocPhotoUrl;
+    if (finalPhotoUrl && !r.selfieUrl) r.selfieUrl = finalPhotoUrl;
     if (finalVehicle) {
       r.vehiclePlate = finalVehicle.plate;
       r.vehicle = { ...finalVehicle };
@@ -25590,7 +26090,8 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
       if (finalCep) g0.cep = finalCep;
       if (finalBirthDate) g0.birthDate = finalBirthDate;
       if (finalGender) g0.gender = finalGender;
-      if (guest.docPhotoUrl && !g0.docPhotoUrl) g0.docPhotoUrl = guest.docPhotoUrl;
+      if ((finalDocPhotoUrl || guest.docPhotoUrl) && !g0.docPhotoUrl) g0.docPhotoUrl = finalDocPhotoUrl || guest.docPhotoUrl;
+      if ((finalPhotoUrl || guest.photoUrl) && !g0.selfieUrl) g0.selfieUrl = finalPhotoUrl || guest.photoUrl;
       if (guest.signatureUrl && !g0.signatureUrl) g0.signatureUrl = guest.signatureUrl;
       if (guest.isCamposResident !== undefined) g0.isCamposResident = guest.isCamposResident;
       if (guest.riskAttentionAlert !== undefined) g0.riskAttentionAlert = guest.riskAttentionAlert;
@@ -25614,22 +26115,68 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
 
   // Tenta vincular o hóspede caso ainda não esteja vinculado por guestId
   let guest = (db.guests || []).find(g => g.id === r.guestId);
-  if (!guest) {
-    const cleanDoc = (r.guestDocument || "").replace(/\D/g, "");
-    const cleanPhone = normalizePhone(r.guestPhone || "");
-    const cleanEmail = (r.guestEmail || "").trim().toLowerCase();
-    const cleanName = normalizeName(r.guestName || "");
+  const cleanResDoc = (r.guestDocument || "").replace(/\D/g, "");
+  const cleanResPhone = normalizePhone(r.guestPhone || "");
+  const cleanResEmail = (r.guestEmail || "").trim().toLowerCase();
+  const cleanResName = normalizeName(r.guestName || "");
 
+  if (!guest) {
     guest = db.guests.find(g =>
-      (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
-      (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
-      (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
-      (cleanName && cleanName.length >= 5 && normalizeName(g.fullName || g.name || "") === cleanName)
+      (cleanResDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanResDoc) ||
+      (cleanResPhone && cleanResPhone.length >= 8 && normalizePhone(g.phone || "") === cleanResPhone) ||
+      (cleanResEmail && cleanResEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanResEmail) ||
+      (cleanResName && cleanResName.length >= 5 && normalizeName(g.fullName || g.name || "") === cleanResName)
     );
     if (guest) {
       r.guestId = guest.id;
       r.guestCode = guest.guestCode;
     }
+  }
+
+  // Recupera documento e foto já anexados anteriormente pelo hóspede (em db.guests, db.guestAccounts ou reservas anteriores)
+  const targetDoc = cleanResDoc || (guest ? (guest.documentNumber || guest.document || "").replace(/\D/g, "") : "");
+  const targetEmail = cleanResEmail || (guest ? (guest.email || "").trim().toLowerCase() : "");
+  const targetPhone = cleanResPhone || (guest ? normalizePhone(guest.phone || "") : "");
+
+  const matchedAccount = (db.guestAccounts || []).find(a =>
+    (guest && a.guestId && Number(a.guestId) === Number(guest.id)) ||
+    (targetDoc && targetDoc.length >= 8 && (a.document || "").replace(/\D/g, "") === targetDoc) ||
+    (targetEmail && targetEmail.includes("@") && (a.email || "").trim().toLowerCase() === targetEmail) ||
+    (targetPhone && targetPhone.length >= 8 && phonesMatch(a.phone, targetPhone))
+  );
+
+  let savedDocPhotoUrl = r.guests?.[0]?.docPhotoUrl || r.docPhotoUrl || r.documentPhotoUrl || guest?.docPhotoUrl || guest?.documentPhotoUrl || matchedAccount?.docPhotoUrl || null;
+  let savedSelfieUrl = r.guests?.[0]?.selfieUrl || r.selfieUrl || r.photoUrl || guest?.photoUrl || guest?.selfieUrl || matchedAccount?.photoUrl || null;
+
+  if (!savedDocPhotoUrl || !savedSelfieUrl) {
+    for (const prevR of (db.reservations || [])) {
+      if (prevR.id === r.id) continue;
+      const sameGuest =
+        (guest && prevR.guestId && Number(prevR.guestId) === Number(guest.id)) ||
+        (targetDoc && targetDoc.length >= 8 && (prevR.guestDocument || prevR.document || "").replace(/\D/g, "") === targetDoc) ||
+        (targetEmail && targetEmail.includes("@") && (prevR.guestEmail || prevR.email || "").trim().toLowerCase() === targetEmail) ||
+        (targetPhone && targetPhone.length >= 8 && phonesMatch(prevR.guestPhone || prevR.phone, targetPhone));
+      if (sameGuest) {
+        if (!savedDocPhotoUrl) {
+          savedDocPhotoUrl = prevR.docPhotoUrl || prevR.documentPhotoUrl || prevR.guests?.[0]?.docPhotoUrl || null;
+        }
+        if (!savedSelfieUrl) {
+          savedSelfieUrl = prevR.selfieUrl || prevR.photoUrl || prevR.guests?.[0]?.selfieUrl || null;
+        }
+        if (savedDocPhotoUrl && savedSelfieUrl) break;
+      }
+    }
+  }
+
+  if (savedDocPhotoUrl) {
+    if (!r.docPhotoUrl) r.docPhotoUrl = savedDocPhotoUrl;
+    if (guest && !guest.docPhotoUrl) guest.docPhotoUrl = savedDocPhotoUrl;
+    if (matchedAccount && !matchedAccount.docPhotoUrl) matchedAccount.docPhotoUrl = savedDocPhotoUrl;
+  }
+  if (savedSelfieUrl) {
+    if (!r.selfieUrl) r.selfieUrl = savedSelfieUrl;
+    if (guest && !guest.photoUrl) guest.photoUrl = savedSelfieUrl;
+    if (matchedAccount && !matchedAccount.photoUrl) matchedAccount.photoUrl = savedSelfieUrl;
   }
 
   const guestCount = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
@@ -25652,8 +26199,8 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         city: guest?.city || "",
         state: guest?.state || "RJ",
         cep: guest?.cep || "",
-        docPhotoUrl: guest?.docPhotoUrl || r.docPhotoUrl || null,
-        selfieUrl: guest?.photoUrl || r.selfieUrl || null,
+        docPhotoUrl: savedDocPhotoUrl || guest?.docPhotoUrl || r.docPhotoUrl || null,
+        selfieUrl: savedSelfieUrl || guest?.photoUrl || r.selfieUrl || null,
         signatureUrl: r.needsReSignature ? null : (r.signatureUrl || null),
         isMinor: Boolean(guest?.isMinor),
         minorAge: guest?.minorAge || null,
@@ -25691,6 +26238,8 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
       if (!r.guests[0].cpf) r.guests[0].cpf = r.guestDocument || guest?.document || "";
       if (!r.guests[0].phone) r.guests[0].phone = r.guestPhone || guest?.phone || "";
       if (!r.guests[0].email) r.guests[0].email = r.guestEmail || guest?.email || "";
+      if (!r.guests[0].docPhotoUrl) r.guests[0].docPhotoUrl = savedDocPhotoUrl || guest?.docPhotoUrl || r.docPhotoUrl || null;
+      if (!r.guests[0].selfieUrl) r.guests[0].selfieUrl = savedSelfieUrl || guest?.photoUrl || r.selfieUrl || null;
       if (guest) {
         if (!r.guests[0].guestId) r.guests[0].guestId = guest.id;
         if (!r.guests[0].guestCode) r.guests[0].guestCode = guest.guestCode;
@@ -25704,8 +26253,6 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         if (!r.guests[0].cep) r.guests[0].cep = guest.cep || "";
         if (!r.guests[0].city) r.guests[0].city = guest.city || "";
         if (!r.guests[0].state) r.guests[0].state = guest.state || "RJ";
-        if (!r.guests[0].docPhotoUrl) r.guests[0].docPhotoUrl = guest.docPhotoUrl || null;
-        if (!r.guests[0].selfieUrl) r.guests[0].selfieUrl = guest.photoUrl || null;
         if (guest.isMinor !== undefined && r.guests[0].isMinor === undefined) r.guests[0].isMinor = Boolean(guest.isMinor);
         if (guest.minorAge && !r.guests[0].minorAge) r.guests[0].minorAge = guest.minorAge;
         if (guest.minorKinship && !r.guests[0].minorKinship) r.guests[0].minorKinship = guest.minorKinship;
@@ -25713,6 +26260,22 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         if (guest.originCity && !r.guests[0].originCity) r.guests[0].originCity = guest.originCity;
         if (guest.originState && !r.guests[0].originState) r.guests[0].originState = guest.originState;
         if (guest.aiVerification && !r.guests[0].aiVerification) r.guests[0].aiVerification = guest.aiVerification;
+      }
+    }
+    // Se acompanhantes (slots >= 2) já possuírem ficha própria em db.guests por guestId/CPF, recupera o docPhotoUrl próprio daquele acompanhante
+    for (let i = 1; i < r.guests.length; i++) {
+      const compSlot = r.guests[i];
+      if (!compSlot) continue;
+      const compDoc = String(compSlot.cpf || compSlot.document || "").replace(/\D/g, "");
+      if (compSlot.guestId || compDoc.length >= 8) {
+        const compGuest = (db.guests || []).find(g =>
+          (compSlot.guestId && Number(g.id) === Number(compSlot.guestId)) ||
+          (compDoc.length >= 8 && (g.documentNumber || g.document || "").replace(/\D/g, "") === compDoc)
+        );
+        if (compGuest && compGuest.id !== guest?.id) {
+          if (!compSlot.docPhotoUrl && compGuest.docPhotoUrl) compSlot.docPhotoUrl = compGuest.docPhotoUrl;
+          if (!compSlot.selfieUrl && compGuest.photoUrl) compSlot.selfieUrl = compGuest.photoUrl;
+        }
       }
     }
   }
@@ -26204,6 +26767,9 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
           fileName: `doc_pre_checkin_g${guest.id}`,
           providedName: validName,
           providedCpf: cleanDoc,
+          reservationName: Number(guestIndex) === 1 ? (r.guestName || "") : "",
+          reservationCpf: Number(guestIndex) === 1 ? (r.guestDocument || "") : "",
+          guestIndex: Number(guestIndex) || 1,
           providedCity: city || guest.city,
           providedAddress: address || guest.address,
           providedBirthDate: normalizedBirthDate || guest.birthDate,
@@ -26317,6 +26883,9 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       neighborhood: guest.neighborhood,
       city: guest.city,
       state: guest.state,
+      docPhotoUrl: guest.docPhotoUrl,
+      photoUrl: guest.photoUrl,
+      signatureUrl: guest.signatureUrl,
       vehiclePlate: guest.vehiclePlate,
       vehicleBrand: guest.vehicleBrand,
       vehicleModel: guest.vehicleModel,
@@ -26772,7 +27341,7 @@ export function logFnrhInternalAudit({
     let userId = null;
     let username = null;
     if (user) {
-      if (user.role === "admin") authContext = "ADM";
+      if (user.role === "admin" || user.role === "dev") authContext = user.role === "dev" ? "DEV" : "ADM";
       else if (user.role === "recepcao") authContext = "RECEPCAO";
       else authContext = user.role.toUpperCase();
       userId = user.id;
@@ -26850,9 +27419,9 @@ function handleFnrhServe(isDownload) {
     let authContext = "ANONIMO";
 
     if (user) {
-      if (user.role === "admin") {
+      if (user.role === "admin" || user.role === "dev") {
         isAuthorized = true;
-        authContext = "ADM";
+        authContext = user.role === "dev" ? "DEV" : "ADM";
       } else if (user.role === "recepcao") {
         if (!user.mustChangePassword && !user.passwordExpired) {
           isAuthorized = true;
@@ -27088,7 +27657,7 @@ export function getFinancialSettings() {
 
 app.get("/api/finance/overview", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores têm acesso ao financeiro." });
   }
   initERPFinancialData();
@@ -30583,7 +31152,7 @@ function enqueueNfseRetry(payload, errorMessage, engine = "giss_prefeitura") {
 
 app.get("/api/nfse/retry-queue", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "recepcao")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso restrito." });
   }
   res.json({
@@ -30594,7 +31163,7 @@ app.get("/api/nfse/retry-queue", (req, res) => {
 
 app.delete("/api/nfse/retry-queue/:id", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Acesso restrito a administradores." });
   }
   const id = String(req.params.id || "");
@@ -30711,7 +31280,7 @@ async function processSingleNfseRetryItem(item) {
 
 app.post("/api/nfse/retry-queue/:id/retry", async (req, res) => {
   const userAuth = getAuthUser(req);
-  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "recepcao")) {
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao")) {
     return res.status(403).json({ error: "Acesso restrito." });
   }
   const id = String(req.params.id || "");
@@ -33900,6 +34469,15 @@ function applyProfileUpdateToAccount(account, body) {
     }
   }
 
+  if (body?.docPhotoUrl && typeof body.docPhotoUrl === "string" && body.docPhotoUrl.trim()) {
+    account.docPhotoUrl = body.docPhotoUrl.trim();
+    syncUpdates.docPhotoUrl = account.docPhotoUrl;
+  }
+  if (body?.photoUrl && typeof body.photoUrl === "string" && body.photoUrl.trim()) {
+    account.photoUrl = body.photoUrl.trim();
+    syncUpdates.photoUrl = account.photoUrl;
+  }
+
   if (newPassword && String(newPassword).length >= 6) {
     account.passwordHash = hashPassword(String(newPassword));
   }
@@ -35869,7 +36447,7 @@ app.post("/api/admin/copilot/chat", async (req, res) => {
     return res.status(401).json({ error: "Não autenticado." });
   }
 
-  if (userAuth && userAuth.role !== "admin" && userAuth.role !== "recepcao" && !isTestAuth) {
+  if (userAuth && userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && !isTestAuth) {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso ao Copiloto IA." });
   }
 
@@ -37994,7 +38572,7 @@ app.post("/api/finance/payments/reconcile/:code", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // 8.1 Listar Logs com Filtros, Paginação e Métricas
-app.get("/api/audit-logs", async (req, res) => {
+app.get("/api/audit-logs", requireDevAuth, async (req, res) => {
   try {
     const { category, level, search, startDate, endDate, limit = 100, offset = 0 } = req.query;
 
@@ -38100,7 +38678,7 @@ app.get("/api/audit-logs", async (req, res) => {
 });
 
 // 8.2 Exportar Logs para Arquivo CSV
-app.get("/api/audit-logs/export", (req, res) => {
+app.get("/api/audit-logs/export", requireDevAuth, (req, res) => {
   try {
     const logs = db.auditLogs || [];
     const headers = ["ID", "Data/Hora", "Nível", "Categoria", "Ação", "Ator / Usuário", "Detalhes", "IP", "Origem"];
@@ -39319,7 +39897,7 @@ app.get("/api/maids/:userId/statement", (req, res) => {
   if (!authUser) return res.status(401).json({ error: "Não autenticado." });
 
   const targetId = Number(req.params.userId);
-  if (authUser.role !== "admin" && authUser.id !== targetId) {
+  if (authUser.role !== "admin" && authUser.role !== "dev" && authUser.id !== targetId) {
     return res.status(403).json({ error: "Acesso negado." });
   }
 
@@ -39340,7 +39918,7 @@ app.get("/api/maids/:userId/statement", (req, res) => {
 
 app.get("/api/maids/all-balances", (req, res) => {
   const authUser = getAuthUser(req);
-  if (!authUser || (authUser.role !== "admin" && authUser.role !== "camareira")) {
+  if (!authUser || (authUser.role !== "admin" && authUser.role !== "dev" && authUser.role !== "camareira")) {
     return res.status(403).json({ error: "Acesso negado." });
   }
 
@@ -39367,7 +39945,7 @@ app.get("/api/maids/all-balances", (req, res) => {
 
 app.post("/api/maids/:userId/pay", async (req, res) => {
   const authUser = getAuthUser(req);
-  if (!authUser || authUser.role !== "admin") {
+  if (!authUser || (authUser.role !== "admin" && authUser.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem realizar pagamentos." });
   }
 
@@ -39586,7 +40164,7 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
 // Endpoint de Estorno de Pagamento / Vale
 async function handlePaymentReversal(req, res) {
   const authUser = getAuthUser(req);
-  if (!authUser || authUser.role !== "admin") {
+  if (!authUser || (authUser.role !== "admin" && authUser.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem estornar pagamentos ou vales." });
   }
 
@@ -39694,7 +40272,7 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
   if (!authUser) return res.status(401).json({ error: "Não autenticado." });
 
   const targetId = req.body?.userId ? Number(req.body.userId) : authUser.id;
-  if (authUser.role !== "admin" && authUser.id !== targetId) {
+  if (authUser.role !== "admin" && authUser.role !== "dev" && authUser.id !== targetId) {
     return res.status(403).json({ error: "Acesso negado." });
   }
 
@@ -39747,7 +40325,7 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
 
 app.get("/api/maids/inter-status", (req, res) => {
   const authUser = getAuthUser(req);
-  if (!authUser || authUser.role !== "admin") {
+  if (!authUser || (authUser.role !== "admin" && authUser.role !== "dev")) {
     return res.status(403).json({ error: "Acesso negado." });
   }
 

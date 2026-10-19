@@ -115,10 +115,13 @@ export function BookingFunnelModal({
   const [isSavingPostRegistration, setIsSavingPostRegistration] = useState(false)
   const [postRegistrationSaved, setPostRegistrationSaved] = useState(false)
 
-  // Anexo de Documento Oficial Obrigatório & Inspeção de IA
-  const [docFileBase64, setDocFileBase64] = useState<string>("")
-  const [docFileName, setDocFileName] = useState<string>("")
-  const [docFileType, setDocFileType] = useState<"pdf" | "image">("image")
+  // Anexo de Documento Oficial Obrigatório & Inspeção de IA (pré-carregado se já salvo anteriormente)
+  const [docFileBase64, setDocFileBase64] = useState<string>(() => guestAccount?.docPhotoUrl || getCachedProfile()?.docPhotoUrl || "")
+  const [docFileName, setDocFileName] = useState<string>(() => (guestAccount?.docPhotoUrl || getCachedProfile()?.docPhotoUrl) ? "documento_salvo_no_cadastro" : "")
+  const [docFileType, setDocFileType] = useState<"pdf" | "image">(() => {
+    const saved = guestAccount?.docPhotoUrl || getCachedProfile()?.docPhotoUrl || ""
+    return saved.startsWith("data:application/pdf") || saved.toLowerCase().includes(".pdf") ? "pdf" : "image"
+  })
   const [isInspectingDoc, setIsInspectingDoc] = useState(false)
   const [aiInspectionResult, setAiInspectionResult] = useState<any | null>(null)
   const [docInspectionError, setDocInspectionError] = useState<string | null>(null)
@@ -168,6 +171,8 @@ export function BookingFunnelModal({
             fileName: file.name,
             providedName: guestName,
             providedCpf: guestDocument,
+            reservationName: guestName,
+            reservationCpf: guestDocument,
             providedCity: guestCity,
             providedAddress: guestAddress
           })
@@ -308,6 +313,11 @@ export function BookingFunnelModal({
       if (acc.city && (!guestCity || guestCity !== acc.city)) setGuestCity(acc.city)
       if (acc.state && (!guestState || guestState !== acc.state)) setGuestState(acc.state)
       if (acc.cep && (!guestCep || guestCep !== acc.cep)) setGuestCep(acc.cep)
+      if (acc.docPhotoUrl && !docFileBase64) {
+        setDocFileBase64(acc.docPhotoUrl)
+        setDocFileName("documento_salvo_no_cadastro")
+        setDocFileType(acc.docPhotoUrl.startsWith("data:application/pdf") || acc.docPhotoUrl.toLowerCase().includes(".pdf") ? "pdf" : "image")
+      }
       if (acc.vehicle?.plate) {
         setHasVehicle(true)
         setVehiclePlate(acc.vehicle.plate)
@@ -333,6 +343,11 @@ export function BookingFunnelModal({
         if (user.city) setGuestCity(user.city)
         if (user.state) setGuestState(user.state)
         if (user.cep) setGuestCep(user.cep)
+        if (user.docPhotoUrl) {
+          setDocFileBase64(user.docPhotoUrl)
+          setDocFileName("documento_salvo_no_cadastro")
+          setDocFileType(user.docPhotoUrl.startsWith("data:application/pdf") || user.docPhotoUrl.toLowerCase().includes(".pdf") ? "pdf" : "image")
+        }
         if (user.vehicle?.plate) {
           setHasVehicle(true)
           setVehiclePlate(user.vehicle.plate)
@@ -576,12 +591,41 @@ export function BookingFunnelModal({
         alert(`O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Por favor, anexe uma foto mais nítida ou o PDF original.`)
         return
       }
+      if (
+        aiInspectionResult &&
+        (aiInspectionResult.identityMatches === false ||
+          aiInspectionResult.nameMatches === false ||
+          aiInspectionResult.cpfMatches === false)
+      ) {
+        const reasons = Array.isArray(aiInspectionResult.mismatchReasons) && aiInspectionResult.mismatchReasons.length > 0
+          ? aiInspectionResult.mismatchReasons.join("\n• ")
+          : "Os dados do documento anexado (Nome ou CPF) não conferem com o titular da reserva."
+        alert(`⚠️ Divergência Pericial de Titularidade:\n\n• ${reasons}\n\nPor favor, anexe o documento pertencente à mesma pessoa titular da reserva ou corrija os dados informados.`)
+        return
+      }
       if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
         setShowMinorNoticeModal(true)
         return
       }
 
-      // Sincroniza dados com a conta no servidor para nunca mais pedir novamente
+      // Sincroniza dados (incluindo documento anexado) com o cache local e conta no servidor para nunca mais pedir novamente
+      try {
+        const currentProf = getCachedProfile() || {}
+        saveSessionLocally({
+          ...currentProf,
+          id: currentProf.id || guestAccount?.id || guestEmail.trim(),
+          name: guestName.trim(),
+          email: guestEmail.trim(),
+          phone: guestPhone.trim(),
+          document: guestDocument.trim(),
+          address: guestAddress.trim(),
+          city: guestCity.trim(),
+          state: guestState.trim(),
+          cep: guestCep.trim(),
+          docPhotoUrl: docFileBase64 || currentProf.docPhotoUrl || null
+        })
+      } catch {}
+
       if (guestPhone.replace(/\D/g, "").length >= 10 || guestDocument.replace(/\D/g, "").length >= 5) {
         updateAccountProfile({
           name: guestName.trim(),
@@ -591,6 +635,7 @@ export function BookingFunnelModal({
           city: guestCity.trim(),
           state: guestState.trim(),
           cep: guestCep.trim(),
+          docPhotoUrl: docFileBase64 || undefined,
           ...(hasVehicle && vehiclePlate
             ? {
                 vehicle: {
