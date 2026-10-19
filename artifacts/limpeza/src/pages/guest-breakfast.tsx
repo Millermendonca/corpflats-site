@@ -1159,9 +1159,9 @@ export default function GuestBreakfast() {
                           : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 min-w-0 truncate">
+                      <div className="flex items-center gap-1.5 min-w-0 text-left">
                         <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                        <span className="truncate">{nameLabel}</span>
+                        <span className="break-words leading-tight min-w-0">{nameLabel}</span>
                       </div>
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
                         curType === 'standard' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'

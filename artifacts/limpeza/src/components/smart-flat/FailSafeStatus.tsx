@@ -66,10 +66,10 @@ export function FailSafeStatus({
   return (
     <Card className="overflow-hidden border border-border/60 shadow-sm transition-all hover:shadow-md bg-card/95">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div
-              className={`flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors ${
                 hasEnteredFlat
                   ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
                   : shutoffTriggered
@@ -87,9 +87,9 @@ export function FailSafeStatus({
                 <ShieldAlert className="h-6 w-6" />
               )}
             </div>
-            <div>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                Segurança & Presença no Flat
+            <div className="min-w-0">
+              <CardTitle className="text-base font-semibold flex flex-wrap items-center gap-2">
+                <span>Segurança & Presença no Flat</span>
                 {hasEnteredFlat && (
                   <Badge variant="outline" className="text-emerald-600 border-emerald-500/30 bg-emerald-500/10 text-[10px]">
                     Presença Confirmada
@@ -112,7 +112,7 @@ export function FailSafeStatus({
                 ? 'secondary'
                 : 'outline'
             }
-            className={`text-xs ${
+            className={`text-xs shrink-0 ${
               hasEnteredFlat
                 ? 'bg-emerald-600 text-white'
                 : warningActive
@@ -150,10 +150,10 @@ export function FailSafeStatus({
         {warningActive && !hasEnteredFlat && !shutoffTriggered && (
           <div className="rounded-xl bg-amber-500/15 border-2 border-amber-500/40 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3 shadow-xs">
             <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-amber-600 animate-pulse" />
-            <div className="space-y-1.5 flex-1">
-              <p className="font-bold text-sm flex items-center justify-between">
+            <div className="space-y-1.5 flex-1 min-w-0">
+              <p className="font-bold text-sm flex flex-wrap items-center justify-between gap-1.5">
                 <span>Aviso Preventivo de Chegada</span>
-                <span className="text-[11px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-mono">
+                <span className="text-[11px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-mono shrink-0">
                   {countdownMinutesRemaining}m restantes
                 </span>
               </p>
@@ -168,10 +168,10 @@ export function FailSafeStatus({
                   type="button"
                   onClick={onConfirmEntrance}
                   disabled={isLoading}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal text-center leading-tight bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                 >
-                  <DoorOpen className="h-4 w-4" />
-                  Confirmar Entrada no Flat Agora
+                  <DoorOpen className="h-4 w-4 shrink-0" />
+                  <span>Confirmar Entrada no Flat Agora</span>
                 </Button>
               </div>
             </div>
@@ -193,10 +193,10 @@ export function FailSafeStatus({
           /* ACTION TO CONFIRM ENTRANCE WHEN NOT YET WARNING */
           !warningActive && (
             <div className="rounded-xl bg-muted/40 border border-border/60 p-3 space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <span className="text-xs font-medium text-foreground flex items-center gap-1.5">
-                  <DoorOpen className="h-4 w-4 text-primary" />
-                  Já está no apartamento?
+                  <DoorOpen className="h-4 w-4 text-primary shrink-0" />
+                  <span>Já está no apartamento?</span>
                 </span>
                 <Badge variant="outline" className="text-[11px]">
                   Presença Pendente
@@ -210,10 +210,10 @@ export function FailSafeStatus({
                 variant="outline"
                 onClick={onConfirmEntrance}
                 disabled={isLoading}
-                className="w-full border-primary/30 text-primary hover:bg-primary/10 hover:text-primary font-medium text-xs flex items-center justify-center gap-2"
+                className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal text-center leading-tight border-primary/30 text-primary hover:bg-primary/10 hover:text-primary font-medium text-xs flex items-center justify-center gap-2"
               >
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                Confirmar Minha Entrada no Flat
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span>Confirmar Minha Entrada no Flat</span>
               </Button>
             </div>
           )
@@ -222,10 +222,10 @@ export function FailSafeStatus({
         {/* TIMELINE / COUNTDOWN PROGRESS IF DEVICES ARE ON AND NOT CONFIRMED */}
         {devicesActive && !hasEnteredFlat && !shutoffTriggered && (
           <div className="space-y-1.5 rounded-xl border border-border/50 bg-background/50 p-3">
-            <div className="flex items-center justify-between text-xs font-medium">
+            <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-medium">
               <span className="flex items-center gap-1 text-muted-foreground">
-                <Clock className="h-3.5 w-3.5 text-amber-500" />
-                Tempo até o Desligamento Automático
+                <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                <span>Tempo até o Desligamento Automático</span>
               </span>
               <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
                 {countdownMinutesRemaining} min restantes

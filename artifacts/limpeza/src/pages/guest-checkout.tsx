@@ -268,7 +268,7 @@ export default function GuestCheckout() {
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Check-out Expresso</span>
               </div>
-              <CardTitle className="text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100">
+              <CardTitle className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100 break-words">
                 Olá, {resContext.firstName || resContext.guestName}! 👋
               </CardTitle>
               <CardDescription className="text-xs text-muted-foreground mt-1">
@@ -276,9 +276,9 @@ export default function GuestCheckout() {
               </CardDescription>
             </CardHeader>
 
-            <CardContent className="p-6 sm:p-7 space-y-5">
+            <CardContent className="p-5 sm:p-7 space-y-5">
               {/* Detalhes da Acomodação (já preenchidos e confirmados) */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between">
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/80 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
                     Sua Acomodação
@@ -292,7 +292,7 @@ export default function GuestCheckout() {
                     Horário Limite
                   </span>
                   <Badge variant="outline" className="bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 font-bold text-xs">
-                    <Clock className="w-3 h-3 mr-1 text-primary" />
+                    <Clock className="w-3 h-3 mr-1 text-primary shrink-0" />
                     Até às {resContext.checkoutTime || "12:00"}
                   </Badge>
                 </div>
@@ -337,16 +337,16 @@ export default function GuestCheckout() {
                 type="button" 
                 onClick={handlePersonalizedConfirm}
                 disabled={loading} 
-                className="w-full h-14 text-base font-black rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
+                className="w-full h-auto min-h-14 py-3 px-4 text-sm sm:text-base font-black whitespace-normal leading-tight text-center rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <Loader2 className="w-5 h-5 animate-spin shrink-0" />
                     <span>Registrando saída...</span>
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 className="w-5 h-5" />
+                    <CheckCircle2 className="w-5 h-5 shrink-0" />
                     <span>Confirmar que estou saindo</span>
                   </>
                 )}

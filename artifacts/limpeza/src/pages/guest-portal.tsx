@@ -1917,11 +1917,11 @@ export default function GuestPortal() {
                 <Button
                   type="button"
                   onClick={() => setLocation(getCheckinPath(false))}
-                  className="w-full sm:w-auto h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                  className="w-full sm:w-auto h-auto min-h-11 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 whitespace-normal leading-tight text-center shadow-md transition-all cursor-pointer"
                 >
-                  <PenTool className="w-4 h-4" />
+                  <PenTool className="w-4 h-4 shrink-0" />
                   <span>Assinar Termo Atualizado</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
               </div>
             </div>
@@ -1998,19 +1998,19 @@ export default function GuestPortal() {
                     setActiveGuestIndex(firstPending.index)
                     setLocation(getCheckinPath(false, firstPending.index))
                   }}
-                  className="h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                  className="h-auto min-h-11 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 whitespace-normal leading-tight text-center shadow-md transition-all cursor-pointer"
                 >
-                  <PenTool className="w-4 h-4" />
+                  <PenTool className="w-4 h-4 shrink-0" />
                   <span>Preencher por {otherPendingReSignGuests[0].name?.split(" ")[0] || "Acompanhante"}</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setLocation(getCheckinPath(true, activeGuestIndex))}
-                  className="h-11 px-4 rounded-xl border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="h-auto min-h-11 py-2.5 px-4 rounded-xl border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 whitespace-normal leading-tight text-center cursor-pointer"
                 >
-                  <FileText className="w-4 h-4 text-emerald-600" />
+                  <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>Ver Minha Ficha</span>
                 </Button>
               </div>
@@ -2150,7 +2150,7 @@ export default function GuestPortal() {
                   <Ban className="w-6 h-6" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Badge className="bg-rose-600 text-white text-[10.5px] font-bold px-2 py-0.5">
                       ✕ Reserva Cancelada
                     </Badge>
@@ -2506,7 +2506,7 @@ export default function GuestPortal() {
 
             <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">
               <div>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
                     Check-out (Saída)
                   </span>
@@ -2579,7 +2579,7 @@ export default function GuestPortal() {
           <Card className="bg-white rounded-3xl border border-rose-200/90 shadow-md p-5 sm:p-7 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-100 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-black text-sm shadow-2xs">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-black text-sm shadow-2xs shrink-0">
                   <Ban className="w-5 h-5" />
                 </div>
                 <div>
@@ -2618,7 +2618,7 @@ export default function GuestPortal() {
         }`}>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-2xs ${
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-2xs shrink-0 ${
                 isPaid ? "bg-emerald-100 text-emerald-700 border border-emerald-300" : "bg-amber-100 text-amber-800 border border-amber-300"
               }`}>
                 {isPaid ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <Clock className="w-5 h-5 text-amber-600" />}
@@ -2714,7 +2714,7 @@ export default function GuestPortal() {
               <Button
                 type="button"
                 onClick={() => setReceiptModalOpen(true)}
-                className="w-full h-11 rounded-2xl bg-white hover:bg-emerald-50/70 active:scale-[0.99] border border-emerald-300 text-emerald-950 font-bold text-xs sm:text-sm shadow-2xs inline-flex items-center justify-center gap-2 transition-all"
+                className="w-full h-auto min-h-11 py-2.5 px-4 rounded-2xl bg-white hover:bg-emerald-50/70 active:scale-[0.99] border border-emerald-300 text-emerald-950 font-bold text-xs sm:text-sm whitespace-normal leading-tight text-center shadow-2xs inline-flex items-center justify-center gap-2 transition-all"
               >
                 <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Ver / Baixar Recibo</span>
@@ -2724,7 +2724,7 @@ export default function GuestPortal() {
                 type="button"
                 onClick={handleSendWhatsAppVoucher}
                 disabled={sendingWaVoucher}
-                className="w-full h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs sm:text-sm shadow-sm inline-flex items-center justify-center gap-2 transition-all disabled:opacity-75"
+                className="w-full h-auto min-h-11 py-2.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs sm:text-sm whitespace-normal leading-tight text-center shadow-sm inline-flex items-center justify-center gap-2 transition-all disabled:opacity-75"
               >
                 <WhatsAppIcon className={`w-4 h-4 shrink-0 ${sendingWaVoucher ? "animate-spin" : ""}`} />
                 <span>{waVoucherSent ? "✓ Enviado pro seu WhatsApp!" : (sendingWaVoucher ? "Enviando..." : "Receber no WhatsApp")}</span>
@@ -2765,7 +2765,7 @@ export default function GuestPortal() {
                 <Label className="text-xs font-bold text-slate-700 block">
                   Selecione ou altere a forma de pagamento:
                 </Label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => handleChangePaymentMethod("pix")}
@@ -2847,19 +2847,19 @@ export default function GuestPortal() {
                   {/* Código Copia e Cola */}
                   {reservation.pixCopiaECola && (
                     <div className="space-y-2 max-w-lg mx-auto">
-                      <div className="flex items-center gap-1.5 p-2 bg-white rounded-xl border border-slate-200 text-left">
-                        <span className="font-mono text-[11px] text-slate-600 truncate flex-1 px-1 select-all">
+                      <div className="flex flex-wrap items-center gap-1.5 p-2 bg-white rounded-xl border border-slate-200 text-left">
+                        <span className="font-mono text-[11px] text-slate-600 truncate flex-1 min-w-[140px] px-1 select-all">
                           {reservation.pixCopiaECola}
                         </span>
                         <Button
                           type="button"
                           size="sm"
                           onClick={handleCopyPix}
-                          className={`h-8 px-3 rounded-lg text-xs font-bold gap-1.5 shrink-0 transition-all ${
+                          className={`w-full sm:w-auto h-8 px-3 rounded-lg text-xs font-bold gap-1.5 shrink-0 transition-all ${
                             copiedPix ? "bg-emerald-600 text-white" : "bg-slate-900 hover:bg-slate-800 text-white"
                           }`}
                         >
-                          {copiedPix ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedPix ? <Check className="w-3.5 h-3.5 shrink-0" /> : <Copy className="w-3.5 h-3.5 shrink-0" />}
                           <span>{copiedPix ? "Copiado!" : "Copiar Código PIX"}</span>
                         </Button>
                       </div>
@@ -2873,9 +2873,9 @@ export default function GuestPortal() {
                       variant="outline"
                       onClick={handleCheckPaymentStatus}
                       disabled={checkingPayment}
-                      className="h-10 px-5 rounded-xl text-xs font-bold border-slate-300 hover:bg-white text-slate-700 gap-2 shadow-sm active:scale-95 transition-all"
+                      className="w-full sm:w-auto h-auto min-h-10 py-2 px-4 rounded-xl text-xs font-bold border-slate-300 hover:bg-white text-slate-700 gap-2 whitespace-normal leading-tight text-center shadow-sm active:scale-95 transition-all"
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
+                      <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
                       <span>{checkingPayment ? "Consultando Banco Inter..." : "Já fiz o PIX • Verificar Pagamento"}</span>
                     </Button>
                   </div>
@@ -2903,7 +2903,7 @@ export default function GuestPortal() {
                   )}
 
                   <div className="text-[11px] text-emerald-700 flex items-center justify-center gap-1.5 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
                     <span>Verificação automática ativa em tempo real. Assim que pagar, sua página será atualizada!</span>
                   </div>
                 </div>
@@ -2922,7 +2922,7 @@ export default function GuestPortal() {
                   </div>
 
                   <div className="max-w-md mx-auto p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
-                    <div className="flex items-center justify-between text-xs border-b border-slate-100 pb-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-xs border-b border-slate-100 pb-2">
                       <span className="text-slate-500">Valor a parcelar:</span>
                       <strong className="text-slate-900 text-sm">
                         R$ {pendingAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
@@ -2934,20 +2934,20 @@ export default function GuestPortal() {
                         href={reservation.mpInitPoint}
                         target="_blank"
                         rel="noreferrer"
-                        className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm shadow-md hover:shadow-lg active:scale-95 transition-all"
+                        className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm whitespace-normal leading-tight text-center shadow-md hover:shadow-lg active:scale-95 transition-all"
                       >
-                        <CreditCard className="w-4 h-4" />
+                        <CreditCard className="w-4 h-4 shrink-0" />
                         <span>Pagar no Cartão (Mercado Pago)</span>
-                        <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+                        <ExternalLink className="w-3.5 h-3.5 opacity-80 shrink-0" />
                       </a>
                     ) : (
                       <Button
                         type="button"
                         onClick={() => handleChangePaymentMethod("card")}
                         disabled={changingMethod}
-                        className="w-full h-11 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm shadow-md gap-2"
+                        className="w-full h-auto min-h-11 py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm whitespace-normal leading-tight text-center shadow-md gap-2"
                       >
-                        <CreditCard className="w-4 h-4" />
+                        <CreditCard className="w-4 h-4 shrink-0" />
                         <span>{changingMethod ? "Gerando link de pagamento..." : "Gerar Link de Pagamento no Cartão"}</span>
                       </Button>
                     )}
@@ -2959,9 +2959,9 @@ export default function GuestPortal() {
                         size="sm"
                         onClick={handleCheckPaymentStatus}
                         disabled={checkingPayment}
-                        className="text-xs text-slate-600 hover:text-slate-900 font-semibold gap-1.5"
+                        className="w-full h-auto py-1.5 px-2 text-xs text-slate-600 hover:text-slate-900 font-semibold gap-1.5 whitespace-normal leading-tight text-center"
                       >
-                        <RefreshCw className={`w-3.5 h-3.5 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
                         <span>Já realizei o pagamento no cartão (Verificar)</span>
                       </Button>
                     </div>
@@ -2977,7 +2977,7 @@ export default function GuestPortal() {
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-7 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center font-black text-sm">
+              <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center font-black text-sm shrink-0">
                 <Building2 className="w-4 h-4" />
               </div>
               <div>
@@ -3009,7 +3009,7 @@ export default function GuestPortal() {
           <div className="p-4 sm:p-5 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-sky-600 text-white flex items-center justify-center font-black text-xl shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-sky-600 text-white flex items-center justify-center font-black text-xl shadow-xs shrink-0">
                   {reservation.flatNumber}
                 </div>
                 <div>
@@ -3023,7 +3023,7 @@ export default function GuestPortal() {
               </div>
 
               {Boolean(accessCode && isPaid && ((data.isCheckinToday && (isPastOrExact14h || isFlatClean)) || reservation.status === "in_house" || reservation.status === "checkin")) && (
-                <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center gap-3 shadow-2xs">
+                <div className="p-3 bg-white rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
                       Senha Fechadura / Portaria
@@ -3039,7 +3039,7 @@ export default function GuestPortal() {
                     onClick={handleCopyKey}
                     className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center gap-1.5"
                   >
-                    {copiedKey ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <KeyRound className="w-3.5 h-3.5 text-amber-500" />}
+                    {copiedKey ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <KeyRound className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
                     <span>{copiedKey ? "Copiada!" : "Copiar"}</span>
                   </Button>
                 </div>
@@ -3130,7 +3130,7 @@ export default function GuestPortal() {
                           ))}
                         </div>
 
-                        <div className="flex items-center gap-2 pt-1">
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
                           <Input
                             value={customArrivalTime}
                             onChange={e => {
@@ -3138,7 +3138,7 @@ export default function GuestPortal() {
                               setSelectedArrivalTime("")
                             }}
                             placeholder="Ou digite o horário (ex: 16:30)"
-                            className="h-8 text-xs bg-white border-amber-200"
+                            className="h-8 text-xs bg-white border-amber-200 min-w-[160px] flex-1"
                           />
                           <Button
                             type="button"
@@ -3156,7 +3156,7 @@ export default function GuestPortal() {
                               variant="ghost"
                               size="sm"
                               onClick={() => setEditingArrival(false)}
-                              className="h-8 px-2 text-xs text-slate-500 hover:text-slate-700"
+                              className="h-8 px-2 text-xs text-slate-500 hover:text-slate-700 shrink-0"
                             >
                               Cancelar
                             </Button>
@@ -3324,9 +3324,9 @@ export default function GuestPortal() {
 
         {/* ── 4. Card: Rede Wi-Fi ──────────────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center font-black text-sm">
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center font-black text-sm shrink-0">
                 <Wifi className="w-4 h-4" />
               </div>
               <div>
@@ -3678,14 +3678,14 @@ export default function GuestPortal() {
                       )}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
                       {["whatsapp", "site", "site_direto", "direto", "balcao"].includes((reservation.channel || "").toLowerCase()) && (
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           onClick={handleOpenModifyModal}
-                          className="text-xs sm:text-sm font-bold rounded-xl h-10 px-4 border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-sky-800 flex items-center gap-2 shadow-2xs"
+                          className="w-full sm:w-auto justify-center text-xs sm:text-sm font-bold rounded-xl h-10 px-4 border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-sky-800 flex items-center gap-2 shadow-2xs"
                         >
                           <Calendar className="w-4.5 h-4.5 text-sky-600 shrink-0" />
                           <span>Modificar Reserva</span>
@@ -3695,7 +3695,7 @@ export default function GuestPortal() {
                         variant="destructive"
                         size="sm"
                         onClick={() => setCancelModalOpen(true)}
-                        className="text-xs sm:text-sm font-bold rounded-xl h-10 px-4 flex items-center gap-1.5"
+                        className="w-full sm:w-auto justify-center text-xs sm:text-sm font-bold rounded-xl h-10 px-4 flex items-center gap-1.5"
                       >
                         <Ban className="w-4 h-4 shrink-0" />
                         <span>Cancelar Reserva</span>
@@ -3777,12 +3777,12 @@ export default function GuestPortal() {
       >
         <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-5 sm:p-7 shadow-2xl">
           <DialogHeader className="border-b border-slate-100 pb-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center font-bold shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center font-bold shadow-2xs shrink-0">
                   <Calendar className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <DialogTitle className="text-base sm:text-lg font-black text-slate-900 leading-snug">
                     {modStep === "preview" && "Modificar Estadia & Hóspedes"}
                     {modStep === "checkout" && "Pagamento da Alteração"}
@@ -3910,18 +3910,18 @@ export default function GuestPortal() {
               {previewData && !previewLoading && (
                 <div className="space-y-3 pt-1">
                   {/* Badge de Disponibilidade */}
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                       Status do Calendário
                     </span>
                     {previewData.available ? (
                       <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                         <span>Disponível para o Período</span>
                       </Badge>
                     ) : (
                       <Badge className="bg-rose-600 text-white font-bold text-xs py-1 px-3 flex items-center gap-1.5">
-                        <Ban className="w-3.5 h-3.5" />
+                        <Ban className="w-3.5 h-3.5 shrink-0" />
                         <span>Indisponível / Conflito</span>
                       </Badge>
                     )}
@@ -3929,7 +3929,7 @@ export default function GuestPortal() {
 
                   {/* Detalhamento de Custos */}
                   <div className="p-4 bg-slate-50/90 border border-slate-200/80 rounded-2xl space-y-2.5">
-                    <div className="flex justify-between items-center text-slate-600">
+                    <div className="flex flex-wrap justify-between items-center gap-1 text-slate-600">
                       <span>Duração da Estadia:</span>
                       <span className="font-bold text-slate-900">
                         {previewData.originalDates?.nights} diárias → {previewData.newDates?.nights} diárias
@@ -3939,7 +3939,7 @@ export default function GuestPortal() {
                       </span>
                     </div>
 
-                    <div className="flex justify-between items-center text-slate-600">
+                    <div className="flex flex-wrap justify-between items-center gap-1 text-slate-600">
                       <span>Valor da Diária Base:</span>
                       <span className="font-bold text-slate-900">
                         R$ {Number(previewData.dailyRate).toFixed(2)}
@@ -3947,7 +3947,7 @@ export default function GuestPortal() {
                     </div>
 
                     {previewData.extraNights > 0 && (
-                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 font-bold text-sky-950">
+                      <div className="flex flex-wrap justify-between items-center gap-1 pt-2 border-t border-slate-200/60 font-bold text-sky-950">
                         <span>Acréscimo a Pagar:</span>
                         <span className="text-base text-sky-600 font-mono">
                           + R$ {Number(previewData.additionalAmountToPay).toFixed(2)}
@@ -3956,7 +3956,7 @@ export default function GuestPortal() {
                     )}
 
                     {previewData.refundAmount > 0 && (
-                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 font-bold text-emerald-950">
+                      <div className="flex flex-wrap justify-between items-center gap-1 pt-2 border-t border-slate-200/60 font-bold text-emerald-950">
                         <span>Estorno / Crédito Elegível:</span>
                         <span className="text-base text-emerald-600 font-mono">
                           - R$ {Number(previewData.refundAmount).toFixed(2)}
@@ -3965,7 +3965,7 @@ export default function GuestPortal() {
                     )}
 
                     {!previewData.requiresPayment && previewData.refundAmount <= 0 && (
-                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 font-bold text-slate-800">
+                      <div className="flex flex-wrap justify-between items-center gap-1 pt-2 border-t border-slate-200/60 font-bold text-slate-800">
                         <span>Acréscimo Financeiro:</span>
                         <span className="text-emerald-600 font-bold">R$ 0,00 (Sem custo adicional)</span>
                       </div>
@@ -4002,10 +4002,10 @@ export default function GuestPortal() {
                     type="button"
                     disabled={checkoutLoading}
                     onClick={handleProceedToCheckout}
-                    className="font-bold text-xs rounded-xl bg-sky-600 hover:bg-sky-700 text-white shadow-xs gap-1.5"
+                    className="h-auto min-h-10 py-2 px-4 font-bold text-xs rounded-xl bg-sky-600 hover:bg-sky-700 text-white whitespace-normal leading-tight text-center shadow-xs gap-1.5"
                   >
                     <span>{checkoutLoading ? "Gerando Cobrança..." : `Continuar para Pagamento (R$ ${Number(previewData.additionalAmountToPay).toFixed(2)})`}</span>
-                    <ArrowRight className="w-4 h-4" />
+                    <ArrowRight className="w-4 h-4 shrink-0" />
                   </Button>
                 )}
 
@@ -4014,9 +4014,9 @@ export default function GuestPortal() {
                     type="button"
                     disabled={checkoutLoading}
                     onClick={handleConfirmZeroCostModify}
-                    className="font-bold text-xs rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-1.5"
+                    className="h-auto min-h-10 py-2 px-4 font-bold text-xs rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white whitespace-normal leading-tight text-center shadow-xs gap-1.5"
                   >
-                    <CheckCircle2 className="w-4 h-4" />
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
                     <span>{checkoutLoading ? "Confirmando..." : "Confirmar Alteração de Datas"}</span>
                   </Button>
                 )}
@@ -4037,10 +4037,10 @@ export default function GuestPortal() {
               )}
 
               {/* Banner de Hold Provisório com Cronômetro */}
-              <div className="p-3.5 bg-sky-50 rounded-2xl border border-sky-200 flex items-center justify-between gap-3 text-sky-950">
-                <div className="flex items-center gap-2">
+              <div className="p-3.5 bg-sky-50 rounded-2xl border border-sky-200 flex flex-wrap items-center justify-between gap-3 text-sky-950">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   <Clock className="w-5 h-5 text-sky-600 shrink-0" />
-                  <div>
+                  <div className="min-w-0">
                     <span className="font-bold block text-xs">Bloqueio Provisório de 30 Minutos</span>
                     <span className="text-[11px] text-sky-800">Suas datas estão reservadas enquanto conclui o pagamento.</span>
                   </div>
@@ -4051,7 +4051,7 @@ export default function GuestPortal() {
               </div>
 
               {/* Caixa de Valor Adicional */}
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 flex items-center justify-between">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
                     Valor Adicional a Liquidar
@@ -4060,13 +4060,13 @@ export default function GuestPortal() {
                     Novas datas: {checkoutData.newDates?.checkinDate} até {checkoutData.newDates?.checkoutDate}
                   </span>
                 </div>
-                <span className="text-2xl font-black text-slate-900 font-mono">
+                <span className="text-xl sm:text-2xl font-black text-slate-900 font-mono">
                   R$ {Number(checkoutData.additionalAmountToPay).toFixed(2)}
                 </span>
               </div>
 
               {/* Seletor de Método de Pagamento */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setModPaymentMethod("pix")}
@@ -4076,7 +4076,7 @@ export default function GuestPortal() {
                       : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  <QrCode className="w-4 h-4" />
+                  <QrCode className="w-4 h-4 shrink-0" />
                   <span>PIX Instantâneo</span>
                 </button>
 
@@ -4089,7 +4089,7 @@ export default function GuestPortal() {
                       : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  <CreditCard className="w-4 h-4" />
+                  <CreditCard className="w-4 h-4 shrink-0" />
                   <span>Cartão de Crédito</span>
                 </button>
               </div>
@@ -4114,7 +4114,7 @@ export default function GuestPortal() {
 
                   {checkoutData.pixCopiaECola && (
                     <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
+                      <div className="flex flex-wrap justify-between items-center gap-1">
                         <span className="text-[11px] font-bold text-slate-700">PIX Copia e Cola:</span>
                         <button
                           type="button"
@@ -4125,7 +4125,7 @@ export default function GuestPortal() {
                           }}
                           className="text-xs font-bold text-sky-700 hover:text-sky-800 flex items-center gap-1"
                         >
-                          {modCopiedPix ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          {modCopiedPix ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Copy className="w-3.5 h-3.5 shrink-0" />}
                           <span>{modCopiedPix ? "Código Copiado!" : "Copiar Código PIX"}</span>
                         </button>
                       </div>
@@ -4141,17 +4141,17 @@ export default function GuestPortal() {
                           setModCopiedPix(true)
                           setTimeout(() => setModCopiedPix(false), 3000)
                         }}
-                        className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center justify-center gap-2 mt-2 shadow-xs"
+                        className="w-full h-auto min-h-10 py-2 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center justify-center gap-2 whitespace-normal leading-tight text-center mt-2 shadow-xs"
                       >
-                        {modCopiedPix ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        {modCopiedPix ? <Check className="w-4 h-4 text-emerald-400 shrink-0" /> : <Copy className="w-4 h-4 shrink-0" />}
                         <span>{modCopiedPix ? "Código PIX Copiado com Sucesso!" : "Copiar Código PIX"}</span>
                       </Button>
                     </div>
                   )}
 
                   {/* Feedback de Polling Ativo */}
-                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-center gap-2 text-emerald-800 font-semibold text-xs">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-center gap-2 text-emerald-800 font-semibold text-xs text-center">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600 shrink-0" />
                     <span>Aguardando confirmação bancária em tempo real...</span>
                   </div>
                 </div>
@@ -4173,16 +4173,16 @@ export default function GuestPortal() {
                       href={checkoutData.mpCheckoutUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full h-11 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
+                      className="w-full h-auto min-h-11 py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 whitespace-normal leading-tight text-center shadow-xs transition-colors"
                     >
-                      <CreditCard className="w-4 h-4" />
+                      <CreditCard className="w-4 h-4 shrink-0" />
                       <span>Pagar no Mercado Pago ↗</span>
                     </a>
                   )}
 
                   {/* Feedback de Polling Ativo */}
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center gap-2 text-slate-600 font-semibold text-xs text-center">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-600" />
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-600 shrink-0" />
                     <span>Após concluir o pagamento, esta tela atualizará automaticamente.</span>
                   </div>
                 </div>
@@ -4194,7 +4194,7 @@ export default function GuestPortal() {
                   variant="outline"
                   disabled={cancellingHold}
                   onClick={handleCancelHold}
-                  className="rounded-xl border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800 text-xs font-bold"
+                  className="h-auto min-h-10 py-2 px-4 rounded-xl border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800 text-xs font-bold whitespace-normal leading-tight text-center"
                 >
                   {cancellingHold ? "Cancelando Bloqueio..." : "Cancelar e Manter Datas Originais"}
                 </Button>
@@ -4203,7 +4203,7 @@ export default function GuestPortal() {
                   type="button"
                   variant="ghost"
                   onClick={() => setModStep("preview")}
-                  className="rounded-xl text-slate-600 text-xs font-semibold"
+                  className="h-auto min-h-10 py-2 px-4 rounded-xl text-slate-600 text-xs font-semibold whitespace-normal leading-tight text-center"
                 >
                   ← Voltar à Simulação
                 </Button>
@@ -4235,13 +4235,13 @@ export default function GuestPortal() {
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block border-b border-slate-200 pb-1">
                   Resumo da Hospedagem Atualizada
                 </span>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-1">
                   <span>Novo Período:</span>
                   <strong className="text-slate-900 font-bold">
                     {modifySuccessInfo.newCheckinDate} até {modifySuccessInfo.newCheckoutDate}
                   </strong>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-1">
                   <span>Acomodação:</span>
                   <strong className="text-slate-900 font-bold">
                     Flat {modifySuccessInfo.newFlatNumber}
@@ -4272,9 +4272,9 @@ export default function GuestPortal() {
                       setModifyModalOpen(false)
                       setLocation(modifySuccessInfo.reSignatureUrl || `/pre-checkin/${encodeURIComponent(reservation?.code || code)}?resign=1`)
                     }}
-                    className="w-full h-11 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                    className="w-full h-auto min-h-11 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm whitespace-normal leading-tight text-center shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
                   >
-                    <FileText className="w-4.5 h-4.5" />
+                    <FileText className="w-4.5 h-4.5 shrink-0" />
                     <span>Assinar Nova Ficha de Check-in Agora →</span>
                   </Button>
                 </div>
@@ -4285,7 +4285,7 @@ export default function GuestPortal() {
                   type="button"
                   variant="outline"
                   onClick={() => setModifyModalOpen(false)}
-                  className="w-full h-10 rounded-xl border-slate-200 text-slate-700 font-bold text-xs"
+                  className="w-full h-auto min-h-10 py-2 px-4 rounded-xl border-slate-200 text-slate-700 font-bold text-xs whitespace-normal leading-tight text-center"
                 >
                   Concluir e Voltar ao Painel
                 </Button>
@@ -4297,10 +4297,10 @@ export default function GuestPortal() {
 
       {/* ── Modal: Confirmação de Cancelamento ──────────────────────────── */}
       <Dialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
-        <DialogContent className="sm:max-w-md bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
+        <DialogContent className="sm:max-w-md bg-white border border-slate-200 text-slate-900 rounded-3xl p-5 sm:p-6 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="text-lg font-black text-rose-600 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
+              <AlertTriangle className="w-5 h-5 shrink-0" />
               Confirmar Cancelamento da Reserva
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">
@@ -4322,7 +4322,7 @@ export default function GuestPortal() {
                     ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
                     : "bg-rose-50 border-rose-200 text-rose-900"
                 }`}>
-                  <div className="flex items-center justify-between font-bold text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-1 font-bold text-sm">
                     <span>Reembolso Estimado:</span>
                     <span className="text-base font-black">
                       {cancelPol.isEligibleForRefund 
@@ -4402,12 +4402,12 @@ export default function GuestPortal() {
       <Dialog open={receiptModalOpen} onOpenChange={setReceiptModalOpen}>
         <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-5 sm:p-7 shadow-2xl">
           <DialogHeader className="border-b border-slate-100 pb-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200/80 flex items-center justify-center font-bold shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200/80 flex items-center justify-center font-bold shadow-2xs shrink-0">
                   <FileText className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <DialogTitle className="text-base sm:text-lg font-black text-slate-900 leading-snug">
                     Recibo Oficial de Pagamento
                   </DialogTitle>
@@ -4416,7 +4416,7 @@ export default function GuestPortal() {
                   </DialogDescription>
                 </div>
               </div>
-              <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3">
+              <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3 shrink-0">
                 ✓ PAGO & QUITADO
               </Badge>
             </div>
@@ -4447,23 +4447,23 @@ export default function GuestPortal() {
               <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
                 Identificação da Reserva
               </span>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Hóspede Titular:</span>
                 <span className="font-bold text-slate-900">{guestName}</span>
               </div>
               {reservation.guestDocument && (
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-1">
                   <span className="text-slate-500">CPF / Documento:</span>
                   <span className="font-mono font-semibold text-slate-800">{reservation.guestDocument}</span>
                 </div>
               )}
               {reservation.guestPhone && (
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-1">
                   <span className="text-slate-500">Telefone / WhatsApp:</span>
                   <span className="font-semibold text-slate-800">{formatPhoneDisplay(reservation.guestPhone)}</span>
                 </div>
               )}
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Código Localizador:</span>
                 <span className="font-mono font-bold text-sky-700">{reservation.code}</span>
               </div>
@@ -4474,19 +4474,19 @@ export default function GuestPortal() {
               <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
                 Acomodação & Estadia
               </span>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Unidade:</span>
                 <span className="font-bold text-slate-900">Apartamento {reservation.flatNumber} ({reservation.roomCategory || "Studio Executivo"})</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Check-in:</span>
                 <span className="font-semibold text-slate-800">{checkinFormatted} (a partir das 14:00)</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Check-out:</span>
                 <span className="font-semibold text-slate-800">{checkoutFormatted} (até as 12:00)</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Período Contratado:</span>
                 <span className="font-semibold text-slate-800">{nights} diária{nights > 1 ? "s" : ""} • {reservation.guestCount || 1} hóspede{(reservation.guestCount || 1) > 1 ? "s" : ""}</span>
               </div>
@@ -4497,7 +4497,7 @@ export default function GuestPortal() {
               <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
                 Detalhamento Financeiro & Liquidação
               </span>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-1">
                 <span className="text-slate-500">Forma de Liquidação:</span>
                 <span className="font-bold text-slate-900">
                   {isOta 
@@ -4510,7 +4510,7 @@ export default function GuestPortal() {
                 </span>
               </div>
               {reservation.paidAt && (
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-1">
                   <span className="text-slate-500">Data e Hora do Pagamento:</span>
                   <span className="font-semibold text-slate-800">
                     {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
@@ -4544,7 +4544,7 @@ export default function GuestPortal() {
             </div>
 
             {/* Caixa de Valor Total Quitado */}
-            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center justify-between">
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 block">
                   Total Liquidado
@@ -4553,7 +4553,7 @@ export default function GuestPortal() {
                   Saldo Restante: R$ 0,00
                 </span>
               </div>
-              <span className="text-2xl font-black text-emerald-800 font-mono">
+              <span className="text-xl sm:text-2xl font-black text-emerald-800 font-mono">
                 R$ {paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
               </span>
             </div>
@@ -4568,18 +4568,18 @@ export default function GuestPortal() {
               type="button"
               variant="outline"
               onClick={handleCopyReceipt}
-              className="h-11 rounded-2xl text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 flex-1"
+              className="h-auto min-h-11 py-2.5 px-4 rounded-2xl text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 whitespace-normal leading-tight text-center flex-1"
             >
-              {copiedReceipt ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-slate-500" />}
+              {copiedReceipt ? <Check className="w-4 h-4 text-emerald-600 shrink-0" /> : <Copy className="w-4 h-4 text-slate-500 shrink-0" />}
               <span>{copiedReceipt ? "Comprovante Copiado!" : "Copiar Dados"}</span>
             </Button>
 
             <Button
               type="button"
               onClick={handlePrintReceipt}
-              className="h-11 rounded-2xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 shadow-sm flex-1"
+              className="h-auto min-h-11 py-2.5 px-4 rounded-2xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 whitespace-normal leading-tight text-center shadow-sm flex-1"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4 shrink-0" />
               <span>Imprimir / Salvar em PDF</span>
             </Button>
           </DialogFooter>
@@ -4588,10 +4588,10 @@ export default function GuestPortal() {
 
       {/* ── Modal: Regras da Casa & Contrato ────────────────────────────── */}
       <Dialog open={termsModalOpen} onOpenChange={setTermsModalOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-5 sm:p-6 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
-              <ShieldCheck className="w-5 h-5 text-sky-600" />
+              <ShieldCheck className="w-5 h-5 text-sky-600 shrink-0" />
               Regras dos Flats & Contrato de Hospedagem
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">

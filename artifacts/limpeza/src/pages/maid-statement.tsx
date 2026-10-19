@@ -513,7 +513,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                 })}
                 disabled={sendingWa}
                 title="Clique: enviar via Z-API | Segure 2s: abrir no WhatsApp Web"
-                className="h-11 sm:h-12 rounded-2xl font-black text-xs gap-2 bg-[#25d366] hover:bg-[#20bd5a] text-white shadow-md shadow-black/20 transition-transform active:scale-[0.98] flex-1"
+                className="w-full sm:w-auto sm:flex-1 h-auto min-h-11 sm:min-h-12 py-2.5 rounded-2xl font-black text-xs gap-2 bg-[#25d366] hover:bg-[#20bd5a] text-white shadow-md shadow-black/20 transition-transform active:scale-[0.98]"
               >
                 <Send className="w-4 h-4 shrink-0" />
                 <span>{sendingWa ? "Enviando Extrato..." : "Enviar Extrato no WhatsApp"}</span>
@@ -529,7 +529,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       setPayDescription("")
                       setPayModalOpen(true)
                     }}
-                    className="h-11 sm:h-12 px-4 rounded-2xl text-xs font-black gap-1.5 bg-white text-slate-900 hover:bg-slate-100 shadow-md transition-transform active:scale-[0.98]"
+                    className="h-auto min-h-11 sm:min-h-12 py-2 px-3 sm:px-4 rounded-2xl text-xs font-black gap-1.5 bg-white text-slate-900 hover:bg-slate-100 shadow-md transition-transform active:scale-[0.98]"
                   >
                     <Banknote className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>Pagar PIX</span>
@@ -542,7 +542,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       setPayDescription("")
                       setPayModalOpen(true)
                     }}
-                    className="h-11 sm:h-12 px-4 rounded-2xl text-xs font-black gap-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md transition-transform active:scale-[0.98]"
+                    className="h-auto min-h-11 sm:min-h-12 py-2 px-3 sm:px-4 rounded-2xl text-xs font-black gap-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md transition-transform active:scale-[0.98]"
                   >
                     <Gift className="w-4 h-4 text-amber-900 shrink-0" />
                     <span>Dar Vale</span>
@@ -1153,14 +1153,14 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                   type="button" 
                   variant="outline" 
                   onClick={() => setPayModalOpen(false)} 
-                  className="rounded-xl h-10 text-xs font-bold"
+                  className="w-full sm:w-auto rounded-xl h-auto min-h-10 py-2 text-xs font-bold"
                 >
                   Cancelar
                 </Button>
                 <Button
                   type="submit"
                   disabled={payingLoading || !payAmount}
-                  className={`rounded-xl h-10 text-xs font-black gap-1.5 shadow-md flex-1 ${
+                  className={`w-full sm:w-auto sm:flex-1 rounded-xl h-auto min-h-10 py-2 text-xs font-black gap-1.5 shadow-md ${
                     payType === "advance" 
                       ? "bg-amber-500 hover:bg-amber-600 text-white" 
                       : "bg-emerald-600 hover:bg-emerald-700 text-white"

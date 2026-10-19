@@ -865,7 +865,7 @@ export default function BookingEngine() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               size="sm"
@@ -935,20 +935,20 @@ export default function BookingEngine() {
 
       {/* ── Top Navigation Bar (Hotel Boutique: Limpo & Reduzido) ───────── */}
       <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/70 px-4 sm:px-8 py-2.5 sm:py-3 w-full max-w-full">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
           {/* Logo CorpFlats */}
           <div 
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            className="flex items-center gap-2.5 cursor-pointer group shrink-0"
+            className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group min-w-0"
           >
             {siteConfig?.branding?.logoImage ? (
               <img 
                 src={siteConfig.branding.logoImage} 
                 alt={brandName} 
-                className="w-8 h-8 object-contain rounded-lg"
+                className="w-8 h-8 object-contain rounded-lg shrink-0"
               />
             ) : (
-              <div className="w-8 h-8 rounded-lg bg-sky-600 group-hover:bg-sky-700 text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-xs transition-colors">
+              <div className="w-8 h-8 rounded-lg bg-sky-600 group-hover:bg-sky-700 text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-xs transition-colors shrink-0">
                 CF
               </div>
             )}
@@ -1230,7 +1230,7 @@ export default function BookingEngine() {
       </header>
 
       {/* ── Benefícios (Apresentados após a reserva, discretos & naturais) ── */}
-      <section id="beneficios" className="max-w-md sm:max-w-lg mx-auto px-4 py-8 sm:py-10">
+      <section id="beneficios" className="w-full min-w-0 max-w-md sm:max-w-lg mx-auto px-4 py-8 sm:py-10">
         <div className="grid grid-cols-2 gap-3 sm:gap-4 text-slate-700">
           <div className="flex items-center gap-2.5">
             <Wifi className="w-4 h-4 text-sky-600 shrink-0" />
@@ -1252,7 +1252,7 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Galeria de Fotos dos Ambientes ───────────────────────────────── */}
-      <section id="galeria" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 space-y-6">
+      <section id="galeria" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 space-y-6">
         <div className="text-center space-y-1">
           <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
             O Flat Soho Residence
@@ -1262,18 +1262,18 @@ export default function BookingEngine() {
           </p>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           <div className="relative h-64 sm:h-96 rounded-2xl overflow-hidden bg-slate-200 shadow-sm">
             <img
               src={galleryList[activePhotoIdx]?.imageUrl || galleryList[0]?.imageUrl}
               alt={galleryList[activePhotoIdx]?.title || "Flat CorpFlats"}
               className="w-full h-full object-cover transition-all duration-500"
             />
-            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-white text-xs font-semibold">
-              <span className="bg-slate-900/75 backdrop-blur-md px-3 py-1 rounded-lg">
+            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 text-white text-xs font-semibold">
+              <span className="bg-slate-900/75 backdrop-blur-md px-3 py-1 rounded-lg min-w-0 truncate">
                 {galleryList[activePhotoIdx]?.title || "Ambiente Arejado"}
               </span>
-              <span className="bg-slate-900/75 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px]">
+              <span className="bg-slate-900/75 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] shrink-0">
                 {activePhotoIdx + 1} / {galleryList.length}
               </span>
             </div>
@@ -1297,7 +1297,7 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Detalhes do Flat & Estrutura ─────────────────────────────────── */}
-      <section id="detalhes" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+      <section id="detalhes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
           <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
             Flats Sofisticados no Soho Residence
@@ -1337,7 +1337,7 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Comodidades do Condomínio ─────────────────────────────────────── */}
-      <section id="comodidades" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+      <section id="comodidades" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
           <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
             Comodidades da Hospedagem
@@ -1366,7 +1366,7 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Localização Privilegiada ─────────────────────────────────────── */}
-      <section id="localizacao" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-4">
+      <section id="localizacao" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-4">
         <div className="space-y-1">
           <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
             Localização Privilegiada
@@ -1404,8 +1404,8 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Avaliações dos Hóspedes ───────────────────────────────────────── */}
-      <section id="avaliacoes" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
-        <div className="flex items-center justify-between">
+      <section id="avaliacoes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
               Experiências dos Hóspedes
@@ -1414,7 +1414,7 @@ export default function BookingEngine() {
               Avaliação média 4.9 ★ com conforto e excelência.
             </p>
           </div>
-          <div className="flex items-center gap-1 text-amber-400">
+          <div className="flex items-center gap-1 text-amber-400 shrink-0">
             {[...Array(5)].map((_, i) => (
               <Star key={i} className="w-4 h-4 fill-amber-400" />
             ))}
@@ -1447,7 +1447,7 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Perguntas Frequentes (FAQ) ───────────────────────────────────── */}
-      <section id="faq" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+      <section id="faq" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
           <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
             Dúvidas Frequentes
@@ -1484,7 +1484,7 @@ export default function BookingEngine() {
       </section>
 
       {/* ── Rodapé Clean ─────────────────────────────────────────────────── */}
-      <footer className="bg-white border-t border-slate-200/80 py-10 px-4 sm:px-8 text-xs text-slate-600 mt-12 pb-24 sm:pb-10">
+      <footer className="w-full min-w-0 bg-white border-t border-slate-200/80 py-10 px-4 sm:px-8 text-xs text-slate-600 mt-12 pb-24 sm:pb-10">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
           <div className="space-y-1">
             <div className="flex items-center justify-center sm:justify-start gap-2">
@@ -1498,19 +1498,19 @@ export default function BookingEngine() {
             </p>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-x-4 gap-y-2 text-xs">
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
               className="text-emerald-700 font-semibold hover:underline flex items-center gap-1"
             >
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <span>WhatsApp ({formatPhoneNumber(whatsappNumber)})</span>
             </a>
             <a
               href={`mailto:${siteConfig?.branding?.email || "reservas@corpflats.com.br"}`}
-              className="text-slate-600 hover:text-sky-600"
+              className="text-slate-600 hover:text-sky-600 break-all"
             >
               {siteConfig?.branding?.email || "reservas@corpflats.com.br"}
             </a>
@@ -1612,7 +1612,7 @@ export default function BookingEngine() {
                 </div>
 
                 {/* Alternativa via Chave CNPJ Banco Inter */}
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs bg-slate-50 p-2.5 rounded-xl">
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs bg-slate-50 p-2.5 rounded-xl">
                   <div className="text-left">
                     <span className="text-[10px] text-slate-500 font-semibold block">Chave Oficial (CNPJ Banco Inter):</span>
                     <span className="font-mono font-bold text-slate-800 text-xs">47.964.813/0001-65</span>
@@ -1666,8 +1666,8 @@ export default function BookingEngine() {
         <DialogContent className="sm:max-w-md bg-white border border-slate-200 rounded-3xl p-6 text-center space-y-4">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-slate-900 flex items-center justify-center gap-2">
-              <CreditCard className="w-6 h-6 text-sky-600" />
-              Pagamento com Cartão de Crédito
+              <CreditCard className="w-6 h-6 text-sky-600 shrink-0" />
+              <span>Pagamento com Cartão de Crédito</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">
               Checkout Seguro do Mercado Pago (à vista ou parcelado com juros do cartão).
@@ -1676,33 +1676,33 @@ export default function BookingEngine() {
 
           <div className="space-y-4 py-2 text-left">
             <div className="p-4 rounded-2xl bg-sky-50/80 border border-sky-200 space-y-2">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-600 font-medium">Código da Reserva:</span>
-                <span className="font-mono font-black text-sky-950">{mpResData?.code || mpResData?.reservationCode || "CORPFLATS"}</span>
+              <div className="flex justify-between items-center gap-2 text-xs">
+                <span className="text-slate-600 font-medium shrink-0">Código da Reserva:</span>
+                <span className="font-mono font-black text-sky-950 text-right">{mpResData?.code || mpResData?.reservationCode || "CORPFLATS"}</span>
               </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-600 font-medium">Hóspede:</span>
-                <span className="font-bold text-slate-900">{guestName}</span>
+              <div className="flex justify-between items-center gap-2 text-xs">
+                <span className="text-slate-600 font-medium shrink-0">Hóspede:</span>
+                <span className="font-bold text-slate-900 text-right break-words">{guestName}</span>
               </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-600 font-medium">Período:</span>
-                <span className="font-bold text-slate-900">{nights} {nights === 1 ? 'noite' : 'noites'}</span>
+              <div className="flex justify-between items-center gap-2 text-xs">
+                <span className="text-slate-600 font-medium shrink-0">Período:</span>
+                <span className="font-bold text-slate-900 text-right">{nights} {nights === 1 ? 'noite' : 'noites'}</span>
               </div>
-              <div className="border-t border-sky-200/80 pt-2 flex justify-between items-center">
+              <div className="border-t border-sky-200/80 pt-2 flex justify-between items-center gap-2">
                 <span className="text-xs font-black text-slate-900">Total à Vista:</span>
-                <span className="text-lg font-black text-sky-700">R$ {totalAmount.toLocaleString('pt-BR')}</span>
+                <span className="text-lg font-black text-sky-700 shrink-0">R$ {totalAmount.toLocaleString('pt-BR')}</span>
               </div>
             </div>
 
             {mpInitPoint && (
               <div className="space-y-3">
                 <Button
-                  className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-sm h-12 rounded-2xl shadow-md gap-2 flex items-center justify-center"
+                  className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-2xl shadow-md gap-2 flex items-center justify-center"
                   onClick={() => window.open(mpInitPoint, "_blank")}
                 >
-                  <CreditCard className="w-5 h-5" />
+                  <CreditCard className="w-5 h-5 shrink-0" />
                   <span>Ir para Pagamento com Cartão</span>
-                  <ExternalLink className="w-4 h-4 opacity-75" />
+                  <ExternalLink className="w-4 h-4 opacity-75 shrink-0" />
                 </Button>
                 
                 <p className="text-[11px] text-center text-slate-500 font-medium">

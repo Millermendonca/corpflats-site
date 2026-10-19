@@ -123,10 +123,10 @@ export function WelcomeMusicPlayer({
   return (
     <Card className="overflow-hidden border border-border/60 shadow-sm transition-all hover:shadow-md bg-card/95">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div
-              className={`flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors ${
                 state.isPlaying
                   ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30'
                   : 'bg-muted text-muted-foreground'
@@ -134,11 +134,11 @@ export function WelcomeMusicPlayer({
             >
               <Music className={`h-6 w-6 ${state.isPlaying ? 'animate-bounce' : ''}`} />
             </div>
-            <div>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                Trilha Sonora de Boas-Vindas
+            <div className="min-w-0">
+              <CardTitle className="text-base font-semibold flex flex-wrap items-center gap-2">
+                <span>Trilha Sonora de Boas-Vindas</span>
                 {state.isPlaying && (
-                  <span className="flex h-2 w-2 rounded-full bg-purple-500 animate-ping" />
+                  <span className="flex h-2 w-2 rounded-full bg-purple-500 animate-ping shrink-0" />
                 )}
               </CardTitle>
               <CardDescription className="text-xs">
@@ -149,7 +149,7 @@ export function WelcomeMusicPlayer({
 
           <Badge
             variant={state.isPlaying ? 'default' : 'secondary'}
-            className={state.isPlaying ? 'bg-purple-600 text-white' : ''}
+            className={`shrink-0 ${state.isPlaying ? 'bg-purple-600 text-white' : ''}`}
           >
             {state.isPlaying ? 'Tocando Agora' : 'Pausado'}
           </Badge>

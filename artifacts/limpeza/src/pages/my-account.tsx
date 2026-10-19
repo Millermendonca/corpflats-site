@@ -432,37 +432,37 @@ export default function MyAccount() {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
       {/* Top Navbar do Hóspede */}
       <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
-        <div className="max-w-5xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto px-4 sm:px-8 min-h-16 py-2 flex items-center justify-between gap-2">
           <div 
             onClick={() => setLocation("/reservar")} 
-            className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity"
+            className="flex items-center gap-2 sm:gap-2.5 cursor-pointer hover:opacity-90 transition-opacity min-w-0"
           >
-            <div className="w-9 h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black text-sm shadow-xs">
+            <div className="w-9 h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black text-sm shadow-xs shrink-0">
               CF
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="font-black text-base tracking-tight text-slate-900 dark:text-slate-100">CorpFlats</span>
               <span className="hidden sm:inline-block text-[11px] text-slate-400 ml-2 font-medium">Área do Hóspede</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setLocation("/reservar")}
-              className="text-xs font-bold gap-1.5 h-9 rounded-xl border-slate-200 hover:border-slate-300 dark:border-slate-800"
+              className="text-xs font-bold gap-1.5 h-auto min-h-9 py-1.5 px-2.5 sm:px-3 rounded-xl border-slate-200 hover:border-slate-300 dark:border-slate-800"
             >
-              <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+              <ArrowRight className="w-3.5 h-3.5 rotate-180 shrink-0" />
               <span>Voltar a Reservas</span>
             </Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={handleLogout}
-              className="text-xs font-bold gap-1.5 h-9 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              className="text-xs font-bold gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 shrink-0"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden sm:inline">Sair</span>
             </Button>
           </div>
@@ -472,12 +472,12 @@ export default function MyAccount() {
       <main className="flex-1">
         <div className="p-4 sm:p-8 max-w-5xl mx-auto space-y-6 pb-28">
         {/* Header do Usuário */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white flex items-center justify-center font-black text-xl shadow-md">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 w-full sm:w-auto">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0">
               {user?.name ? user.name.charAt(0).toUpperCase() : <User className="w-7 h-7" />}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight break-words">
                   {user?.name || "Minha Conta"}
@@ -497,7 +497,7 @@ export default function MyAccount() {
               variant="outline"
               size="sm"
               onClick={() => setLocation("/reservar")}
-              className="text-xs font-bold gap-1.5 h-9 rounded-xl flex-1 sm:flex-none border-slate-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300"
+              className="text-xs font-bold gap-1.5 h-auto min-h-9 py-2 rounded-xl flex-1 sm:flex-none border-slate-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300"
             >
               <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
               <span>Fazer Reserva</span>
@@ -507,7 +507,7 @@ export default function MyAccount() {
               variant="outline"
               size="sm"
               onClick={handleLogout}
-              className="text-xs font-bold gap-1.5 h-9 rounded-xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors shrink-0"
+              className="text-xs font-bold gap-1.5 h-auto min-h-9 py-2 rounded-xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors shrink-0"
             >
               <LogOut className="w-3.5 h-3.5 shrink-0" />
               <span>Sair</span>
@@ -541,8 +541,8 @@ export default function MyAccount() {
             <Card className="rounded-3xl border-slate-200 dark:border-slate-800 shadow-xs">
               <CardHeader>
                 <CardTitle className="text-lg font-black flex items-center gap-2">
-                  <User className="w-5 h-5 text-sky-600" />
-                  Dados Pessoais & Documentação
+                  <User className="w-5 h-5 text-sky-600 shrink-0" />
+                  <span>Dados Pessoais & Documentação</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
                   Mantenha seus dados atualizados para agilizar o check-in automático, emissão de FNRH/NFS-e e liberação de portaria.
@@ -553,7 +553,7 @@ export default function MyAccount() {
                   {/* Dados Pessoais Principais */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">Nome Completo *</Label>
+                      <Label className="text-xs font-semibold">Nome Completo *</Label>
                       <Input
                         value={name}
                         onChange={e => setName(e.target.value)}
@@ -564,7 +564,7 @@ export default function MyAccount() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">E-mail de Acesso & Contato *</Label>
+                      <Label className="text-xs font-semibold">E-mail de Acesso & Contato *</Label>
                       <Input
                         type="email"
                         value={email}
@@ -667,9 +667,9 @@ export default function MyAccount() {
 
                   {/* Seção de Endereço Completo com Busca de CEP */}
                   <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-sky-600" />
+                        <MapPin className="w-4 h-4 text-sky-600 shrink-0" />
                         <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 uppercase tracking-wider">
                           Endereço Residencial (FNRH & Nota Fiscal)
                         </h4>
@@ -763,7 +763,7 @@ export default function MyAccount() {
                   {/* Seção de Veículo para Garagem */}
                   <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
                     <div className="flex items-center gap-2">
-                      <Car className="w-4 h-4 text-sky-600" />
+                      <Car className="w-4 h-4 text-sky-600 shrink-0" />
                       <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 uppercase tracking-wider">
                         Veículo & Estacionamento (Liberação de Portaria)
                       </h4>
@@ -811,7 +811,7 @@ export default function MyAccount() {
                   {/* Seção de Faturamento PJ / Empresas */}
                   <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
                     <div className="flex items-center gap-2">
-                      <Briefcase className="w-4 h-4 text-sky-600" />
+                      <Briefcase className="w-4 h-4 text-sky-600 shrink-0" />
                       <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 uppercase tracking-wider">
                         Dados de Faturamento & Emissão de NFS-e (PJ)
                       </h4>
@@ -860,9 +860,9 @@ export default function MyAccount() {
                     <Button
                       type="submit"
                       disabled={savingProfile}
-                      className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs px-6 h-9 rounded-xl shadow-md gap-1.5"
+                      className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs px-6 h-auto min-h-9 py-2 rounded-xl shadow-md gap-1.5 w-full sm:w-auto"
                     >
-                      <Save className="w-3.5 h-3.5" />
+                      <Save className="w-3.5 h-3.5 shrink-0" />
                       <span>{savingProfile ? "Salvando..." : "Salvar Alterações"}</span>
                     </Button>
                   </div>
@@ -877,8 +877,8 @@ export default function MyAccount() {
             <Card className="rounded-3xl border-slate-200 dark:border-slate-800 shadow-xs">
               <CardHeader>
                 <CardTitle className="text-lg font-black flex items-center gap-2">
-                  <Fingerprint className="w-5 h-5 text-sky-600" />
-                  Acesso com Biometria & Passkeys (FIDO2)
+                  <Fingerprint className="w-5 h-5 text-sky-600 shrink-0" />
+                  <span>Acesso com Biometria & Passkeys (FIDO2)</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
                   Entre na sua conta sem digitar senhas, utilizando o Touch ID, Face ID ou Windows Hello do seu aparelho.
@@ -903,9 +903,9 @@ export default function MyAccount() {
                   <Button
                     onClick={handleAddPasskey}
                     disabled={registeringPasskey}
-                    className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-9 px-4 rounded-xl shadow-xs gap-1.5 shrink-0 w-full sm:w-auto"
+                    className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-auto min-h-9 py-2 px-4 rounded-xl shadow-xs gap-1.5 shrink-0 w-full sm:w-auto"
                   >
-                    <Fingerprint className="w-4 h-4" />
+                    <Fingerprint className="w-4 h-4 shrink-0" />
                     <span>{registeringPasskey ? "Registrando..." : "Cadastrar este Dispositivo"}</span>
                   </Button>
                 </div>
@@ -916,8 +916,8 @@ export default function MyAccount() {
             <Card className="rounded-3xl border-slate-200 dark:border-slate-800 shadow-xs">
               <CardHeader>
                 <CardTitle className="text-lg font-black flex items-center gap-2">
-                  <KeyRound className="w-5 h-5 text-sky-600" />
-                  Alterar Senha de Acesso
+                  <KeyRound className="w-5 h-5 text-sky-600 shrink-0" />
+                  <span>Alterar Senha de Acesso</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
                   Crie uma senha forte e única para proteger seus dados e reservas.
@@ -958,20 +958,20 @@ export default function MyAccount() {
                     />
                   </div>
 
-                  <div className="flex items-center justify-between pt-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="text-[11px] text-slate-500 flex items-center gap-1 hover:text-slate-800"
                     >
-                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {showPassword ? <EyeOff className="w-3.5 h-3.5 shrink-0" /> : <Eye className="w-3.5 h-3.5 shrink-0" />}
                       <span>{showPassword ? "Ocultar" : "Mostrar"} senhas</span>
                     </button>
 
                     <Button
                       type="submit"
                       disabled={savingPassword || !newPassword}
-                      className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 h-9 rounded-xl"
+                      className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 h-auto min-h-9 py-2 rounded-xl"
                     >
                       {savingPassword ? "Atualizando..." : "Salvar Nova Senha"}
                     </Button>
@@ -986,8 +986,8 @@ export default function MyAccount() {
             <Card className="rounded-3xl border-slate-200 dark:border-slate-800 shadow-xs">
               <CardHeader>
                 <CardTitle className="text-lg font-black flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-sky-600" />
-                  Histórico de Estadias & Reservas
+                  <Calendar className="w-5 h-5 text-sky-600 shrink-0" />
+                  <span>Histórico de Estadias & Reservas</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
                   Acompanhe seus flats reservados, códigos de fechadura digital e comprovantes.
@@ -1001,16 +1001,16 @@ export default function MyAccount() {
                         key={r.id || idx}
                         className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
                       >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <Badge className="bg-sky-600 text-white font-bold text-xs">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge className="bg-sky-600 text-white font-bold text-xs shrink-0">
                               Flat {r.flatNumber || r.roomNumber}
                             </Badge>
                             <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
                               {r.checkinDate || r.checkIn} até {r.checkoutDate || r.checkOut}
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-500">
+                          <p className="text-[11px] text-slate-500 break-words">
                             Hóspede: {r.guestName} • Valor: R$ {r.totalAmount || r.totalPrice || "---"}
                           </p>
                         </div>
@@ -1039,10 +1039,10 @@ export default function MyAccount() {
                             size="sm"
                             variant="outline"
                             onClick={() => window.open(`/minha-reserva/${r.id || r.reservationCode || ""}`, "_blank")}
-                            className="text-xs font-bold gap-1 rounded-xl h-8"
+                            className="text-xs font-bold gap-1 rounded-xl h-auto min-h-8 py-1.5"
                           >
                             <span>Ver Detalhes</span>
-                            <ExternalLink className="w-3 h-3" />
+                            <ExternalLink className="w-3 h-3 shrink-0" />
                           </Button>
                         </div>
                       </div>
@@ -1054,7 +1054,7 @@ export default function MyAccount() {
                     <p className="text-xs text-slate-500 font-medium">Você ainda não possui reservas vinculadas a este e-mail.</p>
                     <Button
                       onClick={() => setLocation("/reservar")}
-                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-9 px-4 rounded-xl shadow-xs"
+                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-auto min-h-9 py-2 px-4 rounded-xl shadow-xs"
                     >
                       Reservar um Flat Agora
                     </Button>
@@ -1069,8 +1069,8 @@ export default function MyAccount() {
             <Card className="rounded-3xl border-slate-200 dark:border-slate-800 shadow-xs">
               <CardHeader>
                 <CardTitle className="text-lg font-black flex items-center gap-2">
-                  <Lock className="w-5 h-5 text-sky-600" />
-                  Direitos do Titular & LGPD (Lei Geral de Proteção de Dados)
+                  <Lock className="w-5 h-5 text-sky-600 shrink-0" />
+                  <span>Direitos do Titular & LGPD (Lei Geral de Proteção de Dados)</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
                   Você tem controle total sobre os seus dados pessoais armazenados na plataforma CorpFlats.
@@ -1089,9 +1089,9 @@ export default function MyAccount() {
                       variant="outline"
                       size="sm"
                       onClick={exportUserData}
-                      className="text-xs font-bold gap-1.5 h-8 rounded-xl shrink-0 w-full sm:w-auto"
+                      className="text-xs font-bold gap-1.5 h-auto min-h-8 py-1.5 rounded-xl shrink-0 w-full sm:w-auto"
                     >
-                      <Download className="w-3.5 h-3.5 text-sky-600" />
+                      <Download className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                       <span>Baixar Dados</span>
                     </Button>
                   </div>
@@ -1109,9 +1109,9 @@ export default function MyAccount() {
                       variant="destructive"
                       size="sm"
                       onClick={() => setDeleteModalOpen(true)}
-                      className="text-xs font-bold gap-1.5 h-8 rounded-xl shrink-0 w-full sm:w-auto"
+                      className="text-xs font-bold gap-1.5 h-auto min-h-8 py-1.5 rounded-xl shrink-0 w-full sm:w-auto"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5 shrink-0" />
                       <span>Excluir Conta</span>
                     </Button>
                   </div>
@@ -1126,22 +1126,22 @@ export default function MyAccount() {
           <DialogContent className="sm:max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black text-rose-600 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5" />
-                Confirmar Exclusão de Conta
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <span>Confirmar Exclusão de Conta</span>
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-500">
                 Tem certeza que deseja excluir sua conta? Esta ação é irreversível e removerá todas as suas credenciais de login.
               </DialogDescription>
             </DialogHeader>
-            <DialogFooter className="gap-2 sm:gap-0 pt-3">
-              <Button variant="outline" onClick={() => setDeleteModalOpen(false)} className="rounded-xl">
+            <DialogFooter className="gap-2 pt-3">
+              <Button variant="outline" onClick={() => setDeleteModalOpen(false)} className="rounded-xl w-full sm:w-auto">
                 Cancelar
               </Button>
               <Button
                 variant="destructive"
                 onClick={handleDeleteAccount}
                 disabled={deletingAccount}
-                className="font-bold text-xs rounded-xl"
+                className="font-bold text-xs rounded-xl w-full sm:w-auto"
               >
                 {deletingAccount ? "Excluindo..." : "Sim, Excluir Minha Conta"}
               </Button>

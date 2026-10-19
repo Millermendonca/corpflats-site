@@ -35,41 +35,41 @@ export default function SmartFlatPreview() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-40 border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="max-w-4xl mx-auto flex h-14 items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-3">
+        <div className="max-w-4xl mx-auto flex min-h-14 py-2 items-center justify-between gap-2 px-4 sm:px-6">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setLocation('/dashboard')}
-              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0"
             >
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline">Painel</span>
             </Button>
 
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-sm tracking-tight text-foreground flex items-center gap-1.5">
-                <Sparkles className="h-4 w-4 text-amber-500" />
-                Smart Flat Hub Sandbox
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+              <span className="font-bold text-xs sm:text-sm tracking-tight text-foreground flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-amber-500 shrink-0" />
+                <span>Smart Flat Hub Sandbox</span>
               </span>
-              <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30">
+              <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 shrink-0">
                 Preview Interno
               </Badge>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Badge variant="secondary" className="font-mono text-xs hidden sm:flex items-center gap-1">
-              <Shield className="h-3 w-3 text-emerald-600" />
-              Isolado de Hóspedes
+              <Shield className="h-3 w-3 text-emerald-600 shrink-0" />
+              <span>Isolado de Hóspedes</span>
             </Badge>
             <Button
               variant="outline"
               size="sm"
               onClick={() => setLocation('/')}
-              className="h-8 text-xs flex items-center gap-1"
+              className="h-8 text-xs flex items-center gap-1 shrink-0"
             >
-              <Home className="h-3.5 w-3.5" />
+              <Home className="h-3.5 w-3.5 shrink-0" />
               <span className="hidden sm:inline">Início</span>
             </Button>
           </div>

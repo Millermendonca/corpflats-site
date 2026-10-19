@@ -45,10 +45,10 @@ export function SandboxToolbar({
     <div className="rounded-xl border-2 border-dashed border-amber-500/50 bg-amber-50/70 dark:bg-amber-950/20 p-3.5 space-y-3 shadow-xs">
       {/* Top row: Developer badge & Flat selector */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 pb-2.5">
-        <div className="flex items-center gap-2">
-          <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] flex items-center gap-1.5 uppercase tracking-wide">
-            <FlaskConical className="h-3.5 w-3.5" />
-            Laboratório & Sandbox de Testes
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] flex items-center gap-1.5 uppercase tracking-wide whitespace-normal h-auto py-1">
+            <FlaskConical className="h-3.5 w-3.5 shrink-0" />
+            <span>Laboratório & Sandbox de Testes</span>
           </Badge>
           <span className="text-xs text-amber-900/80 dark:text-amber-200/80 font-medium hidden sm:inline">
             Isolado de hóspedes reais em produção
@@ -57,7 +57,7 @@ export function SandboxToolbar({
 
         {/* Flat Selector */}
         <div className="flex items-center gap-1.5">
-          <Building className="h-3.5 w-3.5 text-muted-foreground" />
+          <Building className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-xs font-semibold text-muted-foreground">Flat:</span>
           <select
             value={selectedFlat}
@@ -123,7 +123,7 @@ export function SandboxToolbar({
             variant="outline"
             size="sm"
             onClick={() => onApplyScenario('eta_minus_45')}
-            className="h-8 text-[11px] bg-background/60 hover:bg-background border-amber-300 dark:border-amber-800 text-foreground flex items-center justify-center gap-1"
+            className="h-auto min-h-8 py-1.5 px-2 text-[11px] bg-background/60 hover:bg-background border-amber-300 dark:border-amber-800 text-foreground flex items-center justify-center gap-1"
             title="Mais de 30min antes do ETA: Deve bloquear acionamento de cafeteira e ar"
           >
             <span>-45m (Bloqueio)</span>
@@ -134,7 +134,7 @@ export function SandboxToolbar({
             variant="outline"
             size="sm"
             onClick={() => onApplyScenario('eta_minus_20')}
-            className="h-8 text-[11px] bg-background/60 hover:bg-background border-emerald-300 dark:border-emerald-800 text-foreground flex items-center justify-center gap-1"
+            className="h-auto min-h-8 py-1.5 px-2 text-[11px] bg-background/60 hover:bg-background border-emerald-300 dark:border-emerald-800 text-foreground flex items-center justify-center gap-1"
             title="Dentro da janela de 30min: Permite ligar aparelhos"
           >
             <span>-20m (Liberado)</span>
@@ -145,10 +145,10 @@ export function SandboxToolbar({
             variant="outline"
             size="sm"
             onClick={() => onApplyScenario('eta_plus_10')}
-            className="h-8 text-[11px] bg-background/60 hover:bg-background border-amber-400 dark:border-amber-700 text-foreground flex items-center justify-center gap-1"
+            className="h-auto min-h-8 py-1.5 px-2 text-[11px] bg-background/60 hover:bg-background border-amber-400 dark:border-amber-700 text-foreground flex items-center justify-center gap-1"
             title="Passou o ETA sem confirmação: Dispara aviso 'Você já chegou?'"
           >
-            <AlertTriangle className="h-3 w-3 text-amber-500" />
+            <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
             <span>+10m (Alerta)</span>
           </Button>
 
@@ -157,10 +157,10 @@ export function SandboxToolbar({
             variant="outline"
             size="sm"
             onClick={() => onApplyScenario('eta_plus_35')}
-            className="h-8 text-[11px] bg-background/60 hover:bg-background border-destructive/40 text-foreground flex items-center justify-center gap-1"
+            className="h-auto min-h-8 py-1.5 px-2 text-[11px] bg-background/60 hover:bg-background border-destructive/40 text-foreground flex items-center justify-center gap-1"
             title="Passou 30min pós-ETA sem check-in: Desliga aparelhos por segurança"
           >
-            <PowerOff className="h-3 w-3 text-destructive" />
+            <PowerOff className="h-3 w-3 text-destructive shrink-0" />
             <span>+35m (Corte)</span>
           </Button>
 
@@ -169,10 +169,10 @@ export function SandboxToolbar({
             variant="outline"
             size="sm"
             onClick={() => onApplyScenario('confirm_entrance')}
-            className="h-8 text-[11px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 flex items-center justify-center gap-1"
+            className="h-auto min-h-8 py-1.5 px-2 text-[11px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 flex items-center justify-center gap-1"
             title="Confirma entrada no flat e desarma fail-safe"
           >
-            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+            <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
             <span>Entrada OK</span>
           </Button>
 
@@ -181,10 +181,10 @@ export function SandboxToolbar({
             variant="outline"
             size="sm"
             onClick={() => onApplyScenario('reset')}
-            className="h-8 text-[11px] bg-background/60 hover:bg-background border-border flex items-center justify-center gap-1"
+            className="h-auto min-h-8 py-1.5 px-2 text-[11px] bg-background/60 hover:bg-background border-border flex items-center justify-center gap-1"
             title="Restaura estado inicial do flat"
           >
-            <RotateCcw className="h-3 w-3" />
+            <RotateCcw className="h-3 w-3 shrink-0" />
             <span>Resetar</span>
           </Button>
         </div>

@@ -71,16 +71,16 @@ export function AddToCalendar({ reservation, variant = "card", className = "" }:
     <Card className={`rounded-3xl border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden ${className}`}>
       <CardContent className="p-5 space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-sky-100 dark:bg-sky-950 text-sky-600 dark:text-sky-400 flex items-center justify-center font-bold shrink-0">
               <Calendar className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <h4 className="font-black text-sm text-slate-900 dark:text-slate-100">
                   Sincronizar com seu Calendário
                 </h4>
-                <Badge className="bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 text-[10px] font-bold">
+                <Badge className="bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 text-[10px] font-bold shrink-0">
                   Check-in 14:00
                 </Badge>
               </div>

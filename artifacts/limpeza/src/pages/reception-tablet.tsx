@@ -294,14 +294,14 @@ export default function ReceptionTablet() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans select-none pb-16">
       {/* Top Tablet Header */}
-      <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-20">
+      <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-20">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-lg">
+          <div className="w-11 h-11 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-lg shrink-0">
             <Building2 className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black text-white tracking-tight">CorpFlats • Portaria & Recepção</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">CorpFlats • Portaria & Recepção</h1>
               <Badge variant="outline" className="bg-emerald-950 text-emerald-400 border-emerald-800 text-[10px] font-bold">
                 Ao Vivo
               </Badge>
@@ -315,7 +315,7 @@ export default function ReceptionTablet() {
         {/* Big Live Digital Clock */}
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <div className="text-2xl font-black text-primary font-mono tracking-wider">
+            <div className="text-xl sm:text-2xl font-black text-primary font-mono tracking-wider">
               {format(currentTime, "HH:mm:ss")}
             </div>
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Horário de Brasília</div>
@@ -327,7 +327,7 @@ export default function ReceptionTablet() {
             onClick={fetchToday}
             className="border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 h-10 px-3 gap-1.5"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-primary" : ""}`} />
+            <RefreshCw className={`w-4 h-4 shrink-0 ${loading ? "animate-spin text-primary" : ""}`} />
             <span className="text-xs font-bold">Atualizar</span>
           </Button>
         </div>
@@ -336,40 +336,40 @@ export default function ReceptionTablet() {
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
         {/* Navigation Tabs (Big Touch Buttons) */}
-        <div className="grid grid-cols-3 gap-3 max-w-2xl mx-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 max-w-2xl mx-auto">
           <button
             onClick={() => setActiveTab("arrivals")}
-            className={`py-3.5 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
+            className={`py-3 sm:py-3.5 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
               activeTab === "arrivals"
                 ? "bg-primary text-primary-foreground ring-2 ring-primary/40 shadow-primary/20"
                 : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
             }`}
           >
-            <UserCheck className="w-4 h-4" />
+            <UserCheck className="w-4 h-4 shrink-0" />
             <span>Chegadas Hoje ({(data?.arrivals || []).length})</span>
           </button>
 
           <button
             onClick={() => setActiveTab("inHouse")}
-            className={`py-3.5 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
+            className={`py-3 sm:py-3.5 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
               activeTab === "inHouse"
                 ? "bg-primary text-primary-foreground ring-2 ring-primary/40 shadow-primary/20"
                 : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
             }`}
           >
-            <BedDouble className="w-4 h-4" />
+            <BedDouble className="w-4 h-4 shrink-0" />
             <span>No Hotel ({(data?.inHouse || []).length})</span>
           </button>
 
           <button
             onClick={() => setActiveTab("completed")}
-            className={`py-3.5 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
+            className={`py-3 sm:py-3.5 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
               activeTab === "completed"
                 ? "bg-primary text-primary-foreground ring-2 ring-primary/40 shadow-primary/20"
                 : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
             }`}
           >
-            <Undo2 className="w-4 h-4" />
+            <Undo2 className="w-4 h-4 shrink-0" />
             <span>Saídas Realizadas ({(data?.completedToday || []).length})</span>
           </button>
         </div>
@@ -377,9 +377,9 @@ export default function ReceptionTablet() {
         {/* Tab 1: Chegadas de Hoje */}
         {activeTab === "arrivals" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
               <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-primary" />
+                <Clock className="w-4 h-4 text-primary shrink-0" />
                 Check-ins Previstos para Hoje
               </h2>
               <span className="text-xs text-slate-400 font-medium">Toque no card para ver a Ficha de Check-in e fotos</span>
@@ -575,17 +575,17 @@ export default function ReceptionTablet() {
                               size="sm"
                               onClick={() => handleResendCheckinLink(item, 1)}
                               disabled={sendingLinkKey === `${item.id || item.code}-1`}
-                              className="w-full bg-emerald-600/90 hover:bg-emerald-600 text-white font-black text-xs h-11 rounded-xl gap-2 shadow-sm border border-emerald-500/30 transition-all flex items-center justify-center"
+                              className="w-full bg-emerald-600/90 hover:bg-emerald-600 text-white font-black text-xs h-auto min-h-11 py-2 px-3 rounded-xl gap-2 shadow-sm border border-emerald-500/30 transition-all flex items-center justify-center"
                               title="Disparar link oficial de check-in digital no WhatsApp do hóspede com 1 clique via Z-API"
                             >
                               {sendingLinkKey === `${item.id || item.code}-1` ? (
                                 <>
-                                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                                  <Loader2 className="w-4 h-4 animate-spin text-white shrink-0" />
                                   <span>Enviando link via WhatsApp...</span>
                                 </>
                               ) : (
                                 <>
-                                  <Send className="w-4 h-4 text-emerald-200" />
+                                  <Send className="w-4 h-4 text-emerald-200 shrink-0" />
                                   <span>Reenviar Check-in Digital (WhatsApp Z-API)</span>
                                 </>
                               )}
@@ -600,9 +600,9 @@ export default function ReceptionTablet() {
                                   setModalGuestIndex(1)
                                   setFnhrModalOpen(true)
                                 }}
-                                className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-12 rounded-xl"
+                                className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl"
                               >
-                                <FileText className="w-4 h-4 mr-1 text-primary" />
+                                <FileText className="w-4 h-4 mr-1 text-primary shrink-0" />
                                 <span>Ver Ficha / Link</span>
                               </Button>
 
@@ -617,10 +617,10 @@ export default function ReceptionTablet() {
                                     pendingGuests: pendingGuests
                                   })
                                 }}
-                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-600 hover:bg-amber-500 text-white"
+                                className="font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl gap-2 shadow-md transition-all bg-amber-600 hover:bg-amber-500 text-white"
                               >
                                 <Unlock className="w-4 h-4 shrink-0" />
-                                <span className="truncate">
+                                <span className="leading-snug">
                                   {enteredGuests.length > 0 
                                     ? `Liberar Entrada Restante (${clearedNotEntered.length})` 
                                     : `Liberar Entrada Parcial (${completedGuests}/${totalGuests})`}
@@ -634,10 +634,10 @@ export default function ReceptionTablet() {
                                   const names = pendingGuests.map((g: any) => g.name || `Hóspede ${g.index}`).join(", ")
                                   alert(`Check-in Digital Pendente:\n\nO(s) hóspede(s) ${names} ainda não concluíram o Pré-Check-in Digital.\n\nAcesse "Ver Ficha / Link" para enviar o link individual pelo WhatsApp. A entrada deles será liberada na portaria assim que preencherem.`)
                                 }}
-                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
+                                className="font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
                               >
                                 <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                                <span className="truncate">
+                                <span className="leading-snug">
                                   {enteredGuests.length > 0 
                                     ? `Aguardando Entrada (${enteredGuests.length}/${totalGuests} no apt)` 
                                     : `Check-in Pendente (0/${totalGuests})`}
@@ -650,27 +650,27 @@ export default function ReceptionTablet() {
                                 onClick={() => {
                                   alert(`Acesso Bloqueado na Portaria:\n\nNenhum hóspede concluiu o Pré-Check-in Digital nesta reserva ainda.\n\nPor favor, solicite aos hóspedes que preencham a ficha digital para liberação de entrada.`)
                                 }}
-                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
+                                className="font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
                               >
                                 <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                                <span className="truncate">Check-in Pendente (0/{totalGuests})</span>
+                                <span className="leading-snug">Check-in Pendente (0/{totalGuests})</span>
                               </Button>
                             ) : !isClean ? (
                               /* Caso 4: Quarto ainda em limpeza */
                               <Button 
                                 size="sm"
                                 onClick={() => handleCheckin(item)}
-                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-rose-950/80 hover:bg-rose-900/90 border border-rose-800/80 text-rose-300"
+                                className="font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl gap-2 shadow-md transition-all bg-rose-950/80 hover:bg-rose-900/90 border border-rose-800/80 text-rose-300"
                               >
                                 <Lock className="w-4 h-4 text-rose-400 shrink-0" />
-                                <span className="truncate">Quarto em Limpeza</span>
+                                <span className="leading-snug">Quarto em Limpeza</span>
                               </Button>
                             ) : (
                               /* Caso 5: Todos liberados e quarto limpo */
                               <Button 
                                 size="sm"
                                 onClick={() => handleCheckin(item)}
-                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-emerald-600 hover:bg-emerald-500 text-white font-black"
+                                className="font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl gap-2 shadow-md transition-all bg-emerald-600 hover:bg-emerald-500 text-white font-black"
                               >
                                 <Unlock className="w-4 h-4 shrink-0" />
                                 <span>Liberar Entrada</span>
@@ -691,9 +691,9 @@ export default function ReceptionTablet() {
         {/* Tab 2: Hóspedes Hospedados (In House) */}
         {activeTab === "inHouse" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
               <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
-                <BedDouble className="w-4 h-4 text-primary" />
+                <BedDouble className="w-4 h-4 text-primary shrink-0" />
                 Hóspedes Atualmente Hospedados ({(data?.inHouse || []).length})
               </h2>
               <span className="text-xs text-slate-400 font-medium">Toque em Check-out para registrar a saída</span>
@@ -894,9 +894,9 @@ export default function ReceptionTablet() {
         {/* Tab 3: Saídas Realizadas Hoje (Desfazer Permanente) */}
         {activeTab === "completed" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
               <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
-                <Undo2 className="w-4 h-4 text-primary" />
+                <Undo2 className="w-4 h-4 text-primary shrink-0" />
                 Check-outs Realizados Hoje ({(data?.completedToday || []).length})
               </h2>
               <span className="text-xs text-slate-400 font-medium">O botão de desfazer fica disponível o tempo todo</span>
@@ -1139,9 +1139,9 @@ export default function ReceptionTablet() {
 
                 {/* Status IA de Biometria e Documentos (se avaliado) */}
                 {currentGuest.aiVerification && (
-                  <div className="p-2.5 bg-sky-950/50 border border-sky-800/60 rounded-xl flex items-center justify-between text-[11px] text-sky-200">
+                  <div className="p-2.5 bg-sky-950/50 border border-sky-800/60 rounded-xl flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-sky-200">
                     <span className="flex items-center gap-1.5 font-bold">
-                      <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                      <Sparkles className="w-3.5 h-3.5 text-sky-400 shrink-0" />
                       Auditoria de Identidade por IA
                     </span>
                     <Badge className={currentGuest.aiVerification.facesMatch ? "bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]" : "bg-rose-950 text-rose-300 border-rose-800 text-[10px]"}>
@@ -1153,7 +1153,7 @@ export default function ReceptionTablet() {
                 {/* Photos Row */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
                       <span className="font-bold text-slate-300 block text-[10px] uppercase">Selfie com Documento</span>
                       {activeSelfie && (
                         <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
@@ -1188,7 +1188,7 @@ export default function ReceptionTablet() {
                   </div>
 
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
                       <span className="font-bold text-slate-300 block text-[10px] uppercase">Foto do Documento</span>
                       {activeDoc && (
                         <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
@@ -1225,7 +1225,7 @@ export default function ReceptionTablet() {
 
                 {/* Data Grid do Hóspede Selecionado */}
                 <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">Nome do Hóspede</span>
                       <span className="font-bold text-white text-sm">{currentGuest.name || selectedItem.guestName}</span>
@@ -1239,7 +1239,7 @@ export default function ReceptionTablet() {
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 font-bold text-emerald-400 hover:text-emerald-300 hover:underline"
                         >
-                          <MessageCircle className="w-3.5 h-3.5" />
+                          <MessageCircle className="w-3.5 h-3.5 shrink-0" />
                           <span>{currentGuest.phone || selectedItem.guestPhone}</span>
                         </a>
                       ) : (
@@ -1248,7 +1248,7 @@ export default function ReceptionTablet() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-800">
                     <div>
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">CPF / Documento</span>
                       <span className="font-semibold text-slate-200 font-mono">{currentGuest.cpf || currentGuest.document || selectedItem.guestDocument || "Não informado"}</span>
@@ -1275,8 +1275,8 @@ export default function ReceptionTablet() {
                   {selectedItem.vehicle && selectedItem.vehicle.plate && (
                     <div className="pt-2 border-t border-slate-800 space-y-1">
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">Veículo Autorizado (Garagem)</span>
-                      <div className="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                        <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                        <div className="flex flex-wrap items-center gap-2">
                           <Car className="w-4 h-4 text-sky-400 shrink-0" />
                           <span className="font-mono font-bold text-white bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-700 text-xs">
                             {selectedItem.vehicle.plate}
@@ -1302,19 +1302,19 @@ export default function ReceptionTablet() {
                   </span>
                   <div className="space-y-1.5">
                     {rawGuests.map((g: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px]">
+                      <div key={i} className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0">
                             {g.index || i + 1}
                           </span>
-                          <div>
-                            <div className="font-bold text-slate-200">{g.name || `Hóspede ${g.index || i + 1}`}</div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-200 break-words">{g.name || `Hóspede ${g.index || i + 1}`}</div>
                             <div className="text-[10px] text-slate-400">
                               {g.hasCompletedCheckin ? "✅ Check-in Digital Realizado" : "⏳ Pendente de Preenchimento"}
                             </div>
                           </div>
                         </div>
-                        <div>
+                        <div className="shrink-0">
                           {g.hasCompletedCheckin ? (
                             <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold">
                               Concluído
@@ -1369,7 +1369,7 @@ export default function ReceptionTablet() {
             )
           })()}
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="flex-wrap gap-2">
             {selectedItem && (() => {
               const rawGuests = selectedItem.guests && selectedItem.guests.length > 0
                 ? selectedItem.guests
@@ -1397,9 +1397,9 @@ export default function ReceptionTablet() {
                     <Button 
                       type="button" 
                       onClick={() => window.open(targetDownloadUrl, "_blank")}
-                      className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs gap-1.5"
+                      className="w-full sm:w-auto h-auto min-h-10 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs gap-1.5"
                     >
-                      <Download className="w-4 h-4" />
+                      <Download className="w-4 h-4 shrink-0" />
                       <span>Baixar PDF Assinado</span>
                     </Button>
                   )}
@@ -1411,16 +1411,16 @@ export default function ReceptionTablet() {
                       }
                     }}
                     disabled={sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}`}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5"
+                    className="w-full sm:w-auto h-auto min-h-10 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5"
                   >
                     {sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}` ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                         <span>Enviando...</span>
                       </>
                     ) : (
                       <>
-                        <Send className="w-4 h-4" />
+                        <Send className="w-4 h-4 shrink-0" />
                         <span>Reenviar via WhatsApp (Z-API)</span>
                       </>
                     )}
@@ -1433,15 +1433,15 @@ export default function ReceptionTablet() {
                         window.open(directUrl, "_blank")
                       }
                     }}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5"
+                    className="w-full sm:w-auto h-auto min-h-10 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5"
                   >
-                    <FileText className="w-4 h-4" />
+                    <FileText className="w-4 h-4 shrink-0" />
                     <span>Abrir Ficha Digital no Tablet</span>
                   </Button>
                   <Button 
                     type="button" 
                     onClick={() => setFnhrModalOpen(false)}
-                    className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
+                    className="w-full sm:w-auto h-auto min-h-10 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
                   >
                     Fechar
                   </Button>
@@ -1458,7 +1458,7 @@ export default function ReceptionTablet() {
           <DialogHeader className="pb-2 border-b border-slate-800">
             <div className="flex items-center justify-between">
               <DialogTitle className="flex items-center gap-2 text-sm font-bold text-slate-200">
-                <Eye className="w-4 h-4 text-primary" />
+                <Eye className="w-4 h-4 text-primary shrink-0" />
                 <span>{zoomedPhoto?.title || "Visualização da Foto"}</span>
               </DialogTitle>
             </div>
@@ -1474,7 +1474,7 @@ export default function ReceptionTablet() {
             </div>
           )}
 
-          <DialogFooter className="gap-2 sm:justify-between flex-row pt-2 border-t border-slate-800">
+          <DialogFooter className="gap-2 sm:justify-between pt-2 border-t border-slate-800">
             <Button
               type="button"
               variant="outline"
@@ -1485,16 +1485,16 @@ export default function ReceptionTablet() {
                   w?.document.write(`<img src="${zoomedPhoto.url}" style="max-width:100%;height:auto;display:block;margin:auto;background:#111;padding:20px;" />`)
                 }
               }}
-              className="text-xs bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 gap-1.5"
+              className="w-full sm:w-auto text-xs bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 gap-1.5"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
+              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
               <span>Abrir em Nova Aba</span>
             </Button>
             <Button
               type="button"
               size="sm"
               onClick={() => setZoomedPhoto(null)}
-              className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
+              className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
             >
               Fechar Visualização
             </Button>
@@ -1507,7 +1507,7 @@ export default function ReceptionTablet() {
         <DialogContent className="sm:max-w-md bg-slate-900 border-slate-800 text-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold text-amber-400">
-              <AlertTriangle className="w-5 h-5 text-amber-400" />
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
               <span>Confirmar Liberação de Entrada</span>
             </DialogTitle>
             <DialogDescription className="text-slate-400 text-xs">
@@ -1527,13 +1527,13 @@ export default function ReceptionTablet() {
             </p>
           </div>
 
-          <DialogFooter className="gap-2 sm:justify-between flex-row">
+          <DialogFooter className="gap-2 sm:justify-between">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => setForceCheckinItem(null)}
-              className="text-xs bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+              className="w-full sm:w-auto text-xs bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
             >
               Cancelar
             </Button>
@@ -1541,9 +1541,9 @@ export default function ReceptionTablet() {
               type="button"
               size="sm"
               onClick={() => forceCheckinItem && handleCheckin(forceCheckinItem, true)}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5"
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5"
             >
-              <Unlock className="w-4 h-4" />
+              <Unlock className="w-4 h-4 shrink-0" />
               <span>Confirmar & Liberar Entrada</span>
             </Button>
           </DialogFooter>
@@ -1555,7 +1555,7 @@ export default function ReceptionTablet() {
         <DialogContent className="sm:max-w-md bg-slate-900 border-slate-800 text-white shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold text-amber-400">
-              <AlertTriangle className="w-5 h-5 text-amber-400" />
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
               <span>Confirmar Entrada Parcial</span>
             </DialogTitle>
             <DialogDescription className="text-slate-400 text-xs">
@@ -1573,7 +1573,7 @@ export default function ReceptionTablet() {
                 </div>
                 <div className="space-y-1 pl-5">
                   {partialCheckinItem.pendingGuests.map((g: any) => (
-                    <div key={g.index} className="flex items-center justify-between font-semibold">
+                    <div key={g.index} className="flex flex-wrap items-center justify-between gap-1 font-semibold">
                       <span>• {g.name || `Hóspede ${g.index}`}</span>
                       <span className="text-[10px] text-amber-400/90 font-normal">Ficha digital não preenchida</span>
                     </div>
@@ -1589,7 +1589,7 @@ export default function ReceptionTablet() {
                 </div>
                 <div className="space-y-1 pl-5">
                   {partialCheckinItem.clearedGuests.map((g: any) => (
-                    <div key={g.index} className="flex items-center justify-between font-bold text-white">
+                    <div key={g.index} className="flex flex-wrap items-center justify-between gap-1 font-bold text-white">
                       <span>• {g.name || `Hóspede ${g.index}`}</span>
                       <Badge className="bg-emerald-600 text-white text-[9px] px-1.5 py-0">Check-in OK</Badge>
                     </div>
@@ -1621,13 +1621,13 @@ export default function ReceptionTablet() {
             </div>
           )}
 
-          <DialogFooter className="gap-2 sm:justify-between flex-row">
+          <DialogFooter className="gap-2 sm:justify-between">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => setPartialCheckinItem(null)}
-              className="text-xs bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+              className="w-full sm:w-auto text-xs bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
             >
               Cancelar
             </Button>
@@ -1635,9 +1635,9 @@ export default function ReceptionTablet() {
               type="button"
               size="sm"
               onClick={() => partialCheckinItem && executePartialCheckin(partialCheckinItem)}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5"
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5"
             >
-              <Unlock className="w-4 h-4" />
+              <Unlock className="w-4 h-4 shrink-0" />
               <span>
                 Confirmar Entrada de{" "}
                 {partialCheckinItem?.clearedGuests?.length === 1

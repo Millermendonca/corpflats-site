@@ -827,14 +827,14 @@ export function BookingFunnelModal({
     }}>
       <DialogContent className="sm:max-w-2xl max-w-[96vw] w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-7 shadow-2xl max-h-[92vh] overflow-y-auto">
         <DialogHeader className="pb-2 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-black text-xs shadow-xs ${
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-black text-xs shadow-xs shrink-0 ${
                 currentStep === 4 && paymentMethod === "pix" && !isPixPaid ? "bg-amber-600" : "bg-sky-600"
               }`}>
                 CF
               </span>
-              <div>
+              <div className="min-w-0">
                 <DialogTitle className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
                   {currentStep === 4 
                     ? (paymentMethod === "pix" && !isPixPaid ? "⏳ Aguardando Pagamento PIX" : "🎉 Reserva Confirmada!") 
@@ -851,7 +851,7 @@ export function BookingFunnelModal({
             </div>
 
             {currentStep < 4 && (
-              <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 text-[11px] font-bold">
+              <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 text-[11px] font-bold shrink-0">
                 Etapa {currentStep} de 3
               </Badge>
             )}
@@ -1025,7 +1025,7 @@ export function BookingFunnelModal({
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       <div className="space-y-1">
                         <Label className="text-[10px] text-slate-500 font-bold">Configuração de Cama:</Label>
                         <select
@@ -1189,16 +1189,16 @@ export function BookingFunnelModal({
 
             {/* Módulo Pet Friendly */}
             <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Heart className="w-4 h-4 text-rose-500" />
-                  <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Heart className="w-4 h-4 text-rose-500 shrink-0" />
+                  <div className="min-w-0">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Vai viajar com animal de estimação?</span>
                     <span className="text-[10px] text-slate-500">Taxa de higienização: R$ {petFeePerUnit}/pet ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "taxa única por estadia"})</span>
                   </div>
                 </div>
 
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 shrink-0">
                   <Button
                     type="button"
                     size="sm"
@@ -1309,18 +1309,18 @@ export function BookingFunnelModal({
             {/* Banner de Identificação / Login */}
             {guestAccount || guestEmail ? (
               <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-900/60 flex items-center justify-center text-emerald-700 dark:text-emerald-300 font-bold shrink-0">
                     <CheckCircle2 className="w-4 h-4" />
                   </div>
-                  <div>
-                    <span className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
                       <span>Conectado como {guestAccount?.name || guestName || "Hóspede"}</span>
-                      <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1.5 font-bold">
+                      <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1.5 font-bold shrink-0">
                         ✓ Verificado
                       </Badge>
                     </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 break-all block">
                       {guestAccount?.email || guestEmail} — Seus dados foram preenchidos automaticamente.
                     </span>
                   </div>
@@ -1503,8 +1503,8 @@ export function BookingFunnelModal({
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs">
-                    <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       {docFileType === "pdf" ? (
                         <div className="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-950/60 flex items-center justify-center text-red-600 font-bold shrink-0">
                           <FileText className="w-5 h-5" />
@@ -1625,21 +1625,21 @@ export function BookingFunnelModal({
 
             {/* Veículo & Portaria */}
             <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-2 text-xs">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Car className="w-3.5 h-3.5 text-sky-600" />
+                  <Car className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   <span>Vai utilizar a Garagem Coberta? (Inclusa Grátis)</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={hasVehicle}
                   onChange={e => setHasVehicle(e.target.checked)}
-                  className="rounded text-sky-600"
+                  className="rounded text-sky-600 shrink-0"
                 />
               </div>
 
               {hasVehicle && (
-                <div className="grid grid-cols-2 gap-2 pt-1 animate-in fade-in">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 animate-in fade-in">
                   <Input
                     value={vehiclePlate}
                     onChange={e => setVehiclePlate(e.target.value.toUpperCase())}
@@ -1658,21 +1658,21 @@ export function BookingFunnelModal({
 
             {/* Viagem a Trabalho / Faturamento PJ */}
             <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-2 text-xs">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                   <span>Viagem Corporativa / Emissão de Nota Fiscal PJ</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={isWorkTrip}
                   onChange={e => setIsWorkTrip(e.target.checked)}
-                  className="rounded text-indigo-600"
+                  className="rounded text-indigo-600 shrink-0"
                 />
               </div>
 
               {isWorkTrip && (
-                <div className="grid grid-cols-2 gap-2 pt-1 animate-in fade-in">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 animate-in fade-in">
                   <Input
                     value={companyCnpj}
                     onChange={e => setCompanyCnpj(e.target.value)}

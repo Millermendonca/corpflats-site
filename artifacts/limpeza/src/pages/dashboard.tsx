@@ -444,43 +444,43 @@ export default function Dashboard() {
           <div className="mb-6 space-y-2">
             {!isAdmin ? (
               // Maid View: Simplified to Total, Sujos, Limpos (Clickable Filters)
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 <button
                   onClick={() => toggleFilter("all")}
-                  className={`border rounded-xl p-3.5 text-center transition-all cursor-pointer shadow-2xs ${
+                  className={`border rounded-xl p-2.5 sm:p-3.5 text-center transition-all cursor-pointer shadow-2xs ${
                     statusFilter === "all"
                       ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 ring-2 ring-primary ring-offset-2 scale-[1.02]"
                       : "bg-white/90 dark:bg-card border-slate-200/80 hover:bg-slate-50 text-slate-800 dark:text-slate-200"
                   }`}
                 >
-                  <div className="text-2xl font-black">{summary.totalCheckouts}</div>
-                  <div className="text-[11px] uppercase font-bold tracking-wider">Total do Dia</div>
+                  <div className="text-xl sm:text-2xl font-black">{summary.totalCheckouts}</div>
+                  <div className="text-[10px] sm:text-[11px] uppercase font-bold tracking-wider leading-tight">Total do Dia</div>
                 </button>
 
                 <button
                   onClick={() => toggleFilter("dirty")}
-                  className={`border rounded-xl p-3.5 text-center transition-all cursor-pointer shadow-2xs ${
+                  className={`border rounded-xl p-2.5 sm:p-3.5 text-center transition-all cursor-pointer shadow-2xs ${
                     statusFilter === "dirty"
                       ? "bg-rose-600 text-white border-rose-600 ring-2 ring-rose-500 ring-offset-2 scale-[1.02]"
                       : "bg-rose-50/80 dark:bg-rose-950/20 border-rose-200 hover:bg-rose-100/90 text-rose-600 dark:text-rose-400"
                   }`}
                 >
-                  <div className="text-2xl font-black">{summary.totalDirty}</div>
-                  <div className={`text-[11px] uppercase font-bold tracking-wider ${statusFilter === "dirty" ? "text-white" : "text-rose-700 dark:text-rose-300"}`}>
+                  <div className="text-xl sm:text-2xl font-black">{summary.totalDirty}</div>
+                  <div className={`text-[10px] sm:text-[11px] uppercase font-bold tracking-wider leading-tight ${statusFilter === "dirty" ? "text-white" : "text-rose-700 dark:text-rose-300"}`}>
                     Sujos
                   </div>
                 </button>
 
                 <button
                   onClick={() => toggleFilter("clean")}
-                  className={`border rounded-xl p-3.5 text-center transition-all cursor-pointer shadow-2xs ${
+                  className={`border rounded-xl p-2.5 sm:p-3.5 text-center transition-all cursor-pointer shadow-2xs ${
                     statusFilter === "clean"
                       ? "bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-500 ring-offset-2 scale-[1.02]"
                       : "bg-emerald-50/80 dark:bg-emerald-950/20 border-emerald-200 hover:bg-emerald-100/90 text-emerald-600 dark:text-emerald-400"
                   }`}
                 >
-                  <div className="text-2xl font-black">{summary.totalClean}</div>
-                  <div className={`text-[11px] uppercase font-bold tracking-wider ${statusFilter === "clean" ? "text-white" : "text-emerald-700 dark:text-emerald-300"}`}>
+                  <div className="text-xl sm:text-2xl font-black">{summary.totalClean}</div>
+                  <div className={`text-[10px] sm:text-[11px] uppercase font-bold tracking-wider leading-tight ${statusFilter === "clean" ? "text-white" : "text-emerald-700 dark:text-emerald-300"}`}>
                     Limpos
                   </div>
                 </button>
@@ -560,9 +560,9 @@ export default function Dashboard() {
 
             {/* Active Filter Notice */}
             {statusFilter !== "all" && (
-              <div className="flex items-center justify-between bg-muted/60 border border-border/80 px-3.5 py-2 rounded-xl text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/60 border border-border/80 px-3.5 py-2 rounded-xl text-xs">
                 <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-medium">
-                  <Filter className="w-3.5 h-3.5 text-primary" />
+                  <Filter className="w-3.5 h-3.5 text-primary shrink-0" />
                   <span>
                     Exibindo apenas quartos: <strong>
                       {statusFilter === "dirty" ? "Sujos" : statusFilter === "clean" ? "Limpos" : statusFilter === "cleaning_now" ? "Limpando" : "Pendências"}
@@ -582,13 +582,13 @@ export default function Dashboard() {
 
         {/* Batch Actions Bar */}
         {selectedRequestIds.length > 0 && (
-          <div className="sticky top-4 z-20 bg-sky-600 text-white p-3.5 rounded-xl shadow-lg mb-6 flex items-center justify-between animate-in fade-in slide-in-from-top-3">
+          <div className="sticky top-4 z-20 bg-sky-600 text-white p-3.5 rounded-xl shadow-lg mb-6 flex flex-wrap items-center justify-between gap-2 animate-in fade-in slide-in-from-top-3">
             <div className="flex items-center gap-2 font-semibold text-sm">
-              <CheckSquare className="w-5 h-5" />
+              <CheckSquare className="w-5 h-5 shrink-0" />
               <span>{selectedRequestIds.length} flats selecionados</span>
             </div>
             <Button 
-              className="bg-white text-sky-800 hover:bg-slate-100 font-bold shadow-xs text-xs" 
+              className="bg-white text-sky-800 hover:bg-slate-100 font-bold shadow-xs text-xs w-full sm:w-auto" 
               onClick={handleBatchClaim}
               disabled={batchClaim.isPending}
             >
@@ -664,12 +664,12 @@ export default function Dashboard() {
               <DialogTitle className="flex items-center gap-2 text-lg font-black text-foreground">
                 {manualRequestType === "instruction" ? (
                   <>
-                    <BedDouble className="w-5 h-5 text-purple-600" />
+                    <BedDouble className="w-5 h-5 text-purple-600 shrink-0" />
                     <span>Nova Instrução para o Flat (Sem Limpeza)</span>
                   </>
                 ) : (
                   <>
-                    <PlusCircle className="w-5 h-5 text-primary" />
+                    <PlusCircle className="w-5 h-5 text-primary shrink-0" />
                     <span>Adicionar Quarto para Limpeza / Relatório</span>
                   </>
                 )}
@@ -692,13 +692,13 @@ export default function Dashboard() {
                     type="button"
                     onClick={() => setManualRequestType("cleaning")}
                     className={cn(
-                      "flex items-center justify-center gap-2 py-2 px-3 rounded-xl border text-xs font-bold transition-all",
+                      "flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all h-auto whitespace-normal leading-tight text-center",
                       manualRequestType === "cleaning"
                         ? "bg-primary text-primary-foreground border-primary shadow-sm"
                         : "bg-muted/40 border-border text-muted-foreground hover:bg-muted"
                     )}
                   >
-                    <Sparkles className="w-4 h-4" />
+                    <Sparkles className="w-4 h-4 shrink-0" />
                     <span>Limpeza de Quarto</span>
                   </button>
                   <button
@@ -711,13 +711,13 @@ export default function Dashboard() {
                       }
                     }}
                     className={cn(
-                      "flex items-center justify-center gap-2 py-2 px-3 rounded-xl border text-xs font-bold transition-all",
+                      "flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all h-auto whitespace-normal leading-tight text-center",
                       manualRequestType === "instruction"
                         ? "bg-purple-700 text-white border-purple-700 shadow-sm"
                         : "bg-muted/40 border-border text-muted-foreground hover:bg-muted"
                     )}
                   >
-                    <BedDouble className="w-4 h-4" />
+                    <BedDouble className="w-4 h-4 shrink-0" />
                     <span>Instrução no Flat</span>
                   </button>
                 </div>
@@ -744,9 +744,9 @@ export default function Dashboard() {
 
               {/* Data da Limpeza / Instrução */}
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <Label htmlFor="dateSelect" className="font-bold text-xs text-foreground flex items-center gap-1.5">
-                    <CalendarIcon className="w-3.5 h-3.5 text-primary" />
+                    <CalendarIcon className="w-3.5 h-3.5 text-primary shrink-0" />
                     {manualRequestType === "instruction" ? "Data da Instrução *" : "Data da Limpeza *"}
                   </Label>
                   <div className="flex items-center gap-1">
@@ -953,7 +953,7 @@ export default function Dashboard() {
             </div>
 
             <DialogFooter className="gap-2 pt-2 border-t border-border">
-              <Button type="button" variant="outline" onClick={() => setManualModalOpen(false)} className="text-xs font-bold rounded-xl h-9.5">
+              <Button type="button" variant="outline" onClick={() => setManualModalOpen(false)} className="w-full sm:w-auto text-xs font-bold rounded-xl h-auto min-h-9.5 py-2">
                 Cancelar
               </Button>
               <Button 
@@ -964,7 +964,7 @@ export default function Dashboard() {
                   (manualRequestType === "instruction" && !manualInstructionText.trim()) ||
                   (manualMarkAsClean && !manualCleanerId && cleanersList.length > 0)
                 } 
-                className={`text-xs font-bold rounded-xl h-9.5 gap-1.5 shadow-sm ${
+                className={`w-full sm:w-auto text-xs font-bold rounded-xl h-auto min-h-9.5 py-2 gap-1.5 shadow-sm ${
                   manualRequestType === "instruction"
                     ? "bg-purple-700 hover:bg-purple-600 text-white"
                     : manualMarkAsClean 
@@ -976,17 +976,17 @@ export default function Dashboard() {
                   "Salvando..."
                 ) : manualRequestType === "instruction" ? (
                   <>
-                    <BedDouble className="w-4 h-4" />
+                    <BedDouble className="w-4 h-4 shrink-0" />
                     <span>Criar Instrução no Flat</span>
                   </>
                 ) : manualMarkAsClean ? (
                   <>
-                    <CheckCircle2 className="w-4 h-4" />
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
                     <span>Registrar Limpeza Concluída</span>
                   </>
                 ) : (
                   <>
-                    <PlusCircle className="w-4 h-4" />
+                    <PlusCircle className="w-4 h-4 shrink-0" />
                     <span>Adicionar à Fila de Limpeza</span>
                   </>
                 )}

@@ -128,10 +128,10 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
+      <DialogContent className="sm:max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 space-y-4">
         <DialogHeader className="text-left space-y-1.5">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-950 flex items-center justify-center text-sky-600">
+            <div className="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-950 flex items-center justify-center text-sky-600 shrink-0">
               <Sparkles className="w-4 h-4" />
             </div>
             <DialogTitle className="text-lg font-black text-slate-900 dark:text-slate-100">
@@ -141,7 +141,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
           <DialogDescription className="text-xs text-slate-500 dark:text-slate-400">
             {user?.email ? (
               <span>
-                Você se conectou via Google como <strong className="text-slate-800 dark:text-slate-200">{user.email}</strong>. Confirme seu WhatsApp e CPF para liberar o voucher de reserva e acesso à portaria 24h.
+                Você se conectou via Google como <strong className="text-slate-800 dark:text-slate-200 break-all">{user.email}</strong>. Confirme seu WhatsApp e CPF para liberar o voucher de reserva e acesso à portaria 24h.
               </span>
             ) : (
               "Preencha seus dados de contato e documento para concluir seu cadastro e liberar suas reservas."
@@ -208,21 +208,21 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
 
           {/* Seção Veículo & Garagem */}
           <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <Car className="w-3.5 h-3.5 text-sky-600" />
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 min-w-0">
+                <Car className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                 <span>Vai utilizar a Garagem Coberta? (Inclusa Grátis)</span>
               </span>
               <input
                 type="checkbox"
                 checked={hasVehicle}
                 onChange={e => setHasVehicle(e.target.checked)}
-                className="rounded text-sky-600"
+                className="rounded text-sky-600 shrink-0"
               />
             </div>
 
             {hasVehicle && (
-              <div className="grid grid-cols-2 gap-2 pt-1 animate-in fade-in">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 animate-in fade-in">
                 <Input
                   value={vehiclePlate}
                   onChange={e => setVehiclePlate(e.target.value.toUpperCase())}
@@ -244,7 +244,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
               type="button"
               variant="ghost"
               onClick={() => onOpenChange(false)}
-              className="text-xs font-medium text-slate-500 rounded-xl order-2 sm:order-1"
+              className="w-full sm:w-auto text-xs font-medium text-slate-500 rounded-xl order-2 sm:order-1"
             >
               Completar depois
             </Button>
@@ -252,13 +252,13 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
             <Button
               type="submit"
               disabled={loading}
-              className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 px-6 rounded-xl shadow-md gap-1.5 order-1 sm:order-2"
+              className="w-full sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 px-6 rounded-xl shadow-md gap-1.5 order-1 sm:order-2"
             >
               {loading ? (
                 <span>Salvando...</span>
               ) : (
                 <>
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 shrink-0" />
                   <span>Salvar e Concluir Cadastro</span>
                 </>
               )}

@@ -347,7 +347,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="text-[11px] font-bold">CPF *</Label>
                   <Input
@@ -402,7 +402,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
                 </div>
                 <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">E-mail de Recuperação Enviado!</h4>
                 <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
-                  Se o endereço <strong>{forgotEmail}</strong> estiver cadastrado, enviamos as instruções de redefinição de senha para sua caixa de entrada.
+                  Se o endereço <strong className="break-all">{forgotEmail}</strong> estiver cadastrado, enviamos as instruções de redefinição de senha para sua caixa de entrada.
                 </p>
                 <Button
                   onClick={() => { setForgotSuccess(false); setActiveTab("login"); }}

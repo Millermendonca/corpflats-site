@@ -300,7 +300,7 @@ export function PdfViewerDialog({ open, onOpenChange, url, title = "Documento PD
       <DialogContent className="gap-0 overflow-hidden p-0 h-[92dvh] sm:h-[92vh] sm:max-w-4xl bg-slate-100 text-slate-900">
         <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 pr-14">
           <div className="min-w-0 flex-1">
-            <DialogTitle className="truncate text-sm sm:text-base font-bold">{title}</DialogTitle>
+            <DialogTitle className="break-words leading-snug text-xs sm:text-base font-bold">{title}</DialogTitle>
             <DialogDescription className="text-[11px] text-slate-500">
               {doc ? `${numPages} ${numPages === 1 ? "página" : "páginas"}` : own.error ? "Falha ao carregar" : "Carregando…"}
             </DialogDescription>

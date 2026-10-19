@@ -84,9 +84,9 @@ export function ClimateControl({
     <Card className="overflow-hidden border border-border/60 shadow-sm transition-all hover:shadow-md bg-card/95">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div
-              className={`flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors ${
                 power
                   ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30'
                   : 'bg-muted text-muted-foreground'
@@ -94,20 +94,20 @@ export function ClimateControl({
             >
               <Snowflake className={`h-6 w-6 ${power ? 'animate-spin' : ''}`} style={{ animationDuration: '8s' }} />
             </div>
-            <div>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                Ar-Condicionado Split Inverter
+            <div className="min-w-0">
+              <CardTitle className="text-base font-semibold flex flex-wrap items-center gap-2">
+                <span>Ar-Condicionado Split Inverter</span>
                 {power && (
-                  <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-ping" />
+                  <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-ping shrink-0" />
                 )}
               </CardTitle>
-              <CardDescription className="text-xs">
+              <CardDescription className="text-xs leading-snug">
                 Controle inteligente com infravermelho IR Blaster 38kHz
               </CardDescription>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Switch
               checked={power}
               onCheckedChange={onTogglePower}

@@ -314,8 +314,8 @@ export function SmartFlatHub({
       {/* Main Header Card */}
       <div className="rounded-2xl border border-border/80 bg-gradient-to-r from-card via-card to-primary/5 p-4 sm:p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
+          <div className="space-y-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <Badge variant="outline" className="text-primary border-primary/30 font-semibold text-xs">
                 Soho Residence Service
               </Badge>
@@ -324,7 +324,7 @@ export function SmartFlatHub({
               </Badge>
               {hasEnteredFlat ? (
                 <Badge className="bg-emerald-600 text-white text-[11px] flex items-center gap-1">
-                  <ShieldCheck className="h-3 w-3" /> No Flat
+                  <ShieldCheck className="h-3 w-3 shrink-0" /> No Flat
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-amber-600 border-amber-500/30 text-[11px]">

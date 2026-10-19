@@ -1548,8 +1548,8 @@ export default function GuestPreCheckin() {
                 <span className="font-bold text-sm sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none truncate">
                   {brandName}
                 </span>
-                <span className="text-[10px] text-slate-500 font-mono font-medium block mt-0.5 truncate">
-                  Check-in Digital Registrado • Apt {reservation?.flatNumber}
+                <span className="text-[10px] text-slate-500 font-medium block mt-0.5 leading-tight">
+                  Check-in Digital Registrado • <span className="whitespace-nowrap font-mono">Apt {reservation?.flatNumber}</span>
                 </span>
               </div>
             </div>
@@ -1598,7 +1598,7 @@ export default function GuestPreCheckin() {
               <span className="leading-snug">Check-in Digital Concluído & Autenticado</span>
             </div>
             <h1 className="text-xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white leading-tight">
-              Ficha de Hospedagem (Check-in Digital)
+              Ficha de Hospedagem <span className="whitespace-nowrap">(Check-in Digital)</span>
             </h1>
             <p className="text-xs sm:text-sm font-normal text-white/95 drop-shadow-sm">
               Apartamento {reservation?.flatNumber} • Edifício Soho Residence Service
@@ -1611,8 +1611,8 @@ export default function GuestPreCheckin() {
           
           {/* Top Actions Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 bg-white border border-slate-200/80 p-3 sm:p-4 rounded-2xl shadow-sm print:hidden">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-3 flex items-center gap-1.5 shadow-none">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-2.5 sm:px-3 flex items-center gap-1.5 shadow-none">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 <span>Documento Registrado</span>
               </Badge>
@@ -1622,17 +1622,23 @@ export default function GuestPreCheckin() {
                   <span>{guestCode || reservation?.guestCode}</span>
                 </Badge>
               )}
+              {isReadOnlyDocument && (
+                <Badge className="bg-slate-900 text-white border-slate-900 text-xs font-bold py-1 px-2.5 sm:px-3 flex items-center gap-1.5 shadow-xs whitespace-normal h-auto">
+                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Documento Oficial Imutável</span>
+                </Badge>
+              )}
               <span className="text-xs text-slate-500 font-medium hidden sm:inline">
                 Reserva <strong className="text-slate-900 font-mono">#{reservation?.code || code}</strong>
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-stretch gap-2 w-full sm:w-auto">
               {targetDownloadUrl && (
                 <Button
                   size="sm"
                   onClick={() => window.open(targetDownloadUrl, "_blank")}
-                  className="flex-1 sm:flex-initial min-w-[140px] sm:min-w-0 h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-slate-900 hover:bg-slate-800 text-white font-bold gap-1.5 rounded-xl shadow-2xs"
+                  className="flex-1 basis-[130px] sm:basis-auto sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-slate-900 hover:bg-slate-800 text-white font-bold gap-1.5 rounded-xl shadow-2xs"
                 >
                   <Download className="w-3.5 h-3.5 shrink-0" />
                   <span>Baixar PDF Assinado</span>
@@ -1644,7 +1650,7 @@ export default function GuestPreCheckin() {
                   variant="outline"
                   size="sm"
                   onClick={() => window.open(`/verificar-ficha/${targetUuid}`, "_blank")}
-                  className="flex-1 sm:flex-initial min-w-[140px] sm:min-w-0 h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100 font-bold gap-1.5 rounded-xl shadow-2xs"
+                  className="flex-1 basis-[130px] sm:basis-auto sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100 font-bold gap-1.5 rounded-xl shadow-2xs"
                 >
                   <ShieldCheck className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   <span>Selo de Autenticidade (QR Code)</span>
@@ -1655,27 +1661,22 @@ export default function GuestPreCheckin() {
                 variant="outline"
                 size="sm"
                 onClick={() => window.print()}
-                className="h-auto min-h-9 py-2 px-3 text-xs bg-white border-slate-200 hover:bg-slate-50 text-slate-700 font-bold gap-1.5 rounded-xl shadow-2xs"
+                className="flex-1 basis-[110px] sm:basis-auto sm:flex-initial h-auto min-h-9 py-2 px-3 text-xs bg-white border-slate-200 hover:bg-slate-50 text-slate-700 font-bold gap-1.5 rounded-xl shadow-2xs"
               >
                 <Printer className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                <span className="hidden sm:inline">Imprimir</span>
+                <span>Imprimir</span>
               </Button>
 
-              {!isReadOnlyDocument ? (
+              {!isReadOnlyDocument && (
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setIsEditing(true)}
-                  className="flex-1 sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-amber-50/70 border-amber-200 hover:bg-amber-100/70 text-amber-800 font-bold gap-1.5 rounded-xl shadow-2xs"
+                  className="flex-1 basis-[120px] sm:basis-auto sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-amber-50/70 border-amber-200 hover:bg-amber-100/70 text-amber-800 font-bold gap-1.5 rounded-xl shadow-2xs"
                 >
                   <Edit3 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                   <span>Editar Dados</span>
                 </Button>
-              ) : (
-                <Badge className="bg-slate-900 text-white border-slate-900 text-xs font-bold py-1.5 px-3 flex items-center gap-1.5 shadow-xs whitespace-normal h-auto">
-                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>Documento Oficial Imutável</span>
-                </Badge>
               )}
 
               <Button
@@ -1688,7 +1689,7 @@ export default function GuestPreCheckin() {
                   )
                   window.open(phoneClean ? `https://wa.me/55${phoneClean}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
                 }}
-                className="flex-1 sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 rounded-xl shadow-xs"
+                className="flex-1 basis-[130px] sm:basis-auto sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal text-center leading-tight text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 rounded-xl shadow-xs"
               >
                 <MessageCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>Compartilhar WhatsApp</span>
@@ -1718,7 +1719,7 @@ export default function GuestPreCheckin() {
                           loadGuestData({ reservation, guests: guestList }, g.index)
                         }
                       }}
-                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between gap-2 border cursor-pointer min-w-0 ${
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between gap-2 border cursor-pointer min-w-0 ${
                         isCurrent
                           ? "bg-slate-900 text-white border-slate-900 shadow-sm"
                           : gNeedsReSign
@@ -1728,7 +1729,7 @@ export default function GuestPreCheckin() {
                           : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                       }`}
                     >
-                      <span className="truncate min-w-0">{g.name || `Hóspede ${g.index}`}</span>
+                      <span className="break-words leading-tight min-w-0">{g.name || `Hóspede ${g.index}`}</span>
                       {gNeedsReSign ? (
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ml-1 ${
                           isCurrent ? "bg-amber-400 text-amber-950 font-black" : "bg-amber-100 text-amber-900 border border-amber-300"
@@ -1827,7 +1828,7 @@ export default function GuestPreCheckin() {
                   </div>
                   <div className="min-w-0">
                     <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight leading-tight">
-                      Ficha de Hospedagem (Check-in Digital)
+                      Ficha de Hospedagem <span className="whitespace-nowrap">(Check-in Digital)</span>
                     </h2>
                     <span className="text-[11px] text-emerald-600 font-bold uppercase tracking-wider block">
                       Documento Oficial Registrado • Studio Apt {reservation?.flatNumber}
@@ -2019,9 +2020,9 @@ export default function GuestPreCheckin() {
 
             {/* 4. Documentos & Biometria Anexados */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase tracking-wider">
+              <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-bold text-slate-700 uppercase tracking-wider">
                 <div className="flex items-center gap-2">
-                  <Camera className="w-3.5 h-3.5 text-sky-600" />
+                  <Camera className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   <span>4. Documentação & Biometria Facial</span>
                 </div>
                 <span className="text-[11px] text-slate-400 font-normal lowercase">Toque na foto para ampliar</span>
@@ -2260,8 +2261,14 @@ export default function GuestPreCheckin() {
               <span className="font-bold text-sm sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none truncate">
                 {brandName}
               </span>
-              <span className="text-[10px] text-slate-500 font-mono font-medium block mt-0.5 truncate">
-                {reservation?.flatNumber ? `Flat ${reservation.flatNumber} • Pré-Check-in Digital` : "Pré-Check-in Digital"}
+              <span className="text-[10px] text-slate-500 font-medium block mt-0.5 leading-tight">
+                {reservation?.flatNumber ? (
+                  <>
+                    <span className="font-mono whitespace-nowrap">Flat {reservation.flatNumber}</span> • <span className="whitespace-nowrap">Pré-Check-in Digital</span>
+                  </>
+                ) : (
+                  "Pré-Check-in Digital"
+                )}
               </span>
             </div>
           </div>
@@ -2506,7 +2513,7 @@ export default function GuestPreCheckin() {
                         loadGuestData({ reservation, guests: guestList }, g.index)
                       }
                     }}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between gap-2 border cursor-pointer min-w-0 ${
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between gap-2 border cursor-pointer min-w-0 ${
                       isCurrent
                         ? "bg-slate-900 text-white border-slate-900 shadow-sm"
                         : gNeedsReSign
@@ -2516,7 +2523,7 @@ export default function GuestPreCheckin() {
                         : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                     }`}
                   >
-                    <span className="truncate min-w-0">{g.name || `Hóspede ${g.index}`}</span>
+                    <span className="break-words leading-tight min-w-0">{g.name || `Hóspede ${g.index}`}</span>
                     {gNeedsReSign ? (
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ml-1 ${
                         isCurrent ? "bg-amber-400 text-amber-950 font-black" : "bg-amber-100 text-amber-900 border border-amber-300"
@@ -2706,7 +2713,7 @@ export default function GuestPreCheckin() {
                         </p>
 
                         {minorAuthDocPhoto ? (
-                          <div className="flex items-center justify-between p-2.5 bg-rose-50 border border-rose-200 rounded-xl">
+                          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl">
                             <span className="text-xs font-semibold text-rose-800 flex items-center gap-1.5">
                               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                               Autorização de cartório anexada com sucesso
@@ -2716,7 +2723,7 @@ export default function GuestPreCheckin() {
                               variant="outline"
                               size="sm"
                               onClick={() => setMinorAuthDocPhoto(null)}
-                              className="text-[11px] h-7 px-2.5 border-rose-300 text-rose-800 hover:bg-rose-100 font-bold rounded-lg"
+                              className="text-[11px] h-7 px-2.5 border-rose-300 text-rose-800 hover:bg-rose-100 font-bold rounded-lg shrink-0"
                             >
                               Trocar Foto
                             </Button>
@@ -2883,18 +2890,18 @@ export default function GuestPreCheckin() {
                 <div className="p-4 sm:p-5 bg-gradient-to-br from-sky-50/80 via-slate-50 to-indigo-50/50 border border-sky-200/90 rounded-2xl space-y-3.5 shadow-xs">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-sky-600" />
+                      <MapPin className="w-4 h-4 text-sky-600 shrink-0" />
                       <span>Informações da Estadia Atual (Exigência MTur - Lei 11.771/2008) *</span>
                     </span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       {selectedGuestIndex > 1 && (
                         <button
                           type="button"
                           onClick={handleCopyTitularVehicle}
-                          className="text-[11px] text-sky-700 hover:text-sky-900 font-bold bg-white hover:bg-sky-50 border border-sky-300 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 shadow-xs"
+                          className="text-[11px] text-sky-700 hover:text-sky-900 font-bold bg-white hover:bg-sky-50 border border-sky-300 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 shadow-xs text-left"
                         >
-                          <Car className="w-3.5 h-3.5 text-sky-600" />
-                          Viajando no mesmo veículo do titular
+                          <Car className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                          <span>Viajando no mesmo veículo do titular</span>
                         </button>
                       )}
                       <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">Obrigatório</Badge>
@@ -3004,18 +3011,18 @@ export default function GuestPreCheckin() {
                   <div className="p-4 bg-sky-50/70 border border-sky-200/80 rounded-2xl space-y-3">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
-                        <Car className="w-4 h-4 text-sky-600" />
-                        Estacionamento Privativo • Edifício Soho Residence
+                        <Car className="w-4 h-4 text-sky-600 shrink-0" />
+                        <span>Estacionamento Privativo • Edifício Soho Residence</span>
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {selectedGuestIndex > 1 && (
                           <button
                             type="button"
                             onClick={handleCopyTitularVehicle}
                             className="text-[10px] text-sky-700 hover:text-sky-900 font-bold bg-white hover:bg-sky-100/80 border border-sky-300 px-2 py-0.5 rounded-lg transition-colors flex items-center gap-1 shadow-xs"
                           >
-                            <Copy className="w-3 h-3 text-sky-600" />
-                            Copiar veículo do titular
+                            <Copy className="w-3 h-3 text-sky-600 shrink-0" />
+                            <span>Copiar veículo do titular</span>
                           </button>
                         )}
                         <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">1 Vaga Inclusa</Badge>
@@ -3120,10 +3127,10 @@ export default function GuestPreCheckin() {
                       runAiDocInspection(docPhoto, "documento_hospede")
                     }
                   }}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl mt-4 gap-2 shadow-md"
                 >
                   <span>Avançar para Foto do Documento</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
               </div>
             </div>
@@ -3134,7 +3141,7 @@ export default function GuestPreCheckin() {
             <div className="space-y-4 sm:space-y-5">
               <div className="border-b border-slate-100 pb-3 flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-sky-600" />
+                  <FileText className="w-4 h-4 text-sky-600 shrink-0" />
                   <span>2. Foto do Documento (RG / CNH / Passaporte)</span>
                 </h3>
                 {docPhoto && isSavedDocFromProfile && (
@@ -3150,11 +3157,11 @@ export default function GuestPreCheckin() {
                   : "Tire uma foto nítida ou anexe o PDF do seu documento oficial de identificação para validação pericial de titularidade e segurança na portaria."}
               </p>
 
-              <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
+              <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-4 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
                 {docPhoto ? (
                   <div className="space-y-3">
                     {isSavedDocFromProfile && (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl sm:rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold leading-tight text-left sm:text-center">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                         <span>Documento salvo em estadias anteriores carregado automaticamente</span>
                       </div>
@@ -3265,9 +3272,9 @@ export default function GuestPreCheckin() {
 
                         {/* Checklist Completo do Robô Pericial */}
                         <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 text-xs shadow-2xs">
-                          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                          <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-1.5">
                             <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                              <ShieldCheck className="w-4 h-4 text-sky-600" />
+                              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
                               <span>Laudo do Robô Pericial CorpFlats</span>
                             </span>
                             {aiDocResult.documentType && aiDocResult.documentType !== "desconhecido" && (
@@ -3341,7 +3348,7 @@ export default function GuestPreCheckin() {
                         </div>
 
                         {aiDocResult.isCamposResident && (
-                          <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center justify-between gap-2 text-xs text-purple-900 shadow-2xs">
+                          <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-purple-900 shadow-2xs">
                             <div className="flex items-center gap-2.5">
                               <span className="text-base shrink-0">📍</span>
                               <div>
@@ -3443,7 +3450,7 @@ export default function GuestPreCheckin() {
                     await ensureOrRefreshToken()
                   }} 
                   disabled={isRefreshingToken || aiInspectingDoc}
-                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-auto min-h-11 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md"
+                  className="w-full sm:w-auto sm:flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-auto min-h-11 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md"
                 >
                   <span>{isRefreshingToken ? "Gerando Sessão de Assinatura..." : "Avançar para Assinatura Eletrônica"}</span>
                   <ArrowRight className="w-4 h-4 shrink-0" />
@@ -3457,7 +3464,7 @@ export default function GuestPreCheckin() {
             <div className="space-y-4 sm:space-y-5">
               <div className="border-b border-slate-100 pb-3">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                  <PenTool className="w-4 h-4 text-sky-600" />
+                  <PenTool className="w-4 h-4 text-sky-600 shrink-0" />
                   <span>3. Assinatura Digital com Validade Jurídica</span>
                 </h3>
               </div>
@@ -3465,9 +3472,9 @@ export default function GuestPreCheckin() {
               {/* CARD DE SESSÃO SEGURA & VALIDADE DE 2 HORAS */}
               {isTokenSessionExpired ? (
                 <div className="p-4 sm:p-5 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-100 text-rose-800 rounded-full text-xs font-bold">
-                      <Clock className="w-3.5 h-3.5 text-rose-600" />
+                      <Clock className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                       <span>Sessão de Assinatura Expirada (2 Horas)</span>
                     </span>
                     <Badge variant="outline" className="bg-white border-rose-300 text-rose-700 text-[10px] font-bold">
@@ -3486,9 +3493,9 @@ export default function GuestPreCheckin() {
                     type="button"
                     onClick={() => ensureOrRefreshToken(true)}
                     disabled={isRefreshingToken}
-                    className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl gap-2 shadow-md"
+                    className="w-full h-auto min-h-11 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl gap-2 shadow-md"
                   >
-                    <RefreshCw className={`w-4 h-4 ${isRefreshingToken ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 shrink-0 ${isRefreshingToken ? 'animate-spin' : ''}`} />
                     <span>{isRefreshingToken ? "Gerando Novo Link..." : "🔄 Renovar Sessão / Gerar Mais 2 Horas"}</span>
                   </Button>
                 </div>
@@ -3800,7 +3807,7 @@ export default function GuestPreCheckin() {
                 <Button 
                   disabled={loading || !signatureData || !legalDeclarationAccepted || isTokenSessionExpired || (otpSent && whatsappOtpInput.trim().length !== 6)}
                   onClick={handleSubmit} 
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ShieldCheck className="w-4 h-4 shrink-0" />
                   <span>

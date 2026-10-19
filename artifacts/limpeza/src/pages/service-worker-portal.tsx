@@ -938,23 +938,23 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       {/* Top Mobile Bar */}
       <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b px-4 py-3 shadow-xs">
-        <div className="max-w-xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+        <div className="max-w-xl mx-auto flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="w-9 h-9 bg-primary/10 rounded-xl flex items-center justify-center text-primary shrink-0">
               <Wrench className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs font-bold uppercase tracking-wider text-primary">CorpFlats</span>
                 <span className="text-[10px] text-muted-foreground font-semibold">Portal do Prestador</span>
               </div>
-              <h1 className="text-sm font-bold truncate max-w-[200px] sm:max-w-[280px] leading-tight">
+              <h1 className="text-sm font-bold break-words leading-tight">
                 {order.title}
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Badge
               variant="outline"
               className={
@@ -976,7 +976,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         {/* Progress & Overview Card */}
         <Card className="border-0 shadow-sm bg-white dark:bg-slate-900 rounded-2xl overflow-hidden">
           <CardContent className="p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Progresso do Serviço
@@ -1015,18 +1015,18 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             // Registered / Identified State (Green / Emerald)
             <Card className="border-2 border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/30 dark:border-emerald-700 rounded-2xl shadow-sm overflow-hidden transition-all">
               <CardContent className="p-4 sm:p-5 space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
                     <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                       <ShieldCheck className="w-6 h-6" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
                           ✓ Prestador Identificado
                         </span>
                       </div>
-                      <div className="text-base font-extrabold text-emerald-950 dark:text-emerald-100">
+                      <div className="text-base font-extrabold text-emerald-950 dark:text-emerald-100 break-words">
                         {serverWorker?.mainWorker?.name}
                       </div>
                       <div className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
@@ -1061,8 +1061,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       }}
                       className="text-emerald-800 hover:text-emerald-900 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900/50 text-xs gap-1 px-2.5 h-8"
                     >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      Editar
+                      <Edit2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Editar</span>
                     </Button>
 
                     <Button
@@ -1073,8 +1073,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       title="Apagar cadastro do prestador e ajudantes"
                       className="text-rose-600 hover:text-rose-700 hover:bg-rose-100 dark:text-rose-400 dark:hover:bg-rose-950/50 text-xs gap-1 px-2.5 h-8"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Apagar
+                      <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Apagar</span>
                     </Button>
                   </div>
                 </div>
@@ -1089,7 +1089,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         <Badge
                           key={i}
                           variant="secondary"
-                          className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 pr-1 flex items-center gap-1"
+                          className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 pr-1 flex items-center gap-1 whitespace-normal h-auto"
                         >
                           <span>
                             {c.name} ({formatCpf(c.cpf)})
@@ -1099,7 +1099,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                             disabled={deleteWorkerMutation.isPending}
                             onClick={() => deleteWorkerMutation.mutate({ collaboratorIndex: i })}
                             title="Remover ajudante"
-                            className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-rose-600 dark:hover:bg-rose-950/60 transition-colors"
+                            className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-rose-600 dark:hover:bg-rose-950/60 transition-colors shrink-0"
                           >
                             <X className="w-3 h-3" />
                           </button>
@@ -1117,9 +1117,9 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     {serverWorker.vehicle.needsGarage ? (
                       <Badge
                         variant="secondary"
-                        className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 pr-1 flex items-center gap-1"
+                        className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 pr-1 flex items-center gap-1 whitespace-normal h-auto"
                       >
-                        <Car className="w-3 h-3 text-emerald-700" />
+                        <Car className="w-3 h-3 text-emerald-700 shrink-0" />
                         <span>
                           Garagem Solicitada: {serverWorker.vehicle.plate || "Sem placa"} {serverWorker.vehicle.modelColor ? `(${serverWorker.vehicle.modelColor})` : ""}
                         </span>
@@ -1128,7 +1128,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           disabled={deleteWorkerMutation.isPending}
                           onClick={() => deleteWorkerMutation.mutate({ clearVehicle: true })}
                           title="Remover solicitação de garagem"
-                          className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-rose-600 dark:hover:bg-rose-950/60 transition-colors"
+                          className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-rose-600 dark:hover:bg-rose-950/60 transition-colors shrink-0"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -1196,7 +1196,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
                 {/* Collaborators Section */}
                 <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       Ajudantes / Equipe (Opcional)
                     </Label>
@@ -1205,10 +1205,10 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       variant="outline"
                       size="sm"
                       onClick={handleAddCollaborator}
-                      className="h-7 text-xs gap-1 border-dashed text-primary hover:text-primary"
+                      className="h-auto min-h-7 py-1 text-xs gap-1 border-dashed text-primary hover:text-primary"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      + Adicionar Ajudante
+                      <Plus className="w-3.5 h-3.5 shrink-0" />
+                      <span>+ Adicionar Ajudante</span>
                     </Button>
                   </div>
 
@@ -1261,11 +1261,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       id="needs-garage-checkbox"
                       checked={needsGarage}
                       onChange={(e) => setNeedsGarage(e.target.checked)}
-                      className="w-4 h-4 rounded text-primary focus:ring-primary border-slate-300 cursor-pointer"
+                      className="w-4 h-4 rounded text-primary focus:ring-primary border-slate-300 cursor-pointer shrink-0"
                     />
                     <Label htmlFor="needs-garage-checkbox" className="text-xs font-bold text-slate-800 dark:text-slate-100 cursor-pointer flex items-center gap-1.5">
-                      <Car className="w-3.5 h-3.5 text-primary" />
-                      Precisa de vaga na garagem para o veículo?
+                      <Car className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>Precisa de vaga na garagem para o veículo?</span>
                     </Label>
                   </div>
 
@@ -1299,14 +1299,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 <Button
                   onClick={() => registerMutation.mutate()}
                   disabled={registerMutation.isPending || !mainWorkerName.trim() || cleanCpfDigits(mainWorkerCpf).length !== 11 || mainWorkerPhone.replace(/\D/g, "").length < 10}
-                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs h-9 shadow-xs"
+                  className="w-full sm:w-auto sm:flex-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs h-auto min-h-9 py-2 shadow-xs"
                 >
                   {registerMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                    <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
                   ) : (
-                    <Check className="w-4 h-4 mr-1.5" />
+                    <Check className="w-4 h-4 mr-1.5 shrink-0" />
                   )}
-                  Salvar Identificação
+                  <span>Salvar Identificação</span>
                 </Button>
 
                 {hasSavedWorker && (
@@ -1316,16 +1316,16 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       size="sm"
                       disabled={deleteWorkerMutation.isPending}
                       onClick={() => deleteWorkerMutation.mutate({})}
-                      className="text-xs h-9 text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 gap-1"
+                      className="flex-1 sm:flex-initial text-xs h-auto min-h-9 py-2 text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 gap-1"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Apagar Cadastro
+                      <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Apagar Cadastro</span>
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => setIsEditingWorker(false)}
-                      className="text-xs h-9"
+                      className="flex-1 sm:flex-initial text-xs h-auto min-h-9 py-2"
                     >
                       Cancelar
                     </Button>
@@ -1497,13 +1497,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               >
                 <CardHeader className="p-4 pb-2">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight">
                           Flat {flat.flatNumber}
                         </span>
                         {flat.operationalScenarioIcon && flat.operationalScenarioLabel ? (
-                          <Badge variant="outline" className="text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap rounded-md">
+                          <Badge variant="outline" className="text-[11px] font-semibold flex items-center gap-1 whitespace-normal h-auto rounded-md">
                             <span>{flat.operationalScenarioIcon}</span>
                             <span>{flat.operationalScenarioLabel}</span>
                           </Badge>
@@ -1511,13 +1511,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           occupancyBadge
                         )}
                         {isForceReleased && (
-                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2 whitespace-nowrap rounded-md">
+                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2 whitespace-normal h-auto rounded-md">
                             🔓 Liberado pela Administração
                           </Badge>
                         )}
                         {!isStatusAllowed && (
-                          <Badge variant="destructive" className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2">
-                            <Lock className="w-3 h-3 shrink-0" /> {statusBlockReason}
+                          <Badge variant="destructive" className="bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 text-[10px] font-bold flex items-center gap-1 py-0.5 px-2 whitespace-normal h-auto">
+                            <Lock className="w-3 h-3 shrink-0" /> <span>{statusBlockReason}</span>
                           </Badge>
                         )}
                       </div>
@@ -1603,7 +1603,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-sky-50 dark:bg-sky-950/40 p-2.5 rounded-xl border border-sky-200 dark:border-sky-900 text-sky-900 dark:text-sky-200 font-medium">
                         <div className="flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                          <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                           <span>Iniciado às {formatTime(flat.startedAt)}</span>
                         </div>
                         {flat.estimatedFinishAt && (
@@ -1614,7 +1614,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       </div>
 
                       {flat.estimatedFinishAt && new Date().getTime() > new Date(flat.estimatedFinishAt).getTime() && (
-                        <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex items-center justify-between text-xs text-rose-900 dark:text-rose-200">
+                        <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-rose-900 dark:text-rose-200">
                           <div className="flex items-center gap-1.5 font-bold">
                             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
                             <span>Serviço atrasado! (Previsão: {formatTime(flat.estimatedFinishAt)})</span>
@@ -1624,7 +1624,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                             size="sm"
                             variant="outline"
                             onClick={() => handleOpenEstimateModal(flat)}
-                            className="h-6 text-[10px] bg-white text-rose-700 border-rose-300 hover:bg-rose-50 px-2 shrink-0 font-semibold"
+                            className="h-auto min-h-7 py-1 text-[10px] bg-white text-rose-700 border-rose-300 hover:bg-rose-50 px-2 shrink-0 font-semibold"
                           >
                             Atualizar Previsão
                           </Button>
@@ -1635,10 +1635,10 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
                   {flat.status === "done" && (
                     <div className="space-y-2 text-xs bg-emerald-50/60 dark:bg-emerald-950/20 p-2.5 rounded-xl border border-emerald-200 dark:border-emerald-900">
-                      <div className="flex items-center justify-between text-emerald-800 dark:text-emerald-300 font-semibold">
+                      <div className="flex flex-wrap items-center justify-between gap-1 text-emerald-800 dark:text-emerald-300 font-semibold">
                         <span className="flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          Finalizado em {formatDateTime(flat.finishedAt)}
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>Finalizado em {formatDateTime(flat.finishedAt)}</span>
                         </span>
                         {flat.needsCleaning !== null && flat.needsCleaning !== undefined && (
                           <span className="text-[11px]">
@@ -1737,27 +1737,27 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     <div className="w-full space-y-2">
                       <Button
                         onClick={() => handleOpenFinishModal(flat)}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-md flex items-center justify-center gap-1.5"
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-auto min-h-10 py-2 shadow-md flex items-center justify-center gap-1.5"
                       >
-                        <CheckCircle2 className="w-4 h-4" />
-                        🏁 Finalizar Serviço
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>🏁 Finalizar Serviço</span>
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleOpenEstimateModal(flat)}
-                        className="w-full text-xs h-8 border-sky-300 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40 flex items-center justify-center gap-1.5"
+                        className="w-full text-xs h-auto min-h-8 py-1.5 border-sky-300 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40 flex items-center justify-center gap-1.5"
                       >
-                        <Clock className="w-3.5 h-3.5" />
-                        ⏱️ Atualizar Previsão
+                        <Clock className="w-3.5 h-3.5 shrink-0" />
+                        <span>⏱️ Atualizar Previsão</span>
                       </Button>
                     </div>
                   )}
 
                   {flat.status === "done" && (
                     <div className="w-full py-1.5 text-center text-xs text-emerald-700 dark:text-emerald-400 font-bold flex items-center justify-center gap-1">
-                      <CheckCircle2 className="w-4 h-4" />
-                      ✓ Concluído ({formatDateTime(flat.finishedAt)})
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>✓ Concluído ({formatDateTime(flat.finishedAt)})</span>
                     </div>
                   )}
                 </CardFooter>
@@ -1768,14 +1768,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
           return (
             <>
               <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                    <Building className="w-4 h-4 text-primary" />
-                    Apartamentos do Serviço ({order.flats.length})
+                    <Building className="w-4 h-4 text-primary shrink-0" />
+                    <span>Apartamentos do Serviço ({order.flats.length})</span>
                   </h2>
                   {isFetching && (
                     <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
-                      <Loader2 className="w-3 h-3 animate-spin text-primary" /> Atualizando...
+                      <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" /> Atualizando...
                     </span>
                   )}
                 </div>
@@ -1824,7 +1824,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 {/* 1. EM ANDAMENTO */}
                 {inProgressGroup.length > 0 && (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between px-1">
+                    <div className="flex flex-wrap items-center justify-between gap-1 px-1">
                       <h3 className="text-sm font-extrabold text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
                         ⚡ Em Andamento ({inProgressGroup.length})
                       </h3>
@@ -1840,7 +1840,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
                 {/* 2. LIBERADOS PARA INICIAR */}
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between px-1">
+                  <div className="flex flex-wrap items-center justify-between gap-1 px-1">
                     <h3 className="text-sm font-extrabold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
                       ✅ Liberados para Iniciar ({availableGroup.length})
                     </h3>
@@ -2132,7 +2132,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               variant="outline"
               size="sm"
               onClick={() => setStartModalOpen(false)}
-              className="text-xs h-10"
+              className="text-xs h-auto min-h-10 py-2 w-full sm:w-auto"
             >
               Cancelar
             </Button>
@@ -2140,14 +2140,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               type="button"
               onClick={handleConfirmStart}
               disabled={startMutation.isPending || !estimatedFinishInput}
-              className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs h-10 shadow-xs"
+              className="w-full sm:w-auto sm:flex-1 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs h-auto min-h-10 py-2.5 px-4 shadow-xs"
             >
               {startMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
               ) : (
-                <Play className="w-4 h-4 mr-1.5 fill-current" />
+                <Play className="w-4 h-4 mr-1.5 fill-current shrink-0" />
               )}
-              Confirmar e Iniciar Serviço
+              <span>Confirmar e Iniciar Serviço</span>
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2158,8 +2158,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         <DialogContent className="max-w-md rounded-2xl p-6">
           <DialogHeader className="space-y-2">
             <DialogTitle className="text-lg font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-sky-600" />
-              Atualizar Previsão — Flat {estimatingFlat?.flatNumber}
+              <Clock className="w-5 h-5 text-sky-600 shrink-0" />
+              <span>Atualizar Previsão — Flat {estimatingFlat?.flatNumber}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               Ajuste o novo horário previsto para o término do serviço. Os responsáveis e a portaria serão notificados automaticamente.
@@ -2229,7 +2229,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               variant="outline"
               size="sm"
               onClick={() => setEstimateModalOpen(false)}
-              className="text-xs h-10"
+              className="text-xs h-auto min-h-10 py-2 w-full sm:w-auto"
             >
               Cancelar
             </Button>
@@ -2237,14 +2237,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               type="button"
               onClick={handleConfirmUpdateEstimate}
               disabled={updateEstimateMutation.isPending || !newEstimateInput}
-              className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 shadow-xs"
+              className="w-full sm:w-auto sm:flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-auto min-h-10 py-2.5 px-4 shadow-xs"
             >
               {updateEstimateMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
               ) : (
-                <Check className="w-4 h-4 mr-1.5" />
+                <Check className="w-4 h-4 mr-1.5 shrink-0" />
               )}
-              Confirmar Nova Previsão
+              <span>Confirmar Nova Previsão</span>
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2255,8 +2255,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         <DialogContent className="max-w-md sm:max-w-lg rounded-2xl p-5 sm:p-6 max-h-[90vh] overflow-y-auto">
           <DialogHeader className="space-y-1">
             <DialogTitle className="text-lg font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-              Finalizar Serviço — Flat {finishingFlat?.flatNumber}
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <span>Finalizar Serviço — Flat {finishingFlat?.flatNumber}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               Preencha o formulário abaixo para confirmar o término dos trabalhos neste apartamento.
@@ -2327,10 +2327,10 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
             {/* Photo Upload (max 5 photos, camera capture, compressImage) */}
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label className="text-xs font-bold flex items-center gap-1.5">
-                  <Camera className="w-4 h-4 text-primary" />
-                  Fotos do Serviço {order.requirePhotos && <span className="text-rose-500 font-bold">*</span>}
+                  <Camera className="w-4 h-4 text-primary shrink-0" />
+                  <span>Fotos do Serviço {order.requirePhotos && <span className="text-rose-500 font-bold">*</span>}</span>
                 </Label>
                 <span className="text-[11px] text-muted-foreground font-medium">
                   {uploadedPhotos.length} de 5 fotos
@@ -2355,17 +2355,17 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   size="sm"
                   disabled={isCompressingPhotos}
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full h-11 border-dashed border-2 border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary font-semibold text-xs flex items-center justify-center gap-2"
+                  className="w-full h-auto min-h-11 py-2 border-dashed border-2 border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary font-semibold text-xs flex items-center justify-center gap-2"
                 >
                   {isCompressingPhotos ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Comprimindo fotos no aparelho...
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      <span>Comprimindo fotos no aparelho...</span>
                     </>
                   ) : (
                     <>
-                      <Camera className="w-4 h-4" />
-                      Tirar Foto ou Escolher da Galeria
+                      <Camera className="w-4 h-4 shrink-0" />
+                      <span>Tirar Foto ou Escolher da Galeria</span>
                     </>
                   )}
                 </Button>
@@ -2406,7 +2406,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               variant="outline"
               size="sm"
               onClick={() => setFinishModalOpen(false)}
-              className="text-xs h-10 sm:w-auto"
+              className="text-xs h-auto min-h-10 py-2 w-full sm:w-auto"
             >
               Cancelar
             </Button>
@@ -2419,14 +2419,14 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 (isCleanWhenStarted(finishingFlat) && needsCleaningChoice === null) ||
                 (Boolean(order.requirePhotos) && uploadedPhotos.length === 0)
               }
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-xs"
+              className="w-full sm:w-auto sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-auto min-h-10 py-2.5 px-4 shadow-xs"
             >
               {finishMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
               ) : (
-                <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                <CheckCircle2 className="w-4 h-4 mr-1.5 shrink-0" />
               )}
-              Confirmar e Finalizar
+              <span>Confirmar e Finalizar</span>
             </Button>
           </DialogFooter>
         </DialogContent>

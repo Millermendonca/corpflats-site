@@ -73,7 +73,7 @@ export default function ReceptionCheckout() {
             <div className="mx-auto w-12 h-12 bg-primary/20 text-primary rounded-2xl flex items-center justify-center mb-2 shadow-xs">
               <Building className="w-6 h-6" />
             </div>
-            <CardTitle className="text-2xl font-black tracking-tight text-white flex items-center justify-center gap-2">
+            <CardTitle className="text-xl sm:text-2xl font-black tracking-tight text-white flex flex-wrap items-center justify-center gap-2">
               Recepção • Baixa de Check-out
             </CardTitle>
             <CardDescription className="text-xs text-slate-400">
@@ -81,7 +81,7 @@ export default function ReceptionCheckout() {
             </CardDescription>
           </CardHeader>
 
-          <CardContent className="p-6 sm:p-8 space-y-5">
+          <CardContent className="p-5 sm:p-8 space-y-5">
             {lastSuccess && (
               <div className="p-4 bg-emerald-950/80 border border-emerald-600/60 text-emerald-300 rounded-2xl flex items-center gap-3 animate-in fade-in zoom-in duration-200">
                 <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
@@ -119,7 +119,7 @@ export default function ReceptionCheckout() {
               <Button 
                 type="submit" 
                 disabled={loading || !flatNumber.trim()} 
-                className="w-full h-12 text-sm font-bold rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg transition-all"
+                className="w-full h-auto min-h-12 py-3 text-sm font-bold rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg transition-all"
               >
                 {loading ? "Registrando..." : "Registrar Saída (Enter ↵)"}
               </Button>
