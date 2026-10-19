@@ -13200,6 +13200,20 @@ app.get("/api/service-orders", (req, res) => {
   res.json(list);
 });
 
+// Calcula o período ativo de bloqueio de um apartamento com serviço em andamento (in_progress).
+// Enquanto o serviço não for finalizado, o bloqueio permanece estendido pelo menos até a data atual (todayStr).
+function getActiveServiceFlatBlockRange(oflat, todayStr = getTodayStr()) {
+  if (!oflat || oflat.status !== "in_progress") return null;
+  const startDate = oflat.startedAt ? getExecutionDateStr(oflat.startedAt) : todayStr;
+  const estDate = oflat.estimatedFinishAt ? getExecutionDateStr(oflat.estimatedFinishAt) : startDate;
+  const endDate = [startDate, estDate, todayStr].filter(Boolean).sort().pop() || todayStr;
+  return {
+    startDate,
+    endDate,
+    isExtendedPastEstimate: Boolean(estDate && todayStr > estDate)
+  };
+}
+
 // Sincroniza bloqueios de inventário (db.roomBlocks) quando uma OS interdita apartamentos
 function syncServiceOrderRoomBlocks(order, isDeleted = false) {
   if (!order || !order.id) return;
@@ -13211,11 +13225,17 @@ function syncServiceOrderRoomBlocks(order, isDeleted = false) {
   }
 
   const todayStr = getTodayStr();
-  const startDate = order.blockStartDate || todayStr;
-  const endDate = order.blockEndDate || getOffsetDateStr(1);
+  const baseStartDate = order.blockStartDate || todayStr;
+  const baseEndDate = order.blockEndDate || getOffsetDateStr(1);
 
   for (const f of (order.flats || [])) {
     if (f.status === "done") continue;
+    const flatStartDate = f.startedAt ? getExecutionDateStr(f.startedAt) : baseStartDate;
+    const startDate = flatStartDate < baseStartDate ? flatStartDate : baseStartDate;
+    const estEndDate = f.estimatedFinishAt ? getExecutionDateStr(f.estimatedFinishAt) : baseEndDate;
+    const endDate = f.status === "in_progress"
+      ? [startDate, baseEndDate, estEndDate, todayStr].filter(Boolean).sort().pop()
+      : (baseEndDate >= todayStr ? baseEndDate : todayStr);
     const nextBlockId = db.roomBlocks.length > 0 ? Math.max(...db.roomBlocks.map(b => Number(b.id) || 0)) + 1 : 1;
     db.roomBlocks.push({
       id: nextBlockId,
@@ -13769,9 +13789,19 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.workerNotifiedAvailableAt = null;
   flat.workerLastNotifiedPhone = null;
 
+  syncServiceOrderRoomBlocks(order);
   saveDatabase("reset_service_flat");
 
   checkAndNotifyAvailableServiceFlats(order.id);
+
+  try {
+    const todayStr = getTodayStr();
+    notifyPmsMutation(db, {
+      type: "service_flat_reset",
+      minDate: todayStr,
+      maxDate: todayStr
+    });
+  } catch (_) {}
 
   res.json({ success: true, flat });
 });
@@ -14185,7 +14215,16 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   }
 
   if (order.status === "draft") order.status = "active";
+  syncServiceOrderRoomBlocks(order);
   saveDatabase("service_flat_start");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "service_flat_started",
+      minDate: todayStr,
+      maxDate: getExecutionDateStr(flat.estimatedFinishAt) || todayStr
+    });
+  } catch (_) {}
 
   const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente";
   dispatchServiceNotifications("start", order, flat, worker, { hasGuestInside: isGuestInside });
@@ -14270,7 +14309,17 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
     }
   }
 
+  syncServiceOrderRoomBlocks(order);
   saveDatabase("service_flat_finish");
+
+  try {
+    const todayStr = getTodayStr();
+    notifyPmsMutation(db, {
+      type: "service_flat_finished",
+      minDate: flat.startedAt ? getExecutionDateStr(flat.startedAt) : todayStr,
+      maxDate: todayStr
+    });
+  } catch (_) {}
 
   const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id)) || { mainWorker: { name: flat.workerName || "Prestador", cpf: flat.workerCpf || "" } };
 
@@ -14318,7 +14367,17 @@ app.post("/api/service/public/:token/flats/:flatId/update-estimate", async (req,
   flat.estimatedFinishAt = newEstDate.toISOString();
   flat.delayNotified = false; // Permite novo alerta caso expire novamente
 
+  syncServiceOrderRoomBlocks(order);
   saveDatabase("service_flat_update_estimate");
+
+  try {
+    const todayStr = getTodayStr();
+    notifyPmsMutation(db, {
+      type: "service_flat_estimate_updated",
+      minDate: flat.startedAt ? getExecutionDateStr(flat.startedAt) : todayStr,
+      maxDate: getExecutionDateStr(flat.estimatedFinishAt) || todayStr
+    });
+  } catch (_) {}
 
   const worker = (db.serviceWorkers || []).find(w => w.token === token || w.serviceOrderId === order.id) || {
     mainWorker: { name: flat.workerName || "Prestador", cpf: flat.workerCpf || "" }
@@ -15921,7 +15980,19 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
       b.endDate > checkinDate
     );
 
-    const isAvailable = conflicts.length === 0 && blockConflicts.length === 0;
+    const todayStr = getTodayStr();
+    const hasServiceInProgressConflict = (db.serviceOrders || []).some(order => {
+      if (order.status !== "active") return false;
+      return (order.flats || []).some(oflat => {
+        if (oflat.status !== "in_progress") return false;
+        if (Number(oflat.flatId) !== Number(flat.id) && String(oflat.flatNumber) !== String(flat.number)) return false;
+        const range = getActiveServiceFlatBlockRange(oflat, todayStr);
+        if (!range) return false;
+        return range.startDate <= checkoutDate && range.endDate >= checkinDate;
+      });
+    });
+
+    const isAvailable = conflicts.length === 0 && blockConflicts.length === 0 && !hasServiceInProgressConflict;
 
     // 2. Calcula total de diárias ocupadas no mês do checkin
     const monthReservations = (db.reservations || []).filter(r =>
@@ -16428,9 +16499,10 @@ app.get("/api/pms/calendar", (req, res) => {
   const serviceOrderBlocks = [];
   for (const order of (db.serviceOrders || []).filter(o => o.status === "active")) {
     for (const oflat of (order.flats || [])) {
-      if (oflat.status === "in_progress" && oflat.startedAt && oflat.estimatedFinishAt) {
-        const startDate = getExecutionDateStr(oflat.startedAt);
-        const endDate = getExecutionDateStr(oflat.estimatedFinishAt);
+      if (oflat.status === "in_progress") {
+        const range = getActiveServiceFlatBlockRange(oflat, todayStr);
+        if (!range) continue;
+        const { startDate, endDate, isExtendedPastEstimate } = range;
         if (startDate <= end && endDate >= start) {
           serviceOrderBlocks.push({
             id: `service_block_${order.id}_${oflat.flatId}`,
@@ -16438,14 +16510,19 @@ app.get("/api/pms/calendar", (req, res) => {
             flatNumber: oflat.flatNumber,
             startDate,
             endDate,
+            startedAt: oflat.startedAt || null,
+            estimatedFinishAt: oflat.estimatedFinishAt || null,
+            isExtendedPastEstimate,
             reason: "service_order",
             isServiceBlock: true,
             title: `🔧 ${order.title}`,
             serviceTitle: order.title,
             workerName: oflat.workerName || "Prestador",
             serviceOrderId: order.id,
-            notes: `Serviço em andamento: ${order.title} (${oflat.workerName || "Prestador"})`,
-            createdAt: oflat.startedAt
+            notes: isExtendedPastEstimate
+              ? `Serviço em andamento (ainda não finalizado desde ${startDate}): ${order.title} (${oflat.workerName || "Prestador"})`
+              : `Serviço em andamento: ${order.title} (${oflat.workerName || "Prestador"})`,
+            createdAt: oflat.startedAt || order.createdAt
           });
         }
       }

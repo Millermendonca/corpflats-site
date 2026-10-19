@@ -4011,6 +4011,7 @@ export default function PmsCalendar() {
                         const inDragRange = isCellInDragRange(flat.id, day);
                         const today = isToday(day);
                         const yesterday = isYesterday(day);
+                        const cellBlock = flatBlocks.find(b => b.startDate && b.endDate && dayStr >= b.startDate && dayStr <= b.endDate);
 
                         return (
                           <div 
@@ -4021,7 +4022,7 @@ export default function PmsCalendar() {
                             data-day-str={dayStr}
                             onMouseDown={(e) => handleStartDrag(flat.id, day, false, e)}
                             onMouseEnter={() => handleDragOver(flat.id, day)}
-                            onClick={() => handleCellClick(flat, day, null, null)}
+                            onClick={() => handleCellClick(flat, day, null, cellBlock || null)}
                             className={`h-full border-r relative flex items-center justify-center cursor-pointer transition-all select-none z-0 ${
                               isMobileStart
                                 ? 'bg-emerald-500/25 dark:bg-emerald-500/35 border-emerald-500 z-10'
@@ -4031,7 +4032,7 @@ export default function PmsCalendar() {
                                 : yesterday ? 'bg-slate-500/[0.04] dark:bg-slate-400/[0.04]'
                                 : ''
                             } hover:bg-primary/10 group/cell`}
-                            title={`Toque para iniciar reserva no Apt ${flat.number} em ${format(day, "dd/MM/yyyy")}`}
+                            title={cellBlock ? `Apartamento bloqueado em ${format(day, "dd/MM/yyyy")}` : `Toque para iniciar reserva no Apt ${flat.number} em ${format(day, "dd/MM/yyyy")}`}
                           >
                             {isMobileStart && (
                               <div className="w-full h-8 mx-0.5 rounded-md bg-emerald-600 text-white flex flex-col items-center justify-center text-[9px] font-black shadow-xs ring-2 ring-emerald-400">
@@ -4043,12 +4044,12 @@ export default function PmsCalendar() {
                                 ✨
                               </div>
                             )}
-                            {!isMobileStart && !inDragRange && today && (
+                            {!isMobileStart && !inDragRange && !cellBlock && today && (
                               <span className="opacity-0 group-hover/cell:opacity-80 text-[10px] text-primary font-bold flex items-center gap-1 transition-opacity">
                                 <Plus className="w-3 h-3" /> Disponível
                               </span>
                             )}
-                            {!isMobileStart && !inDragRange && yesterday && (
+                            {!isMobileStart && !inDragRange && !cellBlock && yesterday && (
                               <span className="opacity-0 group-hover/cell:opacity-80 text-[10px] text-muted-foreground font-semibold flex items-center gap-1 transition-opacity">
                                 Ontem
                               </span>
@@ -8739,6 +8740,14 @@ export default function PmsCalendar() {
                       {selectedBlockForDetails.startDate} até {selectedBlockForDetails.endDate}
                     </span>
                   </div>
+                  {(selectedBlockForDetails.isServiceBlock || selectedBlockForDetails.reason === "service_order") && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground font-semibold">Status da Execução:</span>
+                      <span className="font-black text-amber-600 dark:text-amber-400">
+                        ⏳ Em andamento (não finalizado)
+                      </span>
+                    </div>
+                  )}
                   {selectedBlockForDetails.notes && (
                     <div className="pt-2 border-t border-border">
                       <span className="text-muted-foreground font-semibold block mb-0.5">Observações:</span>

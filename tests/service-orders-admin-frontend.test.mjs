@@ -162,4 +162,29 @@ describe('Frontend Admin Service Orders (M2 Verification)', () => {
     assert.ok(adminContent.includes('🔓 Liberado Manualmente'), 'Admin page must render "🔓 Liberado Manualmente" badge');
     assert.ok(portalContent.includes('🔓 Liberado pela Administração'), 'Worker portal must render "🔓 Liberado pela Administração" badge');
   });
+
+  it('13. R4: Service flat block remains extended through todayStr while service is in_progress (not finished)', () => {
+    const backendPath = path.resolve('artifacts/api-server/demo-server.mjs');
+    const pmsCalendarPath = path.resolve('artifacts/limpeza/src/pages/pms-calendar.tsx');
+    const backendContent = fs.readFileSync(backendPath, 'utf8');
+    const pmsCalendarContent = fs.readFileSync(pmsCalendarPath, 'utf8');
+
+    assert.ok(
+      backendContent.includes('function getActiveServiceFlatBlockRange(oflat, todayStr = getTodayStr())'),
+      'Backend must define getActiveServiceFlatBlockRange helper'
+    );
+    assert.ok(
+      backendContent.includes('const endDate = [startDate, estDate, todayStr].filter(Boolean).sort().pop() || todayStr;'),
+      'getActiveServiceFlatBlockRange must extend endDate to at least todayStr when service is still in_progress'
+    );
+    assert.ok(
+      backendContent.includes('const range = getActiveServiceFlatBlockRange(oflat, todayStr);'),
+      'GET /api/pms/calendar and calculateFairShareStats must use getActiveServiceFlatBlockRange'
+    );
+    assert.ok(
+      pmsCalendarContent.includes('⏳ Em andamento (não finalizado)'),
+      'PMS Calendar block details modal must display ongoing status for service blocks'
+    );
+  });
 });
+
