@@ -359,7 +359,7 @@ export function hasModuleAccess(
     ? user.allowedModules
     : getDefaultModulesForRole(user.role);
 
-  return allowed.includes(canonical);
+  return allowed.some(m => canonicalizeRoute(m) === canonical);
 }
 
 /**
@@ -371,7 +371,11 @@ export function isDefaultPermissionsForRole(
 ): boolean {
   if (!Array.isArray(allowedModules)) return true;
   const defaults = getDefaultModulesForRole(role);
-  const setGiven = new Set(allowedModules);
+  const setGiven = new Set(
+    allowedModules
+      .map(m => typeof m === "string" ? canonicalizeRoute(m.trim()) : "")
+      .filter(Boolean)
+  );
   if (defaults.length !== setGiven.size) return false;
 
   return defaults.every(m => setGiven.has(m));

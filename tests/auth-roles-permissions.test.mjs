@@ -590,5 +590,55 @@ describe("Milestone 1 — Auth, Roles & RBAC Separation Suite", () => {
       // 3. Cleanup
       await fetch(`${BASE_URL}/api/admin/users/${emptyUser.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
     });
+
+    // ── 2.10. Preset Packages & Session Propagation Verification ──────────────
+    it("Preset Packages & Session Propagation: Presets match R1 specifications and propagate to login and auth/me", async () => {
+      // 1. Create a user for each role without passing allowedModules
+      const rolesToTest = [
+        { role: "camareira", expectedCount: 6, mustInclude: ["/dashboard", "/reports", "/achados-perdidos"] },
+        { role: "recepcao", expectedCount: 14, mustInclude: ["/reservas", "/portaria", "/pedidos-cafe", "/dashboard"] },
+        { role: "admin", expectedCount: 31, mustInclude: ["/reservas", "/financeiro", "/equipe", "/tarifas"] }
+      ];
+
+      for (const t of rolesToTest) {
+        const uRes = await fetch(`${BASE_URL}/api/admin/users`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: devCookie },
+          body: JSON.stringify({
+            username: `preset_test_${t.role}`,
+            name: `Preset Test ${t.role}`,
+            role: t.role,
+            password: "password123"
+          })
+        });
+        assert.strictEqual(uRes.status, 201);
+        const uData = await uRes.json();
+        assert.strictEqual(uData.allowedModules.length, t.expectedCount, `${t.role} default modules count must be ${t.expectedCount}`);
+        for (const m of t.mustInclude) {
+          assert.ok(uData.allowedModules.includes(m), `${t.role} must include module ${m}`);
+        }
+
+        // Test login returns correct allowedModules
+        const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: `preset_test_${t.role}`, password: "password123" })
+        });
+        assert.strictEqual(loginRes.status, 200);
+        const loginData = await loginRes.json();
+        assert.strictEqual(loginData.allowedModules.length, t.expectedCount);
+
+        const sessionCookie = (loginRes.headers.get("set-cookie") || "").split(";")[0];
+        const meRes = await fetch(`${BASE_URL}/api/auth/me`, {
+          headers: { Cookie: sessionCookie }
+        });
+        assert.strictEqual(meRes.status, 200);
+        const meData = await meRes.json();
+        assert.strictEqual(meData.allowedModules.length, t.expectedCount);
+
+        // Cleanup
+        await fetch(`${BASE_URL}/api/admin/users/${uData.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
+      }
+    });
   });
 });

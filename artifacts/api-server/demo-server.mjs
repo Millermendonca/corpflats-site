@@ -996,6 +996,30 @@ export function canonicalizeRoute(path) {
   return ROUTE_ALIASES[clean] || clean;
 }
 
+export function hasModuleAccess(user, path) {
+  if (!user) return false;
+  const canonical = canonicalizeRoute(path);
+  if (DEV_ONLY_MODULES.includes(canonical) && user.role !== "dev") {
+    return false;
+  }
+  const allowed = Array.isArray(user.allowedModules)
+    ? user.allowedModules
+    : getDefaultModulesForRole(user.role);
+  return allowed.some(m => canonicalizeRoute(m) === canonical);
+}
+
+export function isDefaultPermissionsForRole(role, allowedModules) {
+  if (!Array.isArray(allowedModules)) return true;
+  const defaults = getDefaultModulesForRole(role);
+  const setGiven = new Set(
+    allowedModules
+      .map(m => typeof m === "string" ? canonicalizeRoute(m.trim()) : "")
+      .filter(Boolean)
+  );
+  if (defaults.length !== setGiven.size) return false;
+  return defaults.every(m => setGiven.has(m));
+}
+
 const defaultUsers = [
   { id: 1, username: "admin", role: "dev", allowedModules: getDefaultModulesForRole("dev"), passwordHash: hashPassword("admin123") },
   { id: 2, username: "Cris", name: "Cris", role: "camareira", allowedModules: getDefaultModulesForRole("camareira"), phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },

@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ShieldAlert, LogIn, LayoutDashboard, Home } from "lucide-react"
-import { hasModuleAccess } from "@/lib/permissions"
+import { hasModuleAccess, canonicalizeRoute, getDefaultModulesForRole } from "@/lib/permissions"
 
 interface AccessDeniedProps {
   moduleName?: string
@@ -37,9 +37,11 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
 
   const currentUser = user as any
   const hasDashboard = hasModuleAccess(currentUser, "/dashboard")
-  const fallbackRoute = hasDashboard
-    ? "/dashboard"
-    : ((Array.isArray(currentUser?.allowedModules) ? currentUser.allowedModules : []).find((m: string) => hasModuleAccess(currentUser, m)) || "/reservar")
+  const userModules = Array.isArray(currentUser?.allowedModules)
+    ? currentUser.allowedModules
+    : getDefaultModulesForRole(currentUser?.role)
+  const candidate = userModules.find((m: string) => hasModuleAccess(currentUser, m)) || "/reservar"
+  const fallbackRoute = hasDashboard ? "/dashboard" : canonicalizeRoute(candidate)
 
   return (
     <Shell>

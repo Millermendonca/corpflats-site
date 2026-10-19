@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Shell } from "@/components/layout";
-import { useGetMe } from "@workspace/api-client-react";
+import { useGetMe, getGetMeQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
   Users,
@@ -154,7 +155,7 @@ export function PermissionsSelector({
             title="Restaurar lista de permissões padrão deste perfil"
           >
             <RefreshCw className="w-3 h-3 mr-1" />
-            <span>Padrão do Perfil</span>
+            <span>Restaurar padrão do perfil</span>
           </Button>
           <Button
             type="button"
@@ -163,7 +164,7 @@ export function PermissionsSelector({
             onClick={handleSelectAll}
             className="h-7 px-2 text-[11px] font-bold rounded-lg"
           >
-            Marcar Todos
+            Marcar todos
           </Button>
           <Button
             type="button"
@@ -172,7 +173,7 @@ export function PermissionsSelector({
             onClick={handleDeselectAll}
             className="h-7 px-2 text-[11px] font-bold rounded-lg text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
           >
-            Desmarcar Todos
+            Desmarcar todos
           </Button>
         </div>
       </div>
@@ -263,6 +264,7 @@ export function PermissionsSelector({
 
 export function TeamPage() {
   const { data: currentUser } = useGetMe();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const isDev = currentUser?.role === "dev";
@@ -436,6 +438,7 @@ export function TeamPage() {
         });
         setPermissionsModalOpen(false);
         fetchUsers();
+        queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
       } else {
         setPermissionsError(data.error || "Erro ao salvar permissões.");
       }
@@ -493,6 +496,7 @@ export function TeamPage() {
         });
         setEditUserModalOpen(false);
         fetchUsers();
+        queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
       } else {
         setEditUserError(data.error || "Erro ao atualizar colaborador.");
       }
@@ -565,6 +569,7 @@ export function TeamPage() {
         setNewUserRole("camareira");
         setNewUserAllowedModules(getDefaultModulesForRole("camareira"));
         fetchUsers();
+        queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
       } else {
         setNewUserError(data.error || "Erro ao cadastrar colaborador.");
       }
