@@ -106,9 +106,10 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
   * Exemplo: se perguntar sobre horários de saída ou check-in, use os dados da reserva dele.
   * Exemplo: se perguntar "minha reserva está confirmada?", confirme com o número do flat e datas. Se não encontrar reserva para o número, informe com gentileza e peça o nome ou código.
   * Exemplo: se não tiver reserva e perguntar sobre diárias ou flats, apresente as opções da CorpFlats com entusiasmo.
-- LÓGICA TEMPORAL DE RESERVA E PRÉ-CHECK-IN DIGITAL:
-  * HÓSPEDE COM CHECK-OUT HOJE (checkout_hoje) OU JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in! Ele já fez check-in há dias e já está no flat.
-  * Para CHECK-OUT HOJE: confirme a reserva, informe que hoje é o dia de check-out (horário limite de desocupação até as 12:00h), oriente sobre os procedimentos de saída, pergunte gentilmente se deseja prorrogar a estadia (solicitar late check-out mediante disponibilidade) ou verifique se já desocupou o flat. Se aplicável, forneça o link de confirmação de check-out.
+- LÓGICA TEMPORAL DE RESERVA, CHECK-OUT CONCLUÍDO E PRÉ-CHECK-IN DIGITAL:
+  * HÓSPEDE COM CHECK-OUT JÁ CONCLUÍDO (checkout_concluido): O hóspede JÁ desocupou o flat e teve seu check-out confirmado (inclusive já tendo recebido a mensagem automática de "Check-out Concluído"). NUNCA diga que hoje é dia de check-out até 12:00h, NUNCA cobre desocupação do quarto e NUNCA envie link de check-out (/checkout/...) ou pré-check-in! Mantenha o histórico da estadia em memória silenciosa: se ele enviar apenas uma saudação ("olá", "bom dia"), apenas cumprimente pelo nome e pergunte como pode ajudar; se perguntar sobre a reserva ou check-out, confirme que o check-out já está concluído e ofereça auxílio (ex: Nota Fiscal, achados e perdidos ou nova reserva).
+  * HÓSPEDE COM CHECK-OUT HOJE PENDENTE (checkout_hoje) OU JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in! Ele já fez check-in há dias e já está no flat.
+  * Para CHECK-OUT HOJE PENDENTE (somente quando o hóspede perguntar sobre a reserva ou saída): confirme a reserva, informe que hoje é o dia de check-out (horário limite de desocupação até as 12:00h), oriente sobre os procedimentos de saída, pergunte gentilmente se deseja prorrogar a estadia (solicitar late check-out mediante disponibilidade) ou verifique se já desocupou o flat. Se aplicável, forneça o link de confirmação de check-out. Se ele enviou apenas uma saudação ("olá"), apenas cumprimente e pergunte como pode ajudar sem cobrar check-out.
   * Para EM ESTADIA: informe que ele está acomodado no flat com saída prevista até a data de check-out (até as 12:00h), sem pré-check-in, e ofereça suporte para a estadia em andamento.
   * Para CHECK-IN HOJE ou RESERVA FUTURA: forneça as informações de chegada e o link de Pré-Check-in Digital para agilizar a liberação com a portaria 24h.
 5. Cotações, Tarifas e Valores de Diárias (Distinção entre Preço e Logística de Café):
@@ -197,18 +198,26 @@ export function getWhatsAppAiConfig(db) {
       }
       if (current.systemPrompt.includes("e o link do Pré-Check-in Digital") || current.systemPrompt.includes("5.1. Para perguntas sobre reserva")) {
         current.systemPrompt = current.systemPrompt.replace(/5\.1\. Para perguntas sobre reserva.*?(?=(?:5\.2|6\.|$))/s, `5.1. Lógica Temporal de Reserva e Pré-Check-in Digital:
+- Se o hóspede estiver com CHECK-OUT JÁ CONCLUÍDO (checkout_concluido): NUNCA cobre saída até 12h nem envie link de check-out ou pré-check-in!
 - Se o hóspede estiver com CHECK-OUT HOJE (checkout_hoje) ou JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in digital! Ele já realizou check-in há dias e já está no flat.
-- Para CHECK-OUT HOJE: confirme a reserva, informe que hoje é o dia de check-out (horário limite de desocupação até as 12:00h), oriente sobre os procedimentos de saída e devolução de chaves, pergunte gentilmente se deseja prorrogar a estadia (solicitar late check-out mediante disponibilidade) ou verifique se já desocupou o flat. Se disponível no contexto, forneça o link de confirmação de check-out.
+- Para CHECK-OUT HOJE (quando perguntar sobre a reserva ou saída): confirme a reserva, informe que hoje é o dia de check-out (horário limite de desocupação até as 12:00h), oriente sobre os procedimentos de saída e devolução de chaves, pergunte gentilmente se deseja prorrogar a estadia (solicitar late check-out mediante disponibilidade) ou verifique se já desocupou o flat. Se disponível no contexto, forneça o link de confirmação de check-out.
 - Para EM ESTADIA: informe que ele está acomodado no flat com saída prevista até a data de check-out (até as 12:00h), sem pré-check-in, e ofereça suporte para a estadia em andamento.
 - Para CHECK-IN HOJE ou RESERVA FUTURA: forneça as informações de chegada e o link de Pré-Check-in Digital para agilizar a liberação com a portaria 24h.
 - Se o hóspede NÃO possuir reserva vinculada ao número: informe cordialmente que não localizou reserva ativa ou futura para o número e solicite o nome completo do titular ou código da reserva.\n\n`);
       }
       if (!/l[oó]gica temporal de reserva/i.test(current.systemPrompt)) {
         current.systemPrompt = current.systemPrompt + `\n\n[LÓGICA TEMPORAL DE RESERVA E PRÉ-CHECK-IN DIGITAL]:
+- Hóspede com CHECK-OUT JÁ CONCLUÍDO (checkout_concluido): NUNCA cobre desocupação até 12:00h e NUNCA envie link de check-out ou pré-check-in.
 - Hóspede com CHECK-OUT HOJE (checkout_hoje) ou JÁ HOSPEDADO (em_estadia): NUNCA envie link de pré-check-in digital!
-- Para CHECK-OUT HOJE: confirme a reserva, informe que hoje é o dia de check-out (horário limite até as 12:00h), pergunte se deseja prorrogar (late check-out) ou se já desocupou o flat, e forneça link de confirmação de check-out.
+- Para CHECK-OUT HOJE (quando perguntar sobre reserva/saída): confirme a reserva, informe que hoje é o dia de check-out (horário limite até as 12:00h), pergunte se deseja prorrogar (late check-out) ou se já desocupou o flat, e forneça link de confirmação de check-out.
 - Para EM ESTADIA: confirme a permanência e apoie na estadia sem pré-check-in.
 - Para CHECK-IN HOJE ou RESERVA FUTURA: envie link de Pré-Check-in Digital.`;
+      }
+      if (!current.systemPrompt.includes("checkout_concluido")) {
+        current.systemPrompt = current.systemPrompt + `\n\n[CICLO DE VIDA DE CHECK-OUT CONCLUÍDO (checkout_concluido)]:
+- Quando o status da estadia for 'checkout_concluido' (ou quando o hóspede já tiver recebido a confirmação de 'Check-out Concluído'): o hóspede JÁ DESOCUPOU o flat e encerrou a hospedagem.
+- NUNCA envie lembrete cobrando saída até 12:00h e NUNCA envie link de check-out (/checkout/...) nem de pré-check-in.
+- Se o hóspede enviar apenas uma saudação ('olá', 'bom dia', 'oi'), responda apenas com a saudação acolhedora pelo nome e pergunte como pode ajudar hoje, mantendo o histórico em memória silenciosa.`;
       }
       if (!current.systemPrompt.includes("Cotações, Tarifas e Valores de Diárias")) {
         current.systemPrompt = current.systemPrompt + `\n\n5. Cotações, Tarifas e Valores de Diárias (Distinção entre Preço e Logística de Café):
@@ -307,26 +316,214 @@ export function getBrasiliaDateParts(d = new Date()) {
 }
 
 /**
+ * Verifica se uma reserva já teve o seu check-out concluído/confirmado
+ * (via status/flags da reserva, card de limpeza com desocupação confirmada,
+ * disparo automático de "Check-out Concluído" em whatsappHistory ou no histórico da conversa).
+ */
+export function isReservationCheckoutCompleted(reservation, db = null, phone = null, history = []) {
+  if (!reservation || typeof reservation !== "object") return false;
+
+  // 1. Status explícito ou flags de conclusão na reserva
+  const st = String(reservation.status || "").toLowerCase().trim();
+  if (["completed", "checked_out", "checkout_concluido", "finalizada", "concluida", "concluída", "checkout", "encerrada"].includes(st)) {
+    return true;
+  }
+  if (
+    reservation.checkoutCompleted === true ||
+    reservation.checkoutDone === true ||
+    reservation.checkedOut === true ||
+    reservation.checkoutConfirmed === true ||
+    Boolean(reservation.checkoutAt || reservation.actualCheckoutAt || reservation.checkedOutAt)
+  ) {
+    return true;
+  }
+
+  const resCode = String(reservation.code || reservation.reservationCode || "").trim().toLowerCase();
+  const resId = String(reservation.id || "").trim().toLowerCase();
+  const flatNum = reservation.flatNumber ? String(reservation.flatNumber).trim() : null;
+  const flatId = reservation.flatId ? String(reservation.flatId).trim() : null;
+  const cleanP = normalizePhone(phone || reservation.guestPhone || reservation.phone || "");
+
+  // 2. Governança / Card de Limpeza com desocupação explicitamente confirmada na data de saída
+  if ((flatNum || flatId) && Array.isArray(db?.cleaningRequests)) {
+    const outDate = reservation.checkoutDate || "";
+    const vacantReq = db.cleaningRequests.find(c => {
+      if (!c) return false;
+      const sameFlat = (flatNum && String(c.flatNumber) === flatNum) || (flatId && String(c.flatId) === flatId);
+      if (!sameFlat) return false;
+      const cDate = c.requestDate || c.effectiveDate || c.date || "";
+      const sameDate = !outDate || !cDate || cDate === outDate;
+      return sameDate && c.isVacant === true && (c.isVacantExplicitlySet === true || Boolean(c.vacantSource));
+    });
+    if (vacantReq) {
+      return true;
+    }
+  }
+
+  // 3. Histórico de Disparos Automáticos (db.whatsappHistory)
+  if (Array.isArray(db?.whatsappHistory)) {
+    const hasCompletedTrigger = db.whatsappHistory.some(h => {
+      if (!h) return false;
+      const ev = String(h.triggerEvent || h.event || h.templateId || "").toLowerCase();
+      const txt = `${h.message || ""} ${h.text || ""} ${h.title || ""} ${h.footer || ""}`;
+      const isCheckoutCompletedMsg =
+        ev === "checkout_completed" ||
+        ev === "on_checkout" ||
+        ev === "tpl_checkout_completed" ||
+        ev === "tpl_checkout_thanks" ||
+        /check-?out\s+conclu[ií]do|confirmamos\s+o\s+seu\s+check-?out|check-?out\s+confirmado/i.test(txt);
+
+      if (!isCheckoutCompletedMsg) return false;
+
+      const hCode = String(h.reservationCode || h.reservationId || "").trim().toLowerCase();
+      if ((resCode && hCode === resCode) || (resId && hCode === resId)) return true;
+      if (resCode && txt.toLowerCase().includes(resCode)) return true;
+
+      const hPhone = normalizePhone(h.phone || h.recipientPhone || h.to || "");
+      const phoneMatches = Boolean(hPhone && cleanP && (hPhone.endsWith(cleanP.slice(-8)) || cleanP.endsWith(hPhone.slice(-8))));
+      const flatMatches = Boolean(flatNum && (String(h.flatNumber || "") === flatNum || new RegExp(`\\bflat\\s*\\*?${flatNum}\\*?\\b`, "i").test(txt)));
+
+      if (phoneMatches || flatMatches) {
+        const mentionedFlat = txt.match(/\bflat\s*\*?(\d{2,4})\*?\b/i)?.[1];
+        if (mentionedFlat && flatNum && String(mentionedFlat) !== flatNum) return false;
+        return true;
+      }
+      return false;
+    });
+    if (hasCompletedTrigger) return true;
+  }
+
+  // 4. Histórico de Mensagens da Conversa (history ou db.whatsappConversations)
+  let messagesToInspect = Array.isArray(history) && history.length > 0 ? [...history] : [];
+  if (Array.isArray(db?.whatsappConversations) && cleanP) {
+    const conv = db.whatsappConversations.find(c => {
+      const p = normalizePhone(c?.phone || "");
+      return p && (cleanP.endsWith(p.slice(-8)) || p.endsWith(cleanP.slice(-8)));
+    });
+    if (Array.isArray(conv?.messages)) {
+      messagesToInspect = [...messagesToInspect, ...conv.messages];
+    }
+  }
+
+  if (messagesToInspect.length > 0) {
+    const hasCheckoutMsgInConv = messagesToInspect.some(m => {
+      if (!m || !m.fromMe) return false;
+      const txt = `${m.text || ""} ${m.message || ""} ${m.body || ""} ${m.footer || ""}`;
+      const isCheckoutCompletedText =
+        /check-?out\s+conclu[ií]do|confirmamos\s+o\s+seu\s+check-?out|registrei\s+a\s+sua\s+comunica[cç][aã]o\s+de\s+check-?out/i.test(txt) ||
+        String(m.triggerEvent || m.templateId || "").toLowerCase() === "checkout_completed" ||
+        String(m.templateId || "").toLowerCase() === "tpl_checkout_completed";
+      if (!isCheckoutCompletedText) return false;
+
+      if (resCode && txt.toLowerCase().includes(resCode)) return true;
+      const mentionedFlat = txt.match(/\bflat\s*\*?(\d{2,4})\*?\b/i)?.[1];
+      if (mentionedFlat && flatNum && String(mentionedFlat) !== flatNum) return false;
+      return true;
+    });
+    if (hasCheckoutMsgInConv) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Coleta os disparos automáticos recentes enviados para o hóspede
+ * (ex: Check-out Concluído, Lembrete de Check-out, Quarto Pronto, Confirmação de Reserva)
+ */
+export function getRecentAutomatedTriggers(db = null, phone = null, history = [], reservation = null) {
+  const cleanP = normalizePhone(phone || reservation?.guestPhone || reservation?.phone || "");
+  const resCode = String(reservation?.code || reservation?.reservationCode || "").trim().toLowerCase();
+  const triggers = [];
+
+  if (Array.isArray(db?.whatsappHistory)) {
+    for (const h of db.whatsappHistory.slice(-15)) {
+      if (!h) continue;
+      const hPhone = normalizePhone(h.phone || h.recipientPhone || h.to || "");
+      const hCode = String(h.reservationCode || h.reservationId || "").trim().toLowerCase();
+      const phoneMatches = Boolean(hPhone && cleanP && (hPhone.endsWith(cleanP.slice(-8)) || cleanP.endsWith(hPhone.slice(-8))));
+      const codeMatches = Boolean(resCode && hCode === resCode);
+      if (!phoneMatches && !codeMatches) continue;
+
+      triggers.push({
+        triggerEvent: h.triggerEvent || h.event || h.templateId || "automated_message",
+        title: h.title || h.footer || h.triggerEvent || "Notificação Automática",
+        sentAt: h.sentAt || h.createdAt || h.timestamp || null,
+        summary: String(h.message || h.text || "").split("\n").slice(0, 2).join(" ").trim()
+      });
+    }
+  }
+
+  let msgs = Array.isArray(history) ? [...history] : [];
+  if (msgs.length === 0 && Array.isArray(db?.whatsappConversations) && cleanP) {
+    const conv = db.whatsappConversations.find(c => {
+      const p = normalizePhone(c?.phone || "");
+      return p && (cleanP.endsWith(p.slice(-8)) || p.endsWith(cleanP.slice(-8)));
+    });
+    if (Array.isArray(conv?.messages)) msgs = conv.messages;
+  }
+
+  for (const m of msgs.slice(-10)) {
+    if (!m || !m.fromMe) continue;
+    const txt = `${m.text || ""} ${m.message || ""} ${m.footer || ""}`;
+    if (/check-?out\s+conclu[ií]do|confirmamos\s+o\s+seu\s+check-?out/i.test(txt)) {
+      if (!triggers.some(t => t.triggerEvent === "checkout_completed")) {
+        triggers.push({
+          triggerEvent: "checkout_completed",
+          title: "CorpFlats • Check-out Concluído",
+          sentAt: m.timestamp || m.createdAt || null,
+          summary: "Check-out confirmado e agradecimentos enviados ao hóspede."
+        });
+      }
+    } else if (/seu\s+flat\s+est[aá]\s+pronto|limpo\s+e\s+liberado/i.test(txt)) {
+      if (!triggers.some(t => t.triggerEvent === "room_ready")) {
+        triggers.push({
+          triggerEvent: "room_ready",
+          title: "CorpFlats • Quarto Pronto e Liberado",
+          sentAt: m.timestamp || m.createdAt || null,
+          summary: "Aviso de quarto limpo e liberado enviado ao hóspede."
+        });
+      }
+    }
+  }
+
+  return triggers;
+}
+
+/**
  * Constrói o contexto em tempo real do hóspede consultando reservas, flats e governança
  */
 export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   let db = dbOrOptions;
   let phone = phoneArg;
   let now = nowArg || new Date();
+  let passedHistory = [];
 
   if (dbOrOptions && typeof dbOrOptions === "object" && ("db" in dbOrOptions || "cleanPhone" in dbOrOptions || "phone" in dbOrOptions)) {
     db = dbOrOptions.db || null;
     phone = dbOrOptions.cleanPhone || dbOrOptions.phone || null;
     if (dbOrOptions.now) now = dbOrOptions.now;
+    if (Array.isArray(dbOrOptions.history)) passedHistory = dbOrOptions.history;
   }
 
   const cleanPhone = normalizePhone(phone);
   const { todayStr, timeStr } = getBrasiliaDateParts(now);
 
+  // 0. Localiza conversa de WhatsApp para inspecionar nome e histórico de mensagens
+  let convRecord = null;
+  if (Array.isArray(db?.whatsappConversations) && cleanPhone) {
+    convRecord = db.whatsappConversations.find(c => {
+      const p = normalizePhone(c.phone || "");
+      return p && (cleanPhone.endsWith(p.slice(-8)) || p.endsWith(cleanPhone.slice(-8)));
+    });
+  }
+  const convMessages = passedHistory.length > 0
+    ? passedHistory
+    : (Array.isArray(convRecord?.messages) ? convRecord.messages : []);
+
   let matchedReservation = null;
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
 
-  // 1. Busca reserva que coincida com o telefone (prioriza ativa hoje, depois futura confirmada, depois passada)
+  // 1. Busca reserva que coincida com o telefone (prioriza ativa hoje não-encerrada, depois futura confirmada, depois check-out concluído hoje, depois passada)
   if (cleanPhone) {
     const allMatching = typeof findAllReservationsByPhone === "function"
       ? findAllReservationsByPhone(db, cleanPhone)
@@ -340,22 +537,29 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
 
     const nonCancelled = allMatching.filter(r => r && r.status !== "cancelada" && r.status !== "cancelled");
 
-    // 1.1 Ativa hoje (em estadia, check-in hoje ou check-out hoje)
-    matchedReservation = nonCancelled.find(r => 
+    const todayMatches = nonCancelled.filter(r =>
       (r.checkinDate === todayStr || r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr))
     );
 
-    // 1.2 Se não está em estadia hoje, procura reserva futura confirmada (ordenada pela data de check-in mais próxima)
+    // 1.1 Prioriza reserva ativa hoje cujo check-out AINDA NÃO foi concluído
+    matchedReservation = todayMatches.find(r => !isReservationCheckoutCompleted(r, db, cleanPhone, convMessages)) || null;
+
+    // 1.2 Se não está em estadia ativa hoje, procura reserva futura confirmada (ordenada pela data de check-in mais próxima)
     if (!matchedReservation) {
       const futureCandidates = nonCancelled
-        .filter(r => (r.checkinDate || "") >= todayStr)
+        .filter(r => (r.checkinDate || "") > todayStr && !isReservationCheckoutCompleted(r, db, cleanPhone, convMessages))
         .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""));
       if (futureCandidates.length > 0) {
         matchedReservation = futureCandidates[0];
       }
     }
 
-    // 1.3 Se não há futura nem ativa, pega a passada mais recente
+    // 1.25 Se não há futura nem ativa pendente, verifica reserva de hoje que já teve check-out concluído
+    if (!matchedReservation && todayMatches.length > 0) {
+      matchedReservation = todayMatches[0];
+    }
+
+    // 1.3 Se não há futura nem de hoje, pega a passada mais recente
     if (!matchedReservation && nonCancelled.length > 0) {
       const pastCandidates = nonCancelled
         .sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
@@ -372,14 +576,6 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     });
   }
 
-  // 2.5 Busca nome na conversa de WhatsApp caso não haja cadastro formal
-  let convRecord = null;
-  if (Array.isArray(db?.whatsappConversations) && cleanPhone) {
-    convRecord = db.whatsappConversations.find(c => {
-      const p = normalizePhone(c.phone || "");
-      return p && (cleanPhone.endsWith(p.slice(-8)) || p.endsWith(cleanPhone.slice(-8)));
-    });
-  }
   const convName = (convRecord?.name && convRecord.name.trim() !== "Hóspede") ? convRecord.name.trim() : null;
 
   // 3. Monta resumo do hóspede
@@ -390,12 +586,16 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   let flatId = matchedReservation?.flatId || null;
   let cleaningStatus = "desconhecido";
   let isRoomReady = false;
+  let isCheckoutCompleted = false;
 
   if (matchedReservation) {
     const checkin = matchedReservation.checkinDate;
     const checkout = matchedReservation.checkoutDate;
+    isCheckoutCompleted = isReservationCheckoutCompleted(matchedReservation, db, cleanPhone, convMessages);
 
-    if (checkin === todayStr) {
+    if (isCheckoutCompleted) {
+      stayStatus = (checkout >= todayStr || checkin === todayStr) ? "checkout_concluido" : "estadia_passada";
+    } else if (checkin === todayStr) {
       stayStatus = "checkin_hoje";
     } else if (checkout === todayStr) {
       stayStatus = "checkout_hoje";
@@ -429,11 +629,14 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
 
   const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
   const rawCheckinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, 1, appOrigin, db) : null;
-  const isCheckinRelevant = stayStatus === "checkin_hoje" || stayStatus === "reserva_futura";
-  const isCheckoutDay = stayStatus === "checkout_hoje";
-  const isHosted = stayStatus === "em_estadia" || isCheckoutDay;
-  const checkoutUrl = matchedReservation ? `${appOrigin}/checkout/${matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`}` : null;
+  const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
+  const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
+  const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
+  const checkoutUrl = (matchedReservation && !isCheckoutCompleted && stayStatus !== "estadia_passada")
+    ? `${appOrigin}/checkout/${matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`}`
+    : null;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
+  const recentTriggers = getRecentAutomatedTriggers(db, cleanPhone, convMessages, matchedReservation);
 
   return {
     todayStr,
@@ -446,7 +649,9 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     checkoutUrl,
     isCheckinRelevant,
     isCheckoutDay,
+    isCheckoutCompleted,
     isHosted,
+    recentTriggers,
     reservation: matchedReservation ? {
       code: matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`,
       guestName: matchedReservation.guestName,
@@ -462,6 +667,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
       checkoutUrl,
       isCheckinRelevant,
       isCheckoutDay,
+      isCheckoutCompleted,
       isHosted,
       stayStatus
     } : null,
@@ -2642,8 +2848,17 @@ export function handleGetReservationDetails(db, args = {}) {
   const rawCheckinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
 
   const todayStr = getBrasiliaDateParts().todayStr;
+  const isCheckoutCompleted = isReservationCheckoutCompleted(
+    matched,
+    db,
+    targetPhone || matched.guestPhone || matched.phone,
+    args.history || []
+  );
+
   let stayStatus = "sem_reserva_ativa";
-  if (matched.checkinDate === todayStr) {
+  if (isCheckoutCompleted) {
+    stayStatus = "checkout_concluido";
+  } else if (matched.checkinDate === todayStr) {
     stayStatus = "checkin_hoje";
   } else if (matched.checkoutDate === todayStr) {
     stayStatus = "checkout_hoje";
@@ -2655,14 +2870,18 @@ export function handleGetReservationDetails(db, args = {}) {
     stayStatus = "estadia_passada";
   }
 
-  const isCheckinRelevant = stayStatus === "checkin_hoje" || stayStatus === "reserva_futura";
-  const isCheckoutDay = stayStatus === "checkout_hoje";
-  const isHosted = stayStatus === "em_estadia" || isCheckoutDay;
-  const checkoutUrl = `${appOrigin}/checkout/${matched.code || matched.reservationCode || `RES-${matched.flatNumber}`}`;
+  const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
+  const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
+  const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
+  const checkoutUrl = isCheckoutCompleted
+    ? null
+    : `${appOrigin}/checkout/${matched.code || matched.reservationCode || `RES-${matched.flatNumber}`}`;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
   let operationalGuidance = "";
-  if (isCheckoutDay) {
+  if (isCheckoutCompleted) {
+    operationalGuidance = "CHECK-OUT JÁ CONCLUÍDO PELO HÓSPEDE (estadia encerrada e saída já confirmada). NUNCA cobrar desocupação até as 12:00h e NUNCA enviar link de check-out ou de pré-check-in. Caso o hóspede pergunte sobre a reserva ou check-out, confirme que o check-out já foi concluído com sucesso e agradeça pela estadia.";
+  } else if (isCheckoutDay) {
     operationalGuidance = "HÓSPEDE EM DIA DE CHECK-OUT HOJE (saída hoje até as 12:00h). NUNCA enviar link de pré-check-in digital. Informar sobre horário limite de saída até 12:00h, orientar sobre procedimentos de desocupação e devolução de chaves, perguntar se deseja prorrogação (late check-out) mediante disponibilidade ou verificar se já desocupou o flat. Fornecer link de confirmação de check-out.";
   } else if (stayStatus === "em_estadia") {
     operationalGuidance = "HÓSPEDE JÁ ACOMODADO NO FLAT (em estadia). NUNCA enviar link de pré-check-in digital. Fornecer apoio à estadia em andamento.";
@@ -2688,6 +2907,7 @@ export function handleGetReservationDetails(db, args = {}) {
       stayStatus,
       isCheckinRelevant,
       isCheckoutDay,
+      isCheckoutCompleted,
       isHosted,
       checkinUrl,
       rawCheckinUrl: isCheckinRelevant ? rawCheckinUrl : null,
@@ -5779,16 +5999,14 @@ export function formatCheckoutCommunicationResponse(name = "", guestContext = nu
 }
 
 /**
- * Auto-Crítica Semântica e Validador Pré-Envio:
- * Avalia criticamente a resposta candidata antes de enviar para garantir
- * que ela realmente responde à pergunta feita pelo hóspede, evitando falsos positivos
- * (ex: responder regras de entrega de bandeja quando a pessoa perguntou preço).
- * Se a demanda não possui dados ou capacidade operacional no sistema, registra
- * em db.unmetDemands imediatamente e gera resposta transparente e cordial.
+ * Pré-Análise Agêntica e Execução Prévia de Contexto (LLM-First Pre-Analysis):
+ * Coleta todos os fatos reais do sistema, ciclo de vida da reserva (incluindo check-out concluído),
+ * gatilhos automáticos recém-enviados e registra demandas não atendidas / FAQs pendentes ANTES
+ * de a Sofia redigir a resposta final, permitindo que o próprio LLM componha 100% da resposta
+ * com naturalidade e sem colagens pós-texto.
  */
-export function validateAndRefineResponse({
+export function prepareAgenticPreAnalysis({
   queryText = "",
-  candidateText = "",
   guestContext = {},
   db = null,
   aiConfig = DEFAULT_AI_CONFIG,
@@ -5808,15 +6026,213 @@ export function validateAndRefineResponse({
 
   const convState = extractConversationState(queryText, effectiveHistory, guestContext, db);
   const analysis = analyzeGuestQuery(queryText, { ...(guestContext || {}), history: effectiveHistory }, db);
-  let replyText = candidateText;
+  const recentTriggers = Array.isArray(guestContext?.recentTriggers) && guestContext.recentTriggers.length > 0
+    ? guestContext.recentTriggers
+    : getRecentAutomatedTriggers(db, guestContext?.phone, effectiveHistory, guestContext?.reservation);
+
+  const isCheckoutDone = Boolean(
+    guestContext?.isCheckoutCompleted ||
+    guestContext?.stayStatus === "checkout_concluido" ||
+    (guestContext?.reservation && isReservationCheckoutCompleted(guestContext.reservation, db, guestContext?.phone, effectiveHistory))
+  );
+
   let unmetDemand = null;
   let missingDataOrCapability = false;
+  let shouldHandover = false;
+  let requiresHandover = false;
+  let autoCheckoutActionResult = null;
+
+  if (analysis.type === "RESERVATION_REQUEST") {
+    const botSettings = getBotActionsSettings(db);
+    const canAutoReserve = botSettings.apiActionsEnabled !== false && (
+      botSettings.allowedActions.createPreReservation !== false ||
+      botSettings.allowedActions.commitReservation !== false
+    );
+    if (!canAutoReserve && db) {
+      missingDataOrCapability = true;
+      shouldHandover = true;
+      requiresHandover = true;
+      unmetDemand = detectAndRecordUnmetDemand({
+        db,
+        text: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        guestContext,
+        actionTarget: "createPreReservation",
+        reason: "action_disabled",
+        category: "pre_reserva",
+        demandTitle: "Nova Pré-Reserva / Solicitação Direta",
+        saveDatabase,
+        createNotification
+      });
+    }
+  } else if (analysis.type === "OPERATIONAL_DEMAND") {
+    missingDataOrCapability = true;
+    const cat = analysis.demandClassification?.category || inferFaqCategory(queryText);
+    const demandTitle = analysis.demandClassification?.demandTitle || UNMET_DEMAND_CATEGORIES[cat]?.title || "Demanda Operacional";
+    const extractedFlat = guestContext?.flatNumber || (queryText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
+    const effectiveContext = extractedFlat && (!guestContext || !guestContext.flatNumber)
+      ? { ...(guestContext || {}), flatNumber: extractedFlat }
+      : guestContext;
+
+    const botActionsSettings = getBotActionsSettings(db);
+    const isCheckoutActionEnabled = botActionsSettings?.apiActionsEnabled !== false && botActionsSettings?.allowedActions?.informCheckout === true;
+
+    if (cat === "checkout_comunicacao" && isCheckoutActionEnabled && db) {
+      const actionResult = handleInformCheckout(db, {
+        flatNumber: extractedFlat,
+        phone: guestContext?.phone,
+        guestName: guestContext?.guestName
+      });
+      autoCheckoutActionResult = actionResult;
+      if (actionResult && actionResult.success) {
+        missingDataOrCapability = false;
+        unmetDemand = null;
+        if (typeof saveDatabase === "function") {
+          try { saveDatabase("bot_action_inform_checkout_auto"); } catch (_) {}
+        }
+      } else {
+        unmetDemand = detectAndRecordUnmetDemand({
+          db,
+          text: queryText,
+          senderPhone: guestContext?.phone,
+          senderName: guestContext?.guestName || "Hóspede",
+          guestContext: effectiveContext,
+          actionTarget: "informCheckout",
+          reason: "capability_missing",
+          category: cat,
+          demandTitle,
+          saveDatabase,
+          createNotification
+        });
+      }
+    } else if (db) {
+      unmetDemand = detectAndRecordUnmetDemand({
+        db,
+        text: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        guestContext: effectiveContext,
+        actionTarget: cat === "checkout_comunicacao" ? "informCheckout" : null,
+        reason: "capability_missing",
+        category: cat,
+        demandTitle,
+        saveDatabase,
+        createNotification
+      });
+    }
+  } else if (analysis.type === "UNKNOWN_INQUIRY" && db) {
+    missingDataOrCapability = true;
+    unmetDemand = detectAndRecordUnmetDemand({
+      db,
+      text: queryText,
+      senderPhone: guestContext?.phone,
+      senderName: guestContext?.guestName || "Hóspede",
+      guestContext,
+      actionTarget: null,
+      reason: "capability_missing",
+      saveDatabase,
+      createNotification
+    });
+
+    const isDevCaller = isDeveloperPhone(guestContext?.phone, db) &&
+      (classifyDeveloperMessage(queryText, db).type !== "guest_simulation");
+
+    if (!isDevCaller) {
+      autoCreatePendingFaq({
+        db,
+        questionText: queryText,
+        senderPhone: guestContext?.phone,
+        senderName: guestContext?.guestName || "Hóspede",
+        saveDatabase,
+        createNotification
+      });
+    }
+  }
+
+  const triggerLines = recentTriggers.length > 0
+    ? recentTriggers.map(t => `  * [${t.triggerEvent || t.templateId || "gatilho"}] ${t.summary || "Notificação automática enviada"}`).join("\n")
+    : "  * Nenhum gatilho automático recente registrado.";
+
+  let preAnalysisDirective = "";
+  if (analysis.type === "GREETING_ONLY") {
+    preAnalysisDirective = `- POSTURA DE ESCUTA ATIVA (MEMÓRIA SILENCIOSA): O hóspede enviou APENAS uma saudação ("${queryText}"). Cumprimente-o pelo nome de forma calorosa e pergunte como pode ajudar. NÃO despeje dados da reserva, NÃO cobre check-out, NÃO envie links não solicitados!`;
+  } else if (isCheckoutDone) {
+    preAnalysisDirective = `- ATENÇÃO: O check-out da reserva ${guestContext?.reservation?.code || ""} (Flat ${guestContext?.flatNumber || "N/A"}) JÁ FOI CONCLUÍDO! Nunca peça para desocupar o quarto até 12h nem envie link de check-out.`;
+  } else if (unmetDemand) {
+    preAnalysisDirective = `- DEMANDA REGISTRADA PREVIAMENTE NO SISTEMA: A solicitação do hóspede ("${unmetDemand.demandTitle || analysis.primaryTopic}") já foi registrada automaticamente na fila da recepção/governança (ID: ${unmetDemand.id || "ativo"}). Informe ao hóspede com naturalidade e empatia que você já registrou o pedido para a equipe atender com prioridade.`;
+  } else if (autoCheckoutActionResult?.success) {
+    preAnalysisDirective = `- CHECK-OUT PROCESSADO AUTOMATICAMENTE: A saída do Flat ${autoCheckoutActionResult.flatNumber || guestContext?.flatNumber || ""} já foi registrada no sistema e a governança foi acionada. Agradeça a estadia com carinho!`;
+  }
+
+  const promptBlock = `
+[DOSSIÊ PRÉ-RESPOSTA & CICLO DE VIDA REAL DA CONVERSA]
+- Classificação da mensagem atual: ${analysis.type} (Tópico: ${analysis.primaryTopic || "geral"})
+- Check-out já concluído / estadia encerrada: ${isCheckoutDone ? "SIM (CHECK-OUT JÁ REALIZADO — PROIBIDO COBRAR SAÍDA OU ENVIAR LINK DE CHECK-OUT)" : "NÃO"}
+- Gatilhos e notificações automáticas enviadas recentemente para este hóspede:
+${triggerLines}
+${preAnalysisDirective ? `${preAnalysisDirective}\n` : ""}`;
+
+  return {
+    analysis,
+    convState,
+    recentTriggers,
+    isCheckoutDone,
+    unmetDemand,
+    missingDataOrCapability,
+    shouldHandover,
+    requiresHandover,
+    autoCheckoutActionResult,
+    promptBlock
+  };
+}
+
+/**
+ * Auto-Crítica Semântica e Validador Pré-Envio:
+ * Avalia criticamente a resposta candidata antes de enviar para garantir
+ * que ela realmente responde à pergunta feita pelo hóspede, evitando falsos positivos
+ * (ex: responder regras de entrega de bandeja quando a pessoa perguntou preço).
+ * Se a demanda não possui dados ou capacidade operacional no sistema, registra
+ * em db.unmetDemands imediatamente e gera resposta transparente e cordial.
+ */
+export function validateAndRefineResponse({
+  queryText = "",
+  candidateText = "",
+  guestContext = {},
+  db = null,
+  aiConfig = DEFAULT_AI_CONFIG,
+  saveDatabase = null,
+  createNotification = null,
+  history = [],
+  preRecordedUnmetDemand = null
+}) {
+  const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
+    ? history
+    : (guestContext?.history && Array.isArray(guestContext.history) && guestContext.history.length > 0
+        ? guestContext.history
+        : ((db?.whatsappConversations || []).find(c => {
+            const p = cleanWhatsAppPhone(c.phone);
+            const target = cleanWhatsAppPhone(guestContext?.phone);
+            return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
+          })?.messages || []));
+
+  const convState = extractConversationState(queryText, effectiveHistory, guestContext, db);
+  const analysis = analyzeGuestQuery(queryText, { ...(guestContext || {}), history: effectiveHistory }, db);
+  let replyText = candidateText;
+  let unmetDemand = preRecordedUnmetDemand || null;
+  let missingDataOrCapability = Boolean(preRecordedUnmetDemand);
   let shouldHandover = false;
   let requiresHandover = false;
 
   const name = guestContext?.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
   const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
   const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  const isCheckoutDone = Boolean(
+    guestContext?.isCheckoutCompleted ||
+    guestContext?.stayStatus === "checkout_concluido" ||
+    (guestContext?.reservation && isReservationCheckoutCompleted(guestContext.reservation, db, guestContext?.phone, effectiveHistory))
+  );
 
   // Regra 1: Validação Crítica de Cotação / Preço vs Regras Operacionais (Ex: Café da Manhã)
   if (analysis.type === "PRICING_QUOTE") {
@@ -5881,7 +6297,7 @@ export function validateAndRefineResponse({
       missingDataOrCapability = true;
       shouldHandover = true;
       requiresHandover = true;
-      unmetDemand = detectAndRecordUnmetDemand({
+      unmetDemand = unmetDemand || detectAndRecordUnmetDemand({
         db,
         text: queryText,
         senderPhone: guestContext?.phone,
@@ -5980,8 +6396,7 @@ export function validateAndRefineResponse({
           try { saveDatabase("bot_action_inform_checkout_auto"); } catch (_) {}
         }
       } else {
-        // Se a ação estava habilitada mas o flat não pôde ser identificado
-        unmetDemand = detectAndRecordUnmetDemand({
+        unmetDemand = unmetDemand || detectAndRecordUnmetDemand({
           db,
           text: queryText,
           senderPhone: guestContext?.phone,
@@ -5996,7 +6411,7 @@ export function validateAndRefineResponse({
         });
       }
     } else if (db) {
-      unmetDemand = detectAndRecordUnmetDemand({
+      unmetDemand = unmetDemand || detectAndRecordUnmetDemand({
         db,
         text: queryText,
         senderPhone: guestContext?.phone,
@@ -6013,8 +6428,6 @@ export function validateAndRefineResponse({
 
     if (cat === "checkout_comunicacao") {
       const checkoutAck = formatCheckoutCommunicationResponse(name, effectiveContext);
-      // Se a resposta candidata respondia a outra pergunta (ex: restaurante, malas, táxi, almoço)
-      // e não era apenas a instrução padrão de check-out ou fallback genérico, preserva o conteúdo útil!
       const isCheckoutFaqOrFallback = /12:00h|instruções\s+de\s+check-?out|deixe\s+a\s+chave|portaria\s+24h|posso\s+te\s+ajudar\s+com\s+informaç/i.test(replyText) ||
         (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("almoç") && !replyText.includes("restaurante") && !replyText.includes("mala") && !replyText.includes("táxi") && !replyText.includes("uber"));
 
@@ -6041,7 +6454,7 @@ export function validateAndRefineResponse({
       (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei"));
 
     if (db) {
-      unmetDemand = detectAndRecordUnmetDemand({
+      unmetDemand = unmetDemand || detectAndRecordUnmetDemand({
         db,
         text: queryText,
         senderPhone: guestContext?.phone,
@@ -6099,7 +6512,7 @@ export function validateAndRefineResponse({
   // Regra 5: Validação de Consulta de Reserva Existente (VIA 2)
   if (analysis.type === "EXISTING_RESERVATION") {
     const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
-      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("confirmada") && !replyText.includes("reserva"));
+      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("confirmada") && !replyText.includes("reserva") && !replyText.includes("concluído"));
 
     if (isGenericFallback) {
       if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada" && guestContext.reservation.status !== "cancelled") {
@@ -6111,7 +6524,9 @@ export function validateAndRefineResponse({
         const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
         const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
-        if (guestContext.stayStatus === "checkout_hoje") {
+        if (isCheckoutDone) {
+          replyText = ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
+        } else if (guestContext.stayStatus === "checkout_hoje") {
           const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
           replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
         } else if (guestContext.stayStatus === "em_estadia") {
@@ -6131,19 +6546,54 @@ export function validateAndRefineResponse({
     }
   }
 
-  // Regra 6: Blindagem Semântica & Sanitização Temporal Pós-Geração (Zero Pré-Check-in em Checkout/Estadia)
-  if (guestContext?.stayStatus === "checkout_hoje" || guestContext?.isCheckoutDay) {
-    if (/pr[eé]-?check-?in/i.test(replyText) || /pre-checkin/i.test(replyText)) {
-      replyText = replyText
-        .replace(/📋\s*\*?Pr[eé]-Check-in(?:\s+Digital)?:\*?\s*\n?(?:👉\s*)?(?:https?:\/\/)?[^\s]*/gi, "")
-        .replace(/(?:👉\s*)?(?:https?:\/\/)?[^\s]*pre-?checkin[^\s]*/gi, "")
-        .replace(/(?:acesse|fa[cç]a|preencha|link\s+(?:do|de)|realize\s+(?:o\s+)?)\s*(?:o\s+)?(?:nosso\s+)?pr[eé]-?check-?in(?:\s+em|\s+pelo|\s+no|\s+digital)?[^\n.]*[.\n]?/gi, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+  // Regra 6: Blindagem Semântica & Sanitização Temporal Pós-Geração (Respeito ao Ciclo de Vida Real e Saudação Silenciosa)
+  const stripPreCheckinFromText = (txt) => String(txt || "")
+    .replace(/📋\s*\*?Pr[eé]-Check-in(?:\s+Digital)?:\*?\s*\n?(?:👉\s*)?(?:https?:\/\/)?[^\s]*/gi, "")
+    .replace(/(?:👉\s*)?(?:https?:\/\/)?[^\s]*pre-?checkin[^\s]*/gi, "")
+    .replace(/(?:acesse|fa[cç]a|preencha|link\s+(?:do|de)|realize\s+(?:o\s+)?)\s*(?:o\s+)?(?:nosso\s+)?pr[eé]-?check-?in(?:\s+em|\s+pelo|\s+no|\s+digital)?[^\n.]*[.\n]?/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const stripPendingCheckoutReminderFromText = (txt) => String(txt || "")
+    .replace(/🚪\s*\*?Confirma[cç][aã]o\s+de\s+Check-?out:\*?\s*\n?(?:👉\s*)?(?:https?:\/\/)?[^\s]*/gi, "")
+    .replace(/(?:👉\s*)?(?:https?:\/\/)?[^\s]*\/checkout\/[^\s]*/gi, "")
+    .replace(/Lembramos\s+que\s+\*?hoje\s+[eé]\s+o\s+dia\s+do\s+seu\s+check-?out\*?[^\n]*\n?/gi, "")
+    .replace(/Caso\s+deseje\s+solicitar\s+prorroga[cç][aã]o\s+da\s+estadia\s*\(late\s+check-?out\)[^\n]*\n?/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (isCheckoutDone) {
+    // Se o check-out já foi concluído, NUNCA permite cobrança de saída até 12h, link de /checkout/ ou link de /pre-checkin/
+    if (/pr[eé]-?check-?in|pre-checkin/i.test(replyText)) {
+      replyText = stripPreCheckinFromText(replyText);
     }
-    const mentionsReservaOrCheckout = /reserva|flat|estadia|quarto|sa[ií]da|checkout|check-out/i.test(queryText) || /reserva|flat|estadia/i.test(replyText);
+    if (/\/checkout\/|Confirma[cç][aã]o\s+de\s+Check-?out|hoje\s+[eé]\s+o\s+dia\s+do\s+seu\s+check-?out/i.test(replyText)) {
+      replyText = stripPendingCheckoutReminderFromText(replyText);
+    }
+    if (!replyText || replyText.trim().length < 5) {
+      const salutation = getGreetingSalutation(queryText, name);
+      replyText = ret(`${salutation} Tudo bem? Sou a ${aiConfig?.agentName || "Sofia"}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
+    }
+  } else if (analysis.type === "GREETING_ONLY") {
+    // Saudação pura (Escuta Ativa / Memória Silenciosa): NUNCA despeja cobrança de check-out nem links não solicitados
+    if (/pr[eé]-?check-?in|pre-checkin/i.test(replyText)) {
+      replyText = stripPreCheckinFromText(replyText);
+    }
+    if (/\/checkout\/|Confirma[cç][aã]o\s+de\s+Check-?out|hoje\s+[eé]\s+o\s+dia\s+do\s+seu\s+check-?out/i.test(replyText)) {
+      replyText = stripPendingCheckoutReminderFromText(replyText);
+    }
+  } else if (guestContext?.stayStatus === "checkout_hoje" || guestContext?.isCheckoutDay) {
+    let hadPreCheckinRemoved = false;
+    if (/pr[eé]-?check-?in/i.test(replyText) || /pre-checkin/i.test(replyText)) {
+      hadPreCheckinRemoved = true;
+      replyText = stripPreCheckinFromText(replyText);
+    }
+    // Apenas complementa dados de check-out se o candidato tinha link errado de pré-check-in removido
+    // ou se o hóspede perguntou sobre sua reserva/estadia/check-out (NUNCA por match de "CorpFlats"!)
+    const guestAskedReservaOrCheckout = analysis.type === "EXISTING_RESERVATION" ||
+      /\b(?:reserva|estadia|sa[ií]da|checkout|check-out)\b/i.test(queryText);
     const hasCheckoutDetails = /12:00|12h|hor[aá]rio\s+limite/i.test(replyText);
-    if (mentionsReservaOrCheckout && !hasCheckoutDetails) {
+    if ((hadPreCheckinRemoved || guestAskedReservaOrCheckout) && !hasCheckoutDetails) {
       const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
       const checkoutUrl = guestContext.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
       const checkoutLinkMsg = checkoutUrl && !replyText.includes(checkoutUrl) ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
@@ -6151,12 +6601,7 @@ export function validateAndRefineResponse({
     }
   } else if (guestContext?.stayStatus === "em_estadia" || guestContext?.isHosted) {
     if (/pr[eé]-?check-?in/i.test(replyText) || /pre-checkin/i.test(replyText)) {
-      replyText = replyText
-        .replace(/📋\s*\*?Pr[eé]-Check-in(?:\s+Digital)?:\*?\s*\n?(?:👉\s*)?(?:https?:\/\/)?[^\s]*/gi, "")
-        .replace(/(?:👉\s*)?(?:https?:\/\/)?[^\s]*pre-?checkin[^\s]*/gi, "")
-        .replace(/(?:acesse|fa[cç]a|preencha|link\s+(?:do|de)|realize\s+(?:o\s+)?)\s*(?:o\s+)?(?:nosso\s+)?pr[eé]-?check-?in(?:\s+em|\s+pelo|\s+no|\s+digital)?[^\n.]*[.\n]?/gi, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+      replyText = stripPreCheckinFromText(replyText);
     }
   }
 
@@ -6443,8 +6888,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         !/(?:estender|prorroga|prolongar)/i.test(g.text || "")
       );
       if (checkoutGuideline) {
+        const isCheckoutAlreadyDone = Boolean(guestContext?.isCheckoutCompleted || guestContext?.stayStatus === "checkout_concluido");
         const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
-        const checkoutUrl = guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
+        const checkoutUrl = !isCheckoutAlreadyDone ? (guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "")) : "";
         const linkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
         return ret(`${greetingSalutation} ${checkoutGuideline.text}${linkMsg}`);
       }
@@ -6634,6 +7080,11 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
       const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
       const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
+
+      // 0. Check-out já concluído (estadia encerrada)
+      if (guestContext.stayStatus === "checkout_concluido" || guestContext.isCheckoutCompleted) {
+        return ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
+      }
 
       // 1. Check-out hoje (Hóspede já hospedado, hoje é a data de saída até 12:00h - NUNCA mandar pré-check-in)
       if (guestContext.stayStatus === "checkout_hoje") {
@@ -6894,6 +7345,10 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
   // 5.1 Check-out / Horário de Saída
   if (/check-?out|sa[ií]da|hor[aá]rio\s+de\s+sa[ií]da|que\s+horas\s+sair|deixar\s+a\s+chave/i.test(text)) {
+    if ((guestContext?.stayStatus === "checkout_concluido" || guestContext?.isCheckoutCompleted) && !asksCheckoutTime) {
+      const flatStr = guestContext?.flatNumber ? ` do *Flat ${guestContext.flatNumber}*` : "";
+      return ret(`${greetingSalutation} O seu check-out${flatStr} já consta como *concluído* em nosso sistema ✅! Agradecemos muito pela sua estadia conosco na CorpFlats. Caso precise de Nota Fiscal (NFS-e) ou qualquer outro auxílio, estou à inteira disposição! 🏨✨`);
+    }
     return ret(`${greetingSalutation} O horário padrão de check-out é até às *${kb.checkoutTime}* ⏰.\n\nPara fazer a saída, pedimos que desligue ar-condicionado e luzes e entregue as chaves/cartão na portaria do condomínio. Caso necessite de late check-out, fale conosco com antecedência! 🙏`);
   }
 
@@ -7264,7 +7719,6 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
  */
 export async function generateAiWhatsAppResponse({ db, phone, messageText, history = [], isCopilot = false }) {
   const aiConfig = getWhatsAppAiConfig(db);
-  const guestContext = buildGuestContext(db, phone);
 
   const conv = (db?.whatsappConversations || []).find(c => {
     const p = cleanWhatsAppPhone(c.phone);
@@ -7275,6 +7729,7 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
     ? history
     : (conv?.messages || []);
 
+  const guestContext = buildGuestContext({ db, phone, history: effectiveHistory });
   guestContext.history = effectiveHistory;
 
   // 1. Verifica intenção de transbordo humano
@@ -7290,8 +7745,16 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
     };
   }
 
-  // 2. Prepara o contexto estruturado e estado acumulado da conversa
-  const convState = extractConversationState(messageText, effectiveHistory, guestContext, db);
+  // 2. Pré-análise Agêntica (LLM-First Pre-Analysis): coleta fatos, ciclo de vida e pré-registra demandas/FAQs ANTES de redigir
+  const preAnalysis = prepareAgenticPreAnalysis({
+    queryText: messageText,
+    guestContext,
+    db,
+    aiConfig,
+    history: effectiveHistory
+  });
+
+  const convState = preAnalysis.convState;
   const botSettings = getBotActionsSettings(db);
   const tools = buildGeminiTools(botSettings);
 
@@ -7351,8 +7814,10 @@ ${formattedFaqs}
   }
 
   let stayStatusNotice = guestContext.stayStatus;
-  if (guestContext.stayStatus === "checkout_hoje") {
-    stayStatusNotice = "CHECK-OUT HOJE (Data de saída). ATENÇÃO: Hóspede em dia de saída. Limite de check-out até às 12:00h. NUNCA envie link de pré-check-in digital. Oriente sobre procedimentos de saída e devolução de chaves, pergunte se precisa prorrogar/late check-out ou se já desocupou o flat. Link para confirmação de check-out: " + (guestContext.checkoutUrl || "Não aplicável");
+  if (guestContext.stayStatus === "checkout_concluido" || guestContext.isCheckoutCompleted) {
+    stayStatusNotice = "CHECK-OUT JÁ CONCLUÍDO (Estadia encerrada). ATENÇÃO CRÍTICA: O hóspede JÁ REALIZOU O CHECK-OUT e já desocupou o flat. NUNCA envie lembrete de saída às 12:00h, NUNCA envie link de check-out (/checkout/) e NUNCA envie link de pré-check-in (/pre-checkin/)!";
+  } else if (guestContext.stayStatus === "checkout_hoje") {
+    stayStatusNotice = "CHECK-OUT HOJE (Data de saída pendente). ATENÇÃO: Hóspede em dia de saída. Limite de check-out até às 12:00h. NUNCA envie link de pré-check-in digital. Apenas envie lembrete ou link de check-out se o hóspede perguntar sobre a reserva, saída ou check-out (NUNCA em saudações simples como 'olá' / 'bom dia'). Link para confirmação de check-out: " + (guestContext.checkoutUrl || "Não aplicável");
   } else if (guestContext.stayStatus === "em_estadia") {
     stayStatusNotice = "EM ESTADIA (Hóspede já acomodado no flat). ATENÇÃO: NUNCA envie link de pré-check-in digital! Preste suporte à estadia em andamento.";
   }
@@ -7375,9 +7840,10 @@ ${formattedFaqs}
 - Possui reserva: ${guestContext.hasReservation ? "SIM" : "NÃO"}
 ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber || "A definir"}
 - Período da reserva: ${guestContext.reservation?.checkinDate} até ${guestContext.reservation?.checkoutDate}
-- Status da reserva: ${guestContext.reservation?.status}
-- Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / sem relevância)"}
-${guestContext.isCheckoutDay && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
+- Status da reserva: ${guestContext.isCheckoutCompleted ? "checkout_concluido (Estadia encerrada)" : guestContext.reservation?.status}
+- Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / check-out concluído / sem relevância)"}
+${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
+${preAnalysis.promptBlock}
 ${conversationStateSection}
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]
 - Endereço: ${aiConfig.knowledgeBase.address}
@@ -7445,22 +7911,24 @@ ${systemActionsNotice}
           guestContext,
           db,
           aiConfig,
-          history: effectiveHistory
+          history: effectiveHistory,
+          preRecordedUnmetDemand: preAnalysis.unmetDemand
         });
 
         const finalReply = geminiRes.requiresHandover ? geminiRes.text : (validation.replyText || geminiRes.text);
 
         return {
-          shouldHandover: Boolean(geminiRes.requiresHandover || validation.shouldHandover),
-          requiresHandover: Boolean(geminiRes.requiresHandover || validation.requiresHandover),
+          shouldHandover: Boolean(geminiRes.requiresHandover || validation.shouldHandover || preAnalysis.shouldHandover),
+          requiresHandover: Boolean(geminiRes.requiresHandover || validation.requiresHandover || preAnalysis.requiresHandover),
           replyText: finalReply,
           guestContext,
+          preAnalysis,
           modelUsed: geminiRes.model,
           source: "gemini",
           functionCall: geminiRes.functionCall || null,
           functionResult: geminiRes.functionResult || null,
-          unmetDemand: validation.unmetDemand || null,
-          missingDataOrCapability: validation.missingDataOrCapability || false
+          unmetDemand: validation.unmetDemand || preAnalysis.unmetDemand || null,
+          missingDataOrCapability: Boolean(validation.missingDataOrCapability || preAnalysis.missingDataOrCapability)
         };
       }
     } catch (err) {
@@ -7476,18 +7944,20 @@ ${systemActionsNotice}
     guestContext,
     db,
     aiConfig,
-    history: effectiveHistory
+    history: effectiveHistory,
+    preRecordedUnmetDemand: preAnalysis.unmetDemand
   });
 
   return {
-    shouldHandover: Boolean(validation.shouldHandover),
-    requiresHandover: Boolean(validation.requiresHandover),
+    shouldHandover: Boolean(validation.shouldHandover || preAnalysis.shouldHandover),
+    requiresHandover: Boolean(validation.requiresHandover || preAnalysis.requiresHandover),
     replyText: validation.replyText || heuristicText,
     guestContext,
+    preAnalysis,
     modelUsed: "heuristic_fallback",
     source: "heuristic",
-    unmetDemand: validation.unmetDemand || null,
-    missingDataOrCapability: validation.missingDataOrCapability || false
+    unmetDemand: validation.unmetDemand || preAnalysis.unmetDemand || null,
+    missingDataOrCapability: Boolean(validation.missingDataOrCapability || preAnalysis.missingDataOrCapability)
   };
 }
 
