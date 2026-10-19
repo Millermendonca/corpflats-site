@@ -2104,10 +2104,19 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
   const channel = reservation.channel || "Site CorpFlats";
 
-  const rawMethod = String(reservation.paymentMethod || "pix").toLowerCase();
+  const rawMethod = String(reservation.paymentMethod || "").toLowerCase();
   let formaPagamento = "PIX";
-  if (rawMethod.includes("cart") || rawMethod.includes("card") || rawMethod.includes("credit")) {
-    formaPagamento = "Cartão de Crédito";
+  if (
+    rawMethod.includes("cart") ||
+    rawMethod.includes("card") ||
+    rawMethod.includes("credit") ||
+    rawMethod.includes("mercadopago") ||
+    rawMethod.includes("infinite") ||
+    (reservation.mpPaymentId && !reservation.pixEndToEndId)
+  ) {
+    formaPagamento = rawMethod.includes("debito") || rawMethod.includes("débito")
+      ? "Cartão de Débito"
+      : "Cartão de Crédito";
   } else if (rawMethod.includes("booking")) {
     formaPagamento = "Booking.com";
   } else if (rawMethod.includes("airbnb")) {

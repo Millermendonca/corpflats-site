@@ -1057,7 +1057,15 @@ export default function Payments() {
                 <div className="flex justify-between border-b border-border/40 pb-1.5">
                   <span className="text-muted-foreground font-medium">Forma de Pagamento:</span>
                   <span className="font-semibold text-foreground">
-                    {selectedPayment.pixTxId ? "⚡ PIX Banco Inter Oficial (mTLS v2)" : (selectedPayment.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : "PIX / PMS")}
+                    {(() => {
+                      const pm = String(selectedPayment.paymentMethod || "").toLowerCase();
+                      const isCard = pm.includes("cartao") || pm.includes("card") || pm.includes("credito") || pm.includes("debito") || Boolean(selectedPayment.mpPaymentId && !selectedPayment.pixEndToEndId);
+                      if (pm.includes("booking")) return "🌐 Booking.com (Canal Parceiro)";
+                      if (pm.includes("airbnb")) return "🔴 Airbnb (Canal Parceiro)";
+                      if (isCard) return selectedPayment.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : "💳 Cartão de Crédito";
+                      if (selectedPayment.pixEndToEndId || selectedPayment.pixTxId) return "⚡ PIX Banco Inter Oficial (mTLS v2)";
+                      return "PIX / PMS";
+                    })()}
                   </span>
                 </div>
 
@@ -1066,6 +1074,25 @@ export default function Payments() {
                     <span className="text-muted-foreground font-medium">Data e Hora da Compensação:</span>
                     <span className="font-semibold text-foreground">
                       {format(parseISO(selectedPayment.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
+                    </span>
+                  </div>
+                )}
+
+                {selectedPayment.mpPaymentId && !selectedPayment.pixEndToEndId && (
+                  <div className="space-y-1 pt-1 border-b border-border/40 pb-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground font-medium">Identificador da Transação (Cartão / Mercado Pago):</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(selectedPayment.mpPaymentId, "mpid")}
+                        className="text-primary hover:underline text-[10px] flex items-center gap-1"
+                      >
+                        {copiedId === "mpid" ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedId === "mpid" ? "Copiado!" : "Copiar"}</span>
+                      </button>
+                    </div>
+                    <span className="font-mono text-[10px] text-sky-700 dark:text-sky-400 font-bold break-all select-all block bg-background p-1.5 rounded-md border">
+                      {selectedPayment.mpPaymentId}
                     </span>
                   </div>
                 )}
@@ -1089,7 +1116,7 @@ export default function Payments() {
                   </div>
                 )}
 
-                {selectedPayment.pixTxId && (
+                {selectedPayment.pixTxId && !selectedPayment.mpPaymentId && !String(selectedPayment.paymentMethod || "").toLowerCase().includes("cartao") && (
                   <div className="space-y-1 pt-1 border-b border-border/40 pb-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground font-medium">Identificador TxId (Banco Inter):</span>

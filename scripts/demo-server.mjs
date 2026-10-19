@@ -19838,26 +19838,71 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
   ));
 
-  // Se a reserva ainda não consta como paga e NÃO está cancelada, verifica ativamente no Extrato do Banco Inter
+  // Se a reserva ainda não consta como paga e NÃO está cancelada, verifica ativamente no Mercado Pago / Extrato do Banco Inter
   if (!isCancelledRes && !isPaid && Number(r.totalAmount) > 0) {
-    try {
-      const extratoMatch = await checkInterBankingExtratoPix(r);
-      if (extratoMatch && extratoMatch.found) {
-        await confirmReservationPayment(r, {
-          amount: extratoMatch.amount,
-          paidAt: extratoMatch.paidAt,
-          endToEndId: extratoMatch.endToEndId,
-          txId: extratoMatch.txId,
-          pagador: extratoMatch.pagador,
-          source: "Banco Inter Extrato"
-        });
-        isPaid = true;
+    const prefersCard = Boolean(
+      r.mpPreferenceId ||
+      req.query?.payment === "success" ||
+      /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
+    );
+    if (prefersCard) {
+      try {
+        const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+        if (mpPayment && mpPayment.status === "approved") {
+          const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+          await confirmReservationPayment(r, {
+            amount: valorPago,
+            paidAt: mpPayment.date_approved,
+            mpPaymentId: String(mpPayment.id),
+            paymentMethod: "cartao_credito",
+            source: "Mercado Pago"
+          });
+          isPaid = true;
+        }
+      } catch (errMp) {
+        console.warn("[Guest Portal] Erro ao checar Mercado Pago:", errMp.message);
       }
-    } catch (errExtrato) {
-      console.warn("[Guest Portal] Erro ao checar extrato PIX:", errExtrato.message);
+    }
+    if (!isPaid && !prefersCard) {
+      try {
+        const extratoMatch = await checkInterBankingExtratoPix(r);
+        if (extratoMatch && extratoMatch.found) {
+          await confirmReservationPayment(r, {
+            amount: extratoMatch.amount,
+            paidAt: extratoMatch.paidAt,
+            endToEndId: extratoMatch.endToEndId,
+            txId: extratoMatch.txId,
+            pagador: extratoMatch.pagador,
+            source: "Banco Inter Extrato"
+          });
+          isPaid = true;
+        }
+      } catch (errExtrato) {
+        console.warn("[Guest Portal] Erro ao checar extrato PIX:", errExtrato.message);
+      }
     }
   } else if (!isCancelledRes && isPaid && !isOta && r.guestPhone) {
     ensurePaymentConfirmationDispatched(r);
+  }
+
+  const isSettledByCard = Boolean(
+    isPaid &&
+    !r.pixEndToEndId &&
+    (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(r.paymentMethod || "")))
+  );
+  if (isSettledByCard) {
+    let changedCardMeta = false;
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      r.paymentMethod = "cartao_credito";
+      changedCardMeta = true;
+    }
+    if (r.pixTxId) {
+      r.pixTxId = null;
+      changedCardMeta = true;
+    }
+    if (changedCardMeta) {
+      saveDatabase();
+    }
   }
 
   const resolvedTotal = Number(r.totalAmount) || 0;
@@ -19909,9 +19954,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       paidAmount: resolvedPaid,
       isPaid,
       paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
-      paymentMethod: r.paymentMethod || (r.pixTxId ? "pix" : (r.mpPaymentId ? "cartao_credito" : "pix")),
+      paymentMethod: (r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
-      pixTxId: r.pixTxId || null,
+      pixTxId: isSettledByCard ? null : (r.pixTxId || null),
       pixCopiaECola: r.pixCopiaECola || null,
       pixEndToEndId: r.pixEndToEndId || null,
       mpPaymentId: r.mpPaymentId || null,
@@ -37600,6 +37645,7 @@ async function confirmReservationPayment(r, {
   paidAt,
   endToEndId,
   txId,
+  mpPaymentId,
   paymentMethod = "pix",
   pagador = null,
   source = "Banco Inter Extrato"
@@ -37608,21 +37654,37 @@ async function confirmReservationPayment(r, {
 
   const valorPago = Number(amount || r.totalAmount || 0);
   const totalAmount = Number(r.totalAmount || 0);
+  const isCard = Boolean(
+    mpPaymentId ||
+    /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(paymentMethod || "")) ||
+    String(source || "").toLowerCase().includes("mercado pago")
+  );
 
   r.paymentStatus = (totalAmount > 0 && valorPago < totalAmount) ? "sinal_pago" : "pago_total";
   r.paidAmount = valorPago;
   r.paidAt = paidAt || r.paidAt || new Date().toISOString();
-  if (endToEndId) r.pixEndToEndId = endToEndId;
-  if (txId) r.pixTxId = txId;
-  if (paymentMethod) r.paymentMethod = paymentMethod;
+
+  if (isCard) {
+    if (mpPaymentId || txId) r.mpPaymentId = String(mpPaymentId || txId);
+    if (!r.pixEndToEndId) {
+      r.pixTxId = null;
+    }
+    r.paymentMethod = (paymentMethod && paymentMethod !== "pix") ? paymentMethod : "cartao_credito";
+  } else {
+    if (endToEndId) r.pixEndToEndId = endToEndId;
+    if (txId) r.pixTxId = txId;
+    if (paymentMethod) r.paymentMethod = paymentMethod;
+  }
 
   // Sincroniza r.payments para garantir consistência em relatórios e no PMS
   const payRecord = {
-    id: `pay_pix_${Date.now()}`,
+    id: isCard ? `pay_card_${Date.now()}` : `pay_pix_${Date.now()}`,
     amount: valorPago,
-    method: paymentMethod || "pix",
+    method: r.paymentMethod || (isCard ? "cartao_credito" : "pix"),
     date: r.paidAt,
-    notes: `PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
+    notes: isCard
+      ? `Cartão de Crédito confirmado via ${source}${r.mpPaymentId ? ` (ID: ${r.mpPaymentId})` : ""}`
+      : `PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
   };
   if (!Array.isArray(r.payments) || r.payments.length === 0) {
     r.payments = [payRecord];
@@ -37634,7 +37696,7 @@ async function confirmReservationPayment(r, {
       r.payments.push({
         ...payRecord,
         amount: valorPago - existingSum,
-        notes: `Complemento PIX via ${source}`
+        notes: isCard ? `Complemento Cartão via ${source}` : `Complemento PIX via ${source}`
       });
     }
   }
@@ -37654,10 +37716,12 @@ async function confirmReservationPayment(r, {
 
   createNotification({
     category: "checkout",
-    title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
+    title: isCard
+      ? `💳 Cartão Aprovado (${source}): R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`
+      : `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
     message: `Reserva ${r.code} liquidada com sucesso via ${source} por ${pagador || r.guestName}!`,
     severity: "success",
-    metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: r.pixEndToEndId },
+    metadata: { reservationCode: r.code, txid: r.pixTxId, mpPaymentId: r.mpPaymentId, amount: valorPago, endToEndId: r.pixEndToEndId },
     targetUrl: `/reservas`
   });
 
@@ -37681,15 +37745,59 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       if (!isOta && r.guestPhone) {
         ensurePaymentConfirmationDispatched(r);
       }
+      const isSettledByCard = Boolean(
+        !r.pixEndToEndId &&
+        (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(r.paymentMethod || "")))
+      );
+      if (isSettledByCard && r.pixTxId) {
+        r.pixTxId = null;
+        if (!r.paymentMethod || r.paymentMethod === "pix") r.paymentMethod = "cartao_credito";
+        saveDatabase();
+      }
       return res.json({
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
+        paymentMethod: isSettledByCard ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || "pix"),
+        paidAt: r.paidAt || null,
         paidAmount: Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0),
         totalAmount: r.totalAmount || 0,
-        pixTxId: r.pixTxId || null,
+        pixTxId: isSettledByCard ? null : (r.pixTxId || null),
+        pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null
       });
+    }
+
+    const prefersCard = Boolean(
+      r.mpPreferenceId ||
+      /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
+    );
+
+    if (prefersCard) {
+      const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+      if (mpPayment && mpPayment.status === "approved") {
+        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+        await confirmReservationPayment(r, {
+          amount: valorPago,
+          paidAt: mpPayment.date_approved,
+          mpPaymentId: String(mpPayment.id),
+          paymentMethod: "cartao_credito",
+          source: "Mercado Pago"
+        });
+
+        return res.json({
+          code: r.code,
+          paid: true,
+          paymentStatus: "pago_total",
+          paymentMethod: "cartao_credito",
+          paidAt: r.paidAt || null,
+          paidAmount: valorPago,
+          totalAmount: r.totalAmount || 0,
+          pixTxId: null,
+          pixEndToEndId: null,
+          mpPaymentId: r.mpPaymentId
+        });
+      }
     }
 
     // Se tem txid do Banco Inter, faz consulta ativa em tempo real na API do Banco Inter!
@@ -37709,9 +37817,12 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           code: r.code,
           paid: true,
           paymentStatus: "pago_total",
+          paymentMethod: "pix",
+          paidAt: r.paidAt || null,
           paidAmount: valorPago,
           totalAmount: r.totalAmount || 0,
           pixTxId: r.pixTxId,
+          pixEndToEndId: r.pixEndToEndId || null,
           mpPaymentId: r.mpPaymentId || null
         });
       }
@@ -37733,36 +37844,42 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
+        paymentMethod: "pix",
+        paidAt: r.paidAt || null,
         paidAmount: r.paidAmount,
         totalAmount: r.totalAmount || 0,
         pixTxId: r.pixTxId,
+        pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null
       });
     }
 
     // Se não liquidou pelo Inter, verifica no Mercado Pago (Cartão de Crédito)
-    const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
-    if (mpPayment && mpPayment.status === "approved") {
-      const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
-      await confirmReservationPayment(r, {
-        amount: valorPago,
-        paidAt: mpPayment.date_approved,
-        txId: String(mpPayment.id),
-        paymentMethod: "cartao_credito",
-        source: "Mercado Pago"
-      });
-      r.mpPaymentId = String(mpPayment.id);
-      saveDatabase();
+    if (!prefersCard) {
+      const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+      if (mpPayment && mpPayment.status === "approved") {
+        const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+        await confirmReservationPayment(r, {
+          amount: valorPago,
+          paidAt: mpPayment.date_approved,
+          mpPaymentId: String(mpPayment.id),
+          paymentMethod: "cartao_credito",
+          source: "Mercado Pago"
+        });
 
-      return res.json({
-        code: r.code,
-        paid: true,
-        paymentStatus: "pago_total",
-        paidAmount: valorPago,
-        totalAmount: r.totalAmount || 0,
-        pixTxId: r.pixTxId || null,
-        mpPaymentId: r.mpPaymentId
-      });
+        return res.json({
+          code: r.code,
+          paid: true,
+          paymentStatus: "pago_total",
+          paymentMethod: "cartao_credito",
+          paidAt: r.paidAt || null,
+          paidAmount: valorPago,
+          totalAmount: r.totalAmount || 0,
+          pixTxId: null,
+          pixEndToEndId: null,
+          mpPaymentId: r.mpPaymentId
+        });
+      }
     }
 
     res.json({
@@ -38084,20 +38201,12 @@ app.post("/api/pms/mercadopago/webhook", async (req, res) => {
           if (resCode) {
             const r = (db.reservations || []).find(resItem => resItem.code === resCode || String(resItem.id) === resCode);
             if (r) {
-              r.paymentStatus = "pago_total";
-              r.paidAmount = valorPago || r.totalAmount;
-              r.paidAt = paymentRes.date_approved || new Date().toISOString();
-              r.paymentMethod = "cartao_credito";
-              r.mpPaymentId = queryId;
-              saveDatabase();
-
-              createNotification({
-                category: "checkout",
-                title: `💳 Cartão Aprovado (Mercado Pago): R$ ${valorPago?.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
-                message: `Reserva ${r.code} paga em até 12x no cartão por ${r.guestName}!`,
-                severity: "success",
-                metadata: { reservationCode: r.code, paymentId: queryId, amount: valorPago },
-                targetUrl: `/reservas`
+              await confirmReservationPayment(r, {
+                amount: valorPago || r.totalAmount,
+                paidAt: paymentRes.date_approved || new Date().toISOString(),
+                mpPaymentId: String(queryId),
+                paymentMethod: "cartao_credito",
+                source: "Mercado Pago Webhook"
               });
             }
           }
@@ -38289,16 +38398,20 @@ app.get("/api/finance/payments", (req, res) => {
       const grossAmount = Number(r.paidAmount || r.totalAmount || 0);
       const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
 
-      // Determinar método de pagamento
+      // Determinar método de pagamento priorizando mpPaymentId sobre pixTxId pré-gerado
       let paymentMethod = r.paymentMethod;
-      if (!paymentMethod) {
-        if (r.pixTxId || r.pixEndToEndId) paymentMethod = "pix";
-        else if (r.mpPaymentId) paymentMethod = "cartao_credito";
+      if (!paymentMethod || (paymentMethod === "pix" && r.mpPaymentId && !r.pixEndToEndId)) {
+        if (r.mpPaymentId && !r.pixEndToEndId) paymentMethod = "cartao_credito";
+        else if (r.pixEndToEndId || r.pixTxId) paymentMethod = "pix";
         else if (r.channel === "booking") paymentMethod = "booking";
         else if (r.channel === "airbnb") paymentMethod = "airbnb";
         else if (r.channel === "site") paymentMethod = "pix";
         else paymentMethod = "pix";
       }
+      const isCardSettled = Boolean(
+        !r.pixEndToEndId &&
+        (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(paymentMethod || "")))
+      );
 
       // Buscar configuração da forma de pagamento
       const pmConfig = paymentMethodsList.find(m =>
@@ -38357,7 +38470,7 @@ app.get("/api/finance/payments", (req, res) => {
         netAmount,
         paidAt: r.paidAt || (isPaid ? r.createdAt : null),
         date: paymentDate ? paymentDate.substring(0, 10) : "",
-        pixTxId: r.pixTxId || null,
+        pixTxId: isCardSettled ? null : (r.pixTxId || null),
         pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null,
         notes: r.notes || "",

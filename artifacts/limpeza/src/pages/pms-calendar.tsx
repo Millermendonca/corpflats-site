@@ -2381,6 +2381,7 @@ export default function PmsCalendar() {
     if (!resolvedMethod) {
       if (chan === "booking") resolvedMethod = "booking";
       else if (chan === "airbnb") resolvedMethod = "airbnb";
+      else if (resItem.mpPaymentId && !resItem.pixEndToEndId) resolvedMethod = "cartao_credito";
       else if (resItem.pixTxId || resItem.pixEndToEndId || chan === "site") resolvedMethod = "pix";
       else if (resItem.mpPaymentId) resolvedMethod = "cartao_credito";
       else resolvedMethod = "pix";
@@ -7246,10 +7247,10 @@ export default function PmsCalendar() {
                     <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-xl space-y-2 text-xs">
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm">⚡</span>
+                          <span className="text-sm">{selectedRes.mpPaymentId || String(selectedRes.paymentMethod || "").toLowerCase().includes("cartao") ? "💳" : "⚡"}</span>
                           <div>
                             <span className="font-bold text-emerald-800 dark:text-emerald-300">
-                              {selectedRes.pixEndToEndId ? "PIX Confirmado pelo Banco Central (Inter)" : (selectedRes.mpPaymentId ? "Cartão Liquidado Mercado Pago" : "Pagamento Liquidado via Gateway")}
+                              {selectedRes.pixEndToEndId ? "PIX Confirmado pelo Banco Central (Inter)" : (selectedRes.mpPaymentId ? "Cartão Liquidado Mercado Pago" : (String(selectedRes.paymentMethod || "").toLowerCase().includes("cartao") ? "Cartão de Crédito Liquidado" : "Pagamento Liquidado via Gateway"))}
                             </span>
                             {selectedRes.paidAt && (
                               <span className="text-muted-foreground block text-[11px]">
@@ -7304,7 +7305,7 @@ export default function PmsCalendar() {
                       </div>
 
                       <div className="pt-1.5 border-t border-emerald-200 dark:border-emerald-800/80 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] font-mono text-slate-600 dark:text-slate-300">
-                        {selectedRes.pixTxId && <span>TxId: <strong className="text-foreground">{selectedRes.pixTxId}</strong></span>}
+                        {selectedRes.pixTxId && !selectedRes.mpPaymentId && !String(selectedRes.paymentMethod || "").toLowerCase().includes("cartao") && <span>TxId: <strong className="text-foreground">{selectedRes.pixTxId}</strong></span>}
                         {selectedRes.pixEndToEndId && <span>E2E: <strong className="text-emerald-700 dark:text-emerald-300">{selectedRes.pixEndToEndId}</strong></span>}
                         {selectedRes.mpPaymentId && <span>MP ID: <strong className="text-foreground">{selectedRes.mpPaymentId}</strong></span>}
                       </div>

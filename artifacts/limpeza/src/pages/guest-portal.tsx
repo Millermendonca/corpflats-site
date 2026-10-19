@@ -610,6 +610,20 @@ export default function GuestPortal() {
   const reservation = data?.reservation
   const channelLower = String(reservation?.channel || "").toLowerCase()
   const isOta = channelLower.includes("booking") || channelLower.includes("airbnb")
+  const rawPayMethod = String(reservation?.paymentMethod || "").toLowerCase()
+  const isCardPayment = Boolean(
+    rawPayMethod.includes("cartao") ||
+    rawPayMethod.includes("cartão") ||
+    rawPayMethod.includes("card") ||
+    rawPayMethod.includes("credito") ||
+    rawPayMethod.includes("crédito") ||
+    rawPayMethod.includes("debito") ||
+    rawPayMethod.includes("débito") ||
+    rawPayMethod.includes("mercadopago") ||
+    rawPayMethod.includes("infinite") ||
+    (reservation?.mpPaymentId && !reservation?.pixEndToEndId)
+  )
+  const isDebitCard = rawPayMethod.includes("debito") || rawPayMethod.includes("débito") || rawPayMethod.includes("debit")
   const isCancelled = Boolean(
     reservation?.status === "cancelada" || 
     reservation?.status === "cancelled" || 
@@ -741,9 +755,11 @@ export default function GuestPortal() {
               reservation: {
                 ...prev.reservation,
                 paymentStatus: "pago_total",
+                paymentMethod: json.paymentMethod || (json.mpPaymentId ? "cartao_credito" : prev.reservation.paymentMethod),
                 paidAmount: json.paidAmount,
-                paidAt: json.paidAt || new Date().toISOString(),
-                pixTxId: json.pixTxId || prev.reservation.pixTxId,
+                paidAt: json.paidAt || prev.reservation.paidAt || new Date().toISOString(),
+                pixTxId: (json.paymentMethod === "cartao_credito" || json.mpPaymentId) ? null : (json.pixTxId || prev.reservation.pixTxId),
+                pixEndToEndId: json.pixEndToEndId || prev.reservation.pixEndToEndId,
                 mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
               }
             }) : null)
@@ -755,12 +771,12 @@ export default function GuestPortal() {
   }, [reservation?.code, isPaid])
 
   useEffect(() => {
-    if (reservation?.paymentMethod === "cartao_credito" || reservation?.paymentMethod === "card") {
+    if (isCardPayment) {
       setPaymentMethodTab("card")
     } else {
       setPaymentMethodTab("pix")
     }
-  }, [reservation?.paymentMethod])
+  }, [isCardPayment])
 
   useEffect(() => {
     if (reservation?.pixCopiaECola && typeof window !== "undefined") {
@@ -971,16 +987,25 @@ export default function GuestPortal() {
   }
 
   const handleCopyReceipt = () => {
+    const methodLabel = isOta
+      ? (channelLower.includes("booking") ? "Booking.com (Canal Parceiro)" : "Airbnb (Canal Parceiro)")
+      : (isCardPayment
+          ? (isDebitCard ? "Cartão de Débito" : (reservation.mpPaymentId ? "Cartão de Crédito (Mercado Pago)" : "Cartão de Crédito"))
+          : "PIX Instantâneo (Banco Inter)")
+    const txLine = isCardPayment
+      ? (reservation.mpPaymentId ? `ID da Transação (Cartão): ${reservation.mpPaymentId}` : "")
+      : (reservation.pixEndToEndId ? `EndToEnd ID: ${reservation.pixEndToEndId}` : (reservation.pixTxId ? `TxID: ${reservation.pixTxId}` : ""))
     const text = [
       `📄 RECIBO DE PAGAMENTO • CORPFLATS HOSPEDAGEM`,
       `Localizador: ${reservation.code}`,
       `Hóspede: ${guestName}`,
       `Acomodação: Flat ${reservation.flatNumber}`,
       `Período: ${checkinFormatted} até ${checkoutFormatted} (${nights} diária${nights > 1 ? "s" : ""})`,
+      `Forma de Liquidação: ${methodLabel}`,
       `Valor Liquidado: R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
       `Status: PAGO & QUITADO ✓`,
       reservation.paidAt ? `Data do Pagamento: ${format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}` : "",
-      reservation.pixEndToEndId ? `EndToEnd ID: ${reservation.pixEndToEndId}` : (reservation.pixTxId ? `TxID: ${reservation.pixTxId}` : ""),
+      txLine,
       `CorpFlats • CNPJ 47.964.813/0001-65 • Campos dos Goytacazes - RJ`
     ].filter(Boolean).join("\n")
     navigator.clipboard.writeText(text)
@@ -996,10 +1021,10 @@ export default function GuestPortal() {
 
     const paymentMethodText = isOta 
       ? (channelLower.includes("booking") ? "Booking.com (Canal Parceiro)" : "Airbnb (Canal Parceiro)")
-      : (reservation?.pixTxId 
-          ? "PIX Instantâneo Oficial (Banco Inter)" 
-          : (reservation?.mpPaymentId 
-              ? "Cartão de Crédito (Mercado Pago)" 
+      : (isCardPayment
+          ? (isDebitCard ? "Cartão de Débito" : (reservation?.mpPaymentId ? "Cartão de Crédito (Mercado Pago)" : "Cartão de Crédito"))
+          : (reservation?.pixEndToEndId || reservation?.pixTxId 
+              ? "PIX Instantâneo Oficial (Banco Inter)" 
               : (channelLower.includes("whatsapp") ? "WhatsApp / CorpFlats" : "PIX Oficial Banco Inter")))
 
     const receiptHtml = `<!DOCTYPE html>
@@ -1449,13 +1474,19 @@ export default function GuestPortal() {
         </div>
         ` : ""}
       </div>
-      ${reservation?.pixEndToEndId ? `
+      ${isCardPayment && reservation?.mpPaymentId ? `
+      <div style="margin-top: 10px;">
+        <span class="audit-label">Identificador de Transação (Cartão / Mercado Pago):</span>
+        <div class="audit-hash">${reservation.mpPaymentId}</div>
+      </div>
+      ` : ""}
+      ${!isCardPayment && reservation?.pixEndToEndId ? `
       <div style="margin-top: 10px;">
         <span class="audit-label">End-to-End ID (Banco Central do Brasil - SPI):</span>
         <div class="audit-hash">${reservation.pixEndToEndId}</div>
       </div>
       ` : ""}
-      ${reservation?.pixTxId && !reservation?.pixEndToEndId ? `
+      ${!isCardPayment && reservation?.pixTxId && !reservation?.pixEndToEndId ? `
       <div style="margin-top: 10px;">
         <span class="audit-label">Identificador de Transação (TxID Banco Inter):</span>
         <div class="audit-hash">${reservation.pixTxId}</div>
@@ -1561,9 +1592,11 @@ export default function GuestPortal() {
             reservation: {
               ...prev.reservation,
               paymentStatus: "pago_total",
+              paymentMethod: json.paymentMethod || (json.mpPaymentId ? "cartao_credito" : prev.reservation.paymentMethod),
               paidAmount: json.paidAmount || reservation.totalAmount,
-              paidAt: json.paidAt || new Date().toISOString(),
-              pixTxId: json.pixTxId || prev.reservation.pixTxId,
+              paidAt: json.paidAt || prev.reservation.paidAt || new Date().toISOString(),
+              pixTxId: (json.paymentMethod === "cartao_credito" || json.mpPaymentId) ? null : (json.pixTxId || prev.reservation.pixTxId),
+              pixEndToEndId: json.pixEndToEndId || prev.reservation.pixEndToEndId,
               mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
             }
           }) : null)
@@ -2250,10 +2283,10 @@ export default function GuestPortal() {
             <div className="pt-1 pb-1">
               <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-2xl bg-slate-50/90 border border-slate-200/80">
                 <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 shrink-0 px-1">
-                  <User className="w-3.5 h-3.5 text-sky-600" />
+                  <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                   Visualizando como:
                 </span>
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
                   {guestsList.map((g: any, idx: number) => {
                     const gIdx = Number(g.index) || (idx + 1)
                     const isSelected = gIdx === activeGuestIndex
@@ -2285,9 +2318,9 @@ export default function GuestPortal() {
                             window.history.replaceState({}, "", url.toString())
                           } catch {}
                         }}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        className={`inline-flex flex-wrap items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer max-w-full ${
                           isSelected
-                            ? "bg-sky-600 text-white shadow-xs scale-[1.02]"
+                            ? "bg-sky-600 text-white shadow-xs"
                             : gNeedsReSign
                             ? "bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300"
                             : gCheckinDone
@@ -2295,28 +2328,28 @@ export default function GuestPortal() {
                             : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"
                         }`}
                       >
-                        <span>👤 {gDisplayName}</span>
+                        <span className="truncate max-w-[160px] sm:max-w-[220px]">👤 {gDisplayName}</span>
                         {isTitular && (
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md shrink-0 ${
                             isSelected ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-600 border border-slate-200"
                           }`}>
                             Titular
                           </span>
                         )}
                         {gNeedsReSign ? (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 ${
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shrink-0 ${
                             isSelected ? "bg-amber-400 text-amber-950 font-black" : "bg-amber-100 text-amber-900 border border-amber-300"
                           }`}>
                             ⚠️ Re-assinar
                           </span>
                         ) : gCheckinDone ? (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 ${
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shrink-0 ${
                             isSelected ? "bg-emerald-500/30 text-emerald-100" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                           }`}>
                             ✓ Assinado
                           </span>
                         ) : (
-                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${
+                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md shrink-0 ${
                             isSelected ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-600 border border-slate-200"
                           }`}>
                             Pendente Check-in
@@ -2334,7 +2367,7 @@ export default function GuestPortal() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">
               <div>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
                     Check-in (Entrada)
                   </span>
@@ -2347,7 +2380,7 @@ export default function GuestPortal() {
                       ⚠️ Re-assinatura Obrigatória
                     </Badge>
                   ) : otherPendingReSignGuests.length > 0 ? (
-                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 font-bold text-[10px]">
+                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 font-bold text-[10px] whitespace-normal text-left">
                       ✓ Seu Check-in Ok • Acompanhante Pendente
                     </Badge>
                   ) : isCurrentGuestPreCheckinDone ? (
@@ -2364,7 +2397,7 @@ export default function GuestPortal() {
                   {checkinFormatted}
                 </span>
                 <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5" />
+                  <Clock className="w-3.5 h-3.5 shrink-0" />
                   <span>A partir das {data?.checkinTime || "14:00"} (antecipado assim que limpo)</span>
                 </span>
               </div>
@@ -2378,9 +2411,9 @@ export default function GuestPortal() {
                   <Button
                     type="button"
                     onClick={() => setLocation(getCheckinPath(false))}
-                    className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-xs sm:text-sm font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <PenTool className="w-4.5 h-4.5 shrink-0" />
+                    <PenTool className="w-4 h-4 shrink-0" />
                     <span>Assinar Termo Atualizado</span>
                   </Button>
                 </div>
@@ -2390,7 +2423,7 @@ export default function GuestPortal() {
                     <span className="font-bold block text-emerald-900 mb-0.5">✓ Sua Assinatura está Atualizada</span>
                     Aguardando preenchimento de <strong>{otherPendingReSignGuests.map((g: any) => g.name || `Hóspede ${g.index}`).join(", ")}</strong> para liberação na portaria.
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
                       onClick={() => {
@@ -2398,18 +2431,18 @@ export default function GuestPortal() {
                         setActiveGuestIndex(targetG.index)
                         setLocation(getCheckinPath(false, targetG.index))
                       }}
-                      className="flex-1 h-9 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="flex-1 min-w-[140px] h-auto min-h-9 py-2 px-3 whitespace-normal leading-tight text-center text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <PenTool className="w-3.5 h-3.5" />
+                      <PenTool className="w-3.5 h-3.5 shrink-0" />
                       <span>Preencher por {otherPendingReSignGuests[0].name?.split(" ")[0] || "Acompanhante"}</span>
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
                       onClick={() => setLocation(getCheckinPath(true))}
-                      className="h-9 px-3 text-xs font-bold rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-1 cursor-pointer"
+                      className="flex-1 sm:flex-initial h-auto min-h-9 py-2 px-3 whitespace-normal leading-tight text-center text-xs font-bold rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                      <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span>Ver Minha Ficha</span>
                     </Button>
                   </div>
@@ -2446,9 +2479,9 @@ export default function GuestPortal() {
                         setConfirmingSelfCheckin(false)
                       }
                     }}
-                    className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-center text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
                   >
-                    <CheckCircle2 className="w-4.5 h-4.5 shrink-0" />
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
                     <span>{confirmingSelfCheckin ? "Confirmando..." : "📍 Já Cheguei no Flat (Confirmar Entrada)"}</span>
                   </Button>
                   <button
@@ -2463,9 +2496,9 @@ export default function GuestPortal() {
                 <Button
                   type="button"
                   onClick={() => setLocation(getCheckinPath(false))}
-                  className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 mt-2"
+                  className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-xs sm:text-sm font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 mt-2"
                 >
-                  <FileText className="w-4.5 h-4.5 shrink-0" />
+                  <FileText className="w-4 h-4 shrink-0" />
                   <span>Pré-Check-in Digital</span>
                 </Button>
               )}
@@ -2658,9 +2691,9 @@ export default function GuestPortal() {
                         ? (channelLower.includes("booking") 
                             ? "Liquidado diretamente via Booking.com." 
                             : "Liquidado diretamente via Airbnb.")
-                        : (reservation.paymentMethod === "cartao_credito" || reservation.mpPaymentId 
-                            ? "Liquidado via Cartão de Crédito (Mercado Pago)." 
-                            : (channelLower.includes("whatsapp") 
+                        : (isCardPayment 
+                            ? (isDebitCard ? "Liquidado via Cartão de Débito." : (reservation.mpPaymentId ? "Liquidado via Cartão de Crédito (Mercado Pago)." : "Liquidado via Cartão de Crédito."))
+                            : (channelLower.includes("whatsapp") && !reservation.pixEndToEndId && !reservation.pixTxId
                                 ? "Liquidado e confirmado via WhatsApp (CorpFlats)." 
                                 : "Liquidado via PIX Banco Inter."))}
                     </span>
@@ -3207,9 +3240,9 @@ export default function GuestPortal() {
             {/* Se houver pedido já agendado para a data */}
             {breakfastOrder && (
               <div className="p-4 bg-white/95 rounded-2xl border border-amber-200 space-y-3 shadow-2xs">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 font-bold text-amber-900 text-xs sm:text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>Pedido Agendado ({breakfastOrder.deliveryDate === format(new Date(), "yyyy-MM-dd") ? "Hoje" : "Próxima Entrega"})</span>
                   </span>
                   <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-bold">
@@ -3227,16 +3260,16 @@ export default function GuestPortal() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-2 pt-2 border-t border-amber-100">
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-amber-100">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     onClick={() => handleToggleFavorite(breakfastOrder.id)}
                     disabled={favoriteTogglingId === breakfastOrder.id}
-                    className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold"
+                    className="flex-1 sm:flex-initial text-xs h-auto min-h-8 py-1.5 px-3 whitespace-normal leading-tight bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center justify-center gap-1.5 rounded-xl font-semibold"
                   >
-                    <Star className={`w-3.5 h-3.5 ${breakfastOrder.isFavorite ? "fill-amber-500 text-amber-500" : ""}`} />
+                    <Star className={`w-3.5 h-3.5 shrink-0 ${breakfastOrder.isFavorite ? "fill-amber-500 text-amber-500" : ""}`} />
                     <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar este Pedido"}</span>
                   </Button>
 
@@ -3246,9 +3279,9 @@ export default function GuestPortal() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleOpenRepeatModal(reservation.lastBreakfastOrder || breakfastOrder)}
-                      className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold ml-auto"
+                      className="flex-1 sm:flex-initial text-xs h-auto min-h-8 py-1.5 px-3 whitespace-normal leading-tight bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center justify-center gap-1.5 rounded-xl font-semibold sm:ml-auto"
                     >
-                      <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                       <span>Repetir para Amanhã</span>
                     </Button>
                   )}
@@ -3260,7 +3293,7 @@ export default function GuestPortal() {
             <div className="flex flex-col gap-2.5 pt-1 w-full">
               <Button
                 onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
-                className="w-full h-12 bg-amber-700 hover:bg-amber-800 active:scale-[0.99] text-white font-semibold text-xs sm:text-sm rounded-2xl shadow-sm shadow-amber-900/10 inline-flex items-center justify-center gap-2.5 transition-all"
+                className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center bg-amber-700 hover:bg-amber-800 active:scale-[0.99] text-white font-semibold text-xs sm:text-sm rounded-2xl shadow-sm shadow-amber-900/10 inline-flex items-center justify-center gap-2.5 transition-all"
               >
                 <Coffee className="w-5 h-5 shrink-0" />
                 <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
@@ -3271,7 +3304,7 @@ export default function GuestPortal() {
                 type="button"
                 variant="outline"
                 onClick={handleCopyCafeLink}
-                className="w-full h-12 rounded-2xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-stone-700 font-semibold text-xs sm:text-sm shadow-2xs transition-all inline-flex items-center justify-center gap-2"
+                className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-2xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-stone-700 font-semibold text-xs sm:text-sm shadow-2xs transition-all inline-flex items-center justify-center gap-2"
               >
                 {copiedCafeLink ? (
                   <>
@@ -3306,36 +3339,36 @@ export default function GuestPortal() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
-              <div>
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between gap-2">
+              <div className="min-w-0">
                 <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Rede Wi-Fi (SSID)</span>
-                <span className="font-bold text-slate-900 text-sm">{wifiNetwork}</span>
+                <span className="font-bold text-slate-900 text-sm block truncate">{wifiNetwork}</span>
               </div>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
                 onClick={handleCopySsid}
-                className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-white text-slate-700 flex items-center gap-1.5"
+                className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-white text-slate-700 flex items-center gap-1.5 shrink-0"
               >
-                {copiedSsid ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-600" />}
+                {copiedSsid ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-slate-600 shrink-0" />}
                 <span>{copiedSsid ? "Copiada!" : "Copiar"}</span>
               </Button>
             </div>
 
-            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
-              <div>
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between gap-2">
+              <div className="min-w-0">
                 <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Senha de Acesso</span>
-                <span className="font-mono font-bold text-slate-900 text-sm">{wifiPassword}</span>
+                <span className="font-mono font-bold text-slate-900 text-sm block truncate">{wifiPassword}</span>
               </div>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
                 onClick={handleCopyWifi}
-                className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-white text-slate-700 flex items-center gap-1.5"
+                className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-white text-slate-700 flex items-center gap-1.5 shrink-0"
               >
-                {copiedWifi ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-600" />}
+                {copiedWifi ? <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-slate-600 shrink-0" />}
                 <span>{copiedWifi ? "Copiada!" : "Copiar"}</span>
               </Button>
             </div>
@@ -3465,7 +3498,7 @@ export default function GuestPortal() {
                 <Button
                   type="submit"
                   disabled={savingCar}
-                  className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl h-10"
+                  className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl h-auto min-h-10 py-2 whitespace-normal leading-tight"
                 >
                   {savingCar ? "Salvando..." : "Salvar e Liberar Estacionamento"}
                 </Button>
@@ -3513,14 +3546,14 @@ export default function GuestPortal() {
 
         {/* ── 7. Card: Localização & Como Chegar ──────────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-black text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-black text-sm shrink-0">
                 <MapPin className="w-4 h-4" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h2 className="text-base font-black text-slate-900">Localização & Como Chegar</h2>
-                <span className="text-xs text-slate-500">Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ</span>
+                <span className="text-xs text-slate-500 block">Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ</span>
               </div>
             </div>
             <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 text-[10px] font-bold">
@@ -3535,9 +3568,9 @@ export default function GuestPortal() {
               rel="noreferrer"
               className="py-2.5 px-3 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
             >
-              <MapPin className="w-4 h-4" />
+              <MapPin className="w-4 h-4 shrink-0" />
               <span>Abrir no Google Maps</span>
-              <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+              <ExternalLink className="w-3.5 h-3.5 opacity-70 shrink-0" />
             </a>
 
             <a
@@ -3546,9 +3579,9 @@ export default function GuestPortal() {
               rel="noreferrer"
               className="py-2.5 px-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
             >
-              <Navigation className="w-4 h-4 text-sky-400" />
+              <Navigation className="w-4 h-4 text-sky-400 shrink-0" />
               <span>Abrir no Waze</span>
-              <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+              <ExternalLink className="w-3.5 h-3.5 opacity-70 shrink-0" />
             </a>
           </div>
         </Card>
@@ -3557,10 +3590,10 @@ export default function GuestPortal() {
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-600" />
+              <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
               <h2 className="text-base font-bold text-slate-900">Regras dos Flats & Contrato</h2>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -3610,9 +3643,9 @@ export default function GuestPortal() {
 
           return (
             <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-sky-600" />
+                  <ShieldAlert className="w-5 h-5 text-sky-600 shrink-0" />
                   <h2 className="text-base font-bold text-slate-900">Política de Cancelamento & Estorno</h2>
                 </div>
                 <Badge variant="outline" className={isCancelledRes ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold" : cancelPol.policyType === "flexivel" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"}>
@@ -3833,7 +3866,7 @@ export default function GuestPortal() {
 
               <div className="space-y-1">
                 <Label className="text-slate-700 font-bold text-[11px]">Quantidade de Hóspedes</Label>
-                <div className="flex items-center gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {[1, 2, 3, 4].map(num => (
                     <Button
                       key={num}
@@ -3843,14 +3876,14 @@ export default function GuestPortal() {
                         setModGuestCount(num)
                         if (modCheckinDate && modCheckoutDate) handleRunPreview(modCheckinDate, modCheckoutDate, num)
                       }}
-                      className={`flex-1 h-9 rounded-xl text-xs font-bold ${
+                      className={`h-9 rounded-xl text-xs font-bold ${
                         modGuestCount === num 
                           ? "bg-slate-900 text-white shadow-xs" 
                           : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                       }`}
                     >
-                      <Users className="w-3.5 h-3.5 mr-1" />
-                      {num} {num === 1 ? "Pessoa" : "Pessoas"}
+                      <Users className="w-3.5 h-3.5 mr-1 shrink-0" />
+                      <span>{num} {num === 1 ? "Pessoa" : "Pessoas"}</span>
                     </Button>
                   ))}
                 </div>
@@ -4469,10 +4502,10 @@ export default function GuestPortal() {
                 <span className="font-bold text-slate-900">
                   {isOta 
                     ? (channelLower.includes("booking") ? "🌐 Booking.com (Canal Parceiro)" : "🔴 Airbnb (Canal Parceiro)")
-                    : (reservation.pixTxId 
-                        ? "⚡ PIX Instantâneo (Banco Inter)" 
-                        : (reservation.mpPaymentId 
-                            ? "💳 Cartão de Crédito (Mercado Pago)" 
+                    : (isCardPayment
+                        ? (isDebitCard ? "💳 Cartão de Débito" : (reservation.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : "💳 Cartão de Crédito"))
+                        : (reservation.pixEndToEndId || reservation.pixTxId 
+                            ? "⚡ PIX Instantâneo (Banco Inter)" 
                             : (channelLower.includes("whatsapp") ? "💬 WhatsApp / CorpFlats" : "PIX Oficial Banco Inter")))}
                 </span>
               </div>
@@ -4484,7 +4517,15 @@ export default function GuestPortal() {
                   </span>
                 </div>
               )}
-              {reservation.pixEndToEndId && (
+              {isCardPayment && reservation.mpPaymentId && (
+                <div className="space-y-0.5 pt-1">
+                  <span className="text-[10px] text-slate-400 font-medium block">Identificador da Transação (Cartão / Mercado Pago):</span>
+                  <span className="font-mono text-[10.5px] text-sky-800 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
+                    {reservation.mpPaymentId}
+                  </span>
+                </div>
+              )}
+              {!isCardPayment && reservation.pixEndToEndId && (
                 <div className="space-y-0.5 pt-1">
                   <span className="text-[10px] text-slate-400 font-medium block">End-to-End ID (Banco Central):</span>
                   <span className="font-mono text-[10.5px] text-emerald-800 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
@@ -4492,7 +4533,7 @@ export default function GuestPortal() {
                   </span>
                 </div>
               )}
-              {reservation.pixTxId && !reservation.pixEndToEndId && (
+              {!isCardPayment && reservation.pixTxId && !reservation.pixEndToEndId && (
                 <div className="space-y-0.5 pt-1">
                   <span className="text-[10px] text-slate-400 font-medium block">Identificador TxID:</span>
                   <span className="font-mono text-[10.5px] text-slate-700 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
@@ -4558,11 +4599,11 @@ export default function GuestPortal() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex gap-2 border-b border-slate-100 pb-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-b border-slate-100 pb-2">
             <button
               type="button"
               onClick={() => setTermsModalTab("rules")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors leading-snug ${
                 termsModalTab === "rules"
                   ? "bg-amber-500 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:text-slate-900"
@@ -4573,7 +4614,7 @@ export default function GuestPortal() {
             <button
               type="button"
               onClick={() => setTermsModalTab("contract")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors leading-snug ${
                 termsModalTab === "contract"
                   ? "bg-indigo-600 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:text-slate-900"
