@@ -1,21 +1,16 @@
-# Progress - Worker M3 (WhatsApp Fiscal Assistant Flow & Automated Enrichment)
+# Progress - Worker M3 (Layout Auto-Hide Sidebar & Nav Reorganization)
 
-Last visited: 2026-10-14T11:10:00Z
+Last visited: 2026-10-19T05:02:40Z
 
 ## Status
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Read assignment, Explorer 3 handoff, ORIGINAL_REQUEST.md, and PROJECT.md
-- [x] Inspect codebase:
-  - `artifacts/api-server/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/zapi-service.mjs`
-  - `artifacts/api-server/lookup.mjs`
-  - `artifacts/api-server/national-nfse.mjs`
-- [x] Design concrete step-by-step implementation plan for F12 to F17
-- [x] Implement F12 & F13: Intercept inbound fiscal intent in WhatsApp, check linked company in CRM, respond without re-asking
-- [x] Implement F14: Onboarding flow for unlinked contacts (`awaitingFiscalData = true`, prompt PJ vs PF)
-- [x] Implement F15 & F16: Sanitization (`toTitleCase`, `cleanPhone`, `cleanCep`), Módulo 11 validation (`isValidCpf`, `isValidCnpj`), automated enrichment (`lookupCnpj`, `lookupCep`)
-- [x] Implement F17: Persist/update CRM (`db.companies`, `db.guests`, `db.reservations`), activate `autoEmitInvoice = true`, confirm on WhatsApp, clear `awaitingFiscalData`
-- [x] Sync identical copies to `scripts/` (twin parity)
-- [x] Run syntax check (`node --check`) on all modified files in both `artifacts/api-server/` and `scripts/`
-- [x] Run comprehensive 9-scenario isolated verification check (all passed)
-- [x] Write handoff.md and send message to orchestrator
+- [x] Initialized DISPATCH.md and updated BRIEFING.md
+- [x] Read assignment, Explorer analysis and handoff, and ORIGINAL_REQUEST.md
+- [x] Inspect current `artifacts/limpeza/src/components/layout.tsx`
+- [x] Create detailed implementation plan
+- [x] Implement Desktop Auto-Hide Sidebar (overlay, 0px width in document flow, hover trigger, top menu trigger, auto-collapse, pin/unpin with localStorage)
+- [x] Implement Quick Search Filter at top of sidebar (desktop & mobile) with auto-accordion expansion
+- [x] Reorganize navigation into 6 operational categories with accordion, Reservas default open, and Engenharia & Dev strictly dev-only
+- [x] Remove all references and buttons for WBP Manual (`/ajuda-wbp`)
+- [x] Verify build with `npm run build` in `artifacts/limpeza` (Exit Code 0)
+- [ ] Commit and `git push origin main`
+- [ ] Generate `handoff.md` and send completion message via `send_message`

@@ -1,85 +1,57 @@
-# Task Assignment: Worker M3 (WhatsApp Fiscal Assistant Flow & Automated Enrichment)
-Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3
-Role: teamwork_preview_worker
+# Task Assignment: Worker M3 (Layout Auto-Hide Sidebar, 6 Categories, Search & Build)
 
-## Escopo e Instruções
-Você deve implementar as funcionalidades de M3 (Features F12 a F17) conforme especificado em `ORIGINAL_REQUEST.md`, `PROJECT.md` e no relatório de `survey_explorer_3`:
+## Mandatory Integrity Warning
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-1. **Interceptação de Intenção Fiscal Inbound no WhatsApp (`whatsapp-ai-service.mjs` & `zapi-service.mjs`)**:
-   - Interceptar mensagens de solicitação de Nota Fiscal ("preciso de nota fiscal", "emite NF", "nota fiscal no CNPJ", "quero nota", etc.) usando regex abrangente e insensível a maiúsculas/acentos.
-   - Cruzar o telefone do remetente (`cleanTarget` / `phone`) com `db.reservations` (verificando `r.guestPhone`, `r.phone`, e `r.requesterInfo?.phone`) e com `db.guests`.
+## Authoritative References
+- ORIGINAL_REQUEST.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read section `## 2026-10-19T02:58:52Z`)
+- PROJECT.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_13\PROJECT.md`
+- Explorer Layout Report: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_layout_nav\analysis.md`
+- Explorer Layout Handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_layout_nav\handoff.md`
 
-2. **Fluxo Sem Repetição de Perguntas para Clientes com Empresa Vinculada (R3.2 - F13)**:
-   - Se o contato (hóspede ou solicitante terceiro) ou a reserva ativa/recente já possuir vínculo com empresa (`companyId` com CNPJ válido em `db.companies`):
-     - **NÃO solicitar os dados novamente!**
-     - Responder imediatamente no WhatsApp confirmando com mensagem clara e calorosa que os dados da empresa já constam no cadastro, exibindo a Razão Social e o CNPJ formatado (ex: `12.345.678/0001-90`).
-     - Ativar `autoEmitInvoice = true` no hóspede e na reserva ativa/recente (`db.reservations`), garantindo `r.companyId = company.id`.
-     - Deixar a solicitação/rascunho fiscal pré-preenchido e pronto para emissão na tela de Notas Fiscais ou check-out (atualizar `r.invoiceDetails` com os dados corporativos).
+## Exclusively Owned Files
+- `artifacts/limpeza/src/components/layout.tsx`
 
-3. **Fluxo de Onboarding Fiscal para Clientes Sem Empresa Vinculada (R3.3 - F14)**:
-   - Caso o contato NÃO possua empresa vinculada no CRM:
-     - Enviar imediatamente uma mensagem acolhedora e explicativa no WhatsApp solicitando os dados para emissão da NFS-e.
-     - Perguntar de forma didática se a nota será emitida para:
-       * **Empresa / Pessoa Jurídica (PJ)**: bastando informar o CNPJ e o e-mail financeiro;
-       * ou **Pessoa Física (PF)**: informando Nome Completo, CPF, Endereço com CEP e E-mail.
-     - Marcar o estado da conversa/contato no CRM com `conv.awaitingFiscalData = true` (ou similar no estado da conversa).
-
-4. **Sanitização, Validação Matemática por Módulo 11 & Enriquecimento Automático (F15 & F16)**:
-   - Quando a pessoa responder no WhatsApp enviando os dados (na mesma mensagem ou nas mensagens seguintes enquanto `awaitingFiscalData` estiver ativo):
-     - Extrair documentos (CPF ou CNPJ), CEP, e-mail e nomes.
-     - **Validação Módulo 11**: Utilizar `isValidCnpj` (14 dígitos) e `isValidCpf` (11 dígitos).
-     - **Se o CPF ou CNPJ for matematicamente inválido**: Enviar imediatamente um aviso gentil no WhatsApp informando que o número parece incorreto e pedindo para conferir os dígitos, SEM poluir o CRM com dados falsos/inválidos.
-     - **Sanitização de Campos**:
-       * Nomes e Razão Social via `toTitleCase` preservando siglas corporativas (LTDA, S/A, SA, ME, EPP, EIRELI, SS, PJ, PF) e preposições ("de", "da", "do", "dos", "das", "e", "em", "para", "com", "por").
-       * Telefones via `cleanPhone`.
-       * CEP via `cleanCep` (8 dígitos).
-       * E-mail em minúsculas e sem espaços.
-     - **Enriquecimento Automático**:
-       * Se for CNPJ (14 dígitos válidos), consultar `lookupCnpj` (verificando primeiro `db.companies` local e, se necessário, BrasilAPI/Receita) para obter Razão Social, Nome Fantasia, Logradouro, Número, Bairro, CEP, Município/UF, Telefone e E-mail.
-       * Se houver CEP, consultar `lookupCep` (ViaCEP / BrasilAPI) para autocompletar logradouro, bairro, cidade, uf e código IBGE.
-
-5. **Inserção/Atualização no CRM, Vínculo e Confirmação no WhatsApp (F17)**:
-   - **Se for PJ (CNPJ)**:
-     * Criar ou atualizar a empresa em `db.companies` com todos os campos sanitizados e enriquecidos.
-     * Vincular `companyId` e `companyName` no cadastro do contato em `db.guests` (criando o hóspede caso ainda não exista) e na reserva ativa/recente (`db.reservations`).
-     * Ativar `autoEmitInvoice = true` no hóspede e na reserva.
-     * Responder no WhatsApp confirmando com carinho o cadastro e vínculo da empresa (Razão Social e CNPJ) para a emissão da NFS-e.
-   - **Se for PF (CPF)**:
-     * Criar ou atualizar o cadastro em `db.guests` com CPF, Nome Completo, Endereço com CEP e E-mail sanitizados.
-     * Vincular e ativar `autoEmitInvoice = true` na reserva ativa/recente.
-     * Responder no WhatsApp confirmando os dados recebidos para emissão da NFS-e.
-   - Limpar o estado `awaitingFiscalData = false`.
-
-6. **Paridade Twin-Server**:
-   - Manter paridade estrita byte-a-byte (100% SHA-256) entre os arquivos modificados em `artifacts/api-server/` e `scripts/`:
-     * `artifacts/api-server/whatsapp-ai-service.mjs` <-> `scripts/whatsapp-ai-service.mjs`
-     * `artifacts/api-server/zapi-service.mjs` <-> `scripts/zapi-service.mjs`
-     * `artifacts/api-server/lookup.mjs` <-> `scripts/lookup.mjs`
-   - Validar sintaxe com `node --check` em todos os arquivos.
-
-MANDATORY INTEGRITY WARNING:
-DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
-
-Ao concluir, atualize seu `progress.md`, crie seu `handoff.md` e envie mensagem para o orquestrador.
+## Scope of Work
+1. **Desktop Auto-Hide Sidebar (`artifacts/limpeza/src/components/layout.tsx`)**:
+   - Sidebar must have 0px width in normal document layout flow on desktop (`w-0` or hidden from document flow), so that `/reservas` (Calendar) and all other pages occupy 100% full-width of the window.
+   - Left-edge hover trigger (`w-3 hover:w-6`) and a discrete floating hamburger menu trigger button at top-left.
+   - Revealing the sidebar renders it as a floating overlay (`fixed left-0 top-0 bottom-0 z-40`) sliding in smoothly.
+   - Leaving the mouse from the sidebar automatically collapses it smoothly.
+   - Pin/unpin toggle button in sidebar header with state persisted in `localStorage` (`gfm_sidebar_pinned`). If pinned, sidebar takes its normal width in document flow.
+2. **Top Quick Search Filter**:
+   - Integrated search input at top of the sidebar (desktop & mobile).
+   - Filters items in real-time by label, description, and route.
+   - Automatically expands accordion categories containing matching items.
+3. **6 Collapsible Categories (Accordion)**:
+   - Ordered strictly by operational priority:
+     1. **📅 Reservas & Hospedagem** (default open)
+     2. **💬 Comunicação & Atendimento**
+     3. **🧹 Governança & Manutenção**
+     4. **💰 Financeiro, Tarifas & Fiscal**
+     5. **🏨 Propriedade & Equipe** (includes `/equipe`)
+     6. **🛠️ Engenharia & Dev** (STRICTLY visible only if `user?.role === 'dev'`, hidden for `admin` and all others)
+   - Auto-expands the category matching the current active route.
+4. **Remove WBP Manual references**:
+   - Remove any links, buttons, or help icons pointing to `/ajuda-wbp` or manual WBP in `layout.tsx`.
+5. **Verify Build**:
+   - Run `npm run build` in `artifacts/limpeza` to ensure TypeScript compilaion succeeds with exit code 0 and updates `artifacts/limpeza/dist/`.
+   - Run `git push` if commits are made.
+6. Report results in `handoff.md`.
 
 
-## 2026-10-14T10:50:56Z
-Você é o Worker M3 (WhatsApp Fiscal Assistant Flow & Automated Enrichment).
-Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3
+## 2026-10-19T04:50:19Z
+Você é o subagente worker_m3 (TypeName: teamwork_preview_worker).
+Seu diretório de trabalho é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-Leia atentamente:
-1. Requisitos oficiais: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\DISPATCH.md
-3. O relatório detalhado de Explorer 3: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3\handoff.md
-4. O plano de arquitetura: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_9\PROJECT.md
-
-Arquivos sob sua responsabilidade exclusiva de escrita para M3:
-- `artifacts/api-server/whatsapp-ai-service.mjs`
-- `artifacts/api-server/zapi-service.mjs`
-- `artifacts/api-server/lookup.mjs`
-- Espelhamento idêntico em `scripts/` (`scripts/whatsapp-ai-service.mjs`, `scripts/zapi-service.mjs`, `scripts/lookup.mjs`).
-
-MANDATORY INTEGRITY WARNING:
-DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
-
-Ao concluir todas as implementações e verificar paridade twin-server e sintaxe com sucesso, crie seu `progress.md`, escreva seu `handoff.md` no seu diretório de trabalho e envie mensagem ao orquestrador.
+Execute o Milestone 3 em `artifacts/limpeza/src/components/layout.tsx`:
+1. Implementar o menu lateral desktop auto-hide retrátil com largura 0px no fluxo normal (ocupando 100% da tela para o calendário / mapa de reservas), hover edge trigger na borda esquerda, gatilho visual no topo esquerdo, exibição flutuante overlay com transição suave, auto-recolhimento ao tirar o mouse, e botão de fixar/desafixar (pin/unpin com persistência em `localStorage`).
+2. Implementar a barra de busca rápida no topo da barra lateral (desktop e mobile) com filtro instantâneo por rótulo, descrição e rota, expandindo categorias correspondentes.
+3. Reorganizar a navegação nas 6 categorias recolhíveis (accordion) por prioridade de uso diário, com a 1ª ("📅 Reservas & Hospedagem") aberta por padrão, e a 6ª ("🛠️ Engenharia & Dev") estritamente oculta se o usuário não for `role === 'dev'`.
+4. Remover links/botões do manual WBP.
+5. Rodar `npm run build` em `artifacts/limpeza` para compilar o TypeScript/Vite e atualizar `artifacts/limpeza/dist/`.
+6. Enviar commits com `git push origin main`.
+7. Gerar relatório de entrega em `handoff.md` e enviar mensagem via `send_message` ao Project Orchestrator (c4864abd-776b-4ad1-aef9-25c7af7463df).

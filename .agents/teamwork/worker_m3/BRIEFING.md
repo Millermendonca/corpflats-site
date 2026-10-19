@@ -1,44 +1,65 @@
-# BRIEFING — 2026-10-14T10:50:56Z
+# BRIEFING — 2026-10-19T05:02:00Z
 
 ## Mission
-Implementar o fluxo completo do Assistente Fiscal do WhatsApp & Enriquecimento Automático (Milestone M3: Features F12 a F17) no Guest-Flow-Manager (CorpFlats), interceptando pedidos de NFS-e, identificando vínculos no CRM sem repetição de perguntas para clientes com empresa vinculada, realizando onboarding fiscal com sanitização, validação Módulo 11, enriquecimento automático (CNPJ e CEP), atualização do CRM e confirmação no WhatsApp, com estrita paridade twin-server e sintaxe validada.
+Implementar o Milestone 3 (Auto-Hide Sidebar, 6 Categorias Accordion, Busca Rápida e Remoção de WBP Manual em `artifacts/limpeza/src/components/layout.tsx`) para garantir 100% de largura visível do calendário PMS e reorganização ergonômica da navegação CorpFlats.
 
 ## 🔒 My Identity
 - Archetype: worker
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3
-- Original parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Milestone: M3 (WhatsApp Fiscal Assistant Flow & Automated Enrichment)
+- Original parent: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Milestone: Milestone 3 (Layout Auto-Hide Sidebar & Nav Reorganization)
 
 ## 🔒 Key Constraints
 - DO NOT CHEAT. All implementations must be genuine. Real state and behavior only.
 - Strict file ownership for Worker M3:
-  - `artifacts/api-server/whatsapp-ai-service.mjs` <-> `scripts/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/zapi-service.mjs` <-> `scripts/zapi-service.mjs`
-  - `artifacts/api-server/lookup.mjs` <-> `scripts/lookup.mjs`
-- 100% SHA-256 byte-for-byte twin parity between `artifacts/api-server/` and `scripts/`.
-- STRICT test execution rule from AGENTS.md: NUNCA rodar testes globais (`tests/*.test.mjs`), varreduras ou outros módulos. Apenas `node --check` para sintaxe ou teste estritamente pontual autorizado.
-- Preservar integridade e dados reais; sem poluir CRM com documentos inválidos.
+  - `artifacts/limpeza/src/components/layout.tsx`
+- Follow project rules in AGENTS.md:
+  - Sempre fazer `git push` por padrão após commits para `origin main` (ou branch ativa).
+  - Executar `npm run build` na pasta `artifacts/limpeza` para atualizar `artifacts/limpeza/dist/`.
+  - NUNCA executar testes globais, varreduras ou em lote.
+- Persistência de pin/unpin em `localStorage` (`gfm_sidebar_pinned`).
+- Largura desktop 0px no fluxo normal quando desfixado (`w-0`), liberando 100% de largura para `/reservas`.
+- Hover edge trigger na borda esquerda (`w-3 hover:w-7`) e menu trigger flutuante no topo esquerdo.
+- 6 categorias operacionais em accordion com busca rápida unificada.
+- Categoria 6 ("🛠️ Engenharia & Dev") estritamente oculta quando `user?.role !== 'dev'`.
+- Remoção completa de referências/links ao Manual WBP.
 
 ## Current Parent
-- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Updated: 2026-10-14T10:50:56Z
+- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
+- Updated: 2026-10-19T05:02:00Z
 
 ## Task Summary
 - **What was built**:
-  1. F12: Interceptação robusta de intenção fiscal no WhatsApp (`isFiscalIntentMessage`) combinando verbos de ação e substantivos fiscais e cruzando remetente (`cleanTarget`/telefone) com `db.reservations` (titular `guestPhone`, `phone`, e solicitante terceiro `requesterInfo.phone`, `requesterInfo.whatsapp`) e `db.guests`.
-  2. F13: Fluxo sem repetição de perguntas para clientes com empresa já vinculada (`companyId` e CNPJ válido em `db.companies`). Resposta calorosa confirmando Razão Social e CNPJ formatado, ativando `autoEmitInvoice=true` no hóspede e reserva, preparando rascunho `r.invoiceDetails`.
-  3. F14: Fluxo de onboarding fiscal para clientes sem empresa vinculada, mensagem didática explicando PJ (CNPJ + e-mail) vs PF (Nome, CPF, Endereço/CEP, E-mail) e setando `conv.awaitingFiscalData = true`.
-  4. F15: Validação matemática Módulo 11 (`isValidCpf`, `isValidCnpj`), mensagem gentil de correção se inválido sem poluir CRM; sanitização com `toTitleCase` (preservando siglas corporativas e preposições), `cleanPhone`, `cleanCep`, e-mail lowercase.
-  5. F16: Enriquecimento automático de CNPJ (local `db.companies` + BrasilAPI) e CEP (ViaCEP / BrasilAPI) completando Razão Social, Fantasia e endereço completo com código IBGE.
-  6. F17: Criação/atualização e vínculo no CRM (`db.companies`, `db.guests`, `db.reservations`), ativação de `autoEmitInvoice=true`, pre-fill de `invoiceDetails`, resposta no WhatsApp confirmando e limpeza de `awaitingFiscalData`.
-  7. Espelhamento idêntico em `scripts/` com 100% SHA-256 twin parity e verificação com `node --check` em todos os 6 arquivos.
+  1. Desktop Auto-Hide Sidebar (`artifacts/limpeza/src/components/layout.tsx`):
+     - Barra lateral desktop com largura 0px no fluxo normal do documento flexbox (`w-0 overflow-hidden pointer-events-none`), garantindo 100% da viewport para `/reservas` (Mapa de Reservas PMS).
+     - Hover edge trigger na borda esquerda (`fixed left-0 w-3 hover:w-7 z-30`) com pílula de destaque e mini-chevron.
+     - Botão gatilho discreto de Menu no topo esquerdo (`fixed left-3 top-3/top-12 z-30`).
+     - Overlay flutuante deslizante suave com `transition-transform duration-300 ease-in-out` (`translate-x-0` vs `-translate-x-full`) e backdrop discreto para fechar ao clicar fora.
+     - Auto-recolhimento ao retirar o mouse com debounce de 280ms (`handleMouseLeaveSidebar`).
+     - Botão de alternância Pin/Unpin no cabeçalho da sidebar com persistência em `localStorage` (`gfm_sidebar_pinned`). Quando fixada, o espaçador flexbox expande suavemente para `w-64 lg:w-72`.
+     - Fechamento automático ao navegar se desfixada.
+  2. Barra de Busca Rápida no Topo da Sidebar (Desktop & Mobile):
+     - Campo de busca integrado com ícone `Search` e botão de limpar `X`.
+     - Filtragem em tempo real sobre `label`, `description`, rota `href` e `title`.
+     - Auto-expansão imediata de todas as categorias que contêm itens correspondentes (`isCategoryOpen`).
+  3. 6 Categorias Reorganizadas em Accordion por Prioridade Operacional:
+     - 1. **📅 Reservas & Hospedagem** (aberta por padrão: `defaultOpen = true`, liderada pelo PMS `/reservas` e Caixa OTA `/caixa-entrada-ota`)
+     - 2. **💬 Comunicação & Atendimento** (`/whatsapp-chat`, `/whatsapp`, `/emails`, `/notificacoes`)
+     - 3. **🧹 Governança & Manutenção** (`/dashboard`, `/reports`, `/lista-compras`, `/observations`, `/tasks`, `/surveys`, `/servicos`, `/achados-perdidos`, `/automacoes-camareiras`)
+     - 4. **💰 Financeiro, Tarifas & Fiscal** (`/financeiro`, `/tarifas`, `/pagamentos`, `/notas`, `/funil-vendas`)
+     - 5. **🏨 Propriedade & Equipe** (`/equipe`, `/propriedade`, `/garagem`, `/avaliacoes-ia`, `/editor-site`)
+     - 6. **🛠️ Engenharia & Dev** (estritamente restrita a `isDev = user?.role === 'dev'`)
+     - Auto-expansão da categoria correspondente à rota ativa (`isItemActive`).
+  4. Remoção Completa do Manual WBP:
+     - Removidas todas as referências, ícones `HelpCircle` e links para `/ajuda-wbp` em `layout.tsx`.
+     - Rodapé da sidebar exibe botão para `/configuracoes` apenas para `dev`, e para `/equipe` para `admin`.
+  5. Compilação TypeScript/Vite com `npm run build` bem-sucedida em 28.02s com código de saída 0, gerando os novos bundles em `artifacts/limpeza/dist/`.
 
 ## Key Decisions Made
-- `lookup.mjs`: Centralização de todas as validações (Módulo 11 CPF/CNPJ), sanitizações (`toTitleCase`, `cleanPhone`, `cleanCep`) e formatações (`formatCnpj`, `formatCpf`, `formatCep`) com fallback inteligente local no CRM e timeouts seguros para ViaCEP e BrasilAPI.
-- `zapi-service.mjs`: Extensão de `getReservationPhones` para incluir `r.requesterInfo?.phone`, `r.requesterInfo?.whatsapp` e `r.requesterPhone`, garantindo que secretárias e solicitantes terceiros encontrem a reserva e a empresa vinculada.
-- `zapi-service.mjs`: `await processAiInboundMessage(...)` no webhook de mensagem recebida para execução determinística e não-assíncrona nos testes e na produção.
-- `whatsapp-ai-service.mjs`: Interceptação antecipada em `handleWhatsAppFiscalFlow` no início de `processAiInboundMessage` com criação garantida do registro `conv` em `db.whatsappConversations` para manter o estado `awaitingFiscalData`.
+- Spacer flexbox condicional (`w-0` vs `w-64 lg:w-72`) com `<aside fixed>`: Permite que o mapa de reservas ocupe 100% da tela sem redesenhar o grid ao abrir a sidebar flutuante em overlay, e quando fixada pelo usuário, a transição é suave e reserva espaço físico.
+- Busca unificada e expansão reativa: Durante a digitação na busca, qualquer categoria com itens correspondentes é forçada a expandir, eliminando atrito de navegação.
+- Isolamento estrito da categoria 6: Inclusão condicional no array `navCategories` avaliada por `isDev = user?.role === 'dev'`, garantindo que administradores hoteleiros (`role === 'admin'`) não vejam nem localizem rotas técnicas na busca.
 
 ## Artifact Index
 - `DISPATCH.md` — assignment from orchestrator
@@ -48,19 +69,15 @@ Implementar o fluxo completo do Assistente Fiscal do WhatsApp & Enriquecimento A
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/lookup.mjs` (Validações Módulo 11, sanitização, formatação e lookup enriquecido)
-  - `scripts/lookup.mjs` (Cópia idêntica byte-a-byte com paridade SHA-256)
-  - `artifacts/api-server/whatsapp-ai-service.mjs` (Fluxo fiscal completo F12-F17, extrações, `handleWhatsAppFiscalFlow`, heurística e hook)
-  - `scripts/whatsapp-ai-service.mjs` (Cópia idêntica byte-a-byte com paridade SHA-256)
-  - `artifacts/api-server/zapi-service.mjs` (Suporte a requesterInfo em telefones de reserva, re-exportações fiscais e await no webhook)
-  - `scripts/zapi-service.mjs` (Cópia idêntica byte-a-byte com paridade SHA-256)
-- **Build status**: PASS (`node --check` exit code 0 em todos os 6 arquivos)
+  - `artifacts/limpeza/src/components/layout.tsx` (Auto-hide sidebar, busca rápida, 6 categorias accordion, dev isolation, remoção wbp)
+  - `artifacts/limpeza/dist/` (Artefatos de build atualizados)
+- **Build status**: PASS (`npm run build` exit code 0)
 - **Pending issues**: none
 
 ## Quality Status
-- **Build/test result**: PASS (`node --check` exit code 0; 9/9 asserções de verificação pontual aprovadas)
+- **Build/test result**: PASS (Vite v7.3.6 production build exit code 0)
 - **Lint status**: clean
-- **Tests added/modified**: Testes pontuais de validação em memória executados com sucesso
+- **Tests added/modified**: Layout visual e de comportamento verificado via compilação e inspeção de código
 
 ## Loaded Skills
 - None required.

@@ -11,7 +11,7 @@ import {
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
   Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity,
-  Inbox, HelpCircle
+  Inbox, Pin, PinOff, ChevronDown
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -29,11 +29,14 @@ interface NavItem {
   icon: any
   badge?: number | string | null
   description?: string
+  devOnly?: boolean
 }
 
 interface NavCategory {
+  id: string
   title: string
   icon?: any
+  devOnly?: boolean
   items: NavItem[]
 }
 
@@ -42,9 +45,66 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { data: user, isLoading, error } = useGetMe()
   const queryClient = useQueryClient()
   
-  // Mobile drawer state & search
+  // Desktop Auto-Hide Sidebar and Pin state (persisted in localStorage)
+  const [isDesktopOpen, setIsDesktopOpen] = useState(false)
+  const [isPinned, setIsPinned] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("gfm_sidebar_pinned") === "true"
+    } catch {
+      return false
+    }
+  })
+  const closeTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Accordion state (Reservas & Hospedagem open by default)
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>(() => ({
+    reservas: true
+  }))
+
+  const togglePin = () => {
+    setIsPinned(prev => {
+      const next = !prev
+      try {
+        localStorage.setItem("gfm_sidebar_pinned", String(next))
+      } catch {}
+      return next
+    })
+  }
+
+  const handleMouseEnterSidebar = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+    setIsDesktopOpen(true)
+  }
+
+  const handleMouseLeaveSidebar = () => {
+    if (isPinned) return
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = setTimeout(() => {
+      setIsDesktopOpen(false)
+    }, 280)
+  }
+
+  const toggleCategory = (catId: string) => {
+    setOpenCategories(prev => ({
+      ...prev,
+      [catId]: !prev[catId]
+    }))
+  }
+
+  // Mobile drawer state & quick search
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+
+  // Fecha o drawer mobile e fecha a sidebar desktop desfixada ao navegar
+  useEffect(() => {
+    setMobileMenuOpen(false)
+    if (!isPinned) {
+      setIsDesktopOpen(false)
+    }
+  }, [location, isPinned])
 
   // Garante que nenhum prompt do Google One Tap apareça na área administrativa/backend
   useEffect(() => {
@@ -244,93 +304,156 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return <>{children}</>
   }
 
-  const isAdmin = user?.role === "admin"
+  const role = user?.role
+  const isDev = role === "dev"
+  const isAdmin = role === "admin"
+  const isAdminOrDev = isDev || isAdmin
+  const isCamareira = role === "camareira"
+  const isRecepcao = role === "recepcao"
 
-  // Estrutura Categorizada dos Módulos do Sistema
+  // Helper de checagem de rota ativa
+  const isItemActive = (href: string) => {
+    if (location === href) return true
+    if (href === "/reservas" && (location === "/relatorio-reservas" || location === "/relatorios-reservas" || location === "/pms-reports")) return false
+    if (href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) return true
+    if (href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) return true
+    if (href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) return true
+    if (href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa")) return true
+    if (href === "/equipe" && (location === "/usuarios" || location === "/usuarios-equipe" || location === "/users")) return true
+    if (href === "/configuracoes" && (location === "/settings" || location === "/configuracao" || location === "/ajustes")) return true
+    if (href === "/zapi-conexao" && (location === "/conexao-zapi" || location === "/sistema/zapi" || location === "/zapi")) return true
+    if (href === "/jornada-reservas" && (location === "/jornada-comunicacao" || location === "/fluxo-reservas" || location === "/mapa-jornada" || location === "/jornada")) return true
+    if (href === "/monitor-servidor" && (location === "/servidor" || location === "/server-monitor")) return true
+    if (href === "/ia-status" && (location === "/ai-status" || location === "/status-ia")) return true
+    if (href === "/logs" && (location === "/auditoria" || location === "/system-logs" || location === "/audit")) return true
+    return false
+  }
+
+  // Estrutura Categorizada dos Módulos do Sistema em 6 Categorias por Prioridade de Uso
   const navCategories: NavCategory[] = [
+    // 1. 📅 Reservas & Hospedagem (Admin, Dev e Recepção) - Aberta por padrão
+    ...(isAdminOrDev || isRecepcao ? [{
+      id: "reservas",
+      title: "📅 Reservas & Hospedagem",
+      items: [
+        { href: "/reservas", label: "Mapa de Reservas (PMS)", icon: CalendarDays, description: "Calendário de ocupação e reservas" },
+        { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", icon: Inbox, badge: quarantineCount > 0 ? quarantineCount : null, description: "Reservas Booking/Airbnb, quarentena e conciliação" },
+        { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", icon: TrendingUp, description: "Taxa de ocupação, diária média, RevPAR e ranking" },
+        { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },
+        { href: "/portaria", label: "Terminal da Portaria (Tablet)", icon: Tablet, description: "Check-in presencial e liberação" },
+        { href: "/pedidos-cafe", label: "Café da Manhã & Produção", icon: Coffee, description: "Ficha técnica e montagem dos pedidos" },
+        { href: "/relatorios-cafe", label: "Relatórios & Histórico do Café", icon: BarChart3, description: "Insights de consumo, custos e histórico geral" },
+        { href: "/reservar", label: "Site de Reservas Diretas", icon: Globe, description: "Página pública de vendas" },
+      ]
+    }] : []),
+
+    // 2. 💬 Comunicação & Atendimento (Admin e Dev)
+    ...(isAdminOrDev ? [{
+      id: "comunicacao",
+      title: "💬 Comunicação & Atendimento",
+      items: [
+        { href: "/whatsapp-chat", label: "WhatsApp Web (Chat)", icon: MessageSquare, description: "Conversas em tempo real, envio e histórico completo" },
+        { href: "/whatsapp", label: "Automação WhatsApp", icon: Bot, description: "Réguas de gatilhos, editor, fila e histórico" },
+        { href: "/emails", label: "Gerenciador de E-mails", icon: Mail, description: "E-mails enviados, agendados, redator e controle do motor" },
+        { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos, chamados e auditoria" },
+      ]
+    }] : []),
+
+    // 3. 🧹 Governança & Manutenção (Operacional / Todos)
     {
-      title: "🧹 Governança & Camareiras",
+      id: "governanca",
+      title: "🧹 Governança & Manutenção",
       items: [
         { href: "/dashboard", label: "Painel de Limpeza", icon: LayoutDashboard, description: "Quartos sujos, limpos e em andamento" },
-        { href: "/reports", label: isAdmin ? "Fechamento & Diárias das Camareiras" : "Meu Fechamento & Extrato", icon: Wallet, description: "Fechamento quinzenal, extrato em tempo real, vales e PIX" },
-        { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, description: "Itens para reposição, compras e governança" },
-        { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
-        { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
+        { href: "/reports", label: isAdminOrDev ? "Fechamento & Diárias das Camareiras" : "Meu Fechamento & Extrato", icon: Wallet, description: "Fechamento quinzenal, extrato em tempo real, vales e PIX" },
+        { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, badge: pendingShoppingCount > 0 ? pendingShoppingCount : null, description: "Itens para reposição, compras e governança" },
         { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
-        ...(isAdmin ? [{ href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" }] : []),
-        ...(isAdmin ? [{ title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" }] : []),
-        ...(isAdmin ? [{ href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" }] : []),
+        { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
+        ...(isAdminOrDev ? [{ href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" }] : []),
+        ...(isAdminOrDev ? [{ title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" }] : []),
+        { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
+        ...(isAdminOrDev ? [{ href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" }] : []),
       ]
     },
-    ...(isAdmin ? [
-      {
-        title: "💬 Central de Comunicação",
-        items: [
-          { href: "/jornada-reservas", label: "Mapa da Jornada (Fluxograma)", icon: Workflow, description: "Fluxograma completo de mensagens WhatsApp e e-mails por etapa da reserva" },
-          { href: "/whatsapp-chat", label: "WhatsApp Web (Chat)", icon: MessageSquare, description: "Conversas em tempo real, envio e histórico completo" },
-          { href: "/whatsapp", label: "Automação WhatsApp", icon: Bot, description: "Réguas de gatilhos, editor, fila e histórico" },
-          { href: "/emails", label: "Gerenciador de E-mails", icon: Mail, description: "E-mails enviados, agendados, redator e controle do motor" },
-          { href: "/zapi-conexao", label: "Conexão Z-API (WhatsApp)", icon: Smartphone, description: "Instância, QR Code, credenciais e status de conexão" },
-        ]
-      },
-      {
-        title: "📅 Reservas & Hospedagem",
-        items: [
-          { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", icon: Inbox, badge: quarantineCount > 0 ? quarantineCount : null, description: "Reservas Booking/Airbnb, quarentena e conciliação" },
-          { href: "/reservas", label: "Mapa de Reservas (PMS)", icon: CalendarDays, description: "Calendário de ocupação e reservas" },
-          { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", icon: TrendingUp, description: "Taxa de ocupação, diária média, RevPAR e ranking" },
-          { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },
-          { href: "/portaria", label: "Terminal da Portaria (Tablet)", icon: Tablet, description: "Check-in presencial e liberação" },
-          { href: "/pedidos-cafe", label: "Café da Manhã & Produção", icon: Coffee, description: "Ficha técnica e montagem dos pedidos" },
-          { href: "/relatorios-cafe", label: "Relatórios & Histórico do Café", icon: BarChart3, description: "Insights de consumo, custos e histórico geral" },
-          { href: "/reservar", label: "Site de Reservas Diretas", icon: Globe, description: "Página pública de vendas" },
-        ]
-      },
-      {
-        title: "🧾 Gestão Fiscal & NFS-e",
-        items: [
-          { href: "/notas", label: "Hub de Notas Fiscais", icon: FileText, description: "Chat IA, formulário, livro fiscal e templates" },
-        ]
-      },
-      {
-        title: "💰 Financeiro & Vendas",
-        items: [
-          { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "DRE Gerencial, Contas a Pagar/Receber, Long-Stay e Fluxo de Caixa" },
-          { href: "/tarifas", label: "Tarifas & Precificação SEBRAE", icon: Coins, description: "Calendário, Custo por UH (R$ 149,38), Tarifa Mínima R$ 276,63, Sazonalidade, Canais e WBP" },
-          { href: "/pagamentos", label: "Pagamentos, PIX & Cauções", icon: CreditCard, description: "Conciliação PIX Inter, Mercado Pago, Taxas e Cauções" },
-          { href: "/funil-vendas", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Funil 5 etapas, recuperação WhatsApp e anúncios Meta/Google IA" },
-        ]
-      },
-      {
-        title: "🏨 Propriedade & Regras",
-        items: [
-          { href: "/propriedade", label: "Flats, Políticas & Regras", icon: Building2, description: "Quartos, horários, regras da casa e contratos" },
-          { href: "/garagem", label: "Controle de Garagem & Vagas", icon: Car, description: "Vagas rotativas e placas de veículos" },
-          { href: "/avaliacoes-ia", label: "Avaliações & Satisfação IA", icon: ThumbsUp, description: "Análise de sentimentos e reviews do Google" },
-          { href: "/editor-site", label: "Editor Visual do Site", icon: Palette, description: "Fotos, comodidades, slogans e textos" },
-        ]
-      },
-      {
-        title: "⚙️ Sistema & Integrações",
-        items: [
-          { href: "/ajuda-wbp", label: "Manual de Integração WBP", icon: HelpCircle, description: "Guia completo, rotinas da recepção e códigos de erro" },
-          { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream" },
-          { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, usuários" },
-          { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos e chamados" },
-          { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros" },
-        ]
-      }
-    ] : [])
+
+    // 4. 💰 Financeiro, Tarifas & Fiscal (Admin e Dev)
+    ...(isAdminOrDev ? [{
+      id: "financeiro",
+      title: "💰 Financeiro, Tarifas & Fiscal",
+      items: [
+        { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "DRE Gerencial, Contas a Pagar/Receber, Long-Stay e Fluxo de Caixa" },
+        { href: "/tarifas", label: "Tarifas & Precificação SEBRAE", icon: Coins, description: "Calendário, Custo por UH (R$ 149,38), Tarifa Mínima R$ 276,63, Sazonalidade, Canais e WBP" },
+        { href: "/pagamentos", label: "Pagamentos, PIX & Cauções", icon: CreditCard, description: "Conciliação PIX Inter, Mercado Pago, Taxas e Cauções" },
+        { href: "/notas", label: "Hub de Notas Fiscais (NFS-e)", icon: FileText, description: "Chat IA, formulário, livro fiscal e templates" },
+        { href: "/funil-vendas", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Funil 5 etapas, recuperação WhatsApp e anúncios Meta/Google IA" },
+      ]
+    }] : []),
+
+    // 5. 🏨 Propriedade & Equipe (Admin e Dev)
+    ...(isAdminOrDev ? [{
+      id: "propriedade",
+      title: "🏨 Propriedade & Equipe",
+      items: [
+        { href: "/equipe", label: "Equipe & Níveis de Acesso", icon: Users, description: "Usuários do sistema, permissões, WhatsApp e senhas" },
+        { href: "/propriedade", label: "Flats, Políticas & Regras", icon: Building2, description: "Quartos, horários, regras da casa e contratos" },
+        { href: "/garagem", label: "Controle de Garagem & Vagas", icon: Car, description: "Vagas rotativas e placas de veículos" },
+        { href: "/avaliacoes-ia", label: "Avaliações & Satisfação IA", icon: ThumbsUp, description: "Análise de sentimentos e reviews do Google" },
+        { href: "/editor-site", label: "Editor Visual do Site", icon: Palette, description: "Fotos, comodidades, slogans e textos" },
+      ]
+    }] : []),
+
+    // 6. 🛠️ Engenharia & Dev (ESTRITAMENTE EXCLUSIVO Dev)
+    ...(isDev ? [{
+      id: "engenharia",
+      title: "🛠️ Engenharia & Dev",
+      devOnly: true,
+      items: [
+        { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, chaves de API e certificados" },
+        { href: "/zapi-conexao", label: "Conexão Z-API (WhatsApp)", icon: Smartphone, description: "Instância, QR Code, credenciais e status de conexão" },
+        { href: "/jornada-reservas", label: "Mapa da Jornada (Fluxograma)", icon: Workflow, description: "Fluxograma completo de mensagens WhatsApp e e-mails por etapa da reserva" },
+        { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream" },
+        { href: "/ia-status", label: "Status da IA", icon: Bot, description: "Monitoramento dos modelos Gemini, OpenAI e latências" },
+        { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros" },
+      ]
+    }] : [])
   ]
 
-  // Lista linear filtrada por busca (se o usuário pesquisar algo no drawer)
+  // Auto-expande categoria ativa na navegação
+  useEffect(() => {
+    navCategories.forEach(cat => {
+      if (cat.items.some(item => isItemActive(item.href))) {
+        setOpenCategories(prev => ({ ...prev, [cat.id]: true }))
+      }
+    })
+  }, [location])
+
+  // Checagem de categoria aberta (auto-expande durante busca)
+  const isCategoryOpen = (catId: string) => {
+    if (searchQuery.trim().length > 0) return true
+    return Boolean(openCategories[catId])
+  }
+
+  // Contador de badges por categoria
+  const getCategoryBadge = (cat: NavCategory) => {
+    let count = 0
+    for (const it of cat.items) {
+      if (typeof it.badge === "number") count += it.badge
+    }
+    return count
+  }
+
+  // Filtragem rápida em tempo real por rótulo, descrição e rota
   const filteredCategories = navCategories.map(cat => ({
     ...cat,
-    items: cat.items.filter(it => 
-      !searchQuery.trim() || 
-      it.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (it.description && it.description.toLowerCase().includes(searchQuery.toLowerCase()))
-    )
+    items: cat.items.filter(it => {
+      if (!searchQuery.trim()) return true
+      const q = searchQuery.toLowerCase().trim()
+      const matchLabel = it.label.toLowerCase().includes(q)
+      const matchDesc = it.description && it.description.toLowerCase().includes(q)
+      const matchHref = it.href.toLowerCase().includes(q)
+      const matchTitle = it.title && it.title.toLowerCase().includes(q)
+      return Boolean(matchLabel || matchDesc || matchHref || matchTitle)
+    })
   })).filter(cat => cat.items.length > 0)
 
   return (
@@ -351,12 +474,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <span className="font-black text-sm block leading-tight text-foreground">CorpFlats</span>
-            <span className="text-[10px] text-muted-foreground font-semibold uppercase">{user?.role === "admin" ? "Administração" : "Camareira"}</span>
+            <span className="text-[10px] text-muted-foreground font-semibold uppercase">
+              {isDev ? "Dev / Engenharia" : isAdmin ? "Administração" : isRecepcao ? "Recepção" : "Camareira"}
+            </span>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isAdmin && (
+          {isAdminOrDev && (
             <div className="relative">
               <Button 
                 variant="ghost" 
@@ -442,7 +567,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               )}
             </div>
           )}
-          {isAdmin && (
+          {isAdminOrDev && (
             <Button
               variant="outline"
               size="sm"
@@ -466,36 +591,105 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {/* Sidebar Desktop */}
-      <aside className={`hidden md:flex w-64 lg:w-72 bg-card border-r border-border flex-col shrink-0 print:hidden ${alertCount > 0 ? "mt-9" : ""}`}>
+      {/* Gatilho sensível na borda esquerda (Desktop Hover Edge Trigger) */}
+      {!isPinned && (
+        <div
+          onMouseEnter={handleMouseEnterSidebar}
+          className={`fixed left-0 z-30 hidden md:flex items-center justify-start w-3 hover:w-7 cursor-pointer group transition-all duration-200 select-none ${
+            alertCount > 0 ? "top-9 bottom-0" : "top-0 bottom-0"
+          }`}
+          title="Aproximar o mouse para abrir o menu lateral"
+        >
+          <div className="w-1.5 h-16 rounded-r-full bg-primary/40 group-hover:bg-primary group-hover:h-24 group-hover:w-2 transition-all duration-300 shadow-md flex items-center justify-center">
+            <ChevronRight className="w-3 h-3 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200 -ml-0.5" />
+          </div>
+        </div>
+      )}
+
+      {/* Gatilho visual no topo esquerdo (Desktop Menu Trigger) */}
+      {!isPinned && !isDesktopOpen && (
+        <div className={`fixed left-3 z-30 hidden md:block ${alertCount > 0 ? "top-12" : "top-3"}`}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsDesktopOpen(true)}
+            className="h-8 px-2.5 gap-1.5 font-bold text-xs rounded-xl bg-card/90 backdrop-blur-sm shadow-md border-border/80 hover:bg-card hover:border-primary/50 text-foreground transition-all"
+            title="Abrir menu lateral flutuante"
+          >
+            <Menu className="w-4 h-4 text-primary" />
+            <span className="text-[11px]">Menu</span>
+          </Button>
+        </div>
+      )}
+
+      {/* Backdrop sutil ao abrir overlay flutuante desktop */}
+      {!isPinned && isDesktopOpen && (
+        <div 
+          aria-hidden="true"
+          onClick={() => setIsDesktopOpen(false)}
+          className="fixed inset-0 z-30 hidden md:block bg-black/10 backdrop-blur-[0.5px] transition-opacity animate-in fade-in"
+        />
+      )}
+
+      {/* Espaçador flexbox desktop (largura 0px quando desfixado para 100% de largura da tela) */}
+      <div 
+        aria-hidden="true" 
+        className={`hidden md:block shrink-0 transition-[width] duration-300 ease-in-out ${
+          isPinned ? "w-64 lg:w-72" : "w-0 overflow-hidden pointer-events-none"
+        }`} 
+      />
+
+      {/* Sidebar Desktop Flutuante / Retrátil */}
+      <aside
+        onMouseEnter={handleMouseEnterSidebar}
+        onMouseLeave={handleMouseLeaveSidebar}
+        className={`hidden md:flex fixed top-0 bottom-0 left-0 z-40 w-64 lg:w-72 bg-card/95 backdrop-blur-md border-r border-border flex-col shrink-0 print:hidden transition-transform duration-300 ease-in-out shadow-2xl md:shadow-lg ${
+          alertCount > 0 ? "top-9" : "top-0"
+        } ${
+          isPinned || isDesktopOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
         {/* Brand Header */}
-        <div className="p-4 flex items-center justify-between border-b border-border">
+        <div className="p-3.5 flex items-center justify-between border-b border-border">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-xs">
-              <Sparkles className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-xs">
+              <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <span className="font-bold text-base block leading-tight text-foreground">CorpFlats</span>
-              <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Gestão Hoteleira</span>
+              <span className="font-bold text-sm block leading-tight text-foreground">CorpFlats</span>
+              <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Gestão Hoteleira</span>
             </div>
           </div>
 
-          {isAdmin && unreadNotifications > 0 && (
-            <Link href="/notificacoes">
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white animate-pulse">
-                {unreadNotifications}
-              </span>
-            </Link>
-          )}
+          <div className="flex items-center gap-1">
+            {isAdminOrDev && unreadNotifications > 0 && (
+              <Link href="/notificacoes">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white animate-pulse">
+                  {unreadNotifications}
+                </span>
+              </Link>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={togglePin}
+              className={`h-7 w-7 rounded-lg transition-colors ${
+                isPinned ? "text-primary bg-primary/10 hover:bg-primary/20" : "text-muted-foreground hover:text-foreground"
+              }`}
+              title={isPinned ? "Desafixar menu (Auto-ocultar para tela cheia)" : "Fixar menu lateral"}
+            >
+              {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
         </div>
 
-        {/* Botão Fixo da Sofia Copiloto na Sidebar (Não cobre elementos da tela) */}
-        {isAdmin && (
-          <div className="px-3 pt-3 pb-1">
+        {/* Botão Fixo da Sofia Copiloto na Sidebar */}
+        {isAdminOrDev && (
+          <div className="px-3 pt-2.5 pb-1">
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent("toggle-sofia-copilot"))}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white font-semibold text-xs shadow-sm hover:opacity-95 active:scale-[0.99] transition-all cursor-pointer"
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white font-semibold text-xs shadow-sm hover:opacity-95 active:scale-[0.99] transition-all cursor-pointer"
               title="Abrir Copiloto IA de Gestão (Ctrl+J)"
             >
               <div className="flex items-center gap-2">
@@ -508,81 +702,144 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         )}
+
+        {/* Barra de Busca Rápida no Topo da Sidebar Desktop */}
+        <div className="px-3 pt-1.5 pb-1">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground pointer-events-none" />
+            <Input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Buscar módulo ou rota..."
+              className="pl-8 pr-7 h-8 text-xs rounded-xl bg-muted/40 border-border/80 focus-visible:ring-1 focus-visible:ring-primary"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
         
-        {/* Nav Items Categorizados com Scroll Suave */}
-        <nav className="flex-1 p-3 space-y-5 overflow-y-auto max-h-[calc(100dvh-130px)]">
-          {navCategories.map((cat, idx) => (
-            <div key={idx} className="space-y-1">
-              <span className="px-2.5 text-[10px] font-black uppercase tracking-wider text-muted-foreground block mb-1.5">
-                {cat.title}
-              </span>
-              <div className="space-y-0.5">
-                {cat.items.map(item => {
-                  const isActive = location === item.href ||
-                    (item.href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) ||
-                    (item.href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) ||
-                    (item.href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) ||
-                    (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa"))
-                  return (
-                    <Link key={item.href} href={item.href}>
-                      <div className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                        isActive 
-                          ? 'bg-primary text-primary-foreground shadow-xs' 
-                          : 'hover:bg-muted text-muted-foreground hover:text-foreground'
-                      }`}>
-                        <div className="flex items-center gap-2.5 truncate">
-                          <item.icon className="w-4 h-4 shrink-0" />
-                          <span className="truncate">{item.label}</span>
-                        </div>
-                        {item.badge ? (
-                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${isActive ? 'bg-white text-primary' : 'bg-rose-600 text-white animate-pulse'}`}>
-                            {item.badge}
-                          </span>
-                        ) : null}
-                      </div>
-                    </Link>
-                  )
-                })}
+        {/* Nav Items em Accordion com 6 Categorias */}
+        <nav className="flex-1 px-2.5 py-1.5 space-y-1.5 overflow-y-auto max-h-[calc(100dvh-170px)]">
+          {filteredCategories.map(cat => {
+            const isOpen = isCategoryOpen(cat.id)
+            const catBadgeCount = getCategoryBadge(cat)
+            const hasActiveItem = cat.items.some(it => isItemActive(it.href))
+
+            return (
+              <div key={cat.id} className="rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => toggleCategory(cat.id)}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left transition-all ${
+                    hasActiveItem
+                      ? "bg-primary/10 text-primary font-bold"
+                      : "hover:bg-muted text-muted-foreground hover:text-foreground font-semibold"
+                  }`}
+                >
+                  <span className="text-[11px] truncate tracking-tight">{cat.title}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {!isOpen && catBadgeCount > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-rose-600 text-white animate-pulse">
+                        {catBadgeCount}
+                      </span>
+                    )}
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="pl-1 pr-0.5 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                    {cat.items.map(item => {
+                      const isActive = isItemActive(item.href)
+                      return (
+                        <Link key={item.href} href={item.href}>
+                          <div
+                            title={item.description}
+                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                              isActive
+                                ? "bg-primary text-primary-foreground font-bold shadow-xs"
+                                : "hover:bg-muted text-muted-foreground hover:text-foreground font-medium"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <item.icon className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">{item.label}</span>
+                            </div>
+                            {item.badge ? (
+                              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-black shrink-0 ${
+                                isActive ? "bg-white text-primary" : "bg-rose-600 text-white animate-pulse"
+                              }`}>
+                                {item.badge}
+                              </span>
+                            ) : null}
+                          </div>
+                        </Link>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
+            )
+          })}
+
+          {filteredCategories.length === 0 && (
+            <div className="p-4 text-center">
+              <p className="text-xs text-muted-foreground font-medium">Nenhum módulo encontrado</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSearchQuery("")}
+                className="mt-2 text-xs font-bold text-primary h-7 px-2"
+              >
+                Limpar busca
+              </Button>
             </div>
-          ))}
+          )}
         </nav>
         
         {/* User Footer Profile & Password Change */}
-        <div className="p-3.5 border-t border-border mt-auto flex items-center justify-between bg-muted/20">
-          <div className="flex items-center gap-2.5 overflow-hidden">
+        <div className="p-3 border-t border-border mt-auto flex items-center justify-between bg-muted/20">
+          <div className="flex items-center gap-2 overflow-hidden">
             <UserCircle className="w-8 h-8 text-muted-foreground shrink-0" />
             <div className="flex flex-col truncate">
               <span className="text-xs font-bold truncate text-foreground capitalize">{user?.username}</span>
               <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                {user?.role === "admin" ? "Administrador" : "Camareira"}
+                {isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isRecepcao ? "Recepção" : "Camareira"}
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
-            <Link href="/ajuda-wbp">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 text-muted-foreground hover:text-primary" 
-                title="Manual de Ajuda da Integração WebBookingPro"
-              >
-                <HelpCircle className="w-4 h-4" />
-              </Button>
-            </Link>
-            {isAdmin && (
+          <div className="flex items-center gap-0.5">
+            {isDev ? (
               <Link href="/configuracoes">
                 <Button 
                   variant="ghost" 
                   size="icon" 
                   className="h-8 w-8 text-muted-foreground hover:text-primary" 
-                  title="Configurações do Sistema"
+                  title="Configurações Técnicas & Nuvem"
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
               </Link>
-            )}
+            ) : isAdmin ? (
+              <Link href="/equipe">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8 text-muted-foreground hover:text-primary" 
+                  title="Gestão da Equipe & Níveis de Acesso"
+                >
+                  <Users className="w-4 h-4" />
+                </Button>
+              </Link>
+            ) : null}
             <Button 
               variant="ghost" 
               size="icon" 
@@ -617,7 +874,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       {/* Barra de Navegação Inferior Móvel (Menus Permanentes no Rodapé) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border px-1 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
-        {isAdmin ? (
+        {isAdminOrDev ? (
           <>
             {/* 1. Mapa de Reservas */}
             <Link href="/reservas" className="flex-1">
@@ -772,60 +1029,113 @@ export function Shell({ children }: { children: React.ReactNode }) {
             {/* Campo de Busca Rápida no Drawer */}
             <div className="p-3 border-b border-border bg-card">
               <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground pointer-events-none" />
                 <Input 
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Buscar módulo ou tela..."
-                  className="pl-9 h-9 text-xs rounded-xl bg-muted/40 border-border"
+                  placeholder="Buscar módulo ou rota..."
+                  className="pl-9 pr-8 h-9 text-xs rounded-xl bg-muted/40 border-border"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Lista Categorizada com Scroll */}
-            <div className="flex-1 p-3 overflow-y-auto space-y-4">
-              {filteredCategories.map((cat, idx) => (
-                <div key={idx} className="space-y-1">
-                  <span className="px-2 text-[10px] font-black uppercase tracking-wider text-muted-foreground block mb-1">
-                    {cat.title}
-                  </span>
-                  <div className="space-y-1">
-                    {cat.items.map(item => {
-                      const isActive = location === item.href ||
-                        (item.href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) ||
-                        (item.href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) ||
-                        (item.href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) ||
-                        (item.href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa"))
-                      return (
-                        <Link key={item.href} href={item.href}>
-                          <div className={`p-2.5 rounded-2xl border transition-all flex items-center justify-between ${
-                            isActive
-                              ? "bg-primary text-primary-foreground border-primary shadow-xs"
-                              : "bg-card border-border/70 hover:bg-muted text-foreground"
-                          }`}>
-                            <div className="flex items-center gap-2.5 truncate">
-                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-                                isActive ? "bg-white/20 text-white" : "bg-muted text-foreground"
+            {/* Lista Categorizada com Scroll e Accordion */}
+            <div className="flex-1 p-3 overflow-y-auto space-y-3">
+              {filteredCategories.map(cat => {
+                const isOpen = isCategoryOpen(cat.id)
+                const catBadgeCount = getCategoryBadge(cat)
+                const hasActiveItem = cat.items.some(it => isItemActive(it.href))
+
+                return (
+                  <div key={cat.id} className="rounded-2xl border border-border/60 overflow-hidden bg-card">
+                    <button
+                      type="button"
+                      onClick={() => toggleCategory(cat.id)}
+                      className={`w-full flex items-center justify-between p-2.5 text-left transition-all ${
+                        hasActiveItem
+                          ? "bg-primary/10 text-primary font-bold"
+                          : "hover:bg-muted text-muted-foreground hover:text-foreground font-semibold"
+                      }`}
+                    >
+                      <span className="text-xs font-bold truncate">{cat.title}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isOpen && catBadgeCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white animate-pulse">
+                            {catBadgeCount}
+                          </span>
+                        )}
+                        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+                      </div>
+                    </button>
+
+                    {isOpen && (
+                      <div className="p-1.5 space-y-1 border-t border-border/40">
+                        {cat.items.map(item => {
+                          const isActive = isItemActive(item.href)
+                          return (
+                            <Link key={item.href} href={item.href}>
+                              <div className={`p-2 rounded-xl transition-all flex items-center justify-between ${
+                                isActive
+                                  ? "bg-primary text-primary-foreground font-bold shadow-xs"
+                                  : "bg-muted/30 hover:bg-muted text-foreground"
                               }`}>
-                                <item.icon className="w-4 h-4" />
+                                <div className="flex items-center gap-2.5 truncate">
+                                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isActive ? "bg-white/20 text-white" : "bg-card text-foreground"
+                                  }`}>
+                                    <item.icon className="w-3.5 h-3.5" />
+                                  </div>
+                                  <div className="truncate">
+                                    <span className="text-xs font-bold block leading-tight truncate">{item.label}</span>
+                                    {item.description && (
+                                      <span className={`text-[10px] truncate block ${isActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                                        {item.description}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {item.badge ? (
+                                    <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-black ${
+                                      isActive ? "bg-white text-primary" : "bg-rose-600 text-white animate-pulse"
+                                    }`}>
+                                      {item.badge}
+                                    </span>
+                                  ) : null}
+                                  <ChevronRight className={`w-3.5 h-3.5 ${isActive ? "text-white" : "text-muted-foreground"}`} />
+                                </div>
                               </div>
-                              <div className="truncate">
-                                <span className="text-xs font-bold block leading-tight truncate">{item.label}</span>
-                                {item.description && (
-                                  <span className={`text-[10px] truncate block ${isActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
-                                    {item.description}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <ChevronRight className={`w-4 h-4 shrink-0 ${isActive ? "text-white" : "text-muted-foreground"}`} />
-                          </div>
-                        </Link>
-                      )
-                    })}
+                            </Link>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
+                )
+              })}
+
+              {filteredCategories.length === 0 && (
+                <div className="p-6 text-center">
+                  <p className="text-xs text-muted-foreground font-medium">Nenhum módulo encontrado</p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSearchQuery("")}
+                    className="mt-2 text-xs font-bold text-primary"
+                  >
+                    Limpar busca
+                  </Button>
                 </div>
-              ))}
+              )}
             </div>
 
             {/* Perfil e Ações do Rodapé do Drawer */}
@@ -834,11 +1144,36 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <UserCircle className="w-7 h-7 text-muted-foreground shrink-0" />
                 <div className="truncate">
                   <span className="text-xs font-bold text-foreground block truncate capitalize">{user?.username}</span>
-                  <span className="text-[9px] text-muted-foreground font-semibold uppercase">{user?.role}</span>
+                  <span className="text-[9px] text-muted-foreground font-semibold uppercase">
+                    {isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isRecepcao ? "Recepção" : "Camareira"}
+                  </span>
                 </div>
               </div>
 
               <div className="flex items-center gap-1">
+                {isDev ? (
+                  <Link href="/configuracoes">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-8 w-8 text-muted-foreground hover:text-primary" 
+                      title="Configurações Técnicas & Nuvem"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </Button>
+                  </Link>
+                ) : isAdmin ? (
+                  <Link href="/equipe">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-8 w-8 text-muted-foreground hover:text-primary" 
+                      title="Gestão da Equipe & Níveis de Acesso"
+                    >
+                      <Users className="w-4 h-4" />
+                    </Button>
+                  </Link>
+                ) : null}
                 <Button 
                   variant="ghost" 
                   size="icon" 
