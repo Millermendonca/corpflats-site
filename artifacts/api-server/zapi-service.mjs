@@ -4308,6 +4308,16 @@ export async function handleConciergeGroupMessage({
     );
 
     if (cleanReq) {
+      if (cleanReq.isDeleted || cleanReq.status === "deleted") {
+        cleanReq.isDeleted = false;
+        cleanReq.status = "dirty";
+        cleanReq.completedAt = null;
+        cleanReq.cleaningStartedAt = null;
+        cleanReq.willCleanAt = null;
+        delete cleanReq.deletedAt;
+        delete cleanReq.deletedBy;
+        delete cleanReq.deletedReservationId;
+      }
       cleanReq.isVacant = true; // Quarto desocupado informado pela portaria
       cleanReq.isVacantExplicitlySet = true;
       cleanReq.vacantSource = "reception_checkout";

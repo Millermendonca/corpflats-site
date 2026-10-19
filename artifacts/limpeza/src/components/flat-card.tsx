@@ -718,6 +718,46 @@ export function FlatCard({
     }
   }
 
+  // Delete Cleaning Card (Admin only)
+  const [deleteCardModalOpen, setDeleteCardModalOpen] = useState(false)
+  const [isDeletingCard, setIsDeletingCard] = useState(false)
+
+  const handleConfirmDeleteCard = async () => {
+    const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+    const targetReqDate = request?.requestDate || flat?.cleaningRequest?.requestDate || flat?.checkoutDate || date
+    setIsDeletingCard(true)
+    try {
+      const qs = new URLSearchParams({
+        flatId: String(flat.flatId || ""),
+        flatNumber: String(flat.flatNumber || flat.number || ""),
+        date: String(targetReqDate || date),
+        viewDate: String(date || "")
+      })
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}?${qs.toString()}`, {
+        method: "DELETE",
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || "Não foi possível excluir o card.")
+      }
+      toast({
+        title: "🗑️ Card Excluído",
+        description: `O card de limpeza do Flat ${flat.flatNumber || flat.number} foi excluído e não voltará automaticamente.`
+      })
+      setDeleteCardModalOpen(false)
+      refreshData()
+    } catch (err: any) {
+      toast({
+        title: "Erro ao excluir card",
+        description: err.message || "Falha ao excluir o card de limpeza.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsDeletingCard(false)
+    }
+  }
+
   // Confirm No Show (Admin only)
   const handleConfirmNoShow = async () => {
     let activeReqId = request?.id
@@ -1853,6 +1893,22 @@ export function FlatCard({
                     <span>Marcar No Show</span>
                   </Button>
                 )}
+
+                {/* Excluir Card Button (Admin Only, available when room not clean, including no_show) */}
+                {isAdmin && !isInstruction && currentStatus !== "clean" && (
+                  <Button 
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteCardModalOpen(true)}
+                    disabled={isProcessing || isDeletingCard}
+                    title="Excluir card do painel de limpeza (some do dashboard e só reaparece se houver novo check-out ou lançamento manual)."
+                    className="w-full text-[11px] font-semibold h-7 gap-1 text-slate-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 mt-0.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Excluir Card</span>
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -1888,6 +1944,33 @@ export function FlatCard({
               disabled={isProcessing}
             >
               {isInstruction ? "Sim, Reabrir Tarefa" : "Sim, Devolver Quarto"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Card Confirmation Dialog */}
+      <Dialog open={deleteCardModalOpen} onOpenChange={setDeleteCardModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-600">
+              <Trash2 className="w-5 h-5" />
+              Excluir Card de Limpeza - Flat {flat.flatNumber}
+            </DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir este card de limpeza? Ele será removido do painel e <strong>não voltará sozinho</strong> nos próximos dias (só reaparecerá se for inserido manualmente ou houver um novo check-out do dia / check-out informado).
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setDeleteCardModalOpen(false)} disabled={isDeletingCard}>
+              Cancelar
+            </Button>
+            <Button 
+              className="bg-rose-600 hover:bg-rose-700 text-white font-semibold shadow-xs"
+              onClick={handleConfirmDeleteCard}
+              disabled={isDeletingCard}
+            >
+              {isDeletingCard ? "Excluindo..." : "Excluir Card"}
             </Button>
           </DialogFooter>
         </DialogContent>

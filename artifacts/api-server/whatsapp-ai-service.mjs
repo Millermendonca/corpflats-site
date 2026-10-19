@@ -3264,13 +3264,28 @@ export function handleInformCheckout(db, args = {}) {
 
   // 2. Atualiza ou cria solicitação de limpeza
   if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
-  let cleanReq = db.cleaningRequests.find(r => 
-    (matchedFlat && r.flatId === matchedFlat.id) || String(r.flatNumber) === resolvedFlatNum
+  let cleanReq = db.cleaningRequests.find(r =>
+    ((matchedFlat && r.flatId === matchedFlat.id) || String(r.flatNumber) === resolvedFlatNum) &&
+    r.requestDate === todayStr &&
+    !r.isInstructionOnly &&
+    r.source !== "manual_instruction" &&
+    r.type !== "instruction" &&
+    r.type !== "bed_adjustment_only"
   );
 
   const guestName = args.guestName || args.senderName || matchedRes?.guestName || "Hóspede";
 
   if (cleanReq) {
+    if (cleanReq.isDeleted || cleanReq.status === "deleted") {
+      cleanReq.isDeleted = false;
+      cleanReq.status = "dirty";
+      cleanReq.completedAt = null;
+      cleanReq.cleaningStartedAt = null;
+      cleanReq.willCleanAt = null;
+      delete cleanReq.deletedAt;
+      delete cleanReq.deletedBy;
+      delete cleanReq.deletedReservationId;
+    }
     cleanReq.isVacant = true;
     cleanReq.isVacantExplicitlySet = true;
     cleanReq.vacantSource = "whatsapp_guest";
