@@ -35,12 +35,11 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
     }
   }
 
-  const hasDashboard = hasModuleAccess(user as any, "/dashboard")
+  const currentUser = user as any
+  const hasDashboard = hasModuleAccess(currentUser, "/dashboard")
   const fallbackRoute = hasDashboard
     ? "/dashboard"
-    : (Array.isArray(user?.allowedModules) && user.allowedModules.length > 0
-        ? user.allowedModules[0]
-        : "/reservar")
+    : ((Array.isArray(currentUser?.allowedModules) ? currentUser.allowedModules : []).find((m: string) => hasModuleAccess(currentUser, m)) || "/reservar")
 
   return (
     <Shell>
@@ -65,7 +64,7 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
               <div className="p-3 bg-muted/30 rounded-2xl border text-xs flex items-center justify-between">
                 <div className="text-left">
                   <span className="text-[10px] uppercase font-bold text-muted-foreground block">Conta Conectada</span>
-                  <span className="font-bold text-slate-900 dark:text-slate-100">{user.name || user.username}</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">{currentUser?.name || currentUser?.username}</span>
                 </div>
                 <Badge variant="outline" className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[10px] capitalize">
                   Perfil: {user.role === "cleaner" ? "Camareira" : user.role}

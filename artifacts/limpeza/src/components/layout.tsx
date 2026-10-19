@@ -212,7 +212,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
             // Auto-oculta o toast após 10 segundos
             setTimeout(() => {
-              setActiveToastNotif(prev => prev?.id === latest.id ? null : prev)
+              setActiveToastNotif((prev: any) => prev?.id === latest.id ? null : prev)
             }, 10000)
 
             // Notificação nativa de browser se permitido

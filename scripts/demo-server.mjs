@@ -992,7 +992,7 @@ export const ROUTE_ALIASES = {
 
 export function canonicalizeRoute(path) {
   if (!path) return "";
-  const clean = String(path).split("?")[0].replace(/\/+$/, "") || "/";
+  const clean = (String(path).split("?")[0].replace(/\/+$/, "") || "/").toLowerCase();
   return ROUTE_ALIASES[clean] || clean;
 }
 

@@ -328,7 +328,7 @@ export const ROUTE_ALIASES: Record<string, string> = {
  */
 export function canonicalizeRoute(path: string): string {
   if (!path) return "";
-  const clean = path.split("?")[0].replace(/\/+$/, "") || "/";
+  const clean = (path.split("?")[0].replace(/\/+$/, "") || "/").toLowerCase();
   return ROUTE_ALIASES[clean] || clean;
 }
 
@@ -371,8 +371,8 @@ export function isDefaultPermissionsForRole(
 ): boolean {
   if (!Array.isArray(allowedModules)) return true;
   const defaults = getDefaultModulesForRole(role);
-  if (defaults.length !== allowedModules.length) return false;
+  const setGiven = new Set(allowedModules);
+  if (defaults.length !== setGiven.size) return false;
 
-  const setA = new Set(defaults);
-  return allowedModules.every(m => setA.has(m));
+  return defaults.every(m => setGiven.has(m));
 }

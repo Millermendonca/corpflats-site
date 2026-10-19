@@ -537,5 +537,58 @@ describe("Milestone 1 — Auth, Roles & RBAC Separation Suite", () => {
       // 4. Cleanup
       await fetch(`${BASE_URL}/api/admin/users/${createdData.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
     });
+
+    // ── 2.9. Edge Cases: Case-Insensitive Aliases, Null/Invalid Entry Sanitization & Empty Array Preservation on POST ───────
+    it("Edge Cases: Case-insensitive alias canonicalization, dirty array sanitization, and explicit empty allowedModules on POST", async () => {
+      // 1. Create user with explicit allowedModules: [] via POST (must NOT fall back to role defaults)
+      const emptyCreate = await fetch(`${BASE_URL}/api/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          username: "zero_perms_user",
+          name: "Zero Perms User",
+          role: "recepcao",
+          password: "password123",
+          allowedModules: []
+        })
+      });
+      assert.strictEqual(emptyCreate.status, 201);
+      const emptyUser = await emptyCreate.json();
+      assert.deepStrictEqual(emptyUser.allowedModules, [], "Creating user with allowedModules: [] must preserve empty array");
+
+      // Verify list returns empty array
+      const listRes = await fetch(`${BASE_URL}/api/admin/users`, { headers: { Cookie: gestorCookie } });
+      const listData = await listRes.json();
+      const inList = listData.find(u => u.id === emptyUser.id);
+      assert.deepStrictEqual(inList.allowedModules, [], "User in list must retain empty allowedModules");
+
+      // 2. PATCH user with mixed-case aliases, trailing slashes, and dirty non-string values
+      const dirtyPatch = await fetch(`${BASE_URL}/api/admin/users/${emptyUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          allowedModules: [
+            "/USUARIOS",            // uppercase alias -> /equipe
+            "/Meu-Extrato/",        // mixed case with trailing slash -> /reports
+            "/SETTINGS",            // uppercase devOnly alias -> stripped for non-dev admin
+            null,                   // invalid non-string
+            12345,                  // invalid number
+            "",                     // empty string
+            "   ",                  // whitespace string
+            "/reservas"             // canonical operational route
+          ]
+        })
+      });
+      assert.strictEqual(dirtyPatch.status, 200);
+      const dirtyData = await dirtyPatch.json();
+      assert.deepStrictEqual(
+        dirtyData.user.allowedModules.sort(),
+        ["/equipe", "/reports", "/reservas"].sort(),
+        "Mixed case aliases, trailing slashes, and dirty values must be cleanly sanitized and dev-only stripped"
+      );
+
+      // 3. Cleanup
+      await fetch(`${BASE_URL}/api/admin/users/${emptyUser.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
+    });
   });
 });

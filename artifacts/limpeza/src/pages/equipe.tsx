@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   Search,
+  Filter,
   ShieldCheck,
   ShieldAlert,
   Sparkles,
