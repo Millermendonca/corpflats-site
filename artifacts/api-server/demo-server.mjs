@@ -3968,7 +3968,19 @@ function reconcileUniversalIntegrity(incomingState = null) {
           const cur = db.cleaningRequests[existingIdx];
           const incDate = incReq.updatedAt || incReq.createdAt || "";
           const curDate = cur.updatedAt || cur.createdAt || "";
-          if (
+          const curIsDeleted = Boolean(cur.isDeleted || cur.status === "deleted");
+          const incIsDeleted = Boolean(incReq.isDeleted || incReq.status === "deleted");
+          if (curIsDeleted && !incIsDeleted) {
+            const delAt = cur.deletedAt || curDate;
+            if (incDate && delAt && incDate > delAt) {
+              db.cleaningRequests[existingIdx] = { ...cur, ...incReq, isDeleted: false };
+              delete db.cleaningRequests[existingIdx].deletedAt;
+              delete db.cleaningRequests[existingIdx].deletedBy;
+              delete db.cleaningRequests[existingIdx].deletedReservationId;
+              changed = true;
+            }
+          } else if (
+            (incIsDeleted && !curIsDeleted && (!curDate || (incReq.deletedAt || incDate) >= curDate)) ||
             (incReq.status === "clean" && cur.status !== "clean") ||
             (incReq.status === "no_show" && cur.status !== "no_show") ||
             (incReq.status === "extended" && cur.status !== "extended") ||
@@ -4289,7 +4301,8 @@ function reconcileUniversalIntegrity(incomingState = null) {
 
           const hasCleanBetween = (db.cleaningRequests || []).some(c => {
             if (String(c.flatNumber) !== String(r.flatNumber) && (!r.flatId || c.flatId !== r.flatId)) return false;
-            if (c.status !== "clean") return false;
+            const isResolvedCleanOrDeleted = c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt));
+            if (!isResolvedCleanOrDeleted) return false;
             const cDate = c.requestDate || c.effectiveDate;
             if (!cDate || cDate < checkoutDate) return false;
             if (cDate <= todayStr) return true;
@@ -7951,6 +7964,14 @@ function reconcileCleaningRequests() {
     } else {
       // Prioridade absoluta: registro com status === "clean" ou "no_show"
       const cleanItem = items.find(i => i.status === "clean");
+      const deletedItem = items.find(i => i.status === "deleted" || i.isDeleted);
+      const newerActiveAfterDelete = deletedItem ? items.find(i =>
+        i !== deletedItem &&
+        !i.isDeleted &&
+        i.status !== "deleted" &&
+        deletedItem.deletedAt &&
+        (i.createdAt || "") > deletedItem.deletedAt
+      ) : null;
       if (cleanItem) {
         // Enriquecer com detalhes de hóspedes se o item limpo não os tiver
         for (const other of items) {
@@ -7964,6 +7985,8 @@ function reconcileCleaningRequests() {
           if (typeof cleanItem.extraMattress !== "boolean" && typeof other.extraMattress === "boolean") cleanItem.extraMattress = other.extraMattress;
         }
         reconciled.push(cleanItem);
+      } else if (deletedItem && !newerActiveAfterDelete) {
+        reconciled.push(deletedItem);
       } else {
         const noShowItem = items.find(i => i.status === "no_show");
         if (noShowItem) {
@@ -10393,6 +10416,16 @@ app.post("/api/public/checkout", async (req, res) => {
   const guestDisplayName = foundRes?.guestName || "Hóspede";
   const now = new Date().toISOString();
   if (existing) {
+    if (existing.isDeleted || existing.status === "deleted") {
+      existing.isDeleted = false;
+      existing.status = "dirty";
+      existing.completedAt = null;
+      existing.cleaningStartedAt = null;
+      existing.willCleanAt = null;
+      delete existing.deletedAt;
+      delete existing.deletedBy;
+      delete existing.deletedReservationId;
+    }
     existing.isVacant = true; // Confirma quarto desocupado via link
     existing.isVacantExplicitlySet = true;
     existing.vacantSource = "guest_checkout";
@@ -10564,7 +10597,10 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
 
   if (reqToEvaluate) {
     const st = reqToEvaluate.cleaningRequest?.status || reqToEvaluate.status;
-    if (st === "in_progress" || st === "cleaning_now") {
+    if (st === "deleted" || Boolean(reqToEvaluate.isDeleted)) {
+      isDirty = false;
+      cleaningStatus = "clean";
+    } else if (st === "in_progress" || st === "cleaning_now") {
       isDirty = true;
       cleaningStatus = "in_progress";
     } else if (st === "dirty" || st === "pending") {
@@ -10590,7 +10626,7 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
       const recentClean = (db.cleaningRequests || []).find(c =>
         (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
         (c.requestDate >= yesterdayStr || c.effectiveDate >= yesterdayStr) &&
-        (c.status === "clean" || c.status === "inspected" || Boolean(c.completedAt))
+        (c.status === "clean" || c.status === "inspected" || c.status === "deleted" || Boolean(c.isDeleted) || Boolean(c.completedAt))
       );
       if (!recentClean) {
         isDirty = true;
@@ -11836,6 +11872,10 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
   });
 
   if (existing) {
+    existing.isDeleted = false;
+    delete existing.deletedAt;
+    delete existing.deletedBy;
+    delete existing.deletedReservationId;
     existing.source = isInstruction ? "manual_instruction" : "manual";
     existing.type = isInstruction ? (resolvedTwinBeds ? "bed_adjustment_only" : "instruction") : "cleaning";
     existing.isInstructionOnly = isInstruction;
@@ -11979,7 +12019,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.type !== "instruction" &&
         c.type !== "bed_adjustment_only" &&
         (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= resDate &&
-        c.status === "clean"
+        (c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!pmsRes.createdAt || !c.deletedAt || c.deletedAt >= pmsRes.createdAt)))
       );
 
       if (!alreadyCleanedAfter) {
@@ -12073,10 +12113,33 @@ function getRequestsForDate(dateStr, isNested = false) {
       c.type !== "bed_adjustment_only" &&
       c.type !== "instruction"
     );
-    let existingCleaning = exactDateCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
-      exactDateCleanings.find(c => c.status === "clean") ||
-      exactDateCleanings.find(c => c.status === "no_show") ||
-      exactDateCleanings[0];
+
+    const activeExactCleanings = exactDateCleanings.filter(c => !c.isDeleted && c.status !== "deleted");
+    const deletedExactCleaning = exactDateCleanings.find(c => c.isDeleted || c.status === "deleted");
+    if (deletedExactCleaning && activeExactCleanings.length === 0) {
+      const isNewResAfterDelete = Boolean(
+        pmsRes.createdAt &&
+        deletedExactCleaning.deletedAt &&
+        pmsRes.createdAt > deletedExactCleaning.deletedAt &&
+        (!deletedExactCleaning.deletedReservationId || Number(pmsRes.id) !== Number(deletedExactCleaning.deletedReservationId))
+      );
+      if (!isNewResAfterDelete) {
+        existingFlatNumbersForDate.add(flatNumber);
+        continue;
+      }
+      deletedExactCleaning.isDeleted = false;
+      deletedExactCleaning.status = "dirty";
+      delete deletedExactCleaning.deletedAt;
+      delete deletedExactCleaning.deletedBy;
+      delete deletedExactCleaning.deletedReservationId;
+      shouldSaveDb = true;
+    }
+
+    let existingCleaning = activeExactCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
+      activeExactCleanings.find(c => c.status === "clean") ||
+      activeExactCleanings.find(c => c.status === "no_show") ||
+      activeExactCleanings[0] ||
+      (deletedExactCleaning && !deletedExactCleaning.isDeleted ? deletedExactCleaning : undefined);
 
     // Só busca em effectiveDate se não houver NENHUM cleaningRequest criado para a data de hoje
     if (!existingCleaning) {
@@ -12255,6 +12318,7 @@ function getRequestsForDate(dateStr, isNested = false) {
 
   // 4. Garante que qualquer solicitação existente no banco de dados para a data apareça na listagem
   for (const r of (db.cleaningRequests || [])) {
+    if (r.isDeleted || r.status === "deleted") continue;
     const fNumber = String(r.flatNumber || "");
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     // Instrução: concluiu, sumiu! Não exibe no painel de pendências ativas
@@ -12268,6 +12332,7 @@ function getRequestsForDate(dateStr, isNested = false) {
 
   // 4.5. Solicitações de dias anteriores que foram trabalhadas ou concluídas nesta data (ex: carry-over limpo hoje)
   for (const r of (db.cleaningRequests || [])) {
+    if (r.isDeleted || r.status === "deleted") continue;
     const fNumber = String(r.flatNumber || "");
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     if (isInst) continue; // Instruções nunca são transferidas para outra data
@@ -12291,6 +12356,7 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 5. Carry-Over de pendências não limpas de dias anteriores (para hoje e dias futuros)
   if (typeof getTodayStr === "function" && dateStr >= getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
+      if (r.isDeleted || r.status === "deleted") return false;
       const fNumber = String(r.flatNumber || "");
       const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
       if (stayoverFlatNumbers.has(fNumber)) {
@@ -12309,8 +12375,8 @@ function getRequestsForDate(dateStr, isNested = false) {
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
 
-      // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,
-      // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
+      // Se o flat já possui qualquer limpeza concluída (status === "clean") ou excluída (status === "deleted") nessa mesma data ou em data posterior,
+      // ele já foi resolvido e NÃO deve ser considerado pendência nem reaparecer para limpar!
       const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c =>
         (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
         !c.isInstructionOnly &&
@@ -12318,7 +12384,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.type !== "instruction" &&
         c.type !== "bed_adjustment_only" &&
         (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
-        c.status === "clean"
+        (c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt)))
       );
       if (alreadyCleanedOnOrAfter) return false;
 
@@ -13594,21 +13660,157 @@ app.delete("/api/cleaning/requests/:id", (req, res) => {
   }
 
   const id = Number(req.params.id);
-  const targetIndex = (db.cleaningRequests || []).findIndex(r => r.id === id);
-  if (targetIndex === -1) {
+  const queryFlatId = req.query.flatId ? Number(req.query.flatId) : (req.body?.flatId ? Number(req.body.flatId) : null);
+  const queryFlatNumber = String(req.query.flatNumber || req.body?.flatNumber || "").trim();
+  const queryDate = String(req.query.date || req.body?.date || "").trim();
+  const viewDate = String(req.query.viewDate || req.body?.viewDate || queryDate || getTodayStr()).trim();
+
+  let targetIndex = (db.cleaningRequests || []).findIndex(r => r && Number(r.id) === id);
+  let target = targetIndex !== -1 ? db.cleaningRequests[targetIndex] : null;
+
+  if (!target && (queryFlatNumber || queryFlatId) && queryDate) {
+    targetIndex = (db.cleaningRequests || []).findIndex(r =>
+      r &&
+      (String(r.flatNumber) === queryFlatNumber || (queryFlatId && Number(r.flatId) === queryFlatId)) &&
+      r.requestDate === queryDate &&
+      !r.isInstructionOnly &&
+      r.source !== "manual_instruction" &&
+      r.type !== "instruction" &&
+      r.type !== "bed_adjustment_only"
+    );
+    if (targetIndex !== -1) target = db.cleaningRequests[targetIndex];
+  }
+
+  if (!target && !queryFlatNumber && !queryFlatId) {
     return res.status(404).json({ error: "Solicitação não encontrada." });
   }
 
-  const removed = db.cleaningRequests[targetIndex];
-  db.cleaningRequests.splice(targetIndex, 1);
-  if (Array.isArray(db.maidStatementEntries)) {
+  const isInstruction = Boolean(
+    target && (
+      target.isInstructionOnly ||
+      target.source === "manual_instruction" ||
+      target.type === "instruction" ||
+      target.type === "bed_adjustment_only" ||
+      target.isBedAdjustmentOnly
+    )
+  );
+
+  if (isInstruction && targetIndex !== -1) {
+    const removed = db.cleaningRequests[targetIndex];
+    db.cleaningRequests.splice(targetIndex, 1);
+    if (Array.isArray(db.maidStatementEntries)) {
+      db.maidStatementEntries = db.maidStatementEntries.filter(
+        e => !(e.cleaningRequestId === id && e.entryDate >= "2026-09-01")
+      );
+    }
+    saveDatabase();
+    return res.json({ success: true, message: `Instrução do Flat ${removed.flatNumber} excluída com sucesso.` });
+  }
+
+  const nowIso = new Date().toISOString();
+  const flatObj = db.flats.find(f =>
+    (target?.flatId && f.id === Number(target.flatId)) ||
+    (queryFlatId && f.id === queryFlatId) ||
+    String(f.number) === String(target?.flatNumber || queryFlatNumber)
+  );
+  const resolvedFlatNumber = String(flatObj?.number || target?.flatNumber || queryFlatNumber);
+  const resolvedFlatId = flatObj?.id || target?.flatId || queryFlatId || null;
+  const resolvedDate = target?.requestDate || queryDate || viewDate || getTodayStr();
+  const maxCoverDate = viewDate > resolvedDate ? viewDate : resolvedDate;
+
+  const pmsRes = (db.reservations || []).find(r =>
+    r.status !== "cancelada" &&
+    r.checkoutDate === resolvedDate &&
+    (String(r.flatNumber) === resolvedFlatNumber || (resolvedFlatId && r.flatId === resolvedFlatId))
+  );
+
+  if (target) {
+    target.status = "deleted";
+    target.isDeleted = true;
+    target.deletedAt = nowIso;
+    target.deletedBy = userAuth.username || "admin";
+    if (pmsRes?.id) target.deletedReservationId = pmsRes.id;
+    target.assignedUserId = null;
+    target.assignedUsername = null;
+    target.assignedUserName = null;
+    target.willCleanAt = null;
+    target.cleaningStartedAt = null;
+    target.completedAt = null;
+    target.durationMinutes = null;
+    target.updatedAt = nowIso;
+  } else {
+    const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    target = {
+      id: maxId + 1,
+      flatId: resolvedFlatId,
+      flatNumber: resolvedFlatNumber,
+      requestDate: resolvedDate,
+      source: "checkout",
+      status: "deleted",
+      isDeleted: true,
+      deletedAt: nowIso,
+      deletedBy: userAuth.username || "admin",
+      deletedReservationId: pmsRes?.id || null,
+      assignedUserId: null,
+      assignedUsername: null,
+      assignedUserName: null,
+      isVacant: false,
+      isPriority: false,
+      leavingGuest: pmsRes?.guestName || null,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    db.cleaningRequests.push(target);
+  }
+
+  // Marca também eventuais pendências anteriores não concluídas do mesmo flat (carry-overs) até a data visualizada
+  // para garantir que nenhum registro antigo de dias anteriores ressuscite sozinho para este flat.
+  for (const c of (db.cleaningRequests || [])) {
+    if (!c || c.id === target.id) continue;
+    const isSameFlat = String(c.flatNumber) === resolvedFlatNumber || (resolvedFlatId && Number(c.flatId) === Number(resolvedFlatId));
+    if (!isSameFlat) continue;
+    const cIsInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+    if (cIsInst) continue;
+    if (c.requestDate && c.requestDate <= maxCoverDate && c.status !== "clean" && c.status !== "deleted" && !c.isDeleted) {
+      c.status = "deleted";
+      c.isDeleted = true;
+      c.deletedAt = nowIso;
+      c.deletedBy = userAuth.username || "admin";
+      c.assignedUserId = null;
+      c.assignedUsername = null;
+      c.assignedUserName = null;
+      c.willCleanAt = null;
+      c.cleaningStartedAt = null;
+      c.completedAt = null;
+      c.durationMinutes = null;
+      c.updatedAt = nowIso;
+    }
+  }
+
+  if (Array.isArray(db.maidStatementEntries) && target?.id) {
     db.maidStatementEntries = db.maidStatementEntries.filter(
-      e => !(e.cleaningRequestId === id && e.entryDate >= "2026-09-01")
+      e => !(e.cleaningRequestId === target.id && e.entryDate >= "2026-09-01")
     );
   }
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "CLEANING_CARD_DELETED_BY_ADMIN",
+    actor: { name: userAuth.username || "admin", role: userAuth.role || "admin" },
+    details: {
+      requestId: target.id,
+      flatNumber: resolvedFlatNumber,
+      requestDate: resolvedDate,
+      viewDate,
+      deletedBy: userAuth.username || "admin",
+      deletedAt: nowIso
+    }
+  });
+
   saveDatabase();
 
-  res.json({ success: true, message: `Solicitação do Flat ${removed.flatNumber} excluída com sucesso.` });
+  res.json({ success: true, message: `Card do Flat ${resolvedFlatNumber} excluído com sucesso.` });
 });
 
 app.patch("/api/cleaning/admin/record/:id", (req, res) => {
@@ -15087,6 +15289,10 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
     );
     const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada pelo prestador. Obs: ${flat.observations || "Nenhuma"}`.trim();
     if (existingReq) {
+      existingReq.isDeleted = false;
+      delete existingReq.deletedAt;
+      delete existingReq.deletedBy;
+      delete existingReq.deletedReservationId;
       existingReq.status = "dirty";
       existingReq.source = "service_order";
       existingReq.adminNote = cleanNote;
@@ -17930,6 +18136,27 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
+  // Se uma nova reserva ativa foi criada com data de check-out onde havia um card excluído anteriormente, reativa a limpeza para o novo check-out
+  if (checkoutDate && resolvedStatus !== "cancelada") {
+    const deletedOnCheckout = (db.cleaningRequests || []).find(c =>
+      (String(c.flatNumber) === String(flat.number) || c.flatId === flat.id) &&
+      c.requestDate === checkoutDate &&
+      (c.isDeleted || c.status === "deleted")
+    );
+    if (deletedOnCheckout) {
+      deletedOnCheckout.isDeleted = false;
+      deletedOnCheckout.status = "dirty";
+      deletedOnCheckout.leavingGuest = newReservation.guestName;
+      deletedOnCheckout.isVacant = false;
+      deletedOnCheckout.isVacantExplicitlySet = false;
+      deletedOnCheckout.vacantSource = null;
+      delete deletedOnCheckout.deletedAt;
+      delete deletedOnCheckout.deletedBy;
+      delete deletedOnCheckout.deletedReservationId;
+      deletedOnCheckout.updatedAt = new Date().toISOString();
+    }
+  }
+
   // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
   if (db.settings?.checkinProvider === "gov_fnrh") {
     try {
@@ -19369,11 +19596,13 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       c.type !== "instruction"
     );
 
-    // 2. Procura solicitação não-concluída na data antiga para este flat
+    // 2. Procura solicitação não-concluída e não-excluída na data antiga para este flat
     const oldReq = db.cleaningRequests.find(c =>
       (c.flatId === oldFlatId || String(c.flatNumber) === String(flatNum)) &&
       c.requestDate === oldCheckout &&
       c.status !== "clean" &&
+      c.status !== "deleted" &&
+      !c.isDeleted &&
       !c.isInstructionOnly &&
       c.source !== "manual_instruction" &&
       c.type !== "bed_adjustment_only" &&
@@ -19407,6 +19636,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         c.type !== "instruction"
       );
       if (existingOnTarget) {
+        if (existingOnTarget.isDeleted || existingOnTarget.status === "deleted") {
+          existingOnTarget.isDeleted = false;
+          existingOnTarget.status = "dirty";
+          existingOnTarget.leavingGuest = r.guestName;
+          existingOnTarget.isVacant = false;
+          existingOnTarget.isVacantExplicitlySet = false;
+          existingOnTarget.vacantSource = null;
+          delete existingOnTarget.deletedAt;
+          delete existingOnTarget.deletedBy;
+          delete existingOnTarget.deletedReservationId;
+          existingOnTarget.updatedAt = new Date().toISOString();
+        }
         // Já existe um card na nova data; descarta o card obsoleto da data antiga
         db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
       } else {
@@ -19426,8 +19667,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         oldReq.updatedAt = new Date().toISOString();
       }
     } else {
-      // 3. Se não havia pendência na data antiga e não existe na nova data, garante criação se não cancelada
-      const hasAnyReq = db.cleaningRequests.some(c =>
+      // 3. Se não havia pendência ativa na data antiga, verifica se existe registro na nova data
+      const existingTargetReq = db.cleaningRequests.find(c =>
         (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) &&
         c.requestDate === r.checkoutDate &&
         !c.isInstructionOnly &&
@@ -19435,7 +19676,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         c.type !== "bed_adjustment_only" &&
         c.type !== "instruction"
       );
-      if (!hasAnyReq && r.status !== "cancelada") {
+      if (existingTargetReq && (existingTargetReq.isDeleted || existingTargetReq.status === "deleted") && r.status !== "cancelada") {
+        existingTargetReq.isDeleted = false;
+        existingTargetReq.status = "dirty";
+        existingTargetReq.leavingGuest = r.guestName;
+        existingTargetReq.isVacant = false;
+        existingTargetReq.isVacantExplicitlySet = false;
+        existingTargetReq.vacantSource = null;
+        delete existingTargetReq.deletedAt;
+        delete existingTargetReq.deletedBy;
+        delete existingTargetReq.deletedReservationId;
+        existingTargetReq.updatedAt = new Date().toISOString();
+      } else if (!existingTargetReq && r.status !== "cancelada") {
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x.id) || 0)) : 0;
         db.cleaningRequests.unshift({
           id: maxId + 1,
@@ -39668,6 +39920,28 @@ if (fs.existsSync(distPath)) {
         res.setHeader('Expires', '0');
       }
     }));
+    // Fallback para chunks JS com hash antigo (evita Failed to fetch dynamically imported module após deploy)
+    app.get("/assets/:filename", (req, res, next) => {
+      try {
+        const reqFile = String(req.params.filename || "");
+        const match = reqFile.match(/^([a-zA-Z0-9_.-]+)-[a-zA-Z0-9_-]{6,12}\.js$/);
+        if (match) {
+          const prefix = match[1] + "-";
+          const files = fs.readdirSync(assetsDir);
+          const candidate = files.find(f => f.startsWith(prefix) && f.endsWith(".js"));
+          res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          if (candidate) {
+            return res.sendFile(path.join(assetsDir, candidate));
+          }
+          // Se o chunk foi incorporado ao bundle principal (ex: pms-calendar), instrui o navegador a atualizar suavemente
+          return res.status(200).send(
+            'if(typeof window!=="undefined"){window.location.reload();}export default function(){return null;}\n'
+          );
+        }
+      } catch {}
+      next();
+    });
   }
   app.use(express.static(distPath, {
     setHeaders: (res, filePath) => {

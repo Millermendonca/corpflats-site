@@ -10,9 +10,12 @@ import { AccessDenied } from '@/components/access-denied';
 import { AdminAiCopilot } from '@/components/admin-ai-copilot';
 import { hasModuleAccess } from '@/lib/permissions';
 
-// Páginas públicas do Hóspede, Portaria, Governança e Prestadores (Carregamento Imediato)
+// Páginas públicas e operacionais principais (Carregamento Imediato — sem dependência de chunk dinâmico no 5G)
 import Login from '@/pages/login';
 import Dashboard from '@/pages/dashboard';
+import PmsCalendar from '@/pages/pms-calendar';
+import WhatsappAutomation from '@/pages/whatsapp-automation';
+import WhatsappChat from '@/pages/whatsapp-chat';
 import GuestPreCheckin from '@/pages/guest-pre-checkin';
 import VerifyFnrh from '@/pages/verify-fnrh';
 import BookingEngine from '@/pages/booking-engine';
@@ -24,46 +27,75 @@ import ServiceOrders from '@/pages/service-orders';
 import ServiceWorkerPortal from '@/pages/service-worker-portal';
 import NotFound from '@/pages/not-found';
 
-// Páginas Administrativas e Backoffice Pesadas (Code-Splitting sob demanda via React.lazy)
-const History = lazy(() => import('@/pages/history'));
-const Settings = lazy(() => import('@/pages/settings'));
-const PropertySettings = lazy(() => import('@/pages/property-settings'));
-const Tasks = lazy(() => import('@/pages/tasks'));
-const Observations = lazy(() => import('@/pages/observations'));
-const LostAndFoundPage = lazy(() => import('@/pages/lost-and-found'));
-const Reports = lazy(() => import('@/pages/reports'));
-const Surveys = lazy(() => import('@/pages/surveys'));
-const PmsCalendar = lazy(() => import('@/pages/pms-calendar'));
-const PmsReportsPage = lazy(() => import('@/pages/pms-reports'));
-const CrmGuests = lazy(() => import('@/pages/crm-guests'));
-const ReceptionTablet = lazy(() => import('@/pages/reception-tablet'));
-const FinancialDashboard = lazy(() => import('@/pages/financial-dashboard'));
-const MarketingTraffic = lazy(() => import('@/pages/marketing-traffic'));
-const FiscalInvoices = lazy(() => import('@/pages/fiscal-invoices'));
-const BreakfastProduction = lazy(() => import('@/pages/breakfast-production'));
-const NotificationsHub = lazy(() => import('@/pages/notifications-hub'));
-const ReceptionCheckout = lazy(() => import('@/pages/reception-checkout'));
-const LiveOperationsPanel = lazy(() => import('@/pages/live-operations-panel'));
-const ReviewInsights = lazy(() => import('@/pages/review-insights'));
-const GarageDashboard = lazy(() => import('@/pages/garage-dashboard'));
-const Payments = lazy(() => import('@/pages/payments'));
-const SiteEditor = lazy(() => import('@/pages/site-editor'));
-const TarifasEditor = lazy(() => import('@/pages/tarifas'));
-const SystemLogsPage = lazy(() => import('@/pages/system-logs'));
-const WhatsappAutomation = lazy(() => import('@/pages/whatsapp-automation'));
-const WhatsappChat = lazy(() => import('@/pages/whatsapp-chat'));
-const MaidWhatsappAutomation = lazy(() => import('@/pages/maid-whatsapp-automation'));
-const ShoppingListPage = lazy(() => import('@/pages/shopping-list'));
-const AiStatusPage = lazy(() => import('@/pages/ai-status'));
-const MaidStatementPage = lazy(() => import('@/pages/maid-statement'));
-const ZapiConnection = lazy(() => import('@/pages/zapi-connection'));
-const EmailHub = lazy(() => import('@/pages/email-hub'));
-const ReservationJourney = lazy(() => import('@/pages/reservation-journey'));
-const ServerMonitorPage = lazy(() => import('@/pages/server-monitor'));
-const SmartFlatPreview = lazy(() => import('@/pages/smart-flat-preview'));
-const PricingSebraePage = lazy(() => import('@/pages/precificacao-sebrae'));
-const OtaInboxPage = lazy(() => import('@/pages/ota-inbox'));
-const EquipePage = lazy(() => import('@/pages/equipe'));
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    const delays = [500, 1200, 2200];
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        return await factory();
+      } catch (err) {
+        lastError = err;
+        if (attempt < delays.length) {
+          await new Promise((r) => setTimeout(r, delays[attempt]));
+        }
+      }
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const lastReload = Number(sessionStorage.getItem('gfm_chunk_reload_ts') || '0');
+        const now = Date.now();
+        if (now - lastReload > 10000) {
+          sessionStorage.setItem('gfm_chunk_reload_ts', String(now));
+          window.location.reload();
+        }
+      } catch {
+        // Ignore storage errors
+      }
+    }
+    throw lastError;
+  });
+}
+
+// Páginas Administrativas e Backoffice Secundárias (Code-Splitting com Retry Automático)
+const History = lazyWithRetry(() => import('@/pages/history'));
+const Settings = lazyWithRetry(() => import('@/pages/settings'));
+const PropertySettings = lazyWithRetry(() => import('@/pages/property-settings'));
+const Tasks = lazyWithRetry(() => import('@/pages/tasks'));
+const Observations = lazyWithRetry(() => import('@/pages/observations'));
+const LostAndFoundPage = lazyWithRetry(() => import('@/pages/lost-and-found'));
+const Reports = lazyWithRetry(() => import('@/pages/reports'));
+const Surveys = lazyWithRetry(() => import('@/pages/surveys'));
+const PmsReportsPage = lazyWithRetry(() => import('@/pages/pms-reports'));
+const CrmGuests = lazyWithRetry(() => import('@/pages/crm-guests'));
+const ReceptionTablet = lazyWithRetry(() => import('@/pages/reception-tablet'));
+const FinancialDashboard = lazyWithRetry(() => import('@/pages/financial-dashboard'));
+const MarketingTraffic = lazyWithRetry(() => import('@/pages/marketing-traffic'));
+const FiscalInvoices = lazyWithRetry(() => import('@/pages/fiscal-invoices'));
+const BreakfastProduction = lazyWithRetry(() => import('@/pages/breakfast-production'));
+const NotificationsHub = lazyWithRetry(() => import('@/pages/notifications-hub'));
+const ReceptionCheckout = lazyWithRetry(() => import('@/pages/reception-checkout'));
+const LiveOperationsPanel = lazyWithRetry(() => import('@/pages/live-operations-panel'));
+const ReviewInsights = lazyWithRetry(() => import('@/pages/review-insights'));
+const GarageDashboard = lazyWithRetry(() => import('@/pages/garage-dashboard'));
+const Payments = lazyWithRetry(() => import('@/pages/payments'));
+const SiteEditor = lazyWithRetry(() => import('@/pages/site-editor'));
+const TarifasEditor = lazyWithRetry(() => import('@/pages/tarifas'));
+const SystemLogsPage = lazyWithRetry(() => import('@/pages/system-logs'));
+const MaidWhatsappAutomation = lazyWithRetry(() => import('@/pages/maid-whatsapp-automation'));
+const ShoppingListPage = lazyWithRetry(() => import('@/pages/shopping-list'));
+const AiStatusPage = lazyWithRetry(() => import('@/pages/ai-status'));
+const MaidStatementPage = lazyWithRetry(() => import('@/pages/maid-statement'));
+const ZapiConnection = lazyWithRetry(() => import('@/pages/zapi-connection'));
+const EmailHub = lazyWithRetry(() => import('@/pages/email-hub'));
+const ReservationJourney = lazyWithRetry(() => import('@/pages/reservation-journey'));
+const ServerMonitorPage = lazyWithRetry(() => import('@/pages/server-monitor'));
+const SmartFlatPreview = lazyWithRetry(() => import('@/pages/smart-flat-preview'));
+const PricingSebraePage = lazyWithRetry(() => import('@/pages/precificacao-sebrae'));
+const OtaInboxPage = lazyWithRetry(() => import('@/pages/ota-inbox'));
+const EquipePage = lazyWithRetry(() => import('@/pages/equipe'));
 
 
 const queryClient = new QueryClient({

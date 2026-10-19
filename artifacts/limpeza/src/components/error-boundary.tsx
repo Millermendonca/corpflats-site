@@ -35,15 +35,32 @@ function toError(value: unknown): Error {
   }
 }
 
+function isDynamicImportError(error: Error | null): boolean {
+  if (!error) return false;
+  const msg = `${error.name || ''} ${error.message || ''} ${String(error)}`.toLowerCase();
+  return (
+    msg.includes('failed to fetch dynamically imported module') ||
+    msg.includes('error loading dynamically imported module') ||
+    msg.includes('importing a module script failed') ||
+    msg.includes('chunkloaderror') ||
+    msg.includes('loading chunk') ||
+    msg.includes('unable to preload css')
+  );
+}
+
 function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
+  const isChunkError = isDynamicImportError(error);
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-6">
       <div className="max-w-xl w-full text-center space-y-3">
         <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-          Ops, ocorreu um erro nesta tela
+          {isChunkError ? 'Atualizando tela para a nova versão...' : 'Ops, ocorreu um erro nesta tela'}
         </h1>
         <p className="text-xs text-muted-foreground">
-          Detalhes do erro para diagnóstico:
+          {isChunkError
+            ? 'Uma atualização do sistema ou oscilação de rede ocorreu. Toque no botão abaixo para recarregar.'
+            : 'Detalhes do erro para diagnóstico:'}
         </p>
         <pre className="overflow-x-auto rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 p-3 text-left text-xs text-rose-800 dark:text-rose-300 font-mono whitespace-pre-wrap">
           {error.message || String(error)}
@@ -51,7 +68,13 @@ function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
         </pre>
         <button
           type="button"
-          onClick={resetError}
+          onClick={() => {
+            if (isChunkError && typeof window !== 'undefined') {
+              window.location.reload();
+              return;
+            }
+            resetError();
+          }}
           className="mt-4 rounded-xl bg-slate-900 dark:bg-slate-100 px-5 py-2.5 text-xs font-bold text-white dark:text-slate-900 hover:opacity-90"
         >
           Recarregar Componente
@@ -72,11 +95,25 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
+    const errObj = toError(error);
     console.error(
       'ErrorBoundary caught an error:',
-      toError(error),
+      errObj,
       info.componentStack,
     );
+
+    if (isDynamicImportError(errObj) && typeof window !== 'undefined') {
+      try {
+        const lastReload = Number(sessionStorage.getItem('gfm_chunk_reload_ts') || '0');
+        const now = Date.now();
+        if (now - lastReload > 10000) {
+          sessionStorage.setItem('gfm_chunk_reload_ts', String(now));
+          window.location.reload();
+        }
+      } catch {
+        // Ignore storage errors
+      }
+    }
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {
@@ -89,6 +126,10 @@ export class ErrorBoundary extends Component<
   }
 
   resetError = (): void => {
+    if (isDynamicImportError(this.state.error) && typeof window !== 'undefined') {
+      window.location.reload();
+      return;
+    }
     this.setState({ error: null });
   };
 
