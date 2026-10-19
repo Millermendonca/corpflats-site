@@ -460,5 +460,82 @@ describe("Milestone 1 — Auth, Roles & RBAC Separation Suite", () => {
       await fetch(`${BASE_URL}/api/admin/users/${customUser.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
       await fetch(`${BASE_URL}/api/admin/users/${sneakyUser.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
     });
+
+    // ── 2.8. Route Aliases Canonicalization & Deduplication ───────────────────────
+    it("Route Aliases Canonicalization: Backend normalizes aliases to canonical routes and deduplicates", async () => {
+      // 1. Create user with duplicate and aliased operational routes
+      const aliasCreate = await fetch(`${BASE_URL}/api/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          username: "alias_user_test",
+          name: "Alias Test User",
+          role: "camareira",
+          password: "password123",
+          allowedModules: [
+            "/usuarios",          // alias for /equipe
+            "/usuarios-equipe",   // duplicate alias for /equipe
+            "/equipe",            // canonical route itself
+            "/meu-extrato",       // alias for /reports
+            "/extrato",           // duplicate alias for /reports
+            "  /dashboard  "      // whitespace padding
+          ]
+        })
+      });
+      assert.strictEqual(aliasCreate.status, 201);
+      const createdData = await aliasCreate.json();
+
+      // Expected: canonicalized, trimmed, deduplicated
+      assert.deepStrictEqual(
+        createdData.allowedModules.sort(),
+        ["/dashboard", "/equipe", "/reports"].sort(),
+        "Aliases must be normalized to canonical routes and deduplicated"
+      );
+
+      // 2. PATCH user with dev-only alias by non-dev admin (/settings -> /configuracoes, /audit -> /logs)
+      const sneakyAliasPatch = await fetch(`${BASE_URL}/api/admin/users/${createdData.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: gestorCookie },
+        body: JSON.stringify({
+          allowedModules: [
+            "/precificacao-sebrae", // alias for /tarifas (operational)
+            "/settings",            // alias for /configuracoes (devOnly)
+            "/audit"                // alias for /logs (devOnly)
+          ]
+        })
+      });
+      assert.strictEqual(sneakyAliasPatch.status, 200);
+      const patchedData = await sneakyAliasPatch.json();
+
+      // Dev-only aliases MUST be stripped when updated by non-dev admin
+      assert.deepStrictEqual(
+        patchedData.user.allowedModules,
+        ["/tarifas"],
+        "Dev-only aliases must be stripped when processed by non-dev admin"
+      );
+
+      // 3. Dev user CAN grant dev-only routes even when provided as aliases
+      const devAliasPatch = await fetch(`${BASE_URL}/api/admin/users/${createdData.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: devCookie },
+        body: JSON.stringify({
+          allowedModules: [
+            "/settings",            // alias for /configuracoes
+            "/sistema/zapi",        // alias for /zapi-conexao
+            "/tarifas"
+          ]
+        })
+      });
+      assert.strictEqual(devAliasPatch.status, 200);
+      const devData = await devAliasPatch.json();
+      assert.deepStrictEqual(
+        devData.user.allowedModules.sort(),
+        ["/configuracoes", "/tarifas", "/zapi-conexao"].sort(),
+        "Dev user can grant dev-only modules via aliases which are canonicalized"
+      );
+
+      // 4. Cleanup
+      await fetch(`${BASE_URL}/api/admin/users/${createdData.id}`, { method: "DELETE", headers: { Cookie: devCookie } });
+    });
   });
 });

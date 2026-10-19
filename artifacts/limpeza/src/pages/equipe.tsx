@@ -89,6 +89,10 @@ export function PermissionsSelector({
     return visibleCategories.flatMap(cat => cat.items.map(it => it.href));
   }, [visibleCategories]);
 
+  const visibleSelectedCount = useMemo(() => {
+    return selectedModules.filter(m => allAvailableModules.includes(m)).length;
+  }, [selectedModules, allAvailableModules]);
+
   const handleToggleModule = (href: string) => {
     if (selectedModules.includes(href)) {
       onChange(selectedModules.filter(m => m !== href));
@@ -126,7 +130,7 @@ export function PermissionsSelector({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-2xl bg-muted/40 border border-border">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-foreground">
-            {selectedModules.length} de {allAvailableModules.length} telas liberadas
+            {visibleSelectedCount} de {allAvailableModules.length} telas liberadas
           </span>
           {isDefaultPermissionsForRole(role, selectedModules) ? (
             <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-primary/40 text-primary font-bold">
@@ -297,6 +301,7 @@ export function TeamPage() {
   // Modal Permissões de Acesso (Dedicado)
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
   const [permissionsUser, setPermissionsUser] = useState<UserItem | null>(null);
+  const [permissionsRole, setPermissionsRole] = useState("camareira");
   const [permissionsModules, setPermissionsModules] = useState<string[]>([]);
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [permissionsError, setPermissionsError] = useState("");
@@ -396,8 +401,9 @@ export function TeamPage() {
   // Abrir Modal de Permissões (Dedicado)
   const handleOpenPermissions = (user: UserItem) => {
     setPermissionsUser(user);
+    setPermissionsRole(user.role || "camareira");
     setPermissionsModules(
-      Array.isArray(user.allowedModules) && user.allowedModules.length > 0
+      Array.isArray(user.allowedModules)
         ? [...user.allowedModules]
         : getDefaultModulesForRole(user.role)
     );
@@ -448,7 +454,7 @@ export function TeamPage() {
     setEditPixKey(user.pixKey || "");
     setEditActive(user.active !== false);
     setEditAllowedModules(
-      Array.isArray(user.allowedModules) && user.allowedModules.length > 0
+      Array.isArray(user.allowedModules)
         ? [...user.allowedModules]
         : getDefaultModulesForRole(user.role)
     );
@@ -494,6 +500,20 @@ export function TeamPage() {
     } finally {
       setSavingEditUser(false);
     }
+  };
+
+  // Abrir Modal Novo Colaborador
+  const handleOpenNewUser = () => {
+    setNewUsername("");
+    setNewName("");
+    setNewUserPassword("");
+    setNewUserRole("camareira");
+    setNewUserAllowedModules(getDefaultModulesForRole("camareira"));
+    setNewWhatsapp("");
+    setNewPixKey("");
+    setShowNewPassword(false);
+    setNewUserError("");
+    setNewUserModalOpen(true);
   };
 
   // Criar Novo Usuário
@@ -716,10 +736,7 @@ export function TeamPage() {
             </Button>
             <Button
               size="sm"
-              onClick={() => {
-                setNewUserError("");
-                setNewUserModalOpen(true);
-              }}
+              onClick={handleOpenNewUser}
               className="h-9 px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
             >
               <UserPlus className="w-4 h-4" />
@@ -924,7 +941,7 @@ export function TeamPage() {
                               {renderRoleBadge(u.role)}
                               <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
                                 <span className="font-semibold text-muted-foreground">
-                                  {(u.allowedModules || getDefaultModulesForRole(u.role)).length} telas
+                                  {(Array.isArray(u.allowedModules) ? u.allowedModules : getDefaultModulesForRole(u.role)).length} telas
                                 </span>
                                 {isDefaultPermissionsForRole(u.role, u.allowedModules) ? (
                                   <Badge variant="outline" className="text-[9px] py-0 px-1 border-muted text-muted-foreground font-normal">
@@ -1355,8 +1372,32 @@ export function TeamPage() {
                 </div>
               )}
 
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-2xl bg-muted/30 border border-border">
+                <div className="space-y-0.5">
+                  <Label className="text-xs font-bold">Perfil Base de Referência</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Carregue o pacote padrão de telas recomendado para outra função.
+                  </p>
+                </div>
+                <select
+                  value={permissionsRole}
+                  onChange={(e) => {
+                    const r = e.target.value;
+                    setPermissionsRole(r);
+                    setPermissionsModules(getDefaultModulesForRole(r));
+                  }}
+                  disabled={permissionsUser?.role === "dev" && !isDev}
+                  className="h-8 rounded-xl border border-input bg-background px-2.5 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
+                >
+                  <option value="camareira">🧹 Governança / Camareira</option>
+                  <option value="recepcao">🛎️ Recepção / Portaria</option>
+                  <option value="admin">👔 Administrador</option>
+                  {isDev && <option value="dev">🛠️ Desenvolvedor</option>}
+                </select>
+              </div>
+
               <PermissionsSelector
-                role={permissionsUser?.role || "camareira"}
+                role={permissionsRole}
                 selectedModules={permissionsModules}
                 onChange={setPermissionsModules}
                 isDev={isDev}

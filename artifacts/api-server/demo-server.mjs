@@ -829,6 +829,173 @@ export function getDefaultModulesForRole(role) {
   }
 }
 
+export const ROUTE_ALIASES = {
+  // Equipe / Usuários
+  "/usuarios": "/equipe",
+  "/usuarios-equipe": "/equipe",
+  "/team": "/equipe",
+  "/users": "/equipe",
+
+  // Tarifas & Precificação
+  "/precificacao-sebrae": "/tarifas",
+  "/pricing-sebrae": "/tarifas",
+  "/gestao-tarifas": "/tarifas",
+  "/tabela-tarifas": "/tarifas",
+  "/precos": "/tarifas",
+
+  // Extratos & Fechamento
+  "/meu-extrato": "/reports",
+  "/extrato": "/reports",
+  "/extrato-camareiras": "/reports",
+  "/fechamento": "/reports",
+  "/fechamento-limpeza": "/reports",
+  "/relatorios": "/reports",
+  "/history": "/reports",
+  "/historico": "/reports",
+
+  // Configurações Técnicas
+  "/settings": "/configuracoes",
+  "/configuracao": "/configuracoes",
+  "/ajustes": "/configuracoes",
+
+  // Z-API
+  "/conexao-zapi": "/zapi-conexao",
+  "/sistema/zapi": "/zapi-conexao",
+  "/zapi": "/zapi-conexao",
+
+  // Jornada
+  "/jornada-comunicacao": "/jornada-reservas",
+  "/fluxo-reservas": "/jornada-reservas",
+  "/mapa-jornada": "/jornada-reservas",
+  "/jornada": "/jornada-reservas",
+
+  // Monitor do Servidor
+  "/servidor": "/monitor-servidor",
+  "/server-monitor": "/monitor-servidor",
+
+  // IA Status
+  "/ai-status": "/ia-status",
+  "/status-ia": "/ia-status",
+
+  // Logs & Auditoria
+  "/auditoria": "/logs",
+  "/system-logs": "/logs",
+  "/audit": "/logs",
+
+  // Portaria & Recepção
+  "/tablet": "/portaria",
+  "/recepcao": "/portaria",
+  "/reception": "/portaria",
+
+  // Painel Ao Vivo
+  "/painel-aovivo": "/reservas",
+  "/live-ops": "/reservas",
+  "/aovivo": "/reservas",
+
+  // Avaliações
+  "/reviews-ia": "/avaliacoes-ia",
+
+  // Garagem
+  "/estacionamento": "/garagem",
+
+  // Compras
+  "/compras": "/lista-compras",
+
+  // Tarefas
+  "/tarefas": "/tasks",
+
+  // Achados
+  "/achados": "/achados-perdidos",
+  "/lost-and-found": "/achados-perdidos",
+
+  // Ocorrências
+  "/ocorrencias": "/observations",
+  "/avarias": "/observations",
+
+  // E-mails
+  "/email-hub": "/emails",
+  "/gerenciador-emails": "/emails",
+
+  // WhatsApp Chat
+  "/chat": "/whatsapp-chat",
+  "/whatsapp-web": "/whatsapp-chat",
+  "/chat-whatsapp": "/whatsapp-chat",
+
+  // Automações WhatsApp
+  "/camareiras-whatsapp": "/automacoes-camareiras",
+  "/governanca-whatsapp": "/automacoes-camareiras",
+  "/whatsapp-automation": "/whatsapp",
+  "/automacao-whatsapp": "/whatsapp",
+
+  // Notificações
+  "/notifications": "/notificacoes",
+  "/alertas": "/notificacoes",
+
+  // Café
+  "/cafe-dashboard": "/pedidos-cafe",
+  "/historico-cafe": "/pedidos-cafe",
+  "/insights-cafe": "/relatorios-cafe",
+
+  // Relatórios de Reservas
+  "/relatorio-reservas": "/relatorios-reservas",
+  "/pms-reports": "/relatorios-reservas",
+
+  // CRM
+  "/guests": "/crm",
+  "/hospedes": "/crm",
+
+  // Pagamentos
+  "/payments": "/pagamentos",
+  "/recebiveis": "/pagamentos",
+  "/taxas": "/pagamentos",
+
+  // Financeiro
+  "/financial": "/financeiro",
+  "/precificacao": "/financeiro",
+  "/finance": "/financeiro",
+  "/dre": "/financeiro",
+  "/contas": "/financeiro",
+  "/fluxo-caixa": "/financeiro",
+
+  // Funil / Tráfego
+  "/trafego": "/funil-vendas",
+  "/marketing": "/funil-vendas",
+  "/ads": "/funil-vendas",
+
+  // Notas Fiscais
+  "/nfse": "/notas",
+  "/invoices": "/notas",
+
+  // Vistorias
+  "/vistorias": "/surveys",
+
+  // Serviços
+  "/service-orders": "/servicos",
+
+  // Propriedade
+  "/hotel": "/propriedade",
+  "/regras": "/propriedade",
+
+  // Editor Site
+  "/configurar-site": "/editor-site",
+  "/personalizar-site": "/editor-site",
+  "/site-editor": "/editor-site",
+  "/cms": "/editor-site",
+
+  // Caixa de Entrada OTA
+  "/ota-inbox": "/caixa-entrada-ota",
+  "/quarentena": "/caixa-entrada-ota",
+
+  // Reservar
+  "/booking": "/reservar"
+};
+
+export function canonicalizeRoute(path) {
+  if (!path) return "";
+  const clean = String(path).split("?")[0].replace(/\/+$/, "") || "/";
+  return ROUTE_ALIASES[clean] || clean;
+}
+
 const defaultUsers = [
   { id: 1, username: "admin", role: "dev", allowedModules: getDefaultModulesForRole("dev"), passwordHash: hashPassword("admin123") },
   { id: 2, username: "Cris", name: "Cris", role: "camareira", allowedModules: getDefaultModulesForRole("camareira"), phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
@@ -850,6 +1017,7 @@ export function ensureSystemUsers(database) {
   if (adminUser) {
     if (adminUser.role !== "dev") {
       adminUser.role = "dev";
+      adminUser.allowedModules = getDefaultModulesForRole("dev");
       changed = true;
     }
   } else {
@@ -857,6 +1025,7 @@ export function ensureSystemUsers(database) {
       id: 1,
       username: "admin",
       role: "dev",
+      allowedModules: getDefaultModulesForRole("dev"),
       passwordHash: hashPassword("admin123")
     });
     changed = true;
@@ -9948,7 +10117,11 @@ app.post("/api/admin/users", (req, res) => {
   // Tratamento de allowedModules (R2)
   let finalAllowedModules;
   if (Array.isArray(allowedModules)) {
-    finalAllowedModules = allowedModules.filter(m => typeof m === "string" && ALL_CANONICAL_MODULES.includes(m));
+    finalAllowedModules = Array.from(new Set(
+      allowedModules
+        .map(m => typeof m === "string" ? canonicalizeRoute(m.trim()) : "")
+        .filter(m => ALL_CANONICAL_MODULES.includes(m))
+    ));
     if (userAuth.role !== "dev") {
       finalAllowedModules = finalAllowedModules.filter(m => !DEV_ONLY_MODULES.includes(m));
     }
@@ -10022,7 +10195,11 @@ app.patch("/api/admin/users/:id", (req, res) => {
 
   // R2: Tratamento e persistência de allowedModules com segurança devOnly
   if (allowedModules !== undefined && Array.isArray(allowedModules)) {
-    let sanitized = allowedModules.filter(m => typeof m === "string" && ALL_CANONICAL_MODULES.includes(m));
+    let sanitized = Array.from(new Set(
+      allowedModules
+        .map(m => typeof m === "string" ? canonicalizeRoute(m.trim()) : "")
+        .filter(m => ALL_CANONICAL_MODULES.includes(m))
+    ));
     if (userAuth.role !== "dev") {
       sanitized = sanitized.filter(m => !DEV_ONLY_MODULES.includes(m));
     }

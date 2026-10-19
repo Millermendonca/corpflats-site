@@ -2,10 +2,11 @@ import { useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Shell } from "@/components/layout"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ShieldAlert, LogIn, LayoutDashboard, UserCheck } from "lucide-react"
+import { ShieldAlert, LogIn, LayoutDashboard, Home } from "lucide-react"
+import { hasModuleAccess } from "@/lib/permissions"
 
 interface AccessDeniedProps {
   moduleName?: string
@@ -34,6 +35,13 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
     }
   }
 
+  const hasDashboard = hasModuleAccess(user as any, "/dashboard")
+  const fallbackRoute = hasDashboard
+    ? "/dashboard"
+    : (Array.isArray(user?.allowedModules) && user.allowedModules.length > 0
+        ? user.allowedModules[0]
+        : "/reservar")
+
   return (
     <Shell>
       <div className="min-h-[70vh] flex items-center justify-center p-4 sm:p-6 w-full">
@@ -44,11 +52,11 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
             </div>
             
             <h1 className="text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
-              Acesso Restrito ao Administrador
+              Acesso Restrito
             </h1>
             
             <p className="text-xs text-muted-foreground font-medium max-w-sm mx-auto leading-relaxed">
-              Você não possui credenciais válidas com permissão de administrador para acessar <strong className="text-slate-800 dark:text-slate-200">{moduleName}</strong>.
+              Você não possui permissão de acesso para visualizar o módulo <strong className="text-slate-800 dark:text-slate-200">{moduleName}</strong>. Solicite a liberação ao administrador ou desenvolvedor do sistema.
             </p>
           </div>
 
@@ -67,11 +75,20 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
 
             <div className="space-y-2 pt-2">
               <Button 
-                onClick={() => setLocation("/dashboard")}
+                onClick={() => setLocation(fallbackRoute)}
                 className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold h-11 rounded-xl text-xs gap-2"
               >
-                <LayoutDashboard className="w-4 h-4" />
-                <span>Ir para Painel de Governança</span>
+                {hasDashboard ? (
+                  <>
+                    <LayoutDashboard className="w-4 h-4" />
+                    <span>Ir para Painel de Governança</span>
+                  </>
+                ) : (
+                  <>
+                    <Home className="w-4 h-4" />
+                    <span>Ir para Início</span>
+                  </>
+                )}
               </Button>
 
               <Button 
@@ -80,7 +97,7 @@ export function AccessDenied({ moduleName = "este serviço" }: AccessDeniedProps
                 className="w-full font-bold h-11 rounded-xl text-xs gap-2 text-primary border-primary/30 hover:bg-primary/5"
               >
                 <LogIn className="w-4 h-4" />
-                <span>Entrar como Administrador</span>
+                <span>Entrar com Outro Usuário</span>
               </Button>
             </div>
           </CardContent>
