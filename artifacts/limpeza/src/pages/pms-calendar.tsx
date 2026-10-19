@@ -871,10 +871,18 @@ export default function PmsCalendar() {
 
   // Guests individual fields
   const [formGuest1Cpf, setFormGuest1Cpf] = useState("")
+  const [formGuest2Id, setFormGuest2Id] = useState("")
+  const [guest2SearchFilter, setGuest2SearchFilter] = useState("")
+  const [showGuest2Suggestions, setShowGuest2Suggestions] = useState(false)
+  const guest2SuggestionsRef = useRef<HTMLDivElement>(null)
   const [formGuest2Name, setFormGuest2Name] = useState("")
   const [formGuest2Cpf, setFormGuest2Cpf] = useState("")
   const [formGuest2Phone, setFormGuest2Phone] = useState("")
   const [formGuest2Email, setFormGuest2Email] = useState("")
+  const [formGuest3Id, setFormGuest3Id] = useState("")
+  const [guest3SearchFilter, setGuest3SearchFilter] = useState("")
+  const [showGuest3Suggestions, setShowGuest3Suggestions] = useState(false)
+  const guest3SuggestionsRef = useRef<HTMLDivElement>(null)
   const [formGuest3Name, setFormGuest3Name] = useState("")
   const [formGuest3Cpf, setFormGuest3Cpf] = useState("")
   const [formGuest3Phone, setFormGuest3Phone] = useState("")
@@ -2031,10 +2039,16 @@ export default function PmsCalendar() {
     setFormGuest1Cpf("")
     setFormGuestPhone("")
     setFormGuestEmail("")
+    setFormGuest2Id("")
+    setGuest2SearchFilter("")
+    setShowGuest2Suggestions(false)
     setFormGuest2Name("")
     setFormGuest2Cpf("")
     setFormGuest2Phone("")
     setFormGuest2Email("")
+    setFormGuest3Id("")
+    setGuest3SearchFilter("")
+    setShowGuest3Suggestions(false)
     setFormGuest3Name("")
     setFormGuest3Cpf("")
     setFormGuest3Phone("")
@@ -2212,10 +2226,16 @@ export default function PmsCalendar() {
     setFormGuest1Cpf("")
     setFormGuestPhone("")
     setFormGuestEmail("")
+    setFormGuest2Id("")
+    setGuest2SearchFilter("")
+    setShowGuest2Suggestions(false)
     setFormGuest2Name("")
     setFormGuest2Cpf("")
     setFormGuest2Phone("")
     setFormGuest2Email("")
+    setFormGuest3Id("")
+    setGuest3SearchFilter("")
+    setShowGuest3Suggestions(false)
     setFormGuest3Name("")
     setFormGuest3Cpf("")
     setFormGuest3Phone("")
@@ -2317,13 +2337,27 @@ export default function PmsCalendar() {
     setFormGuestEmail(g1?.email || resItem.guestEmail || "")
 
     const g2 = resItem.guests?.[1]
-    setFormGuest2Name(g2?.name && !g2.name.startsWith("Hóspede") ? g2.name : "")
+    const g2Name = g2?.name && !g2.name.startsWith("Hóspede") ? g2.name : ""
+    const matchedG2 = g2?.guestId
+      ? crmGuests.find(cg => String(cg.id) === String(g2.guestId))
+      : (g2Name ? crmGuests.find(cg => (g2?.cpf && (cg.documentNumber || cg.document) === g2.cpf) || (cg.name || cg.fullName || "").toLowerCase() === g2Name.toLowerCase()) : null)
+    setFormGuest2Id(matchedG2 ? String(matchedG2.id) : (g2?.guestId ? String(g2.guestId) : (g2Name ? "manual" : "")))
+    setGuest2SearchFilter("")
+    setShowGuest2Suggestions(false)
+    setFormGuest2Name(g2Name)
     setFormGuest2Cpf(g2?.cpf || "")
     setFormGuest2Phone(g2?.phone || "")
     setFormGuest2Email(g2?.email || "")
 
     const g3 = resItem.guests?.[2]
-    setFormGuest3Name(g3?.name && !g3.name.startsWith("Hóspede") ? g3.name : "")
+    const g3Name = g3?.name && !g3.name.startsWith("Hóspede") ? g3.name : ""
+    const matchedG3 = g3?.guestId
+      ? crmGuests.find(cg => String(cg.id) === String(g3.guestId))
+      : (g3Name ? crmGuests.find(cg => (g3?.cpf && (cg.documentNumber || cg.document) === g3.cpf) || (cg.name || cg.fullName || "").toLowerCase() === g3Name.toLowerCase()) : null)
+    setFormGuest3Id(matchedG3 ? String(matchedG3.id) : (g3?.guestId ? String(g3.guestId) : (g3Name ? "manual" : "")))
+    setGuest3SearchFilter("")
+    setShowGuest3Suggestions(false)
+    setFormGuest3Name(g3Name)
     setFormGuest3Cpf(g3?.cpf || "")
     setFormGuest3Phone(g3?.phone || "")
     setFormGuest3Email(g3?.email || "")
@@ -2636,6 +2670,160 @@ export default function PmsCalendar() {
       toast({
         title: "Erro ao Cadastrar",
         description: e.message || "Não foi possível cadastrar o solicitante no CRM.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  // Handlers e Memos para Hóspede 2 e Hóspede 3 (CRM)
+  const handleSelectGuest2 = (val: string) => {
+    setFormGuest2Id(val)
+    if (!val || val === "manual") {
+      return
+    }
+    const g = crmGuests.find(guest => String(guest.id) === val)
+    if (g) {
+      setFormGuest2Name(g.name || g.fullName || "")
+      setFormGuest2Cpf(g.documentNumber || g.document || "")
+      setFormGuest2Phone(g.phone || "")
+      setFormGuest2Email(g.email || "")
+      toast({
+        title: "2º Hóspede Selecionado do CRM",
+        description: `${g.name || g.fullName} carregado com sucesso.`
+      })
+    }
+  }
+
+  const handleSelectGuest3 = (val: string) => {
+    setFormGuest3Id(val)
+    if (!val || val === "manual") {
+      return
+    }
+    const g = crmGuests.find(guest => String(guest.id) === val)
+    if (g) {
+      setFormGuest3Name(g.name || g.fullName || "")
+      setFormGuest3Cpf(g.documentNumber || g.document || "")
+      setFormGuest3Phone(g.phone || "")
+      setFormGuest3Email(g.email || "")
+      toast({
+        title: "3º Hóspede Selecionado do CRM",
+        description: `${g.name || g.fullName} carregado com sucesso.`
+      })
+    }
+  }
+
+  const filteredGuests2 = useMemo(() => {
+    if (!guest2SearchFilter.trim()) return []
+    const q = guest2SearchFilter.toLowerCase().trim()
+    const cleanQ = q.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
+    })
+  }, [crmGuests, guest2SearchFilter])
+
+  const filteredGuests3 = useMemo(() => {
+    if (!guest3SearchFilter.trim()) return []
+    const q = guest3SearchFilter.toLowerCase().trim()
+    const cleanQ = q.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
+    })
+  }, [crmGuests, guest3SearchFilter])
+
+  const liveGuest2Matches = useMemo(() => {
+    const query = (formGuest2Name || "").toLowerCase().trim()
+    if (!query) return []
+    const cleanQ = query.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      const comp = (g.companyName || "").toLowerCase()
+      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
+    }).slice(0, 8)
+  }, [crmGuests, formGuest2Name])
+
+  const liveGuest3Matches = useMemo(() => {
+    const query = (formGuest3Name || "").toLowerCase().trim()
+    if (!query) return []
+    const cleanQ = query.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      const comp = (g.companyName || "").toLowerCase()
+      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
+    }).slice(0, 8)
+  }, [crmGuests, formGuest3Name])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (guest2SuggestionsRef.current && !guest2SuggestionsRef.current.contains(event.target as Node)) {
+        setShowGuest2Suggestions(false)
+      }
+      if (guest3SuggestionsRef.current && !guest3SuggestionsRef.current.contains(event.target as Node)) {
+        setShowGuest3Suggestions(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const handleSaveAdditionalGuestToCrm = async (guestNumber: 2 | 3) => {
+    const isG2 = guestNumber === 2
+    const nameToSave = (isG2 ? formGuest2Name : formGuest3Name).trim()
+    const phoneToSave = (isG2 ? formGuest2Phone : formGuest3Phone).trim()
+    const emailToSave = (isG2 ? formGuest2Email : formGuest3Email).trim()
+    const cpfToSave = (isG2 ? formGuest2Cpf : formGuest3Cpf).trim()
+
+    if (!nameToSave) {
+      toast({
+        title: "Nome Obrigatório",
+        description: `Preencha o nome do ${guestNumber}º hóspede para cadastrá-lo no CRM.`,
+        variant: "destructive"
+      })
+      return
+    }
+    try {
+      const res = await fetch("/api/pms/guests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: nameToSave,
+          fullName: nameToSave,
+          phone: phoneToSave,
+          email: emailToSave,
+          document: cpfToSave,
+          documentNumber: cpfToSave,
+          notes: `Cadastrado como ${guestNumber}º hóspede (acompanhante) via CRM`
+        })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Erro ao cadastrar hóspede no CRM.")
+      }
+      const newGuest = await res.json()
+      setCrmGuests(prev => [newGuest, ...prev.filter(g => g.id !== newGuest.id)])
+      if (isG2) {
+        setFormGuest2Id(String(newGuest.id))
+      } else {
+        setFormGuest3Id(String(newGuest.id))
+      }
+      toast({
+        title: "Hóspede Cadastrado no CRM!",
+        description: `${newGuest.name || newGuest.fullName} foi registrado com sucesso.`
+      })
+    } catch (e: any) {
+      toast({
+        title: "Erro ao Cadastrar",
+        description: e.message || "Não foi possível cadastrar o hóspede no CRM.",
         variant: "destructive"
       })
     }
@@ -3139,12 +3327,20 @@ export default function PmsCalendar() {
       }
 
       const numG = Number(formGuestCount) || 1
-      const guestsPayload = [
-        { index: 1, name: formGuestName.trim(), cpf: formGuest1Cpf.trim(), phone: formGuestPhone.trim(), email: formGuestEmail.trim() }
+      const guestsPayload: any[] = [
+        {
+          index: 1,
+          guestId: formGuestId && formGuestId !== "manual" ? Number(formGuestId) : (selectedRes?.guests?.[0]?.guestId || selectedRes?.guestId || null),
+          name: formGuestName.trim(),
+          cpf: formGuest1Cpf.trim(),
+          phone: formGuestPhone.trim(),
+          email: formGuestEmail.trim()
+        }
       ]
       if (numG >= 2) {
         guestsPayload.push({
           index: 2,
+          guestId: formGuest2Id && formGuest2Id !== "manual" ? Number(formGuest2Id) : (selectedRes?.guests?.[1]?.guestId || null),
           name: formGuest2Name.trim() || "Hóspede 2",
           cpf: formGuest2Cpf.trim(),
           phone: formGuest2Phone.trim(),
@@ -3154,6 +3350,7 @@ export default function PmsCalendar() {
       if (numG === 3) {
         guestsPayload.push({
           index: 3,
+          guestId: formGuest3Id && formGuest3Id !== "manual" ? Number(formGuest3Id) : (selectedRes?.guests?.[2]?.guestId || null),
           name: formGuest3Name.trim() || "Hóspede 3",
           cpf: formGuest3Cpf.trim(),
           phone: formGuest3Phone.trim(),
@@ -6161,10 +6358,212 @@ export default function PmsCalendar() {
                           <User className="w-3.5 h-3.5 text-indigo-600" />
                           <span>Hóspede 2 (Autorizado)</span>
                         </span>
-                        <Badge variant="outline" className="text-[9px]">Acompanhante</Badge>
+                        <div className="flex items-center gap-2">
+                          {formGuest2Name.trim() && (!formGuest2Id || formGuest2Id === "manual") && (
+                            <button
+                              type="button"
+                              onClick={() => handleSaveAdditionalGuestToCrm(2)}
+                              className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" /> Cadastrar no CRM agora
+                            </button>
+                          )}
+                          <Badge variant="outline" className="text-[9px]">Acompanhante</Badge>
+                        </div>
                       </div>
+
+                      {/* Busca CRM para Hóspede 2 */}
+                      <div className="p-2 bg-background border border-indigo-500/20 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-black text-indigo-600 dark:text-indigo-400 block">
+                            Buscar 2º Hóspede Cadastrado (CRM 360°)
+                          </span>
+                          {formGuest2Id && formGuest2Id !== "manual" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormGuest2Id("manual")
+                                setFormGuest2Name("")
+                                setFormGuest2Cpf("")
+                                setFormGuest2Phone("")
+                                setFormGuest2Email("")
+                              }}
+                              className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
+                            >
+                              Desvincular / Novo Hóspede
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="relative">
+                          <Input
+                            value={guest2SearchFilter}
+                            onChange={e => setGuest2SearchFilter(e.target.value)}
+                            placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp..."
+                            className="text-xs h-8 bg-muted/40"
+                          />
+                          {guest2SearchFilter.trim() && (
+                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
+                              <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                                <span>Resultados no CRM ({filteredGuests2.length})</span>
+                                <span className="text-[9px]">Clique para selecionar</span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFormGuest2Id("manual")
+                                  setFormGuest2Name(guest2SearchFilter)
+                                  setGuest2SearchFilter("")
+                                }}
+                                className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>➕ Cadastrar "{guest2SearchFilter}" como Novo Hóspede</span>
+                              </button>
+
+                              {filteredGuests2.length > 0 ? (
+                                <div className="divide-y divide-border/40">
+                                  {filteredGuests2.slice(0, 10).map((g: any) => (
+                                    <button
+                                      key={g.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleSelectGuest2(String(g.id))
+                                        setGuest2SearchFilter("")
+                                      }}
+                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                    >
+                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                        <User className="w-3.5 h-3.5" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-foreground truncate">
+                                          {g.name || g.fullName}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                          {g.documentNumber || g.document ? (
+                                            <span>CPF: {g.documentNumber || g.document}</span>
+                                          ) : null}
+                                          {g.phone ? (
+                                            <span>• Tel: {g.phone}</span>
+                                          ) : null}
+                                          {g.companyName ? (
+                                            <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="p-3 text-center text-xs text-muted-foreground">
+                                  Nenhum hóspede localizado com esse termo.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <Select value={formGuest2Id} onValueChange={handleSelectGuest2}>
+                          <SelectTrigger className="text-xs h-8">
+                            <SelectValue placeholder="Ou selecione um Hóspede Cadastrado..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-64">
+                            <SelectItem value="manual" className="text-primary font-bold">
+                              ➕ Novo Hóspede (Digitar manualmente)
+                            </SelectItem>
+                            {crmGuests.map((g: any) => (
+                              <SelectItem key={g.id} value={String(g.id)}>
+                                <span className="font-semibold">{g.name || g.fullName}</span>
+                                {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
+                                {g.phone ? ` • Tel: ${g.phone}` : ""}
+                                {g.companyName ? ` • (${g.companyName})` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        {formGuest2Id && formGuest2Id !== "manual" && (
+                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 2º Hóspede vinculado do CRM ({formGuest2Name}).
+                          </div>
+                        )}
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
-                        <Input value={formGuest2Name} onChange={e => setFormGuest2Name(e.target.value)} placeholder="Nome do 2º Hóspede" className="text-xs h-8" />
+                        <div className="relative" ref={guest2SuggestionsRef}>
+                          <Input
+                            value={formGuest2Name}
+                            onChange={e => {
+                              setFormGuest2Name(e.target.value)
+                              setShowGuest2Suggestions(true)
+                            }}
+                            onFocus={() => {
+                              if (formGuest2Name.trim().length > 0) setShowGuest2Suggestions(true)
+                            }}
+                            placeholder="Nome do 2º Hóspede"
+                            className="text-xs h-8"
+                          />
+                          {showGuest2Suggestions && formGuest2Name.trim().length > 0 && (
+                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
+                              <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                                <span>Hóspedes no CRM ({liveGuest2Matches.length})</span>
+                                <span className="text-[9px]">Clique para preencher</span>
+                              </div>
+                              {liveGuest2Matches.length > 0 ? (
+                                <div className="divide-y divide-border/40">
+                                  {liveGuest2Matches.map((g: any) => (
+                                    <button
+                                      key={g.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleSelectGuest2(String(g.id))
+                                        setShowGuest2Suggestions(false)
+                                      }}
+                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                    >
+                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                        <User className="w-3.5 h-3.5" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-foreground truncate">
+                                          {g.name || g.fullName}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                          {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
+                                          {g.phone ? <span>• Tel: {g.phone}</span> : null}
+                                          {g.companyName ? <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span> : null}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="p-3 text-center text-[11px] text-muted-foreground">
+                                  Nenhum hóspede localizado no CRM com este nome.
+                                </div>
+                              )}
+                              <div className="p-1.5 bg-muted/30 border-t border-border">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFormGuest2Id("manual")
+                                    setShowGuest2Suggestions(false)
+                                    toast({
+                                      title: "Novo Hóspede",
+                                      description: `Preencha os dados de '${formGuest2Name}' para registrá-lo.`
+                                    })
+                                  }}
+                                  className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>Cadastrar como Novo Hóspede: "{formGuest2Name}"</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                         <Input value={formGuest2Cpf} onChange={e => setFormGuest2Cpf(e.target.value)} placeholder="CPF do 2º Hóspede" className="text-xs h-8" />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
@@ -6182,10 +6581,212 @@ export default function PmsCalendar() {
                           <User className="w-3.5 h-3.5 text-purple-600" />
                           <span>Hóspede 3 (Autorizado)</span>
                         </span>
-                        <Badge variant="outline" className="text-[9px]">Acompanhante Extra</Badge>
+                        <div className="flex items-center gap-2">
+                          {formGuest3Name.trim() && (!formGuest3Id || formGuest3Id === "manual") && (
+                            <button
+                              type="button"
+                              onClick={() => handleSaveAdditionalGuestToCrm(3)}
+                              className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" /> Cadastrar no CRM agora
+                            </button>
+                          )}
+                          <Badge variant="outline" className="text-[9px]">Acompanhante Extra</Badge>
+                        </div>
                       </div>
+
+                      {/* Busca CRM para Hóspede 3 */}
+                      <div className="p-2 bg-background border border-purple-500/20 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-black text-purple-600 dark:text-purple-400 block">
+                            Buscar 3º Hóspede Cadastrado (CRM 360°)
+                          </span>
+                          {formGuest3Id && formGuest3Id !== "manual" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormGuest3Id("manual")
+                                setFormGuest3Name("")
+                                setFormGuest3Cpf("")
+                                setFormGuest3Phone("")
+                                setFormGuest3Email("")
+                              }}
+                              className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
+                            >
+                              Desvincular / Novo Hóspede
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="relative">
+                          <Input
+                            value={guest3SearchFilter}
+                            onChange={e => setGuest3SearchFilter(e.target.value)}
+                            placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp..."
+                            className="text-xs h-8 bg-muted/40"
+                          />
+                          {guest3SearchFilter.trim() && (
+                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
+                              <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                                <span>Resultados no CRM ({filteredGuests3.length})</span>
+                                <span className="text-[9px]">Clique para selecionar</span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFormGuest3Id("manual")
+                                  setFormGuest3Name(guest3SearchFilter)
+                                  setGuest3SearchFilter("")
+                                }}
+                                className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>➕ Cadastrar "{guest3SearchFilter}" como Novo Hóspede</span>
+                              </button>
+
+                              {filteredGuests3.length > 0 ? (
+                                <div className="divide-y divide-border/40">
+                                  {filteredGuests3.slice(0, 10).map((g: any) => (
+                                    <button
+                                      key={g.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleSelectGuest3(String(g.id))
+                                        setGuest3SearchFilter("")
+                                      }}
+                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                    >
+                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                        <User className="w-3.5 h-3.5" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-foreground truncate">
+                                          {g.name || g.fullName}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                          {g.documentNumber || g.document ? (
+                                            <span>CPF: {g.documentNumber || g.document}</span>
+                                          ) : null}
+                                          {g.phone ? (
+                                            <span>• Tel: {g.phone}</span>
+                                          ) : null}
+                                          {g.companyName ? (
+                                            <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="p-3 text-center text-xs text-muted-foreground">
+                                  Nenhum hóspede localizado com esse termo.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <Select value={formGuest3Id} onValueChange={handleSelectGuest3}>
+                          <SelectTrigger className="text-xs h-8">
+                            <SelectValue placeholder="Ou selecione um Hóspede Cadastrado..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-64">
+                            <SelectItem value="manual" className="text-primary font-bold">
+                              ➕ Novo Hóspede (Digitar manualmente)
+                            </SelectItem>
+                            {crmGuests.map((g: any) => (
+                              <SelectItem key={g.id} value={String(g.id)}>
+                                <span className="font-semibold">{g.name || g.fullName}</span>
+                                {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
+                                {g.phone ? ` • Tel: ${g.phone}` : ""}
+                                {g.companyName ? ` • (${g.companyName})` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        {formGuest3Id && formGuest3Id !== "manual" && (
+                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 3º Hóspede vinculado do CRM ({formGuest3Name}).
+                          </div>
+                        )}
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
-                        <Input value={formGuest3Name} onChange={e => setFormGuest3Name(e.target.value)} placeholder="Nome do 3º Hóspede" className="text-xs h-8" />
+                        <div className="relative" ref={guest3SuggestionsRef}>
+                          <Input
+                            value={formGuest3Name}
+                            onChange={e => {
+                              setFormGuest3Name(e.target.value)
+                              setShowGuest3Suggestions(true)
+                            }}
+                            onFocus={() => {
+                              if (formGuest3Name.trim().length > 0) setShowGuest3Suggestions(true)
+                            }}
+                            placeholder="Nome do 3º Hóspede"
+                            className="text-xs h-8"
+                          />
+                          {showGuest3Suggestions && formGuest3Name.trim().length > 0 && (
+                            <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
+                              <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                                <span>Hóspedes no CRM ({liveGuest3Matches.length})</span>
+                                <span className="text-[9px]">Clique para preencher</span>
+                              </div>
+                              {liveGuest3Matches.length > 0 ? (
+                                <div className="divide-y divide-border/40">
+                                  {liveGuest3Matches.map((g: any) => (
+                                    <button
+                                      key={g.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleSelectGuest3(String(g.id))
+                                        setShowGuest3Suggestions(false)
+                                      }}
+                                      className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                    >
+                                      <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                        <User className="w-3.5 h-3.5" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-foreground truncate">
+                                          {g.name || g.fullName}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                          {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
+                                          {g.phone ? <span>• Tel: {g.phone}</span> : null}
+                                          {g.companyName ? <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span> : null}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="p-3 text-center text-[11px] text-muted-foreground">
+                                  Nenhum hóspede localizado no CRM com este nome.
+                                </div>
+                              )}
+                              <div className="p-1.5 bg-muted/30 border-t border-border">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFormGuest3Id("manual")
+                                    setShowGuest3Suggestions(false)
+                                    toast({
+                                      title: "Novo Hóspede",
+                                      description: `Preencha os dados de '${formGuest3Name}' para registrá-lo.`
+                                    })
+                                  }}
+                                  className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>Cadastrar como Novo Hóspede: "{formGuest3Name}"</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                         <Input value={formGuest3Cpf} onChange={e => setFormGuest3Cpf(e.target.value)} placeholder="CPF do 3º Hóspede" className="text-xs h-8" />
                       </div>
                       <div className="grid grid-cols-2 gap-2">

@@ -16798,13 +16798,14 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
-  // Prepara lista de hóspedes da reserva (1, 2 ou 3)
+  // Prepara lista de hóspedes da reserva (1, 2 ou 3) e faz upsert dos acompanhantes no CRM
   const preparedGuests = [];
   for (let i = 1; i <= numGuests; i++) {
     const existingG = Array.isArray(guests) ? guests.find(g => g.index === i || g.order === i) : null;
     if (i === 1) {
       preparedGuests.push({
         index: 1,
+        guestId: guest.id,
         name: primaryName,
         cpf: primaryDoc,
         phone: primaryPhone,
@@ -16813,12 +16814,56 @@ app.post("/api/pms/reservations", async (req, res) => {
         checkinCompletedAt: existingG?.checkinCompletedAt || null
       });
     } else {
+      const gName = existingG?.name ? existingG.name.trim() : `Hóspede ${i}`;
+      const gCpf = (existingG?.cpf || existingG?.document || "").trim();
+      const gPhone = (existingG?.phone || "").trim();
+      const gEmail = (existingG?.email || "").trim();
+      let resolvedExtraGuestId = existingG?.guestId ? Number(existingG.guestId) : null;
+
+      if (gName && !/^h[óo]spede\s*\d+$/i.test(gName)) {
+        let extraGuest = db.guests.find(cg =>
+          (resolvedExtraGuestId && cg.id === resolvedExtraGuestId) ||
+          (gCpf && (cg.document === gCpf || cg.documentNumber === gCpf)) ||
+          (gPhone && cg.phone === gPhone) ||
+          (cg.name && cg.name.toLowerCase() === gName.toLowerCase())
+        );
+        if (!extraGuest) {
+          extraGuest = {
+            id: db.guests.length > 0 ? Math.max(...db.guests.map(cg => cg.id)) + 1 : 1,
+            name: gName,
+            fullName: gName,
+            phone: gPhone,
+            email: gEmail,
+            document: gCpf,
+            documentNumber: gCpf,
+            city: "",
+            companyName: companyName || "",
+            notes: `Cadastrado como ${i}º hóspede (acompanhante) da reserva`,
+            tags: [],
+            isMonthlyGuest: false,
+            clientType: "avulso",
+            autoEmitInvoice: false,
+            createdAt: new Date().toISOString()
+          };
+          db.guests.push(extraGuest);
+        } else {
+          if (gPhone && !extraGuest.phone) extraGuest.phone = gPhone;
+          if (gEmail && !extraGuest.email) extraGuest.email = gEmail;
+          if (gCpf && !extraGuest.document) {
+            extraGuest.document = gCpf;
+            extraGuest.documentNumber = gCpf;
+          }
+        }
+        resolvedExtraGuestId = extraGuest.id;
+      }
+
       preparedGuests.push({
         index: i,
-        name: existingG?.name ? existingG.name.trim() : `Hóspede ${i}`,
-        cpf: existingG?.cpf || existingG?.document || "",
-        phone: existingG?.phone || "",
-        email: existingG?.email || "",
+        guestId: resolvedExtraGuestId,
+        name: gName,
+        cpf: gCpf,
+        phone: gPhone,
+        email: gEmail,
         hasCompletedCheckin: Boolean(existingG?.hasCompletedCheckin),
         checkinCompletedAt: existingG?.checkinCompletedAt || null
       });
@@ -18173,6 +18218,59 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
     r.requesterInfo.guestId = reqGuest.id;
+  }
+
+  // Upsert dos hóspedes acompanhantes (2º e 3º hóspedes) no CRM ao atualizar reserva
+  if (Array.isArray(r.guests)) {
+    if (!db.guests) db.guests = [];
+    for (const gItem of r.guests) {
+      const idx = Number(gItem?.index || gItem?.order || 0);
+      if (idx >= 2 && gItem?.name) {
+        const gName = String(gItem.name).trim();
+        if (gName && !/^h[óo]spede\s*\d+$/i.test(gName)) {
+          const gCpf = String(gItem.cpf || gItem.document || "").trim();
+          const gPhone = String(gItem.phone || "").trim();
+          const gEmail = String(gItem.email || "").trim();
+          const gId = gItem.guestId ? Number(gItem.guestId) : null;
+
+          let extraGuest = db.guests.find(cg =>
+            (gId && cg.id === gId) ||
+            (gCpf && (cg.document === gCpf || cg.documentNumber === gCpf)) ||
+            (gPhone && cg.phone === gPhone) ||
+            (cg.name && cg.name.toLowerCase() === gName.toLowerCase())
+          );
+
+          if (!extraGuest) {
+            extraGuest = {
+              id: db.guests.length > 0 ? Math.max(...db.guests.map(cg => cg.id)) + 1 : 1,
+              name: gName,
+              fullName: gName,
+              phone: gPhone,
+              email: gEmail,
+              document: gCpf,
+              documentNumber: gCpf,
+              city: "",
+              companyName: r.companyName || "",
+              notes: `Cadastrado como ${idx}º hóspede (acompanhante) da reserva`,
+              tags: [],
+              isMonthlyGuest: false,
+              clientType: "avulso",
+              autoEmitInvoice: false,
+              createdAt: new Date().toISOString()
+            };
+            db.guests.push(extraGuest);
+          } else {
+            if (gPhone && !extraGuest.phone) extraGuest.phone = gPhone;
+            if (gEmail && !extraGuest.email) extraGuest.email = gEmail;
+            if (gCpf && !extraGuest.document) {
+              extraGuest.document = gCpf;
+              extraGuest.documentNumber = gCpf;
+            }
+          }
+          gItem.guestId = extraGuest.id;
+        }
+      }
+    }
   }
 
   // Se houve alteração de flat ou datas, garante que req.body.guests não ressuscite flags de check-in concluído
