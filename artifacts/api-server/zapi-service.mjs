@@ -52,7 +52,15 @@ import {
   findContactAndReservation,
   extractCnpj,
   extractCpf,
-  generateSofiaRealtimeAssistance
+  generateSofiaRealtimeAssistance,
+  selectFairShareFlat,
+  extractActivePreReservationData,
+  isOperatorConductingConversation,
+  evaluateAndNotifyActivePreReservation,
+  createStandardPmsPreReservation,
+  handleManagerPreReservationReply,
+  parseManagerPreReservationCommand,
+  formatActivePreReservationManagerSummary
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -88,7 +96,15 @@ export {
   isFiscalIntentMessage,
   findContactAndReservation,
   extractCnpj,
-  extractCpf
+  extractCpf,
+  selectFairShareFlat,
+  extractActivePreReservationData,
+  isOperatorConductingConversation,
+  evaluateAndNotifyActivePreReservation,
+  createStandardPmsPreReservation,
+  handleManagerPreReservationReply,
+  parseManagerPreReservationCommand,
+  formatActivePreReservationManagerSummary
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
@@ -1399,8 +1415,8 @@ export function isBotMessage(text) {
     return true;
   }
 
-  // 5. Modelos de mensagens rápidas do sistema
-  if (/\b(?:corpflats\s*•\s*agradecemos\s+sua\s+prefer[eê]ncia|corpflats\s*•\s*sua\s+opini[aã]o\s+vale\s+muito|corpflats\s*•\s*guia\s+de\s+conviv[eê]ncia|manual_do_hospede_corpflats\.pdf)\b/i.test(lower)) {
+  // 5. Modelos de mensagens rápidas do sistema e Assistente Ativa de Pré-Reservas
+  if (/\b(?:corpflats\s*•\s*agradecemos\s+sua\s+prefer[eê]ncia|corpflats\s*•\s*sua\s+opini[aã]o\s+vale\s+muito|corpflats\s*•\s*guia\s+de\s+conviv[eê]ncia|manual_do_hospede_corpflats\.pdf|assistente\s+ativa\s+de\s+pre-reservas|resumo\s+atualizado\s+da\s+pre-reserva|pre-reserva\s+criada\s+com\s+sucesso\s+no\s+sistema|proposta\s+de\s+pre-reserva\s+cancelada)\b/i.test(lower)) {
     return true;
   }
 
@@ -7327,6 +7343,37 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
                 });
               }
             }
+
+            // 3. Assistente Ativa de Pré-Reservas:
+            // Se o operador enviou mensagem na conversa com o hóspede (ex: passou o orçamento que faltava)
+            // ou respondeu no próprio número do gestor para confirmar/editar uma proposta pendente
+            try {
+              if (isDeveloperPhone(cleanTarget, db)) {
+                await handleManagerPreReservationReply({
+                  db,
+                  cleanTarget,
+                  messageText: incomingInfo.text,
+                  conv,
+                  sendZapiMessage,
+                  appendMessageFn: appendMessageToConversation,
+                  saveDatabase,
+                  createNotification
+                });
+              } else if (conv) {
+                await evaluateAndNotifyActivePreReservation({
+                  db,
+                  conv,
+                  cleanTarget,
+                  incomingInfo,
+                  saveDatabase,
+                  createNotification,
+                  sendZapiMessage,
+                  appendMessageFn: appendMessageToConversation
+                });
+              }
+            } catch (preResErr) {
+              console.warn("[Z-API Webhook fromMe] Erro ao processar Assistente Ativa de Pré-Reservas:", preResErr.message);
+            }
           }
         }
       }
@@ -7952,6 +7999,41 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             link: "/whatsapp-automation?tab=faq"
           });
         }
+      }
+
+      // Assistente Ativa de Pré-Reservas: avalia a conversa após envio manual pelo Live Chat
+      try {
+        if (isDeveloperPhone(cleanPhone, db)) {
+          await handleManagerPreReservationReply({
+            db,
+            cleanTarget: cleanPhone,
+            messageText: finalMessage,
+            conv: updatedConv,
+            sendZapiMessage,
+            appendMessageFn: appendMessageToConversation,
+            saveDatabase,
+            createNotification
+          });
+        } else if (updatedConv) {
+          await evaluateAndNotifyActivePreReservation({
+            db,
+            conv: updatedConv,
+            cleanTarget: cleanPhone,
+            incomingInfo: {
+              fromMe: true,
+              text: finalMessage,
+              phone: cleanPhone,
+              senderName: "Operador",
+              timestamp: nowIso
+            },
+            saveDatabase,
+            createNotification,
+            sendZapiMessage,
+            appendMessageFn: appendMessageToConversation
+          });
+        }
+      } catch (preResChatErr) {
+        console.warn("[WhatsApp Live Chat] Erro ao processar Assistente Ativa de Pré-Reservas:", preResChatErr.message);
       }
     }
 

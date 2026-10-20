@@ -10633,3 +10633,1682 @@ export async function generateSofiaRealtimeAssistance({
     dynamicQuickButtons: filteredQuickButtons
   };
 }
+
+// ============================================================================
+// ASSISTENTE ATIVA DE PRÉ-RESERVAS (SOFIA -> WHATSAPP DO GESTOR)
+// ============================================================================
+
+/**
+ * Retorna o telefone do gestor/desenvolvedor configurado (padrão: 5522998505276).
+ */
+export function getManagerWhatsAppPhone(db = null) {
+  const raw = db?.whatsappAiSettings?.developerPhone || DEVELOPER_PHONES[0] || "22998505276";
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length >= 10 && digits.length <= 11 && !digits.startsWith("55")) {
+    return `55${digits}`;
+  }
+  return digits || "5522998505276";
+}
+
+/**
+ * Motor "Flat da Vez" (Fair-Share) idêntico ao PMS (calculateFairShareStats do demo-server.mjs):
+ * Filtra unidades disponíveis no período [checkinDate, checkoutDate] e ordena por:
+ * 1) Menor número de diárias ocupadas no mês do check-in (monthOccupiedDays ASC)
+ * 2) Maior tempo ocioso desde o último check-out (daysSinceLastCheckout DESC)
+ * 3) Número do flat em ordem crescente
+ */
+export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId = null) {
+  const rawUnits = (Array.isArray(db?.flats) && db.flats.length > 0) ? db.flats : (db?.rooms || []);
+  const activeFlats = rawUnits.filter(f => f && f.isActive !== false && f.status !== "manutencao_bloqueada");
+
+  if (!checkinDate || !checkoutDate || checkinDate >= checkoutDate || activeFlats.length === 0) {
+    return {
+      recommendedFlat: null,
+      availableFlats: [],
+      allStats: []
+    };
+  }
+
+  const refDateStr = checkinDate;
+  const [yearStr, monthStr] = refDateStr.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const monthStart = `${yearStr}-${monthStr}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const monthEnd = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
+
+  const nowMs = Date.now();
+  const allReservations = Array.isArray(db?.reservations) ? db.reservations : [];
+
+  const validReservations = allReservations.filter(r => {
+    if (!r) return false;
+    if (excludeResId != null && String(r.id) === String(excludeResId)) return false;
+    const statusNorm = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelled", "no_show", "expirada"].includes(statusNorm)) return false;
+    if ((statusNorm === "pre_reserva" || statusNorm === "pendente") && r.expiresAt) {
+      if (new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const stats = activeFlats.map(flat => {
+    const flatRes = validReservations.filter(r =>
+      (r.flatId != null && String(r.flatId) === String(flat.id)) ||
+      (r.flatNumber != null && String(r.flatNumber) === String(flat.number)) ||
+      (r.roomNumber != null && String(r.roomNumber) === String(flat.number))
+    );
+
+    let monthOccupiedDays = 0;
+    let lastCheckoutStr = null;
+
+    for (const r of flatRes) {
+      if (r.checkinDate && r.checkoutDate && r.checkinDate <= monthEnd && r.checkoutDate > monthStart) {
+        const start = r.checkinDate < monthStart ? monthStart : r.checkinDate;
+        const end = r.checkoutDate > monthEnd ? monthEnd : r.checkoutDate;
+        const sD = new Date(`${start}T12:00:00Z`);
+        const eD = new Date(`${end}T12:00:00Z`);
+        const diff = Math.max(0, Math.round((eD - sD) / (1000 * 60 * 60 * 24)));
+        monthOccupiedDays += diff;
+      }
+
+      if (r.checkoutDate && r.checkoutDate <= refDateStr) {
+        if (!lastCheckoutStr || r.checkoutDate > lastCheckoutStr) {
+          lastCheckoutStr = r.checkoutDate;
+        }
+      }
+    }
+
+    let daysSinceLastCheckout = 9999;
+    if (lastCheckoutStr) {
+      const refD = new Date(`${refDateStr}T12:00:00Z`);
+      const lastD = new Date(`${lastCheckoutStr}T12:00:00Z`);
+      daysSinceLastCheckout = Math.max(0, Math.round((refD - lastD) / (1000 * 60 * 60 * 24)));
+    }
+
+    const hasResConflict = flatRes.some(r => {
+      const statusNorm = String(r.status || "").toLowerCase();
+      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm)) return false;
+      if (isReservationCheckoutCompleted(r, db)) return false;
+      return r.checkinDate < checkoutDate && r.checkoutDate > checkinDate;
+    });
+
+    const hasBlockConflict = (db?.roomBlocks || []).some(b => {
+      const sameFlat =
+        (b.flatId != null && String(b.flatId) === String(flat.id)) ||
+        (b.flatNumber != null && String(b.flatNumber) === String(flat.number)) ||
+        (b.roomNumber != null && String(b.roomNumber) === String(flat.number));
+      if (!sameFlat) return false;
+      return b.startDate < checkoutDate && b.endDate > checkinDate;
+    });
+
+    const hasServiceOrderConflict = (db?.serviceOrders || []).some(o => {
+      const sameFlat =
+        (o.flatId != null && String(o.flatId) === String(flat.id)) ||
+        (o.flatNumber != null && String(o.flatNumber) === String(flat.number));
+      if (!sameFlat || o.status !== "em_andamento" || !o.startDate || !o.endDate) return false;
+      return o.startDate <= checkoutDate && o.endDate >= checkinDate;
+    });
+
+    const isAvailableInPeriod = !hasResConflict && !hasBlockConflict && !hasServiceOrderConflict;
+    const amenitiesInfo = getFlatAmenitiesInfo(flat);
+
+    return {
+      id: flat.id,
+      number: String(flat.number),
+      type: flat.type || "Standard",
+      floor: flat.floor || null,
+      status: flat.status || "disponivel",
+      monthOccupiedDays,
+      lastCheckoutDate: lastCheckoutStr,
+      daysSinceLastCheckout,
+      isAvailableInPeriod,
+      airConditionerType: amenitiesInfo?.airConditionerType || "split",
+      bedType: amenitiesInfo?.bedType || "casal",
+      hasMicrowave: amenitiesInfo?.hasMicrowave ?? true
+    };
+  });
+
+  const availableFlats = stats
+    .filter(s => s.isAvailableInPeriod)
+    .sort((a, b) => {
+      if (a.monthOccupiedDays !== b.monthOccupiedDays) {
+        return a.monthOccupiedDays - b.monthOccupiedDays;
+      }
+      if (b.daysSinceLastCheckout !== a.daysSinceLastCheckout) {
+        return b.daysSinceLastCheckout - a.daysSinceLastCheckout;
+      }
+      return String(a.number).localeCompare(String(b.number), undefined, { numeric: true });
+    });
+
+  return {
+    recommendedFlat: availableFlats.length > 0 ? availableFlats[0] : null,
+    availableFlats,
+    allStats: stats
+  };
+}
+
+/**
+ * Verifica se uma mensagem fromMe foi enviada pela Sofia / robô / régua automática
+ * (e não por um operador humano).
+ */
+function isAutomatedOrSofiaMessage(msg) {
+  if (!msg) return false;
+  if (msg.isOperator === true || msg.senderRole === "operator") return false;
+  if (msg.isAi === true || msg.isBot === true || msg.role === "assistant") return true;
+
+  const sender = String(msg.senderName || msg.sender || "").trim().toLowerCase();
+  if (/^(?:sofia|ia|ai|bot|sistema|system|assistente|concierge\s+virtual)$/.test(sender)) {
+    return true;
+  }
+
+  const msgId = String(msg.messageId || msg.id || "");
+  if (/^(?:dev_|fiscal_|sofia_|bot_|msg_disp_|auto_)/.test(msgId)) {
+    return true;
+  }
+
+  // Disparo manual no Live Chat Web usa triggerEvent === "chat_direct" ou "live_chat_manual_message" ou "qm_..."
+  // Disparos da régua automática usam triggerEvent de template (ex: reservation_created, pre_reservation_created, checkin_day, etc.)
+  const trig = String(msg.triggerEvent || "").trim();
+  if (trig && trig !== "chat_direct" && trig !== "live_chat_manual_message" && !trig.startsWith("qm_")) {
+    return true;
+  }
+
+  const text = String(msg.text || msg.message || "").trim();
+  if (!text) return false;
+  const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|assistente\s+ativa\s+de\s+pre-reservas|pre-reserva\s+garantida|pix\s+copia\s+e\s+cola.*expira\s+em)\b/.test(lower)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Verifica se há mensagens enviadas por um operador humano na conversa.
+ */
+export function hasHumanOperatorMessagesInConversation(conv, db = null) {
+  const messages = Array.isArray(conv) ? conv : (Array.isArray(conv?.messages) ? conv.messages : []);
+  if (messages.length === 0) return false;
+  return messages.some(m => {
+    if (!m || !m.fromMe) return false;
+    return !isAutomatedOrSofiaMessage(m);
+  });
+}
+
+/**
+ * Determina se a conversa está sendo conduzida pelo operador humano (escopo em que a Sofia
+ * atua como Assistente Ativa de Pré-Reservas consultando o gestor no WhatsApp) vs. Sofia sozinha.
+ */
+export function isOperatorConductingConversation(conv, db = null, incomingInfo = null) {
+  const phone = conv?.phone || incomingInfo?.phone || incomingInfo?.senderPhone || "";
+  if (phone && isDeveloperPhone(phone, db)) return false;
+
+  if (conv?.aiPaused === true || conv?.operatorActive === true) {
+    return true;
+  }
+
+  if (incomingInfo?.fromMe === true && !isAutomatedOrSofiaMessage(incomingInfo)) {
+    return true;
+  }
+
+  const aiConfig = getWhatsAppAiConfig(db);
+  if (aiConfig?.mode === "copilot") {
+    return true;
+  }
+
+  if (aiConfig?.mode === "off_hours") {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(utc + (-3 * 60 * 60000));
+    const currentHour = brDate.getHours() + (brDate.getMinutes() / 60);
+    const [startH, startM] = (aiConfig.offHoursStart || "18:00").split(":").map(Number);
+    const [endH, endM] = (aiConfig.offHoursEnd || "08:00").split(":").map(Number);
+    const startVal = startH + (startM / 60);
+    const endVal = endH + (endM / 60);
+    const isOffHours = startVal > endVal
+      ? (currentHour >= startVal || currentHour <= endVal)
+      : (currentHour >= startVal && currentHour <= endVal);
+    if (!isOffHours) {
+      return true;
+    }
+  }
+
+  if (conv?.aiPaused !== false && hasHumanOperatorMessagesInConversation(conv, db)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Converte string monetária brasileira/numérica (ex: "1.250,50", "480,00", "480") em Number.
+ */
+function parseBrlAmountValue(rawStr) {
+  if (typeof rawStr === "number") return isNaN(rawStr) ? null : rawStr;
+  if (!rawStr || typeof rawStr !== "string") return null;
+  let s = rawStr.trim().replace(/[R$\s]/gi, "");
+  if (!s) return null;
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, "");
+  }
+  const num = parseFloat(s);
+  return (!isNaN(num) && num > 0) ? Math.round(num * 100) / 100 : null;
+}
+
+/**
+ * Converte data avulsa DD/MM[/YYYY] ou YYYY-MM-DD para YYYY-MM-DD.
+ */
+function parseSingleDateToken(rawToken, refYear = null) {
+  if (!rawToken || typeof rawToken !== "string") return null;
+  const t = rawToken.trim();
+  const isoM = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (isoM) return `${isoM[1]}-${isoM[2]}-${isoM[3]}`;
+
+  const brM = /^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/.exec(t);
+  if (brM) {
+    const d = parseInt(brM[1], 10);
+    const m = parseInt(brM[2], 10);
+    if (d < 1 || d > 31 || m < 1 || m > 12) return null;
+    const { year: curYear, month: curMonth } = getBrasiliaDateParts();
+    let y = brM[3] ? parseInt(brM[3], 10) : (refYear || curYear);
+    if (y < 100) y += 2000;
+    if (!brM[3] && !refYear && m < curMonth) y += 1;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+/**
+ * Valida e limpa um candidato a Nome Completo (mínimo de 2 palavras alfabéticas, sem termos de chat/saudação).
+ */
+function sanitizeFullNameCandidate(rawCandidate) {
+  if (!rawCandidate || typeof rawCandidate !== "string") return null;
+  let cleaned = rawCandidate
+    .replace(/(?:cpf|cnpj|e-?mail|telefone|celular|whatsapp|whats|rg|endere[cç]o|cep|check-?in|check-?out|valor|total|di[aá]ria|flat|apto|apartamento)\s*[:\-]?.*/i, "")
+    .replace(/[0-9@#$_=*~`<>[\]{}|\\^/]+/g, " ")
+    .replace(/^[\s,.;:\-–—•*]+|[\s,.;:\-–—•*]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length < 5 || cleaned.length > 75) return null;
+
+  const words = cleaned.split(" ").filter(Boolean);
+  if (words.length < 2 || words.length > 7) return null;
+
+  // Todas as palavras devem ser alfabéticas (permitindo acentos, apóstrofo e hífen)
+  const validWordRegex = /^[A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,}$/;
+  const connectorRegex = /^(?:da|de|do|das|dos|e)$/i;
+  let mainWordCount = 0;
+
+  for (const w of words) {
+    if (connectorRegex.test(w)) continue;
+    if (!validWordRegex.test(w)) return null;
+    mainWordCount++;
+  }
+
+  if (mainWordCount < 2) return null;
+
+  const normFull = cleaned.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const forbiddenTokens = /\b(?:bom\s+dia|boa\s+tarde|boa\s+noite|ola|oi|tudo\s+bem|quero\s+reservar|gostaria|preciso|pode\s+ser|pode\s+criar|confirmo|confirmar|reserva|pre\s+reserva|disponibilidade|disponivel|orcamento|cotacao|valor|diaria|reais|cafe\s+da\s+manha|sem\s+cafe|com\s+cafe|nota\s+fiscal|nfse|obrigado|obrigada|por\s+favor|segue|seguem|meus\s+dados|dados\s+abaixo|aqui\s+esta|pix|pagamento|cartao|hospede|cliente|recepcao|corpflats|edificio\s+soho|campos\s+dos\s+goytacazes|rio\s+de\s+janeiro|rua\s+conselheiro|avenida|bairro|centro|casal|solteiro|pessoa|pessoas|adultos|noites|diarias|entrada|saida|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/;
+  if (forbiddenTokens.test(normFull)) return null;
+
+  return toTitleCase(cleaned);
+}
+
+/**
+ * Extrai um Nome Completo (>= 2 palavras) a partir do histórico de mensagens da conversa.
+ */
+function extractFullNameFromMessages(messages = []) {
+  let extractedName = null;
+
+  for (const msg of messages) {
+    const text = String(msg?.text || msg?.message || "").trim();
+    if (!text) continue;
+    if (msg.fromMe && isAutomatedOrSofiaMessage(msg)) continue;
+
+    // 1. Padrões rotulados explícitos ("Nome completo: ...", "Nome: ...", "Meu nome é ...", "Hóspede: ...", "no nome de ...")
+    const labeledRegexes = [
+      /(?:nome\s+completo|nome\s+do\s+h[oó]spede|h[oó]spede|titular|nome)\s*[:=\-–]\s*([^\n\r,;•|]+)/i,
+      /\b(?:meu\s+nome\s+[eé]|me\s+chamo|(?:no|em)\s+nome\s+d[eo]|nome\s+completo\s+[eé])\s+([A-Za-zÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’\-]+){1,6})/i
+    ];
+    for (const rx of labeledRegexes) {
+      const m = text.match(rx);
+      if (m && m[1]) {
+        const candidate = sanitizeFullNameCandidate(m[1]);
+        if (candidate) extractedName = candidate;
+      }
+    }
+
+    // 2. Mensagem contendo CPF ou E-mail (ficha cadastral em múltiplas linhas ou separada por ponto, dois-pontos, vírgula, traço ou barra)
+    const hasCpfInMsg = /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/.test(text);
+    const hasEmailInMsg = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(text);
+    if (hasCpfInMsg || hasEmailInMsg) {
+      const segments = text
+        .split(/(?:[\r\n,;•|]+|(?<!\d)\.(?!\d|[a-zA-Z])|\s+[-–—/]\s+)/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      for (const seg of segments) {
+        const subParts = seg.includes(":") ? [seg, seg.split(":").slice(1).join(":")] : [seg];
+        for (const part of subParts) {
+          const cleanSeg = part
+            .replace(/^(?:1[\.\)\-\s]*|(?:segue(?:m)?(?:\s+os)?(?:\s+meus)?(?:\s+dados)?|meus\s+dados(?:\s+s[aã]o)?|dados(?:\s+para\s+reserva)?|nome(?:\s+completo)?|h[oó]spede|titular)\s*[:=\-–]?\s*)+/i, "")
+            .trim();
+          const candidate = sanitizeFullNameCandidate(cleanSeg);
+          if (candidate) {
+            extractedName = candidate;
+          }
+        }
+      }
+    }
+
+    // 3. Mensagem curta enviada pelo hóspede contendo apenas o Nome Completo
+    if (!msg.fromMe && !text.includes("?") && text.length <= 65) {
+      const candidate = sanitizeFullNameCandidate(text);
+      if (candidate) {
+        extractedName = candidate;
+      }
+    }
+  }
+
+  return extractedName;
+}
+
+/**
+ * Extrai CPF (11 dígitos) das mensagens da conversa, evitando confundir com o telefone do contato.
+ */
+function extractCpfFromMessages(messages = [], guestPhone = "") {
+  const cleanGuestPhone = onlyDigits(guestPhone);
+  const guestPhoneNoCountry = cleanGuestPhone.startsWith("55") && cleanGuestPhone.length >= 12
+    ? cleanGuestPhone.slice(2)
+    : cleanGuestPhone;
+
+  let foundCpf = null;
+
+  for (const msg of messages) {
+    const text = String(msg?.text || msg?.message || "").trim();
+    if (!text) continue;
+    if (msg.fromMe && isAutomatedOrSofiaMessage(msg)) continue;
+
+    // 1. Formato pontuado XXX.XXX.XXX-XX
+    const formattedMatch = text.match(/\b(\d{3}\.\d{3}\.\d{3}-\d{2})\b/);
+    if (formattedMatch) {
+      foundCpf = onlyDigits(formattedMatch[1]);
+      continue;
+    }
+
+    // 2. Rotulado com "CPF"
+    const labeledMatch = text.match(/\bcpf\s*[:=\-–]?\s*(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}|\d{11})\b/i);
+    if (labeledMatch) {
+      foundCpf = onlyDigits(labeledMatch[1]);
+      continue;
+    }
+
+    // 3. Sequência de 11 dígitos que não seja telefone do hóspede nem chave PIX da empresa
+    const elevenMatches = text.match(/(?:^|\D)(\d{11})(?!\d)/g) || [];
+    for (const rawM of elevenMatches) {
+      const digits = onlyDigits(rawM);
+      if (digits.length !== 11) continue;
+      if (guestPhoneNoCountry && digits === guestPhoneNoCountry) continue;
+      if (/^(\d)\1{10}$/.test(digits)) continue;
+      foundCpf = digits;
+    }
+  }
+
+  return foundCpf;
+}
+
+/**
+ * Extrai E-mail das mensagens da conversa.
+ */
+function extractEmailFromMessages(messages = []) {
+  let foundEmail = null;
+  for (const msg of messages) {
+    const text = String(msg?.text || msg?.message || "").trim();
+    if (!text) continue;
+    if (msg.fromMe && isAutomatedOrSofiaMessage(msg)) continue;
+
+    const matches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+    for (const email of matches) {
+      const lower = email.toLowerCase();
+      if (lower.endsWith("@corpflats.com.br") || lower.endsWith("@corpflats.com")) continue;
+      foundEmail = lower;
+    }
+  }
+  return foundEmail;
+}
+
+/**
+ * Extrai Datas (checkIn, checkOut, nights) das mensagens da conversa (tanto naturais quanto Check-in/Check-out separados).
+ */
+function extractDatesFromMessages(messages = []) {
+  let checkIn = null;
+  let checkOut = null;
+  let explicitIn = null;
+  let explicitOut = null;
+
+  for (const msg of messages) {
+    const text = String(msg?.text || msg?.message || "").trim();
+    if (!text) continue;
+
+    // 1. Parser de datas naturais em par (ex: "20/11 a 23/11", "de 10 a 15 de dezembro")
+    const parsed = parseNaturalDatesFromText(text);
+    if (parsed && parsed.checkIn && parsed.checkOut && parsed.checkIn < parsed.checkOut) {
+      checkIn = parsed.checkIn;
+      checkOut = parsed.checkOut;
+    }
+
+    // 2. Rótulos individuais de Check-in / Entrada e Check-out / Saída (na mesma mensagem ou em mensagens separadas)
+    const inMatch = text.match(/(?:check-?in|entrada|chegada)\s*[:=\-–]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i);
+    if (inMatch && inMatch[1]) {
+      const dIn = parseSingleDateToken(inMatch[1]);
+      if (dIn) explicitIn = dIn;
+    }
+    const outMatch = text.match(/(?:check-?out|sa[ií]da)\s*[:=\-–]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i);
+    if (outMatch && outMatch[1]) {
+      const dOut = parseSingleDateToken(outMatch[1]);
+      if (dOut) explicitOut = dOut;
+    }
+    if (explicitIn && explicitOut && explicitIn < explicitOut) {
+      checkIn = explicitIn;
+      checkOut = explicitOut;
+    }
+  }
+
+  if (!checkIn || !checkOut || checkIn >= checkOut) {
+    return { hasDates: false, checkIn: null, checkOut: null, nights: 0, displayCheckIn: null, displayCheckOut: null };
+  }
+
+  const inD = new Date(`${checkIn}T12:00:00Z`);
+  const outD = new Date(`${checkOut}T12:00:00Z`);
+  const nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
+
+  return {
+    hasDates: true,
+    checkIn,
+    checkOut,
+    nights,
+    displayCheckIn: checkIn.split("-").reverse().join("/"),
+    displayCheckOut: checkOut.split("-").reverse().join("/")
+  };
+}
+
+/**
+ * Extrai Orçamento / Valor (totalAmount e dailyRate) passado na conversa,
+ * respeitando a preferência de café da manhã e a quantidade de diárias.
+ */
+function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference = null) {
+  const effectiveNights = Math.max(1, Number(nights || 1));
+  let totalAmount = null;
+  let dailyRate = null;
+  let dualOptionRates = null; // { withoutBfDaily, withBfDaily, withoutBfTotal, withBfTotal }
+
+  for (const msg of messages) {
+    const text = String(msg?.text || msg?.message || "").trim();
+    if (!text) continue;
+
+    // Ignora linhas que não têm relação com preço/orçamento
+    const hasCurrencyOrPriceContext =
+      /R\$\s*\d/i.test(text) ||
+      /\b\d+(?:[.,]\d{1,2})?\s*reais\b/i.test(text) ||
+      /\b(?:valor|total|or[cç]amento|di[aá]ria|pacote|fica|fechamos|fechado\s+por|cota[cç][aã]o)\b[\s:=-]*R?\$?\s*\d/i.test(text);
+
+    if (!hasCurrencyOrPriceContext) continue;
+
+    const lines = text.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+    let msgTotal = null;
+    let msgDaily = null;
+    let msgWithBfDaily = null;
+    let msgWithoutBfDaily = null;
+    let msgWithBfTotal = null;
+    let msgWithoutBfTotal = null;
+
+    for (const line of lines) {
+      const lowerLine = line.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      // Ignora menção isolada ao custo avulso do café da manhã (ex: "café avulso R$ 35") quando não é a diária/total
+      const isBreakfastAddonLine = /\bcafe\b/.test(lowerLine) && /\b(?:avulso|adicional|por\s+pessoa)\b/.test(lowerLine) && !/\b(?:diaria|total|com\s+cafe\s+incluso)\b/.test(lowerLine);
+      if (isBreakfastAddonLine) continue;
+
+      // Extrai todos os valores monetários da linha
+      const currencyMatches = [];
+      const rxCurrency = /(?:R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)|(\d{2,5}(?:[.,]\d{1,2})?)\s*reais|(?:valor|total|or[cç]amento|di[aá]ria|fica|por)\s*(?:de|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?))/gi;
+      let m;
+      while ((m = rxCurrency.exec(line)) !== null) {
+        const rawNum = m[1] || m[2] || m[3];
+        const parsed = parseBrlAmountValue(rawNum);
+        if (parsed && parsed >= 50 && parsed <= 100000) {
+          currencyMatches.push({ value: parsed, index: m.index, raw: m[0] });
+        }
+      }
+
+      if (currencyMatches.length === 0) continue;
+
+      const mentionsWithBf = /\b(?:com\s+cafe|c\/\s*cafe|cafe\s+incluso|incluindo\s+cafe|op[cç][aã]o\s*1)\b/.test(lowerLine);
+      const mentionsWithoutBf = /\b(?:sem\s+cafe|s\/\s*cafe|apenas\s+hospedagem|somente\s+hospedagem|op[cç][aã]o\s*2)\b/.test(lowerLine);
+      const mentionsTotal = /\b(?:total|pacote|pelas?\s+\d+\s*di[aá]rias|as\s+\d+\s*di[aá]rias|no\s+total|valor\s+final|valor\s+total|fechado\s+em|fica\s+r?\$?\s*\d+\s+pelas)\b/.test(lowerLine);
+      const mentionsDaily = /\b(?:di[aá]ria|por\s+noite|\/\s*noite|\/\s*dia|a\s+noite|cada\s+di[aá]ria)\b/.test(lowerLine);
+
+      // Caso a mesma linha mencione AMBOS "sem café" e "com café" com 2 valores (ex: "R$ 237 sem café ou R$ 272 com café")
+      if (mentionsWithBf && mentionsWithoutBf && currencyMatches.length >= 2) {
+        const idxWith = lowerLine.search(/\b(?:com\s+cafe|c\/\s*cafe|cafe\s+incluso)\b/);
+        const idxWithout = lowerLine.search(/\b(?:sem\s+cafe|s\/\s*cafe)\b/);
+        const firstVal = currencyMatches[0].value;
+        const secondVal = currencyMatches[1].value;
+        if (idxWithout < idxWith) {
+          if (mentionsTotal && !mentionsDaily) {
+            msgWithoutBfTotal = firstVal;
+            msgWithBfTotal = secondVal;
+          } else {
+            msgWithoutBfDaily = firstVal;
+            msgWithBfDaily = secondVal;
+          }
+        } else {
+          if (mentionsTotal && !mentionsDaily) {
+            msgWithBfTotal = firstVal;
+            msgWithoutBfTotal = secondVal;
+          } else {
+            msgWithBfDaily = firstVal;
+            msgWithoutBfDaily = secondVal;
+          }
+        }
+        continue;
+      }
+
+      if (mentionsWithBf && !mentionsWithoutBf) {
+        if (mentionsTotal && !mentionsDaily) {
+          msgWithBfTotal = currencyMatches[currencyMatches.length - 1].value;
+        } else if (mentionsDaily && !mentionsTotal) {
+          msgWithBfDaily = currencyMatches[0].value;
+        } else if (currencyMatches.length >= 2) {
+          const sorted = [...currencyMatches.map(c => c.value)].sort((a, b) => a - b);
+          msgWithBfDaily = sorted[0];
+          msgWithBfTotal = sorted[sorted.length - 1];
+        } else {
+          msgWithBfDaily = currencyMatches[0].value;
+        }
+        continue;
+      }
+
+      if (mentionsWithoutBf && !mentionsWithBf) {
+        if (mentionsTotal && !mentionsDaily) {
+          msgWithoutBfTotal = currencyMatches[currencyMatches.length - 1].value;
+        } else if (mentionsDaily && !mentionsTotal) {
+          msgWithoutBfDaily = currencyMatches[0].value;
+        } else if (currencyMatches.length >= 2) {
+          const sorted = [...currencyMatches.map(c => c.value)].sort((a, b) => a - b);
+          msgWithoutBfDaily = sorted[0];
+          msgWithoutBfTotal = sorted[sorted.length - 1];
+        } else {
+          msgWithoutBfDaily = currencyMatches[0].value;
+        }
+        continue;
+      }
+
+      // Linha de preço geral (sem distinção de opção de café)
+      if (currencyMatches.length >= 2 && (mentionsDaily || mentionsTotal)) {
+        const sorted = [...currencyMatches.map(c => c.value)].sort((a, b) => a - b);
+        msgDaily = sorted[0];
+        msgTotal = sorted[sorted.length - 1];
+      } else if (mentionsTotal && !mentionsDaily) {
+        msgTotal = currencyMatches[currencyMatches.length - 1].value;
+      } else if (mentionsDaily && !mentionsTotal) {
+        msgDaily = currencyMatches[0].value;
+      } else {
+        // Ex: "Fica R$ 540,00" ou "Valor: R$ 270,00"
+        const val = currencyMatches[currencyMatches.length - 1].value;
+        msgTotal = val;
+      }
+    }
+
+    if (msgWithBfDaily || msgWithoutBfDaily || msgWithBfTotal || msgWithoutBfTotal) {
+      dualOptionRates = {
+        withBfDaily: msgWithBfDaily || dualOptionRates?.withBfDaily || null,
+        withoutBfDaily: msgWithoutBfDaily || dualOptionRates?.withoutBfDaily || null,
+        withBfTotal: msgWithBfTotal || dualOptionRates?.withBfTotal || null,
+        withoutBfTotal: msgWithoutBfTotal || dualOptionRates?.withoutBfTotal || null
+      };
+    }
+
+    if (msgTotal != null || msgDaily != null) {
+      if (msgTotal != null && msgDaily != null) {
+        totalAmount = msgTotal;
+        dailyRate = msgDaily;
+      } else if (msgDaily != null) {
+        dailyRate = msgDaily;
+        totalAmount = Math.round(msgDaily * effectiveNights * 100) / 100;
+      } else if (msgTotal != null) {
+        totalAmount = msgTotal;
+        dailyRate = Math.round((msgTotal / effectiveNights) * 100) / 100;
+      }
+    }
+  }
+
+  // Se havia duas opções na cotação (com café vs sem café) e nenhum preço único posterior sobrescreveu,
+  // seleciona o valor correspondente à preferência de café da manhã escolhida na conversa
+  if (dualOptionRates && totalAmount == null) {
+    const preferWithBf = breakfastPreference === "with_breakfast";
+    const preferWithoutBf = breakfastPreference === "without_breakfast";
+    if (preferWithBf && (dualOptionRates.withBfTotal || dualOptionRates.withBfDaily)) {
+      dailyRate = dualOptionRates.withBfDaily || Math.round((dualOptionRates.withBfTotal / effectiveNights) * 100) / 100;
+      totalAmount = dualOptionRates.withBfTotal || Math.round(dailyRate * effectiveNights * 100) / 100;
+    } else if (preferWithoutBf && (dualOptionRates.withoutBfTotal || dualOptionRates.withoutBfDaily)) {
+      dailyRate = dualOptionRates.withoutBfDaily || Math.round((dualOptionRates.withoutBfTotal / effectiveNights) * 100) / 100;
+      totalAmount = dualOptionRates.withoutBfTotal || Math.round(dailyRate * effectiveNights * 100) / 100;
+    } else {
+      const chosenDaily = dualOptionRates.withoutBfDaily || dualOptionRates.withBfDaily;
+      const chosenTotal = dualOptionRates.withoutBfTotal || dualOptionRates.withBfTotal;
+      if (chosenDaily || chosenTotal) {
+        dailyRate = chosenDaily || Math.round((chosenTotal / effectiveNights) * 100) / 100;
+        totalAmount = chosenTotal || Math.round(dailyRate * effectiveNights * 100) / 100;
+      }
+    }
+  } else if (dualOptionRates && totalAmount != null) {
+    // Se a escolha de café ocorreu depois da mensagem de dupla opção, ajusta caso o total atual ainda seja uma das opções
+    if (breakfastPreference === "with_breakfast" && (dualOptionRates.withBfTotal || dualOptionRates.withBfDaily)) {
+      const wTotal = dualOptionRates.withBfTotal || Math.round(dualOptionRates.withBfDaily * effectiveNights * 100) / 100;
+      const woTotal = dualOptionRates.withoutBfTotal || (dualOptionRates.withoutBfDaily ? Math.round(dualOptionRates.withoutBfDaily * effectiveNights * 100) / 100 : null);
+      if (totalAmount === woTotal) {
+        totalAmount = wTotal;
+        dailyRate = dualOptionRates.withBfDaily || Math.round((wTotal / effectiveNights) * 100) / 100;
+      }
+    } else if (breakfastPreference === "without_breakfast" && (dualOptionRates.withoutBfTotal || dualOptionRates.withoutBfDaily)) {
+      const woTotal = dualOptionRates.withoutBfTotal || Math.round(dualOptionRates.withoutBfDaily * effectiveNights * 100) / 100;
+      const wTotal = dualOptionRates.withBfTotal || (dualOptionRates.withBfDaily ? Math.round(dualOptionRates.withBfDaily * effectiveNights * 100) / 100 : null);
+      if (totalAmount === wTotal) {
+        totalAmount = woTotal;
+        dailyRate = dualOptionRates.withoutBfDaily || Math.round((woTotal / effectiveNights) * 100) / 100;
+      }
+    }
+  }
+
+  return {
+    hasQuote: Boolean(totalAmount != null && totalAmount > 0),
+    totalAmount: totalAmount != null ? Math.round(totalAmount * 100) / 100 : null,
+    dailyRate: dailyRate != null ? Math.round(dailyRate * 100) / 100 : null
+  };
+}
+
+/**
+ * Extrai e valida os 5 dados obrigatórios + intenção de reserva na conversa para a Assistente Ativa de Pré-Reservas:
+ * 1) Datas (checkIn, checkOut)
+ * 2) Orçamento / Valor (totalAmount, dailyRate)
+ * 3) Nome Completo (mínimo 2 palavras)
+ * 4) CPF (11 dígitos)
+ * 5) E-mail
+ */
+export function extractActivePreReservationData(convOrMessages, db = null, guestPhone = "") {
+  const messages = Array.isArray(convOrMessages)
+    ? convOrMessages
+    : (Array.isArray(convOrMessages?.messages) ? convOrMessages.messages : []);
+  const resolvedPhone = cleanWhatsAppPhone(guestPhone || convOrMessages?.phone || "");
+
+  const dateInfo = extractDatesFromMessages(messages);
+
+  // Detecta preferência de café da manhã e quantidade de hóspedes no histórico
+  let breakfastPreference = null;
+  let guestsCount = 1;
+  let preferredFlatNumber = null;
+  let hasBookingKeywords = false;
+  let hasPostStayFiscalOnly = false;
+
+  for (const msg of messages) {
+    const text = String(msg?.text || msg?.message || "").trim();
+    if (!text) continue;
+    const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    if (/\b(?:sem\s+cafe|s\/\s*cafe|apenas\s+hospedagem|somente\s+hospedagem|nao\s+quero\s+cafe)\b/.test(norm) && !/\bcom\s+cafe\b/.test(norm)) {
+      breakfastPreference = "without_breakfast";
+    } else if (/\b(?:com\s+cafe|c\/\s*cafe|cafe\s+incluso|incluir\s+cafe|quero\s+cafe)\b/.test(norm) && !/\bsem\s+cafe\b/.test(norm)) {
+      breakfastPreference = "with_breakfast";
+    }
+
+    const gMatch = norm.match(/\b([1-4])\s*(?:hospedes?|pessoas?|adultos?)\b/);
+    if (gMatch) {
+      guestsCount = parseInt(gMatch[1], 10);
+    } else if (/\b(?:casal|duas\s+pessoas|dois\s+adultos|eu\s+e\s+minha\s+esposa|eu\s+e\s+meu\s+marido)\b/.test(norm)) {
+      guestsCount = 2;
+    } else if (/\b(?:sozinho|individual|uma\s+pessoa|1\s+adulto)\b/.test(norm)) {
+      guestsCount = 1;
+    }
+
+    const flatMatch = norm.match(/\b(?:flat|apto|apartamento|unidade|quarto)\s*(\d{3,4})\b/);
+    if (flatMatch) {
+      preferredFlatNumber = flatMatch[1];
+    }
+
+    if (/\b(?:reservar|reserva|pre-?reserva|disponibilidade|disponivel|vaga|diaria|diarias|cotacao|orcamento|fechar|confirmar|hospedar|hospedagem|check-?in|ficar|estadia|quarto|flat|dados\s+para\s+reserva|fazer\s+a\s+reserva|pode\s+reservar)\b/.test(norm)) {
+      hasBookingKeywords = true;
+    }
+
+    if (/\b(?:nota\s+fiscal|nfse|nfs-e|emitir\s+nota|emissao\s+de\s+nota|recibo\s+fiscal)\b/.test(norm)) {
+      hasPostStayFiscalOnly = true;
+    }
+  }
+
+  const quoteInfo = extractQuoteFromMessages(messages, dateInfo.nights || 1, breakfastPreference);
+  const fullName = extractFullNameFromMessages(messages);
+  const cpf = extractCpfFromMessages(messages, resolvedPhone);
+  const email = extractEmailFromMessages(messages);
+
+  const hasDates = Boolean(dateInfo.hasDates && dateInfo.checkIn && dateInfo.checkOut);
+  const hasQuote = Boolean(quoteInfo.hasQuote && quoteInfo.totalAmount > 0);
+  const hasFullName = Boolean(fullName && fullName.split(/\s+/).length >= 2);
+  const hasCpf = Boolean(cpf && cpf.length === 11);
+  const hasEmail = Boolean(email && email.includes("@"));
+
+  const isPureFiscal = hasPostStayFiscalOnly && !/\b(?:reservar|nova\s+reserva|pre-?reserva|disponibilidade|cotacao|orcamento)\b/i.test(
+    messages.map(m => String(m?.text || "")).join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  );
+
+  const hasBookingIntent = !isPureFiscal && (hasBookingKeywords || (hasDates && hasQuote));
+
+  const missingFields = [];
+  if (!hasDates) missingFields.push("datas");
+  if (!hasQuote) missingFields.push("orcamento_valor");
+  if (!hasFullName) missingFields.push("nome_completo");
+  if (!hasCpf) missingFields.push("cpf");
+  if (!hasEmail) missingFields.push("email");
+  if (!hasBookingIntent) missingFields.push("intencao_reserva");
+
+  const includeBreakfast = breakfastPreference === "with_breakfast";
+  const ratePlan = includeBreakfast ? "with_breakfast" : "room_only";
+
+  return {
+    isComplete: missingFields.length === 0,
+    missingFields,
+    hasDates,
+    hasQuote,
+    hasFullName,
+    hasCpf,
+    hasEmail,
+    hasBookingIntent,
+    checkIn: dateInfo.checkIn,
+    checkOut: dateInfo.checkOut,
+    nights: dateInfo.nights,
+    displayCheckIn: dateInfo.displayCheckIn,
+    displayCheckOut: dateInfo.displayCheckOut,
+    totalAmount: quoteInfo.totalAmount,
+    dailyRate: quoteInfo.dailyRate,
+    guestName: fullName,
+    guestCpf: cpf,
+    formattedCpf: cpf ? formatCpf(cpf) : null,
+    guestEmail: email,
+    guestPhone: resolvedPhone,
+    guests: guestsCount,
+    includeBreakfast,
+    ratePlan,
+    preferredFlatNumber
+  };
+}
+
+/**
+ * Formata a mensagem de resumo de pré-reserva enviada pela Sofia para o WhatsApp do gestor.
+ */
+export function formatActivePreReservationManagerSummary(proposal, db = null, options = {}) {
+  const isReviewUpdate = Boolean(options.isReviewUpdate);
+  const availableList = Array.isArray(proposal.availableFlatNumbers) && proposal.availableFlatNumbers.length > 0
+    ? proposal.availableFlatNumbers.join(", ")
+    : (proposal.flatNumber || "Nenhum");
+
+  const totalFmt = Number(proposal.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dailyFmt = Number(proposal.dailyRate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cpfFmt = proposal.guestCpf ? formatCpf(proposal.guestCpf) : "Não informado";
+  const phoneFmt = proposal.guestPhone ? formatPhoneDisplay(proposal.guestPhone) : "Não informado";
+  const inDisp = proposal.checkIn ? proposal.checkIn.split("-").reverse().join("/") : "-";
+  const outDisp = proposal.checkOut ? proposal.checkOut.split("-").reverse().join("/") : "-";
+  const nights = Math.max(1, Number(proposal.nights || 1));
+  const guests = Math.max(1, Number(proposal.guests || 1));
+
+  const header = isReviewUpdate
+    ? `✏️ *Resumo Atualizado da Pré-Reserva (#${proposal.id}) — Sofia*`
+    : `🤖 *Assistente Ativa de Pré-Reservas — Sofia*\nIdentifiquei intenção de reserva com todos os dados completos no atendimento em andamento:`;
+
+  return `${header}
+
+👤 *Hóspede:* ${proposal.guestName}
+🪪 *CPF:* ${cpfFmt}
+📧 *E-mail:* ${proposal.guestEmail}
+📱 *WhatsApp:* ${phoneFmt}
+📅 *Período:* ${inDisp} a ${outDisp} (*${nights} ${nights === 1 ? "diária" : "diárias"}*)
+👥 *Hóspedes:* ${guests} ${guests === 1 ? "pessoa" : "pessoas"}
+☕ *Café da Manhã:* ${proposal.includeBreakfast ? "Incluso" : "Não incluso"}
+💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt})
+🏢 *Flat Sugerido (Flat da Vez):* *Flat ${proposal.flatNumber}*
+_(Flats disponíveis no período: ${availableList})_${proposal.notes ? `\n📝 *Obs:* ${proposal.notes}` : ""}
+
+Deseja que eu crie a pré-reserva no sistema agora?
+• Responda *"Sim"* ou *"Pode criar"* para confirmar;
+• Ou peça para criar alterando algum dado (ex.: *"Pode criar, mas coloca no flat 509"*, *"Cria com valor 480"*);
+• Ou peça para revisar antes (ex.: *"Muda para o flat 509 para eu revisar"*);
+• Ou responda *"Cancelar"* para descartar.`;
+}
+
+/**
+ * Avalia a conversa conduzida pelo operador humano e, caso contenha os 5 dados obrigatórios + intenção de reserva,
+ * seleciona o Flat da Vez (Fair-Share), registra a proposta pendente e envia o resumo para o WhatsApp do gestor.
+ */
+export async function evaluateAndNotifyActivePreReservation({
+  db,
+  conv,
+  cleanTarget,
+  incomingInfo = null,
+  saveDatabase = null,
+  createNotification = null,
+  sendZapiMessage = null,
+  appendMessageFn = null
+}) {
+  if (!db || !conv) {
+    return { triggered: false, reason: "missing_context" };
+  }
+
+  const guestPhone = cleanWhatsAppPhone(cleanTarget || conv.phone || "");
+  if (!guestPhone || isDeveloperPhone(guestPhone, db)) {
+    return { triggered: false, reason: "developer_phone_ignored" };
+  }
+
+  if (!isOperatorConductingConversation(conv, db, incomingInfo)) {
+    return { triggered: false, reason: "not_operator_conversation" };
+  }
+
+  const extracted = extractActivePreReservationData(conv, db, guestPhone);
+  if (!extracted.isComplete) {
+    return {
+      triggered: false,
+      reason: "incomplete_mandatory_data",
+      missingFields: extracted.missingFields,
+      extracted
+    };
+  }
+
+  // Verifica se já existe uma reserva ou pré-reserva ativa no sistema para o mesmo hóspede e período
+  const nowMs = Date.now();
+  const existingReservation = (db.reservations || []).find(r => {
+    if (!r) return false;
+    const statusNorm = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelled", "expirada", "no_show"].includes(statusNorm)) return false;
+    if ((statusNorm === "pre_reserva" || statusNorm === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+      return false;
+    }
+    const sameDates = r.checkinDate === extracted.checkIn && r.checkoutDate === extracted.checkOut;
+    if (!sameDates) return false;
+    const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+    const rCpf = onlyDigits(r.guestCpf || r.guestDocument || "");
+    return (rPhone && matchClientPhone(rPhone, guestPhone)) || (rCpf && rCpf === extracted.guestCpf);
+  });
+
+  if (existingReservation) {
+    return {
+      triggered: false,
+      reason: "reservation_already_exists",
+      reservationCode: existingReservation.code
+    };
+  }
+
+  if (!Array.isArray(db.pendingPreReservationProposals)) {
+    db.pendingPreReservationProposals = [];
+  }
+
+  // Deduplicação: verifica se já existe uma proposta pendente ou confirmada para este hóspede e datas com os mesmos dados
+  const signature = `${guestPhone}|${extracted.checkIn}|${extracted.checkOut}|${extracted.totalAmount}|${extracted.guestCpf}|${extracted.guestEmail}|${extracted.guestName}`;
+  const existingProposal = db.pendingPreReservationProposals.find(p =>
+    p &&
+    matchClientPhone(p.guestPhone, guestPhone) &&
+    p.checkIn === extracted.checkIn &&
+    p.checkOut === extracted.checkOut &&
+    (p.status === "pending_manager" || p.status === "confirmed")
+  );
+
+  if (existingProposal && existingProposal.signature === signature) {
+    return {
+      triggered: false,
+      reason: "proposal_already_notified",
+      proposalId: existingProposal.id
+    };
+  }
+
+  // Seleciona o Flat da Vez (Fair-Share) entre os flats disponíveis no período
+  const fairShare = selectFairShareFlat(db, extracted.checkIn, extracted.checkOut);
+  if (!fairShare.recommendedFlat) {
+    return {
+      triggered: false,
+      reason: "no_available_flats_in_period",
+      extracted
+    };
+  }
+
+  // Se o operador/hóspede mencionou explicitamente um flat específico na conversa e ele está disponível, usa-o;
+  // caso contrário, usa rigorosamente o Flat da Vez (Fair-Share)
+  let selectedFlat = fairShare.recommendedFlat;
+  if (extracted.preferredFlatNumber) {
+    const matchPref = fairShare.availableFlats.find(f => String(f.number) === String(extracted.preferredFlatNumber));
+    if (matchPref) {
+      selectedFlat = matchPref;
+    }
+  }
+
+  const proposalId = existingProposal && existingProposal.status === "pending_manager"
+    ? existingProposal.id
+    : `PRERES-${Date.now().toString(36).toUpperCase().slice(-5)}`;
+
+  const proposal = {
+    id: proposalId,
+    status: "pending_manager",
+    signature,
+    guestPhone,
+    guestName: extracted.guestName,
+    guestCpf: extracted.guestCpf,
+    guestEmail: extracted.guestEmail,
+    checkIn: extracted.checkIn,
+    checkOut: extracted.checkOut,
+    nights: extracted.nights,
+    guests: extracted.guests || 1,
+    totalAmount: extracted.totalAmount,
+    dailyRate: extracted.dailyRate,
+    includeBreakfast: extracted.includeBreakfast,
+    ratePlan: extracted.ratePlan,
+    flatId: selectedFlat.id,
+    flatNumber: String(selectedFlat.number),
+    fairShareFlatNumber: String(fairShare.recommendedFlat.number),
+    availableFlatNumbers: fairShare.availableFlats.map(f => String(f.number)),
+    notes: "",
+    createdAt: existingProposal?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (existingProposal && existingProposal.status === "pending_manager") {
+    const idx = db.pendingPreReservationProposals.indexOf(existingProposal);
+    db.pendingPreReservationProposals[idx] = proposal;
+  } else {
+    db.pendingPreReservationProposals.unshift(proposal);
+  }
+
+  const managerPhone = getManagerWhatsAppPhone(db);
+  const summaryMessage = formatActivePreReservationManagerSummary(proposal, db);
+
+  let sendRes = null;
+  if (typeof sendZapiMessage === "function") {
+    sendRes = await sendZapiMessage(db.zapiConfig, {
+      phone: managerPhone,
+      message: summaryMessage,
+      channelId: "ai_agent",
+      recipientRole: "developer",
+      bypassTestMode: true,
+      triggerEvent: "sofia_active_pre_reservation_prompt",
+      db
+    });
+  }
+
+  if (typeof appendMessageFn === "function") {
+    const aiConfig = getWhatsAppAiConfig(db);
+    appendMessageFn(db, {
+      phone: managerPhone,
+      senderName: aiConfig.agentName || "Sofia",
+      fromMe: true,
+      text: summaryMessage,
+      type: "text",
+      status: sendRes?.success === false ? "failed" : "delivered",
+      timestamp: new Date().toISOString(),
+      messageId: sendRes?.messageId || `sofia_preres_prompt_${Date.now()}`
+    });
+  }
+
+  if (typeof createNotification === "function") {
+    createNotification({
+      category: "whatsapp",
+      title: `🤖 Pré-Reserva Pronta p/ Aprovação: ${proposal.guestName}`,
+      message: `Flat ${proposal.flatNumber} (Flat da Vez) • ${extracted.displayCheckIn} a ${extracted.displayCheckOut} • R$ ${Number(proposal.totalAmount).toFixed(2)}. Confira no seu WhatsApp!`,
+      type: "sofia_pre_reservation_proposal",
+      targetUrl: `/whatsapp-chat?phone=${guestPhone}`,
+      link: `/whatsapp-chat?phone=${guestPhone}`
+    });
+  }
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("active_pre_reservation_proposal_created"); } catch (_) {}
+  }
+
+  return {
+    triggered: true,
+    proposal,
+    managerPhone,
+    summaryMessage
+  };
+}
+
+/**
+ * Cria a pré-reserva oficial no PMS seguindo rigorosamente o fluxo padrão de pré-reserva (status: "pre_reserva")
+ * e dispara o gatilho imediato da régua de reservas (pre_reservation_created) sem enviar mensagem extra da IA ao hóspede.
+ */
+export async function createStandardPmsPreReservation(db, proposal, options = {}) {
+  const saveDatabase = options.saveDatabase || null;
+  const triggerImmediateFn = options.triggerImmediateFn || triggerImmediateWhatsApp;
+
+  const flat = (db?.flats || []).find(f =>
+    String(f.id) === String(proposal.flatId) || String(f.number) === String(proposal.flatNumber)
+  );
+  if (!flat) {
+    return {
+      success: false,
+      error: "FLAT_NOT_FOUND",
+      message: `O Flat ${proposal.flatNumber || proposal.flatId} não foi encontrado no cadastro do sistema.`
+    };
+  }
+
+  // Revalida disponibilidade do flat no período
+  const fairCheck = selectFairShareFlat(db, proposal.checkIn, proposal.checkOut);
+  const isSelectedFlatAvailable = fairCheck.availableFlats.some(f =>
+    String(f.id) === String(flat.id) || String(f.number) === String(flat.number)
+  );
+  if (!isSelectedFlatAvailable) {
+    return {
+      success: false,
+      error: "FLAT_UNAVAILABLE",
+      availableFlatNumbers: fairCheck.availableFlats.map(f => String(f.number)),
+      recommendedFlatNumber: fairCheck.recommendedFlat?.number || null,
+      message: `O Flat ${flat.number} não está disponível para o período de ${proposal.checkIn.split("-").reverse().join("/")} a ${proposal.checkOut.split("-").reverse().join("/")}.`
+    };
+  }
+
+  if (!Array.isArray(db.guests)) db.guests = [];
+  if (!Array.isArray(db.reservations)) db.reservations = [];
+
+  const cleanGuestPhone = cleanWhatsAppPhone(proposal.guestPhone || "");
+  const cleanGuestCpf = onlyDigits(proposal.guestCpf || "");
+  const cleanGuestEmail = String(proposal.guestEmail || "").trim().toLowerCase();
+  const cleanGuestName = String(proposal.guestName || "Hóspede").trim();
+
+  // 1. Vincula ou cria o hóspede em db.guests (padrão PMS demo-server.mjs)
+  let guestRecord = db.guests.find(g =>
+    (cleanGuestCpf && onlyDigits(g.cpf || g.document || "") === cleanGuestCpf) ||
+    (cleanGuestPhone && matchClientPhone(g.phone || "", cleanGuestPhone))
+  );
+
+  if (!guestRecord) {
+    const nextGuestId = db.guests.length > 0
+      ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1
+      : 1;
+    guestRecord = {
+      id: nextGuestId,
+      name: cleanGuestName,
+      phone: cleanGuestPhone,
+      email: cleanGuestEmail,
+      document: cleanGuestCpf,
+      cpf: cleanGuestCpf,
+      notes: "",
+      totalStays: 1,
+      lastStay: proposal.checkIn,
+      createdAt: new Date().toISOString()
+    };
+    db.guests.push(guestRecord);
+  } else {
+    guestRecord.name = cleanGuestName || guestRecord.name;
+    if (cleanGuestPhone) guestRecord.phone = cleanGuestPhone;
+    if (cleanGuestEmail) guestRecord.email = cleanGuestEmail;
+    if (cleanGuestCpf) {
+      guestRecord.document = cleanGuestCpf;
+      guestRecord.cpf = cleanGuestCpf;
+    }
+    guestRecord.lastStay = proposal.checkIn;
+  }
+
+  // 2. Calcula diárias e estrutura dailyRates (padrão PMS demo-server.mjs)
+  const inD = new Date(`${proposal.checkIn}T12:00:00Z`);
+  const outD = new Date(`${proposal.checkOut}T12:00:00Z`);
+  const nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
+  const totalAmount = Math.round(Number(proposal.totalAmount || 0) * 100) / 100;
+  const dailyRate = proposal.dailyRate != null && proposal.dailyRate > 0
+    ? Math.round(Number(proposal.dailyRate) * 100) / 100
+    : Math.round((totalAmount / nights) * 100) / 100;
+
+  const dailyRates = [];
+  for (let i = 0; i < nights; i++) {
+    const d = new Date(inD.getTime() + i * 86400000);
+    dailyRates.push({
+      date: d.toISOString().slice(0, 10),
+      rate: dailyRate
+    });
+  }
+
+  const nextResId = db.reservations.length > 0
+    ? Math.max(...db.reservations.map(r => Number(r.id) || 0)) + 1
+    : 1;
+  const code = `RES-${String(flat.number)}-${String(nextResId).padStart(4, "0")}`;
+  const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+
+  const pixPayload = generateStaticPixPayload({
+    pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
+    amount: totalAmount,
+    merchantName: "CORPFLATS LTDA",
+    merchantCity: "CAMPOS DOS GOYTACAZES",
+    txid: cleanTxId
+  });
+
+  const nowIso = new Date().toISOString();
+  const guestsCount = Math.max(1, Number(proposal.guests || 1));
+  const includeBreakfast = Boolean(proposal.includeBreakfast);
+
+  const newReservation = {
+    id: nextResId,
+    code,
+    flatId: flat.id,
+    flatNumber: String(flat.number),
+    guestId: guestRecord.id,
+    guestName: cleanGuestName,
+    guestPhone: cleanGuestPhone,
+    phone: cleanGuestPhone,
+    guestEmail: cleanGuestEmail,
+    guestDocument: cleanGuestCpf,
+    guestCpf: cleanGuestCpf,
+    checkinDate: proposal.checkIn,
+    checkoutDate: proposal.checkOut,
+    checkinTime: "14:00",
+    checkoutTime: "12:00",
+    status: "pre_reserva",
+    paymentStatus: "pendente",
+    totalAmount,
+    dailyRate,
+    dailyRates,
+    paidAmount: 0,
+    payments: [],
+    paymentMethod: "pix",
+    channel: "whatsapp",
+    source: "whatsapp",
+    ratePlan: includeBreakfast ? "with_breakfast" : "room_only",
+    includeBreakfast,
+    breakfastIncluded: includeBreakfast,
+    guestsCount,
+    numGuests: guestsCount,
+    guests: [
+      {
+        index: 1,
+        guestId: guestRecord.id,
+        name: cleanGuestName,
+        cpf: cleanGuestCpf,
+        phone: cleanGuestPhone,
+        email: cleanGuestEmail,
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
+      }
+    ],
+    pixCopiaECola: pixPayload,
+    pixTxId: cleanTxId,
+    notes: proposal.notes || "Pré-reserva criada pela Assistente Ativa Sofia mediante confirmação do gestor via WhatsApp.",
+    createdBy: "Sofia (Assistente Ativa WhatsApp)",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    auditLogs: [
+      {
+        id: Date.now(),
+        timestamp: nowIso,
+        action: "Pré-reserva criada via Assistente Ativa Sofia (confirmada pelo gestor no WhatsApp)",
+        user: "Sofia / Gestor"
+      }
+    ]
+  };
+
+  db.reservations.unshift(newReservation);
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("pre_reservation_created_by_sofia_assistant"); } catch (_) {}
+  }
+
+  // Dispara apenas a régua padrão de pré-reserva do sistema (sem mensagem avulsa de chat da IA)
+  if (options.skipImmediateTrigger !== true && typeof triggerImmediateFn === "function") {
+    try {
+      await triggerImmediateFn(db, saveDatabase, "pre_reservation_created", newReservation);
+    } catch (trigErr) {
+      console.warn("[Active Pre-Reservation Assistant] Aviso ao acionar régua pre_reservation_created:", trigErr.message);
+    }
+  }
+
+  return {
+    success: true,
+    reservation: newReservation,
+    guest: guestRecord
+  };
+}
+
+/**
+ * Interpreta a resposta do gestor no WhatsApp para uma proposta de pré-reserva pendente:
+ * - Confirmação direta ("sim", "pode criar", "confirmo", "ok")
+ * - Confirmação com alterações ("pode criar, mas coloca no flat 509", "cria com valor 480", etc.)
+ * - Pedido de edição/revisão antes de confirmar ("muda para o flat 509 e valor 480 para eu revisar", ou envio apenas das alterações)
+ * - Cancelamento ("cancelar", "não precisa criar")
+ */
+export function parseManagerPreReservationCommand(text, proposal, db = null) {
+  if (!text || typeof text !== "string" || !proposal) {
+    return { matched: false };
+  }
+
+  const trimmed = text.trim();
+  const norm = trimmed.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Evita interceptar comandos explícitos de treinamento/calibração da Sofia que não tratam da pré-reserva
+  if (/^sofia\s*[,:]?\s*(?:seja\s+mais|use\s+tom|nao\s+use\s+emojis|lembre-se\s+que|sempre\s+que\s+um\s+hospede|a\s+partir\s+de\s+agora\s+responda)/i.test(norm)) {
+    return { matched: false };
+  }
+
+  const updates = {};
+  let hasFieldUpdates = false;
+
+  // 1. Alteração de Flat (ex: "no flat 509", "coloca no 509", "apto 404", "muda pro 301")
+  const allFlatNumbers = (Array.isArray(db?.flats) ? db.flats : []).map(f => String(f.number));
+  const explicitFlatMatch = norm.match(/\b(?:flat|apto|apartamento|unidade|quarto)\s*[:=\-]?\s*(\d{3,4})\b/);
+  if (explicitFlatMatch) {
+    updates.flatNumber = explicitFlatMatch[1];
+    hasFieldUpdates = true;
+  } else {
+    const shortFlatMatch = norm.match(/\b(?:coloca\s+no|muda\s+p(?:ara\s+o|ro)|vai\s+no|cria\s+no|reserva\s+no|no)\s+(\d{3,4})\b/);
+    if (shortFlatMatch && (allFlatNumbers.length === 0 || allFlatNumbers.includes(shortFlatMatch[1]))) {
+      updates.flatNumber = shortFlatMatch[1];
+      hasFieldUpdates = true;
+    }
+  }
+
+  // 2. Alteração de Datas (ex: "muda as datas para 22/11 a 25/11" ou "check-in 22/11 e check-out 25/11")
+  const parsedDates = parseNaturalDatesFromText(trimmed);
+  if (parsedDates && parsedDates.checkIn && parsedDates.checkOut && parsedDates.checkIn < parsedDates.checkOut) {
+    updates.checkIn = parsedDates.checkIn;
+    updates.checkOut = parsedDates.checkOut;
+    const inD = new Date(`${parsedDates.checkIn}T12:00:00Z`);
+    const outD = new Date(`${parsedDates.checkOut}T12:00:00Z`);
+    updates.nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
+    hasFieldUpdates = true;
+  } else {
+    const inMatch = trimmed.match(/(?:check-?in|entrada)\s*(?:para|:|=|-)?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i);
+    const outMatch = trimmed.match(/(?:check-?out|sa[ií]da)\s*(?:para|:|=|-)?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i);
+    const newIn = inMatch ? parseSingleDateToken(inMatch[1]) : null;
+    const newOut = outMatch ? parseSingleDateToken(outMatch[1]) : null;
+    const finalIn = newIn || proposal.checkIn;
+    const finalOut = newOut || proposal.checkOut;
+    if ((newIn || newOut) && finalIn && finalOut && finalIn < finalOut) {
+      updates.checkIn = finalIn;
+      updates.checkOut = finalOut;
+      const inD = new Date(`${finalIn}T12:00:00Z`);
+      const outD = new Date(`${finalOut}T12:00:00Z`);
+      updates.nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
+      hasFieldUpdates = true;
+    }
+  }
+
+  const effectiveNights = updates.nights || proposal.nights || 1;
+
+  // 3. Alteração de Valor Total ou Diária
+  // Remove ocorrências de "flat 509" e datas da string para não confundir números de flat/data com valor
+  const textWithoutFlatAndDates = trimmed
+    .replace(/\b(?:flat|apto|apartamento|unidade|quarto)\s*[:=\-]?\s*\d{3,4}\b/gi, " ")
+    .replace(/\b(?:coloca\s+no|muda\s+p(?:ara\s+o|ro)|vai\s+no|cria\s+no|reserva\s+no)\s+\d{3,4}\b/gi, " ")
+    .replace(/\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g, " ")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ")
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ");
+
+  const dailyUpdateMatch =
+    textWithoutFlatAndDates.match(/\bdi[aá]ria\s*(?:de|para|por|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
+    textWithoutFlatAndDates.match(/R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:reais\s+)?(?:a\s+di[aá]ria|por\s+di[aá]ria|por\s+noite|\/\s*dia|\/\s*noite)/i);
+
+  const textWithoutDaily = dailyUpdateMatch
+    ? textWithoutFlatAndDates.replace(dailyUpdateMatch[0], " ")
+    : textWithoutFlatAndDates;
+
+  const totalUpdateMatch = textWithoutDaily.match(/\b(?:valor(?:\s+total)?|total|or[cç]amento|pre[cç]o|por)\s*(?:de|para|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
+                           textWithoutDaily.match(/R\$\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
+                           textWithoutDaily.match(/\b(\d{2,5}(?:[.,]\d{1,2})?)\s*reais\b/i);
+
+  if (dailyUpdateMatch && dailyUpdateMatch[1]) {
+    const parsedDaily = parseBrlAmountValue(dailyUpdateMatch[1]);
+    if (parsedDaily && parsedDaily >= 50) {
+      updates.dailyRate = parsedDaily;
+      updates.totalAmount = Math.round(parsedDaily * effectiveNights * 100) / 100;
+      hasFieldUpdates = true;
+    }
+  }
+  if (totalUpdateMatch && totalUpdateMatch[1]) {
+    const parsedTotal = parseBrlAmountValue(totalUpdateMatch[1]);
+    if (parsedTotal && parsedTotal >= 50) {
+      updates.totalAmount = parsedTotal;
+      if (!updates.dailyRate) {
+        updates.dailyRate = Math.round((parsedTotal / effectiveNights) * 100) / 100;
+      }
+      hasFieldUpdates = true;
+    }
+  } else if (!updates.totalAmount && updates.nights && updates.nights !== proposal.nights && proposal.dailyRate) {
+    updates.totalAmount = Math.round(proposal.dailyRate * updates.nights * 100) / 100;
+  }
+
+  // 4. Alteração de Café da Manhã
+  if (/\b(?:com\s+cafe|inclui(?:r)?\s+cafe|cafe\s+incluso|adiciona(?:r)?\s+cafe)\b/.test(norm)) {
+    updates.includeBreakfast = true;
+    updates.ratePlan = "with_breakfast";
+    hasFieldUpdates = true;
+  } else if (/\b(?:sem\s+cafe|tira(?:r)?\s+(?:o\s+)?cafe|retira(?:r)?\s+(?:o\s+)?cafe|remove(?:r)?\s+(?:o\s+)?cafe)\b/.test(norm)) {
+    updates.includeBreakfast = false;
+    updates.ratePlan = "room_only";
+    hasFieldUpdates = true;
+  }
+
+  // 5. Alteração de Quantidade de Hóspedes
+  const guestsUpdateMatch = norm.match(/\b([1-4])\s*(?:hospedes?|pessoas?|adultos?)\b/);
+  if (guestsUpdateMatch) {
+    updates.guests = parseInt(guestsUpdateMatch[1], 10);
+    hasFieldUpdates = true;
+  } else if (/\b(?:casal|duas\s+pessoas)\b/.test(norm)) {
+    updates.guests = 2;
+    hasFieldUpdates = true;
+  }
+
+  // 6. Alteração de Nome, CPF ou E-mail
+  const nameUpdateMatch = trimmed.match(/\bnome\s*(?:para|:|=|-)\s*([^\n\r,;]+)/i);
+  if (nameUpdateMatch && nameUpdateMatch[1]) {
+    const cleanNewName = sanitizeFullNameCandidate(nameUpdateMatch[1]) || toTitleCase(nameUpdateMatch[1].trim());
+    if (cleanNewName && cleanNewName.split(/\s+/).length >= 2) {
+      updates.guestName = cleanNewName;
+      hasFieldUpdates = true;
+    }
+  }
+
+  const cpfUpdateMatch = trimmed.match(/\bcpf\s*(?:para|:|=|-)?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
+  if (cpfUpdateMatch && cpfUpdateMatch[1]) {
+    updates.guestCpf = onlyDigits(cpfUpdateMatch[1]);
+    hasFieldUpdates = true;
+  }
+
+  const emailUpdateMatch = trimmed.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  if (emailUpdateMatch) {
+    updates.guestEmail = emailUpdateMatch[0].toLowerCase();
+    hasFieldUpdates = true;
+  }
+
+  // 7. Classificação da Intenção do Gestor
+  const isCancel =
+    /^(?:nao|não|cancela|cancelar|descarta|descartar|ignora|ignorar|aborta|abortar)\b/.test(norm) ||
+    /\b(?:nao\s+precisa\s+criar|nao\s+cria|nao\s+faca|deixa\s+quieto|ja\s+criei|ja\s+fiz\s+manualmente|pode\s+cancelar|pode\s+descartar)\b/.test(norm);
+
+  if (isCancel && !hasFieldUpdates) {
+    return {
+      matched: true,
+      action: "cancel",
+      updates: {}
+    };
+  }
+
+  const hasReviewOnlyIntent =
+    /\b(?:para\s+eu\s+revisar|pra\s+eu\s+revisar|para\s+revisar|para\s+eu\s+ver|pra\s+eu\s+ver|antes\s+de\s+criar|antes\s+de\s+confirmar|sem\s+criar\s+ainda|nao\s+cria\s+ainda|so\s+altera|apenas\s+altera|so\s+muda|apenas\s+muda|me\s+mostra\s+como\s+fica)\b/.test(norm);
+
+  const hasConfirmIntent =
+    /^(?:sim|s|ok|okay|confirmo|confirmado|confirma|aprovo|aprovado|autorizo|pode\s+criar|pode\s+fazer|pode\s+gerar|pode\s+confirmar|cria|criar|gera|gerar|fechado|perfeito|isso\s+mesmo|manda\s+bala)\b/.test(norm) ||
+    /\b(?:pode\s+criar|pode\s+fazer|pode\s+gerar|pode\s+lancar|confirmo|confirmado|aprovo|aprovado|cria\s+no|cria\s+com|cria\s+a\s+pre|gera\s+a\s+pre)\b/.test(norm);
+
+  if (hasConfirmIntent && !hasReviewOnlyIntent) {
+    return {
+      matched: true,
+      action: "confirm_and_create",
+      updates
+    };
+  }
+
+  if (hasFieldUpdates) {
+    return {
+      matched: true,
+      action: "update_and_review",
+      updates
+    };
+  }
+
+  return { matched: false };
+}
+
+/**
+ * Processa a resposta do gestor (no WhatsApp 22998505276) referente à proposta pendente da Assistente Ativa de Pré-Reservas.
+ */
+export async function handleManagerPreReservationReply({
+  db,
+  cleanTarget,
+  messageText,
+  conv = null,
+  sendZapiMessage = null,
+  appendMessageFn = null,
+  saveDatabase = null,
+  createNotification = null,
+  triggerImmediateFn = null
+}) {
+  if (!db || !messageText || !isDeveloperPhone(cleanTarget, db)) {
+    return { handled: false };
+  }
+
+  const pendingList = (db.pendingPreReservationProposals || []).filter(p => p && p.status === "pending_manager");
+  if (pendingList.length === 0) {
+    return { handled: false };
+  }
+
+  // Se houver mais de uma proposta pendente, permite selecionar pelo ID (#PRERES-...) ou nome do hóspede; padrão é a mais recente
+  const normText = String(messageText).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let targetProposal = pendingList[0];
+  for (const p of pendingList) {
+    const idLower = String(p.id || "").toLowerCase();
+    const firstName = String(p.guestName || "").split(/\s+/)[0].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if ((idLower && normText.includes(idLower)) || (firstName.length >= 3 && normText.includes(firstName))) {
+      targetProposal = p;
+      break;
+    }
+  }
+
+  const parsedCmd = parseManagerPreReservationCommand(messageText, targetProposal, db);
+  if (!parsedCmd.matched) {
+    return { handled: false };
+  }
+
+  const aiConfig = getWhatsAppAiConfig(db);
+  const managerPhone = cleanWhatsAppPhone(cleanTarget) || getManagerWhatsAppPhone(db);
+
+  const sendManagerReply = async (replyText, eventTag = "sofia_active_pre_reservation_reply") => {
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: managerPhone,
+        message: replyText,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        bypassTestMode: true,
+        triggerEvent: eventTag,
+        db
+      });
+    }
+    if (typeof appendMessageFn === "function") {
+      appendMessageFn(db, {
+        phone: managerPhone,
+        senderName: aiConfig.agentName || "Sofia",
+        fromMe: true,
+        text: replyText,
+        type: "text",
+        status: "delivered",
+        timestamp: new Date().toISOString(),
+        messageId: `sofia_preres_reply_${Date.now()}`
+      });
+    }
+  };
+
+  // 1. Cancelamento / descarte da proposta
+  if (parsedCmd.action === "cancel") {
+    targetProposal.status = "cancelled";
+    targetProposal.cancelledAt = new Date().toISOString();
+    targetProposal.updatedAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("active_pre_reservation_proposal_cancelled"); } catch (_) {}
+    }
+
+    const cancelReply = `✅ *Proposta de Pré-Reserva Cancelada*\n\nDescartei a criação automática da pré-reserva para *${targetProposal.guestName}* (${targetProposal.checkIn.split("-").reverse().join("/")} a ${targetProposal.checkOut.split("-").reverse().join("/")}). Nenhuma alteração foi feita no sistema.`;
+    await sendManagerReply(cancelReply, "sofia_active_pre_reservation_cancelled");
+
+    return {
+      handled: true,
+      processed: true,
+      mode: "active_pre_reservation_assistant",
+      action: "cancelled",
+      proposal: targetProposal,
+      replyText: cancelReply
+    };
+  }
+
+  // Aplica atualizações de campos solicitadas pelo gestor (flat, valor, diária, datas, café, hóspedes, nome, CPF, email)
+  const updates = parsedCmd.updates || {};
+  if (updates.flatNumber) {
+    const flatObj = (db.flats || []).find(f => String(f.number) === String(updates.flatNumber) || String(f.id) === String(updates.flatNumber));
+    if (!flatObj) {
+      const notFoundReply = `⚠️ Não encontrei o *Flat ${updates.flatNumber}* cadastrado no sistema. Os flats disponíveis no período são: *${(targetProposal.availableFlatNumbers || []).join(", ")}*.\n\nPor favor, me informe um flat válido para prosseguir.`;
+      await sendManagerReply(notFoundReply, "sofia_active_pre_reservation_error");
+      return {
+        handled: true,
+        processed: true,
+        mode: "active_pre_reservation_assistant",
+        action: "flat_not_found",
+        proposal: targetProposal,
+        replyText: notFoundReply
+      };
+    }
+    targetProposal.flatId = flatObj.id;
+    targetProposal.flatNumber = String(flatObj.number);
+  }
+
+  if (updates.checkIn && updates.checkOut) {
+    targetProposal.checkIn = updates.checkIn;
+    targetProposal.checkOut = updates.checkOut;
+    targetProposal.nights = updates.nights || targetProposal.nights;
+  }
+  if (updates.totalAmount != null) {
+    targetProposal.totalAmount = updates.totalAmount;
+  }
+  if (updates.dailyRate != null) {
+    targetProposal.dailyRate = updates.dailyRate;
+  } else if (updates.totalAmount != null && targetProposal.nights > 0) {
+    targetProposal.dailyRate = Math.round((updates.totalAmount / targetProposal.nights) * 100) / 100;
+  }
+  if (updates.includeBreakfast !== undefined) {
+    targetProposal.includeBreakfast = updates.includeBreakfast;
+    targetProposal.ratePlan = updates.ratePlan;
+  }
+  if (updates.guests != null) {
+    targetProposal.guests = updates.guests;
+  }
+  if (updates.guestName) {
+    targetProposal.guestName = updates.guestName;
+  }
+  if (updates.guestCpf) {
+    targetProposal.guestCpf = updates.guestCpf;
+  }
+  if (updates.guestEmail) {
+    targetProposal.guestEmail = updates.guestEmail;
+  }
+
+  // Revalida disponibilidade para as datas/flat atualizados
+  const fairShareNow = selectFairShareFlat(db, targetProposal.checkIn, targetProposal.checkOut);
+  targetProposal.availableFlatNumbers = fairShareNow.availableFlats.map(f => String(f.number));
+  const isTargetFlatFree = fairShareNow.availableFlats.some(f => String(f.number) === String(targetProposal.flatNumber));
+
+  if (!isTargetFlatFree) {
+    const availStr = targetProposal.availableFlatNumbers.length > 0
+      ? targetProposal.availableFlatNumbers.join(", ")
+      : "Nenhum disponível";
+    const conflictReply = `⚠️ O *Flat ${targetProposal.flatNumber}* possui conflito de ocupação/bloqueio no período de *${targetProposal.checkIn.split("-").reverse().join("/")} a ${targetProposal.checkOut.split("-").reverse().join("/")}*.\n\n🏢 Flats disponíveis nesse período: *${availStr}*${fairShareNow.recommendedFlat ? ` (Flat da Vez sugerido: *Flat ${fairShareNow.recommendedFlat.number}*)` : ""}.\n\nQual flat deseja utilizar para criar a pré-reserva?`;
+    await sendManagerReply(conflictReply, "sofia_active_pre_reservation_conflict");
+    return {
+      handled: true,
+      processed: true,
+      mode: "active_pre_reservation_assistant",
+      action: "flat_unavailable",
+      proposal: targetProposal,
+      replyText: conflictReply
+    };
+  }
+
+  targetProposal.updatedAt = new Date().toISOString();
+
+  // 2. Pedido de edição para revisão antes de confirmar
+  if (parsedCmd.action === "update_and_review") {
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("active_pre_reservation_proposal_updated"); } catch (_) {}
+    }
+    const reviewReply = formatActivePreReservationManagerSummary(targetProposal, db, { isReviewUpdate: true });
+    await sendManagerReply(reviewReply, "sofia_active_pre_reservation_review");
+    return {
+      handled: true,
+      processed: true,
+      mode: "active_pre_reservation_assistant",
+      action: "updated_for_review",
+      proposal: targetProposal,
+      replyText: reviewReply
+    };
+  }
+
+  // 3. Confirmação (direta ou com alterações embutidas) -> Cria a pré-reserva no PMS
+  const createRes = await createStandardPmsPreReservation(db, targetProposal, {
+    saveDatabase,
+    triggerImmediateFn
+  });
+
+  if (!createRes.success) {
+    const errReply = `⚠️ Não foi possível criar a pré-reserva: ${createRes.message}`;
+    await sendManagerReply(errReply, "sofia_active_pre_reservation_error");
+    return {
+      handled: true,
+      processed: true,
+      mode: "active_pre_reservation_assistant",
+      action: "creation_error",
+      error: createRes.error,
+      proposal: targetProposal,
+      replyText: errReply
+    };
+  }
+
+  const createdRes = createRes.reservation;
+  targetProposal.status = "confirmed";
+  targetProposal.confirmedAt = new Date().toISOString();
+  targetProposal.reservationId = createdRes.id;
+  targetProposal.reservationCode = createdRes.code;
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("active_pre_reservation_proposal_confirmed"); } catch (_) {}
+  }
+
+  if (typeof createNotification === "function") {
+    createNotification({
+      category: "reservations",
+      title: `✅ Pré-Reserva Criada pela Sofia: ${createdRes.code}`,
+      message: `${createdRes.guestName} • Flat ${createdRes.flatNumber} • ${createdRes.checkinDate.split("-").reverse().join("/")} a ${createdRes.checkoutDate.split("-").reverse().join("/")}`,
+      type: "pre_reservation_created",
+      targetUrl: `/reservas?code=${createdRes.code}`,
+      link: `/reservas?code=${createdRes.code}`
+    });
+  }
+
+  const totalFmt = Number(createdRes.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dailyFmt = Number(createdRes.dailyRate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const confirmReply = `✅ *Pré-Reserva Criada com Sucesso no Sistema!*
+
+🔖 *Código:* *${createdRes.code}*
+🏢 *Unidade:* *Flat ${createdRes.flatNumber}*
+👤 *Hóspede:* ${createdRes.guestName}
+🪪 *CPF:* ${formatCpf(createdRes.guestCpf)}
+📧 *E-mail:* ${createdRes.guestEmail}
+📅 *Período:* ${createdRes.checkinDate.split("-").reverse().join("/")} a ${createdRes.checkoutDate.split("-").reverse().join("/")} (*${targetProposal.nights} ${targetProposal.nights === 1 ? "diária" : "diárias"}*)
+☕ *Café da Manhã:* ${createdRes.includeBreakfast ? "Incluso" : "Não incluso"}
+💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt})
+📊 *Status:* Pré-Reserva (régua padrão do sistema acionada)`;
+
+  await sendManagerReply(confirmReply, "sofia_active_pre_reservation_confirmed");
+
+  return {
+    handled: true,
+    processed: true,
+    mode: "active_pre_reservation_assistant",
+    action: "confirmed_and_created",
+    proposal: targetProposal,
+    reservation: createdRes,
+    replyText: confirmReply
+  };
+}
+
