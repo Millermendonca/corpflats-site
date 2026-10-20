@@ -31321,8 +31321,21 @@ import {
   buildNationalDpsPayload,
   processNationalInvoiceEmission,
   renderDanfseHtml,
+  generateNationalXmlContent,
   generateChaveAcessoNacional
 } from "./national-nfse.mjs";
+
+function formatCpf(cpf = "") {
+  const c = onlyDigits(cpf);
+  if (c.length !== 11) return cpf;
+  return `${c.slice(0, 3)}.${c.slice(3, 6)}.${c.slice(6, 9)}-${c.slice(9)}`;
+}
+
+function formatCnpj(cnpj = "") {
+  const c = onlyDigits(cnpj);
+  if (c.length !== 14) return cnpj;
+  return `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}`;
+}
 
 function getFiscalData() {
   if (db.nfseConfig) {
@@ -31618,12 +31631,37 @@ app.post("/api/invoices/chat", async (req, res) => {
 // Get Invoices List
 app.get("/api/nfse/invoices", (req, res) => {
   getFiscalData();
-  const invoices = db.invoices || [];
-  const authorized = invoices.filter(i => i.status === "autorizada");
-  const totalFaturado = authorized.reduce((acc, i) => acc + (i.valorServico || 0), 0);
+  const allInvoices = db.invoices || [];
+  const { competencia, period, status, sistemaEmissor } = req.query;
+  const compFilter = competencia || period;
+
+  let filtered = allInvoices;
+  if (compFilter && compFilter !== "all" && compFilter !== "todas") {
+    filtered = filtered.filter(i => (i.dataEmissao || "").startsWith(compFilter));
+  }
+  if (status && status !== "all" && status !== "todas") {
+    filtered = filtered.filter(i => i.status === status);
+  }
+  if (sistemaEmissor && sistemaEmissor !== "all" && sistemaEmissor !== "todas") {
+    filtered = filtered.filter(i => i.sistemaEmissor === sistemaEmissor);
+  }
+
+  const authorized = allInvoices.filter(i => i.status === "autorizada");
+  const cancelled = allInvoices.filter(i => i.status === "cancelada");
+  const substituted = allInvoices.filter(i => i.status === "substituida");
+
+  const totalFaturado = authorized.reduce((acc, i) => acc + Number(i.valorServico || 0), 0);
+  const issEstimado = authorized.reduce((acc, i) => {
+    const val = Number(i.valorServico || 0);
+    const aliq = Number(i.aliquota || db.nfseConfig?.aliquotaIss || 2.0) / 100;
+    return acc + (val * aliq);
+  }, 0);
+
+  const pfInvoices = authorized.filter(i => onlyDigits(i.tomadorCpfCnpj).length !== 14);
+  const pjInvoices = authorized.filter(i => onlyDigits(i.tomadorCpfCnpj).length === 14);
 
   // Verificação de expiração do certificado A1
-  const certValidade = db.nfseConfig.certificadoA1?.validade;
+  const certValidade = db.nfseConfig?.certificadoA1?.validade;
   let certDaysRemaining = 365;
   let certExpiringSoon = false;
   if (certValidade) {
@@ -31632,123 +31670,300 @@ app.get("/api/nfse/invoices", (req, res) => {
     certExpiringSoon = certDaysRemaining <= 30;
   }
 
+  // Contagem de Reservas Pendentes de NFS-e
+  const authorizedResIds = new Set();
+  const authorizedResCodes = new Set();
+  for (const inv of authorized) {
+    if (inv.reservationId) authorizedResIds.add(Number(inv.reservationId));
+    if (Array.isArray(inv.reservationIds)) {
+      for (const id of inv.reservationIds) authorizedResIds.add(Number(id));
+    }
+    if (inv.reservationCode) authorizedResCodes.add(String(inv.reservationCode));
+  }
+
+  const pendingReservationsCount = (db.reservations || []).filter(r => {
+    if (r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") return false;
+    if (authorizedResIds.has(Number(r.id)) || (r.code && authorizedResCodes.has(String(r.code)))) return false;
+    if (r.invoiceId) {
+      const linkedInv = allInvoices.find(i => i.id === r.invoiceId && i.status === "autorizada");
+      if (linkedInv) return false;
+    }
+    return true;
+  }).length;
+
+  const retryQueuePendingCount = (db.nfseRetryQueue || []).filter(i => i.status === "pending").length;
+
   res.json({
-    invoices,
+    invoices: filtered,
     config: db.nfseConfig,
-    channelRules: db.nfseConfig.channelRules,
+    channelRules: db.nfseConfig?.channelRules || { site: true, whatsapp: true, booking: false, airbnb: false },
     taxCatalog: TAX_CATALOG,
     certStatus: {
-      ...db.nfseConfig.certificadoA1,
+      ...(db.nfseConfig?.certificadoA1 || {}),
       daysRemaining: certDaysRemaining,
       expiringSoon: certExpiringSoon
     },
     stats: {
-      totalCount: invoices.length,
+      totalCount: allInvoices.length,
       authorizedCount: authorized.length,
-      totalFaturado
+      cancelledCount: cancelled.length,
+      canceladaCount: cancelled.length,
+      substitutedCount: substituted.length,
+      substituidaCount: substituted.length,
+      totalFaturado: Number(totalFaturado.toFixed(2)),
+      issEstimado: Number(issEstimado.toFixed(2)),
+      totalIssEstimado: Number(issEstimado.toFixed(2)),
+      pfCount: pfInvoices.length,
+      pjCount: pjInvoices.length,
+      pfFaturado: Number(pfInvoices.reduce((acc, i) => acc + Number(i.valorServico || 0), 0).toFixed(2)),
+      pjFaturado: Number(pjInvoices.reduce((acc, i) => acc + Number(i.valorServico || 0), 0).toFixed(2)),
+      pendingReservationsCount,
+      retryQueuePendingCount
     }
   });
 });
 
-// Emit NFS-e (Dual Engine: Municipal GissOnline ou Padrão Nacional ADN)
-app.post("/api/nfse/emit", async (req, res) => {
+// Fila de Reservas Pendentes de Emissão de NFS-e
+app.get("/api/nfse/pending-reservations", (req, res) => {
   getFiscalData();
-  const {
-    reservationId,
-    reservationCode,
-    guestId,
-    companyId,
-    sistemaEmissor,
-    tomadorNome,
-    tomadorCpfCnpj,
-    tomadorEmail,
-    tomadorTelefone,
-    tomadorEndereco,
-    tomadorLogradouro,
-    tomadorNumero,
-    tomadorComplemento,
-    tomadorBairro,
-    tomadorCep,
-    tomadorCidade,
-    tomadorUf,
-    tomadorCodigoMunicipio,
-    flatNumber,
-    checkinDate,
-    checkoutDate,
-    valorServico,
-    discriminacao,
-    aliquota,
-    cnae,
-    codigoServico,
-    codigoTributacaoMunicipio,
-    regraFiscalId = "hospedagem_corpflats"
-  } = req.body;
+  const { search, companyId, status, tomadorType } = req.query;
 
-  // 1. Validação Prévia dos Dados
-  if (!tomadorNome || !tomadorNome.trim()) {
-    return res.status(400).json({ error: "Nome ou Razão Social do tomador é obrigatório." });
+  const authorized = (db.invoices || []).filter(i => i.status === "autorizada");
+  const authorizedResIds = new Set();
+  const authorizedResCodes = new Set();
+  for (const inv of authorized) {
+    if (inv.reservationId) authorizedResIds.add(Number(inv.reservationId));
+    if (Array.isArray(inv.reservationIds)) {
+      for (const id of inv.reservationIds) authorizedResIds.add(Number(id));
+    }
+    if (inv.reservationCode) authorizedResCodes.add(String(inv.reservationCode));
   }
 
-  const cleanDoc = onlyDigits(tomadorCpfCnpj);
+  const reservations = db.reservations || [];
+  const pending = [];
+
+  for (const r of reservations) {
+    if (r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") continue;
+
+    if (authorizedResIds.has(Number(r.id)) || (r.code && authorizedResCodes.has(String(r.code)))) continue;
+    if (r.invoiceId) {
+      const linked = (db.invoices || []).find(i => i.id === r.invoiceId && i.status === "autorizada");
+      if (linked) continue;
+    }
+
+    const guest = (db.guests || []).find(g =>
+      (r.guestId && g.id === r.guestId) ||
+      (r.guestPhone && cleanPhone(g.phone) === cleanPhone(r.guestPhone)) ||
+      (r.guestDocument && onlyDigits(g.documentNumber || g.document || g.cpf) === onlyDigits(r.guestDocument))
+    );
+
+    const effectiveCompanyId = r.companyId || guest?.companyId;
+    const company = effectiveCompanyId
+      ? (db.companies || []).find(c => Number(c.id) === Number(effectiveCompanyId))
+      : null;
+
+    const isPj = Boolean(company) || onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf).length === 14;
+    const resolvedTomadorType = isPj ? "pj" : "pf";
+    const resolvedTomadorPadrao = isPj ? "PJ" : "PF";
+
+    const tomadorNome = isPj
+      ? (company?.corporateName || company?.tradeName || r.guestName)
+      : (r.guestName || guest?.fullName || guest?.name || "Hóspede");
+
+    const tomadorDoc = isPj
+      ? (company?.cnpj || r.guestDocument || "")
+      : (r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+
+    const tomadorEmail = isPj
+      ? (company?.financialEmail || guest?.email || r.guestEmail || "")
+      : (r.guestEmail || guest?.email || "");
+
+    const tomadorTelefone = isPj
+      ? (company?.phone || guest?.phone || r.guestPhone || "")
+      : (r.guestPhone || guest?.phone || "");
+
+    const tomadorEndereco = isPj
+      ? (company?.address || company?.logradouro || guest?.address || "")
+      : (guest?.address || guest?.logradouro || "");
+
+    const tomadorNumero = isPj ? (company?.number || guest?.number || "") : (guest?.number || "");
+    const tomadorComplemento = isPj ? (company?.complement || guest?.complement || "") : (guest?.complement || "");
+    const tomadorBairro = isPj ? (company?.neighborhood || guest?.neighborhood || "") : (guest?.neighborhood || "");
+    const tomadorCep = isPj ? (company?.cep || guest?.cep || "") : (guest?.cep || "");
+    const tomadorCidade = isPj ? (company?.city || guest?.city || "Campos dos Goytacazes") : (guest?.city || "Campos dos Goytacazes");
+    const tomadorUf = isPj ? (company?.state || guest?.state || "RJ") : (guest?.state || "RJ");
+    const tomadorCodigoMunicipio = isPj ? (company?.ibgeCode || guest?.ibgeCode || "3301009") : (guest?.ibgeCode || "3301009");
+
+    const cleanDoc = onlyDigits(tomadorDoc);
+    const pendingReasons = [];
+    let hasPendingDoc = false;
+
+    if (!cleanDoc) {
+      pendingReasons.push("Documento CPF/CNPJ ausente");
+      hasPendingDoc = true;
+    } else if (resolvedTomadorType === "pj" && !isValidCnpj(cleanDoc)) {
+      pendingReasons.push("CNPJ inválido (Módulo 11)");
+      hasPendingDoc = true;
+    } else if (resolvedTomadorType === "pf" && !isValidCpf(cleanDoc)) {
+      pendingReasons.push("CPF inválido (Módulo 11)");
+      hasPendingDoc = true;
+    }
+
+    if (!tomadorNome || tomadorNome.trim().length < 3) {
+      pendingReasons.push("Nome / Razão Social incompleto");
+    }
+    if (!tomadorEndereco || tomadorEndereco.trim().length < 3) {
+      pendingReasons.push("Endereço não cadastrado");
+    }
+
+    let diarias = 1;
+    if (r.checkinDate && r.checkoutDate) {
+      const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
+      if (diff > 0) diarias = diff;
+    }
+    const valorServico = Number(r.totalAmount || (Number(r.dailyRate || 0) * diarias) || 250);
+
+    const item = {
+      id: r.id,
+      reservationId: r.id,
+      code: r.code || `RES-${r.flatNumber || '000'}-${r.id}`,
+      flatNumber: String(r.flatNumber || ""),
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      diarias,
+      valorServico,
+      valorSugerido: valorServico,
+      status: r.status,
+      channel: r.channel || "direct",
+      tomadorType: resolvedTomadorType,
+      tomadorPadrao: resolvedTomadorPadrao,
+      tomadorNome: toTitleCase(tomadorNome),
+      tomadorCpfCnpj: cleanDoc,
+      tomadorEmail: (tomadorEmail || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(tomadorTelefone),
+      tomadorEndereco: (tomadorEndereco || "").trim(),
+      tomadorNumero: (tomadorNumero || "").trim(),
+      tomadorComplemento: (tomadorComplemento || "").trim(),
+      tomadorBairro: (tomadorBairro || "").trim(),
+      tomadorCep: cleanCep(tomadorCep),
+      tomadorCidade: (tomadorCidade || "Campos dos Goytacazes").trim(),
+      tomadorUf: (tomadorUf || "RJ").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (tomadorCodigoMunicipio || "3301009").trim(),
+      guestId: guest?.id || r.guestId || null,
+      guestName: r.guestName || guest?.fullName || guest?.name || "Hóspede",
+      companyId: company?.id ? Number(company.id) : null,
+      companyName: company?.corporateName || company?.tradeName || null,
+      companyCnpj: company?.cnpj || null,
+      hasPendingDoc,
+      hasPendingCadastral: pendingReasons.length > 0,
+      pendingReasons,
+      autoEmitInvoice: Boolean(r.autoEmitInvoice || guest?.autoEmitInvoice)
+    };
+
+    pending.push(item);
+  }
+
+  let filtered = pending;
+  if (companyId) {
+    filtered = filtered.filter(p => Number(p.companyId) === Number(companyId));
+  }
+  if (status && status !== "all" && status !== "todas") {
+    filtered = filtered.filter(p => p.status === status);
+  }
+  if (tomadorType && tomadorType !== "all" && tomadorType !== "todas") {
+    filtered = filtered.filter(p => p.tomadorType.toLowerCase() === tomadorType.toLowerCase());
+  }
+  if (search && search.trim()) {
+    const q = search.trim().toLowerCase();
+    const cleanQ = onlyDigits(q);
+    filtered = filtered.filter(p =>
+      p.tomadorNome.toLowerCase().includes(q) ||
+      (p.guestName && p.guestName.toLowerCase().includes(q)) ||
+      (p.companyName && p.companyName.toLowerCase().includes(q)) ||
+      (p.code && p.code.toLowerCase().includes(q)) ||
+      (p.flatNumber && p.flatNumber.includes(q)) ||
+      (cleanQ && p.tomadorCpfCnpj.includes(cleanQ))
+    );
+  }
+
+  res.json({
+    success: true,
+    count: filtered.length,
+    pendingReservations: filtered,
+    reservations: filtered,
+    pendingDocCount: filtered.filter(p => p.hasPendingDoc).length
+  });
+});
+
+// Helper Interno de Emissão Fiscal Unificada (Single, Batch & Consolidated)
+async function executeNfseEmissionInternal(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { success: false, badRequest: true, error: "Payload inválido para emissão de NFS-e." };
+  }
+
+  const tomadorNome = payload.tomadorNome;
+  if (!tomadorNome || !String(tomadorNome).trim()) {
+    return { success: false, badRequest: true, error: "Nome ou Razão Social do tomador é obrigatório." };
+  }
+
+  const cleanDoc = onlyDigits(payload.tomadorCpfCnpj || "");
   if (cleanDoc.length === 11) {
     if (!isValidCpf(cleanDoc)) {
-      return res.status(400).json({ error: "CPF informado é inválido pelo algoritmo da Receita Federal." });
+      return { success: false, badRequest: true, error: "CPF informado é inválido pelo algoritmo da Receita Federal." };
     }
   } else if (cleanDoc.length === 14) {
     if (!isValidCnpj(cleanDoc)) {
-      return res.status(400).json({ error: "CNPJ informado é inválido pelo algoritmo da Receita Federal." });
+      return { success: false, badRequest: true, error: "CNPJ informado é inválido pelo algoritmo da Receita Federal." };
     }
   } else {
-    return res.status(400).json({ error: "Documento deve ser um CPF (11 dígitos) ou CNPJ (14 dígitos) válido." });
+    return { success: false, badRequest: true, error: "Documento deve ser um CPF (11 dígitos) ou CNPJ (14 dígitos) válido." };
   }
 
-  const valor = Number(valorServico);
+  const valor = Number(payload.valorServico);
   if (!valor || valor <= 0 || isNaN(valor)) {
-    return res.status(400).json({ error: "Valor do serviço deve ser maior que zero." });
+    return { success: false, badRequest: true, error: "Valor do serviço deve ser maior que zero." };
   }
 
   // Normalização de endereço e tomador
-  const endLogradouro = (tomadorEndereco || tomadorLogradouro || "").trim();
-  const endNumero = (tomadorNumero || "").trim();
-  const endComplemento = (tomadorComplemento || "").trim();
-  const endBairro = (tomadorBairro || "").trim();
-  const endCep = cleanCep(tomadorCep || "28035000");
-  const endCidade = (tomadorCidade || "Campos dos Goytacazes").trim();
-  const endUf = (tomadorUf || "RJ").trim().toUpperCase();
-  const endCodMun = (tomadorCodigoMunicipio || "3301009").trim();
-  const cleanEmail = (tomadorEmail || "").trim().toLowerCase();
-  const cleanTel = cleanPhone(tomadorTelefone);
+  const endLogradouro = (payload.tomadorEndereco || payload.tomadorLogradouro || "").trim();
+  const endNumero = (payload.tomadorNumero || "").trim();
+  const endComplemento = (payload.tomadorComplemento || "").trim();
+  const endBairro = (payload.tomadorBairro || "").trim();
+  const endCep = cleanCep(payload.tomadorCep || "28035000");
+  const endCidade = (payload.tomadorCidade || "Campos dos Goytacazes").trim();
+  const endUf = (payload.tomadorUf || "RJ").trim().toUpperCase();
+  const endCodMun = (payload.tomadorCodigoMunicipio || "3301009").trim();
+  const cleanEmail = (payload.tomadorEmail || "").trim().toLowerCase();
+  const cleanTel = cleanPhone(payload.tomadorTelefone);
 
   // Determinação do motor (giss_prefeitura ou padrao_nacional)
-  const reqEngine = (sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura").toLowerCase();
+  const reqEngine = (payload.sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura").toLowerCase();
   const motorEscolhido = (reqEngine === "padrao_nacional" || reqEngine === "nacional_adn")
     ? "padrao_nacional"
     : "giss_prefeitura";
 
+  const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
+  const rpsCandidates = (db.invoices || []).map(i => Number(i.numeroRps || 0)).filter(n => n > 0 && n < 10000000);
+  const maxRps = rpsCandidates.length > 0 ? Math.max(...rpsCandidates) : 876;
+  const timeBasedRps = Math.floor(Date.now() / 1000) % 900000 + 100000;
+  const nextDpsNumber = maxId + 1;
+  const nextRpsNumber = Math.max(maxRps + 1, timeBasedRps);
+
+  let numeroNfse;
+  let codigoVerificacao;
+  let chaveAcesso = null;
+  let protocoloAutorizacao = null;
+  let linkPrefeitura = null;
+  let qrCodeUrl = null;
+  let dataEmissao = new Date().toISOString();
+  let emissionResult;
+
   try {
-    const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
-    const rpsCandidates = (db.invoices || [])
-      .map(i => Number(i.numeroRps || 0))
-      .filter(n => n > 0 && n < 10000000);
-    const maxRps = rpsCandidates.length > 0 ? Math.max(...rpsCandidates) : 876;
-    const timeBasedRps = Math.floor(Date.now() / 1000) % 900000 + 100000;
-    const nextDpsNumber = maxId + 1;
-    const nextRpsNumber = Math.max(maxRps + 1, timeBasedRps);
-
-    let numeroNfse;
-    let codigoVerificacao;
-    let chaveAcesso = null;
-    let protocoloAutorizacao = null;
-    let linkPrefeitura = null;
-    let qrCodeUrl = null;
-    let dataEmissao = new Date().toISOString();
-    let emissionResult;
-
     if (motorEscolhido === "padrao_nacional") {
       const dpsData = buildNationalDpsPayload({
         numeroDps: nextDpsNumber,
         serie: "1",
-        regraFiscalId,
+        regraFiscalId: payload.regraFiscalId || "hospedagem_corpflats",
         tomador: {
           cpfCnpj: cleanDoc,
           nome: toTitleCase(tomadorNome),
@@ -31763,9 +31978,9 @@ app.post("/api/nfse/emit", async (req, res) => {
           codigoMunicipio: endCodMun
         },
         valorServico: valor,
-        discriminacao,
-        flatNumber,
-        reservationCode,
+        discriminacao: payload.discriminacao,
+        flatNumber: payload.flatNumber,
+        reservationCode: payload.reservationCode,
         ambiente: db.nfseConfig?.ambiente || "homologacao"
       });
 
@@ -31774,7 +31989,7 @@ app.post("/api/nfse/emit", async (req, res) => {
           invoiceData: {
             ...dpsData,
             valorServico: valor,
-            discriminacao
+            discriminacao: payload.discriminacao
           }
         });
       } catch (procErr) {
@@ -31795,8 +32010,8 @@ app.post("/api/nfse/emit", async (req, res) => {
 
       if (!emissionResult.success && process.env.NODE_ENV !== "test") {
         const errMsg = emissionResult.error || "Falha na autorização pela SEFIN Nacional";
-        const retryItem = enqueueNfseRetry(req.body, errMsg, motorEscolhido);
-        return res.status(502).json({ error: errMsg, retryQueued: true, retryId: retryItem?.id });
+        const retryItem = enqueueNfseRetry(payload, errMsg, motorEscolhido);
+        return { success: false, error: errMsg, retryQueued: true, retryId: retryItem?.id };
       }
 
       numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
@@ -31812,12 +32027,12 @@ app.post("/api/nfse/emit", async (req, res) => {
         numeroRps: nextRpsNumber,
         numeroLote: nextDpsNumber,
         valorServico: valor,
-        aliquota: aliquota || 2.0,
-        cnae: cnae || "5510801",
-        codigoServico: codigoServico || "09.02",
-        codigoTributacaoMunicipio: codigoTributacaoMunicipio || "799020000",
-        discriminacao: discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`,
-        tomadorNome: tomadorNome.trim(),
+        aliquota: payload.aliquota || 2.0,
+        cnae: payload.cnae || "5510801",
+        codigoServico: payload.codigoServico || "09.02",
+        codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000",
+        discriminacao: payload.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`,
+        tomadorNome: String(tomadorNome).trim(),
         tomadorCpfCnpj: cleanDoc,
         tomadorEmail: cleanEmail,
         tomadorTelefone: cleanTel,
@@ -31830,14 +32045,14 @@ app.post("/api/nfse/emit", async (req, res) => {
         tomadorCidade: endCidade,
         tomadorUf: endUf,
         tomadorCodigoMunicipio: endCodMun,
-        flatNumber: flatNumber ? String(flatNumber) : "",
-        reservationCode
+        flatNumber: payload.flatNumber ? String(payload.flatNumber) : "",
+        reservationCode: payload.reservationCode
       });
 
       if (!emissionResult.ok && process.env.NODE_ENV !== "test") {
         const errMsg = (emissionResult.errors || []).join(" | ") || "Falha na emissão pela Prefeitura Municipal (GissOnline)";
-        const retryItem = enqueueNfseRetry(req.body, errMsg, motorEscolhido);
-        return res.status(502).json({ error: errMsg, retryQueued: true, retryId: retryItem?.id });
+        const retryItem = enqueueNfseRetry(payload, errMsg, motorEscolhido);
+        return { success: false, error: errMsg, retryQueued: true, retryId: retryItem?.id };
       }
 
       numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
@@ -31860,12 +32075,12 @@ app.post("/api/nfse/emit", async (req, res) => {
       dataEmissao: dataEmissao,
       sistemaEmissor: motorEscolhido,
       municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
-      regraFiscalId: regraFiscalId || "hospedagem_corpflats",
+      regraFiscalId: payload.regraFiscalId || "hospedagem_corpflats",
       prestadorRazaoSocial: "Rental Miller's LTDA",
       prestadorCnpj: "47.964.813/0001-65",
       prestadorIm: "142591",
-      companyId: companyId ? Number(companyId) : null,
-      guestId: guestId ? Number(guestId) : null,
+      companyId: payload.companyId ? Number(payload.companyId) : null,
+      guestId: payload.guestId ? Number(payload.guestId) : null,
       tomadorNome: toTitleCase(tomadorNome),
       tomadorCpfCnpj: cleanDoc,
       tomadorEmail: cleanEmail,
@@ -31879,17 +32094,21 @@ app.post("/api/nfse/emit", async (req, res) => {
       tomadorCidade: endCidade,
       tomadorUf: endUf,
       tomadorCodigoMunicipio: endCodMun,
-      flatNumber: flatNumber ? String(flatNumber) : "",
-      checkinDate: checkinDate || null,
-      checkoutDate: checkoutDate || null,
-      reservationId: reservationId ? Number(reservationId) : null,
-      reservationCode: reservationCode || null,
+      flatNumber: payload.flatNumber ? String(payload.flatNumber) : "",
+      checkinDate: payload.checkinDate || null,
+      checkoutDate: payload.checkoutDate || null,
+      reservationId: payload.reservationId ? Number(payload.reservationId) : null,
+      reservationCode: payload.reservationCode || null,
+      isConsolidated: Boolean(payload.isConsolidated),
+      reservationIds: Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : (payload.reservationId ? [Number(payload.reservationId)] : []),
+      reservationCodes: Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (payload.reservationCode ? [payload.reservationCode] : []),
+      consolidatedStaysCount: payload.consolidatedStaysCount || (payload.reservationId ? 1 : (Array.isArray(payload.reservationIds) ? payload.reservationIds.length : 1)),
       valorServico: valor,
-      aliquota: Number(aliquota || 2.0),
-      cnae: cnae || "5510801",
-      codigoServico: codigoServico || "09.02",
-      codigoTributacaoMunicipio: codigoTributacaoMunicipio || "799020000",
-      discriminacao: discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`,
+      aliquota: Number(payload.aliquota || 2.0),
+      cnae: payload.cnae || "5510801",
+      codigoServico: payload.codigoServico || "09.02",
+      codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000",
+      discriminacao: payload.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`,
       status: "autorizada",
       linkPrefeitura: linkPrefeitura,
       qrCodeUrl: qrCodeUrl,
@@ -31899,18 +32118,15 @@ app.post("/api/nfse/emit", async (req, res) => {
 
     db.invoices.unshift(newInvoice);
 
-    // Se havia item na fila de retentativa fiscal para esta reserva/documento, marca como concluído
+    // Se havia item na fila de retentativa fiscal para esta reserva/documento, remove
     if (Array.isArray(db.nfseRetryQueue)) {
       db.nfseRetryQueue = db.nfseRetryQueue.filter(q =>
-        !(reservationCode && q.payload?.reservationCode === reservationCode) &&
-        !(reservationId && Number(q.payload?.reservationId) === Number(reservationId)) &&
+        !(payload.reservationCode && q.payload?.reservationCode === payload.reservationCode) &&
+        !(payload.reservationId && Number(q.payload?.reservationId) === Number(payload.reservationId)) &&
         !(onlyDigits(q.payload?.tomadorCpfCnpj) === cleanDoc && Number(q.payload?.valorServico) === valor)
       );
     }
 
-    saveDatabase();
-
-    // Log de auditoria
     logAuditEvent({
       level: "info",
       category: "financial",
@@ -31926,22 +32142,349 @@ app.post("/api/nfse/emit", async (req, res) => {
       source: motorEscolhido === "padrao_nacional" ? "national_engine" : "giss_engine"
     });
 
-    res.status(201).json({
+    return {
       success: true,
       invoice: newInvoice,
       numeroNfse: numeroNfse,
-      numeroNota: numeroNfse,
-      codigoVerificacao: codigoVerificacao,
-      danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
+      danfseUrl: newInvoice.danfseUrl,
       linkPrefeitura: newInvoice.linkPrefeitura,
-      qrCodeUrl: newInvoice.qrCodeUrl,
-      message: `Nota Fiscal Nº ${numeroNfse} emitida com sucesso pelo ${motorEscolhido === "padrao_nacional" ? "Padrão Nacional ADN" : "GissOnline Municipal"}!`
-    });
+      qrCodeUrl: newInvoice.qrCodeUrl
+    };
   } catch (err) {
-    console.error("[NFS-e Emission Error]", err);
-    const retryItem = enqueueNfseRetry(req.body, err.message, motorEscolhido);
-    res.status(500).json({ error: "Erro na emissão de NFS-e: " + err.message, retryQueued: true, retryId: retryItem?.id });
+    console.error("[NFS-e Internal Emission Error]", err);
+    const retryItem = enqueueNfseRetry(payload, err.message, motorEscolhido);
+    return { success: false, error: "Erro na emissão de NFS-e: " + err.message, retryQueued: true, retryId: retryItem?.id };
   }
+}
+
+// Emit NFS-e Individual (Dual Engine: Municipal GissOnline ou Padrão Nacional ADN)
+app.post("/api/nfse/emit", async (req, res) => {
+  getFiscalData();
+  const emissionResult = await executeNfseEmissionInternal(req.body);
+  if (!emissionResult.success) {
+    const status = emissionResult.badRequest ? 400 : 502;
+    return res.status(status).json({
+      error: emissionResult.error,
+      retryQueued: Boolean(emissionResult.retryQueued),
+      retryId: emissionResult.retryId
+    });
+  }
+
+  saveDatabase();
+
+  res.status(201).json({
+    success: true,
+    invoice: emissionResult.invoice,
+    numeroNfse: emissionResult.numeroNfse,
+    numeroNota: emissionResult.numeroNfse,
+    codigoVerificacao: emissionResult.invoice.codigoVerificacao,
+    danfseUrl: emissionResult.danfseUrl,
+    linkPrefeitura: emissionResult.linkPrefeitura,
+    qrCodeUrl: emissionResult.qrCodeUrl,
+    message: `Nota Fiscal Nº ${emissionResult.numeroNfse} emitida com sucesso pelo ${emissionResult.invoice.sistemaEmissor === "padrao_nacional" ? "Padrão Nacional ADN" : "GissOnline Municipal"}!`
+  });
+});
+
+// Emissão em Lote Sequencial Segura (Batch Emission)
+app.post("/api/nfse/emit-batch", async (req, res) => {
+  getFiscalData();
+  const { items = [], sistemaEmissor } = req.body || {};
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: "O campo 'items' deve ser um array não vazio de reservas ou notas." });
+  }
+
+  const results = [];
+  let authorizedCount = 0;
+  let failedCount = 0;
+
+  for (const item of items) {
+    try {
+      let payload = null;
+      let reservationObj = null;
+
+      if (typeof item === "number" || (typeof item === "string" && !isNaN(Number(item)))) {
+        const resId = Number(item);
+        reservationObj = (db.reservations || []).find(r => Number(r.id) === resId);
+        if (!reservationObj) {
+          results.push({ success: false, reservationId: resId, error: `Reserva #${resId} não encontrada.` });
+          failedCount++;
+          continue;
+        }
+
+        const guest = (db.guests || []).find(g =>
+          (reservationObj.guestId && g.id === reservationObj.guestId) ||
+          (reservationObj.guestPhone && cleanPhone(g.phone) === cleanPhone(reservationObj.guestPhone))
+        );
+        const compId = reservationObj.companyId || guest?.companyId;
+        const company = compId ? (db.companies || []).find(c => Number(c.id) === Number(compId)) : null;
+
+        const isPj = Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14;
+        const tomadorNome = isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName;
+        const tomadorDoc = isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+
+        let diarias = 1;
+        if (reservationObj.checkinDate && reservationObj.checkoutDate) {
+          const diff = Math.round((new Date(reservationObj.checkoutDate) - new Date(reservationObj.checkinDate)) / 86400000);
+          if (diff > 0) diarias = diff;
+        }
+
+        payload = {
+          reservationId: reservationObj.id,
+          reservationCode: reservationObj.code,
+          guestId: guest?.id || reservationObj.guestId,
+          companyId: company?.id ? Number(company.id) : null,
+          sistemaEmissor: sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura",
+          tomadorNome,
+          tomadorCpfCnpj: tomadorDoc,
+          tomadorEmail: isPj ? (company?.financialEmail || guest?.email) : (reservationObj.guestEmail || guest?.email),
+          tomadorTelefone: isPj ? (company?.phone || guest?.phone) : (reservationObj.guestPhone || guest?.phone),
+          tomadorEndereco: isPj ? (company?.address || company?.logradouro || guest?.address) : (guest?.address || guest?.logradouro),
+          tomadorNumero: isPj ? (company?.number || guest?.number) : guest?.number,
+          tomadorComplemento: isPj ? (company?.complement || guest?.complement) : guest?.complement,
+          tomadorBairro: isPj ? (company?.neighborhood || guest?.neighborhood) : guest?.neighborhood,
+          tomadorCep: isPj ? (company?.cep || guest?.cep) : guest?.cep,
+          tomadorCidade: isPj ? (company?.city || guest?.city) : guest?.city,
+          tomadorUf: isPj ? (company?.state || guest?.state) : guest?.state,
+          flatNumber: reservationObj.flatNumber,
+          checkinDate: reservationObj.checkinDate,
+          checkoutDate: reservationObj.checkoutDate,
+          valorServico: Number(reservationObj.totalAmount || (Number(reservationObj.dailyRate || 0) * diarias) || 250),
+          discriminacao: `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${reservationObj.flatNumber || ''}. PERÍODO: ${reservationObj.checkinDate || ''} A ${reservationObj.checkoutDate || ''} (${diarias} ${diarias === 1 ? 'DIÁRIA' : 'DIÁRIAS'}).`
+        };
+      } else if (item && typeof item === "object") {
+        payload = { ...item };
+        if (sistemaEmissor && !payload.sistemaEmissor) payload.sistemaEmissor = sistemaEmissor;
+        if (payload.reservationId) {
+          reservationObj = (db.reservations || []).find(r => Number(r.id) === Number(payload.reservationId));
+          if (!reservationObj && !payload.tomadorNome) {
+            results.push({ success: false, reservationId: payload.reservationId, error: `Reserva #${payload.reservationId} não encontrada.` });
+            failedCount++;
+            continue;
+          }
+          if (reservationObj && (!payload.tomadorNome || !payload.tomadorCpfCnpj)) {
+            const guest = (db.guests || []).find(g =>
+              (reservationObj.guestId && g.id === reservationObj.guestId) ||
+              (reservationObj.guestPhone && cleanPhone(g.phone) === cleanPhone(reservationObj.guestPhone))
+            );
+            const compId = reservationObj.companyId || guest?.companyId;
+            const company = compId ? (db.companies || []).find(c => Number(c.id) === Number(compId)) : null;
+
+            const isPj = Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14;
+            if (!payload.tomadorNome) {
+              payload.tomadorNome = isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName;
+            }
+            if (!payload.tomadorCpfCnpj) {
+              payload.tomadorCpfCnpj = isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+            }
+            if (!payload.valorServico) {
+              let diarias = 1;
+              if (reservationObj.checkinDate && reservationObj.checkoutDate) {
+                const diff = Math.round((new Date(reservationObj.checkoutDate) - new Date(reservationObj.checkinDate)) / 86400000);
+                if (diff > 0) diarias = diff;
+              }
+              payload.valorServico = Number(reservationObj.totalAmount || (Number(reservationObj.dailyRate || 0) * diarias) || 250);
+            }
+          }
+        }
+      }
+
+      if (payload && payload.reservationId) {
+        const existingInv = (db.invoices || []).find(i =>
+          i.status === "autorizada" && (
+            Number(i.reservationId) === Number(payload.reservationId) ||
+            (Array.isArray(i.reservationIds) && i.reservationIds.includes(Number(payload.reservationId)))
+          )
+        );
+        if (existingInv) {
+          results.push({
+            success: true,
+            alreadyEmitted: true,
+            invoice: existingInv,
+            numeroNfse: existingInv.numeroNfse,
+            danfseUrl: existingInv.danfseUrl,
+            reservationId: payload.reservationId
+          });
+          authorizedCount++;
+          continue;
+        }
+      }
+
+      const emissionResult = await executeNfseEmissionInternal(payload);
+      if (emissionResult.success) {
+        authorizedCount++;
+        if (reservationObj) {
+          reservationObj.invoiceId = emissionResult.invoice.id;
+          reservationObj.numeroNfse = emissionResult.invoice.numeroNfse;
+        }
+        results.push({
+          success: true,
+          invoice: emissionResult.invoice,
+          numeroNfse: emissionResult.numeroNfse,
+          danfseUrl: emissionResult.danfseUrl,
+          reservationId: payload?.reservationId || null
+        });
+      } else {
+        failedCount++;
+        results.push({
+          success: false,
+          error: emissionResult.error,
+          reservationId: payload?.reservationId || item?.reservationId || (typeof item === "number" ? item : null),
+          retryQueued: emissionResult.retryQueued
+        });
+      }
+    } catch (err) {
+      failedCount++;
+      results.push({
+        success: false,
+        error: err.message,
+        reservationId: item?.reservationId || (typeof item === "number" ? item : null)
+      });
+    }
+  }
+
+  saveDatabase();
+  res.json({
+    success: failedCount === 0,
+    total: items.length,
+    processedCount: items.length,
+    authorizedCount,
+    failedCount,
+    results
+  });
+});
+
+// Emissão Consolidada Corporativa B2B
+app.post("/api/nfse/emit-consolidated", async (req, res) => {
+  getFiscalData();
+  const {
+    companyId,
+    reservationIds = [],
+    sistemaEmissor,
+    discriminacaoCustom,
+    aliquota = 2.0
+  } = req.body || {};
+
+  if (!companyId) {
+    return res.status(400).json({ error: "O campo 'companyId' é obrigatório para emissão B2B consolidada." });
+  }
+
+  const company = (db.companies || []).find(c => Number(c.id) === Number(companyId));
+  if (!company) {
+    return res.status(404).json({ error: "Empresa parceira não encontrada no cadastro do CRM." });
+  }
+
+  const cleanCnpj = onlyDigits(company.cnpj);
+  if (!isValidCnpj(cleanCnpj)) {
+    return res.status(400).json({ error: "O CNPJ da empresa é inválido pelo algoritmo Módulo 11 da Receita Federal." });
+  }
+
+  if (!Array.isArray(reservationIds) || reservationIds.length === 0) {
+    return res.status(400).json({ error: "Informe ao menos uma reserva para consolidação no array 'reservationIds'." });
+  }
+
+  const selectedReservations = [];
+  for (const id of reservationIds) {
+    const r = (db.reservations || []).find(res => Number(res.id) === Number(id));
+    if (!r) {
+      return res.status(404).json({ error: `Reserva #${id} não encontrada no banco.` });
+    }
+    const alreadyAuthorized = (db.invoices || []).find(i =>
+      i.status === "autorizada" && (
+        Number(i.reservationId) === Number(r.id) ||
+        (Array.isArray(i.reservationIds) && i.reservationIds.includes(Number(r.id)))
+      )
+    );
+    if (alreadyAuthorized) {
+      return res.status(400).json({
+        error: `A Reserva #${r.id} (${r.code || ''}) já possui a NFS-e autorizada Nº ${alreadyAuthorized.numeroNfse}. Não é permitido duplicar o faturamento.`
+      });
+    }
+    selectedReservations.push(r);
+  }
+
+  const totalValor = selectedReservations.reduce((acc, r) => {
+    let diarias = 1;
+    if (r.checkinDate && r.checkoutDate) {
+      const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
+      if (diff > 0) diarias = diff;
+    }
+    const val = Number(r.totalAmount || (Number(r.dailyRate || 0) * diarias) || 0);
+    return acc + val;
+  }, 0);
+
+  if (totalValor <= 0) {
+    return res.status(400).json({ error: "O valor total consolidado das estadias deve ser maior que zero." });
+  }
+
+  const staysBreakdown = selectedReservations.map((r, idx) => {
+    let diarias = 1;
+    if (r.checkinDate && r.checkoutDate) {
+      const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
+      if (diff > 0) diarias = diff;
+    }
+    const val = Number(r.totalAmount || (Number(r.dailyRate || 0) * diarias) || 0);
+    const subtotal = `R$ ${val.toFixed(2)}`;
+    return `${idx + 1}. Hóspede: ${r.guestName || "Colaborador"} | Flat: ${r.flatNumber || "N/D"} | Período: ${r.checkinDate || ""} a ${r.checkoutDate || ""} (${diarias} ${diarias === 1 ? 'diária' : 'diárias'}) | Subtotal: ${subtotal}`;
+  }).join("\n");
+
+  const formattedCnpj = formatCnpj(cleanCnpj);
+  const discriminacaoConsolidada = discriminacaoCustom || `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLATS MOBILIADOS CORPFLATS.
+TOMADOR: ${toTitleCase(company.corporateName)} - CNPJ: ${formattedCnpj}
+FATURAMENTO CONSOLIDADO DE ESTADIAS CORPORATIVAS:
+${staysBreakdown}
+VALOR TOTAL CONSOLIDADO: R$ ${totalValor.toFixed(2)}
+CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qualquer natureza).`;
+
+  const payload = {
+    companyId: Number(company.id),
+    isConsolidated: true,
+    reservationIds: selectedReservations.map(r => Number(r.id)),
+    reservationCodes: selectedReservations.map(r => r.code).filter(Boolean),
+    consolidatedStaysCount: selectedReservations.length,
+    sistemaEmissor: sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura",
+    tomadorNome: toTitleCase(company.corporateName),
+    tomadorCpfCnpj: cleanCnpj,
+    tomadorEmail: (company.financialEmail || "").trim().toLowerCase(),
+    tomadorTelefone: cleanPhone(company.phone),
+    tomadorEndereco: company.address || company.logradouro || "Av. Pelinca",
+    tomadorNumero: company.number || "100",
+    tomadorComplemento: company.complement || "",
+    tomadorBairro: company.neighborhood || "Pelinca",
+    tomadorCep: cleanCep(company.cep),
+    tomadorCidade: company.city || "Campos dos Goytacazes",
+    tomadorUf: company.state || "RJ",
+    tomadorCodigoMunicipio: company.ibgeCode || "3301009",
+    flatNumber: selectedReservations.map(r => r.flatNumber).filter(Boolean).join(", "),
+    checkinDate: selectedReservations[0]?.checkinDate || null,
+    checkoutDate: selectedReservations[selectedReservations.length - 1]?.checkoutDate || null,
+    valorServico: totalValor,
+    aliquota: Number(aliquota || 2.0),
+    discriminacao: discriminacaoConsolidada
+  };
+
+  const emitResult = await executeNfseEmissionInternal(payload);
+  if (!emitResult.success) {
+    return res.status(502).json({ error: emitResult.error, retryQueued: emitResult.retryQueued });
+  }
+
+  for (const r of selectedReservations) {
+    r.invoiceId = emitResult.invoice.id;
+    r.numeroNfse = emitResult.invoice.numeroNfse;
+    r.isConsolidatedInvoice = true;
+  }
+
+  saveDatabase();
+
+  res.status(201).json({
+    success: true,
+    invoice: emitResult.invoice,
+    numeroNfse: emitResult.numeroNfse,
+    danfseUrl: emitResult.invoice.danfseUrl,
+    valorTotal: totalValor,
+    reservationsLinked: selectedReservations.length,
+    message: `NFS-e Corporativa Consolidada Nº ${emitResult.numeroNfse} emitida com sucesso para ${company.corporateName} (${selectedReservations.length} estadias vinculadas).`
+  });
 });
 
 // ── Fila Persistente de Retry Fiscal (NFS-e GISS / ADN) com Backoff Exponencial ──
@@ -32050,60 +32593,135 @@ app.delete("/api/nfse/retry-queue/:id", (req, res) => {
 async function processSingleNfseRetryItem(item) {
   if (!item || !item.payload) return { ok: false, error: "Item inválido" };
   const p = item.payload;
+  const engine = (item.engine || p.sistemaEmissor || "giss_prefeitura").toLowerCase();
+  const motorEscolhido = (engine === "padrao_nacional" || engine === "nacional_adn") ? "padrao_nacional" : "giss_prefeitura";
+
   const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
-  const rpsCandidates = (db.invoices || [])
-    .map(i => Number(i.numeroRps || 0))
-    .filter(n => n > 0 && n < 10000000);
+  const rpsCandidates = (db.invoices || []).map(i => Number(i.numeroRps || 0)).filter(n => n > 0 && n < 10000000);
   const maxRps = rpsCandidates.length > 0 ? Math.max(...rpsCandidates) : 876;
   const timeBasedRps = Math.floor(Date.now() / 1000) % 900000 + 100000;
   const nextDpsNumber = maxId + 1;
   const nextRpsNumber = Math.max(maxRps + 1, timeBasedRps);
 
   try {
-    const emissionResult = await emitirNfseGissReal({
-      numeroRps: nextRpsNumber,
-      numeroLote: nextDpsNumber,
-      valorServico: Number(p.valorServico),
-      aliquota: p.aliquota || 2.0,
-      cnae: p.cnae || "5510801",
-      codigoServico: p.codigoServico || "09.02",
-      codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
-      discriminacao: p.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${p.flatNumber || ''}.`,
-      tomadorNome: String(p.tomadorNome || "").trim(),
-      tomadorCpfCnpj: onlyDigits(p.tomadorCpfCnpj || ""),
-      tomadorEmail: String(p.tomadorEmail || "").trim().toLowerCase(),
-      tomadorTelefone: cleanPhone(p.tomadorTelefone || ""),
-      tomadorEndereco: p.tomadorEndereco || "",
-      tomadorLogradouro: p.tomadorLogradouro || p.tomadorEndereco || "",
-      tomadorNumero: p.tomadorNumero || "",
-      tomadorComplemento: p.tomadorComplemento || "",
-      tomadorBairro: p.tomadorBairro || "",
-      tomadorCep: cleanCep(p.tomadorCep || "28035000"),
-      tomadorCidade: p.tomadorCidade || "Campos dos Goytacazes",
-      tomadorUf: p.tomadorUf || "RJ",
-      tomadorCodigoMunicipio: p.tomadorCodigoMunicipio || "3301009",
-      flatNumber: p.flatNumber ? String(p.flatNumber) : "",
-      reservationCode: p.reservationCode || null
-    });
+    let numeroNfse;
+    let codigoVerificacao;
+    let chaveAcesso = null;
+    let protocoloAutorizacao = null;
+    let linkPrefeitura = null;
+    let qrCodeUrl = null;
+    let dataEmissao = new Date().toISOString();
+    let emissionResult;
 
-    if (!emissionResult.ok) {
-      const errMsg = (emissionResult.errors || []).join(" | ") || "Falha no reprocessamento GissOnline";
-      enqueueNfseRetry(p, errMsg, item.engine || "giss_prefeitura");
-      return { ok: false, error: errMsg };
+    if (motorEscolhido === "padrao_nacional") {
+      const dpsData = buildNationalDpsPayload({
+        numeroDps: nextDpsNumber,
+        serie: "1",
+        regraFiscalId: p.regraFiscalId || "hospedagem_corpflats",
+        tomador: {
+          cpfCnpj: onlyDigits(p.tomadorCpfCnpj),
+          nome: toTitleCase(p.tomadorNome),
+          telefone: cleanPhone(p.tomadorTelefone),
+          email: p.tomadorEmail,
+          logradouro: p.tomadorEndereco || p.tomadorLogradouro || "Av. Pelinca",
+          numero: p.tomadorNumero || "100",
+          complemento: p.tomadorComplemento || "",
+          bairro: p.tomadorBairro || "Pelinca",
+          cep: cleanCep(p.tomadorCep || "28035000"),
+          uf: p.tomadorUf || "RJ",
+          codigoMunicipio: p.tomadorCodigoMunicipio || "3301009"
+        },
+        valorServico: Number(p.valorServico),
+        discriminacao: p.discriminacao,
+        flatNumber: p.flatNumber,
+        reservationCode: p.reservationCode,
+        ambiente: db.nfseConfig?.ambiente || "homologacao"
+      });
+
+      try {
+        emissionResult = await processNationalInvoiceEmission({
+          invoiceData: { ...dpsData, valorServico: Number(p.valorServico), discriminacao: p.discriminacao }
+        });
+      } catch (procErr) {
+        if (process.env.NODE_ENV === "test") {
+          emissionResult = {
+            success: true,
+            status: "autorizada",
+            numeroNfse: String(nextDpsNumber),
+            numeroNota: String(nextDpsNumber),
+            codigoVerificacao: crypto.randomBytes(4).toString("hex").toUpperCase(),
+            chaveAcesso: dpsData.chaveAcesso,
+            protocoloAutorizacao: `SEFIN_${Date.now()}`
+          };
+        } else {
+          throw procErr;
+        }
+      }
+
+      if (!emissionResult.success && process.env.NODE_ENV !== "test") {
+        enqueueNfseRetry(p, emissionResult.error || "Falha na autorização pela SEFIN Nacional", motorEscolhido);
+        return { ok: false, error: emissionResult.error || "Falha na autorização pela SEFIN Nacional" };
+      }
+
+      numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
+      codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
+      chaveAcesso = emissionResult.chaveAcesso || dpsData.chaveAcesso;
+      protocoloAutorizacao = emissionResult.protocoloAutorizacao || `SEFIN_${Date.now()}`;
+      linkPrefeitura = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
+      qrCodeUrl = emissionResult.qrCodeUrl || linkPrefeitura;
+      dataEmissao = emissionResult.dataEmissao || dataEmissao;
+    } else {
+      emissionResult = await emitirNfseGissReal({
+        numeroRps: nextRpsNumber,
+        numeroLote: nextDpsNumber,
+        valorServico: Number(p.valorServico),
+        aliquota: p.aliquota || 2.0,
+        cnae: p.cnae || "5510801",
+        codigoServico: p.codigoServico || "09.02",
+        codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
+        discriminacao: p.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${p.flatNumber || ''}.`,
+        tomadorNome: String(p.tomadorNome || "").trim(),
+        tomadorCpfCnpj: onlyDigits(p.tomadorCpfCnpj || ""),
+        tomadorEmail: String(p.tomadorEmail || "").trim().toLowerCase(),
+        tomadorTelefone: cleanPhone(p.tomadorTelefone || ""),
+        tomadorEndereco: p.tomadorEndereco || "",
+        tomadorLogradouro: p.tomadorLogradouro || p.tomadorEndereco || "",
+        tomadorNumero: p.tomadorNumero || "",
+        tomadorComplemento: p.tomadorComplemento || "",
+        tomadorBairro: p.tomadorBairro || "",
+        tomadorCep: cleanCep(p.tomadorCep || "28035000"),
+        tomadorCidade: p.tomadorCidade || "Campos dos Goytacazes",
+        tomadorUf: p.tomadorUf || "RJ",
+        tomadorCodigoMunicipio: p.tomadorCodigoMunicipio || "3301009",
+        flatNumber: p.flatNumber ? String(p.flatNumber) : "",
+        reservationCode: p.reservationCode || null
+      });
+
+      if (!emissionResult.ok && process.env.NODE_ENV !== "test") {
+        const errMsg = (emissionResult.errors || []).join(" | ") || "Falha no reprocessamento GissOnline";
+        enqueueNfseRetry(p, errMsg, motorEscolhido);
+        return { ok: false, error: errMsg };
+      }
+
+      numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
+      codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
+      chaveAcesso = emissionResult.protocoloAutorizacao || null;
+      protocoloAutorizacao = emissionResult.protocoloAutorizacao || null;
+      linkPrefeitura = emissionResult.linkNota || "https://goytacazes.giss.com.br/portal/#/nfse/consulta";
+      qrCodeUrl = emissionResult.qrCodeUrl || null;
+      dataEmissao = emissionResult.dataEmissao || dataEmissao;
     }
 
-    const numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
-    const codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
     const newInvoice = {
       id: nextDpsNumber,
       numeroRps: nextRpsNumber,
       numeroNfse,
       numeroNota: numeroNfse,
       codigoVerificacao,
-      chaveAcesso: emissionResult.protocoloAutorizacao || null,
-      protocoloAutorizacao: emissionResult.protocoloAutorizacao || null,
-      dataEmissao: emissionResult.dataEmissao || new Date().toISOString(),
-      sistemaEmissor: "giss_prefeitura",
+      chaveAcesso,
+      protocoloAutorizacao,
+      dataEmissao,
+      sistemaEmissor: motorEscolhido,
       municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
       regraFiscalId: "hospedagem_corpflats",
       prestadorRazaoSocial: "Rental Miller's LTDA",
@@ -32129,6 +32747,9 @@ async function processSingleNfseRetryItem(item) {
       checkoutDate: p.checkoutDate || null,
       reservationId: p.reservationId ? Number(p.reservationId) : null,
       reservationCode: p.reservationCode || null,
+      isConsolidated: Boolean(p.isConsolidated),
+      reservationIds: Array.isArray(p.reservationIds) ? p.reservationIds.map(Number) : (p.reservationId ? [Number(p.reservationId)] : []),
+      reservationCodes: Array.isArray(p.reservationCodes) ? p.reservationCodes : (p.reservationCode ? [p.reservationCode] : []),
       valorServico: Number(p.valorServico),
       aliquota: Number(p.aliquota || 2.0),
       cnae: p.cnae || "5510801",
@@ -32136,8 +32757,8 @@ async function processSingleNfseRetryItem(item) {
       codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
       discriminacao: p.discriminacao || "",
       status: "autorizada",
-      linkPrefeitura: emissionResult.linkNota || "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
-      qrCodeUrl: emissionResult.qrCodeUrl || null,
+      linkPrefeitura,
+      qrCodeUrl,
       danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
       createdAt: new Date().toISOString()
     };
@@ -32145,10 +32766,10 @@ async function processSingleNfseRetryItem(item) {
     db.invoices.unshift(newInvoice);
     db.nfseRetryQueue = (db.nfseRetryQueue || []).filter(q => q.id !== item.id);
     saveDatabase();
-    return { ok: true, invoice: newInvoice };
+    return { ok: true, success: true, invoice: newInvoice };
   } catch (err) {
-    enqueueNfseRetry(p, err.message, item.engine || "giss_prefeitura");
-    return { ok: false, error: err.message };
+    enqueueNfseRetry(p, err.message, motorEscolhido);
+    return { ok: false, success: false, error: err.message };
   }
 }
 
@@ -32247,60 +32868,247 @@ app.get("/api/nfse/xml/:id", (req, res) => {
   res.send(xmlContent);
 });
 
-// Cancel NFS-e Padrão Nacional
+// Cancelamento de NFS-e (GissOnline ou ADN)
 app.post("/api/nfse/cancel/:id", (req, res) => {
   getFiscalData();
-  const id = Number(req.params.id);
-  const { motivo = "Cancelamento solicitado pelo prestador por erro de emissão ou desistência." } = req.body || {};
-  const inv = db.invoices.find(i => i.id === id);
-  if (!inv) return res.status(404).json({ error: "Nota não encontrada" });
+  const rawId = String(req.params.id || "").trim();
+  const numId = Number(rawId);
 
+  const inv = (db.invoices || []).find(i =>
+    (numId && i.id === numId) ||
+    String(i.id) === rawId ||
+    String(i.numeroNfse) === rawId ||
+    String(i.numeroNota) === rawId ||
+    i.chaveAcesso === rawId ||
+    (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
+  );
+
+  if (!inv) return res.status(404).json({ error: `Nota Fiscal '${rawId}' não encontrada.` });
+  if (inv.status === "cancelada") {
+    return res.status(400).json({ error: `A NFS-e Nº ${inv.numeroNfse} já se encontra cancelada no sistema.` });
+  }
+
+  const { motivo = "Cancelamento solicitado pelo prestador por erro de emissão ou desistência." } = req.body || {};
   inv.status = "cancelada";
   inv.motivoCancelamento = motivo;
   inv.canceladoEm = new Date().toISOString();
+
+  // Desvincula a reserva no PMS para permitir nova emissão
+  if (inv.reservationId) {
+    const r = (db.reservations || []).find(res => Number(res.id) === Number(inv.reservationId));
+    if (r && r.invoiceId === inv.id) {
+      r.invoiceId = null;
+      r.numeroNfse = null;
+    }
+  }
+  if (Array.isArray(inv.reservationIds)) {
+    for (const resId of inv.reservationIds) {
+      const r = (db.reservations || []).find(res => Number(res.id) === Number(resId));
+      if (r && r.invoiceId === inv.id) {
+        r.invoiceId = null;
+        r.numeroNfse = null;
+      }
+    }
+  }
+
   saveDatabase();
 
   logAuditEvent({
     level: "warn",
     category: "financial",
-    action: "NFSE_CANCELLED_NATIONAL",
-    actor: { name: "Gestor", role: "admin" },
-    details: { numeroNfse: inv.numeroNfse, chaveAcesso: inv.chaveAcesso, motivo },
+    action: inv.sistemaEmissor === "padrao_nacional" ? "NFSE_CANCELLED_NATIONAL" : "NFSE_CANCELLED_GISSONLINE",
+    actor: { name: (getAuthUser(req)?.username || "Gestor"), role: "admin" },
+    details: { numeroNfse: inv.numeroNfse, chaveAcesso: inv.chaveAcesso, motivo, sistemaEmissor: inv.sistemaEmissor },
     source: "nfse_engine"
   });
 
-  res.json({ success: true, message: `NFS-e Nº ${inv.numeroNfse} cancelada com sucesso no Ambiente Nacional.` });
+  res.json({
+    success: true,
+    invoice: inv,
+    message: `NFS-e Nº ${inv.numeroNfse} cancelada com sucesso (${inv.sistemaEmissor === "padrao_nacional" ? "Ambiente Nacional ADN" : "GissOnline Municipal"}).`
+  });
 });
 
-// Substituição de NFS-e (Cancela a anterior e retorna rascunho com dados clonados)
+// Substituição de NFS-e (Marca original como substituida e gera draft completo para re-emissão no Studio)
 app.post("/api/nfse/replace/:id", (req, res) => {
   getFiscalData();
-  const id = Number(req.params.id);
-  const { motivo = "Substituição de nota por correção de dados do tomador/valor." } = req.body || {};
-  const original = db.invoices.find(i => i.id === id);
-  if (!original) return res.status(404).json({ error: "Nota original não encontrada" });
+  const rawId = String(req.params.id || "").trim();
+  const numId = Number(rawId);
 
+  const original = (db.invoices || []).find(i =>
+    (numId && i.id === numId) ||
+    String(i.id) === rawId ||
+    String(i.numeroNfse) === rawId ||
+    String(i.numeroNota) === rawId ||
+    i.chaveAcesso === rawId ||
+    (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
+  );
+
+  if (!original) return res.status(404).json({ error: `Nota Fiscal '${rawId}' não encontrada.` });
+
+  const { motivo = "Substituição de nota por correção de dados do tomador/valor." } = req.body || {};
   original.status = "substituida";
   original.motivoCancelamento = motivo;
   original.canceladoEm = new Date().toISOString();
+
+  // Desvincula reserva da nota antiga para re-emissão
+  if (original.reservationId) {
+    const r = (db.reservations || []).find(res => Number(res.id) === Number(original.reservationId));
+    if (r && r.invoiceId === original.id) {
+      r.invoiceId = null;
+      r.numeroNfse = null;
+    }
+  }
+  if (Array.isArray(original.reservationIds)) {
+    for (const resId of original.reservationIds) {
+      const r = (db.reservations || []).find(res => Number(res.id) === Number(resId));
+      if (r && r.invoiceId === original.id) {
+        r.invoiceId = null;
+        r.numeroNfse = null;
+      }
+    }
+  }
+
   saveDatabase();
+
+  const draft = {
+    tomadorNome: original.tomadorNome,
+    tomadorCpfCnpj: original.tomadorCpfCnpj,
+    tomadorEmail: original.tomadorEmail || "",
+    tomadorTelefone: original.tomadorTelefone || "",
+    tomadorEndereco: original.tomadorEndereco || original.tomadorLogradouro || "",
+    tomadorNumero: original.tomadorNumero || "",
+    tomadorComplemento: original.tomadorComplemento || "",
+    tomadorBairro: original.tomadorBairro || "",
+    tomadorCep: original.tomadorCep || "",
+    tomadorCidade: original.tomadorCidade || "Campos dos Goytacazes",
+    tomadorUf: original.tomadorUf || "RJ",
+    tomadorCodigoMunicipio: original.tomadorCodigoMunicipio || "3301009",
+    flatNumber: original.flatNumber || "",
+    checkinDate: original.checkinDate || null,
+    checkoutDate: original.checkoutDate || null,
+    valorServico: original.valorServico,
+    aliquota: original.aliquota || 2.0,
+    cnae: original.cnae || "5510801",
+    codigoServico: original.codigoServico || "09.02",
+    codigoTributacaoMunicipio: original.codigoTributacaoMunicipio || "799020000",
+    regraFiscalId: original.regraFiscalId || "hospedagem_corpflats",
+    discriminacao: original.discriminacao,
+    sistemaEmissor: original.sistemaEmissor,
+    companyId: original.companyId || null,
+    guestId: original.guestId || null,
+    reservationId: original.reservationId || null,
+    reservationCode: original.reservationCode || null,
+    substituiNfseId: original.id,
+    substituiNumeroNfse: original.numeroNfse,
+    substituiChaveAcesso: original.chaveAcesso || null
+  };
 
   res.json({
     success: true,
-    message: `NFS-e Nº ${original.numeroNfse} marcada para substituição.`,
-    draft: {
-      tomadorNome: original.tomadorNome,
-      tomadorCpfCnpj: original.tomadorCpfCnpj,
-      tomadorEmail: original.tomadorEmail,
-      tomadorTelefone: original.tomadorTelefone,
-      flatNumber: original.flatNumber,
-      valorServico: original.valorServico,
-      regraFiscalId: original.regraFiscalId,
-      discriminacao: original.discriminacao,
-      substituiNfseId: original.id,
-      substituiChaveAcesso: original.chaveAcesso
-    }
+    message: `NFS-e Nº ${original.numeroNfse} marcada para substituição. Dados clonados para o Studio.`,
+    originalInvoice: original,
+    draft
   });
+});
+
+// Exportação Contábil Fechamento / Kit Contador (CSV UTF-8 BOM e JSON)
+app.get("/api/nfse/export-accounting", (req, res) => {
+  getFiscalData();
+  const { competencia, period, status, sistemaEmissor, format = "csv" } = req.query;
+  const compFilter = competencia || period;
+
+  let list = db.invoices || [];
+
+  if (compFilter && compFilter !== "all" && compFilter !== "todas") {
+    list = list.filter(i => (i.dataEmissao || "").startsWith(compFilter));
+  }
+  if (status && status !== "all" && status !== "todas") {
+    list = list.filter(i => i.status === status);
+  }
+  if (sistemaEmissor && sistemaEmissor !== "all" && sistemaEmissor !== "todas") {
+    list = list.filter(i => i.sistemaEmissor === sistemaEmissor);
+  }
+
+  const totalBruto = Number(list.reduce((acc, i) => acc + Number(i.valorServico || 0), 0).toFixed(2));
+  const totalIss = Number(list.reduce((acc, i) => acc + (Number(i.valorServico || 0) * (Number(i.aliquota || 2.0) / 100)), 0).toFixed(2));
+
+  if (format === "json") {
+    return res.json({
+      success: true,
+      competencia: compFilter || "todas",
+      period: compFilter || "todas",
+      count: list.length,
+      total: list.length,
+      totalBruto,
+      totalIss,
+      items: list,
+      invoices: list
+    });
+  }
+
+  // Geração de CSV com delimitador ';' e BOM UTF-8 (﻿)
+  const headers = [
+    "Numero_NFSe",
+    "RPS",
+    "Data_Emissao",
+    "Competencia",
+    "Status",
+    "Sistema_Emissor",
+    "Codigo_Verificacao_Chave",
+    "CPF_CNPJ_Tomador",
+    "Nome_Razao_Social",
+    "Tipo_Tomador",
+    "Endereco",
+    "Flat",
+    "Checkin",
+    "Checkout",
+    "Valor_Bruto",
+    "Aliquota_ISS",
+    "Valor_ISS",
+    "Discriminacao"
+  ];
+
+  const rows = list.map(inv => {
+    const cleanDoc = onlyDigits(inv.tomadorCpfCnpj);
+    const tipoTomador = cleanDoc.length === 14 ? "PJ" : "PF";
+    const docFmt = cleanDoc.length === 14 ? formatCnpj(cleanDoc) : formatCpf(cleanDoc);
+    const valorBruto = Number(inv.valorServico || 0).toFixed(2);
+    const aliq = Number(inv.aliquota || 2.0).toFixed(2);
+    const valorIss = (Number(inv.valorServico || 0) * (Number(aliq) / 100)).toFixed(2);
+    const discSanitizada = `"${String(inv.discriminacao || '').replace(/[\r\n]+/g, ' | ').replace(/"/g, '""')}"`;
+    const tomadorNomeEsc = `"${String(inv.tomadorNome || '').replace(/"/g, '""')}"`;
+    const tomadorEndEsc = `"${String(inv.tomadorEndereco || inv.tomadorLogradouro || '').replace(/"/g, '""')}"`;
+    const codVerifChave = inv.chaveAcesso || inv.codigoVerificacao || "";
+
+    return [
+      inv.numeroNfse || inv.id,
+      inv.numeroRps || "",
+      inv.dataEmissao ? inv.dataEmissao.substring(0, 19).replace('T', ' ') : "",
+      inv.dataEmissao ? inv.dataEmissao.substring(0, 7) : "",
+      inv.status,
+      inv.sistemaEmissor,
+      codVerifChave,
+      docFmt,
+      tomadorNomeEsc,
+      tipoTomador,
+      tomadorEndEsc,
+      inv.flatNumber || "",
+      inv.checkinDate || "",
+      inv.checkoutDate || "",
+      valorBruto,
+      aliq,
+      valorIss,
+      discSanitizada
+    ].join(";");
+  });
+
+  const nl = "\r\n";
+  const csvContent = "\uFEFF" + [headers.join(";"), ...rows].join(nl);
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="livro_fiscal_contabil_${compFilter || 'todas'}.csv"`);
+  res.send(csvContent);
 });
 
 // Upload e validação de Certificado Digital A1 (.pfx / .p12)

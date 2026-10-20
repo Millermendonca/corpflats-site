@@ -88,6 +88,7 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
   let serverProcess;
   let serverPort;
   let baseUrl;
+  let adminCookie = "";
   let initialProdHash;
   let initialProdMtime;
 
@@ -135,6 +136,129 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       });
     }
 
+    // Seed test guest Carla Silveira (id: 802) for PF flow
+    if (!initialDb.guests.some(g => g.id === 802)) {
+      initialDb.guests.push({
+        id: 802,
+        name: "Carla Silveira",
+        fullName: "Carla Silveira",
+        cpf: "01234567890",
+        documentNumber: "01234567890",
+        email: "carla.silveira@email.com",
+        phone: "2299776655",
+        address: "Rua Barão da Lagoa Dourada",
+        number: "120",
+        neighborhood: "Pelinca",
+        city: "Campos dos Goytacazes",
+        state: "RJ",
+        cep: "28035260",
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    // Seed dedicated test reservations for T11-T16 without colliding with T1/T2
+    const testReservations = [
+      {
+        id: 701,
+        code: "RES-201-701",
+        flatNumber: "201",
+        guestName: "Eng. Roberto Marinho",
+        guestPhone: "2299881122",
+        guestDocument: "52998224725",
+        guestEmail: "roberto@petroserv.com.br",
+        companyId: 901,
+        status: "in_house",
+        checkinDate: "2026-10-18",
+        checkoutDate: "2026-10-21",
+        totalAmount: 600.00
+      },
+      {
+        id: 702,
+        code: "RES-202-702",
+        flatNumber: "202",
+        guestName: "Carla Silveira",
+        guestPhone: "2299776655",
+        guestDocument: "01234567890",
+        guestEmail: "carla.silveira@email.com",
+        status: "checked_out",
+        checkinDate: "2026-10-15",
+        checkoutDate: "2026-10-17",
+        totalAmount: 350.00
+      },
+      {
+        id: 703,
+        code: "RES-203-703",
+        flatNumber: "203",
+        guestName: "Hóspede Sem Documento",
+        guestPhone: "2299112233",
+        guestDocument: "",
+        status: "confirmed",
+        checkinDate: "2026-10-25",
+        checkoutDate: "2026-10-27",
+        totalAmount: 500.00
+      },
+      {
+        id: 704,
+        code: "RES-204-704",
+        flatNumber: "204",
+        guestName: "Lucas Vasconcellos",
+        guestPhone: "2299554433",
+        guestDocument: "52998224725",
+        guestEmail: "lucas@email.com",
+        status: "checked_out",
+        checkinDate: "2026-10-10",
+        checkoutDate: "2026-10-12",
+        totalAmount: 480.00
+      },
+      {
+        id: 705,
+        code: "RES-205-705",
+        flatNumber: "205",
+        guestName: "Tatiana Nogueira",
+        guestPhone: "2299332211",
+        guestDocument: "01234567890",
+        guestEmail: "tatiana@email.com",
+        status: "checked_out",
+        checkinDate: "2026-10-12",
+        checkoutDate: "2026-10-14",
+        totalAmount: 520.00
+      },
+      {
+        id: 706,
+        code: "RES-104-706",
+        flatNumber: "104",
+        guestName: "Eng. Pedro Alvares",
+        guestPhone: "2299223344",
+        guestDocument: "52998224725",
+        guestEmail: "pedro@petroserv.com.br",
+        companyId: 901,
+        status: "checked_out",
+        checkinDate: "2026-10-10",
+        checkoutDate: "2026-10-12",
+        totalAmount: 400.00
+      },
+      {
+        id: 707,
+        code: "RES-106-707",
+        flatNumber: "106",
+        guestName: "Dra. Marcia Cunha",
+        guestPhone: "2299665544",
+        guestDocument: "01234567890",
+        guestEmail: "marcia@petroserv.com.br",
+        companyId: 901,
+        status: "checked_out",
+        checkinDate: "2026-10-12",
+        checkoutDate: "2026-10-15",
+        totalAmount: 500.00
+      }
+    ];
+
+    for (const resItem of testReservations) {
+      if (!initialDb.reservations.some(r => r.id === resItem.id)) {
+        initialDb.reservations.push(resItem);
+      }
+    }
+
     fs.writeFileSync(tmpDbPath, JSON.stringify(initialDb, null, 2), "utf8");
 
     // 3. Find available port and launch server process
@@ -165,6 +289,16 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
     });
 
     await waitForServer(baseUrl);
+
+    // 4. Capture admin authentication cookie for protected endpoints
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "admin123" })
+    });
+    assert.strictEqual(loginRes.status, 200, "Admin login must succeed in test before hook");
+    const rawCookie = loginRes.headers.get("set-cookie") || "";
+    adminCookie = rawCookie.split(";")[0];
   });
 
   after(async () => {
@@ -862,6 +996,382 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       assert.strictEqual(mockDb.reservations[0].invoiceDetails.tomadorCpfCnpj, "11144477735");
       assert.strictEqual(conv.awaitingFiscalData, false);
       assert.match(sentZapi.message, /Dados recebidos com sucesso/i);
+    });
+  });
+
+  // =========================================================================
+  // T11: Fila de Reservas Pendentes (GET /api/nfse/pending-reservations)
+  // =========================================================================
+  describe("T11: Fila de Reservas Pendentes (GET /api/nfse/pending-reservations)", () => {
+    it("T11.1 - Retorna reservas elegíveis sem NFS-e autorizada, enriquecidas com PF e PJ", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/pending-reservations`);
+      assert.strictEqual(res.status, 200, "GET /api/nfse/pending-reservations must return 200");
+      const data = await res.json();
+      assert.strictEqual(data.success, true, "Response must report success: true");
+      assert.ok(Array.isArray(data.pendingReservations), "pendingReservations must be an array");
+
+      const p701 = data.pendingReservations.find(p => p.id === 701);
+      assert.ok(p701, "Res 701 must be present in pendingReservations");
+      assert.strictEqual(p701.tomadorPadrao, "PJ", "Res 701 with companyId 901 must default to tomadorPadrao PJ");
+      assert.strictEqual(p701.tomadorType, "pj", "Res 701 must have tomadorType 'pj'");
+      assert.strictEqual(p701.companyName, "Petroserv Logística Offshore S/A");
+      assert.strictEqual(p701.companyCnpj, "02709449000159");
+      assert.strictEqual(p701.valorSugerido, 600.00);
+      assert.ok(p701.diarias >= 1, "Res 701 diarias must be >= 1");
+
+      const p702 = data.pendingReservations.find(p => p.id === 702);
+      assert.ok(p702, "Res 702 must be present in pendingReservations");
+      assert.strictEqual(p702.tomadorPadrao, "PF", "Res 702 without company must default to tomadorPadrao PF");
+      assert.strictEqual(p702.tomadorType, "pf", "Res 702 must have tomadorType 'pf'");
+      assert.strictEqual(p702.valorSugerido, 350.00);
+      assert.match(p702.guestName, /Carla Silveira/i);
+    });
+
+    it("T11.2 - Exclui reservas que já possuem NFS-e autorizada vinculada", async () => {
+      // 1. Emit authorized invoice linked to reservation 701
+      const emitRes = await fetch(`${baseUrl}/api/nfse/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationId: 701,
+          sistemaEmissor: "padrao_nacional",
+          tomadorNome: "Petroserv Logística Offshore S/A",
+          tomadorCpfCnpj: "02709449000159",
+          tomadorEmail: "financeiro@petroserv.com.br",
+          valorServico: 600.00,
+          flatNumber: "201"
+        })
+      });
+      assert.strictEqual(emitRes.status, 201, "Invoice emission for Res 701 must return 201");
+
+      // 2. Query pending reservations again
+      const resAfter = await fetch(`${baseUrl}/api/nfse/pending-reservations`);
+      assert.strictEqual(resAfter.status, 200);
+      const dataAfter = await resAfter.json();
+      const found701 = dataAfter.pendingReservations.find(p => p.id === 701);
+      assert.strictEqual(found701, undefined, "Res 701 with authorized NFS-e must NOT appear in pending reservations");
+
+      const found702 = dataAfter.pendingReservations.find(p => p.id === 702);
+      assert.ok(found702, "Res 702 without NFS-e must remain in pending reservations");
+    });
+
+    it("T11.3 - Sinaliza pendência cadastral (hasPendingDoc = true) quando tomador não possui CPF/CNPJ válido", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/pending-reservations`);
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      const p703 = data.pendingReservations.find(p => p.id === 703);
+      assert.ok(p703, "Res 703 must be in pendingReservations");
+      assert.strictEqual(p703.hasPendingDoc, true, "Res 703 without document must flag hasPendingDoc = true");
+      assert.ok(p703.pendingReasons.length >= 1, "Res 703 must detail pendingReasons");
+      assert.ok(data.pendingDocCount >= 1, "pendingDocCount summary must be >= 1");
+    });
+  });
+
+  // =========================================================================
+  // T12: Emissão em Lote Sequencial Segura (POST /api/nfse/emit-batch)
+  // =========================================================================
+  describe("T12: Emissão em Lote Sequencial Segura (POST /api/nfse/emit-batch)", () => {
+    it("T12.1 - Emite lote de múltiplas reservas pendentes sequencialmente com sucesso", async () => {
+      const batchRes = await fetch(`${baseUrl}/api/nfse/emit-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: [
+            { reservationId: 704, sistemaEmissor: "padrao_nacional" },
+            { reservationId: 705, sistemaEmissor: "giss_prefeitura" }
+          ]
+        })
+      });
+      assert.strictEqual(batchRes.status, 200, "POST /api/nfse/emit-batch must return 200");
+      const data = await batchRes.json();
+      assert.strictEqual(data.success, true, "All items succeeded so success must be true");
+      assert.strictEqual(data.processedCount, 2, "processedCount must equal 2");
+      assert.strictEqual(data.authorizedCount, 2, "authorizedCount must equal 2");
+      assert.strictEqual(data.failedCount, 0, "failedCount must equal 0");
+      assert.strictEqual(data.results.length, 2, "results array must contain 2 items");
+
+      assert.strictEqual(data.results[0].success, true);
+      assert.ok(data.results[0].numeroNfse, "Item 1 must have generated numeroNfse");
+      assert.ok(data.results[0].danfseUrl, "Item 1 must have danfseUrl");
+
+      assert.strictEqual(data.results[1].success, true);
+      assert.ok(data.results[1].numeroNfse, "Item 2 must have generated numeroNfse");
+      assert.ok(data.results[1].danfseUrl, "Item 2 must have danfseUrl");
+    });
+
+    it("T12.2 - Trata item com erro sem interromper os demais no lote", async () => {
+      const batchRes = await fetch(`${baseUrl}/api/nfse/emit-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: [
+            { reservationId: 702, sistemaEmissor: "padrao_nacional" },
+            { reservationId: 999999, sistemaEmissor: "padrao_nacional" }
+          ]
+        })
+      });
+      assert.strictEqual(batchRes.status, 200, "Batch endpoint responds 200 even with partial item failure");
+      const data = await batchRes.json();
+      assert.strictEqual(data.success, false, "Batch with failed item must report success: false");
+      assert.strictEqual(data.processedCount, 2);
+      assert.strictEqual(data.authorizedCount, 1);
+      assert.strictEqual(data.failedCount, 1);
+
+      assert.strictEqual(data.results[0].success, true, "Valid reservation 702 must succeed");
+      assert.strictEqual(data.results[1].success, false, "Invalid reservation 999999 must fail");
+      assert.ok(data.results[1].error, "Failed item must report error description");
+    });
+  });
+
+  // =========================================================================
+  // T13: Faturamento Corporativo B2B Consolidado (POST /api/nfse/emit-consolidated)
+  // =========================================================================
+  describe("T13: Faturamento Corporativo B2B Consolidado (POST /api/nfse/emit-consolidated)", () => {
+    it("T13.1 - Emite 1 única NFS-e somando valores de múltiplos colaboradores da mesma empresa com discriminação detalhada", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/emit-consolidated`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId: 901,
+          reservationIds: [706, 707],
+          sistemaEmissor: "padrao_nacional",
+          aliquota: 2.0
+        })
+      });
+      assert.strictEqual(res.status, 201, "Consolidated emission must return 201 Created");
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.ok(data.numeroNfse, "Must generate numeroNfse");
+      assert.strictEqual(data.invoice.valorServico, 900.00, "Consolidated valorServico must be 400 + 500 = 900.00");
+      assert.strictEqual(data.invoice.tomadorCpfCnpj, "02709449000159", "Tomador document must match Petroserv CNPJ");
+      assert.ok(Array.isArray(data.invoice.reservationIds), "reservationIds must be an array");
+      assert.ok(data.invoice.reservationIds.includes(706), "Must include reservation 706");
+      assert.ok(data.invoice.reservationIds.includes(707), "Must include reservation 707");
+
+      // Verify detailed discrimination contains all guests and flats
+      const disc = data.invoice.discriminacao || "";
+      assert.match(disc, /Pedro Alvares/i, "Discrimination must list guest Pedro Alvares");
+      assert.match(disc, /104/, "Discrimination must include Flat 104");
+      assert.match(disc, /Marcia Cunha/i, "Discrimination must list guest Marcia Cunha");
+      assert.match(disc, /106/, "Discrimination must include Flat 106");
+      assert.match(disc, /CONSOLIDADO/i, "Discrimination must identify as consolidated billing");
+    });
+
+    it("T13.2 - Reservas consolidadas deixam de aparecer em GET /api/nfse/pending-reservations", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/pending-reservations`);
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.strictEqual(
+        data.pendingReservations.find(p => p.id === 706),
+        undefined,
+        "Consolidated Res 706 must NOT appear in pendingReservations"
+      );
+      assert.strictEqual(
+        data.pendingReservations.find(p => p.id === 707),
+        undefined,
+        "Consolidated Res 707 must NOT appear in pendingReservations"
+      );
+    });
+  });
+
+  // =========================================================================
+  // T14: Ciclo de Vida da NFS-e: Cancelamento e Substituição
+  // =========================================================================
+  describe("T14: Ciclo de Vida da NFS-e: Cancelamento e Substituição (POST /api/nfse/cancel/:id e /api/nfse/replace/:id)", () => {
+    it("T14.1 - Cancela NFS-e autorizada registrando motivo e timestamp, desvinculando reserva no PMS", async () => {
+      // 1. Emit an invoice to cancel
+      const emitRes = await fetch(`${baseUrl}/api/nfse/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sistemaEmissor: "padrao_nacional",
+          tomadorNome: "Hóspede Para Cancelar",
+          tomadorCpfCnpj: "11144477735",
+          tomadorEmail: "cancelar@email.com",
+          valorServico: 300.00,
+          flatNumber: "301"
+        })
+      });
+      assert.strictEqual(emitRes.status, 201);
+      const emitData = await emitRes.json();
+      const invId = emitData.invoice.id;
+
+      // 2. Cancel invoice
+      const cancelRes = await fetch(`${baseUrl}/api/nfse/cancel/${invId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          motivo: "Cancelamento solicitado pelo hóspede antes do check-in"
+        })
+      });
+      assert.strictEqual(cancelRes.status, 200, "Cancel must return 200");
+      const cancelData = await cancelRes.json();
+      assert.strictEqual(cancelData.success, true);
+      assert.strictEqual(cancelData.invoice.status, "cancelada");
+      assert.strictEqual(cancelData.invoice.motivoCancelamento, "Cancelamento solicitado pelo hóspede antes do check-in");
+      assert.ok(cancelData.invoice.canceladoEm, "canceladoEm timestamp must be set");
+    });
+
+    it("T14.2 - Substitui NFS-e marcando original como substituída e gerando draft estruturado", async () => {
+      // 1. Emit an invoice to replace
+      const emitRes = await fetch(`${baseUrl}/api/nfse/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sistemaEmissor: "giss_prefeitura",
+          tomadorNome: "Hóspede Para Substituir",
+          tomadorCpfCnpj: "11144477735",
+          tomadorEmail: "substituir@email.com",
+          valorServico: 450.00,
+          flatNumber: "302"
+        })
+      });
+      assert.strictEqual(emitRes.status, 201);
+      const emitData = await emitRes.json();
+      const invId = emitData.invoice.id;
+
+      // 2. Replace invoice
+      const replaceRes = await fetch(`${baseUrl}/api/nfse/replace/${invId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          motivo: "Correção de razão social do tomador"
+        })
+      });
+      assert.strictEqual(replaceRes.status, 200, "Replace must return 200");
+      const replaceData = await replaceRes.json();
+      assert.strictEqual(replaceData.success, true);
+      assert.strictEqual(replaceData.originalInvoice.status, "substituida");
+      assert.ok(replaceData.draft, "Draft object must be returned");
+      assert.strictEqual(replaceData.draft.substituiNfseId, invId);
+      assert.strictEqual(replaceData.draft.tomadorNome, "Hóspede para Substituir");
+      assert.strictEqual(replaceData.draft.valorServico, 450.00);
+    });
+
+    it("T14.3 - Funciona buscando por numeroNfse além de id numérico", async () => {
+      // 1. Emit invoice
+      const emitRes = await fetch(`${baseUrl}/api/nfse/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sistemaEmissor: "padrao_nacional",
+          tomadorNome: "Busca Por Numero",
+          tomadorCpfCnpj: "11144477735",
+          valorServico: 200.00,
+          flatNumber: "303"
+        })
+      });
+      assert.strictEqual(emitRes.status, 201);
+      const emitData = await emitRes.json();
+      const numeroNfse = emitData.invoice.numeroNfse;
+      assert.ok(numeroNfse, "numeroNfse must exist on invoice");
+
+      // 2. Cancel querying by numeroNfse string
+      const cancelRes = await fetch(`${baseUrl}/api/nfse/cancel/${numeroNfse}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: "Cancelado via numeroNfse" })
+      });
+      assert.strictEqual(cancelRes.status, 200, "Cancel by numeroNfse must return 200");
+      const cancelData = await cancelRes.json();
+      assert.strictEqual(cancelData.success, true);
+      assert.strictEqual(cancelData.invoice.status, "cancelada");
+      assert.strictEqual(String(cancelData.invoice.numeroNfse), String(numeroNfse));
+    });
+  });
+
+  // =========================================================================
+  // T15: Exportação Contábil "Kit Contador" (GET /api/nfse/export-accounting)
+  // =========================================================================
+  describe("T15: Exportação Contábil Kit Contador (GET /api/nfse/export-accounting)", () => {
+    it("T15.1 - Exporta CSV contábil compatível com Excel (UTF-8 BOM e colunas tributárias com ;)", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/export-accounting?format=csv`);
+      assert.strictEqual(res.status, 200, "GET /api/nfse/export-accounting?format=csv must return 200");
+      assert.match(res.headers.get("content-type") || "", /text\/csv/);
+
+      // Check UTF-8 BOM in raw binary buffer
+      const buf = Buffer.from(await res.arrayBuffer());
+      assert.strictEqual(buf[0], 0xEF, "First byte must be 0xEF (UTF-8 BOM)");
+      assert.strictEqual(buf[1], 0xBB, "Second byte must be 0xBB (UTF-8 BOM)");
+      assert.strictEqual(buf[2], 0xBF, "Third byte must be 0xBF (UTF-8 BOM)");
+
+      const text = buf.toString("utf8");
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      assert.ok(lines.length >= 2, "CSV must contain header and at least one data row");
+
+      const headerLine = lines[0].replace("\uFEFF", "");
+      const expectedHeader = "Numero_NFSe;RPS;Data_Emissao;Competencia;Status;Sistema_Emissor;Codigo_Verificacao_Chave;CPF_CNPJ_Tomador;Nome_Razao_Social;Tipo_Tomador;Endereco;Flat;Checkin;Checkout;Valor_Bruto;Aliquota_ISS;Valor_ISS;Discriminacao";
+      assert.strictEqual(headerLine, expectedHeader, "CSV header columns must match accounting specification");
+    });
+
+    it("T15.2 - Filtra por competência mensal (period=YYYY-MM) e status", async () => {
+      const currentMonth = new Date().toISOString().substring(0, 7);
+      const res = await fetch(`${baseUrl}/api/nfse/export-accounting?format=csv&period=${currentMonth}&status=autorizada`);
+      assert.strictEqual(res.status, 200);
+      const text = await res.text();
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      assert.ok(lines.length >= 2, "Filtered CSV must contain header and matching authorized invoices");
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(";");
+        assert.strictEqual(cols[4], "autorizada", "Row status must be autorizada");
+        assert.strictEqual(cols[3], currentMonth, "Row competence must match filtered month");
+      }
+    });
+
+    it("T15.3 - Exporta Kit Contador estruturado em JSON com totais e subtotais", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/export-accounting?format=json`);
+      assert.strictEqual(res.status, 200, "GET /api/nfse/export-accounting?format=json must return 200");
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.strictEqual(typeof data.count, "number");
+      assert.strictEqual(typeof data.totalBruto, "number");
+      assert.strictEqual(typeof data.totalIss, "number");
+      assert.ok(Array.isArray(data.items), "data.items must be an array");
+      assert.strictEqual(data.items.length, data.count);
+    });
+  });
+
+  // =========================================================================
+  // T16: Cockpit de KPIs Executivos & Fila de Contingência
+  // =========================================================================
+  describe("T16: Cockpit de KPIs Executivos & Fila de Contingência", () => {
+    it("T16.1 - GET /api/nfse/invoices retorna stats enriquecidos (Faturamento, ISS Estimado, PF vs PJ, Pendentes, Canceladas/Substituídas)", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/invoices`);
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.ok(data.stats, "Response must include stats object");
+      const s = data.stats;
+
+      assert.ok(s.totalFaturado >= 0, "totalFaturado must be >= 0");
+      const iss = s.totalIssEstimado ?? s.issEstimado;
+      assert.ok(iss >= 0, "totalIssEstimado must be >= 0");
+      assert.ok(s.authorizedCount >= 1, "authorizedCount must be >= 1 from preceding tests");
+      const cancelled = s.cancelledCount ?? s.canceladaCount;
+      assert.ok(cancelled >= 1, "cancelledCount must be >= 1 from T14 cancellation");
+      const substituted = s.substituidaCount ?? s.substitutedCount;
+      assert.ok(substituted >= 1, "substituidaCount must be >= 1 from T14 substitution");
+      assert.strictEqual(s.pfCount + s.pjCount, s.authorizedCount, "pfCount + pjCount must equal authorizedCount");
+      assert.strictEqual(typeof s.pendingReservationsCount, "number", "pendingReservationsCount must be a number");
+      assert.strictEqual(typeof s.retryQueuePendingCount, "number", "retryQueuePendingCount must be a number");
+    });
+
+    it("T16.2 - GET /api/nfse/retry-queue e POST /api/nfse/retry-queue/:id/retry funcionam com autenticação", async () => {
+      const res = await fetch(`${baseUrl}/api/nfse/retry-queue`, {
+        headers: { Cookie: adminCookie }
+      });
+      assert.strictEqual(res.status, 200, "GET /api/nfse/retry-queue with admin cookie must return 200");
+      const data = await res.json();
+      assert.ok(Array.isArray(data.items), "retry-queue items must be an array");
+      assert.strictEqual(typeof data.pendingCount, "number", "pendingCount must be a number");
+
+      // Verify retry action handles request cleanly
+      const retryRes = await fetch(`${baseUrl}/api/nfse/retry-queue/non-existent-id/retry`, {
+        method: "POST",
+        headers: { Cookie: adminCookie }
+      });
+      assert.ok(retryRes.status === 404 || retryRes.status === 200, "Retry action must return 404 or 200");
     });
   });
 
