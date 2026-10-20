@@ -1768,9 +1768,16 @@ export default function FiscalInvoicesPage() {
       })
       const data = await res.json()
       if (res.ok && data.success) {
+        if (data.invoice) {
+          setLastEmittedInvoice({
+            ...data.invoice,
+            danfseUrl: data.invoice.danfseUrl || `/api/nfse/danfse/${data.invoice.numeroNfse || data.invoice.id}`,
+            pdfUrl: `/api/nfse/pdf/${data.invoice.numeroNfse || data.invoice.id}`
+          })
+        }
         toast({
-          title: "Nota Reprocessada com Sucesso!",
-          description: `NFS-e autorizada via contingência.`
+          title: `NFS-e Nº ${data.invoice?.numeroNfse || ""} Autorizada! 🎉`,
+          description: `Nota fiscal autorizada pela Prefeitura (Cód: ${data.invoice?.codigoVerificacao || "OK"}).`
         })
         fetchRetryQueue()
         fetchInvoices()
@@ -2156,6 +2163,14 @@ export default function FiscalInvoicesPage() {
                       <span>Ver DANFSE</span>
                     </Button>
                   )}
+                  <Button 
+                    size="sm"
+                    onClick={() => window.open(`/api/nfse/pdf/${lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id}`, "_blank")}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl h-8.5 gap-1.5"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Abrir PDF</span>
+                  </Button>
                   {lastEmittedInvoice.linkPrefeitura && (
                     <Button 
                       size="sm"
@@ -3317,12 +3332,24 @@ export default function FiscalInvoicesPage() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => window.open(`/api/nfse/danfse/${inv.id || inv.numeroNfse}`, "_blank")}
+                                    onClick={() => window.open(`/api/nfse/danfse/${inv.numeroNfse || inv.id}`, "_blank")}
                                     className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-600/40 hover:bg-emerald-500/10 shadow-2xs"
                                     title="Visualizar e Imprimir Espelho DANFSE Oficial"
                                   >
                                     <ExternalLink className="w-3 h-3 text-emerald-600" />
                                     <span>DANFSE</span>
+                                  </Button>
+
+                                  {/* Abrir PDF Oficial */}
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => window.open(`/api/nfse/pdf/${inv.numeroNfse || inv.id}`, "_blank")}
+                                    className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-indigo-700 dark:text-indigo-300 border-indigo-600/40 hover:bg-indigo-500/10 shadow-2xs"
+                                    title="Abrir Documento PDF Oficial da NFS-e"
+                                  >
+                                    <FileText className="w-3 h-3 text-indigo-600" />
+                                    <span>PDF</span>
                                   </Button>
 
                                   {/* Portal Giss */}

@@ -1373,6 +1373,25 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       });
       assert.ok(retryRes.status === 404 || retryRes.status === 200, "Retry action must return 404 or 200");
     });
+
+    it("T16.3 - GET /api/nfse/danfse/904 e GET /api/nfse/pdf/904 abrem espelho DANFSE e PDF binário válido da nota real Nº 904 (5FXJ1ZDHS)", async () => {
+      const danfseRes = await fetch(`${baseUrl}/api/nfse/danfse/904`);
+      assert.strictEqual(danfseRes.status, 200, "GET /api/nfse/danfse/904 must return 200");
+      const html = await danfseRes.text();
+      assert.ok(html.includes("904"), "DANFSE HTML must contain invoice number 904");
+      assert.ok(html.includes("5FXJ1ZDHS"), "DANFSE HTML must contain verification code 5FXJ1ZDHS");
+      assert.ok(html.includes("Miller Mendonça Pessanha"), "DANFSE HTML must contain Miller Mendonça Pessanha");
+
+      const pdfRes = await fetch(`${baseUrl}/api/nfse/pdf/904`);
+      assert.strictEqual(pdfRes.status, 200, "GET /api/nfse/pdf/904 must return 200");
+      assert.ok(
+        (pdfRes.headers.get("content-type") || "").includes("application/pdf"),
+        "GET /api/nfse/pdf/904 must return application/pdf content-type"
+      );
+      const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
+      assert.ok(pdfBuf.length > 1500, "PDF buffer must have valid size > 1500 bytes");
+      assert.strictEqual(pdfBuf.subarray(0, 4).toString("ascii"), "%PDF", "PDF binary must start with %PDF header");
+    });
   });
 
   // =========================================================================
