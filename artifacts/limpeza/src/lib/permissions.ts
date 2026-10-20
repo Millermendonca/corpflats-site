@@ -51,6 +51,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     title: "🧹 Governança & Manutenção",
     items: [
       { href: "/dashboard", label: "Painel de Limpeza", description: "Quartos sujos, limpos e em andamento" },
+      { href: "/raio-x-flats", label: "Raio-X & Hub dos Flats", description: "Diário do flat, campanhas (AC/dedetização/cortinas), ficha técnica, 76 tags, preventivas e vistorias" },
       { href: "/reports", label: "Fechamento & Diárias", description: "Fechamento quinzenal, extrato em tempo real, vales e PIX" },
       { href: "/lista-compras", label: "Lista de Compras", description: "Itens para reposição, compras e governança" },
       { href: "/observations", label: "Ocorrências & Avarias", description: "Defeitos e manutenções relatadas" },
@@ -302,8 +303,12 @@ export const ROUTE_ALIASES: Record<string, string> = {
   // Vistorias
   "/vistorias": "/surveys",
 
-  // Serviços
+  // Serviços & Raio-X dos Flats
   "/service-orders": "/servicos",
+  "/diario-flats": "/raio-x-flats",
+  "/hub-manutencao": "/raio-x-flats",
+  "/raio-x": "/raio-x-flats",
+  "/prontuario-flats": "/raio-x-flats",
 
   // Propriedade
   "/hotel": "/propriedade",
@@ -359,7 +364,16 @@ export function hasModuleAccess(
     ? user.allowedModules
     : getDefaultModulesForRole(user.role);
 
-  return allowed.some(m => canonicalizeRoute(m) === canonical);
+  if (allowed.some(m => canonicalizeRoute(m) === canonical)) {
+    return true;
+  }
+
+  if (canonical === "/raio-x-flats") {
+    const hubEquivalents = ["/servicos", "/tasks", "/observations", "/surveys"];
+    return allowed.some(m => hubEquivalents.includes(canonicalizeRoute(m)));
+  }
+
+  return false;
 }
 
 /**

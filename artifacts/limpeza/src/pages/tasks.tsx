@@ -365,7 +365,7 @@ function overdueBadge(item: any) {
   )
 }
 
-export default function Tasks() {
+export default function Tasks({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast()
   const { data: user } = useGetMe()
   const isAdmin = user?.role === "admin" || user?.role === "dev"
@@ -467,9 +467,10 @@ export default function Tasks() {
 
   const flatOptions = (flats ?? []).map(f => ({ id: f.id, number: f.number }))
   const execItem = allPending.find(p => p.taskId === execDialogTaskId && p.flatId === execFlatId)
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : Shell
 
   return (
-    <Shell>
+    <Wrapper>
       <div className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -759,6 +760,6 @@ export default function Tasks() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Shell>
+    </Wrapper>
   )
 }

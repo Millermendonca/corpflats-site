@@ -105,7 +105,7 @@ function ObservationCard({ obs, isAdmin, onResolve }: { obs: Observation; isAdmi
   )
 }
 
-export default function Observations() {
+export default function Observations({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: user } = useGetMe()
   const isAdmin = user?.role === "admin" || user?.role === "dev"
   const qc = useQueryClient()
@@ -157,6 +157,7 @@ export default function Observations() {
   })
 
   const openCount = (observations ?? []).filter(o => o.status === "aberta").length
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : Shell
 
   const filteredObservations = (observations ?? []).filter(obs => {
     if (!searchQuery.trim()) return true
@@ -169,7 +170,7 @@ export default function Observations() {
   })
 
   return (
-    <Shell>
+    <Wrapper>
       <div className="flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6 pb-28">
         {/* Header Principal */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-5 rounded-3xl shadow-sm">
@@ -422,6 +423,6 @@ export default function Observations() {
           </DialogContent>
         </Dialog>
       </div>
-    </Shell>
+    </Wrapper>
   )
 }

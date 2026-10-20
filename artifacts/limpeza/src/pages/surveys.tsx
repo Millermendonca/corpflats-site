@@ -52,7 +52,7 @@ const QUESTION_TYPES = [
   { value: "photo", label: "Foto / Evidência", icon: Camera, desc: "Tirar foto na hora ou enviar da galeria (comprimida)" },
 ]
 
-export default function SurveysPage() {
+export default function SurveysPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast()
   const { data: flatsData } = useListFlats()
   const flatOptions = (flatsData ?? []).map(f => ({ id: f.id, number: f.number }))
@@ -372,9 +372,10 @@ export default function SurveysPage() {
   const answeredCount = answeredFlatIds.size
   const totalTargetCount = targetFlatsList.length
   const progressPercent = totalTargetCount > 0 ? Math.round((answeredCount / totalTargetCount) * 100) : 0
+  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <>{children}</> : Shell
 
   return (
-    <Shell>
+    <Wrapper>
       <div className="flex-1 p-4 md:p-8 max-w-7xl mx-auto w-full space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1271,6 +1272,6 @@ export default function SurveysPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Shell>
+    </Wrapper>
   )
 }

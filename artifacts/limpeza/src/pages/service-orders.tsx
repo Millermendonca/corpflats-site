@@ -188,9 +188,22 @@ export interface ServiceFlat {
   forceReleased?: boolean;
 }
 
+export interface ServiceCatalogItem {
+  id: string;
+  name: string;
+  category: string;
+  icon: string;
+  recommendedIntervalDays?: number | null;
+  requiresExternalPortal?: boolean;
+  tracksRemovedItem?: boolean;
+  description?: string;
+}
+
 export interface ServiceOrder {
   id: string;
   title: string;
+  serviceTypeId?: string;
+  serviceTypeName?: string;
   token: string;
   status: OrderStatus;
   createdAt: string;
@@ -295,12 +308,22 @@ function cleanCpfDigits(val: string): string {
   return val.replace(/\D/g, "");
 }
 
-export default function ServiceOrders() {
+export default function ServiceOrders({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   // Tab State: "list" | "form" | "tracking"
   const [activeTab, setActiveTab] = useState<"list" | "form" | "tracking">("list");
+
+  // Query: Catálogo Oficial de Tipos de Serviço
+  const { data: serviceCatalog = [] } = useQuery<ServiceCatalogItem[]>({
+    queryKey: ["/api/service-catalog"],
+    queryFn: async () => {
+      const res = await fetch("/api/service-catalog", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
 
   // Flat selection and raw list
   const { data: rawFlats, isLoading: flatsLoading } = useListFlats();
@@ -378,6 +401,11 @@ export default function ServiceOrders() {
 
   // Form State (Criar / Editar)
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [formServiceTypeId, setFormServiceTypeId] = useState<string>("higienizacao_ac");
+  const [showNewCatalogInline, setShowNewCatalogInline] = useState(false);
+  const [newCatalogName, setNewCatalogName] = useState("");
+  const [newCatalogIcon, setNewCatalogIcon] = useState("🔧");
+  const [newCatalogInterval, setNewCatalogInterval] = useState<string>("90");
   const [formTitle, setFormTitle] = useState("");
   const [formWorkerName, setFormWorkerName] = useState("");
   const [formWorkerCpf, setFormWorkerCpf] = useState("");
@@ -498,6 +526,8 @@ export default function ServiceOrders() {
   // Reset form to blank creation state
   const resetFormToCreate = () => {
     setEditingOrderId(null);
+    setFormServiceTypeId("higienizacao_ac");
+    setShowNewCatalogInline(false);
     setFormTitle("");
     setFormWorkerName("");
     setFormWorkerCpf("");
@@ -521,6 +551,8 @@ export default function ServiceOrders() {
   // Load existing order into form for editing
   const loadOrderIntoForm = (order: ServiceOrder) => {
     setEditingOrderId(order.id);
+    setFormServiceTypeId(order.serviceTypeId || "higienizacao_ac");
+    setShowNewCatalogInline(false);
     setFormTitle(order.title || "");
     setFormWorkerName((order as any).workerName || "");
     setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
@@ -629,6 +661,51 @@ export default function ServiceOrders() {
     },
   });
 
+  // Mutation: Criar novo tipo de serviço no catálogo oficial
+  const createCatalogItemMutation = useMutation({
+    mutationFn: async () => {
+      if (!newCatalogName.trim()) throw new Error("Informe o nome do tipo de serviço.");
+      const res = await fetch("/api/service-catalog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: newCatalogName.trim(),
+          icon: newCatalogIcon || "🔧",
+          category: "geral",
+          recommendedIntervalDays: newCatalogInterval ? Number(newCatalogInterval) : null,
+          requiresExternalPortal: true,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Erro ao adicionar tipo de serviço.");
+      }
+      return res.json();
+    },
+    onSuccess: (created: ServiceCatalogItem) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/flats/xray"] });
+      setFormServiceTypeId(created.id);
+      if (!formTitle.trim()) {
+        setFormTitle(created.name);
+      }
+      setShowNewCatalogInline(false);
+      setNewCatalogName("");
+      toast({
+        title: "Tipo adicionado à Lista Oficial!",
+        description: `"${created.name}" agora faz parte do catálogo de serviços recorrentes.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao criar tipo de serviço",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Mutation: Salvar Ordem (POST ou PATCH)
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -666,8 +743,12 @@ export default function ServiceOrders() {
 
       const shouldClearWorker = Boolean(editingOrderId && !trimmedWorkerName && !cleanedWorkerCpf && !cleanedWorkerPhone);
 
+      const selectedCatalogItem = serviceCatalog.find((c) => c.id === formServiceTypeId);
+
       const bodyPayload = {
         title: formTitle.trim(),
+        serviceTypeId: formServiceTypeId || undefined,
+        serviceTypeName: selectedCatalogItem?.name || undefined,
         cleanFlatMode: "always" as CleanFlatMode,
         allowedRoomStatuses: formAllowedStatuses,
         maxSimultaneousFlats: Number(formMaxSimultaneous) || 2,
@@ -705,6 +786,7 @@ export default function ServiceOrders() {
     },
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: ["service-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/flats/xray"] });
       if (editingOrderId) {
         queryClient.invalidateQueries({ queryKey: ["service-order-progress", editingOrderId] });
       }
@@ -802,6 +884,7 @@ export default function ServiceOrders() {
     onSuccess: (data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["service-orders"] });
       queryClient.invalidateQueries({ queryKey: ["service-order-progress", vars.orderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/flats/xray"] });
       toast({
         title: "Flat resetado para Pendente!",
         description: `O flat foi reaberto e está novamente liberado para o prestador de serviço.`,
@@ -814,6 +897,50 @@ export default function ServiceOrders() {
     onError: (err: any) => {
       toast({
         title: "Erro ao resetar flat",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation: Concluir Flat diretamente pelo Admin (alimenta Raio-X / Diário)
+  const adminCompleteFlatMutation = useMutation({
+    mutationFn: async ({ orderId, flatId, observations }: { orderId: string; flatId: number; observations?: string }) => {
+      const res = await fetch(`/api/service-orders/${orderId}/flats/${flatId}/admin-complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ observations }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao concluir flat.");
+      }
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["service-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["service-order-progress", vars.orderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/flats/xray"] });
+      toast({
+        title: "Flat marcado como concluído!",
+        description: `A execução foi registrada no acompanhamento e no Raio-X do Flat.`,
+      });
+      if (detailModalFlat && detailModalFlat.flatId === vars.flatId) {
+        setDetailModalFlat((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "done",
+                finishedAt: new Date().toISOString(),
+              }
+            : null
+        );
+      }
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao concluir flat",
         description: err.message,
         variant: "destructive",
       });
@@ -927,10 +1054,9 @@ export default function ServiceOrders() {
     return progressData.flats.filter((f) => f.status === trackingStatusFilter);
   }, [progressData, trackingStatusFilter]);
 
-  return (
-    <Shell>
+  const pageContent = (
       <TooltipProvider>
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-10 space-y-5 sm:space-y-6">
+        <div className={embedded ? "space-y-5 sm:space-y-6" : "max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-10 space-y-5 sm:space-y-6"}>
           {/* Header principal da página */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5 border-b border-border/40 pb-4 sm:pb-5">
             <div className="space-y-1">
@@ -940,10 +1066,10 @@ export default function ServiceOrders() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground leading-tight">
-                    Ordens de Serviço de Terceirizados
+                    Campanhas & Serviços Externos (Terceirizados)
                   </h1>
                   <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 leading-snug">
-                    Gestão de pintores, eletricistas e reformas com portal exclusivo e controle de faxina
+                    Gestão de higienização de A/C, dedetização, pintores e reformas com portal exclusivo e vínculo ao Raio-X dos Flats
                   </p>
                 </div>
               </div>
@@ -1085,28 +1211,36 @@ export default function ServiceOrders() {
                         <CardHeader className="pb-3 space-y-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="space-y-1 flex-1 min-w-0">
-                              <Badge
-                                variant={
-                                  order.status === "active"
-                                    ? "default"
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Badge
+                                  variant={
+                                    order.status === "active"
+                                      ? "default"
+                                      : order.status === "closed"
+                                      ? "secondary"
+                                      : "outline"
+                                  }
+                                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                                    order.status === "active"
+                                      ? "bg-emerald-600 hover:bg-emerald-600 text-white"
+                                      : order.status === "closed"
+                                      ? "bg-slate-600 text-white"
+                                      : ""
+                                  }`}
+                                >
+                                  {order.status === "active"
+                                    ? "● Ativo"
                                     : order.status === "closed"
-                                    ? "secondary"
-                                    : "outline"
-                                }
-                                className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
-                                  order.status === "active"
-                                    ? "bg-emerald-600 hover:bg-emerald-600 text-white"
-                                    : order.status === "closed"
-                                    ? "bg-slate-600 text-white"
-                                    : ""
-                                }`}
-                              >
-                                {order.status === "active"
-                                  ? "● Ativo"
-                                  : order.status === "closed"
-                                  ? "Encerrado"
-                                  : "Rascunho"}
-                              </Badge>
+                                    ? "Encerrado"
+                                    : "Rascunho"}
+                                </Badge>
+                                {(order.serviceTypeName || order.serviceTypeId) && (
+                                  <Badge variant="outline" className="text-[10px] font-semibold px-2 py-0.5 bg-primary/10 text-primary border-primary/25">
+                                    {serviceCatalog.find((c) => c.id === order.serviceTypeId)?.icon || "🔧"}{" "}
+                                    {order.serviceTypeName || serviceCatalog.find((c) => c.id === order.serviceTypeId)?.name}
+                                  </Badge>
+                                )}
+                              </div>
                               <CardTitle className="text-base font-bold text-foreground leading-snug line-clamp-2 pt-1">
                                 {order.title}
                               </CardTitle>
@@ -1308,20 +1442,116 @@ export default function ServiceOrders() {
                 </CardHeader>
 
                 <CardContent className="space-y-6 p-4 sm:p-6 pt-5 sm:pt-6">
+                  {/* 0. Tipo Oficial de Serviço do Catálogo (sincronizado com o Raio-X dos Flats) */}
+                  <div className="p-4 rounded-xl border bg-primary/5 border-primary/20 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <Label className="text-sm font-semibold flex items-center gap-1.5 text-foreground">
+                          <Sparkles className="w-4 h-4 text-primary" />
+                          Tipo Oficial do Serviço (Catálogo do Raio-X dos Flats) <span className="text-rose-500">*</span>
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Vincular ao catálogo oficial permite que o sistema atualize automaticamente no Raio-X quais flats já fizeram este serviço e quando vence a próxima execução.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowNewCatalogInline((v) => !v)}
+                        className="h-8 text-xs gap-1.5 shrink-0 self-start sm:self-center"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{showNewCatalogInline ? "Fechar Novo Tipo" : "+ Criar Novo Tipo na Lista"}</span>
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {serviceCatalog.map((cat) => {
+                        const selected = formServiceTypeId === cat.id;
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => {
+                              setFormServiceTypeId(cat.id);
+                              if (!formTitle.trim() || serviceCatalog.some((c) => c.name === formTitle.trim())) {
+                                setFormTitle(cat.name);
+                              }
+                            }}
+                            className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                              selected
+                                ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                                : "bg-background hover:bg-muted border-border text-foreground"
+                            }`}
+                          >
+                            <span>{cat.icon || "🔧"}</span>
+                            <span>{cat.name}</span>
+                            {cat.recommendedIntervalDays ? (
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${selected ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                                {cat.recommendedIntervalDays}d
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {showNewCatalogInline && (
+                      <div className="p-3 rounded-xl bg-background border space-y-2.5">
+                        <span className="text-xs font-bold text-foreground block">
+                          Adicionar novo tipo permanente ao Catálogo Oficial de Serviços:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                          <Input
+                            placeholder="Ícone (ex: ❄️, 🪲, 🪟)"
+                            value={newCatalogIcon}
+                            onChange={(e) => setNewCatalogIcon(e.target.value)}
+                            className="h-9 text-xs sm:col-span-1"
+                          />
+                          <Input
+                            placeholder="Nome do tipo (ex: Limpeza de Sofá / Estofados)"
+                            value={newCatalogName}
+                            onChange={(e) => setNewCatalogName(e.target.value)}
+                            className="h-9 text-xs sm:col-span-2"
+                          />
+                          <Input
+                            type="number"
+                            placeholder="Ciclo em dias (ex: 180)"
+                            value={newCatalogInterval}
+                            onChange={(e) => setNewCatalogInterval(e.target.value)}
+                            className="h-9 text-xs sm:col-span-1"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => createCatalogItemMutation.mutate()}
+                            disabled={createCatalogItemMutation.isPending}
+                            className="h-8 text-xs font-semibold"
+                          >
+                            {createCatalogItemMutation.isPending ? "Adicionando..." : "Salvar Novo Tipo no Catálogo"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* 1. Título do Serviço */}
                   <div className="space-y-2">
                     <Label htmlFor="service-title" className="text-sm font-semibold flex items-center gap-1.5">
-                      Título do Serviço / Manutenção <span className="text-rose-500">*</span>
+                      Título da Campanha / Ordem de Serviço <span className="text-rose-500">*</span>
                     </Label>
                     <Input
                       id="service-title"
-                      placeholder="Ex: Pintura Geral e Reparos de Tomadas — Bloco A"
+                      placeholder="Ex: Higienização de Ar-Condicionado — Outubro / 2026"
                       value={formTitle}
                       onChange={(e) => setFormTitle(e.target.value)}
                       className="text-base py-5 rounded-xl font-medium"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Este nome será exibido ao prestador no portal e no card das camareiras.
+                      Este nome será exibido ao prestador no portal e registrado no Diário de cada flat concluído.
                     </p>
                   </div>
 
@@ -2672,7 +2902,29 @@ export default function ServiceOrders() {
 
                                 {/* Ações */}
                                 <TableCell className="text-right align-top py-3" onClick={(e) => e.stopPropagation()}>
-                                  <div className="flex items-center justify-end gap-1.5">
+                                  <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                    {flat.status !== "done" && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() =>
+                                              adminCompleteFlatMutation.mutate({
+                                                orderId: effectiveTrackingOrderId,
+                                                flatId: flat.flatId,
+                                              })
+                                            }
+                                            disabled={adminCompleteFlatMutation.isPending}
+                                            className="h-8 px-2 text-xs text-emerald-700 border-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 font-semibold gap-1"
+                                          >
+                                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                            <span>Concluir</span>
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>Marcar este flat como concluído pelo Admin (atualiza o Raio-X)</TooltipContent>
+                                      </Tooltip>
+                                    )}
                                     {flat.status === "pending" ? (
                                       flat.forceReleased ? (
                                         <Tooltip>
@@ -2712,7 +2964,7 @@ export default function ServiceOrders() {
                                               disabled={forceReleaseMutation.isPending}
                                               className="h-8 px-2 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold gap-1"
                                             >
-                                              <span>🔓 Liberar Flat</span>
+                                              <span>🔓 Liberar</span>
                                             </Button>
                                           </TooltipTrigger>
                                           <TooltipContent>Liberar flat independente de status ou regras de prioridade</TooltipContent>
@@ -2917,45 +3169,65 @@ export default function ServiceOrders() {
                 </div>
               )}
 
-              <DialogFooter className="border-t pt-3 flex items-center justify-between gap-2">
-                {detailModalFlat && detailModalFlat.status === "pending" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      forceReleaseMutation.mutate({
-                        orderId: effectiveTrackingOrderId,
-                        flatId: detailModalFlat.flatId,
-                        forceReleased: !detailModalFlat.forceReleased,
-                      });
-                    }}
-                    disabled={forceReleaseMutation.isPending}
-                    className={`text-xs gap-1.5 font-semibold ${
-                      detailModalFlat.forceReleased
-                        ? "text-amber-700 border-amber-300 hover:bg-amber-50"
-                        : "text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                    }`}
-                  >
-                    {detailModalFlat.forceReleased ? "🔒 Revogar Liberação Manual" : "🔓 Liberar Flat"}
-                  </Button>
-                )}
+              <DialogFooter className="border-t pt-3 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {detailModalFlat && detailModalFlat.status !== "done" && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => {
+                        adminCompleteFlatMutation.mutate({
+                          orderId: effectiveTrackingOrderId,
+                          flatId: detailModalFlat.flatId,
+                        });
+                      }}
+                      disabled={adminCompleteFlatMutation.isPending}
+                      className="text-xs gap-1.5 font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Marcar Concluído (Admin)
+                    </Button>
+                  )}
 
-                {detailModalFlat && detailModalFlat.status !== "pending" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setResetConfirmFlat(detailModalFlat);
-                    }}
-                    className="text-xs gap-1.5 text-amber-600 hover:text-amber-700"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Resetar Flat para Pendente
-                  </Button>
-                )}
+                  {detailModalFlat && detailModalFlat.status === "pending" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        forceReleaseMutation.mutate({
+                          orderId: effectiveTrackingOrderId,
+                          flatId: detailModalFlat.flatId,
+                          forceReleased: !detailModalFlat.forceReleased,
+                        });
+                      }}
+                      disabled={forceReleaseMutation.isPending}
+                      className={`text-xs gap-1.5 font-semibold ${
+                        detailModalFlat.forceReleased
+                          ? "text-amber-700 border-amber-300 hover:bg-amber-50"
+                          : "text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                      }`}
+                    >
+                      {detailModalFlat.forceReleased ? "🔒 Revogar Liberação Manual" : "🔓 Liberar Flat"}
+                    </Button>
+                  )}
+
+                  {detailModalFlat && detailModalFlat.status !== "pending" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setResetConfirmFlat(detailModalFlat);
+                      }}
+                      className="text-xs gap-1.5 text-amber-600 hover:text-amber-700"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Resetar Flat para Pendente
+                    </Button>
+                  )}
+                </div>
 
                 <Button
-                  variant="default"
+                  variant="outline"
                   size="sm"
                   onClick={() => setDetailModalFlat(null)}
                   className="font-medium ml-auto"
@@ -3091,6 +3363,11 @@ export default function ServiceOrders() {
           </Dialog>
         </div>
       </TooltipProvider>
-    </Shell>
   );
+
+  if (embedded) {
+    return pageContent;
+  }
+
+  return <Shell>{pageContent}</Shell>;
 }

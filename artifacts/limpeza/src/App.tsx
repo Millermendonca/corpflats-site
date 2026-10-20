@@ -96,6 +96,7 @@ const SmartFlatPreview = lazyWithRetry(() => import('@/pages/smart-flat-preview'
 const PricingSebraePage = lazyWithRetry(() => import('@/pages/precificacao-sebrae'));
 const OtaInboxPage = lazyWithRetry(() => import('@/pages/ota-inbox'));
 const EquipePage = lazyWithRetry(() => import('@/pages/equipe'));
+const FlatXrayHub = lazyWithRetry(() => import('@/pages/flat-xray-hub'));
 
 
 const queryClient = new QueryClient({
@@ -459,6 +460,11 @@ function Router() {
         <DevRoute path="/server-monitor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
 
         {/* External Service Orders Management (Admin Only) */}
+        <AdminRoute path="/raio-x-flats" component={FlatXrayHub} moduleName="o Raio-X & Hub dos Flats" />
+        <AdminRoute path="/diario-flats" component={FlatXrayHub} moduleName="o Diário & Raio-X dos Flats" />
+        <AdminRoute path="/hub-manutencao" component={FlatXrayHub} moduleName="o Hub de Manutenção & Governança" />
+        <AdminRoute path="/raio-x" component={FlatXrayHub} moduleName="o Raio-X dos Flats" />
+        <AdminRoute path="/prontuario-flats" component={FlatXrayHub} moduleName="o Prontuário dos Flats" />
         <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
         <AdminRoute path="/service-orders" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
 

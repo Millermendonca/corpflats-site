@@ -327,6 +327,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (href === "/monitor-servidor" && (location === "/servidor" || location === "/server-monitor")) return true
     if (href === "/ia-status" && (location === "/ai-status" || location === "/status-ia")) return true
     if (href === "/logs" && (location === "/auditoria" || location === "/system-logs" || location === "/audit")) return true
+    if (href === "/raio-x-flats" && (location === "/raio-x-flats" || location === "/diario-flats" || location === "/hub-manutencao" || location === "/servicos" || location === "/tasks" || location === "/observations" || location === "/surveys")) return true
     return false
   }
 
@@ -368,10 +369,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/dashboard", label: "Painel de Limpeza", icon: LayoutDashboard, description: "Quartos sujos, limpos e em andamento" },
         { href: "/reports", label: isAdminOrDev ? "Fechamento & Diárias das Camareiras" : "Meu Fechamento & Extrato", icon: Wallet, description: "Fechamento quinzenal, extrato em tempo real, vales e PIX" },
         { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, badge: pendingShoppingCount > 0 ? pendingShoppingCount : null, description: "Itens para reposição, compras e governança" },
-        { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
-        { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
-        { href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" },
-        { title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" },
+        ...(isCamareira ? [{ href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" }] : [{ href: "/raio-x-flats", label: "Raio-X & Hub dos Flats", icon: Wrench, description: "Diário do flat, campanhas (AC/dedetização/cortinas), ficha técnica, 76 tags, preventivas e vistorias" }]),
+        ...(isCamareira ? [{ href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" }] : []),
+
+
         { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
         { href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" },
       ]
