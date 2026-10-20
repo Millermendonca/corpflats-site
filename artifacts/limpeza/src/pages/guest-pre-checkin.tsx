@@ -1496,6 +1496,103 @@ export default function GuestPreCheckin() {
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
+  // MODO 0.5: PRÉ-RESERVA AGUARDANDO PAGAMENTO (CHECK-IN DIGITAL BLOQUEADO)
+  // ══════════════════════════════════════════════════════════════════════════════
+  const isPreReservationBlocked = useMemo(() => {
+    if (!reservation) return false
+    const chan = String(reservation.channel || "").toLowerCase()
+    const isOtaChan = chan.includes("booking") || chan.includes("airbnb")
+    if (isOtaChan) return false
+    const st = String(reservation.status || "").toLowerCase()
+    if (st === "pre_reserva" || st === "pendente") return true
+    return false
+  }, [reservation])
+
+  if (reservation && isPreReservationBlocked) {
+    const portalPath = `/minha-reserva/${encodeURIComponent(reservation.code || code)}`
+    return (
+      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
+        <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
+          <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
+            <div
+              onClick={() => setLocation(portalPath)}
+              className="flex items-center gap-2 sm:gap-3 cursor-pointer group min-w-0 flex-1"
+            >
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm shrink-0">
+                CF
+              </div>
+              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 block leading-none truncate">
+                {brandName}
+              </span>
+            </div>
+
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors shrink-0"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>WhatsApp</span>
+            </a>
+          </div>
+        </nav>
+
+        <main className="max-w-lg w-full mx-auto px-4 py-10 sm:py-16 space-y-4">
+          <Card className="bg-white border-2 border-amber-200 rounded-3xl p-6 sm:p-8 shadow-xl text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-2xs">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-2">
+              <Badge className="bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs px-3 py-1">
+                ⏳ Pré-Reserva • Aguardando Pagamento
+              </Badge>
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                Check-in Digital Aguardando Confirmação
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Olá, <strong>{reservation.guestName || "Hóspede"}</strong>! Sua reserva <strong>{reservation.code}</strong> encontra-se atualmente como <strong>Pré-Reserva</strong>.
+              </p>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                O preenchimento do <strong>Check-in Digital (FNRH)</strong> e o envio da autorização de entrada para a <strong>recepção/portaria 24h</strong> são liberados automaticamente assim que o pagamento for confirmado.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 text-left text-xs text-amber-950 space-y-1.5">
+              <span className="font-bold block">Como confirmar sua reserva agora:</span>
+              <p className="leading-relaxed text-amber-900">
+                Acesse o Portal da sua Reserva abaixo para concluir o pagamento via <strong>PIX com baixa imediata</strong> ou <strong>Cartão de Crédito</strong>. Assim que quitada, o check-in digital será desbloqueado na mesma hora!
+              </p>
+            </div>
+
+            <div className="space-y-2.5 pt-1">
+              <Button
+                type="button"
+                onClick={() => setLocation(portalPath)}
+                className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm rounded-2xl shadow-md gap-2"
+              >
+                <span>Ir para Minha Reserva & Efetuar Pagamento</span>
+                <ArrowRight className="w-4 h-4 shrink-0" />
+              </Button>
+
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full h-10 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <MessageCircle className="w-4 h-4 text-emerald-600" />
+                <span>Já paguei / Falar com o Atendimento</span>
+              </a>
+            </div>
+          </Card>
+        </main>
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
   // MODO 1: FICHA DIGITAL DE HOSPEDAGEM (FNHR) CONCLUÍDA & CERTIFICADA
   // ══════════════════════════════════════════════════════════════════════════════
   if (isCompleted && !isEditing) {

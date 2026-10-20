@@ -3005,16 +3005,19 @@ export function handleGetReservationDetails(db, args = {}) {
   }
 
   const canonicalCode = matched.code || matched.reservationCode || (matched.flatNumber && matched.id != null ? `RES-${matched.flatNumber}-${String(matched.id).padStart(4, "0")}` : `RES-${matched.flatNumber}`);
-  const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
+  const isPreReservaUnpaid = matched.status === "pre_reserva" || matched.status === "pendente";
+  const isCheckinRelevant = !isCheckoutCompleted && !isPreReservaUnpaid && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
   const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
   const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
-  const checkoutUrl = isCheckoutCompleted
+  const checkoutUrl = isCheckoutCompleted || isPreReservaUnpaid
     ? null
     : `${appOrigin}/checkout/${canonicalCode}`;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
   let operationalGuidance = "";
-  if (isCheckoutCompleted) {
+  if (isPreReservaUnpaid) {
+    operationalGuidance = "PRÉ-RESERVA AGUARDANDO PAGAMENTO (status pre_reserva). NUNCA enviar link de pré-check-in digital e NUNCA liberar entrada na portaria antes da confirmação do pagamento. Orientar o hóspede a concluir o pagamento via PIX ou Cartão no Portal do Hóspede para confirmar a reserva.";
+  } else if (isCheckoutCompleted) {
     operationalGuidance = "CHECK-OUT JÁ CONCLUÍDO PELO HÓSPEDE (estadia encerrada e saída já confirmada). NUNCA cobrar desocupação até as 12:00h e NUNCA enviar link de check-out ou de pré-check-in. Caso o hóspede pergunte sobre a reserva ou check-out, confirme que o check-out já foi concluído com sucesso e agradeça pela estadia.";
   } else if (isCheckoutDay) {
     operationalGuidance = "HÓSPEDE EM DIA DE CHECK-OUT HOJE (saída hoje até as 12:00h). NUNCA enviar link de pré-check-in digital. Informar sobre horário limite de saída até 12:00h, orientar sobre procedimentos de desocupação e devolução de chaves, perguntar se deseja prorrogação (late check-out) mediante disponibilidade ou verificar se já desocupou o flat. Fornecer link de confirmação de check-out.";

@@ -2492,6 +2492,21 @@ export default function GuestPortal() {
                     Ver Dados do Check-in
                   </button>
                 </div>
+              ) : (!isPaid && (reservation.status === "pre_reserva" || reservation.status === "pendente" || data?.preCheckinBlocked)) ? (
+                <div className="space-y-2 mt-2">
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug">
+                    <strong className="block font-bold text-amber-950 mb-0.5">🔒 Check-in Digital Aguardando Pagamento</strong>
+                    Apenas após a confirmação do pagamento sua reserva estará confirmada para liberar o check-in digital e o envio para a recepção/portaria.
+                  </div>
+                  <Button
+                    type="button"
+                    disabled
+                    className="w-full h-auto min-h-10 py-2 px-3 whitespace-normal leading-tight text-xs sm:text-sm font-bold rounded-xl bg-slate-200 text-slate-500 cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <FileText className="w-4 h-4 shrink-0" />
+                    <span>Pré-Check-in Digital (Aguardando Pagamento)</span>
+                  </Button>
+                </div>
               ) : (
                 <Button
                   type="button"

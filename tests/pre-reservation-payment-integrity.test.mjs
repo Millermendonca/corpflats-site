@@ -141,4 +141,62 @@ describe('Integridade de Pagamento da Pré-Reserva', () => {
     assert.match(pms, /const isUnpaidPreReserva = resItem\.status === "pre_reserva" && !isOtaRes && !isGatewayPaid;/);
     assert.match(pms, /const isResCurrentlyPaid = !isUnpaidPreReserva && \(/);
   });
+
+  it('13. isPreReservationBlocked bloqueia pré-reserva sem pagamento real e libera confirmada', () => {
+    const code = `${extractFunction(server, 'hasRealPaymentEvidence')}\n${extractFunction(server, 'isUnverifiedPreReservation')}\n${extractFunction(server, 'isPreReservationBlocked')}\nreturn { isPreReservationBlocked };`;
+    const { isPreReservationBlocked } = new Function(code)();
+
+    assert.strictEqual(isPreReservationBlocked({ status: 'pre_reserva', channel: 'direto', paymentStatus: 'pendente', paidAmount: 0 }), true);
+    assert.strictEqual(isPreReservationBlocked({ status: 'pendente', channel: 'whatsapp', paymentStatus: 'pendente', paidAmount: 0 }), true);
+    assert.strictEqual(isPreReservationBlocked({ status: 'pre_reserva', channel: 'direto', paymentStatus: 'pago_total', paidAmount: 500 }), true);
+    assert.strictEqual(isPreReservationBlocked({ status: 'confirmada', channel: 'direto', paymentStatus: 'pago_total', paidAmount: 500 }), false);
+    assert.strictEqual(isPreReservationBlocked({ status: 'checkin', channel: 'direto' }), false);
+    assert.strictEqual(isPreReservationBlocked({ status: 'pre_reserva', channel: 'booking' }), false);
+  });
+
+  it('14. Pré-reserva bloqueia o check-in digital na API e na interface do hóspede', () => {
+    const preCheckinGet = sliceBetween(server, 'app.get("/api/pms/pre-checkin/:code", (req, res) => {', 'app.post("/api/pms/pre-checkin/:code/signature-token"');
+    assert.match(preCheckinGet, /const preCheckinBlocked = isPreReservationBlocked\(r\);/);
+    assert.match(preCheckinGet, /preCheckinBlocked,/);
+
+    const sigToken = sliceBetween(server, 'app.post("/api/pms/pre-checkin/:code/signature-token"', 'app.post("/api/pms/pre-checkin/:code/whatsapp-otp"');
+    assert.match(sigToken, /if \(isPreReservationBlocked\(r\)\) \{\s*return res\.status\(403\)/);
+
+    const waOtp = sliceBetween(server, 'app.post("/api/pms/pre-checkin/:code/whatsapp-otp"', 'app.post("/api/pms/pre-checkin/:code/verify-whatsapp-otp"');
+    assert.match(waOtp, /if \(isPreReservationBlocked\(r\)\) \{\s*return res\.status\(403\)/);
+
+    const verifyOtp = sliceBetween(server, 'app.post("/api/pms/pre-checkin/:code/verify-whatsapp-otp"', 'app.post("/api/pms/pre-checkin", async');
+    assert.match(verifyOtp, /if \(isPreReservationBlocked\(r\)\) \{\s*return res\.status\(403\)/);
+
+    const preCheckinPost = sliceBetween(server, 'app.post("/api/pms/pre-checkin", async', 'const wasReSignature = Boolean(');
+    assert.match(preCheckinPost, /if \(isPreReservationBlocked\(r\)\) \{\s*return res\.status\(403\)/);
+
+    const resendLink = sliceBetween(server, 'app.post(["/api/pms/reservations/:id/resend-checkin-link"', 'const targetGuest =');
+    assert.match(resendLink, /if \(isPreReservationBlocked\(reservation\)\) \{\s*return res\.status\(403\)/);
+
+    const selfCheckin = sliceBetween(server, 'app.all(["/api/pms/guest-portal/:code/self-checkin"', 'const todayStr =');
+    assert.match(selfCheckin, /if \(isPreReservationBlocked\(r\)\)/);
+
+    const guestPreCheckinUi = fs.readFileSync(path.resolve('artifacts/limpeza/src/pages/guest-pre-checkin.tsx'), 'utf8');
+    assert.match(guestPreCheckinUi, /Check-in Digital Aguardando Confirmação/);
+    assert.match(guestPreCheckinUi, /Ir para Minha Reserva & Efetuar Pagamento/);
+  });
+
+  it('15. Pré-reserva não envia nem exibe na recepção/portaria ou garagem antes da confirmação do pagamento', () => {
+    const receptionToday = sliceBetween(server, 'app.get("/api/reception/today", (req, res) => {', 'app.patch("/api/pms/reservations/:id/early-checkin"');
+    assert.match(receptionToday, /if \(isPreReservationBlocked\(r\)\) \{\s*return false;\s*\}/);
+
+    const receptionCheckin = sliceBetween(server, 'app.post("/api/reception/checkin/:reservationId"', '// Bloqueio mandatório: se a reserva requer re-assinatura de termo');
+    assert.match(receptionCheckin, /if \(isPreReservationBlocked\(r\)\) \{\s*return res\.status\(403\)/);
+
+    const garageSheet = sliceBetween(server, 'app.get("/api/pms/garage/daily-sheet"', 'const entries =');
+    assert.match(garageSheet, /!isPreReservationBlocked\(r\)/);
+
+    const directBooking = sliceBetween(server, 'app.post("/api/reservations/direct-booking"', '// ── PMS & CRM Endpoints');
+    assert.match(directBooking, /status: \(paymentMethod === "pix" \|\| paymentMethod === "card" \|\| paymentMethod === "cartao_credito"\) \? "pre_reserva" : "confirmada"/);
+    assert.match(directBooking, /if \(reservation\.status !== "pre_reserva" && !isPreReservationBlocked\(reservation\) && isReservationForToday\(reservation\)\)/);
+
+    const confirmDispatch = extractFunction(server, 'ensurePaymentConfirmationDispatched');
+    assert.match(confirmDispatch, /dispatchConfirmedReservationToReceptionAndGarage\(r,/);
+  });
 });

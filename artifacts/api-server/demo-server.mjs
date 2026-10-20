@@ -9521,6 +9521,20 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     const previousPlate = String(reservation.vehicle?.plate || "").toUpperCase().trim();
     reservation.vehicle = { ...(previousPlate === cleanPlate ? (reservation.vehicle || {}) : {}), ...vehicleData };
 
+    // Regra de Pré-Reserva Estrita:
+    // Não disparar e-mail de garagem para uma pré-reserva ainda aguardando pagamento.
+    if (typeof isPreReservationBlocked === "function" && isPreReservationBlocked(reservation) && !options.force) {
+      if (typeof saveDatabase === "function") saveDatabase();
+      console.log(`[GarageService ⏳] Liberação de garagem retida para placa ${cleanPlate}: a reserva ${reservation.code || reservation.id} é uma pré-reserva aguardando pagamento.`);
+      return {
+        success: true,
+        deferred: true,
+        reason: "pre_reservation_unpaid",
+        plate: cleanPlate,
+        checkinDate: reservation.checkinDate
+      };
+    }
+
     // Regra de Comunicação Estrita:
     // Não disparar e-mail de reservas criadas ou alteradas para datas futuras para a garagem.
     // Apenas se a reserva for para o dia de hoje (ou estadias correntes).
@@ -16625,6 +16639,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       checkinTime: db.settings?.checkinTime || "14:00",
       checkoutTime: lateCheckout && lateCheckoutTime ? lateCheckoutTime : (db.settings?.checkoutTime || "12:00"),
       extras: extras || null,
+      status: (paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito") ? "pre_reserva" : "confirmada",
       totalAmount: Number(totalAmount),
       paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : Number(totalAmount),
       paymentStatus: paymentMethod === "pix" ? "pendente_pix" : (paymentMethod === "card" || paymentMethod === "cartao_credito" ? "pendente_cartao" : "pago_total"),
@@ -16816,7 +16831,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     reservation.fnhrCompleted = false;
 
     // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
-    if (db.settings?.checkinProvider === "gov_fnrh") {
+    if (reservation.status !== "pre_reserva" && db.settings?.checkinProvider === "gov_fnrh") {
       try {
         const serproRes = await fnrhSerproService.registerReservation(reservation, db.settings);
         if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
@@ -16941,11 +16956,15 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       }
     }
 
-    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
+    if (reservation.status === "pre_reserva") {
+      triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", reservation);
+    } else {
+      triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
+    }
 
-    // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in).
-    // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
-    if (isReservationForToday(reservation)) {
+    // Gatilho E-mail Recepção: Apenas se a reserva estiver confirmada (paga) E for para o dia de hoje (same-day check-in).
+    // Pré-reservas aguardam a confirmação do pagamento; reservas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
+    if (reservation.status !== "pre_reserva" && !isPreReservationBlocked(reservation) && isReservationForToday(reservation)) {
       try {
         const flat = (db.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
@@ -18195,7 +18214,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
-  if (db.settings?.checkinProvider === "gov_fnrh") {
+  if (resolvedStatus !== "pre_reserva" && db.settings?.checkinProvider === "gov_fnrh") {
     try {
       const serproRes = await fnrhSerproService.registerReservation(newReservation, db.settings);
       if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
@@ -19921,10 +19940,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 
   if (changes.length > 0) {
     // Regra de Comunicação Estrita:
-    // Apenas dispara e-mail de alteração para a recepção se a reserva for para o dia de hoje (ou estadias correntes)
-    // E se a portaria já havia recebido a notificação prévia da reserva.
+    // Apenas dispara e-mail de alteração para a recepção se a reserva NÃO for pré-reserva bloqueada,
+    // for para o dia de hoje (ou estadias correntes) E se a portaria já havia recebido a notificação prévia da reserva.
     // Reservas para datas futuras aguardam o dia do check-in para envio pontual às 07:00.
-    if (isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
+    if (!isPreReservationBlocked(r) && isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
       try {
         const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
@@ -20004,6 +20023,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
+    dispatchConfirmedReservationToReceptionAndGarage(r, "pms_pre_reservation_confirmed").catch(() => {});
     const now = new Date();
     const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
     const brDate = new Date(nowUtc - (3 * 3600000));
@@ -20030,12 +20050,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const hadCheckoutExtension = (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
     const hadPendingIncrease = pendingAmt > 0 && (r.paymentStatus === "pendente" || r.paymentStatus === "parcial" || (req.body.totalAmount && Number(req.body.totalAmount) > totalAmt));
 
-    if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0) {
+    if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0 && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
       triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", r).catch(err => {
         console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
       });
-    } else {
+    } else if (!isPreReservationBlocked(r)) {
       const now = new Date();
       const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
       const brDate = new Date(nowUtc - (3 * 3600000));
@@ -20438,8 +20458,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isPastOrExact14h = currentHour >= 14;
   const isCheckinToday = (todayStr === r.checkinDate);
 
-  // Antecipação de Check-in: Quarto já limpo no dia da chegada E hóspede tem direito ao benefício
-  const canDoEarlyCheckin = isCheckinToday && isFlatClean && hasEarlyCheckinBenefit;
+  // Antecipação de Check-in: Quarto já limpo no dia da chegada E hóspede tem direito ao benefício (e não é pré-reserva bloqueada)
+  let canDoEarlyCheckin = !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit;
 
   const checkinTimeStr = db.settings.checkinTime || "14:00";
   const checkoutTimeStr = db.settings.checkoutTime || "12:00";
@@ -20587,6 +20607,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     saveDatabase();
   }
 
+  canDoEarlyCheckin = Boolean(!isCancelledRes && isPaid && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
+
   // Se pendente com valor total cadastrado e sem chave PIX ainda, gera cobrança estática PIX com a chave oficial CorpFlats
   if (!isCancelledRes && !isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
     try {
@@ -20676,17 +20698,21 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     isPastOrExact14h,
     currentHour,
     brasilia: bNow,
-    earlyCheckinMessage: isCheckinToday
-      ? (isFlatClean
-          ? (canDoEarlyCheckin && !isPastOrExact14h
-              ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
-              : (isPastOrExact14h
-                  ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
-                  : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
-          : "🧹 Apartamento em higienização e preparação pela equipe de governança. O horário oficial de check-in é a partir das 14:00 (antecipação concedida estritamente mediante disponibilidade após a conclusão da limpeza).")
-      : `Check-in a partir das 14:00 em ${r.checkinDate}.`,
+    preCheckinBlocked: Boolean(!isPaid || isPreReservationBlocked(r)),
+    earlyCheckinMessage: (!isPaid || isPreReservationBlocked(r))
+      ? "⏳ Pré-reserva aguardando confirmação do pagamento. Apenas após o pagamento a reserva é confirmada, o check-in digital é liberado e os dados são enviados para a recepção/portaria."
+      : (isCheckinToday
+          ? (isFlatClean
+              ? (canDoEarlyCheckin && !isPastOrExact14h
+                  ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
+                  : (isPastOrExact14h
+                      ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
+                      : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
+              : "🧹 Apartamento em higienização e preparação pela equipe de governança. O horário oficial de check-in é a partir das 14:00 (antecipação concedida estritamente mediante disponibilidade após a conclusão da limpeza).")
+          : `Check-in a partir das 14:00 em ${r.checkinDate}.`),
     breakfastOrder: existingBreakfastOrder || null,
     preCheckinStatus: {
+      preCheckinBlocked: Boolean(!isPaid || isPreReservationBlocked(r)),
       totalGuests,
       completedCheckins,
       isFullyCompleted: completedCheckins >= totalGuests,
@@ -20712,6 +20738,12 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Não é possível liberar check-in antecipado para uma pré-reserva aguardando pagamento. Realize o pagamento para confirmar sua reserva.",
+      preCheckinBlocked: true
+    });
+  }
 
   r.earlyCheckinAuthorized = true;
   r.notes = `${r.notes || ''} • [Early Check-in Gratuito Liberado Antecipadamente às ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}]`.trim();
@@ -20736,6 +20768,12 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
 
   if (!reservation) {
     return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+  if (isPreReservationBlocked(reservation)) {
+    return res.status(403).json({
+      error: "Esta é uma pré-reserva aguardando pagamento. O link de check-in digital só é liberado após a confirmação do pagamento.",
+      preCheckinBlocked: true
+    });
   }
 
   const targetGuest = (reservation.guests || []).find(g => (g.index || 1) === Number(guestIndex)) || (reservation.guests && reservation.guests[0]);
@@ -20949,6 +20987,15 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
   const r = findReservationByLocatorOrContact(code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+  if (isPreReservationBlocked(r)) {
+    if (req.method === "GET") {
+      return res.redirect(`/minha-reserva/${r.code}?error=payment_pending`);
+    }
+    return res.status(403).json({
+      error: "Pré-reserva aguardando pagamento. A confirmação de entrada só é permitida após a quitação e confirmação da reserva.",
+      preCheckinBlocked: true
+    });
   }
 
   const now = new Date();
@@ -24831,10 +24878,14 @@ app.get("/api/reception/today", (req, res) => {
     const currentHour = bNow.hour;
 
     // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
+    // Pré-reservas aguardando pagamento NUNCA são enviadas/exibidas na recepção/portaria.
     const arrivals = (db.reservations || [])
       .filter(r => {
         const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
-        if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+        if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out" || r.status === "expirada") {
+          return false;
+        }
+        if (isPreReservationBlocked(r)) {
           return false;
         }
         if (resDate === today && r.status !== "in_house") {
@@ -25082,13 +25133,16 @@ app.get("/api/reception/today", (req, res) => {
     // Devem ser apenas reservas com checkin confirmado (in_house) OU estadias anteriores ainda em andamento (checkinDate < today)
     const inHouse = (db.reservations || [])
       .filter(r => {
-        if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+        if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out" || r.status === "expirada") {
+          return false;
+        }
+        if (isPreReservationBlocked(r)) {
           return false;
         }
         if (r.status === "in_house") {
           return true;
         }
-        if (r.checkinDate < today && r.checkoutDate >= today && r.status !== "pendente") {
+        if (r.checkinDate < today && r.checkoutDate >= today && r.status !== "pendente" && r.status !== "pre_reserva") {
           return true;
         }
         return false;
@@ -25126,7 +25180,7 @@ app.get("/api/reception/today", (req, res) => {
 
     // 4. Todas as Saídas Previstas para Hoje
     const departures = (db.reservations || [])
-      .filter(r => r.checkoutDate === today && r.status !== "cancelada")
+      .filter(r => r.checkoutDate === today && r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "expirada" && !isPreReservationBlocked(r))
       .map(r => {
         const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
         return {
@@ -25229,6 +25283,13 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   const id = Number(req.params.reservationId);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Não é permitido liberar entrada na portaria para uma pré-reserva aguardando pagamento. A reserva precisa estar paga e confirmada.",
+      preCheckinBlocked: true
+    });
+  }
 
   // Bloqueio mandatório: se a reserva requer re-assinatura de termo (datas ou flat alterados)
   if (r.needsReSignature && !req.body.adminOverride && !req.body.forceOverrideReSignature) {
@@ -25677,7 +25738,7 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
 
 // Gerador de E-mails Agendados para Reserva (Fila de Pré/Pós Estadia)
 export function ensureReservationScheduledEmails(db, saveDatabase, r) {
-  if (!r || !r.guestEmail || r.status === "cancelada") return;
+  if (!r || !r.guestEmail || r.status === "cancelada" || isPreReservationBlocked(r)) return;
   if (!db.emailQueue) db.emailQueue = [];
 
   const resCode = r.code || `RES-${r.flatNumber || '00'}-${r.id}`;
@@ -27054,12 +27115,17 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
     });
   }
 
+  const preCheckinBlocked = isPreReservationBlocked(r);
   res.json({
     reservation: r,
     guest: guest || {},
     guestCount,
     guests: r.guests,
-    tokenStatus
+    tokenStatus,
+    preCheckinBlocked,
+    preCheckinBlockedReason: preCheckinBlocked
+      ? "Esta é uma pré-reserva aguardando pagamento. Apenas após a confirmação do pagamento o check-in digital é liberado e a reserva é enviada para a recepção/portaria."
+      : null
   });
 });
 
@@ -27069,6 +27135,12 @@ app.post("/api/pms/pre-checkin/:code/signature-token", (req, res) => {
   const { guestIndex = 1, phone, email } = req.body || {};
   const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Check-in digital indisponível para pré-reserva. Apenas após a confirmação do pagamento a reserva estará confirmada para prosseguir com o check-in digital.",
+      preCheckinBlocked: true
+    });
+  }
 
   const token = crypto.randomBytes(24).toString("hex");
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2 horas a partir de agora
@@ -27107,6 +27179,12 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
   const { guestIndex = 1, phone, email, channel = "whatsapp", forceNew = false } = req.body || {};
   const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Check-in digital indisponível para pré-reserva. Apenas após a confirmação do pagamento a reserva estará confirmada para prosseguir com o check-in digital.",
+      preCheckinBlocked: true
+    });
+  }
 
   // Isolamento estrito de telefone entre titular e acompanhantes
   const isTitular = Number(guestIndex) === 1;
@@ -27269,6 +27347,12 @@ app.post("/api/pms/pre-checkin/:code/verify-whatsapp-otp", (req, res) => {
   const { guestIndex = 1, otp } = req.body || {};
   const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Check-in digital indisponível para pré-reserva. Apenas após a confirmação do pagamento a reserva estará confirmada para prosseguir com o check-in digital.",
+      preCheckinBlocked: true
+    });
+  }
 
   const cleanOtp = String(otp || "").replace(/\D/g, "").trim();
   if (cleanOtp.length !== 6) {
@@ -27333,6 +27417,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
 
   const r = (db.reservations || []).find(x => x.id === Number(reservationId) || x.code === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  if (isPreReservationBlocked(r)) {
+    return res.status(403).json({
+      error: "Uma pré-reserva não permite realizar o check-in digital nem o envio para a recepção/portaria. Efetue o pagamento para confirmar sua reserva e prosseguir.",
+      preCheckinBlocked: true
+    });
+  }
 
   const wasReSignature = Boolean(
     r.needsReSignature ||
@@ -27913,8 +28003,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       targetGuest.hasCompletedCheckin = true;
       targetGuest.needsReSignature = false;
 
-      // Preserva status como "confirmada" caso não esteja in_house/checkin
-      if (!r.status || r.status === "CHECKED_IN" || r.status === "pre_reserva") {
+      // Preserva status como "confirmada" caso não esteja in_house/checkin (nunca promove pre_reserva sem pagamento)
+      if (!r.status || r.status === "CHECKED_IN") {
         r.status = "confirmada";
       }
       r.checkedInAt = fnrhDocument.signedAt;
@@ -29794,10 +29884,12 @@ app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commi
     reservation.status = "confirmada";
     reservation.paymentStatus = "pago_total";
     reservation.paidAmount = reservation.totalAmount;
+    reservation.paidAt = reservation.paidAt || new Date().toISOString();
     reservation.pmsConfirmed = true;
     reservation.confirmedAt = new Date().toISOString();
     reservation.updatedAt = new Date().toISOString();
     delete reservation.expiresAt; // Remove o timestamp de hold provisório
+    dispatchConfirmedReservationToReceptionAndGarage(reservation, "bot_commit_reservation").catch(() => {});
 
     if (!Array.isArray(reservation.auditLogs)) reservation.auditLogs = [];
     reservation.auditLogs.push({
@@ -37426,9 +37518,14 @@ app.get("/api/pms/garage/daily-sheet", (req, res) => {
   try {
     const todayStr = getIsoDateStr(new Date());
 
-    // Busca reservas ativas hoje ou com checkin hoje
+    // Busca reservas ativas hoje ou com checkin hoje (exclui canceladas, expiradas e pré-reservas não pagas)
     const activeReservations = (db.reservations || []).filter(r =>
-      r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+      r.checkinDate <= todayStr &&
+      r.checkoutDate >= todayStr &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelado" &&
+      r.status !== "expirada" &&
+      !isPreReservationBlocked(r)
     );
 
     const vehicles = [];
@@ -37572,15 +37669,18 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
       source: "Portal do Hóspede / Pré-Checkin"
     });
 
-    const responseMsg = isFuture
-      ? `Veículo ${cleanPlate} cadastrado com sucesso! Como a reserva é para data futura (${reservation.checkinDate}), o e-mail de autorização será enviado para a garagem pontualmente no dia do check-in.`
-      : `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem com sucesso!`;
+    const isPreBlocked = isPreReservationBlocked(reservation);
+    const responseMsg = isPreBlocked
+      ? `Veículo ${cleanPlate} vinculado à pré-reserva! Assim que o pagamento for confirmado, a autorização da garagem será liberada.`
+      : (isFuture
+          ? `Veículo ${cleanPlate} cadastrado com sucesso! Como a reserva é para data futura (${reservation.checkinDate}), o e-mail de autorização será enviado para a garagem pontualmente no dia do check-in.`
+          : `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem com sucesso!`);
 
     res.json({
       success: true,
       message: responseMsg,
       vehicle: vehicleData,
-      deferred: isFuture,
+      deferred: Boolean(isFuture || isPreBlocked),
       authorization: garageRes?.authRecord
     });
   } catch (err) {
@@ -38399,6 +38499,89 @@ function isUnverifiedPreReservation(r) {
   return !isOtaChan && r.status === "pre_reserva" && !hasRealPaymentEvidence(r);
 }
 
+function isPreReservationBlocked(r) {
+  if (!r) return false;
+  const chan = String(r.channel || "").toLowerCase();
+  const isOtaChan = chan.includes("booking") || chan.includes("airbnb");
+  if (isOtaChan) return false;
+  const st = String(r.status || "").toLowerCase();
+  if (st === "pre_reserva" || st === "pendente") return true;
+  if (isUnverifiedPreReservation(r)) return true;
+  return false;
+}
+
+async function dispatchConfirmedReservationToReceptionAndGarage(r, triggerSource = "payment_confirmed") {
+  if (!r || isPreReservationBlocked(r)) return;
+  try {
+    if (r.guestEmail) {
+      ensureReservationScheduledEmails(db, saveDatabase, r);
+    }
+    if (db.settings?.checkinProvider === "gov_fnrh" && !r.serproReservaId && !r.serproPrecheckinUrl) {
+      try {
+        const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
+        if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+          r.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+          r.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+          r.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+          r.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+          r.serproCreatedAt = new Date().toISOString();
+          saveDatabase();
+        }
+      } catch (serproErr) {
+        console.warn(`[FNRH SERPRO Post-Payment] Falha ao registrar reserva ${r.code}:`, serproErr.message);
+      }
+    }
+    if (isReservationForTodayOrPast(r)) {
+      if (!hasReceptionReceivedReservation(r, db)) {
+        const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+        const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+        const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+        const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+        const titularGuest = (db.guests || []).find(g => (r.guestId && g.id === r.guestId) || (r.guestDocument && (g.documentNumber || g.document) === r.guestDocument));
+        await ensureReservationAttachmentsReady({ reservation: r, guest: titularGuest, db });
+        const emailAttachments = resolveReservationAttachments({ reservation: r, guest: titularGuest, db });
+
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: r.code || r.id,
+          recipient: receptionEmail,
+          cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+          subject,
+          bodyHtml,
+          type: "email",
+          direction: "outbound",
+          attachments: emailAttachments,
+          metadata: {
+            trigger: triggerSource,
+            flatNumber: r.flatNumber,
+            guestName: r.guestName,
+            buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+            hasPdfAttached: emailAttachments.some(a => a.filename?.includes("FNRH")),
+            hasDocumentAttached: emailAttachments.some(a => a.filename?.includes("Documento")),
+            attachmentsCount: emailAttachments.length,
+            receptionEmail,
+            garageEmail
+          }
+        });
+        r.morningEmailSentDate = getBrasiliaTodayStr();
+        r.morningEmailSentAt = new Date().toISOString();
+        r.receptionNotifiedAt = new Date().toISOString();
+        saveDatabase();
+      }
+      if (r.vehicle && r.vehicle.plate) {
+        triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+          trigger: triggerSource,
+          source: "Confirmação de Pagamento",
+          force: false
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[Post-Payment Reception/Garage Dispatch] Erro:", err.message);
+  }
+}
+
 async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
   if (!r || !r.guestPhone) return;
   // Nunca confirma nem dispara confirmação para pré-reserva sem pagamento real comprovado
@@ -38416,6 +38599,9 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     r.status = "confirmada";
     saveDatabase();
   }
+
+  // 0. Assim que confirmada pelo pagamento, libera agendamentos e notifica recepção/portaria e garagem (se for para hoje)
+  await dispatchConfirmedReservationToReceptionAndGarage(r, "payment_confirmed");
 
   // 1. Dispara o comprovante financeiro / confirmação se ainda não foi disparado
   if (!isConfirmationAlreadyDispatched(r)) {
@@ -41479,6 +41665,8 @@ setInterval(async () => {
         r.checkinDate === todayStr &&
         r.status !== "cancelada" &&
         r.status !== "cancelled" &&
+        r.status !== "expirada" &&
+        !isPreReservationBlocked(r) &&
         r.morningEmailSentDate !== todayStr
       );
 

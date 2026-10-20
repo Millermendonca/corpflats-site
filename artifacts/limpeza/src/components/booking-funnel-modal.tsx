@@ -1943,9 +1943,9 @@ export function BookingFunnelModal({
               </div>
               <div className="flex flex-wrap justify-between items-center gap-2 pt-1 border-t border-slate-200 dark:border-slate-700">
                 <span className="text-slate-500">Status da Reserva:</span>
-                {paymentMethod === "pix" && !isPixPaid ? (
+                {!isPixPaid ? (
                   <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 font-bold text-[10px]">
-                    ⏳ Aguardando Pagamento PIX
+                    ⏳ Pré-Reserva • Aguardando Pagamento
                   </Badge>
                 ) : (
                   <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 font-bold text-[10px]">
@@ -2082,18 +2082,24 @@ export function BookingFunnelModal({
                       Seus 5 dados cadastrais (Nome, CPF, Telefone, E-mail e Endereço) já constam no sistema e foram vinculados à sua reserva. No seu pré check-in digital, você <strong>não precisará preencher tudo de novo</strong>, bastando conferir, fotografar o documento e assinar!
                     </p>
                     <div className="pt-1 flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          const resCode = confirmedReservation.code || confirmedReservation.reservationCode || confirmedReservation.id;
-                          window.open(`/pre-checkin/${resCode}`, "_blank");
-                        }}
-                        className="text-xs h-auto min-h-8 py-1.5 bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-50 rounded-xl whitespace-normal leading-tight"
-                      >
-                        <FileText className="w-3.5 h-3.5 mr-1 shrink-0" />
-                        <span>Acessar Pré Check-in Digital</span>
-                      </Button>
+                      {isPixPaid ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const resCode = confirmedReservation.code || confirmedReservation.reservationCode || confirmedReservation.id;
+                            window.open(`/pre-checkin/${resCode}`, "_blank");
+                          }}
+                          className="text-xs h-auto min-h-8 py-1.5 bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-50 rounded-xl whitespace-normal leading-tight"
+                        >
+                          <FileText className="w-3.5 h-3.5 mr-1 shrink-0" />
+                          <span>Acessar Pré Check-in Digital</span>
+                        </Button>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300/80 px-2.5 py-1.5 rounded-xl block w-full">
+                          ⏳ O Pré Check-in Digital e o envio para a recepção/portaria serão liberados automaticamente após a confirmação do pagamento.
+                        </span>
+                      )}
                     </div>
                   </div>
                 );

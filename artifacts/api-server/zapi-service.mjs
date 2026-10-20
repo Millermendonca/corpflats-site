@@ -3025,8 +3025,27 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     );
 
   // ── Lógica Dinâmica de Botões de Check-in e Chegada ────────────────────────
-  // Se o hóspede já entrou no flat:
-  if (hasEnteredFlat) {
+  const isUnpaidPreReserva = Boolean(
+    reservation && (
+      reservation.status === "pre_reserva" ||
+      reservation.status === "pendente" ||
+      templateId === "tpl_pre_reserva" ||
+      templateId === "tpl_payment_pending" ||
+      triggerEvent === "pre_reservation_created" ||
+      triggerEvent === "payment_pending"
+    )
+  );
+
+  if (isUnpaidPreReserva) {
+    // Pré-reserva NÃO permite check-in digital nem autodeclaração de chegada antes do pagamento!
+    list = list.filter(b =>
+      !isCheckinBtn(b) &&
+      b.id !== "btn_cheguei" &&
+      b.id !== "btn_cafe" &&
+      (!b.url || (!String(b.url).includes("/self-checkin") && !String(b.url).includes("/cafe")))
+    );
+  } else if (hasEnteredFlat) {
+    // Se o hóspede já entrou no flat:
     // Remove botões de pré-checkin e de auto-declaração de chegada
     list = list.filter(b => 
       !isCheckinBtn(b) && 
@@ -9286,6 +9305,13 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       return;
     }
     if (!reservation) return;
+    if ((reservation.status === "pre_reserva" || reservation.status === "pendente") &&
+        eventName !== "pre_reservation_created" &&
+        eventName !== "payment_pending" &&
+        eventName !== "reservation_cancelled") {
+      console.log(`[WhatsApp Trigger ⏳] Evento '${eventName}' retido para ${reservation.code || reservation.id}: reserva ainda está como pré-reserva aguardando pagamento.`);
+      return;
+    }
 
     const now = new Date();
     const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -9523,6 +9549,9 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       r.status !== "cancelled" &&
       r.status !== "no_show" &&
       r.status !== "checkout" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "expirada" &&
       r.checkinDate === todayStr &&
       (r.flatId === flatId || String(r.flatNumber) === String(flatNumber)) &&
       reservationHasAnyContact(r, db)
@@ -9657,6 +9686,9 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
       r.status !== "cancelled" &&
       r.status !== "no_show" &&
       r.status !== "checkout" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "expirada" &&
       !r.checkedInAt &&
       r.status !== "checked_in" &&
       r.checkinDate === todayStr &&
