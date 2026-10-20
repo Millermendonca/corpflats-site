@@ -2384,7 +2384,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   guestList.forEach((g, idx) => {
     if (!g || idx === 0) return;
     const index = Number(g.index) > 1 ? Number(g.index) : idx + 1;
-    const phone = String(g.phone || "").trim();
+    const phone = String(g.phone || g.whatsapp || "").trim();
     const email = normalizeEmailAddress(g.email);
     if (!phone && !email) return;
     const rawName = String(g.name || "").trim();
@@ -6854,14 +6854,22 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         return res.status(404).json({ error: "Reserva não encontrada." });
       }
     } else if (req.body.reservation && typeof req.body.reservation === "object") {
-      reservation = { ...reservation, ...req.body.reservation };
+      const dbGuests = Array.isArray(reservation.guests) ? reservation.guests : [];
+      const bodyGuests = Array.isArray(req.body.reservation.guests) ? req.body.reservation.guests : [];
+      reservation = {
+        ...reservation,
+        ...req.body.reservation,
+        guests: bodyGuests.length >= dbGuests.length ? bodyGuests : dbGuests
+      };
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const recipients = getReservationRecipients(reservation, db);
     const isPureBilling = isPureBillingTemplateOrEvent(template);
-    let targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "custom"
-    if (recipients.requester?.isDifferentFromGuest && isPureBilling && targetMode !== "custom") {
+    let targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "all_guests" | "all" | "guest_2" | "guest_3" | "custom"
+    const companionModeMatch = /^(?:guest|companion)_(\d+)$/.exec(String(targetMode || ""));
+    const isCompanionTarget = Boolean(companionModeMatch || (targetMode === "custom" && Number(req.body.guestIndex) > 1));
+    if (recipients.requester?.isDifferentFromGuest && isPureBilling && targetMode !== "custom" && !isCompanionTarget) {
       targetMode = "requester";
     }
     const requestedPhone = req.body.customPhone ? String(req.body.customPhone).trim() : (req.body.phone ? String(req.body.phone).trim() : null);
@@ -6873,16 +6881,84 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const dispatches = [];
 
-    if (targetMode === "custom" && requestedPhone) {
+    if (isCompanionTarget) {
+      const rawIdx = companionModeMatch
+        ? (String(targetMode).startsWith("companion_") ? Number(companionModeMatch[1]) + 1 : Number(companionModeMatch[1]))
+        : Number(req.body.guestIndex);
+      const compIndex = rawIdx > 1 ? rawIdx : 2;
+      const matchedComp = (recipients.companions || []).find(c => Number(c.index) === compIndex);
+      const compPhone = requestedPhone || matchedComp?.phone || "";
+      const compName = req.body.customName || matchedComp?.name || `Acompanhante ${compIndex}`;
       dispatches.push({
-        type: isPureBilling && recipients.requester?.isDifferentFromGuest ? "requester" : "guest",
-        name: req.body.customName || (isPureBilling && recipients.requester?.isDifferentFromGuest ? recipients.requester.name : recipients.guest.name),
-        phone: requestedPhone
+        type: `guest_${compIndex}`,
+        guestIndex: compIndex,
+        name: compName,
+        phone: compPhone
       });
+    } else if (targetMode === "all_guests" || targetMode === "all") {
+      const seenPhones = new Set();
+      const mainPhone = recipients.guest.phone || fallbackPhone;
+      const mainDigits = String(mainPhone || "").replace(/\D/g, "");
+      if (mainDigits.length >= 8) {
+        seenPhones.add(mainDigits.slice(-8));
+        dispatches.push({
+          type: "guest",
+          guestIndex: 1,
+          name: recipients.guest.name,
+          phone: mainPhone
+        });
+      }
+      for (const comp of (recipients.companions || [])) {
+        const compDigits = String(comp.phone || "").replace(/\D/g, "");
+        const compKey = compDigits.slice(-8);
+        if (compDigits.length >= 8 && !seenPhones.has(compKey)) {
+          seenPhones.add(compKey);
+          dispatches.push({
+            type: comp.type || `guest_${comp.index}`,
+            guestIndex: comp.index,
+            name: comp.name,
+            phone: comp.phone
+          });
+        }
+      }
+      if (targetMode === "all" && recipients.requester?.isDifferentFromGuest && recipients.requester?.phone) {
+        const reqDigits = String(recipients.requester.phone || "").replace(/\D/g, "");
+        const reqKey = reqDigits.slice(-8);
+        if (reqDigits.length >= 8 && !seenPhones.has(reqKey)) {
+          seenPhones.add(reqKey);
+          dispatches.push({
+            type: "requester",
+            guestIndex: null,
+            name: recipients.requester.name,
+            phone: recipients.requester.phone
+          });
+        }
+      }
+    } else if (targetMode === "custom" && requestedPhone) {
+      const reqCleanKey = requestedPhone.replace(/\D/g, "").slice(-8);
+      const matchedCompByPhone = reqCleanKey
+        ? (recipients.companions || []).find(c => String(c.cleanDigits || "").slice(-8) === reqCleanKey)
+        : null;
+      if (matchedCompByPhone) {
+        dispatches.push({
+          type: matchedCompByPhone.type || `guest_${matchedCompByPhone.index}`,
+          guestIndex: matchedCompByPhone.index,
+          name: req.body.customName || matchedCompByPhone.name,
+          phone: requestedPhone
+        });
+      } else {
+        dispatches.push({
+          type: isPureBilling && recipients.requester?.isDifferentFromGuest ? "requester" : "guest",
+          guestIndex: 1,
+          name: req.body.customName || (isPureBilling && recipients.requester?.isDifferentFromGuest ? recipients.requester.name : recipients.guest.name),
+          phone: requestedPhone
+        });
+      }
     } else {
       if (targetMode === "guest" || targetMode === "both") {
         dispatches.push({
           type: "guest",
+          guestIndex: 1,
           name: recipients.guest.name,
           phone: (targetMode === "guest" && requestedPhone) ? requestedPhone : (recipients.guest.phone || fallbackPhone)
         });
@@ -6894,12 +6970,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (reqPhone) {
             dispatches.push({
               type: "requester",
+              guestIndex: null,
               name: recipients.requester.name,
               phone: reqPhone
             });
           } else if (targetMode === "requester" && (!recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact)) {
             dispatches.push({
               type: "guest",
+              guestIndex: 1,
               name: recipients.guest.name,
               phone: requestedPhone || recipients.guest.phone || fallbackPhone
             });
@@ -6917,6 +6995,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       dispatches.push({
         type: "guest",
+        guestIndex: 1,
         name: req.body.customName || recipients.guest.name,
         phone: requestedPhone || recipients.guest.phone || fallbackPhone
       });
@@ -6933,8 +7012,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const baseMsgText = (typeof req.body.customMessage === "string" && req.body.customMessage.trim())
         ? req.body.customMessage
         : template.message;
-      const renderedMessage = resolveWhatsAppTags(baseMsgText, reservation, db, baseUrl, d.type, template);
-      const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type, template);
+      const targetContext = d.guestIndex && Number(d.guestIndex) > 1
+        ? {
+            type: d.type,
+            index: Number(d.guestIndex),
+            guestIndex: Number(d.guestIndex),
+            name: d.name,
+            firstName: String(d.name || "Hóspede").trim().split(" ")[0] || "Hóspede",
+            phone: d.phone
+          }
+        : d.type;
+      const renderedMessage = resolveWhatsAppTags(baseMsgText, reservation, db, baseUrl, targetContext, template);
+      const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, targetContext, template);
 
       // Disparo de template da régua de comunicação com hóspedes
       const sendRes = await sendZapiMessage(db?.zapiConfig, {

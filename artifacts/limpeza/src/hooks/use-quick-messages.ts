@@ -29,6 +29,17 @@ export interface WhatsAppQuickMessage {
   documentCaption?: string
 }
 
+export interface ReservationCompanion {
+  key: string
+  index: number
+  type: string
+  name: string
+  firstName: string
+  phone: string
+  cleanDigits: string
+  email?: string
+}
+
 export interface ReservationRecipients {
   guest: {
     name: string
@@ -37,6 +48,7 @@ export interface ReservationRecipients {
     cleanDigits: string
     email?: string
   }
+  companions: ReservationCompanion[]
   requester: {
     name: string
     firstName: string
@@ -140,6 +152,32 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
     (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
   )
 
+  const companions: ReservationCompanion[] = []
+  if (Array.isArray(resItem?.guests)) {
+    resItem.guests.forEach((g: any, idx: number) => {
+      if (!g || idx === 0) return
+      const guestIndex = Number(g.index) > 1 ? Number(g.index) : idx + 1
+      const rawP = String(g.phone || g.whatsapp || "").trim()
+      const digits = rawP.replace(/\D/g, "")
+      const email = String(g.email || "").trim().toLowerCase()
+      if (!digits && !email) return
+      const rawName = String(g.name || "").trim()
+      const isPlaceholder = !rawName || /^h[óo]spede\s*\d*$/i.test(rawName)
+      const name = isPlaceholder ? `Acompanhante ${guestIndex}` : rawName
+      const firstName = name.split(" ")[0] || name
+      companions.push({
+        key: `guest_${guestIndex}`,
+        index: guestIndex,
+        type: `guest_${guestIndex}`,
+        name,
+        firstName,
+        phone: rawP,
+        cleanDigits: digits,
+        email,
+      })
+    })
+  }
+
   return {
     guest: {
       name: guestName,
@@ -148,6 +186,7 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
       cleanDigits: cleanGuestDigits,
       email: guestEmail
     },
+    companions,
     requester: {
       name: requesterName,
       firstName: requesterFirstName,
@@ -359,7 +398,7 @@ export function renderQuickMessage(
   templateText: string, 
   resItem: any, 
   appOrigin?: string,
-  targetRecipient: "guest" | "requester" = "guest",
+  targetRecipient: "guest" | "requester" | string = "guest",
   companies: any[] = []
 ): string {
   if (!templateText) return ""
@@ -371,15 +410,25 @@ export function renderQuickMessage(
   const guest = recipients.guest
   const requester = recipients.requester
 
+  const compMatch = /^(?:guest|companion)_(\d+)$/.exec(String(targetRecipient || ""))
+  const companion = compMatch
+    ? recipients.companions.find(
+        c =>
+          c.key === targetRecipient ||
+          c.index === (String(targetRecipient).startsWith("companion_") ? Number(compMatch[1]) + 1 : Number(compMatch[1]))
+      )
+    : null
+  const recipientGuestIndex = companion ? companion.index : 1
+
   const recipientIsRequester = targetRecipient === "requester"
   const hideFinancialForGuest = Boolean(requester.isDifferentFromGuest && !recipientIsRequester)
-  const primaryRecipientName = recipientIsRequester ? requester.name : guest.name
-  const primaryRecipientFirstName = recipientIsRequester ? requester.firstName : guest.firstName
-  const primaryRecipientPhone = recipientIsRequester ? requester.phone : guest.phone
+  const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name)
+  const primaryRecipientFirstName = companion ? companion.firstName : (recipientIsRequester ? requester.firstName : guest.firstName)
+  const primaryRecipientPhone = companion ? companion.phone : (recipientIsRequester ? requester.phone : guest.phone)
 
-  const guestName = guest.name
+  const guestName = companion ? companion.name : guest.name
   const firstName = primaryRecipientFirstName
-  const phone = guest.phone
+  const phone = companion ? companion.phone : guest.phone
   const flatNumber = String(resItem.flatNumber || resItem.flat?.number || "Flat")
   const resCode = String(resItem.code || resItem.reservationCode || `RES-${flatNumber}-${resItem.id || "001"}`)
 
@@ -415,8 +464,10 @@ export function renderQuickMessage(
   const paymentStatus = isPaid ? "Confirmado / Pago" : "Aguardando Pagamento"
   const statusConfirmacao = resItem.status === "pre_reserva" ? "Pré-Reserva" : "Confirmada"
 
-  const linkPortal = `${origin}/minha-reserva/${resCode}`
-  const linkCheckin = getCheckinUrl(resItem, 1, origin)
+  const linkPortal = recipientGuestIndex > 1
+    ? `${origin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}`
+    : `${origin}/minha-reserva/${resCode}`
+  const linkCheckin = getCheckinUrl(resItem, recipientGuestIndex, origin)
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
   const linkCheckout = `${origin}/checkout/${resCode}`
   const linkMaps = "https://share.google/LHu3541d5lhkdvbL2"
@@ -487,7 +538,8 @@ export function buildFullWhatsAppTextMessage(
   footer?: string, 
   buttons?: ButtonAction[], 
   resItem?: any, 
-  originUrl?: string
+  originUrl?: string,
+  targetRecipient: string = "guest"
 ): string {
   let full = renderedBody.trim()
 
@@ -511,8 +563,8 @@ export function buildFullWhatsAppTextMessage(
     const linkItems = safeButtons
       .filter(b => b.url || b.phone)
       .map(b => {
-        const resolvedUrl = b.url ? renderQuickMessage(b.url, resItem, originUrl).trim() : ""
-        const resolvedPhone = b.phone ? renderQuickMessage(b.phone, resItem, originUrl).trim() : ""
+        const resolvedUrl = b.url ? renderQuickMessage(b.url, resItem, originUrl, targetRecipient).trim() : ""
+        const resolvedPhone = b.phone ? renderQuickMessage(b.phone, resItem, originUrl, targetRecipient).trim() : ""
         if (resolvedUrl) {
           const normUrl = resolvedUrl.replace(/\/+$/, "")
           if (full.includes(resolvedUrl) || (normUrl && full.includes(normUrl))) return ""
@@ -740,8 +792,9 @@ export function useQuickMessages() {
     qm: WhatsAppQuickMessage, 
     resItem: any, 
     appOrigin?: string,
-    overrideOrOptions?: "guest" | "requester" | "both" | "custom" | {
-      overrideTarget?: "guest" | "requester" | "both" | "custom";
+    overrideOrOptions?: "guest" | "requester" | "both" | "all_guests" | "all" | "custom" | string | {
+      overrideTarget?: "guest" | "requester" | "both" | "all_guests" | "all" | "custom" | string;
+      guestIndex?: number;
       customPhone?: string;
       customName?: string;
       customMessage?: string;
@@ -753,7 +806,7 @@ export function useQuickMessages() {
     const recipients = getReservationRecipients(resItem)
     const isPureBilling = isPureBillingQuickMessage(qm)
     let targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
-    if (recipients.requester.isDifferentFromGuest && isPureBilling && targetMode !== "custom") {
+    if (recipients.requester.isDifferentFromGuest && isPureBilling && targetMode !== "custom" && !String(targetMode).startsWith("guest_")) {
       targetMode = "requester"
     }
     const resCode = resItem.code || resItem.reservationCode || String(resItem.id || "")
@@ -766,19 +819,32 @@ export function useQuickMessages() {
       ? `55${recipients.requester.cleanDigits}` 
       : recipients.requester.cleanDigits
 
+    const matchedCompanion = recipients.companions.find(
+      c => c.key === targetMode || (opts.guestIndex && c.index === Number(opts.guestIndex))
+    )
+    const companionDigits = matchedCompanion?.cleanDigits || ""
+    const companionPhone = companionDigits.length === 10 || companionDigits.length === 11
+      ? `55${companionDigits}`
+      : companionDigits
+
     const cleanCustomPhone = opts.customPhone ? opts.customPhone.replace(/\D/g, "") : ""
     const formattedCustomPhone = cleanCustomPhone.length === 10 || cleanCustomPhone.length === 11
       ? `55${cleanCustomPhone}`
       : cleanCustomPhone
 
+    const isMultiGuestMode = targetMode === "all_guests" || targetMode === "all"
     const allowRequesterFallbackToGuest = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
-    const effectiveTargetPhone = formattedCustomPhone
-      || (targetMode === "requester" ? (requesterPhone || (allowRequesterFallbackToGuest ? guestPhone : "")) : guestPhone)
+    const effectiveTargetPhone = isMultiGuestMode
+      ? guestPhone
+      : (formattedCustomPhone
+          || companionPhone
+          || (targetMode === "requester" ? (requesterPhone || (allowRequesterFallbackToGuest ? guestPhone : "")) : guestPhone))
 
+    const previewTarget = matchedCompanion ? matchedCompanion.key : (targetMode === "requester" ? "requester" : "guest")
     const baseRenderedBody = opts.customMessage?.trim()
       ? opts.customMessage
-      : renderQuickMessage(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
-    const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin)
+      : renderQuickMessage(qm.message, resItem, appOrigin, previewTarget)
+    const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin, previewTarget)
     const waWebUrl = effectiveTargetPhone
       ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullFallbackText)}`
       : `https://api.whatsapp.com/send?text=${encodeURIComponent(fullFallbackText)}`
@@ -792,11 +858,12 @@ export function useQuickMessages() {
           reservationCode: resCode,
           reservationId: resItem?.id,
           recipientTarget: targetMode,
+          guestIndex: opts.guestIndex || matchedCompanion?.index || undefined,
           reservation: resItem,
           template: qm,
-          phone: effectiveTargetPhone,
-          customPhone: formattedCustomPhone || undefined,
-          customName: opts.customName || undefined,
+          phone: isMultiGuestMode ? undefined : effectiveTargetPhone,
+          customPhone: isMultiGuestMode ? undefined : (formattedCustomPhone || companionPhone || undefined),
+          customName: opts.customName || matchedCompanion?.name || undefined,
           customMessage: opts.customMessage || undefined,
           bypassTestMode: true
         })
@@ -806,8 +873,23 @@ export function useQuickMessages() {
       const isSimulated = Boolean(data.simulated || (Array.isArray(data.results) && data.results.length > 0 && data.results.every((r: any) => r.simulated)))
 
       if (res.ok && data.success && !isSimulated) {
-        let recipientSummary = opts.customName || recipients.guest.name
-        if (targetMode === "both") {
+        let recipientSummary = opts.customName || matchedCompanion?.name || recipients.guest.name
+        if (Array.isArray(data.results) && data.results.length > 1) {
+          const sentNames = data.results.filter((r: any) => r.success).map((r: any) => r.recipientName).filter(Boolean)
+          if (sentNames.length > 0) {
+            recipientSummary = sentNames.join(" e ")
+          }
+        } else if (targetMode === "all_guests") {
+          const names = [recipients.guest.firstName, ...recipients.companions.map(c => c.firstName)].filter(Boolean)
+          recipientSummary = names.join(" e ")
+        } else if (targetMode === "all") {
+          const names = [
+            recipients.guest.firstName,
+            ...recipients.companions.map(c => c.firstName),
+            ...(recipients.requester.isDifferentFromGuest ? [recipients.requester.firstName] : [])
+          ].filter(Boolean)
+          recipientSummary = names.join(" e ")
+        } else if (targetMode === "both") {
           if (recipients.requester.isDifferentFromGuest && recipients.requester.phone) {
             recipientSummary = `Hóspede (${recipients.guest.firstName}) e Solicitante (${recipients.requester.firstName})`
           } else {
@@ -963,8 +1045,9 @@ export function buildQuickMessageWaWebUrl(
   qm: WhatsAppQuickMessage,
   resItem: any,
   appOrigin?: string,
-  overrideOrOptions?: "guest" | "requester" | "both" | "custom" | {
-    overrideTarget?: "guest" | "requester" | "both" | "custom";
+  overrideOrOptions?: "guest" | "requester" | "both" | "all_guests" | "all" | "custom" | string | {
+    overrideTarget?: "guest" | "requester" | "both" | "all_guests" | "all" | "custom" | string;
+    guestIndex?: number;
     customPhone?: string;
     customName?: string;
     customMessage?: string;
@@ -976,7 +1059,7 @@ export function buildQuickMessageWaWebUrl(
   const recipients = getReservationRecipients(resItem)
   const isPureBilling = isPureBillingQuickMessage(qm)
   let targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
-  if (recipients.requester.isDifferentFromGuest && isPureBilling && targetMode !== "custom") {
+  if (recipients.requester.isDifferentFromGuest && isPureBilling && targetMode !== "custom" && !String(targetMode).startsWith("guest_")) {
     targetMode = "requester"
   }
 
@@ -987,6 +1070,14 @@ export function buildQuickMessageWaWebUrl(
     ? `55${recipients.requester.cleanDigits}`
     : recipients.requester.cleanDigits
 
+  const matchedCompanion = recipients.companions.find(
+    c => c.key === targetMode || (opts.guestIndex && c.index === Number(opts.guestIndex))
+  )
+  const companionDigits = matchedCompanion?.cleanDigits || ""
+  const companionPhone = companionDigits.length === 10 || companionDigits.length === 11
+    ? `55${companionDigits}`
+    : companionDigits
+
   const cleanCustomPhone = opts.customPhone ? opts.customPhone.replace(/\D/g, "") : ""
   const formattedCustomPhone = cleanCustomPhone.length === 10 || cleanCustomPhone.length === 11
     ? `55${cleanCustomPhone}`
@@ -994,12 +1085,14 @@ export function buildQuickMessageWaWebUrl(
 
   const allowRequesterFallbackToGuest = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
   const effectiveTargetPhone = formattedCustomPhone
+    || companionPhone
     || (targetMode === "requester" ? (requesterPhone || (allowRequesterFallbackToGuest ? guestPhone : "")) : guestPhone)
 
+  const previewTarget = matchedCompanion ? matchedCompanion.key : (targetMode === "requester" ? "requester" : "guest")
   const baseRenderedBody = opts.customMessage?.trim()
     ? opts.customMessage
-    : renderQuickMessage(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
-  const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin)
+    : renderQuickMessage(qm.message, resItem, appOrigin, previewTarget)
+  const fullFallbackText = buildFullWhatsAppTextMessage(baseRenderedBody, qm.footer, qm.buttons, resItem, appOrigin, previewTarget)
 
   return effectiveTargetPhone
     ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullFallbackText)}`

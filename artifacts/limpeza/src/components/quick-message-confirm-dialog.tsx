@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo, useRef } from "react"
 import {
   Dialog,
   DialogContent,
@@ -40,7 +40,8 @@ interface QuickMessageConfirmDialogProps {
   onConfirm: (
     qm: WhatsAppQuickMessage,
     options: {
-      overrideTarget?: "guest" | "requester" | "both" | "custom"
+      overrideTarget?: "guest" | "requester" | "both" | "all_guests" | "all" | "custom" | string
+      guestIndex?: number
       customPhone?: string
       customName?: string
       customMessage?: string
@@ -61,6 +62,7 @@ export function QuickMessageConfirmDialog({
   const [isEditingText, setIsEditingText] = useState(false)
   const [editedMessage, setEditedMessage] = useState("")
   const [isSending, setIsSending] = useState(false)
+  const initializedSessionRef = useRef<string | null>(null)
 
   const recipients = useMemo(
     () => (resItem ? getReservationRecipients(resItem) : null),
@@ -71,17 +73,29 @@ export function QuickMessageConfirmDialog({
     if (!resItem || !Array.isArray(resItem.guests)) return []
     const guestClean = recipients?.guest?.cleanDigits || ""
     const reqClean = recipients?.requester?.cleanDigits || ""
-    const list: { key: string; name: string; phone: string; cleanDigits: string }[] = []
+    const list: {
+      key: string
+      guestIndex: number
+      name: string
+      firstName: string
+      phone: string
+      cleanDigits: string
+    }[] = []
 
     resItem.guests.forEach((g: any, idx: number) => {
       if (idx === 0) return
+      const guestIndex = Number(g?.index) > 1 ? Number(g.index) : idx + 1
       const rawP = String(g?.phone || g?.whatsapp || "").trim()
       const digits = rawP.replace(/\D/g, "")
       if (!digits || digits.length < 8) return
       if (digits === guestClean || digits === reqClean) return
+      const rawName = String(g?.name || `Acompanhante ${guestIndex}`).trim()
+      const firstName = rawName.split(" ")[0] || rawName
       list.push({
-        key: `companion_${idx}`,
-        name: String(g?.name || `Acompanhante ${idx + 1}`).trim(),
+        key: `guest_${guestIndex}`,
+        guestIndex,
+        name: rawName,
+        firstName,
         phone: rawP,
         cleanDigits: digits,
       })
@@ -89,14 +103,33 @@ export function QuickMessageConfirmDialog({
     return list
   }, [resItem, recipients])
 
+  const selectedCompanion = useMemo(
+    () => companionOptions.find((c) => c.key === selectedTargetKey) || null,
+    [companionOptions, selectedTargetKey]
+  )
+
   const renderedPreview = useMemo(() => {
     if (!quickMessage || !resItem) return ""
-    const targetType = selectedTargetKey === "requester" ? "requester" : "guest"
+    const targetType = selectedCompanion
+      ? selectedCompanion.key
+      : selectedTargetKey === "requester"
+      ? "requester"
+      : "guest"
     return renderQuickMessage(quickMessage.message, resItem, originUrl, targetType)
-  }, [quickMessage, resItem, originUrl, selectedTargetKey])
+  }, [quickMessage, resItem, originUrl, selectedTargetKey, selectedCompanion])
 
   useEffect(() => {
-    if (open && quickMessage) {
+    if (!open) {
+      initializedSessionRef.current = null
+      return
+    }
+    if (open && quickMessage && recipients) {
+      const sessionKey = `${quickMessage.id}::${resItem?.id || resItem?.code || "res"}`
+      if (initializedSessionRef.current === sessionKey) {
+        return
+      }
+      initializedSessionRef.current = sessionKey
+
       const isBillingRestricted = Boolean(
         isPureBillingQuickMessage(quickMessage) && recipients?.requester?.isDifferentFromGuest
       )
@@ -118,7 +151,7 @@ export function QuickMessageConfirmDialog({
       }
       setIsEditingText(false)
     }
-  }, [open, quickMessage, recipients])
+  }, [open, quickMessage, recipients, resItem?.id, resItem?.code])
 
   useEffect(() => {
     if (!isEditingText) {
@@ -135,11 +168,24 @@ export function QuickMessageConfirmDialog({
     recipients.requester.isDifferentFromGuest && (recipients.requester.phone || isPureBillingWithDistinctRequester)
   )
 
-  const selectedCompanion = companionOptions.find((c) => c.key === selectedTargetKey)
-
   const currentPhoneDisplay = (() => {
     if (selectedCompanion) {
       return `${selectedCompanion.name} (${selectedCompanion.phone})`
+    }
+    if (selectedTargetKey === "all_guests") {
+      const parts = [
+        `${recipients.guest.firstName} (${recipients.guest.phone || "Sem nº"})`,
+        ...companionOptions.map((c) => `${c.firstName} (${c.phone})`),
+      ]
+      return parts.join(" + ")
+    }
+    if (selectedTargetKey === "all") {
+      const parts = [
+        `${recipients.guest.firstName} (${recipients.guest.phone || "Sem nº"})`,
+        ...companionOptions.map((c) => `${c.firstName} (${c.phone})`),
+        `${recipients.requester.firstName} (${recipients.requester.phone})`,
+      ]
+      return parts.join(" + ")
     }
     if (selectedTargetKey === "both") {
       return `${recipients.guest.firstName} (${recipients.guest.phone || "Sem nº"}) + ${recipients.requester.firstName} (${recipients.requester.phone})`
@@ -162,17 +208,18 @@ export function QuickMessageConfirmDialog({
 
       if (selectedCompanion) {
         await onConfirm(quickMessage, {
-          overrideTarget: "custom",
+          overrideTarget: selectedCompanion.key,
+          guestIndex: selectedCompanion.guestIndex,
           customPhone: selectedCompanion.phone,
           customName: selectedCompanion.name,
           customMessage: customMsg,
         })
       } else {
         const target = (
-          ["guest", "requester", "both"].includes(selectedTargetKey)
+          ["guest", "requester", "both", "all_guests", "all"].includes(selectedTargetKey)
             ? selectedTargetKey
             : "guest"
-        ) as "guest" | "requester" | "both"
+        ) as "guest" | "requester" | "both" | "all_guests" | "all"
         await onConfirm(quickMessage, {
           overrideTarget: target,
           customMessage: customMsg,
@@ -228,6 +275,8 @@ export function QuickMessageConfirmDialog({
                   className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
                     selectedTargetKey === "guest"
                       ? "border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 ring-1 ring-emerald-500"
+                      : selectedTargetKey === "all_guests" || selectedTargetKey === "all" || selectedTargetKey === "both"
+                      ? "border-purple-300 dark:border-purple-800/80 bg-purple-50/30 dark:bg-purple-950/20"
                       : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
                   }`}
                 >
@@ -246,6 +295,78 @@ export function QuickMessageConfirmDialog({
                   {selectedTargetKey === "guest" && (
                     <Badge className="bg-emerald-600 text-white text-[10px]">Selecionado</Badge>
                   )}
+                  {(selectedTargetKey === "all_guests" || selectedTargetKey === "all" || selectedTargetKey === "both") && (
+                    <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300 dark:border-purple-700 text-[10px]">
+                      Incluído
+                    </Badge>
+                  )}
+                </button>
+              )}
+
+              {/* Acompanhantes com telefone cadastrado (ocultos em cobrança financeira) */}
+              {!isPureBillingWithDistinctRequester && companionOptions.map((comp) => (
+                <button
+                  key={comp.key}
+                  type="button"
+                  onClick={() => setSelectedTargetKey(comp.key)}
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                    selectedTargetKey === comp.key
+                      ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/40 text-sky-950 dark:text-sky-200 ring-1 ring-sky-500"
+                      : selectedTargetKey === "all_guests" || selectedTargetKey === "all"
+                      ? "border-purple-300 dark:border-purple-800/80 bg-purple-50/30 dark:bg-purple-950/20"
+                      : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <User className="w-4 h-4 text-sky-600 shrink-0" />
+                    <div className="truncate">
+                      <div className="text-xs font-bold truncate">
+                        Acompanhante: {comp.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
+                        <Phone className="w-2.5 h-2.5" />
+                        {comp.phone}
+                      </div>
+                    </div>
+                  </div>
+                  {selectedTargetKey === comp.key && (
+                    <Badge className="bg-sky-600 text-white text-[10px]">Selecionado</Badge>
+                  )}
+                  {(selectedTargetKey === "all_guests" || selectedTargetKey === "all") && (
+                    <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300 dark:border-purple-700 text-[10px]">
+                      Incluído
+                    </Badge>
+                  )}
+                </button>
+              ))}
+
+              {/* Botão Enviar para Ambos / Todos os Hóspedes (Hóspede Principal + Acompanhante(s)) */}
+              {!isPureBillingWithDistinctRequester && companionOptions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTargetKey("all_guests")}
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                    selectedTargetKey === "all_guests"
+                      ? "border-purple-500 bg-purple-50/70 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 ring-1 ring-purple-500"
+                      : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Users className="w-4 h-4 text-purple-600 shrink-0" />
+                    <div className="truncate">
+                      <div className="text-xs font-bold truncate">
+                        {companionOptions.length === 1
+                          ? `✨ Enviar para as 2 / Ambos (${recipients.guest.firstName} + ${companionOptions[0].firstName})`
+                          : `✨ Enviar para Todos os Hóspedes (${recipients.guest.firstName} + ${companionOptions.map((c) => c.firstName).join(" + ")})`}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                        {[recipients.guest.phone, ...companionOptions.map((c) => c.phone)].filter(Boolean).join(" e ")}
+                      </div>
+                    </div>
+                  </div>
+                  {selectedTargetKey === "all_guests" && (
+                    <Badge className="bg-purple-600 text-white text-[10px]">Selecionado</Badge>
+                  )}
                 </button>
               )}
 
@@ -258,6 +379,8 @@ export function QuickMessageConfirmDialog({
                     className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
                       selectedTargetKey === "requester"
                         ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 ring-1 ring-amber-500"
+                        : selectedTargetKey === "both" || selectedTargetKey === "all"
+                        ? "border-purple-300 dark:border-purple-800/80 bg-purple-50/30 dark:bg-purple-950/20"
                         : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
                     }`}
                   >
@@ -277,6 +400,11 @@ export function QuickMessageConfirmDialog({
                     {selectedTargetKey === "requester" && (
                       <Badge className="bg-amber-600 text-white text-[10px]">Selecionado</Badge>
                     )}
+                    {(selectedTargetKey === "both" || selectedTargetKey === "all") && (
+                      <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300 dark:border-purple-700 text-[10px]">
+                        Incluído
+                      </Badge>
+                    )}
                   </button>
 
                   {isPureBillingWithDistinctRequester ? (
@@ -284,63 +412,64 @@ export function QuickMessageConfirmDialog({
                       🔒 Mensagens financeiras e de PIX são enviadas exclusivamente ao solicitante quando a reserva possui solicitante distinto do hóspede.
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTargetKey("both")}
-                      className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
-                        selectedTargetKey === "both"
-                          ? "border-purple-500 bg-purple-50/70 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 ring-1 ring-purple-500"
-                          : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Users className="w-4 h-4 text-purple-600 shrink-0" />
-                        <div className="truncate">
-                          <div className="text-xs font-bold truncate">
-                            ✨ Enviar para Ambos (Hóspede + Solicitante)
-                          </div>
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
-                            {recipients.guest.phone} e {recipients.requester.phone}
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTargetKey("both")}
+                        className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                          selectedTargetKey === "both"
+                            ? "border-purple-500 bg-purple-50/70 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 ring-1 ring-purple-500"
+                            : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Users className="w-4 h-4 text-purple-600 shrink-0" />
+                          <div className="truncate">
+                            <div className="text-xs font-bold truncate">
+                              ✨ Enviar para Ambos (Hóspede + Solicitante)
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                              {recipients.guest.phone} e {recipients.requester.phone}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      {selectedTargetKey === "both" && (
-                        <Badge className="bg-purple-600 text-white text-[10px]">Selecionado</Badge>
+                        {selectedTargetKey === "both" && (
+                          <Badge className="bg-purple-600 text-white text-[10px]">Selecionado</Badge>
+                        )}
+                      </button>
+
+                      {companionOptions.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTargetKey("all")}
+                          className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                            selectedTargetKey === "all"
+                              ? "border-purple-500 bg-purple-50/70 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 ring-1 ring-purple-500"
+                              : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Users className="w-4 h-4 text-purple-600 shrink-0" />
+                            <div className="truncate">
+                              <div className="text-xs font-bold truncate">
+                                ✨ Enviar para Todos (Hóspedes + Solicitante)
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                                {[recipients.guest.phone, ...companionOptions.map((c) => c.phone), recipients.requester.phone]
+                                  .filter(Boolean)
+                                  .join(" • ")}
+                              </div>
+                            </div>
+                          </div>
+                          {selectedTargetKey === "all" && (
+                            <Badge className="bg-purple-600 text-white text-[10px]">Selecionado</Badge>
+                          )}
+                        </button>
                       )}
-                    </button>
+                    </>
                   )}
                 </>
               )}
-
-              {/* Acompanhantes com telefone cadastrado (ocultos em cobrança financeira) */}
-              {!isPureBillingWithDistinctRequester && companionOptions.map((comp) => (
-                <button
-                  key={comp.key}
-                  type="button"
-                  onClick={() => setSelectedTargetKey(comp.key)}
-                  className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
-                    selectedTargetKey === comp.key
-                      ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/40 text-sky-950 dark:text-sky-200 ring-1 ring-sky-500"
-                      : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <User className="w-4 h-4 text-sky-600 shrink-0" />
-                    <div className="truncate">
-                      <div className="text-xs font-bold truncate">
-                        Acompanhante: {comp.name}
-                      </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
-                        <Phone className="w-2.5 h-2.5" />
-                        {comp.phone}
-                      </div>
-                    </div>
-                  </div>
-                  {selectedTargetKey === comp.key && (
-                    <Badge className="bg-sky-600 text-white text-[10px]">Selecionado</Badge>
-                  )}
-                </button>
-              ))}
             </div>
           </div>
 
@@ -359,6 +488,12 @@ export function QuickMessageConfirmDialog({
                 {isEditingText ? "Ver prévia formatada" : "Editar texto antes de enviar"}
               </button>
             </div>
+
+            {(selectedTargetKey === "all_guests" || selectedTargetKey === "all" || selectedTargetKey === "both") && (
+              <div className="text-[11px] text-purple-800 dark:text-purple-300 bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/60 rounded-lg px-2.5 py-1.5 font-medium">
+                ✨ <strong>Envio individualizado:</strong> cada destinatário receberá a mensagem com o seu próprio nome e link individual de check-in.
+              </div>
+            )}
 
             {isEditingText ? (
               <textarea
@@ -443,15 +578,16 @@ export function QuickMessageConfirmDialog({
                       : undefined
                   const opts = selectedCompanion
                     ? {
-                        overrideTarget: "custom" as const,
+                        overrideTarget: selectedCompanion.key,
+                        guestIndex: selectedCompanion.guestIndex,
                         customPhone: selectedCompanion.phone,
                         customName: selectedCompanion.name,
                         customMessage: customMsg,
                       }
                     : {
-                        overrideTarget: (["guest", "requester", "both"].includes(selectedTargetKey)
+                        overrideTarget: (["guest", "requester", "both", "all_guests", "all"].includes(selectedTargetKey)
                           ? selectedTargetKey
-                          : "guest") as "guest" | "requester" | "both",
+                          : "guest") as "guest" | "requester" | "both" | "all_guests" | "all",
                         customMessage: customMsg,
                       }
                   const url = buildQuickMessageWaWebUrl(quickMessage, resItem, originUrl, opts)
