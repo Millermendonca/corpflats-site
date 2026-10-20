@@ -1,0 +1,1723 @@
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import {
+  getSmtpConfig,
+  sendEmailAsync,
+  resendEmailAsync,
+  wrapEmailTemplate,
+  renderCheckinConfirmedEmail,
+  renderReservationUpdateEmail,
+  renderGarageAuthorizationEmail,
+  renderReservationConfirmationEmail,
+  renderPreCheckinReminderEmail,
+  renderAccessInstructionsEmail,
+  renderManualEmail,
+  resolveReservationAttachments,
+  ensureReservationAttachmentsReady
+} from "./mail-service.mjs";
+
+// ── Cache em memória para Ciclo de Vida OAuth2 Zoho ───────────────────────────
+const zohoTokenCache = {
+  accessToken: null,
+  expiresAt: 0,
+  accountId: null,
+  primaryEmailAddress: null,
+  accountDisplayName: null,
+  lastSyncAt: null,
+  lastError: null
+};
+
+const DEFAULT_SYSTEM_LABELS = [
+  { id: "lbl_urgente", name: "Urgente", color: "#EF4444", system: true },
+  { id: "lbl_reserva", name: "Reserva", color: "#10B981", system: true },
+  { id: "lbl_portaria", name: "Portaria", color: "#3B82F6", system: true },
+  { id: "lbl_garagem", name: "Garagem", color: "#F59E0B", system: true },
+  { id: "lbl_financeiro", name: "Financeiro", color: "#8B5CF6", system: true },
+  { id: "lbl_vip", name: "Hóspede VIP", color: "#EC4899", system: true }
+];
+
+/**
+ * Garante as coleções necessárias no banco em memória / persistido
+ */
+export function ensureWebmailCollections(db) {
+  if (!db) return;
+  if (!db.settings) db.settings = {};
+  if (!db.settings.zohoOAuth) db.settings.zohoOAuth = {};
+  if (!Array.isArray(db.emailDrafts)) db.emailDrafts = [];
+  if (!Array.isArray(db.emailCustomFolders)) {
+    db.emailCustomFolders = [
+      { id: "fld_portaria", name: "Portaria Soho", icon: "Building2", color: "#3B82F6", createdAt: new Date().toISOString() },
+      { id: "fld_garagem", name: "PFB Estacionamentos", icon: "Car", color: "#F59E0B", createdAt: new Date().toISOString() },
+      { id: "fld_fornecedores", name: "Fornecedores & Notas", icon: "Briefcase", color: "#8B5CF6", createdAt: new Date().toISOString() }
+    ];
+  }
+  if (!Array.isArray(db.emailLabels) || db.emailLabels.length === 0) {
+    db.emailLabels = [...DEFAULT_SYSTEM_LABELS];
+  } else {
+    for (const defLbl of DEFAULT_SYSTEM_LABELS) {
+      if (!db.emailLabels.some(l => l.id === defLbl.id || l.name.toLowerCase() === defLbl.name.toLowerCase())) {
+        db.emailLabels.push(defLbl);
+      }
+    }
+  }
+  if (!db.emailStateMeta || typeof db.emailStateMeta !== "object") {
+    db.emailStateMeta = {};
+  }
+  if (!Array.isArray(db.zohoMessagesCache)) {
+    db.zohoMessagesCache = [];
+  }
+  if (!Array.isArray(db.webmailInboundMessages)) {
+    db.webmailInboundMessages = [];
+  }
+
+  // Semeia mensagens iniciais de demonstração operacional na Caixa de Entrada caso esteja vazia,
+  // permitindo testar leitura em thread, resposta rápida, anexos e vínculo com reservas imediatamente.
+  if (db.webmailInboundMessages.length === 0 && !db.settings.webmailSeededV1) {
+    const sampleRes = (db.reservations || []).find(r => r.status !== "cancelada") || (db.reservations || [])[0];
+    const flatNum = sampleRes?.flatNumber || "113";
+    const guestName = sampleRes?.guestName || "Hóspede CorpFlats";
+    const guestEmail = sampleRes?.guestEmail || "hospede.exemplo@empresa.com.br";
+    const resCode = sampleRes?.code || `RES-${flatNum}`;
+    const now = Date.now();
+
+    db.webmailInboundMessages.push(
+      {
+        id: "inb_welcome_portaria_1",
+        threadId: `thread_${resCode}`,
+        folder: "inbox",
+        direction: "inbound",
+        fromName: "Recepção Soho Residence (Promenade)",
+        fromEmail: db.settings?.receptionEmail || "soho@promenade.com.br",
+        recipient: getSmtpConfig(db).fromEmail || "reservas@corpflats.com.br",
+        cc: "",
+        subject: `Re: Flat ${flatNum} - ${guestName} (Confirmação de Recebimento Portaria)`,
+        snippet: `Recebemos a ficha FNRH e a liberação de entrada para o Flat ${flatNum} (${guestName}). Chaves separadas na recepção 24h.`,
+        bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1F2937; line-height: 1.6;">
+          <p>Olá, equipe <strong>CorpFlats</strong>!</p>
+          <p>Confirmamos o recebimento da documentação cadastral e da Ficha FNRH referente à reserva <strong>#${resCode}</strong> (<strong>Flat ${flatNum}</strong> — Hóspede: <strong>${guestName}</strong>).</p>
+          <p>O acesso já encontra-se pré-autorizado na portaria 24h do Edifício Soho Residence Service.</p>
+          <hr style="border:none;border-top:1px solid #E5E7EB;margin:16px 0;" />
+          <p style="font-size:12px;color:#6B7280;">Atenciosamente,<br/><strong>Recepção & Portaria 24h • Edifício Soho Residence</strong></p>
+        </div>`,
+        bodyText: `Olá, equipe CorpFlats! Confirmamos o recebimento da documentação cadastral e da Ficha FNRH referente à reserva #${resCode} (Flat ${flatNum} - Hóspede: ${guestName}).`,
+        isRead: false,
+        isStarred: true,
+        labels: ["lbl_portaria", "lbl_reserva"],
+        reservation_id: String(sampleRes?.id || resCode),
+        reservationCode: resCode,
+        created_at: new Date(now - 25 * 60 * 1000).toISOString(),
+        attachments: []
+      },
+      {
+        id: "inb_guest_question_1",
+        threadId: `thread_guest_${resCode}`,
+        folder: "inbox",
+        direction: "inbound",
+        fromName: guestName,
+        fromEmail: guestEmail,
+        recipient: getSmtpConfig(db).fromEmail || "reservas@corpflats.com.br",
+        cc: "",
+        subject: `Dúvida sobre vaga de garagem e Early Check-in - Flat ${flatNum} (#${resCode})`,
+        snippet: `Olá! Gostaria de confirmar se consigo entrar um pouco antes das 14h e cadastrar a placa do meu veículo para o estacionamento.`,
+        bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1F2937; line-height: 1.6;">
+          <p>Bom dia, pessoal do <strong>CorpFlats</strong>!</p>
+          <p>Estou com a reserva <strong>#${resCode}</strong> confirmada para o <strong>Flat ${flatNum}</strong>.</p>
+          <p>Gostaria de saber se há possibilidade de <em>Early Check-in</em> por volta das 12h30 e se já posso informar a placa do carro por aqui para liberar o estacionamento PFB.</p>
+          <p>Muito obrigado,<br/><strong>${guestName}</strong></p>
+        </div>`,
+        bodyText: `Bom dia, pessoal do CorpFlats! Estou com a reserva #${resCode} confirmada para o Flat ${flatNum}. Gostaria de saber sobre Early Check-in e liberação de garagem.`,
+        isRead: false,
+        isStarred: false,
+        labels: ["lbl_reserva", "lbl_garagem"],
+        reservation_id: String(sampleRes?.id || resCode),
+        reservationCode: resCode,
+        created_at: new Date(now - 2 * 3600 * 1000).toISOString(),
+        attachments: []
+      },
+      {
+        id: "inb_garage_confirm_1",
+        threadId: `thread_garage_${flatNum}`,
+        folder: "inbox",
+        direction: "inbound",
+        fromName: "PFB Estacionamentos - Soho",
+        fromEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+        recipient: getSmtpConfig(db).fromEmail || "reservas@corpflats.com.br",
+        cc: "",
+        subject: `Re: Autorização de Garagem Liberada - Flat ${flatNum}`,
+        snippet: `Veículo cadastrado na cancela eletrônica para o período da estadia do Flat ${flatNum}.`,
+        bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1F2937; line-height: 1.6;">
+          <p>Prezada Administração CorpFlats,</p>
+          <p>Informamos que a liberação de vaga de garagem referente ao <strong>Flat ${flatNum}</strong> foi registrada com sucesso no sistema da PFB Estacionamentos.</p>
+          <p>Cordialmente,<br/><strong>Operação PFB Estacionamentos • Promenade Soho</strong></p>
+        </div>`,
+        bodyText: `Prezada Administração CorpFlats, Informamos que a liberação de vaga de garagem referente ao Flat ${flatNum} foi registrada com sucesso.`,
+        isRead: true,
+        isStarred: false,
+        labels: ["lbl_garagem"],
+        reservation_id: String(sampleRes?.id || resCode),
+        reservationCode: resCode,
+        created_at: new Date(now - 18 * 3600 * 1000).toISOString(),
+        attachments: []
+      }
+    );
+    db.settings.webmailSeededV1 = true;
+  }
+}
+
+/**
+ * Obtém a configuração consolidada do Zoho OAuth2 (.env > db.settings.zohoOAuth)
+ */
+export function getZohoOAuthConfig(db, overrides = {}) {
+  const saved = db?.settings?.zohoOAuth || {};
+  const clientId = (overrides.clientId !== undefined ? overrides.clientId : (process.env.ZOHO_CLIENT_ID || saved.clientId || "")).trim();
+  const clientSecret = (overrides.clientSecret !== undefined && overrides.clientSecret !== "••••••••"
+    ? overrides.clientSecret
+    : (process.env.ZOHO_CLIENT_SECRET || saved.clientSecret || "")).trim();
+  const refreshToken = (overrides.refreshToken !== undefined && overrides.refreshToken !== "••••••••"
+    ? overrides.refreshToken
+    : (process.env.ZOHO_REFRESH_TOKEN || saved.refreshToken || "")).trim();
+  const accountId = (overrides.accountId !== undefined
+    ? overrides.accountId
+    : (process.env.ZOHO_ACCOUNT_ID || saved.accountId || zohoTokenCache.accountId || "")).trim();
+  const dc = (overrides.dc || process.env.ZOHO_DC || saved.dc || "com").replace(/^\./, "").trim();
+
+  const accountsDomain = dc.startsWith("http") ? dc : `https://accounts.zoho.${dc}`;
+  const mailApiBase = `https://mail.zoho.${dc}/api`;
+
+  const isConfigured = Boolean(clientId && clientSecret && refreshToken);
+
+  return {
+    clientId,
+    clientSecret,
+    refreshToken,
+    accountId,
+    dc,
+    accountsDomain,
+    mailApiBase,
+    isConfigured
+  };
+}
+
+/**
+ * Troca um Authorization Code temporário ("Self Client" do Zoho API Console) por um Refresh Token permanente
+ */
+export async function exchangeZohoGrantCode(db, saveDatabase, { grantCode, clientId, clientSecret, dc = "com" }) {
+  const cfg = getZohoOAuthConfig(db, { clientId, clientSecret, dc });
+  if (!cfg.clientId || !cfg.clientSecret || !grantCode) {
+    return {
+      ok: false,
+      error: "Informe o Client ID, Client Secret e o Código de Autorização (Self Client Grant Code)."
+    };
+  }
+
+  try {
+    const params = new URLSearchParams({
+      code: grantCode.trim(),
+      grant_type: "authorization_code",
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret
+    });
+
+    const tokenUrl = `${cfg.accountsDomain}/oauth/v2/token`;
+    const res = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      return {
+        ok: false,
+        error: `Erro Zoho OAuth (${data.error || res.status}): Verifique se o Grant Code não expirou e se o Data Center (${cfg.dc}) corresponde à sua conta Zoho.`
+      };
+    }
+
+    if (!db.settings) db.settings = {};
+    if (!db.settings.zohoOAuth) db.settings.zohoOAuth = {};
+    db.settings.zohoOAuth.clientId = cfg.clientId;
+    db.settings.zohoOAuth.clientSecret = cfg.clientSecret;
+    db.settings.zohoOAuth.dc = cfg.dc;
+    if (data.refresh_token) {
+      db.settings.zohoOAuth.refreshToken = data.refresh_token;
+    }
+
+    if (data.access_token) {
+      zohoTokenCache.accessToken = data.access_token;
+      zohoTokenCache.expiresAt = Date.now() + ((Number(data.expires_in) || 3600) - 300) * 1000;
+    }
+
+    // Descobre accountId imediatamente
+    const accResult = await discoverZohoAccountId(db);
+    if (accResult.accountId) {
+      db.settings.zohoOAuth.accountId = accResult.accountId;
+    }
+
+    if (typeof saveDatabase === "function") saveDatabase();
+
+    return {
+      ok: true,
+      refreshToken: data.refresh_token || db.settings.zohoOAuth.refreshToken,
+      accountId: accResult.accountId || null,
+      primaryEmailAddress: accResult.primaryEmailAddress || null,
+      message: data.refresh_token
+        ? "Refresh Token gerado e salvo automaticamente com sucesso!"
+        : "Token de acesso obtido! (Obs: O Zoho só retorna refresh_token na primeira troca do código; se já possuir um, mantenha-o salvo)."
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Falha de rede ao contatar Zoho Accounts: ${err.message}`
+    };
+  }
+}
+
+/**
+ * Obtém ou renova automaticamente o access_token do Zoho OAuth2 em memória
+ */
+export async function getZohoAccessToken(db, overrides = {}, forceRefresh = false) {
+  const cfg = getZohoOAuthConfig(db, overrides);
+  if (!cfg.isConfigured) {
+    return { ok: false, error: "Credenciais Zoho OAuth2 não configuradas.", isConfigured: false };
+  }
+
+  const now = Date.now();
+  if (!forceRefresh && zohoTokenCache.accessToken && zohoTokenCache.expiresAt > now) {
+    return { ok: true, accessToken: zohoTokenCache.accessToken, config: cfg };
+  }
+
+  try {
+    const params = new URLSearchParams({
+      refresh_token: cfg.refreshToken,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      grant_type: "refresh_token"
+    });
+
+    const tokenUrl = `${cfg.accountsDomain}/oauth/v2/token`;
+    const res = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.error || !data.access_token) {
+      const errMsg = data.error || `HTTP ${res.status}`;
+      zohoTokenCache.lastError = errMsg;
+      return {
+        ok: false,
+        error: `Falha ao renovar access_token Zoho (${errMsg}). Verifique Client ID, Secret, Refresh Token e Data Center (${cfg.dc}).`
+      };
+    }
+
+    const expiresInSec = Number(data.expires_in) || 3600;
+    zohoTokenCache.accessToken = data.access_token;
+    zohoTokenCache.expiresAt = now + Math.max(60, expiresInSec - 300) * 1000;
+    zohoTokenCache.lastError = null;
+
+    return { ok: true, accessToken: data.access_token, config: cfg };
+  } catch (err) {
+    zohoTokenCache.lastError = err.message;
+    return { ok: false, error: `Erro de conexão com Zoho OAuth2: ${err.message}` };
+  }
+}
+
+/**
+ * Descobre e faz cache automático do accountId via GET /api/accounts
+ */
+export async function discoverZohoAccountId(db, overrides = {}) {
+  const tokenRes = await getZohoAccessToken(db, overrides);
+  if (!tokenRes.ok) return tokenRes;
+
+  const { accessToken, config } = tokenRes;
+  if (config.accountId && zohoTokenCache.accountId === config.accountId && zohoTokenCache.primaryEmailAddress) {
+    return {
+      ok: true,
+      accountId: config.accountId,
+      primaryEmailAddress: zohoTokenCache.primaryEmailAddress,
+      accountDisplayName: zohoTokenCache.accountDisplayName
+    };
+  }
+
+  try {
+    const res = await fetch(`${config.mailApiBase}/accounts`, {
+      method: "GET",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        Accept: "application/json"
+      }
+    });
+
+    const data = await res.json();
+    if (!res.ok || !Array.isArray(data?.data) || data.data.length === 0) {
+      return {
+        ok: false,
+        error: data?.data?.moreInfo || data?.status?.description || `Não foi possível listar contas na Zoho Mail API (HTTP ${res.status}). Verifique se os escopos ZohoMail.accounts.READ e ZohoMail.messages.ALL estão ativos.`
+      };
+    }
+
+    const primaryAcc = data.data[0];
+    const discoveredId = String(primaryAcc.accountId || "").trim();
+    const emailAddr = primaryAcc.primaryEmailAddress || primaryAcc.incomingUserName || "";
+    const dispName = primaryAcc.accountDisplayName || primaryAcc.displayName || "CorpFlats";
+
+    zohoTokenCache.accountId = discoveredId;
+    zohoTokenCache.primaryEmailAddress = emailAddr;
+    zohoTokenCache.accountDisplayName = dispName;
+
+    if (db?.settings?.zohoOAuth && discoveredId) {
+      db.settings.zohoOAuth.accountId = discoveredId;
+      db.settings.zohoOAuth.primaryEmailAddress = emailAddr;
+    }
+
+    return {
+      ok: true,
+      accountId: discoveredId,
+      primaryEmailAddress: emailAddr,
+      accountDisplayName: dispName,
+      accounts: data.data
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Erro ao consultar /api/accounts no Zoho Mail: ${err.message}`
+    };
+  }
+}
+
+/**
+ * Helper genérico para chamadas autenticadas à Zoho Mail REST API
+ */
+export async function callZohoMailApi(db, endpointPath, options = {}) {
+  const tokenRes = await getZohoAccessToken(db);
+  if (!tokenRes.ok) return tokenRes;
+
+  let accountId = tokenRes.config.accountId || zohoTokenCache.accountId;
+  if (!accountId && endpointPath.includes("{accountId}")) {
+    const accRes = await discoverZohoAccountId(db);
+    if (!accRes.ok) return accRes;
+    accountId = accRes.accountId;
+  }
+
+  const finalPath = endpointPath.replace("{accountId}", accountId || "");
+  const url = `${tokenRes.config.mailApiBase}${finalPath.startsWith("/") ? "" : "/"}${finalPath}`;
+
+  try {
+    const headers = {
+      Authorization: `Zoho-oauthtoken ${tokenRes.accessToken}`,
+      Accept: "application/json",
+      ...(options.body && typeof options.body === "string" ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {})
+    };
+
+    let res = await fetch(url, {
+      ...options,
+      headers
+    });
+
+    // Se retornou 401, força renovação única do token e tenta novamente
+    if (res.status === 401) {
+      const retryToken = await getZohoAccessToken(db, {}, true);
+      if (retryToken.ok) {
+        headers.Authorization = `Zoho-oauthtoken ${retryToken.accessToken}`;
+        res = await fetch(url, { ...options, headers });
+      }
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json") ? await res.json() : await res.text();
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: payload?.data?.moreInfo || payload?.status?.description || `Erro Zoho API HTTP ${res.status}`,
+        raw: payload
+      };
+    }
+
+    zohoTokenCache.lastSyncAt = new Date().toISOString();
+    return {
+      ok: true,
+      status: res.status,
+      data: payload?.data !== undefined ? payload.data : payload,
+      raw: payload
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Erro na requisição Zoho Mail API (${endpointPath}): ${err.message}`
+    };
+  }
+}
+
+/**
+ * Sanitizador seguro de HTML de e-mail para proteger contra XSS mantendo layouts ricos
+ */
+export function sanitizeEmailHtml(rawHtml = "") {
+  if (!rawHtml || typeof rawHtml !== "string") return "";
+  return rawHtml
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
+    .replace(/<embed\b[^>]*>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/javascript\s*:/gi, "blocked:");
+}
+
+/**
+ * Extrai texto limpo para snippet a partir de HTML
+ */
+export function extractTextSnippet(htmlOrText = "", maxLen = 140) {
+  if (!htmlOrText) return "";
+  const noStyle = String(htmlOrText)
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<head\b[^<]*(?:(?!<\/head>)<[^<]*)*<\/head>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+  return noStyle.length > maxLen ? noStyle.slice(0, maxLen).trim() + "…" : noStyle;
+}
+
+/**
+ * Normaliza assunto para agrupamento inteligente de Threads (remove Re:, Fwd:, Enc:, etc.)
+ */
+export function normalizeThreadSubject(subject = "") {
+  return String(subject || "")
+    .replace(/^(\s*(re|fw|fwd|enc|resp)\s*:\s*)+/gi, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Cruza automaticamente um e-mail com o banco de reservas e hóspedes do CorpFlats
+ */
+export function matchEmailWithReservation(db, item) {
+  if (!db || !item) return null;
+  const reservations = db.reservations || [];
+  if (reservations.length === 0) return null;
+
+  const explicitId = item.reservation_id || item.reservationId || item.reservationCode || item.metadata?.reservationCode;
+  let matched = null;
+
+  if (explicitId && explicitId !== "0" && explicitId !== "MANUAL" && explicitId !== "TEST") {
+    const cleanExp = String(explicitId).trim().toUpperCase();
+    matched = reservations.find(
+      r => String(r.id).toUpperCase() === cleanExp || (r.code && String(r.code).toUpperCase() === cleanExp)
+    );
+  }
+
+  // 2. Busca por código #RES-... ou #CORP-... no assunto ou corpo
+  if (!matched) {
+    const textToScan = `${item.subject || ""} ${item.snippet || ""}`;
+    const codeMatch = textToScan.match(/\b(RES-[A-Z0-9-]+|CORP-[A-Z0-9-]+)\b/i);
+    if (codeMatch) {
+      const targetCode = codeMatch[1].toUpperCase();
+      matched = reservations.find(r => r.code && String(r.code).toUpperCase() === targetCode);
+    }
+  }
+
+  // 3. Busca por endereço de e-mail do remetente ou destinatário
+  if (!matched) {
+    const candidateEmails = [item.fromEmail, item.recipient]
+      .filter(Boolean)
+      .flatMap(e => String(e).split(/[,;]/))
+      .map(e => e.replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase())
+      .filter(e => e && e.includes("@") && !e.includes("corpflats") && !e.includes("promenade") && !e.includes("pfbestacionamentos"));
+
+    if (candidateEmails.length > 0) {
+      matched = reservations.find(r => {
+        const rEmail = (r.guestEmail || "").trim().toLowerCase();
+        if (rEmail && candidateEmails.includes(rEmail)) return true;
+        if (Array.isArray(r.guests)) {
+          return r.guests.some(g => g.email && candidateEmails.includes(String(g.email).trim().toLowerCase()));
+        }
+        return false;
+      });
+    }
+  }
+
+  // 4. Busca por "Flat XXX" no assunto
+  if (!matched && item.subject) {
+    const flatMatch = String(item.subject).match(/\bFlat\s+(\d+[A-Z]?)\b/i);
+    if (flatMatch) {
+      const flatNum = flatMatch[1];
+      const candidates = reservations.filter(r => String(r.flatNumber) === flatNum && r.status !== "cancelada");
+      if (candidates.length === 1) {
+        matched = candidates[0];
+      } else if (candidates.length > 1) {
+        matched = candidates.find(r => r.guestName && item.subject.toLowerCase().includes(r.guestName.toLowerCase().split(" ")[0])) || candidates[0];
+      }
+    }
+  }
+
+  if (!matched) return null;
+
+  const flat = (db.flats || []).find(f => f.id === matched.flatId || String(f.number) === String(matched.flatNumber));
+  const atts = resolveReservationAttachments({ reservation: matched, db });
+
+  return {
+    id: matched.id,
+    code: matched.code || `RES-${matched.flatNumber || "00"}-${matched.id}`,
+    flatNumber: matched.flatNumber || flat?.number || "N/I",
+    buildingName: flat?.buildingName || flat?.building || db.settings?.buildingName || "Edifício Soho Residence Service",
+    guestName: matched.guestName || "Hóspede Titular",
+    guestEmail: matched.guestEmail || "",
+    guestPhone: matched.guestPhone || "",
+    guestDocument: matched.guestDocument || "",
+    checkinDate: matched.checkinDate || "",
+    checkoutDate: matched.checkoutDate || "",
+    status: matched.status || "confirmada",
+    fnhrCompleted: Boolean(matched.fnhrCompleted || matched.fnrhDocumentUuid || matched.guests?.[0]?.hasCompletedCheckin),
+    vehiclePlate: matched.vehicle?.plate || "",
+    attachmentsAvailableCount: atts.length,
+    attachmentsSummary: atts.map(a => a.filename),
+    receptionNotified: Boolean(matched.morningEmailSentDate || matched.receptionNotifiedAt)
+  };
+}
+
+/**
+ * Sincroniza mensagens da Zoho Mail API para o cache local quando OAuth2 está ativo
+ */
+export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 40 } = {}) {
+  ensureWebmailCollections(db);
+  const oauthCfg = getZohoOAuthConfig(db);
+  if (!oauthCfg.isConfigured) {
+    return { ok: false, synced: 0, mode: "local_smtp" };
+  }
+
+  try {
+    // 1. Primeiro sincroniza pastas remotas se necessário
+    const foldersRes = await callZohoMailApi(db, "/accounts/{accountId}/folders");
+    let zohoFolderMap = {};
+    if (foldersRes.ok && Array.isArray(foldersRes.data)) {
+      for (const zf of foldersRes.data) {
+        const fType = String(zf.folderType || zf.folderName || "").toLowerCase();
+        if (fType.includes("inbox")) zohoFolderMap.inbox = zf.folderId;
+        else if (fType.includes("sent")) zohoFolderMap.sent = zf.folderId;
+        else if (fType.includes("draft")) zohoFolderMap.drafts = zf.folderId;
+        else if (fType.includes("trash")) zohoFolderMap.trash = zf.folderId;
+        else if (fType.includes("spam") || fType.includes("junk")) zohoFolderMap.spam = zf.folderId;
+        else if (fType.includes("outbox")) zohoFolderMap.outbox = zf.folderId;
+        else if (fType.includes("archive")) zohoFolderMap.archive = zf.folderId;
+      }
+    }
+
+    const queryParams = new URLSearchParams({
+      limit: String(limit),
+      includeto: "true"
+    });
+    if (zohoFolderMap[folder]) {
+      queryParams.set("folderId", String(zohoFolderMap[folder]));
+    }
+
+    const endpoint = search
+      ? `/accounts/{accountId}/messages/search?searchKey=entire:${encodeURIComponent(search)}&limit=${limit}`
+      : `/accounts/{accountId}/messages/view?${queryParams.toString()}`;
+
+    const msgRes = await callZohoMailApi(db, endpoint);
+    if (!msgRes.ok || !Array.isArray(msgRes.data)) {
+      return { ok: false, error: msgRes.error, mode: "hybrid_fallback" };
+    }
+
+    let addedOrUpdated = 0;
+    for (const zm of msgRes.data) {
+      const zId = `zoho_${zm.messageId}`;
+      const existingIdx = db.zohoMessagesCache.findIndex(m => m.id === zId);
+      const sentTimeMs = Number(zm.sentDateInGMT || zm.receivedTime || Date.now());
+      const isoDate = new Date(sentTimeMs).toISOString();
+
+      const mapped = {
+        id: zId,
+        zohoMessageId: String(zm.messageId),
+        zohoFolderId: String(zm.folderId || zohoFolderMap[folder] || ""),
+        threadId: zm.threadId ? `zthread_${zm.threadId}` : undefined,
+        folder: folder === "sent" ? "sent" : folder === "drafts" ? "drafts" : folder === "trash" ? "trash" : folder === "spam" ? "spam" : "inbox",
+        direction: folder === "sent" ? "outbound" : "inbound",
+        fromName: zm.sender || zm.fromAddress || "Remetente",
+        fromEmail: zm.fromAddress || zm.sender || "",
+        recipient: zm.toAddress ? String(zm.toAddress).replace(/&lt;|&gt;/g, "") : "",
+        cc: zm.ccAddress ? String(zm.ccAddress).replace(/&lt;|&gt;/g, "") : "",
+        subject: zm.subject || "(Sem assunto)",
+        snippet: zm.summary || "",
+        bodyHtml: existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].bodyHtml : "",
+        isRead: String(zm.status) === "1" || Boolean(zm.isRead),
+        isStarred: Boolean(zm.flagid && zm.flagid !== "flag_not_set"),
+        hasAttachments: Boolean(zm.hasAttachment === "1" || zm.hasAttachment === true),
+        created_at: isoDate,
+        source: "zoho_api"
+      };
+
+      if (existingIdx >= 0) {
+        db.zohoMessagesCache[existingIdx] = { ...db.zohoMessagesCache[existingIdx], ...mapped };
+      } else {
+        db.zohoMessagesCache.unshift(mapped);
+      }
+      addedOrUpdated++;
+    }
+
+    return { ok: true, synced: addedOrUpdated, mode: "zoho_api" };
+  } catch (err) {
+    return { ok: false, error: err.message, mode: "hybrid_fallback" };
+  }
+}
+
+/**
+ * Constrói a lista unificada de mensagens do Webmail (Zoho Cache + Inbound + Comunicações Enviadas + Fila + Rascunhos)
+ */
+export function buildUnifiedMessagesList(db) {
+  ensureWebmailCollections(db);
+  const smtpCfg = getSmtpConfig(db);
+  const defaultFromName = smtpCfg.fromName || "CorpFlats";
+  const defaultFromEmail = smtpCfg.fromEmail || smtpCfg.user || "reservas@corpflats.com.br";
+  const stateMeta = db.emailStateMeta || {};
+
+  const unified = [];
+  const seenIds = new Set();
+
+  // 1. Mensagens da Zoho REST API cacheadas
+  for (const zm of db.zohoMessagesCache || []) {
+    if (seenIds.has(zm.id)) continue;
+    seenIds.add(zm.id);
+    const meta = stateMeta[zm.id] || {};
+    if (meta.deletedForever) continue;
+
+    const item = {
+      ...zm,
+      folder: meta.folder || zm.folder || "inbox",
+      isRead: meta.isRead !== undefined ? meta.isRead : zm.isRead !== false,
+      isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(zm.isStarred),
+      labels: Array.isArray(meta.labels) ? meta.labels : (Array.isArray(zm.labels) ? zm.labels : []),
+      status: zm.status || "received"
+    };
+    item.matchedReservation = matchEmailWithReservation(db, item);
+    unified.push(item);
+  }
+
+  // 2. Mensagens recebidas locais / Webhooks (db.webmailInboundMessages)
+  for (const inb of db.webmailInboundMessages || []) {
+    if (seenIds.has(inb.id)) continue;
+    seenIds.add(inb.id);
+    const meta = stateMeta[inb.id] || {};
+    if (meta.deletedForever) continue;
+
+    const item = {
+      ...inb,
+      folder: meta.folder || inb.folder || "inbox",
+      isRead: meta.isRead !== undefined ? meta.isRead : Boolean(inb.isRead),
+      isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(inb.isStarred),
+      labels: Array.isArray(meta.labels) ? meta.labels : (Array.isArray(inb.labels) ? inb.labels : []),
+      hasAttachments: Boolean((inb.attachments && inb.attachments.length > 0) || inb.hasAttachments),
+      status: "received",
+      source: inb.source || "local_inbound"
+    };
+    item.matchedReservation = matchEmailWithReservation(db, item);
+    unified.push(item);
+  }
+
+  // 3. Histórico de Comunicações e Disparos do Sistema (db.reservationCommunications)
+  for (const comm of db.reservationCommunications || []) {
+    if (!comm || comm.type !== "email") continue;
+    const id = comm.id;
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    const meta = stateMeta[id] || {};
+    if (meta.deletedForever) continue;
+
+    const isFailedOrPending = comm.status === "failed" || comm.status === "pending";
+    const defaultFolder = isFailedOrPending ? "outbox" : (comm.direction === "inbound" ? "inbox" : "sent");
+
+    // Auto-atribui etiquetas inteligentes baseadas no gatilho ou destinatário
+    const autoLabels = new Set(Array.isArray(meta.labels) ? meta.labels : (Array.isArray(comm.labels) ? comm.labels : []));
+    const recipLower = String(comm.recipient || "").toLowerCase();
+    const trig = String(comm.metadata?.trigger || "").toLowerCase();
+    if (meta.labels === undefined) {
+      if (recipLower.includes("promenade.com.br") || trig.includes("checkin") || trig.includes("portaria")) {
+        autoLabels.add("lbl_portaria");
+      }
+      if (recipLower.includes("pfbestacionamentos") || trig.includes("garage")) {
+        autoLabels.add("lbl_garagem");
+      }
+      if (comm.reservation_id && comm.reservation_id !== "0" && comm.reservation_id !== "TEST" && comm.reservation_id !== "MANUAL") {
+        autoLabels.add("lbl_reserva");
+      }
+      if (comm.status === "failed") {
+        autoLabels.add("lbl_urgente");
+      }
+    }
+
+    const item = {
+      id,
+      communicationId: id,
+      threadId: comm.threadId || undefined,
+      folder: meta.folder || defaultFolder,
+      direction: comm.direction || "outbound",
+      fromName: comm.direction === "inbound" ? (comm.fromName || comm.recipient) : defaultFromName,
+      fromEmail: comm.direction === "inbound" ? (comm.fromEmail || comm.recipient) : defaultFromEmail,
+      recipient: comm.recipient || "",
+      cc: comm.cc || comm.metadata?.cc || "",
+      bcc: comm.bcc || comm.metadata?.bcc || "",
+      subject: comm.subject || "(Sem assunto)",
+      snippet: extractTextSnippet(comm.body || comm.subject),
+      bodyHtml: comm.body || "",
+      bodyText: extractTextSnippet(comm.body || "", 2000),
+      isRead: meta.isRead !== undefined ? meta.isRead : true,
+      isStarred: meta.isStarred !== undefined ? meta.isStarred : false,
+      labels: Array.from(autoLabels),
+      status: comm.status || "sent",
+      reservation_id: comm.reservation_id,
+      metadata: comm.metadata || {},
+      hasAttachments: Boolean(comm.metadata?.hasAttachments || (comm.attachments && comm.attachments.length > 0)),
+      attachmentsCount: comm.metadata?.attachmentsCount || (comm.attachments ? comm.attachments.length : 0),
+      created_at: comm.created_at || new Date().toISOString(),
+      source: "corpflats_engine"
+    };
+    item.matchedReservation = matchEmailWithReservation(db, item);
+    unified.push(item);
+  }
+
+  // 4. Fila de E-mails Agendados (db.emailQueue -> pasta 'queue')
+  for (const q of db.emailQueue || []) {
+    if (!q || q.status === "cancelled" || q.status === "sent") continue;
+    const qId = q.id;
+    if (seenIds.has(qId)) continue;
+    seenIds.add(qId);
+    const meta = stateMeta[qId] || {};
+    if (meta.deletedForever) continue;
+
+    const item = {
+      id: qId,
+      queueId: q.id,
+      folder: meta.folder || "queue",
+      direction: "scheduled",
+      fromName: defaultFromName,
+      fromEmail: defaultFromEmail,
+      recipient: q.recipient || "",
+      cc: q.cc || "",
+      subject: q.subject || "(Agendado)",
+      snippet: extractTextSnippet(q.bodyText || q.bodyHtml || q.subject),
+      bodyHtml: q.bodyHtml || "",
+      bodyText: q.bodyText || "",
+      isRead: meta.isRead !== undefined ? meta.isRead : true,
+      isStarred: meta.isStarred !== undefined ? meta.isStarred : false,
+      labels: Array.isArray(meta.labels) ? meta.labels : ["lbl_reserva"],
+      status: "scheduled",
+      scheduledFor: q.scheduledFor,
+      triggerEvent: q.triggerEvent,
+      guestName: q.guestName,
+      reservation_id: q.reservationId,
+      reservationCode: q.reservationCode,
+      hasAttachments: false,
+      created_at: q.scheduledFor || q.createdAt || new Date().toISOString(),
+      source: "email_queue"
+    };
+    item.matchedReservation = matchEmailWithReservation(db, item);
+    unified.push(item);
+  }
+
+  // 5. Rascunhos Salvos (db.emailDrafts -> pasta 'drafts')
+  for (const dr of db.emailDrafts || []) {
+    if (!dr || !dr.id) continue;
+    if (seenIds.has(dr.id)) continue;
+    seenIds.add(dr.id);
+    const meta = stateMeta[dr.id] || {};
+    if (meta.deletedForever) continue;
+
+    const item = {
+      id: dr.id,
+      draftId: dr.id,
+      folder: meta.folder || "drafts",
+      direction: "draft",
+      fromName: defaultFromName,
+      fromEmail: defaultFromEmail,
+      recipient: Array.isArray(dr.to) ? dr.to.join(", ") : (dr.recipient || dr.to || ""),
+      cc: Array.isArray(dr.cc) ? dr.cc.join(", ") : (dr.cc || ""),
+      bcc: Array.isArray(dr.bcc) ? dr.bcc.join(", ") : (dr.bcc || ""),
+      subject: dr.subject || "(Rascunho sem assunto)",
+      snippet: extractTextSnippet(dr.bodyHtml || dr.bodyText || "Rascunho em edição..."),
+      bodyHtml: dr.bodyHtml || "",
+      bodyText: dr.bodyText || "",
+      isRead: true,
+      isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(dr.isStarred),
+      labels: Array.isArray(meta.labels) ? meta.labels : (Array.isArray(dr.labels) ? dr.labels : []),
+      status: "draft",
+      reservation_id: dr.reservationId || dr.reservationCode || null,
+      reservationCode: dr.reservationCode || null,
+      templateKey: dr.templateKey || "custom",
+      attachReservationDocs: Boolean(dr.attachReservationDocs),
+      attachments: Array.isArray(dr.attachments) ? dr.attachments : [],
+      hasAttachments: Boolean((dr.attachments && dr.attachments.length > 0) || dr.attachReservationDocs),
+      created_at: dr.updatedAt || dr.createdAt || new Date().toISOString(),
+      updatedAt: dr.updatedAt || dr.createdAt || new Date().toISOString(),
+      source: "drafts"
+    };
+    item.matchedReservation = matchEmailWithReservation(db, item);
+    unified.push(item);
+  }
+
+  // Ordena por data decrescente (exceto fila que mostra próximos primeiro quando filtrada na UI)
+  unified.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+
+  return unified;
+}
+
+/**
+ * Calcula contadores dinâmicos de pastas e etiquetas
+ */
+export function getWebmailFoldersAndCounts(db) {
+  ensureWebmailCollections(db);
+  const all = buildUnifiedMessagesList(db);
+
+  const counts = {
+    inbox: { total: 0, unread: 0 },
+    starred: { total: 0, unread: 0 },
+    drafts: { total: 0, unread: 0 },
+    queue: { total: 0, unread: 0 },
+    outbox: { total: 0, unread: 0 },
+    sent: { total: 0, unread: 0 },
+    archive: { total: 0, unread: 0 },
+    spam: { total: 0, unread: 0 },
+    trash: { total: 0, unread: 0 }
+  };
+
+  const customCounts = {};
+  for (const cf of db.emailCustomFolders || []) {
+    customCounts[cf.id] = { total: 0, unread: 0 };
+  }
+
+  const labelCounts = {};
+  for (const lb of db.emailLabels || []) {
+    labelCounts[lb.id] = { total: 0, unread: 0 };
+  }
+
+  for (const m of all) {
+    const fld = m.folder || "inbox";
+    if (counts[fld]) {
+      counts[fld].total++;
+      if (!m.isRead) counts[fld].unread++;
+    } else if (customCounts[fld]) {
+      customCounts[fld].total++;
+      if (!m.isRead) customCounts[fld].unread++;
+    }
+
+    if (m.isStarred && fld !== "trash" && fld !== "spam") {
+      counts.starred.total++;
+      if (!m.isRead) counts.starred.unread++;
+    }
+
+    if (fld !== "trash" && fld !== "spam" && fld !== "drafts") {
+      counts.archive.total++;
+    }
+
+    if (Array.isArray(m.labels) && fld !== "trash") {
+      for (const lid of m.labels) {
+        if (labelCounts[lid]) {
+          labelCounts[lid].total++;
+          if (!m.isRead) labelCounts[lid].unread++;
+        }
+      }
+    }
+  }
+
+  const systemFolders = [
+    { id: "inbox", name: "Caixa de Entrada", icon: "Inbox", total: counts.inbox.total, unread: counts.inbox.unread, badgeType: "unread" },
+    { id: "starred", name: "Com Estrela", icon: "Star", total: counts.starred.total, unread: counts.starred.unread, badgeType: "total" },
+    { id: "drafts", name: "Rascunhos", icon: "FileEdit", total: counts.drafts.total, unread: counts.drafts.unread, badgeType: "total" },
+    { id: "queue", name: "Fila Agendada", icon: "Clock", total: counts.queue.total, unread: counts.queue.unread, badgeType: "total", accent: "amber" },
+    { id: "outbox", name: "Caixa de Saída", icon: "SendHorizontal", total: counts.outbox.total, unread: counts.outbox.unread, badgeType: "total", accent: counts.outbox.total > 0 ? "rose" : undefined },
+    { id: "sent", name: "Enviados", icon: "Send", total: counts.sent.total, unread: 0, badgeType: "total" },
+    { id: "archive", name: "Todos / Arquivo", icon: "Archive", total: counts.archive.total, unread: 0, badgeType: "none" },
+    { id: "spam", name: "Spam", icon: "ShieldAlert", total: counts.spam.total, unread: counts.spam.unread, badgeType: "total" },
+    { id: "trash", name: "Lixeira", icon: "Trash2", total: counts.trash.total, unread: 0, badgeType: "total" }
+  ];
+
+  const customFolders = (db.emailCustomFolders || []).map(cf => ({
+    ...cf,
+    total: customCounts[cf.id]?.total || 0,
+    unread: customCounts[cf.id]?.unread || 0
+  }));
+
+  const labels = (db.emailLabels || []).map(lb => ({
+    ...lb,
+    total: labelCounts[lb.id]?.total || 0,
+    unread: labelCounts[lb.id]?.unread || 0
+  }));
+
+  return { systemFolders, customFolders, labels };
+}
+
+/**
+ * Filtra e pagina mensagens para a Coluna 2 (Lista de E-mails / Threads)
+ */
+export async function listWebmailMessages(db, {
+  folder = "inbox",
+  labelId = "",
+  quickFilter = "all",
+  search = "",
+  syncRemote = false
+} = {}) {
+  ensureWebmailCollections(db);
+
+  if (syncRemote) {
+    await syncZohoMessagesToCache(db, { folder, search });
+  }
+
+  const all = buildUnifiedMessagesList(db);
+  const cleanSearch = String(search || "").trim().toLowerCase();
+
+  let filtered = all.filter(m => {
+    // 1. Filtro por Etiqueta (se selecionado na sidebar)
+    if (labelId) {
+      if (m.folder === "trash") return false;
+      if (!Array.isArray(m.labels) || !m.labels.includes(labelId)) return false;
+    } else {
+      // 2. Filtro por Pasta
+      if (folder === "starred") {
+        if (!m.isStarred || m.folder === "trash") return false;
+      } else if (folder === "archive") {
+        if (m.folder === "trash" || m.folder === "spam" || m.folder === "drafts") return false;
+      } else {
+        if (m.folder !== folder) return false;
+      }
+    }
+
+    // 3. Pílulas de Filtro Rápido (Quick Toggles)
+    if (quickFilter === "unread" && m.isRead) return false;
+    if (quickFilter === "starred" && !m.isStarred) return false;
+    if (quickFilter === "hasAttachment" && !m.hasAttachments && !(m.matchedReservation?.attachmentsAvailableCount > 0)) return false;
+    if (quickFilter === "hasReservation" && !m.matchedReservation) return false;
+    if (quickFilter === "failed" && m.status !== "failed") return false;
+
+    // 4. Busca Instantânea
+    if (cleanSearch) {
+      const haystack = [
+        m.subject,
+        m.fromName,
+        m.fromEmail,
+        m.recipient,
+        m.cc,
+        m.snippet,
+        m.reservation_id,
+        m.reservationCode,
+        m.matchedReservation?.code,
+        m.matchedReservation?.guestName,
+        m.matchedReservation?.flatNumber ? `flat ${m.matchedReservation.flatNumber}` : ""
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      if (!haystack.includes(cleanSearch)) return false;
+    }
+
+    return true;
+  });
+
+  // Se for a pasta de Fila Agendada, ordena pela próxima data programada
+  if (folder === "queue" && !labelId) {
+    filtered.sort((a, b) => new Date(a.scheduledFor || a.created_at).getTime() - new Date(b.scheduledFor || b.created_at).getTime());
+  }
+
+  // Calcula contagem de mensagens na mesma conversa (Thread Count)
+  const subjectMap = new Map();
+  for (const m of all) {
+    if (m.folder === "trash" || m.folder === "drafts") continue;
+    const normSubj = normalizeThreadSubject(m.subject);
+    const key = m.threadId || (normSubj ? `subj_${normSubj}` : m.id);
+    subjectMap.set(key, (subjectMap.get(key) || 0) + 1);
+  }
+
+  const itemsWithThreadCount = filtered.map(m => {
+    const normSubj = normalizeThreadSubject(m.subject);
+    const key = m.threadId || (normSubj ? `subj_${normSubj}` : m.id);
+    return {
+      ...m,
+      threadCount: subjectMap.get(key) || 1
+    };
+  });
+
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+
+  return {
+    messages: itemsWithThreadCount,
+    systemFolders,
+    customFolders,
+    labels,
+    zohoStatus: getZohoStatusSummary(db)
+  };
+}
+
+/**
+ * Obtém detalhes completos de uma mensagem + histórico da Thread em Acordeão + Anexos
+ */
+export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
+  ensureWebmailCollections(db);
+  const all = buildUnifiedMessagesList(db);
+  const target = all.find(m => m.id === messageId);
+  if (!target) {
+    return { ok: false, error: "Mensagem não encontrada." };
+  }
+
+  // Se for mensagem vinda da Zoho REST API e ainda não tiver o HTML carregado sob demanda, busca na Zoho API
+  if (target.source === "zoho_api" && !target.bodyHtml && target.zohoMessageId && target.zohoFolderId) {
+    const contentRes = await callZohoMailApi(
+      db,
+      `/accounts/{accountId}/folders/${target.zohoFolderId}/messages/${target.zohoMessageId}/content`
+    );
+    if (contentRes.ok && contentRes.data?.content) {
+      target.bodyHtml = contentRes.data.content;
+      const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
+      if (cached) cached.bodyHtml = target.bodyHtml;
+    }
+
+    if (target.hasAttachments) {
+      const attRes = await callZohoMailApi(
+        db,
+        `/accounts/{accountId}/folders/${target.zohoFolderId}/messages/${target.zohoMessageId}/attachmentinfo`
+      );
+      if (attRes.ok && Array.isArray(attRes.data?.attachments)) {
+        target.attachments = attRes.data.attachments.map(a => ({
+          id: a.attachmentId,
+          filename: a.attachmentName,
+          size: a.attachmentSize,
+          contentType: a.contentType || "application/octet-stream",
+          downloadUrl: `/api/webmail/attachments/${target.zohoFolderId}/${target.zohoMessageId}/${a.attachmentId}?name=${encodeURIComponent(a.attachmentName || "anexo")}`
+        }));
+      }
+    }
+  }
+
+  // Resolve anexos da reserva se aplicável
+  let resolvedAttachments = Array.isArray(target.attachments) ? [...target.attachments] : [];
+  if (target.matchedReservation && resolvedAttachments.length === 0) {
+    const resObj = (db.reservations || []).find(r => String(r.id) === String(target.matchedReservation.id));
+    if (resObj) {
+      const resAtts = resolveReservationAttachments({ reservation: resObj, db });
+      resolvedAttachments = resAtts.map((a, idx) => ({
+        id: `res_att_${idx}`,
+        filename: a.filename,
+        size: a.content ? a.content.length : 148000,
+        contentType: a.contentType || (a.filename?.endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+        downloadUrl: a.path && String(a.path).startsWith("http")
+          ? a.path
+          : `/api/webmail/reservation-attachment/${encodeURIComponent(String(resObj.code || resObj.id))}/${idx}`
+      }));
+    }
+  }
+
+  // Marca automaticamente como lido ao abrir
+  if (!target.isRead) {
+    if (!db.emailStateMeta[target.id]) db.emailStateMeta[target.id] = {};
+    db.emailStateMeta[target.id].isRead = true;
+    target.isRead = true;
+    if (typeof saveDatabase === "function") saveDatabase();
+  }
+
+  // Agrupa todas as mensagens da mesma conversa (Thread)
+  const normTargetSubj = normalizeThreadSubject(target.subject);
+  const threadMessages = all
+    .filter(m => {
+      if (m.id === target.id) return true;
+      if (m.folder === "trash" || m.folder === "drafts") return false;
+      if (target.threadId && m.threadId === target.threadId) return true;
+      if (normTargetSubj && normTargetSubj.length > 4 && normalizeThreadSubject(m.subject) === normTargetSubj) {
+        return true;
+      }
+      return false;
+    })
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map(tm => ({
+      ...tm,
+      bodyHtml: sanitizeEmailHtml(tm.bodyHtml || `<p>${tm.bodyText || tm.snippet || ""}</p>`),
+      attachments: tm.id === target.id ? resolvedAttachments : (tm.attachments || [])
+    }));
+
+  return {
+    ok: true,
+    message: {
+      ...target,
+      bodyHtml: sanitizeEmailHtml(target.bodyHtml || `<p>${target.bodyText || target.snippet || ""}</p>`),
+      attachments: resolvedAttachments
+    },
+    threadMessages
+  };
+}
+
+/**
+ * Auto-Save ou Atualização de Rascunho (Draft)
+ */
+export async function saveWebmailDraft(db, saveDatabase, payload = {}) {
+  ensureWebmailCollections(db);
+  const draftId = payload.id || payload.draftId || `drf_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const now = new Date().toISOString();
+
+  const toList = Array.isArray(payload.to)
+    ? payload.to
+    : String(payload.to || payload.recipient || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+  const ccList = Array.isArray(payload.cc)
+    ? payload.cc
+    : String(payload.cc || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+  const bccList = Array.isArray(payload.bcc)
+    ? payload.bcc
+    : String(payload.bcc || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+
+  const draftRecord = {
+    id: draftId,
+    to: toList,
+    recipient: toList.join(", "),
+    cc: ccList,
+    bcc: bccList,
+    subject: String(payload.subject || "").trim(),
+    bodyHtml: payload.bodyHtml || "",
+    bodyText: payload.bodyText || "",
+    reservationId: payload.reservationId || null,
+    reservationCode: payload.reservationCode || null,
+    templateKey: payload.templateKey || "custom",
+    useTransactionalLayout: payload.useTransactionalLayout !== false,
+    attachReservationDocs: Boolean(payload.attachReservationDocs),
+    attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+    inReplyTo: payload.inReplyTo || null,
+    updatedAt: now,
+    createdAt: payload.createdAt || now
+  };
+
+  const existingIdx = db.emailDrafts.findIndex(d => d.id === draftId);
+  if (existingIdx >= 0) {
+    db.emailDrafts[existingIdx] = { ...db.emailDrafts[existingIdx], ...draftRecord };
+  } else {
+    db.emailDrafts.unshift(draftRecord);
+  }
+
+  // Se o Zoho OAuth2 estiver ativo, sincroniza o rascunho remotamente em background
+  const oauthCfg = getZohoOAuthConfig(db);
+  if (oauthCfg.isConfigured && (draftRecord.subject || draftRecord.bodyHtml || draftRecord.bodyText)) {
+    const smtpCfg = getSmtpConfig(db);
+    callZohoMailApi(db, "/accounts/{accountId}/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        fromAddress: zohoTokenCache.primaryEmailAddress || smtpCfg.fromEmail,
+        toAddress: draftRecord.recipient,
+        ccAddress: ccList.join(", "),
+        bccAddress: bccList.join(", "),
+        subject: draftRecord.subject || "(Rascunho)",
+        content: draftRecord.bodyHtml || draftRecord.bodyText || "",
+        mode: "draft",
+        mailFormat: "html"
+      })
+    }).catch(() => {});
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { ok: true, draft: draftRecord };
+}
+
+/**
+ * Exclui um rascunho
+ */
+export function deleteWebmailDraft(db, saveDatabase, draftId) {
+  ensureWebmailCollections(db);
+  const before = db.emailDrafts.length;
+  db.emailDrafts = db.emailDrafts.filter(d => d.id !== draftId);
+  if (db.emailStateMeta?.[draftId]) {
+    delete db.emailStateMeta[draftId];
+  }
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { ok: true, removed: before !== db.emailDrafts.length };
+}
+
+/**
+ * Envia e-mail pelo Webmail (Novo, Responder, Encaminhar, com Templates Hoteleiros e Anexos FNRH/Upload)
+ */
+export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
+  ensureWebmailCollections(db);
+  const toList = Array.isArray(payload.to)
+    ? payload.to
+    : String(payload.to || payload.recipient || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+  const ccList = Array.isArray(payload.cc)
+    ? payload.cc
+    : String(payload.cc || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+  const bccList = Array.isArray(payload.bcc)
+    ? payload.bcc
+    : String(payload.bcc || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+
+  const recipientStr = toList.join(", ");
+  const ccStr = ccList.join(", ");
+  const bccStr = bccList.join(", ");
+  const subjectStr = String(payload.subject || "").trim();
+  const rawBodyHtml = payload.bodyHtml || "";
+  const rawBodyText = payload.bodyText || extractTextSnippet(rawBodyHtml, 4000);
+
+  if (!recipientStr || !subjectStr) {
+    return { ok: false, error: "Destinatário (Para) e Assunto são obrigatórios." };
+  }
+
+  // Localiza reserva vinculada (se informada no compositor)
+  const resIdentifier = payload.reservationCode || payload.reservationId;
+  const reservation = resIdentifier
+    ? (db.reservations || []).find(r => String(r.id) === String(resIdentifier) || r.code === resIdentifier)
+    : null;
+  const flat = reservation
+    ? (db.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber))
+    : null;
+
+  // Renderiza com o Template Transacional de 600px se solicitado
+  let finalHtml = rawBodyHtml;
+  if (payload.useTransactionalLayout !== false) {
+    const rendered = renderManualEmail({
+      subject: subjectStr,
+      message: rawBodyHtml || rawBodyText,
+      reservation,
+      flat,
+      settings: db.settings
+    });
+    finalHtml = rendered.bodyHtml;
+  } else if (!finalHtml && rawBodyText) {
+    finalHtml = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1F2937; line-height: 1.6; white-space: pre-wrap;">${rawBodyText}</div>`;
+  }
+
+  // Prepara lista de anexos (Anexos da Reserva FNRH/Doc + Uploads do Compositor)
+  const attachments = [];
+  if (payload.attachReservationDocs && reservation) {
+    const resAtts = await ensureReservationAttachmentsReady({ reservation, db });
+    if (Array.isArray(resAtts)) {
+      attachments.push(...resAtts);
+    }
+  }
+
+  if (Array.isArray(payload.attachments)) {
+    for (const att of payload.attachments) {
+      if (!att) continue;
+      if (att.dataUrl && String(att.dataUrl).startsWith("data:")) {
+        const match = String(att.dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          attachments.push({
+            filename: att.filename || att.name || "anexo.bin",
+            content: Buffer.from(match[2], "base64"),
+            contentType: match[1]
+          });
+        }
+      } else if (att.path) {
+        attachments.push({
+          filename: att.filename || att.name || path.basename(att.path),
+          path: att.path
+        });
+      }
+    }
+  }
+
+  // Se havia um rascunho em edição, remove-o dos rascunhos ativos
+  if (payload.draftId) {
+    deleteWebmailDraft(db, null, payload.draftId);
+  }
+
+  // Tenta enviar via Zoho Mail REST API se OAuth2 estiver ativo e sem anexos locais em disco
+  const oauthCfg = getZohoOAuthConfig(db);
+  let sentViaZohoRest = false;
+  let zohoMsgId = null;
+
+  if (oauthCfg.isConfigured && attachments.length === 0) {
+    const smtpCfg = getSmtpConfig(db);
+    const zohoRes = await callZohoMailApi(db, "/accounts/{accountId}/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        fromAddress: zohoTokenCache.primaryEmailAddress || smtpCfg.fromEmail,
+        toAddress: recipientStr,
+        ...(ccStr ? { ccAddress: ccStr } : {}),
+        ...(bccStr ? { bccAddress: bccStr } : {}),
+        subject: subjectStr,
+        content: finalHtml,
+        mailFormat: "html",
+        ...(payload.replyType === "reply" ? { action: "reply", inReplyTo: payload.inReplyTo } : {}),
+        ...(payload.replyType === "replyall" ? { action: "replyall", inReplyTo: payload.inReplyTo } : {}),
+        ...(payload.replyType === "forward" ? { action: "forward", inReplyTo: payload.inReplyTo } : {})
+      })
+    });
+
+    if (zohoRes.ok) {
+      sentViaZohoRest = true;
+      zohoMsgId = zohoRes.data?.messageId || `zoho_sent_${Date.now()}`;
+    }
+  }
+
+  if (sentViaZohoRest) {
+    const now = new Date().toISOString();
+    const commLog = {
+      id: crypto.randomUUID(),
+      reservation_id: String(reservation?.code || reservation?.id || payload.reservationCode || "MANUAL"),
+      type: "email",
+      direction: "outbound",
+      recipient: recipientStr,
+      cc: ccStr || null,
+      bcc: bccStr || null,
+      subject: subjectStr,
+      body: finalHtml,
+      status: "sent",
+      metadata: {
+        trigger: payload.trigger || "webmail_zoho_api",
+        sentVia: "zoho_rest_api",
+        messageId: zohoMsgId,
+        sentAt: now,
+        reservationCode: reservation?.code || null,
+        guestName: reservation?.guestName || null,
+        hasAttachments: attachments.length > 0,
+        attachmentsCount: attachments.length
+      },
+      created_at: now
+    };
+    if (!db.reservationCommunications) db.reservationCommunications = [];
+    db.reservationCommunications.unshift(commLog);
+    if (typeof saveDatabase === "function") saveDatabase();
+    return {
+      ok: true,
+      method: "zoho_rest_api",
+      communication: commLog
+    };
+  }
+
+  // Fallback/Motor Principal Integrado: Dispara via sendEmailAsync (Nodemailer Zoho SMTP)
+  const commLog = sendEmailAsync({
+    db,
+    saveDatabase,
+    reservationId: reservation?.code || reservation?.id || payload.reservationCode || "MANUAL",
+    recipient: recipientStr,
+    cc: ccStr || undefined,
+    bcc: bccStr || undefined,
+    subject: subjectStr,
+    bodyHtml: finalHtml,
+    bodyText: rawBodyText,
+    type: "email",
+    direction: "outbound",
+    attachments,
+    metadata: {
+      trigger: payload.trigger || "webmail_compose",
+      replyType: payload.replyType || undefined,
+      inReplyTo: payload.inReplyTo || undefined,
+      reservationCode: reservation?.code || null,
+      flatNumber: reservation?.flatNumber || flat?.number || null,
+      guestName: reservation?.guestName || null
+    }
+  });
+
+  return {
+    ok: true,
+    method: "smtp_engine",
+    communication: commLog
+  };
+}
+
+/**
+ * Executa ações em massa ou individuais (Lido/Não lido, Estrela, Arquivar, Mover, Etiquetas, Lixeira)
+ */
+export async function performWebmailBulkAction(db, saveDatabase, {
+  messageIds = [],
+  action,
+  targetFolderId,
+  labelId
+} = {}) {
+  ensureWebmailCollections(db);
+  if (!Array.isArray(messageIds) || messageIds.length === 0 || !action) {
+    return { ok: false, error: "Selecione ao menos uma mensagem e uma ação válida." };
+  }
+
+  const zohoMsgIds = [];
+
+  for (const id of messageIds) {
+    if (!db.emailStateMeta[id]) db.emailStateMeta[id] = {};
+    const meta = db.emailStateMeta[id];
+
+    // Se for mensagem da Zoho API, coleta o ID numérico para sincronizar com PUT /updatemessage
+    if (String(id).startsWith("zoho_")) {
+      zohoMsgIds.push(String(id).replace(/^zoho_/, ""));
+    }
+
+    switch (action) {
+      case "markAsRead":
+        meta.isRead = true;
+        break;
+      case "markAsUnread":
+        meta.isRead = false;
+        break;
+      case "star":
+        meta.isStarred = true;
+        break;
+      case "unstar":
+        meta.isStarred = false;
+        break;
+      case "archive":
+        meta.folder = "archive";
+        break;
+      case "unarchive":
+      case "moveToInbox":
+        meta.folder = "inbox";
+        break;
+      case "moveToFolder":
+        if (targetFolderId) meta.folder = targetFolderId;
+        break;
+      case "spam":
+        meta.folder = "spam";
+        break;
+      case "trash":
+        meta.folder = "trash";
+        break;
+      case "deleteForever":
+        meta.deletedForever = true;
+        if (String(id).startsWith("drf_")) {
+          db.emailDrafts = (db.emailDrafts || []).filter(d => d.id !== id);
+        }
+        break;
+      case "applyLabel":
+        if (labelId) {
+          const current = new Set(Array.isArray(meta.labels) ? meta.labels : []);
+          current.add(labelId);
+          meta.labels = Array.from(current);
+        }
+        break;
+      case "removeLabel":
+        if (labelId && Array.isArray(meta.labels)) {
+          meta.labels = meta.labels.filter(l => l !== labelId);
+        }
+        break;
+      default:
+        break;
+    }
+
+    // Atualiza também diretamente em webmailInboundMessages se existir
+    const inb = (db.webmailInboundMessages || []).find(m => m.id === id);
+    if (inb) {
+      if (meta.isRead !== undefined) inb.isRead = meta.isRead;
+      if (meta.isStarred !== undefined) inb.isStarred = meta.isStarred;
+      if (meta.folder) inb.folder = meta.folder;
+      if (Array.isArray(meta.labels)) inb.labels = meta.labels;
+    }
+  }
+
+  // Sincroniza em background com a Zoho Mail REST API caso haja mensagens remotas
+  const oauthCfg = getZohoOAuthConfig(db);
+  if (oauthCfg.isConfigured && zohoMsgIds.length > 0) {
+    let zohoMode = null;
+    const zohoPayload = { messageId: zohoMsgIds };
+    if (action === "markAsRead") zohoMode = "markAsRead";
+    else if (action === "markAsUnread") zohoMode = "markAsUnread";
+    else if (action === "star") {
+      zohoMode = "flagMails";
+      zohoPayload.flagid = "important";
+    } else if (action === "unstar") {
+      zohoMode = "flagMails";
+      zohoPayload.flagid = "flag_not_set";
+    } else if (action === "moveToFolder" && targetFolderId) {
+      zohoMode = "moveMessage";
+      zohoPayload.destfolderId = targetFolderId;
+    }
+
+    if (zohoMode) {
+      callZohoMailApi(db, "/accounts/{accountId}/updatemessage", {
+        method: "PUT",
+        body: JSON.stringify({ mode: zohoMode, ...zohoPayload })
+      }).catch(() => {});
+    }
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { ok: true, updatedCount: messageIds.length, action };
+}
+
+/**
+ * Cria pasta personalizada (Zoho API + Banco Local)
+ */
+export async function createWebmailCustomFolder(db, saveDatabase, { name, color = "#6366F1" }) {
+  ensureWebmailCollections(db);
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return { ok: false, error: "Informe o nome da pasta." };
+
+  const folderObj = {
+    id: `fld_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+    name: cleanName,
+    color,
+    createdAt: new Date().toISOString()
+  };
+
+  const oauthCfg = getZohoOAuthConfig(db);
+  if (oauthCfg.isConfigured) {
+    const zRes = await callZohoMailApi(db, "/accounts/{accountId}/folders", {
+      method: "POST",
+      body: JSON.stringify({ folderName: cleanName })
+    });
+    if (zRes.ok && zRes.data?.folderId) {
+      folderObj.zohoFolderId = String(zRes.data.folderId);
+    }
+  }
+
+  db.emailCustomFolders.push(folderObj);
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { ok: true, folder: folderObj };
+}
+
+/**
+ * Cria etiqueta colorida personalizada (Zoho API + Banco Local)
+ */
+export async function createWebmailLabel(db, saveDatabase, { name, color = "#10B981" }) {
+  ensureWebmailCollections(db);
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return { ok: false, error: "Informe o nome da etiqueta." };
+
+  const labelObj = {
+    id: `lbl_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+    name: cleanName,
+    color,
+    system: false,
+    createdAt: new Date().toISOString()
+  };
+
+  const oauthCfg = getZohoOAuthConfig(db);
+  if (oauthCfg.isConfigured) {
+    const zRes = await callZohoMailApi(db, "/accounts/{accountId}/labels", {
+      method: "POST",
+      body: JSON.stringify({ displayName: cleanName, color })
+    });
+    if (zRes.ok && zRes.data?.labelId) {
+      labelObj.zohoLabelId = String(zRes.data.labelId);
+    }
+  }
+
+  db.emailLabels.push(labelObj);
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { ok: true, label: labelObj };
+}
+
+/**
+ * Resumo de status do Zoho OAuth2 + Motor SMTP para a Topbar do Webmail
+ */
+export function getZohoStatusSummary(db) {
+  const oauthCfg = getZohoOAuthConfig(db);
+  const smtpCfg = getSmtpConfig(db);
+  return {
+    oauthConfigured: oauthCfg.isConfigured,
+    oauthConnected: Boolean(oauthCfg.isConfigured && zohoTokenCache.accessToken && !zohoTokenCache.lastError),
+    accountId: oauthCfg.accountId || zohoTokenCache.accountId || null,
+    primaryEmailAddress: zohoTokenCache.primaryEmailAddress || smtpCfg.fromEmail || smtpCfg.user || "reservas@corpflats.com.br",
+    dc: oauthCfg.dc || "com",
+    lastSyncAt: zohoTokenCache.lastSyncAt,
+    lastError: zohoTokenCache.lastError,
+    smtpConfigured: smtpCfg.isConfigured,
+    smtpHost: smtpCfg.host,
+    smtpPort: smtpCfg.port,
+    smtpUser: smtpCfg.user,
+    fromName: smtpCfg.fromName,
+    fromEmail: smtpCfg.fromEmail,
+    engineEnabled: db?.settings?.emailSettings?.enabled !== false,
+    receptionEmail: db?.settings?.receptionEmail || "soho@promenade.com.br",
+    garageEmail: db?.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br"
+  };
+}
+
+/**
+ * Gera preview preenchido de um template oficial do CorpFlats para uma reserva selecionada no Compositor
+ */
+export function buildComposerReservationTemplate(db, { templateKey, reservationId }) {
+  const r = reservationId
+    ? (db.reservations || []).find(x => String(x.id) === String(reservationId) || x.code === reservationId)
+    : null;
+  const flat = r
+    ? (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber))
+    : null;
+
+  const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || "soho@promenade.com.br";
+  const garageEmail = db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br";
+
+  if (!r) {
+    if (templateKey === "portaria") {
+      return {
+        to: receptionEmail,
+        subject: "Flat [Número] - [Nome do Hóspede] ([Check-in] a [Check-out])",
+        bodyText: "Prezada Recepção / Portaria,\n\nSolicitamos a liberação de entrada e acesso para o hóspede titular referente à estadia informada.\n\nAtenciosamente,\nEquipe CorpFlats",
+        bodyHtml: ""
+      };
+    }
+    if (templateKey === "garagem") {
+      return {
+        to: garageEmail,
+        subject: "Flat [Número] - [Nome do Hóspede] ([Check-in] a [Check-out])",
+        bodyText: "Prezada Equipe PFB Estacionamentos,\n\nSolicitamos a liberação de entrada e acesso à vaga de garagem para o veículo cadastrado.\n\nAtenciosamente,\nEquipe CorpFlats",
+        bodyHtml: ""
+      };
+    }
+    if (templateKey === "hospede_welcome") {
+      return {
+        to: "",
+        subject: "[CONFIRMAÇÃO DE RESERVA] Bem-vindo(a) ao CorpFlats",
+        bodyText: "Olá!\n\nSua reserva no CorpFlats está confirmada. Lembre-se de preencher seu Pré-Check-in Digital para liberação rápida na portaria 24h.\n\nAtenciosamente,\nEquipe CorpFlats",
+        bodyHtml: ""
+      };
+    }
+    return { to: "", subject: "", bodyText: "", bodyHtml: "" };
+  }
+
+  if (templateKey === "portaria") {
+    const rendered = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings, db });
+    return {
+      to: receptionEmail,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: `Informativo cadastral da reserva #${r.code || r.id} referente ao Flat ${r.flatNumber} (${r.guestName}).`,
+      attachReservationDocs: true
+    };
+  }
+
+  if (templateKey === "garagem") {
+    const rendered = renderGarageAuthorizationEmail({ reservation: r, flat, vehicle: r.vehicle, settings: db.settings });
+    return {
+      to: garageEmail,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: `Solicitação de liberação de garagem para o Flat ${r.flatNumber} - Hóspede: ${r.guestName}.`,
+      attachReservationDocs: false
+    };
+  }
+
+  if (templateKey === "hospede_welcome") {
+    const rendered = renderReservationConfirmationEmail({ reservation: r, flat, settings: db.settings, db });
+    return {
+      to: r.guestEmail || "",
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: `Olá, ${r.guestName}! Sua reserva #${r.code || r.id} no Flat ${r.flatNumber} está confirmada.`,
+      attachReservationDocs: false
+    };
+  }
+
+  if (templateKey === "acesso_wifi") {
+    const rendered = renderAccessInstructionsEmail({ reservation: r, flat, settings: db.settings, db });
+    return {
+      to: r.guestEmail || "",
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: `Olá, ${r.guestName}! Seguem as instruções de acesso e Wi-Fi para o Flat ${r.flatNumber}.`,
+      attachReservationDocs: false
+    };
+  }
+
+  if (templateKey === "lembrete_checkin") {
+    const rendered = renderPreCheckinReminderEmail({ reservation: r, flat, settings: db.settings, db });
+    return {
+      to: r.guestEmail || "",
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: `Olá, ${r.guestName}! Lembrete de preenchimento da ficha digital para entrada no Flat ${r.flatNumber}.`,
+      attachReservationDocs: false
+    };
+  }
+
+  return {
+    to: r.guestEmail || receptionEmail,
+    subject: `Flat ${r.flatNumber} - ${r.guestName} (#${r.code || r.id})`,
+    bodyText: `Olá, ${r.guestName}!\n\nReferente à sua reserva #${r.code || r.id} no Flat ${r.flatNumber}:\n\n`,
+    bodyHtml: ""
+  };
+}
