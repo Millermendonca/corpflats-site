@@ -31665,6 +31665,18 @@ function getFiscalData() {
         process.env.CERT_PFX_PASSWORD = db.nfseConfig.certificadoA1.passphrase;
       }
     }
+    if (Array.isArray(db.nfseRetryQueue) && db.nfseRetryQueue.length > 1) {
+      const seenKeys = new Set();
+      db.nfseRetryQueue = db.nfseRetryQueue.filter(item => {
+        const p = item?.payload || {};
+        const key = p.reservationId
+          ? `res_${p.reservationId}`
+          : (p.reservationCode ? `code_${p.reservationCode}` : `doc_${onlyDigits(p.tomadorCpfCnpj || "")}_${Number(p.valorServico || 0)}`);
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
+    }
   } catch (_) {}
   if (db.nfseConfig) {
     db.nfseConfig.ambiente = "producao";
@@ -32852,11 +32864,9 @@ function enqueueNfseRetry(payload, errorMessage, engine = "giss_prefeitura") {
   const resId = payload.reservationId ? Number(payload.reservationId) : null;
 
   let existing = db.nfseRetryQueue.find(item =>
-    item.status !== "exhausted" && (
-      (resCode && item.payload?.reservationCode === resCode) ||
-      (resId && Number(item.payload?.reservationId) === resId) ||
-      (cleanDoc && onlyDigits(item.payload?.tomadorCpfCnpj) === cleanDoc && Number(item.payload?.valorServico) === valor)
-    )
+    (resCode && item.payload?.reservationCode === resCode) ||
+    (resId && Number(item.payload?.reservationId) === resId) ||
+    (cleanDoc && onlyDigits(item.payload?.tomadorCpfCnpj) === cleanDoc && Number(item.payload?.valorServico) === valor)
   );
 
   const now = Date.now();
@@ -33119,7 +33129,22 @@ async function processSingleNfseRetryItem(item) {
     };
 
     db.invoices.unshift(newInvoice);
-    db.nfseRetryQueue = (db.nfseRetryQueue || []).filter(q => q.id !== item.id);
+    if (Array.isArray(db.reservations) && (p.reservationId || p.reservationCode)) {
+      const matchedRes = db.reservations.find(r =>
+        (p.reservationId && Number(r.id) === Number(p.reservationId)) ||
+        (p.reservationCode && String(r.code) === String(p.reservationCode))
+      );
+      if (matchedRes) {
+        matchedRes.invoiceId = newInvoice.id;
+        matchedRes.numeroNfse = newInvoice.numeroNfse;
+      }
+    }
+    db.nfseRetryQueue = (db.nfseRetryQueue || []).filter(q =>
+      q.id !== item.id &&
+      !(p.reservationCode && q.payload?.reservationCode === p.reservationCode) &&
+      !(p.reservationId && Number(q.payload?.reservationId) === Number(p.reservationId)) &&
+      !(onlyDigits(q.payload?.tomadorCpfCnpj) === onlyDigits(p.tomadorCpfCnpj) && Number(q.payload?.valorServico) === Number(p.valorServico))
+    );
     saveDatabase();
     return { ok: true, success: true, invoice: newInvoice };
   } catch (err) {

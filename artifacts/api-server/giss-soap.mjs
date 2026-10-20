@@ -271,7 +271,7 @@ export function loadCert() {
   const password = (process.env.CERT_PFX_PASSWORD || process.env.CERT_PASS || process.env.CERT_PASSWORD || compat.pass || "").trim();
 
   let pfxBuf;
-  const b64 = process.env.CERT_PFX_BASE64;
+  const b64 = process.env.CERT_PFX_BASE64 || compat.pfx;
   if (b64 && b64.trim().length > 0) {
     pfxBuf = Buffer.from(b64.trim(), "base64");
   } else {
@@ -457,11 +457,13 @@ export function buildRpsXml(data) {
   const codigoCnae = cnaeDigits && cnaeDigits.length === 7 ? `<CodigoCnae>${cnaeDigits}</CodigoCnae>` : "";
   const codTrib = (data.codigoTributacaoMunicipio || "799020000").trim();
   const itemListaServico = normalizeItemServico(data.codigoServico || "09.02");
-  const aliqFrac  = Number(data.aliquota || 2) / 100;
+  const aliqNum = Number(data.aliquota || 2);
+  const aliqFrac  = aliqNum / 100;
   const aliqFormatted = aliqFrac.toFixed(4);
+  const aliqPctFormatted = (aliqNum > 0 ? aliqNum : 2.0).toFixed(2);
   const valorIss = "0.00";
 
-  const tribBlock = `<trib><tribFed><piscofins><CST>00</CST><vBCPisCofins>0.00</vBCPisCofins><pAliqPis>0.00</pAliqPis><pAliqCofins>0.00</pAliqCofins><vPis>0.00</vPis><vCofins>0.00</vCofins></piscofins></tribFed><totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib></trib>`;
+  const tribBlock = `<trib><tribFed><piscofins><CST>00</CST><vBCPisCofins>0.00</vBCPisCofins><pAliqPis>0.00</pAliqPis><pAliqCofins>0.00</pAliqCofins><vPis>0.00</vPis><vCofins>0.00</vCofins></piscofins></tribFed><totTrib><pTotTrib><pTotTribFed>4.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>${aliqPctFormatted}</pTotTribMun></pTotTrib></totTrib></trib>`;
   const ibscbsBlock = `<IBSCBS><finNFSe>0</finNFSe><indFinal>0</indFinal><cIndOp>100301</cIndOp><indDest>0</indDest><valores><trib><gIBSCBS><CST>200</CST><cClassTrib>200051</cClassTrib></gIBSCBS></trib><cLocalidadeIncid>${COD_MUNICIPIO}</cLocalidadeIncid><pRedutor>0</pRedutor></valores></IBSCBS>`;
   const simplesNacional = data.optanteSimplesNacional !== false ? "1" : "2";
 
