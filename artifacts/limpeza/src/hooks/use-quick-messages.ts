@@ -35,16 +35,35 @@ export interface ReservationRecipients {
     firstName: string
     phone: string
     cleanDigits: string
+    email?: string
   }
   requester: {
     name: string
     firstName: string
     phone: string
     cleanDigits: string
+    email?: string
     type: "guest" | "other_person" | "company"
     company: string
+    hasOwnPhone?: boolean
+    hasOwnEmail?: boolean
+    hasOwnContact?: boolean
     isDifferentFromGuest: boolean
   }
+}
+
+export function isPureBillingQuickMessage(qm?: Partial<WhatsAppQuickMessage> | null): boolean {
+  if (!qm) return false
+  const id = String(qm.id || "").toLowerCase()
+  const cat = String(qm.category || "").toLowerCase()
+  return (
+    id === "qm_payment_pending" ||
+    id === "qm_payment_confirmed" ||
+    id === "tpl_pre_reserva" ||
+    id === "tpl_payment_pending" ||
+    id === "tpl_additional_daily_pending" ||
+    cat === "financeiro"
+  )
 }
 
 export function getReservationRecipients(resItem: any, companies: any[] = []): ReservationRecipients {
@@ -52,15 +71,28 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
   const guestFirstName = guestName.split(" ")[0] || guestName
   const rawGuestPhone = resItem?.guestPhone || resItem?.guests?.[0]?.phone || ""
   const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "")
+  const guestEmail = String(resItem?.guestEmail || resItem?.guests?.[0]?.email || "").trim().toLowerCase()
 
   let requesterName = ""
   let requesterPhone = ""
+  let requesterEmail = ""
   let requesterType: "guest" | "other_person" | "company" = resItem?.requesterType || "guest"
+  if (requesterType === "guest") {
+    if (resItem?.companyId || resItem?.companyName) {
+      requesterType = "company"
+    } else if (
+      resItem?.requesterInfo &&
+      (resItem.requesterInfo.name || resItem.requesterInfo.phone || resItem.requesterInfo.email)
+    ) {
+      requesterType = "other_person"
+    }
+  }
   let requesterCompany = ""
 
   if (requesterType === "other_person" && resItem?.requesterInfo) {
     requesterName = (resItem.requesterInfo.name || "").trim()
     requesterPhone = (resItem.requesterInfo.phone || "").trim()
+    requesterEmail = String(resItem.requesterInfo.email || "").trim().toLowerCase()
   } else if (requesterType === "company") {
     requesterCompany = resItem?.companyName || ""
     let companyObj = null
@@ -76,23 +108,35 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
     if (companyObj) {
       requesterName = (companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
       requesterPhone = (companyObj.phone || "").trim()
+      requesterEmail = String(companyObj.email || companyObj.financialEmail || "").trim().toLowerCase()
       requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany
     } else {
       requesterName = resItem.companyName || "Solicitante Corporativo"
     }
   }
 
+  const requesterHasOwnPhone = Boolean(requesterPhone)
+  const requesterHasOwnEmail = Boolean(requesterEmail)
+  const requesterHasOwnContact = requesterHasOwnPhone || requesterHasOwnEmail
+
   if (!requesterName) {
     requesterName = guestName
   }
-  if (!requesterPhone) {
-    requesterPhone = rawGuestPhone
+  if (!requesterHasOwnContact) {
+    if (!requesterPhone) {
+      requesterPhone = rawGuestPhone
+    }
+    if (!requesterEmail) {
+      requesterEmail = guestEmail
+    }
   }
 
   const requesterFirstName = requesterName.split(" ")[0] || requesterName
   const cleanRequesterDigits = String(requesterPhone).replace(/\D/g, "")
   const isDifferentFromGuest = Boolean(
     (cleanRequesterDigits && cleanGuestDigits && cleanRequesterDigits !== cleanGuestDigits) ||
+    (requesterEmail && guestEmail && requesterEmail !== guestEmail) ||
+    (requesterType !== "guest" && requesterHasOwnContact) ||
     (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
   )
 
@@ -101,15 +145,20 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
       name: guestName,
       firstName: guestFirstName,
       phone: rawGuestPhone,
-      cleanDigits: cleanGuestDigits
+      cleanDigits: cleanGuestDigits,
+      email: guestEmail
     },
     requester: {
       name: requesterName,
       firstName: requesterFirstName,
       phone: requesterPhone,
       cleanDigits: cleanRequesterDigits,
+      email: requesterEmail,
       type: requesterType,
       company: requesterCompany,
+      hasOwnPhone: requesterHasOwnPhone,
+      hasOwnEmail: requesterHasOwnEmail,
+      hasOwnContact: requesterHasOwnContact,
       isDifferentFromGuest
     }
   }
@@ -123,7 +172,7 @@ export const DEFAULT_QUICK_MESSAGES: WhatsAppQuickMessage[] = [
     icon: "💳",
     description: "Link para pagamento via PIX ou Cartão de Crédito.",
     category: "Financeiro",
-    recipientTarget: "guest",
+    recipientTarget: "requester",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ⏳
 Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagamento para confirmação definitiva.
@@ -323,6 +372,7 @@ export function renderQuickMessage(
   const requester = recipients.requester
 
   const recipientIsRequester = targetRecipient === "requester"
+  const hideFinancialForGuest = Boolean(requester.isDifferentFromGuest && !recipientIsRequester)
   const primaryRecipientName = recipientIsRequester ? requester.name : guest.name
   const primaryRecipientFirstName = recipientIsRequester ? requester.firstName : guest.firstName
   const primaryRecipientPhone = recipientIsRequester ? requester.phone : guest.phone
@@ -390,16 +440,16 @@ export function renderQuickMessage(
     "{{horario_checkout}}": checkoutTime,
     "{{num_hospedes}}": String(guestCount),
     "{{num_diarias}}": String(totalNights),
-    "{{valor_total}}": formattedTotal,
-    "{{valor_pago}}": formattedPaid,
-    "{{quanto_falta}}": formattedPending,
-    "{{saldo_restante}}": formattedPending,
+    "{{valor_total}}": hideFinancialForGuest ? "" : formattedTotal,
+    "{{valor_pago}}": hideFinancialForGuest ? "" : formattedPaid,
+    "{{quanto_falta}}": hideFinancialForGuest ? "" : formattedPending,
+    "{{saldo_restante}}": hideFinancialForGuest ? "" : formattedPending,
     "{{status_confirmacao}}": statusConfirmacao,
-    "{{status_pagamento}}": paymentStatus,
-    "{{chave_pix}}": "47.964.813/0001-65",
-    "{{titular_pix}}": "CorpFlats Hospedagem",
-    "{{instrucao_saldo}}": pendingAmount > 0 ? `Saldo restante de ${formattedPending} a acertar no check-in.` : "Reserva quitada.",
-    "{{instrucao_pagamento}}": pendingAmount > 0 ? `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 ${linkPortal}` : "Reserva 100% quitada! Nenhuma pendência financeira.",
+    "{{status_pagamento}}": hideFinancialForGuest ? "" : paymentStatus,
+    "{{chave_pix}}": hideFinancialForGuest ? "" : "47.964.813/0001-65",
+    "{{titular_pix}}": hideFinancialForGuest ? "" : "CorpFlats Hospedagem",
+    "{{instrucao_saldo}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Saldo restante de ${formattedPending} a acertar no check-in.` : "Reserva quitada."),
+    "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 ${linkPortal}` : "Reserva 100% quitada! Nenhuma pendência financeira."),
     "{{canal_reserva}}": resItem.channel || "Site CorpFlats",
     "{{nome_hotel}}": "CorpFlats",
     "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
@@ -409,7 +459,7 @@ export function renderQuickMessage(
     "{{telefone_hotel}}": "5522997124021",
     "{{link_checkin_digital}}": linkCheckin,
     "{{link_portal_hospede}}": linkPortal,
-    "{{link_pagamento}}": linkPortal,
+    "{{link_pagamento}}": hideFinancialForGuest ? "" : linkPortal,
     "{{link_cafe_manha}}": linkCafe,
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": linkAvaliacao,
@@ -418,10 +468,18 @@ export function renderQuickMessage(
   }
 
   let text = templateText
+  if (hideFinancialForGuest) {
+    text = text
+      .replace(/💰\s*\*Situação Financeira:\*[\s\S]*?(?=\n\n|$)/gi, "")
+      .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor|Valor Total[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*)\*?:[^\n]*\n?/gim, "")
+  }
   for (const [tag, val] of Object.entries(tagMap)) {
     text = text.split(tag).join(val)
   }
-  return text
+  if (hideFinancialForGuest) {
+    text = text.replace(/^[ \t]*•[^:\n]+:[ \t]*(\*\*[ \t]*)?(\([ \t]*\))?[ \t]*\n?/gm, "")
+  }
+  return text.replace(/\n{3,}/g, "\n\n").trim()
 }
 
 export function buildFullWhatsAppTextMessage(
@@ -489,16 +547,20 @@ const QUICK_MESSAGES_CACHE_TTL_MS = 60000
 
 function normalizeQuickMessagesList(list: any[]): WhatsAppQuickMessage[] {
   return list.map(m => {
-    if (m.id === "qm_breakfast" && (!m.buttons || m.buttons.length === 0)) {
+    let next = m
+    if (m.id === "qm_payment_pending" || m.id === "qm_payment_confirmed") {
+      next = { ...next, recipientTarget: "requester" }
+    }
+    if (next.id === "qm_breakfast" && (!next.buttons || next.buttons.length === 0)) {
       return {
-        ...m,
+        ...next,
         buttons: [
           { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" },
           { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
         ]
       }
     }
-    return m
+    return next
   })
 }
 
@@ -688,8 +750,12 @@ export function useQuickMessages() {
     const opts = typeof overrideOrOptions === "string"
       ? { overrideTarget: overrideOrOptions }
       : (overrideOrOptions || {})
-    const targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
     const recipients = getReservationRecipients(resItem)
+    const isPureBilling = isPureBillingQuickMessage(qm)
+    let targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
+    if (recipients.requester.isDifferentFromGuest && isPureBilling && targetMode !== "custom") {
+      targetMode = "requester"
+    }
     const resCode = resItem.code || resItem.reservationCode || String(resItem.id || "")
 
     // Fallback phones
@@ -705,8 +771,9 @@ export function useQuickMessages() {
       ? `55${cleanCustomPhone}`
       : cleanCustomPhone
 
+    const allowRequesterFallbackToGuest = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
     const effectiveTargetPhone = formattedCustomPhone
-      || (targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone)
+      || (targetMode === "requester" ? (requesterPhone || (allowRequesterFallbackToGuest ? guestPhone : "")) : guestPhone)
 
     const baseRenderedBody = opts.customMessage?.trim()
       ? opts.customMessage
@@ -906,8 +973,12 @@ export function buildQuickMessageWaWebUrl(
   const opts = typeof overrideOrOptions === "string"
     ? { overrideTarget: overrideOrOptions }
     : (overrideOrOptions || {})
-  const targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
   const recipients = getReservationRecipients(resItem)
+  const isPureBilling = isPureBillingQuickMessage(qm)
+  let targetMode = opts.overrideTarget || qm.recipientTarget || "guest"
+  if (recipients.requester.isDifferentFromGuest && isPureBilling && targetMode !== "custom") {
+    targetMode = "requester"
+  }
 
   const guestPhone = recipients.guest.cleanDigits.length === 10 || recipients.guest.cleanDigits.length === 11
     ? `55${recipients.guest.cleanDigits}`
@@ -921,8 +992,9 @@ export function buildQuickMessageWaWebUrl(
     ? `55${cleanCustomPhone}`
     : cleanCustomPhone
 
+  const allowRequesterFallbackToGuest = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
   const effectiveTargetPhone = formattedCustomPhone
-    || (targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone)
+    || (targetMode === "requester" ? (requesterPhone || (allowRequesterFallbackToGuest ? guestPhone : "")) : guestPhone)
 
   const baseRenderedBody = opts.customMessage?.trim()
     ? opts.customMessage

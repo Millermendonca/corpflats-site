@@ -887,7 +887,7 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
     description: "Disparado quando uma reserva de qualquer canal (inclusive Booking/Airbnb) solicita acréscimo de diária ou serviço adicional e fica com saldo pendente a quitar.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    recipientTarget: "both",
+    recipientTarget: "requester",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -1045,7 +1045,7 @@ export const DEFAULT_WHATSAPP_QUICK_MESSAGES = [
     icon: "💳",
     description: "Link para pagamento via PIX ou Cartão de Crédito.",
     category: "Financeiro",
-    recipientTarget: "guest",
+    recipientTarget: "requester",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ⏳
 Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagamento para confirmação definitiva.
@@ -1069,7 +1069,7 @@ Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seg
     icon: "✅",
     description: "Aviso de pagamento aprovado e confirmação de reserva.",
     category: "Financeiro",
-    recipientTarget: "guest",
+    recipientTarget: "requester",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! 💚🎉
 Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*.
@@ -2161,14 +2161,32 @@ function formatCurrency(amount) {
 }
 
 // ── Formatação de Alterações da Reserva para o WhatsApp (De ➔ Para) ─────────
-export function formatWhatsAppChangesSummary(changes = []) {
-  if (!Array.isArray(changes) || changes.length === 0) {
+export const FINANCIAL_CHANGE_FIELDS = new Set([
+  "totalAmount",
+  "paidAmount",
+  "paymentStatus",
+  "dailyRate",
+  "paymentMethod"
+]);
+
+export function hasNonFinancialChanges(changes = []) {
+  if (!Array.isArray(changes) || changes.length === 0) return true;
+  return changes.some(c => c && !FINANCIAL_CHANGE_FIELDS.has(String(c.field || "")));
+}
+
+export function formatWhatsAppChangesSummary(changes = [], options = {}) {
+  const excludeFinancial = Boolean(options?.excludeFinancial);
+  const filteredChanges = Array.isArray(changes)
+    ? (excludeFinancial ? changes.filter(c => c && !FINANCIAL_CHANGE_FIELDS.has(String(c.field || ""))) : changes)
+    : [];
+
+  if (filteredChanges.length === 0) {
     return "• *Status da Reserva:* Atualizada no sistema.";
   }
 
   const lines = [];
 
-  for (const c of changes) {
+  for (const c of filteredChanges) {
     if (!c) continue;
     let label = c.label || c.field;
     let oldV = c.oldValue;
@@ -2280,6 +2298,16 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   let requesterPhone = "";
   let requesterEmail = "";
   let requesterType = reservation.requesterType || "guest";
+  if (requesterType === "guest") {
+    if (reservation.companyId || reservation.companyName) {
+      requesterType = "company";
+    } else if (
+      reservation.requesterInfo &&
+      (reservation.requesterInfo.name || reservation.requesterInfo.phone || reservation.requesterInfo.email)
+    ) {
+      requesterType = "other_person";
+    }
+  }
   let requesterCompany = "";
 
   if (requesterType === "other_person" && reservation.requesterInfo) {
@@ -2309,21 +2337,27 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   }
 
   const requesterHasOwnPhone = Boolean(requesterPhone);
+  const requesterHasOwnEmail = Boolean(requesterEmail);
+  const requesterHasOwnContact = requesterHasOwnPhone || requesterHasOwnEmail;
   if (!requesterName) {
     requesterName = guestName;
   }
-  if (!requesterPhone) {
-    requesterPhone = rawGuestPhone;
-  }
-  // Mesmo comportamento do telefone: sem contato próprio, o solicitante "é" o hóspede principal
-  if (!requesterEmail && !requesterHasOwnPhone) {
-    requesterEmail = guestEmail;
+  // Fallback estrito: só usa telefone/e-mail do hóspede se o solicitante não possuir NENHUM contato próprio (nem telefone, nem e-mail)
+  if (!requesterHasOwnContact) {
+    if (!requesterPhone) {
+      requesterPhone = rawGuestPhone;
+    }
+    if (!requesterEmail) {
+      requesterEmail = guestEmail;
+    }
   }
 
   const requesterFirstName = requesterName.split(" ")[0] || requesterName;
   const cleanRequesterDigits = String(requesterPhone).replace(/\D/g, "");
   const isDifferentFromGuest = Boolean(
     (cleanRequesterDigits && cleanGuestDigits && cleanRequesterDigits !== cleanGuestDigits) ||
+    (requesterEmail && guestEmail && requesterEmail !== guestEmail) ||
+    (requesterType !== "guest" && requesterHasOwnContact) ||
     (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
   );
 
@@ -2368,6 +2402,9 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       email: requesterEmail,
       type: requesterType,
       company: requesterCompany,
+      hasOwnPhone: requesterHasOwnPhone,
+      hasOwnEmail: requesterHasOwnEmail,
+      hasOwnContact: requesterHasOwnContact,
       isDifferentFromGuest
     }
   };
@@ -2380,6 +2417,31 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
   "additional_daily_pending",
   "payment_confirmed"
 ]);
+
+// ── Cobrança / PIX puro: quando há solicitante distinto, vai EXCLUSIVAMENTE ao solicitante ──
+export const PURE_BILLING_EVENTS = new Set([
+  "pre_reservation_created",
+  "payment_pending",
+  "additional_daily_pending"
+]);
+
+export const PURE_BILLING_TEMPLATE_IDS = new Set([
+  "tpl_pre_reserva",
+  "tpl_payment_pending",
+  "tpl_additional_daily_pending",
+  "qm_payment_pending",
+  "qm_payment_confirmed"
+]);
+
+export function isPureBillingTemplateOrEvent(tplOrEvent) {
+  if (!tplOrEvent) return false;
+  if (typeof tplOrEvent === "string") {
+    return PURE_BILLING_EVENTS.has(tplOrEvent) || PURE_BILLING_TEMPLATE_IDS.has(tplOrEvent);
+  }
+  const id = String(tplOrEvent.id || "").trim();
+  const ev = String(tplOrEvent.triggerEvent || "").trim();
+  return PURE_BILLING_TEMPLATE_IDS.has(id) || PURE_BILLING_EVENTS.has(ev);
+}
 
 export function shouldIncludeCompanions(tpl) {
   if (typeof tpl?.includeCompanions === "boolean") return tpl.includeCompanions;
@@ -2413,15 +2475,29 @@ export function getCompanionForTarget(recipients, targetRecipient) {
  * cada um com telefone (WhatsApp) e/ou e-mail. Remove contatos repetidos por canal.
  */
 export function buildTemplateTargets(tpl, recipients, options = {}) {
-  const targetMode = options.targetMode || tpl?.recipientTarget || "guest";
+  const guest = recipients.guest;
+  const requester = recipients.requester;
+  const isPureBilling = isPureBillingTemplateOrEvent(tpl);
+  const isNewReservationConfirm = tpl?.id === "tpl_new_reservation_direct" || tpl?.id === "tpl_new_reservation";
+
+  let targetMode = options.targetMode || tpl?.recipientTarget || "guest";
+  if (requester?.isDifferentFromGuest) {
+    if (isPureBilling) {
+      targetMode = "requester";
+    } else if (isNewReservationConfirm && !options.targetMode && requester.hasOwnContact) {
+      targetMode = "both";
+    }
+  }
+
   const includeEmail = options.includeEmail !== undefined ? options.includeEmail : shouldMirrorTemplateToEmail(tpl);
   const onlyGuestIdx = options.onlyGuestIndex ? Number(options.onlyGuestIndex) : 0;
   const raw = [];
-  const guest = recipients.guest;
-  const requester = recipients.requester;
   const guestTarget = () => ({ type: "guest", guestIndex: 1, name: guest.name, phone: guest.phone, email: guest.email });
+  const requesterHasOwnContact = requester?.hasOwnContact !== undefined
+    ? Boolean(requester.hasOwnContact)
+    : Boolean(requester?.isDifferentFromGuest && (requester?.phone || requester?.email));
 
-  if (onlyGuestIdx > 1) {
+  if (onlyGuestIdx > 1 && !(requester?.isDifferentFromGuest && isPureBilling)) {
     const matchedComp = (recipients.companions || []).find(c => Number(c.index) === onlyGuestIdx);
     if (matchedComp && (matchedComp.phone || matchedComp.email)) {
       raw.push({
@@ -2451,14 +2527,16 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
       if (targetMode === "requester" || requester.isDifferentFromGuest) {
         if (requester.phone || requester.email) {
           raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
-        } else if (targetMode === "requester" && (guest.phone || guest.email)) {
+        } else if (targetMode === "requester" && (!requester.isDifferentFromGuest || !requesterHasOwnContact) && (guest.phone || guest.email)) {
           raw.push(guestTarget());
         }
       }
     }
 
     if (raw.length === 0 && (guest.phone || guest.email)) {
-      raw.push(guestTarget());
+      if (!(targetMode === "requester" && requester?.isDifferentFromGuest && requesterHasOwnContact)) {
+        raw.push(guestTarget());
+      }
     }
 
     if (onlyGuestIdx !== 1 && (targetMode === "guest" || targetMode === "both") && shouldIncludeCompanions(tpl)) {
@@ -2530,13 +2608,26 @@ const EMAIL_SUBJECT_BY_EVENT = {
 
 /** Assunto do e-mail espelhado: usa o assunto customizado do template ou um assunto amigável por evento */
 export function buildMirrorEmailSubject(tpl, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest") {
+  const recipients = getReservationRecipients(reservation, db);
+  const targetType = targetRecipient && typeof targetRecipient === "object" ? targetRecipient.type : targetRecipient;
+  const hideFinancialForGuest = Boolean(recipients.requester?.isDifferentFromGuest && targetType !== "requester");
+
   const custom = String(tpl?.emailSubject || "").trim();
   if (custom) {
-    return resolveWhatsAppTags(custom, reservation, db, baseUrl, targetRecipient, tpl).replace(/\s+/g, " ").trim();
+    let resolvedCustom = resolveWhatsAppTags(custom, reservation, db, baseUrl, targetRecipient, tpl).replace(/\s+/g, " ").trim();
+    if (hideFinancialForGuest) {
+      resolvedCustom = resolvedCustom
+        .replace(/Pagamento\s+Confirmado/gi, "Reserva Confirmada")
+        .replace(/Pagamento\s+Pendente/gi, "Informações da Reserva");
+    }
+    return resolvedCustom;
   }
   const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
   const event = String(tpl?.triggerEvent || "");
-  const label = EMAIL_SUBJECT_BY_EVENT[event] || "Informações da sua reserva";
+  let label = EMAIL_SUBJECT_BY_EVENT[event] || "Informações da sua reserva";
+  if (hideFinancialForGuest && event === "payment_confirmed") {
+    label = EMAIL_SUBJECT_BY_EVENT.reservation_created;
+  }
   const resCode = reservation.code || reservation.reservationCode || "";
   return [hotelName, label, resCode ? `Reserva ${resCode}` : ""].filter(Boolean).join(" • ");
 }
@@ -2622,7 +2713,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
         ? Number(targetRecipient.guestIndex || targetRecipient.index)
         : 1);
 
-  const recipientIsRequester = targetRecipient === "requester";
+  const recipientIsRequester = targetRecipient === "requester" || (targetRecipient && typeof targetRecipient === "object" && targetRecipient.type === "requester");
+  const hideFinancialForGuest = Boolean(requester.isDifferentFromGuest && !recipientIsRequester);
   const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name);
   const primaryRecipientFirstName = companion ? companion.firstName : (recipientIsRequester ? requester.firstName : guest.firstName);
   const primaryRecipientPhone = companion ? companion.phone : (recipientIsRequester ? requester.phone : guest.phone);
@@ -2780,7 +2872,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   let resumoAlteracoes = "";
   const changes = reservation._changesContext || [];
   if (Array.isArray(changes) && changes.length > 0) {
-    resumoAlteracoes = formatWhatsAppChangesSummary(changes);
+    resumoAlteracoes = formatWhatsAppChangesSummary(changes, { excludeFinancial: hideFinancialForGuest });
   }
   if (!resumoAlteracoes) {
     resumoAlteracoes = "• *Status da Reserva:* Dados atualizados no sistema.";
@@ -2877,18 +2969,18 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{horario_checkout}}": checkoutTime,
     "{{num_hospedes}}": String(guestCount),
     "{{num_diarias}}": String(totalNights),
-    "{{valor_total}}": formatCurrency(totalAmount),
-    "{{valor_pago}}": formatCurrency(paidAmount),
-    "{{quanto_falta}}": formatCurrency(pendingAmount),
-    "{{saldo_restante}}": formatCurrency(pendingAmount),
-    "{{valor_restante}}": formatCurrency(pendingAmount),
-    "{{chave_pix}}": pixKey,
-    "{{titular_pix}}": titularPix,
-    "{{pix_copia_e_cola}}": pixCopiaECola,
-    "{{instrucao_pagamento}}": instrucaoPagamento,
-    "{{instrucao_saldo}}": instrucaoSaldo,
+    "{{valor_total}}": hideFinancialForGuest ? "" : formatCurrency(totalAmount),
+    "{{valor_pago}}": hideFinancialForGuest ? "" : formatCurrency(paidAmount),
+    "{{quanto_falta}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
+    "{{saldo_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
+    "{{valor_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
+    "{{chave_pix}}": hideFinancialForGuest ? "" : pixKey,
+    "{{titular_pix}}": hideFinancialForGuest ? "" : titularPix,
+    "{{pix_copia_e_cola}}": hideFinancialForGuest ? "" : pixCopiaECola,
+    "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : instrucaoPagamento,
+    "{{instrucao_saldo}}": hideFinancialForGuest ? "" : instrucaoSaldo,
     "{{status_confirmacao}}": statusConfirmacao,
-    "{{status_pagamento}}": paymentStatus,
+    "{{status_pagamento}}": hideFinancialForGuest ? "" : paymentStatus,
     "{{canal_reserva}}": channel,
     "{{nome_hotel}}": hotelName,
     "{{endereco_hotel}}": hotelAddress,
@@ -2898,9 +2990,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{telefone_hotel}}": adminWhatsApp,
     "{{link_checkin_digital}}": linkCheckinDigital,
     "{{link_portal_hospede}}": linkPortalHospede,
-    "{{link_pagamento}}": linkPagamento,
-    "{{link_copiar_pix}}": linkCopiarPix,
-    "{{link_pix}}": linkCopiarPix,
+    "{{link_pagamento}}": hideFinancialForGuest ? "" : linkPagamento,
+    "{{link_copiar_pix}}": hideFinancialForGuest ? "" : linkCopiarPix,
+    "{{link_pix}}": hideFinancialForGuest ? "" : linkCopiarPix,
     "{{link_cafe_manha}}": linkCafeManha,
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl,
@@ -2915,7 +3007,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
-    "{{forma_pagamento}}": formaPagamento,
+    "{{forma_pagamento}}": hideFinancialForGuest ? "" : formaPagamento,
     "{{data_pagamento}}": formatDateBr(reservation.paidAt || new Date().toISOString()),
     "{{resumo_alteracoes}}": resumoAlteracoes,
     "{{nome_camareira}}": reservation.maidName || reservation.foundBy || "Camareira",
@@ -2927,8 +3019,23 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   };
 
   let rendered = text;
+  if (hideFinancialForGuest) {
+    rendered = rendered
+      .replace(/Confirmamos o recebimento do seu pagamento[^\n]*A sua reserva está \*100% garantida\*! 🎉/gi, "A sua reserva está *100% confirmada e garantida*! 🎉")
+      .replace(/Confirmamos o recebimento do seu pagamento[^\n]*\n*/gi, "")
+      .replace(/💰\s*\*Situação Financeira:\*[\s\S]*?(?=\n\n|$)/gi, "")
+      .replace(/💰\s*\*Saldo Pendente da Alteração:\*[\s\S]*?(?=\n\n|$)/gi, "")
+      .replace(/💳\s*\*Dados para Pagamento[\s\S]*?(?=\n\n|$)/gi, "")
+      .replace(/📋\s*\*PIX Copia e Cola[\s\S]*?(?=\n\n|$)/gi, "")
+      .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor Total[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*|Situação do Pagamento|Chave PIX|Favorecido|Forma de Pagamento)\*?:[^\n]*\n?/gim, "");
+  }
+
   for (const [tag, val] of Object.entries(tagsMap)) {
     rendered = rendered.split(tag).join(val !== undefined && val !== null ? String(val) : "");
+  }
+
+  if (hideFinancialForGuest) {
+    rendered = rendered.replace(/^[ \t]*•[^:\n]+:[ \t]*(\*\*[ \t]*)?(\([ \t]*\))?[ \t]*\n?/gm, "");
   }
 
   // Remove excesso de quebras de linha decorrentes de tags opcionais vazias
@@ -3253,6 +3360,33 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
         list.push(cafeBtn);
       }
     }
+  }
+
+  const recipientsObj = getReservationRecipients(reservation || {}, db || {});
+  const targetType = targetRecipient && typeof targetRecipient === "object" ? targetRecipient.type : targetRecipient;
+  const hideFinancialForGuest = Boolean(recipientsObj.requester?.isDifferentFromGuest && targetType !== "requester");
+
+  if (hideFinancialForGuest) {
+    list = list.filter(b => {
+      if (!b) return false;
+      const bId = String(b.id || "").toLowerCase();
+      const bLabel = String(b.label || "").toLowerCase();
+      const bUrl = String(b.url || "").toLowerCase();
+      if (bId === "btn_pix" || bId === "btn_pagar" || bId === "btn_payment") return false;
+      if (b.type === "COPY" || Boolean(b.copyCode)) return false;
+      if (
+        bUrl.includes("/copiar-pix") ||
+        bUrl.includes("link_pagamento") ||
+        bUrl.includes("link_copiar_pix") ||
+        bUrl.includes("link_pix") ||
+        bUrl.includes("pix_copia_e_cola") ||
+        bUrl.startsWith("000201")
+      ) {
+        return false;
+      }
+      if (/pix|pagar|pagamento|quitar|fatura|cobran[cç]a/i.test(bLabel)) return false;
+      return true;
+    });
   }
 
   // Deduplicação de botões por id/url
@@ -5878,6 +6012,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_additional_daily_pending") {
+          tpl.recipientTarget = "requester";
           if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp"))) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
@@ -6043,6 +6178,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       for (const qm of db.whatsappQuickMessages) {
         if (!qm.recipientTarget) {
           qm.recipientTarget = "guest";
+        }
+        if (qm.id === "qm_payment_pending" || qm.id === "qm_payment_confirmed") {
+          qm.recipientTarget = "requester";
         }
         if (qm.id === "qm_breakfast") {
           const defBreakfast = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_breakfast");
@@ -6697,7 +6835,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const recipients = getReservationRecipients(reservation, db);
-    const targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "custom"
+    const isPureBilling = isPureBillingTemplateOrEvent(template);
+    let targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "custom"
+    if (recipients.requester?.isDifferentFromGuest && isPureBilling && targetMode !== "custom") {
+      targetMode = "requester";
+    }
     const requestedPhone = req.body.customPhone ? String(req.body.customPhone).trim() : (req.body.phone ? String(req.body.phone).trim() : null);
     if (requestedPhone && recipients.guest && targetMode === "guest") {
       recipients.guest.phone = requestedPhone;
@@ -6709,8 +6851,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     if (targetMode === "custom" && requestedPhone) {
       dispatches.push({
-        type: "guest",
-        name: req.body.customName || recipients.guest.name,
+        type: isPureBilling && recipients.requester?.isDifferentFromGuest ? "requester" : "guest",
+        name: req.body.customName || (isPureBilling && recipients.requester?.isDifferentFromGuest ? recipients.requester.name : recipients.guest.name),
         phone: requestedPhone
       });
     } else {
@@ -6724,13 +6866,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
       if (targetMode === "requester" || targetMode === "both") {
         if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
-          if (recipients.requester.phone) {
+          const reqPhone = (targetMode === "requester" && req.body.customPhone) ? String(req.body.customPhone).trim() : recipients.requester.phone;
+          if (reqPhone) {
             dispatches.push({
               type: "requester",
               name: recipients.requester.name,
-              phone: (targetMode === "requester" && req.body.customPhone) ? String(req.body.customPhone).trim() : recipients.requester.phone
+              phone: reqPhone
             });
-          } else if (targetMode === "requester") {
+          } else if (targetMode === "requester" && (!recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact)) {
             dispatches.push({
               type: "guest",
               name: recipients.guest.name,
@@ -6742,6 +6885,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
 
     if (dispatches.length === 0) {
+      if (targetMode === "requester" && recipients.requester?.isDifferentFromGuest && recipients.requester?.hasOwnContact) {
+        return res.status(400).json({
+          success: false,
+          error: "O solicitante desta reserva não possui telefone/WhatsApp cadastrado (apenas e-mail). Mensagens financeiras não são enviadas ao hóspede quando há outro solicitante."
+        });
+      }
       dispatches.push({
         type: "guest",
         name: req.body.customName || recipients.guest.name,
@@ -8718,6 +8867,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
+        // Checagem dinâmica de privacidade financeira: nunca enviar cobrança/PIX ao hóspede quando há solicitante distinto
+        if (resv && isPureBillingTemplateOrEvent(item.triggerEvent || item.templateId) && (item.recipientType || "guest") !== "requester") {
+          const itemRecipients = getReservationRecipients(resv, db);
+          if (itemRecipients.requester?.isDifferentFromGuest) {
+            console.log(`[Auto-WhatsApp] Cancelando cobrança agendada para o hóspede (${item.recipientName || item.guestName}): reserva possui solicitante distinto (${itemRecipients.requester.name}).`);
+            item.status = "cancelled";
+            item.error = "Cancelado: reserva possui solicitante distinto responsável pelo pagamento";
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
+        }
+
         // Checagem dinâmica: se for lembrete de pré-checkin e todos os hóspedes já preencheram
         // (para acompanhantes: se aquele acompanhante já preencheu a própria ficha)
         if (item.triggerEvent === "pre_checkin_reminder") {
@@ -8936,7 +9098,7 @@ function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, pho
  * Monta um item da fila de agendamentos para um destinatário (hóspede, acompanhante ou solicitante).
  */
 export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, channel, baseUrl = "https://corpflats.onrender.com", idPrefix = "q", recipientTarget = null }) {
-  const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, target.type);
+  const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, target.type, tpl);
   const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, target.type, tpl);
   const hasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
   return {
@@ -9090,7 +9252,7 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
  * e espelho por e-mail (respeitando a chave do motor de e-mails automáticos).
  */
 export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl = "" }) {
-  const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, target.type);
+  const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, target.type, tpl);
   const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, target.type, tpl);
   const rawHasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
   let hasAttachment = rawHasAttachment;
@@ -9528,6 +9690,16 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
       for (const d of dispatches) {
         let target = { ...d };
+
+        // Se a reserva tiver solicitante distinto e a alteração foi EXCLUSIVAMENTE financeira,
+        // não envia notificação de atualização ao hóspede/acompanhantes.
+        if (isUpdatedEvent && recipients.requester?.isDifferentFromGuest && target.type !== "requester") {
+          const changes = reservation._changesContext || [];
+          if (Array.isArray(changes) && changes.length > 0 && !hasNonFinancialChanges(changes)) {
+            console.log(`[Z-API Privacy] Ignorando envio de 'reservation_updated' para o hóspede (${target.name}): alterações foram exclusivamente financeiras e há solicitante distinto (${recipients.requester.name}).`);
+            continue;
+          }
+        }
 
         // Validação global anti-duplicação (Histórico + In-Flight Lock) para eventos únicos e reservation_updated (janela de 30s)
         if ((isSingleFireEvent || isUpdatedEvent) && (rCode || rId)) {

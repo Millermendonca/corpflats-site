@@ -25,6 +25,7 @@ import {
   WhatsAppQuickMessage,
   renderQuickMessage,
   getReservationRecipients,
+  isPureBillingQuickMessage,
   bindZapiClickOrHoldWaWeb,
   buildQuickMessageWaWebUrl,
 } from "@/hooks/use-quick-messages"
@@ -96,8 +97,13 @@ export function QuickMessageConfirmDialog({
 
   useEffect(() => {
     if (open && quickMessage) {
-      const defaultTarget = quickMessage.recipientTarget || "guest"
-      if (
+      const isBillingRestricted = Boolean(
+        isPureBillingQuickMessage(quickMessage) && recipients?.requester?.isDifferentFromGuest
+      )
+      const defaultTarget = isBillingRestricted ? "requester" : (quickMessage.recipientTarget || "guest")
+      if (isBillingRestricted) {
+        setSelectedTargetKey("requester")
+      } else if (
         defaultTarget === "requester" &&
         (!recipients?.requester?.phone || !recipients?.requester?.isDifferentFromGuest)
       ) {
@@ -122,8 +128,11 @@ export function QuickMessageConfirmDialog({
 
   if (!quickMessage || !resItem || !recipients) return null
 
+  const isPureBillingWithDistinctRequester = Boolean(
+    isPureBillingQuickMessage(quickMessage) && recipients.requester.isDifferentFromGuest
+  )
   const hasDistinctRequester = Boolean(
-    recipients.requester.isDifferentFromGuest && recipients.requester.phone
+    recipients.requester.isDifferentFromGuest && (recipients.requester.phone || isPureBillingWithDistinctRequester)
   )
 
   const selectedCompanion = companionOptions.find((c) => c.key === selectedTargetKey)
@@ -136,7 +145,8 @@ export function QuickMessageConfirmDialog({
       return `${recipients.guest.firstName} (${recipients.guest.phone || "Sem nº"}) + ${recipients.requester.firstName} (${recipients.requester.phone})`
     }
     if (selectedTargetKey === "requester") {
-      return `${recipients.requester.name} (${recipients.requester.phone || recipients.guest.phone || "Sem nº"})`
+      const allowFallback = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
+      return `${recipients.requester.name} (${recipients.requester.phone || (allowFallback ? recipients.guest.phone : "") || "Sem nº cadastrado"})`
     }
     return `${recipients.guest.name} (${recipients.guest.phone || "Sem nº cadastrado"})`
   })()
@@ -210,34 +220,36 @@ export function QuickMessageConfirmDialog({
             </label>
 
             <div className="grid grid-cols-1 gap-1.5">
-              {/* Hóspede Principal */}
-              <button
-                type="button"
-                onClick={() => setSelectedTargetKey("guest")}
-                className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
-                  selectedTargetKey === "guest"
-                    ? "border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 ring-1 ring-emerald-500"
-                    : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
-                }`}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <User className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <div className="truncate">
-                    <div className="text-xs font-bold truncate">
-                      Hóspede: {recipients.guest.name}
-                    </div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
-                      <Phone className="w-2.5 h-2.5" />
-                      {recipients.guest.phone || "Sem telefone cadastrado"}
+              {/* Hóspede Principal (oculto quando for cobrança e existir solicitante distinto) */}
+              {!isPureBillingWithDistinctRequester && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTargetKey("guest")}
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                    selectedTargetKey === "guest"
+                      ? "border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 ring-1 ring-emerald-500"
+                      : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <User className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div className="truncate">
+                      <div className="text-xs font-bold truncate">
+                        Hóspede: {recipients.guest.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
+                        <Phone className="w-2.5 h-2.5" />
+                        {recipients.guest.phone || "Sem telefone cadastrado"}
+                      </div>
                     </div>
                   </div>
-                </div>
-                {selectedTargetKey === "guest" && (
-                  <Badge className="bg-emerald-600 text-white text-[10px]">Selecionado</Badge>
-                )}
-              </button>
+                  {selectedTargetKey === "guest" && (
+                    <Badge className="bg-emerald-600 text-white text-[10px]">Selecionado</Badge>
+                  )}
+                </button>
+              )}
 
-              {/* Solicitante / Empresa (se houver telefone diferente) */}
+              {/* Solicitante / Empresa */}
               {hasDistinctRequester && (
                 <>
                   <button
@@ -258,7 +270,7 @@ export function QuickMessageConfirmDialog({
                         </div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
                           <Phone className="w-2.5 h-2.5" />
-                          {recipients.requester.phone}
+                          {recipients.requester.phone || "Sem telefone cadastrado"}
                         </div>
                       </div>
                     </div>
@@ -267,35 +279,41 @@ export function QuickMessageConfirmDialog({
                     )}
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTargetKey("both")}
-                    className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
-                      selectedTargetKey === "both"
-                        ? "border-purple-500 bg-purple-50/70 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 ring-1 ring-purple-500"
-                        : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Users className="w-4 h-4 text-purple-600 shrink-0" />
-                      <div className="truncate">
-                        <div className="text-xs font-bold truncate">
-                          ✨ Enviar para Ambos (Hóspede + Solicitante)
-                        </div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
-                          {recipients.guest.phone} e {recipients.requester.phone}
+                  {isPureBillingWithDistinctRequester ? (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-lg px-2.5 py-1.5">
+                      🔒 Mensagens financeiras e de PIX são enviadas exclusivamente ao solicitante quando a reserva possui solicitante distinto do hóspede.
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTargetKey("both")}
+                      className={`flex items-center justify-between px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                        selectedTargetKey === "both"
+                          ? "border-purple-500 bg-purple-50/70 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 ring-1 ring-purple-500"
+                          : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Users className="w-4 h-4 text-purple-600 shrink-0" />
+                        <div className="truncate">
+                          <div className="text-xs font-bold truncate">
+                            ✨ Enviar para Ambos (Hóspede + Solicitante)
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                            {recipients.guest.phone} e {recipients.requester.phone}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    {selectedTargetKey === "both" && (
-                      <Badge className="bg-purple-600 text-white text-[10px]">Selecionado</Badge>
-                    )}
-                  </button>
+                      {selectedTargetKey === "both" && (
+                        <Badge className="bg-purple-600 text-white text-[10px]">Selecionado</Badge>
+                      )}
+                    </button>
+                  )}
                 </>
               )}
 
-              {/* Acompanhantes com telefone cadastrado */}
-              {companionOptions.map((comp) => (
+              {/* Acompanhantes com telefone cadastrado (ocultos em cobrança financeira) */}
+              {!isPureBillingWithDistinctRequester && companionOptions.map((comp) => (
                 <button
                   key={comp.key}
                   type="button"

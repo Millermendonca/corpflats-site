@@ -11,7 +11,19 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients } from "./zapi-service.mjs";
+
+export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
+  if (!reservation) return false;
+  const recipients = getReservationRecipients(reservation, db);
+  if (!recipients.requester?.isDifferentFromGuest) return false;
+  const cleanSender = cleanWhatsAppPhone(senderPhone);
+  const cleanReq = cleanWhatsAppPhone(recipients.requester.phone);
+  if (cleanSender && cleanReq && matchClientPhone(cleanSender, cleanReq)) {
+    return false;
+  }
+  return true;
+}
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
 import {
   lookupCep,
@@ -734,6 +746,9 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     : null;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
   const recentTriggers = getRecentAutomatedTriggers(db, cleanPhone, convMessages, matchedReservation);
+  const hideFinancialForGuest = matchedReservation ? isNonRequesterGuestForReservation(matchedReservation, cleanPhone, db) : false;
+  const recipientsInfo = matchedReservation ? getReservationRecipients(matchedReservation, db) : null;
+  const requesterName = recipientsInfo?.requester?.isDifferentFromGuest ? recipientsInfo.requester.name : null;
 
   return {
     todayStr,
@@ -741,6 +756,8 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     phone: cleanPhone,
     guestName,
     reservationCode: canonicalResCode,
+    hideFinancialForGuest,
+    requesterName,
     hasReservation: Boolean(matchedReservation && matchedReservation.status !== "cancelada" && matchedReservation.status !== "cancelled" && stayStatus !== "estadia_passada"),
     checkinUrl,
     rawCheckinUrl,
@@ -757,9 +774,11 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
       checkoutDate: matchedReservation.checkoutDate,
       flatNumber: matchedReservation.flatNumber,
       status: matchedReservation.status,
-      paymentStatus: matchedReservation.paymentStatus,
+      paymentStatus: hideFinancialForGuest ? undefined : matchedReservation.paymentStatus,
       channel: matchedReservation.channel,
-      totalAmount: matchedReservation.totalAmount,
+      totalAmount: hideFinancialForGuest ? undefined : matchedReservation.totalAmount,
+      hideFinancialForGuest,
+      requesterName,
       checkinUrl,
       rawCheckinUrl,
       checkoutUrl,
@@ -992,6 +1011,7 @@ export async function querySystemData(db, {
 
       const sanitized = list.map(r => {
         const isOwn = requesterRole === "admin" || (requesterPhone && doesReservationMatchPhone(r, requesterPhone));
+        const hideFin = isNonRequesterGuestForReservation(r, requesterPhone, db);
 
         if (requesterRole === "admin") {
           return { ...r };
@@ -1006,9 +1026,9 @@ export async function querySystemData(db, {
             checkinDate: r.checkinDate,
             checkoutDate: r.checkoutDate,
             status: r.status,
-            paymentStatus: r.paymentStatus,
-            totalAmount: r.totalAmount,
-            paidAmount: r.paidAmount,
+            paymentStatus: hideFin ? undefined : r.paymentStatus,
+            totalAmount: hideFin ? undefined : r.totalAmount,
+            paidAmount: hideFin ? undefined : r.paidAmount,
             includeBreakfast: r.includeBreakfast,
             checkinTime: r.checkinTime || "14:00",
             checkoutTime: r.checkoutTime || "12:00"
@@ -2775,6 +2795,16 @@ async function handleGeneratePayment(db, args = {}) {
     );
   }
 
+  const senderPhone = args.requesterPhone || args.phone || args.guestPhone || "";
+  if (resObj && args.requesterRole !== "admin" && isNonRequesterGuestForReservation(resObj, senderPhone, db)) {
+    const rec = getReservationRecipients(resObj, db);
+    return {
+      success: false,
+      error: "BILLING_HANDLED_BY_REQUESTER",
+      message: `O pagamento e faturamento desta reserva são tratados diretamente com o solicitante responsável (${rec.requester.name}). Não envie cobrança ou PIX ao hóspede.`
+    };
+  }
+
   const resolvedAmount = Number(args.amount || resObj?.totalAmount || 0);
   if (isNaN(resolvedAmount) || resolvedAmount <= 0) {
     return {
@@ -3005,16 +3035,24 @@ export function handleGetReservationDetails(db, args = {}) {
   }
 
   const canonicalCode = matched.code || matched.reservationCode || (matched.flatNumber && matched.id != null ? `RES-${matched.flatNumber}-${String(matched.id).padStart(4, "0")}` : `RES-${matched.flatNumber}`);
-  const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
+  const isPreReservaUnpaid = matched.status === "pre_reserva" || matched.status === "pendente";
+  const isCheckinRelevant = !isCheckoutCompleted && !isPreReservaUnpaid && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
   const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
   const isHosted = !isCheckoutCompleted && (stayStatus === "em_estadia" || isCheckoutDay);
-  const checkoutUrl = isCheckoutCompleted
+  const checkoutUrl = isCheckoutCompleted || isPreReservaUnpaid
     ? null
     : `${appOrigin}/checkout/${canonicalCode}`;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
 
+  const senderPhoneForPrivacy = args.requesterPhone || args.phone || args.guestPhone || "";
+  const hideFin = args.requesterRole !== "admin" && isNonRequesterGuestForReservation(matched, senderPhoneForPrivacy, db);
+  const recipientsInfo = getReservationRecipients(matched, db);
   let operationalGuidance = "";
-  if (isCheckoutCompleted) {
+  if (isPreReservaUnpaid) {
+    operationalGuidance = hideFin
+      ? `PRÉ-RESERVA EM CONFIRMAÇÃO COM O SOLICITANTE (${recipientsInfo.requester.name}). NUNCA enviar cobrança, valor ou PIX ao hóspede. Informar apenas que a reserva está em processo de confirmação junto ao solicitante responsável.`
+      : "PRÉ-RESERVA AGUARDANDO PAGAMENTO (status pre_reserva). NUNCA enviar link de pré-check-in digital e NUNCA liberar entrada na portaria antes da confirmação do pagamento. Orientar o hóspede a concluir o pagamento via PIX ou Cartão no Portal do Hóspede para confirmar a reserva.";
+  } else if (isCheckoutCompleted) {
     operationalGuidance = "CHECK-OUT JÁ CONCLUÍDO PELO HÓSPEDE (estadia encerrada e saída já confirmada). NUNCA cobrar desocupação até as 12:00h e NUNCA enviar link de check-out ou de pré-check-in. Caso o hóspede pergunte sobre a reserva ou check-out, confirme que o check-out já foi concluído com sucesso e agradeça pela estadia.";
   } else if (isCheckoutDay) {
     operationalGuidance = "HÓSPEDE EM DIA DE CHECK-OUT HOJE (saída hoje até as 12:00h). NUNCA enviar link de pré-check-in digital. Informar sobre horário limite de saída até 12:00h, orientar sobre procedimentos de desocupação e devolução de chaves, perguntar se deseja prorrogação (late check-out) mediante disponibilidade ou verificar se já desocupou o flat. Fornecer link de confirmação de check-out.";
@@ -3036,9 +3074,11 @@ export function handleGetReservationDetails(db, args = {}) {
       checkoutDate: matched.checkoutDate,
       flatNumber: matched.flatNumber,
       status: matched.status,
-      paymentStatus: matched.paymentStatus,
+      paymentStatus: hideFin ? undefined : matched.paymentStatus,
       channel: matched.channel,
-      totalAmount: matched.totalAmount,
+      totalAmount: hideFin ? undefined : matched.totalAmount,
+      hideFinancialForGuest: hideFin,
+      requesterName: recipientsInfo?.requester?.isDifferentFromGuest ? recipientsInfo.requester.name : null,
       stayStatus,
       isCheckinRelevant,
       isCheckoutDay,
@@ -3047,7 +3087,9 @@ export function handleGetReservationDetails(db, args = {}) {
       checkinUrl,
       rawCheckinUrl: isCheckinRelevant ? rawCheckinUrl : null,
       checkoutUrl,
-      operationalGuidance
+      operationalGuidance: hideFin
+        ? `${operationalGuidance} PRIVACIDADE FINANCEIRA: Esta reserva possui solicitante distinto (${recipientsInfo.requester.name}) responsável pelo pagamento. NUNCA informe valores, saldo, status de pagamento ou PIX ao hóspede.`.trim()
+        : operationalGuidance
     }
   };
 }
@@ -6774,7 +6816,9 @@ export function validateAndRefineResponse({
         const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
         const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
         const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
+        const hideFinGuest = Boolean(guestContext?.hideFinancialForGuest || r.hideFinancialForGuest);
         const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
+        const statusSuffix = hideFinGuest ? "" : ` (${paymentStr})`;
         const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
         const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
@@ -6782,17 +6826,17 @@ export function validateAndRefineResponse({
           replyText = ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
         } else if (guestContext.stayStatus === "checkout_hoje") {
           const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
         } else if (guestContext.stayStatus === "em_estadia") {
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
         } else if (guestContext.stayStatus === "checkin_hoje") {
           const linkUrl = r.checkinUrl || guestContext.checkinUrl;
           const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
         } else {
           const linkUrl = r.checkinUrl || guestContext.checkinUrl;
           const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
         }
       } else {
         replyText = ret(`Olá${name}! Não localizei nenhuma reserva confirmada para este número de WhatsApp no sistema. Se a reserva foi realizada em outro nome ou plataforma, me informe o *nome completo do titular* ou o *código da reserva* que consulto para você! 🛎️✨`);
@@ -6904,7 +6948,7 @@ export function getGreetingSalutation(messageText, name = "") {
  */
 export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null, history = []) {
   const text = (messageText || "").toLowerCase().trim();
-  const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
+  const kb = aiConfig?.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
   const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0].trim()}` : "";
   const greetingSalutation = getGreetingSalutation(messageText, name);
 
@@ -7316,6 +7360,17 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
+  // 0.68 Privacidade Financeira: Hóspede não-solicitante perguntando sobre pagamento/PIX da reserva existente
+  if (
+    guestContext?.hasReservation &&
+    (guestContext?.hideFinancialForGuest || guestContext?.reservation?.hideFinancialForGuest) &&
+    /\b(?:pix|pagamento|pagar|pago|paga|quitar|quitad[ao]|saldo|fatura|boleto|cobran[cç]a)\b/i.test(text) &&
+    !isReservationBookingRequest(text)
+  ) {
+    const reqLabel = guestContext.requesterName || guestContext.reservation?.requesterName || "o solicitante responsável pela reserva";
+    return ret(`Olá${name}! As informações financeiras e o pagamento desta reserva são tratados diretamente com *${reqLabel}* 🏨✨.\n\nPara você, posso ajudar com todas as orientações da sua estadia, como *Pré-Check-in Digital, Wi-Fi, horários de entrada/saída, garagem e café da manhã*. Como posso te ajudar? 😊`);
+  }
+
   // 0.7 Consulta sobre Reserva Existente / Confirmação de Reserva (Prioridade para quem já tem reserva)
   const hasSpecificTopicOrOperationalDemand = (
     queryAnalysis.type === "OPERATIONAL_DEMAND" ||
@@ -7341,7 +7396,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
       const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
       const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
+      const hideFinGuest = Boolean(guestContext?.hideFinancialForGuest || r.hideFinancialForGuest);
       const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
+      const statusSuffix = hideFinGuest ? "" : ` (${paymentStr})`;
       const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
       const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
@@ -7353,25 +7410,25 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       // 1. Check-out hoje (Hóspede já hospedado, hoje é a data de saída até 12:00h - NUNCA mandar pré-check-in)
       if (guestContext.stayStatus === "checkout_hoje") {
         const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
-        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
       }
 
       // 2. Em estadia (Hóspede já hospedado, saída em data futura - NUNCA mandar pré-check-in)
       if (guestContext.stayStatus === "em_estadia") {
-        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
       }
 
       // 3. Check-in hoje (Chegada hoje a partir das 14:00h)
       if (guestContext.stayStatus === "checkin_hoje") {
         const linkUrl = r.checkinUrl || guestContext.checkinUrl;
         const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
       }
 
       // 4. Reserva futura
       const linkUrl = r.checkinUrl || guestContext.checkinUrl;
       const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
     } else {
       const displayPhone = clientPhone ? ` (*${formatPhoneDisplay ? formatPhoneDisplay(clientPhone) : clientPhone}*)` : "";
       return ret(`Olá${name}! Não localizei nenhuma reserva ativa ou futura confirmada para este número de WhatsApp${displayPhone} no nosso sistema.\n\nSe a sua reserva foi realizada em outro nome, com outro telefone ou por plataformas como Booking.com ou Airbnb, por favor me informe o seu *nome completo* ou o *código da reserva* para que eu possa verificar com a nossa equipe! 🛎️✨`);
@@ -8122,7 +8179,7 @@ ${formattedFaqs}
 - Possui reserva: ${guestContext.hasReservation ? "SIM" : "NÃO"}
 ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber || "A definir"}
 - Período da reserva: ${guestContext.reservation?.checkinDate} até ${guestContext.reservation?.checkoutDate}
-- Status da reserva: ${guestContext.isCheckoutCompleted ? "checkout_concluido (Estadia encerrada)" : guestContext.reservation?.status}
+- Status da reserva: ${guestContext.isCheckoutCompleted ? "checkout_concluido (Estadia encerrada)" : guestContext.reservation?.status}${guestContext.hideFinancialForGuest ? `\n- PRIVACIDADE FINANCEIRA (SOLICITANTE DISTINTO): Esta reserva foi solicitada por ${guestContext.requesterName || "outro responsável"}. NUNCA informe valores, saldo, status de pagamento nem gere/envie PIX ou cobrança para este hóspede. Caso ele pergunte sobre pagamento da reserva, informe cordialmente que o acerto financeiro é tratado diretamente com o solicitante.` : ""}
 - Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / check-out concluído / sem relevância)"}
 ${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 ${preAnalysis.promptBlock}
