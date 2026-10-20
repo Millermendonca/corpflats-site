@@ -7728,7 +7728,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   // 5. Check-in / Horário de Entrada
-  if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
+  if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/check-?in\s+(?:online|digital)|pr[eé]-?check-?in|ficha(?:\s+de\s+check-?in)?|link(?:\s+do|\s+de)?\s+check-?in/i.test(text)) {
     return ret(`${greetingSalutation} O horário padrão de check-in é a partir das *${kb.checkinTime}* 🔑.\n\nPara reservas diretas, o early check-in a partir das 10h é gratuito mediante disponibilidade de liberação pela governança.`);
   }
 

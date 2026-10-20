@@ -244,6 +244,55 @@ export class FnrhSerproClient {
       }
 
       if (!res.ok) {
+        // Auto-detecção inteligente de ambiente (Homologação <-> Produção) em caso de HTTP 401
+        if (res.status === 401 && !process.env.SERPRO_ENV && !options._retriedAltEnv) {
+          const altEnv = config.env === "homologacao" ? "producao" : "homologacao";
+          const altBaseUrl = (SERPRO_BASE_URLS[altEnv] || "").replace(/\/+$/, "");
+          if (altBaseUrl) {
+            const altController = new AbortController();
+            const altTimer = setTimeout(() => altController.abort(), timeoutMs);
+            const altStart = Date.now();
+            try {
+              const altRes = await fetch(`${altBaseUrl}${cleanEndpoint}`, {
+                ...options,
+                _retriedAltEnv: true,
+                headers,
+                signal: altController.signal
+              });
+              if (altRes.ok) {
+                const altLatencyMs = Date.now() - altStart;
+                const altText = await altRes.text();
+                let altData = null;
+                try {
+                  altData = altText ? JSON.parse(altText) : null;
+                } catch (_) {
+                  altData = { rawText: altText };
+                }
+                // Atualiza em memória a configuração para o ambiente válido detectado
+                if (settingsOverride?.serproConfig && typeof settingsOverride.serproConfig === "object") {
+                  settingsOverride.serproConfig.env = altEnv;
+                } else if (settingsOverride?.db?.settings?.serproConfig && typeof settingsOverride.db.settings.serproConfig === "object") {
+                  settingsOverride.db.settings.serproConfig.env = altEnv;
+                } else if (settingsOverride && typeof settingsOverride === "object" && "env" in settingsOverride) {
+                  settingsOverride.env = altEnv;
+                }
+                this.initialConfig.env = altEnv;
+                console.log(`[FNRH SERPRO] Ambiente auto-ajustado automaticamente de '${config.env}' para '${altEnv}' após validação das credenciais.`);
+                return {
+                  status: altRes.status,
+                  latencyMs: altLatencyMs,
+                  data: altData,
+                  detectedEnv: altEnv
+                };
+              }
+            } catch (_) {
+              // Ignora erro do fallback de ambiente e lança o erro original abaixo
+            } finally {
+              clearTimeout(altTimer);
+            }
+          }
+        }
+
         const errorMsg = data?.message || data?.error || (data?.erros ? JSON.stringify(data.erros) : `HTTP ${res.status} ${res.statusText}`);
         const err = new Error(`SERPRO_API_ERROR [HTTP ${res.status}]: ${errorMsg}`);
         err.status = res.status;
@@ -469,13 +518,17 @@ export class FnrhSerproClient {
       const latencyMs = Date.now() - startTime;
       const situacoes = res.data?.dados || [];
 
+      const resolvedEnv = res.detectedEnv || config.env;
+      const resolvedBaseUrl = (SERPRO_BASE_URLS[resolvedEnv] || config.baseUrl).replace(/\/+$/, "");
+
       return {
         ok: true,
         status: "healthy",
         statusCode: res.status,
         latencyMs,
-        env: config.env,
-        baseUrl: config.baseUrl,
+        env: resolvedEnv,
+        baseUrl: resolvedBaseUrl,
+        detectedEnv: res.detectedEnv || undefined,
         message: `Conexão com a API FNRH SERPRO operacional (${situacoes.length} situações carregadas).`,
         timestamp
       };

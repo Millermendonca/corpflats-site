@@ -8625,7 +8625,7 @@ function saveDatabase(reason = "auto_save") {
     invalidateGuestCache();
     invalidateFlatsCache();
 
-    if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason === "shutdown") {
+    if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason.startsWith("settings_") || reason === "shutdown") {
       if (localSaveTimeout) {
         clearTimeout(localSaveTimeout);
         localSaveTimeout = null;

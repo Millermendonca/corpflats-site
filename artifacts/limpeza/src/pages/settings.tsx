@@ -67,7 +67,8 @@ export default function SystemSettings() {
     try {
       await updateSettings.mutateAsync({
         data: {
-          checkinProvider: nextProvider
+          checkinProvider: nextProvider,
+          validateConnection: true
         } as any
       })
       queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() })
@@ -328,9 +329,6 @@ export default function SystemSettings() {
     fetchGeminiConfig()
   }, [])
 
-  if (loadingUser) return null
-  if (user?.role !== "dev") return <Shell><AccessDenied /></Shell>
-
   useEffect(() => {
     if (settings?.serproConfig) {
       if (settings.serproConfig.user) setSerproUser(settings.serproConfig.user)
@@ -339,6 +337,9 @@ export default function SystemSettings() {
       if (settings.serproConfig.hasPassword) setSerproHasPassword(true)
     }
   }, [settings])
+
+  if (loadingUser) return null
+  if (user?.role !== "dev") return <Shell><AccessDenied /></Shell>
 
   // Handlers de Ações Técnicas
   const handleSaveSerpro = async (e: React.FormEvent) => {
@@ -780,12 +781,11 @@ export default function SystemSettings() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Opção 1: Check-in Próprio */}
               <div
-                onClick={() => (!togglingProvider && isGovActive) && handleToggleCheckinProvider(false)}
                 className={cn(
-                  "relative p-5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3",
+                  "relative p-5 rounded-2xl border-2 transition-all flex flex-col justify-between space-y-3",
                   !isGovActive
                     ? "border-sky-500 bg-sky-50/40 dark:bg-sky-950/20 shadow-xs"
-                    : "border-border/70 hover:border-border bg-card/60 opacity-80 hover:opacity-100"
+                    : "border-border/70 bg-card/60 opacity-85"
                 )}
               >
                 <div className="space-y-2">
@@ -807,20 +807,32 @@ export default function SystemSettings() {
                   </p>
                 </div>
 
-                <div className="text-[11px] font-semibold text-sky-700 dark:text-sky-300 pt-1 border-t border-sky-200/40 dark:border-sky-800/40 flex items-center justify-between">
-                  <span>URL gerada: /pre-checkin/:codigo</span>
-                  {!isGovActive && <span className="font-bold">✓ Selecionado</span>}
+                <div className="text-[11px] font-semibold text-sky-700 dark:text-sky-300 pt-2 border-t border-sky-200/40 dark:border-sky-800/40 flex flex-wrap items-center justify-between gap-2">
+                  <span>Fluxo completo: /pre-checkin/:codigo</span>
+                  {!isGovActive ? (
+                    <span className="font-bold">✓ Selecionado</span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={togglingProvider}
+                      onClick={() => handleToggleCheckinProvider(false)}
+                      className="h-7 text-[11px] font-bold rounded-xl border-sky-300 text-sky-700 hover:bg-sky-50"
+                    >
+                      Ativar Check-in Próprio
+                    </Button>
+                  )}
                 </div>
               </div>
 
               {/* Opção 2: Check-in Gov.br FNRH */}
               <div
-                onClick={() => (!togglingProvider && !isGovActive) && handleToggleCheckinProvider(true)}
                 className={cn(
-                  "relative p-5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3",
+                  "relative p-5 rounded-2xl border-2 transition-all flex flex-col justify-between space-y-3",
                   isGovActive
                     ? "border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs"
-                    : "border-border/70 hover:border-border bg-card/60 opacity-80 hover:opacity-100"
+                    : "border-border/70 bg-card/60 opacity-85"
                 )}
               >
                 <div className="space-y-2">
@@ -838,29 +850,43 @@ export default function SystemSettings() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Integração com a API SERPRO v2.4.2 do Ministério do Turismo. Cadastra reservas automaticamente e gera o link oficial com autenticação Gov.br para os hóspedes, com contingência automática inteligente.
+                    Fluxo híbrido (Triagem Rápida Soho/Garagem + FNRH Digital SERPRO v2.4.2): coleta dados operacionais da portaria e garagem (placa/modelo/cor e foto do documento) e redireciona para assinatura oficial Gov.br, com contingência automática.
                   </p>
                 </div>
 
                 <div className="pt-2 border-t border-emerald-200/40 dark:border-emerald-800/40 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                    <span>URL gerada: fnrh.turismo.gov.br</span>
-                    {isGovActive && <span className="font-bold ml-1.5">✓ Selecionado</span>}
+                  <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                    <span>Triagem Soho + fnrh.turismo.gov.br</span>
+                    {isGovActive && <span className="font-bold">✓ Selecionado</span>}
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSerproStatusMsg(null);
-                      setSerproModalOpen(true);
-                    }}
-                    className="h-7 text-[11px] font-bold gap-1.5 rounded-xl border-emerald-300 dark:border-emerald-700 bg-white/90 dark:bg-emerald-950/70 hover:bg-emerald-50 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 shadow-xs"
-                  >
-                    <Key className="w-3 h-3 text-emerald-600" />
-                    <span>Configurar Credenciais FNRH</span>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {!isGovActive && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={togglingProvider}
+                        onClick={() => handleToggleCheckinProvider(true)}
+                        className="h-7 text-[11px] font-bold rounded-xl border-emerald-400 text-emerald-700 hover:bg-emerald-50"
+                      >
+                        Ativar Gov.br
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSerproStatusMsg(null);
+                        setSerproModalOpen(true);
+                      }}
+                      className="h-7 text-[11px] font-bold gap-1.5 rounded-xl border-emerald-300 dark:border-emerald-700 bg-white/90 dark:bg-emerald-950/70 hover:bg-emerald-50 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 shadow-xs"
+                    >
+                      <Key className="w-3 h-3 text-emerald-600" />
+                      <span>Configurar Credenciais FNRH</span>
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

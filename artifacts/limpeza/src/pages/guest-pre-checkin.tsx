@@ -235,6 +235,13 @@ export default function GuestPreCheckin() {
   const [termsModalTab, setTermsModalTab] = useState<"rules" | "contract">("rules")
   const [settings, setSettings] = useState<any>(null)
   const [siteConfig, setSiteConfig] = useState<any>(null)
+  const [checkinProvider, setCheckinProvider] = useState<string>("proprio")
+  const [serproPrecheckinUrl, setSerproPrecheckinUrl] = useState<string | null>(null)
+  const resolvedSerproUrl = serproPrecheckinUrl || reservation?.serproPrecheckinUrl || reservation?.link_precheckin || null
+  const isGovTriagemMode = Boolean(
+    (checkinProvider === "gov_fnrh" || settings?.checkinProvider === "gov_fnrh") &&
+    resolvedSerproUrl
+  )
 
   // Token OTP via WhatsApp / E-mail (2FA - Duplo Fator de Autenticação)
   const [whatsappOtpInput, setWhatsappOtpInput] = useState("")
@@ -390,12 +397,13 @@ export default function GuestPreCheckin() {
 
   // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
   useEffect(() => {
+    if (isGovTriagemMode) return
     const isTitular = selectedGuestIndex === 1
     const targetPhone = phone || (isTitular ? reservation?.guestPhone : "")
     if (step === 3 && !otpSent && targetPhone && !isTokenSessionExpired) {
       handleSendOtp("whatsapp")
     }
-  }, [step, otpSent, phone, selectedGuestIndex, reservation?.guestPhone, isTokenSessionExpired])
+  }, [step, otpSent, phone, selectedGuestIndex, reservation?.guestPhone, isTokenSessionExpired, isGovTriagemMode])
 
   // Canvas for signature
 
@@ -852,6 +860,12 @@ export default function GuestPreCheckin() {
               setTokenSecondsRemaining(0)
             }
           }
+          if (data.checkinProvider) {
+            setCheckinProvider(data.checkinProvider)
+          }
+          if (data.serproPrecheckinUrl) {
+            setSerproPrecheckinUrl(data.serproPrecheckinUrl)
+          }
           if (data.reservation) {
             setReservation(data.reservation)
             loadGuestData(data, selectedGuestIndex)
@@ -1163,7 +1177,7 @@ export default function GuestPreCheckin() {
   }
 
   const handleSubmit = async () => {
-    if (otpSent && whatsappOtpInput.trim().length !== 6) {
+    if (!isGovTriagemMode && otpSent && whatsappOtpInput.trim().length !== 6) {
       alert("Por favor, informe o código de 6 dígitos recebido no seu WhatsApp para confirmar a assinatura.")
       return
     }
@@ -1192,6 +1206,7 @@ export default function GuestPreCheckin() {
           guestIndex: selectedGuestIndex,
           token: signatureToken || (typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("token") || "") : ""),
           whatsappOtp: whatsappOtpInput.trim(),
+          govTriagemMode: isGovTriagemMode,
           resign: isReSignatureNeeded ? "1" : undefined,
           isReSignature: isReSignatureNeeded,
           fullName,
@@ -1326,11 +1341,27 @@ export default function GuestPreCheckin() {
         } else if (resData.reservation?.guestCode) {
           setGuestCode(resData.reservation.guestCode)
         }
+        if (resData.serproPrecheckinUrl) {
+          setSerproPrecheckinUrl(resData.serproPrecheckinUrl)
+        }
+        if (resData.checkinProvider) {
+          setCheckinProvider(resData.checkinProvider)
+        }
         setIsCompleted(true)
         setIsEditing(false)
         setSuccess(true)
 
-        if (isReSignatureNeeded || resData.wasReSignature) {
+        const targetGovUrl = resData.serproPrecheckinUrl || resolvedSerproUrl
+        if (isGovTriagemMode && targetGovUrl && typeof window !== "undefined") {
+          try {
+            const win = window.open(targetGovUrl, "_blank")
+            if (!win) {
+              setTimeout(() => {
+                window.location.href = targetGovUrl
+              }, 1200)
+            }
+          } catch {}
+        } else if (isReSignatureNeeded || resData.wasReSignature) {
           // Fast-track: Redireciona com confirmação de sucesso de volta ao Portal do Hóspede
           const targetCode = resData.reservation?.code || reservation?.code || code
           setTimeout(() => {
@@ -1705,7 +1736,33 @@ export default function GuestPreCheckin() {
 
         {/* Main Certificate Container */}
         <main className="max-w-3xl w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 sm:space-y-5 pb-20">
-          
+          {isGovTriagemMode && resolvedSerproUrl && (
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 text-white rounded-2xl border-2 border-emerald-400/60 shadow-lg space-y-3 print:hidden">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="space-y-1">
+                  <Badge className="bg-emerald-400/20 text-emerald-200 border border-emerald-400/40 text-[10px] font-bold">
+                    ✓ Etapa 1 Concluída (Portaria Soho & Garagem)
+                  </Badge>
+                  <h3 className="text-sm sm:text-base font-black text-white">
+                    Etapa 2 Obrigatória: Finalizar FNRH Digital no Portal Gov.br
+                  </h3>
+                  <p className="text-xs text-emerald-100/90 leading-relaxed">
+                    Seus dados de acesso ao condomínio e veículo já foram liberados para a recepção. Agora clique abaixo para assinar a Ficha Oficial do Ministério do Turismo com sua conta Gov.br:
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => window.open(resolvedSerproUrl, "_blank")}
+                  className="w-full sm:w-auto bg-white hover:bg-emerald-50 text-emerald-950 font-black text-xs sm:text-sm h-11 px-5 rounded-xl shadow-md gap-2 shrink-0"
+                >
+                  <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>Acessar FNRH Oficial no Gov.br</span>
+                  <ArrowRight className="w-4 h-4 shrink-0" />
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Top Actions Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 bg-white border border-slate-200/80 p-3 sm:p-4 rounded-2xl shadow-sm print:hidden">
             <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
@@ -2686,7 +2743,7 @@ export default function GuestPreCheckin() {
               <div className="border-b border-slate-100 pb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                   <User className="w-4 h-4 text-sky-600 shrink-0" />
-                  <span>1. Dados Cadastrais do Hóspede</span>
+                  <span>{isGovTriagemMode ? "1. Triagem Rápida da Portaria Soho & Garagem" : "1. Dados Cadastrais do Hóspede"}</span>
                 </h3>
                 {(guestCode || reservation?.guestCode) && (
                   <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-mono font-bold">
@@ -2694,6 +2751,18 @@ export default function GuestPreCheckin() {
                   </Badge>
                 )}
               </div>
+
+              {isGovTriagemMode && (
+                <div className="p-3.5 sm:p-4 bg-emerald-50/90 border border-emerald-300 rounded-2xl space-y-1.5 text-emerald-950 shadow-2xs">
+                  <div className="flex items-center gap-2 font-bold text-xs text-emerald-900">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Modo Check-in Oficial Gov.br Ativo (Fluxo Simplificado)</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    Aqui você preenche <strong>apenas os dados operacionais para liberação na portaria 24h do Edifício Soho e da garagem</strong> (nome, CPF, veículo e foto do documento). Os dados de endereço e viagem serão validados diretamente com sua conta <strong>Gov.br</strong> no final.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-3 sm:space-y-4">
                 <div className="space-y-1.5">
@@ -2881,6 +2950,7 @@ export default function GuestPreCheckin() {
                 </div>
 
                 {/* Endereço Residencial com Auto-Preenchimento e Campos Estruturados */}
+                {!isGovTriagemMode && (
                 <div className="space-y-3 p-4 bg-slate-50/70 border border-slate-200/80 rounded-2xl">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
@@ -2982,13 +3052,14 @@ export default function GuestPreCheckin() {
                     </div>
                   </div>
                 </div>
+                )}
 
-                {/* ── Seção Obrigatória MTur: Informações da Estadia Atual (NUNCA pré-preenchidas) ── */}
+                {/* ── Seção Obrigatória MTur / Transporte & Chegada ── */}
                 <div className="p-4 sm:p-5 bg-gradient-to-br from-sky-50/80 via-slate-50 to-indigo-50/50 border border-sky-200/90 rounded-2xl space-y-3.5 shadow-xs">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-sky-600 shrink-0" />
-                      <span>Informações da Estadia Atual (Exigência MTur - Lei 11.771/2008) *</span>
+                      <span>{isGovTriagemMode ? "Transporte & Previsão de Chegada (Garagem Soho) *" : "Informações da Estadia Atual (Exigência MTur - Lei 11.771/2008) *"}</span>
                     </span>
                     <div className="flex flex-wrap items-center gap-2">
                       {selectedGuestIndex > 1 && (
@@ -3005,10 +3076,13 @@ export default function GuestPreCheckin() {
                     </div>
                   </div>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Por exigência do Ministério do Turismo, informe os dados específicos desta viagem para emissão da FNRH:
+                    {isGovTriagemMode
+                      ? "Informe se você virá de veículo para cadastrarmos sua placa na portaria e garagem privativa do Edifício Soho:"
+                      : "Por exigência do Ministério do Turismo, informe os dados específicos desta viagem para emissão da FNRH:"}
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className={`grid grid-cols-1 ${isGovTriagemMode ? "sm:grid-cols-2" : "sm:grid-cols-3"} gap-3`}>
+                    {!isGovTriagemMode && (
                     <div className="space-y-1">
                       <Label className="text-xs font-bold text-slate-700">Motivo da Viagem *</Label>
                       <Select value={travelReason} onValueChange={setTravelReason}>
@@ -3025,6 +3099,7 @@ export default function GuestPreCheckin() {
                         </SelectContent>
                       </Select>
                     </div>
+                    )}
 
                     <div className="space-y-1">
                       <Label className="text-xs font-bold text-slate-700">Meio de Transporte *</Label>
@@ -3062,6 +3137,7 @@ export default function GuestPreCheckin() {
                   </div>
 
                   {/* Procedência e Destino */}
+                  {!isGovTriagemMode && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div className="space-y-1">
                       <Label className="text-xs font-bold text-slate-700">Última Procedência (De onde você veio?) *</Label>
@@ -3101,6 +3177,7 @@ export default function GuestPreCheckin() {
                       </div>
                     </div>
                   </div>
+                  )}
                 </div>
 
                 {/* 🚗 Garagem & Veículo Soho */}
@@ -3176,11 +3253,15 @@ export default function GuestPreCheckin() {
 
                 <Button 
                   onClick={() => {
-                    if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim() || (!address.trim() && !street.trim())) {
-                      alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone, Endereço e E-mail.")
+                    if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim()) {
+                      alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone e E-mail.")
                       return
                     }
-                    if (!streetNumber.trim() && !address.includes(",")) {
+                    if (!isGovTriagemMode && (!address.trim() && !street.trim())) {
+                      alert("Por favor, preencha seu Endereço Residencial.")
+                      return
+                    }
+                    if (!isGovTriagemMode && !streetNumber.trim() && !address.includes(",")) {
                       alert("Por favor, informe o Número do endereço residencial (ou S/N se não houver).")
                       numberInputRef.current?.focus()
                       return
@@ -3189,23 +3270,23 @@ export default function GuestPreCheckin() {
                       alert("Por favor, informe uma data de nascimento válida (DD/MM/AAAA) ou selecione no calendário.")
                       return
                     }
-                    if (!travelReason) {
+                    if (!isGovTriagemMode && !travelReason) {
                       alert("Por favor, selecione o Motivo da Viagem (exigência legal do Ministério do Turismo).")
                       return
                     }
                     if (!transportMethod) {
-                      alert("Por favor, selecione o Meio de Transporte utilizado (exigência legal do Ministério do Turismo).")
+                      alert("Por favor, selecione o Meio de Transporte utilizado.")
                       return
                     }
                     if (isCarTransport && !vehiclePlate.trim()) {
                       alert("Por favor, informe a Placa do Veículo para liberarmos sua entrada na garagem.")
                       return
                     }
-                    if (!originCity.trim() || !originState.trim()) {
+                    if (!isGovTriagemMode && (!originCity.trim() || !originState.trim())) {
                       alert("Por favor, informe a Última Procedência (Cidade e UF de onde veio).")
                       return
                     }
-                    if (!destinationCity.trim() || !destinationState.trim()) {
+                    if (!isGovTriagemMode && (!destinationCity.trim() || !destinationState.trim())) {
                       alert("Por favor, informe o Próximo Destino (Cidade e UF para onde irá).")
                       return
                     }
@@ -3549,7 +3630,13 @@ export default function GuestPreCheckin() {
                   disabled={isRefreshingToken || aiInspectingDoc}
                   className="w-full sm:w-auto sm:flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-auto min-h-11 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md"
                 >
-                  <span>{isRefreshingToken ? "Gerando Sessão de Assinatura..." : "Avançar para Assinatura Eletrônica"}</span>
+                  <span>
+                    {isRefreshingToken
+                      ? "Preparando..."
+                      : isGovTriagemMode
+                      ? "Avançar para Aceite das Regras & Gov.br"
+                      : "Avançar para Assinatura Eletrônica"}
+                  </span>
                   <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
               </div>
@@ -3562,10 +3649,25 @@ export default function GuestPreCheckin() {
               <div className="border-b border-slate-100 pb-3">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                   <PenTool className="w-4 h-4 text-sky-600 shrink-0" />
-                  <span>3. Assinatura Digital com Validade Jurídica</span>
+                  <span>{isGovTriagemMode ? "3. Regras do Condomínio Soho & Prosseguir para o Gov.br" : "3. Assinatura Digital com Validade Jurídica"}</span>
                 </h3>
               </div>
 
+              {isGovTriagemMode ? (
+                <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-sky-50 border-2 border-emerald-300 rounded-2xl space-y-2.5 shadow-xs">
+                  <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs sm:text-sm">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span>Assinatura Oficial via Gov.br (Sem Dupla Assinatura)</span>
+                  </div>
+                  <p className="text-xs text-slate-700 leading-relaxed">
+                    Como o modo <strong>FNRH Digital Oficial (Gov.br)</strong> está ativo, você <strong>não precisa desenhar assinatura na tela nem aguardar código no WhatsApp</strong> nesta etapa.
+                  </p>
+                  <p className="text-xs text-emerald-900 font-medium leading-relaxed">
+                    Basta marcar abaixo a ciência das Regras do Edifício Soho Residence para liberarmos imediatamente sua portaria 24h e garagem, e você será direcionado para concluir a Ficha Nacional no portal <strong>fnrh.turismo.gov.br</strong>.
+                  </p>
+                </div>
+              ) : (
+                <>
               {/* CARD DE SESSÃO SEGURA & VALIDADE DE 2 HORAS */}
               {isTokenSessionExpired ? (
                 <div className="p-4 sm:p-5 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3">
@@ -3796,6 +3898,8 @@ export default function GuestPreCheckin() {
                   </button>
                 </div>
               </div>
+              </>
+              )}
 
               {/* 🔒 Card de Segurança da Informação & Conformidade LGPD */}
               <div className="p-4 sm:p-5 bg-slate-900 border border-sky-500/40 rounded-2xl text-slate-200 space-y-3 shadow-lg">
@@ -3902,16 +4006,18 @@ export default function GuestPreCheckin() {
                   <ArrowLeft className="w-4 h-4 mr-1 shrink-0" /> Voltar
                 </Button>
                 <Button 
-                  disabled={loading || !signatureData || !legalDeclarationAccepted || isTokenSessionExpired || (otpSent && whatsappOtpInput.trim().length !== 6)}
+                  disabled={loading || !legalDeclarationAccepted || (!isGovTriagemMode && (!signatureData || isTokenSessionExpired || (otpSent && whatsappOtpInput.trim().length !== 6)))}
                   onClick={handleSubmit} 
                   className="w-full sm:w-auto sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ShieldCheck className="w-4 h-4 shrink-0" />
                   <span>
                     {loading 
-                      ? "Gerando Ficha e Auditoria..." 
-                      : isTokenSessionExpired 
+                      ? (isGovTriagemMode ? "Salvando Portaria e Abrindo Gov.br..." : "Gerando Ficha e Auditoria...")
+                      : (!isGovTriagemMode && isTokenSessionExpired)
                       ? "Sessão Expirada - Renove Acima para Concluir" 
+                      : isGovTriagemMode
+                      ? "Confirmar Dados da Portaria e Prosseguir para o Gov.br (FNRH)"
                       : "Confirmar Check-in e Gerar Ficha"}
                   </span>
                 </Button>

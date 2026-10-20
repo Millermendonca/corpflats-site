@@ -35,7 +35,10 @@ const isolatedDbPath = path.join(rootDir, `data/test-fnrh-toggle-db-${Date.now()
 
 let serverProcess = null;
 
-const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString("base64");
+const TEST_AUTH_SECRET = "test-fnrh-hmac-secret";
+const tokenPayloadB64 = Buffer.from(JSON.stringify({ v: 2, id: 1 }), "utf-8").toString("base64url");
+const tokenSig = crypto.createHmac("sha256", TEST_AUTH_SECRET).update(tokenPayloadB64).digest("base64url");
+const adminToken = `${tokenPayloadB64}.${tokenSig}`;
 const adminHeaders = {
   "Content-Type": "application/json",
   "Authorization": `Bearer ${adminToken}`
@@ -65,6 +68,10 @@ before(async () => {
   };
   initialDb.auditLogs = [];
   initialDb.notifications = [];
+  if (Array.isArray(initialDb.users)) {
+    const u1 = initialDb.users.find(u => Number(u.id) === 1);
+    if (u1) u1.role = "dev";
+  }
   fs.writeFileSync(isolatedDbPath, JSON.stringify(initialDb, null, 2), "utf-8");
 
   // 2. Spawn live demo-server instance on isolated port
@@ -75,9 +82,10 @@ before(async () => {
       NODE_ENV: "test",
       DATABASE_URL: "",
       DATABASE_FILE: isolatedDbPath,
-      SERPRO_MOCK: "true"
+      SERPRO_MOCK: "true",
+      AUTH_SECRET: TEST_AUTH_SECRET
     },
-    stdio: "pipe"
+    stdio: "ignore"
   });
 
   // 3. Wait for live test server to become ready
@@ -177,6 +185,97 @@ describe("AC 1: Alternância e Persistência do Provedor de Check-in", () => {
     const checkRes = await fetch(`${BASE_URL}/api/settings`);
     const checkData = await checkRes.json();
     assert.strictEqual(checkData.checkinProvider, "proprio");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUITE 1B: Fluxo Híbrido Opção 2B (Triagem Rápida Soho/Garagem + Gov.br) & Ciclo de Vida PMS
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Suite 1B: Fluxo Híbrido (Triagem Rápida Soho/Garagem + Gov.br) e Sincronização de Cancelamento", () => {
+  let testReservation = null;
+
+  it("1B.1 Cria reserva e garante lazy-registration SERPRO no GET /api/pms/pre-checkin/:code quando gov_fnrh ativo", async () => {
+    await fetch(`${BASE_URL}/api/settings`, {
+      method: "PATCH",
+      headers: adminHeaders,
+      body: JSON.stringify({ checkinProvider: "gov_fnrh" })
+    });
+
+    const createRes = await fetch(`${BASE_URL}/api/pms/reservations`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        flatId: 1,
+        guestName: "Carlos Eduardo GovTriagem",
+        guestPhone: "22999112233",
+        guestEmail: "carlos.gov@teste.com",
+        guestDocument: "12345678909",
+        checkinDate: "2026-12-01",
+        checkoutDate: "2026-12-05",
+        adults: 1,
+        children: 0,
+        totalAmount: 800,
+        status: "confirmada"
+      })
+    });
+    assert.strictEqual(createRes.status, 201);
+    testReservation = await createRes.json();
+    assert.ok(testReservation.code);
+
+    const preRes = await fetch(`${BASE_URL}/api/pms/pre-checkin/${testReservation.code}`);
+    assert.strictEqual(preRes.status, 200);
+    const preData = await preRes.json();
+    assert.strictEqual(preData.checkinProvider, "gov_fnrh");
+    assert.ok(preData.serproPrecheckinUrl && preData.serproPrecheckinUrl.startsWith("https://fnrh.turismo.gov.br/precheckin/"));
+  });
+
+  it("1B.2 POST /api/pms/pre-checkin em govTriagemMode salva veículo/portaria sem exigir OTP de 6 dígitos e retorna link Gov.br", async () => {
+    const postRes = await fetch(`${BASE_URL}/api/pms/pre-checkin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: testReservation.code,
+        reservationId: testReservation.id,
+        guestIndex: 1,
+        govTriagemMode: true,
+        fullName: "Carlos Eduardo GovTriagem",
+        phone: "22999112233",
+        email: "carlos.gov@teste.com",
+        document: "12345678909",
+        birthDate: "1988-05-15",
+        transportMethod: "Carro próprio",
+        vehiclePlate: "RJA1B23",
+        vehicleBrand: "Toyota",
+        vehicleModel: "Corolla",
+        vehicleColor: "Prata",
+        legalDeclarationAccepted: true,
+        legalTermsAccepted: true
+      })
+    });
+    assert.strictEqual(postRes.status, 200);
+    const postData = await postRes.json();
+    assert.strictEqual(postData.success, true);
+    assert.strictEqual(postData.checkinProvider, "gov_fnrh");
+    assert.ok(postData.serproPrecheckinUrl && postData.serproPrecheckinUrl.startsWith("https://fnrh.turismo.gov.br/precheckin/"));
+    assert.strictEqual(postData.reservation.vehicle?.plate, "RJA1B23");
+  });
+
+  it("1B.3 Cancelamento de reserva no PMS sincroniza status CANCELADA no SERPRO FNRH", async () => {
+    const cancelRes = await fetch(`${BASE_URL}/api/pms/reservations/${testReservation.id}`, {
+      method: "PUT",
+      headers: adminHeaders,
+      body: JSON.stringify({ status: "cancelada" })
+    });
+    assert.strictEqual(cancelRes.status, 200);
+    const canceledData = await cancelRes.json();
+    assert.strictEqual(canceledData.serproStatus, "CANCELADA");
+
+    // Restaura modo proprio
+    await fetch(`${BASE_URL}/api/settings`, {
+      method: "PATCH",
+      headers: adminHeaders,
+      body: JSON.stringify({ checkinProvider: "proprio" })
+    });
   });
 });
 
