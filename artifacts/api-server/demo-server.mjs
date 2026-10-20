@@ -40224,6 +40224,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       imageHeight = "630";
     }
 
+    if (rawPath.startsWith("/whatsapp-chat") || rawPath.startsWith("/chat-whatsapp") || rawPath.startsWith("/whatsapp-web") || rawPath === "/chat") { title = "CF WhatsApp • Chat & Sofia IA"; desc = "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real."; }
     const pageUrl = `https://corpflats.onrender.com${req.originalUrl || req.url || req.path}`;
 
     html = html
@@ -40254,6 +40255,111 @@ function serveSpaWithMetadata(distFolder, req, res) {
     return res.sendFile(indexPath);
   }
 }
+
+// ── Ícone PNG Nativo para Instalação do PWA CorpFlats WhatsApp (/api/pwa/chat-icon.png) ──
+const pwaIconCache = new Map();
+function buildPwaChatPngBuffer(size = 192) {
+  const dim = size === 512 ? 512 : 192;
+  if (pwaIconCache.has(dim)) return pwaIconCache.get(dim);
+
+  const rawData = Buffer.alloc((dim * 4 + 1) * dim);
+  const center = dim / 2;
+  const bubbleRadius = dim * 0.31;
+
+  for (let y = 0; y < dim; y++) {
+    const rowStart = y * (dim * 4 + 1);
+    rawData[rowStart] = 0; // filtro None
+    for (let x = 0; x < dim; x++) {
+      const px = rowStart + 1 + x * 4;
+      const dx = x - center;
+      const dy = y - center * 0.96;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Cauda do balão do WhatsApp no canto inferior esquerdo
+      const inTail =
+        x >= dim * 0.20 &&
+        x <= dim * 0.38 &&
+        y >= dim * 0.56 &&
+        y <= dim * 0.78 &&
+        (x - dim * 0.20) * 1.1 >= (y - dim * 0.56) * 0.5;
+
+      // Badge roxo da Sofia IA no canto superior direito
+      const sdx = x - dim * 0.74;
+      const sdy = y - dim * 0.26;
+      const sDist = Math.sqrt(sdx * sdx + sdy * sdy);
+
+      if (sDist <= dim * 0.095) {
+        // Ponto central dourado (estrela Sofia) ou círculo roxo
+        if (Math.abs(sdx) + Math.abs(sdy) <= dim * 0.045) {
+          rawData[px] = 253; rawData[px + 1] = 224; rawData[px + 2] = 71; rawData[px + 3] = 255;
+        } else {
+          rawData[px] = 124; rawData[px + 1] = 58; rawData[px + 2] = 237; rawData[px + 3] = 255;
+        }
+      } else if (dist <= bubbleRadius || inTail) {
+        // Interior verde escuro (símbolo de telefone/chat) ou balão branco
+        const innerHole = dist <= bubbleRadius * 0.52 && (dx + dy > -bubbleRadius * 0.25) && (dx * dx + dy * dy > (bubbleRadius * 0.22) ** 2);
+        if (innerHole) {
+          rawData[px] = 0; rawData[px + 1] = 128; rawData[px + 2] = 105; rawData[px + 3] = 255;
+        } else {
+          rawData[px] = 255; rawData[px + 1] = 255; rawData[px + 2] = 255; rawData[px + 3] = 255;
+        }
+      } else {
+        // Gradiente Verde WhatsApp (#128C7E -> #075E54)
+        const ratio = (x + y) / (dim * 2);
+        rawData[px] = Math.round(22 * (1 - ratio) + 7 * ratio);
+        rawData[px + 1] = Math.round(163 * (1 - ratio) + 94 * ratio);
+        rawData[px + 2] = Math.round(106 * (1 - ratio) + 84 * ratio);
+        rawData[px + 3] = 255;
+      }
+    }
+  }
+
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    crcTable[n] = c >>> 0;
+  }
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const makeChunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const typeBuf = Buffer.from(type, "ascii");
+    const crcBuf = Buffer.alloc(4);
+    crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+    return Buffer.concat([len, typeBuf, data, crcBuf]);
+  };
+
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(dim, 0);
+  ihdr.writeUInt32BE(dim, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+
+  const compressed = zlib.deflateSync(rawData);
+  const pngBuffer = Buffer.concat([
+    signature,
+    makeChunk("IHDR", ihdr),
+    makeChunk("IDAT", compressed),
+    makeChunk("IEND", Buffer.alloc(0))
+  ]);
+  pwaIconCache.set(dim, pngBuffer);
+  return pngBuffer;
+}
+
+app.get("/api/pwa/chat-icon.png", (req, res) => {
+  const size = Number(req.query.size) === 512 ? 512 : 192;
+  const buf = buildPwaChatPngBuffer(size);
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.send(buf);
+});
 
 // ── Página Oficial de Cópia Rápida de PIX (/copiar-pix/:code) ─────────────────
 app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) => {

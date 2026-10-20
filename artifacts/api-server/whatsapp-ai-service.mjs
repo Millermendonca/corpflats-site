@@ -11,7 +11,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp } from "./zapi-service.mjs";
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
   if (!reservation) return false;
@@ -2651,7 +2651,10 @@ function createPreReservationSync(db, args = {}) {
   const outDate = args.checkOut || args.checkout;
   const guestName = args.guestName;
   const guestPhone = args.guestPhone || "";
-  const flatId = args.flatId;
+  const fairDefault = (!args.flatId && inDate && outDate)
+    ? selectFairShareFlat(db, inDate, outDate)?.recommendedFlat
+    : null;
+  const flatId = args.flatId || fairDefault?.id || fairDefault?.number;
   const channel = args.channel || "whatsapp";
   const guests = Math.max(1, Number(args.guests || args.guestsCount || 1));
   const ratePlan = args.ratePlan || "room_only";
@@ -5687,7 +5690,7 @@ export function executeConversationalBookingStep({
     }
 
     if (avail.available && avail.flats.length > 0) {
-      // Seleciona o flat ideal de acordo com a preferência do hóspede ou comodidades
+      // Seleciona o flat ideal de acordo com a preferência do hóspede, comodidades ou Fair-Share (flat da vez)
       let selectedFlat = avail.flats[0];
       if (convState.preferredFlatNumber) {
         const matchByNum = avail.flats.find(f => String(f.number) === String(convState.preferredFlatNumber) || String(f.id) === String(convState.preferredFlatNumber));
@@ -5700,6 +5703,15 @@ export function executeConversationalBookingStep({
           return true;
         });
         if (matchByAmenity) selectedFlat = matchByAmenity;
+      } else {
+        const fairShare = selectFairShareFlat(db, convState.checkIn, convState.checkOut, convState.activePreReservation?.id || null);
+        if (fairShare && fairShare.recommendedFlat) {
+          const matchFair = avail.flats.find(f =>
+            String(f.number) === String(fairShare.recommendedFlat.number) ||
+            String(f.id) === String(fairShare.recommendedFlat.id)
+          );
+          if (matchFair) selectedFlat = matchFair;
+        }
       }
 
       const quoteChosen = canCalculateQuote
@@ -9388,7 +9400,15 @@ export async function processAiInboundMessage({
     }
   }
 
-  // 2. Verifica se o canal ai_agent está em Modo de Teste (independente de guest_schedule)
+  // 2. Obtém ou cria a conversa antes da checagem de modo de teste / pausa
+  let conv = (db?.whatsappConversations || []).find(c => {
+    const p = cleanWhatsAppPhone(c.phone);
+    return p && (p.endsWith(cleanTarget.slice(-8)) || cleanTarget.endsWith(p.slice(-8)));
+  });
+
+  const isDev = isDeveloperPhone(cleanTarget, db);
+
+  // 2.5. Verifica se o canal ai_agent está em Modo de Teste (independente de guest_schedule)
   const isAiTestMode = aiChannel
     ? Boolean(aiChannel.testMode)
     : (db?.zapiConfig?.aiAgent?.testMode !== undefined ? Boolean(db.zapiConfig.aiAgent.testMode) : Boolean(db?.zapiConfig?.testModeOnly));
@@ -9402,16 +9422,31 @@ export async function processAiInboundMessage({
       .filter(Boolean);
     const isAllowed = allowed.some(a => targetNorm.endsWith(a.slice(-8)) || a.endsWith(targetNorm.slice(-8)));
     if (!isAllowed && aiChannel?.redirectToWhitelistOnTest !== true) {
+      let activePreResTestEval = null;
+      if (!isDev && conv && isOperatorConductingConversation(conv, db, incomingInfo)) {
+        try {
+          activePreResTestEval = await evaluateAndNotifyActivePreReservation({
+            db,
+            conv,
+            cleanTarget,
+            incomingInfo,
+            saveDatabase,
+            createNotification,
+            sendZapiMessage,
+            appendMessageFn
+          });
+        } catch (err) {
+          console.warn("[Active Pre-Reservation Assistant] Erro ao avaliar conversa em modo de teste:", err.message);
+        }
+      }
       console.log(`[WhatsApp AI] Modo de Teste da IA ativo: mensagem de ${cleanTarget} ignorada pela IA.`);
-      return { skipped: true, reason: "test_mode_not_allowed" };
+      return {
+        skipped: true,
+        reason: "test_mode_not_allowed",
+        ...(activePreResTestEval ? { activePreReservation: activePreResTestEval } : {})
+      };
     }
   }
-
-  // 3. Obtém ou cria a conversa
-  let conv = (db?.whatsappConversations || []).find(c => {
-    const p = cleanWhatsAppPhone(c.phone);
-    return p && (p.endsWith(cleanTarget.slice(-8)) || cleanTarget.endsWith(p.slice(-8)));
-  });
 
   if (!conv && Array.isArray(db?.whatsappConversations)) {
     conv = {
@@ -9424,6 +9459,23 @@ export async function processAiInboundMessage({
       updatedAt: new Date().toISOString()
     };
     db.whatsappConversations.push(conv);
+  }
+
+  // 3.0. Assistente Ativa de Pré-Reservas: Intercepta resposta do gestor/desenvolvedor (22998505276)
+  if (isDev) {
+    const preResReply = await handleManagerPreReservationReply({
+      db,
+      cleanTarget,
+      messageText: incomingInfo.text,
+      conv,
+      sendZapiMessage,
+      appendMessageFn,
+      saveDatabase,
+      createNotification
+    });
+    if (preResReply && preResReply.handled) {
+      return preResReply;
+    }
   }
 
   // 3.1. Interceptador de Fluxo Fiscal WhatsApp (Milestone M3: Features F12 a F17)
@@ -9443,8 +9495,6 @@ export async function processAiInboundMessage({
     return fiscalResult;
   }
 
-  const isDev = isDeveloperPhone(cleanTarget, db);
-
   // Se a conversa estiver pausada manualmente (operador assumiu ou hóspede pediu humano)
   if (conv && conv.aiPaused === true) {
     if (isDev) {
@@ -9453,9 +9503,52 @@ export async function processAiInboundMessage({
       conv.aiPausedReason = null;
       conv.isDeveloper = true;
     } else {
+      let activePreResEval = null;
+      try {
+        activePreResEval = await evaluateAndNotifyActivePreReservation({
+          db,
+          conv,
+          cleanTarget,
+          incomingInfo,
+          saveDatabase,
+          createNotification,
+          sendZapiMessage,
+          appendMessageFn
+        });
+      } catch (err) {
+        console.warn("[Active Pre-Reservation Assistant] Erro ao avaliar conversa pausada:", err.message);
+      }
       console.log(`[WhatsApp AI] Conversa com ${cleanTarget} com IA pausada. Aguardando atendimento humano.`);
-      return { skipped: true, reason: "conversation_ai_paused" };
+      return {
+        skipped: true,
+        reason: "conversation_ai_paused",
+        ...(activePreResEval ? { activePreReservation: activePreResEval } : {})
+      };
     }
+  }
+
+  // Se o operador humano está conduzindo a conversa no histórico (mesmo que aiPaused não estivesse marcado)
+  if (!isDev && conv && conv.aiPaused !== false && hasHumanOperatorMessagesInConversation(conv, db)) {
+    let activePreResEval = null;
+    try {
+      activePreResEval = await evaluateAndNotifyActivePreReservation({
+        db,
+        conv,
+        cleanTarget,
+        incomingInfo,
+        saveDatabase,
+        createNotification,
+        sendZapiMessage,
+        appendMessageFn
+      });
+    } catch (err) {
+      console.warn("[Active Pre-Reservation Assistant] Erro ao avaliar conversa conduzida pelo operador:", err.message);
+    }
+    return {
+      skipped: true,
+      reason: "conversation_ai_paused",
+      ...(activePreResEval ? { activePreReservation: activePreResEval } : {})
+    };
   }
 
   // 3.5. Roteamento do Desenvolvedor (Tri-Modal Coaching Engine)
@@ -9582,8 +9675,29 @@ export async function processAiInboundMessage({
 
   // 4. Verifica Modo de Atuação
   if (aiConfig.mode === "copilot") {
+    let activePreResEval = null;
+    if (!isDev && conv) {
+      try {
+        activePreResEval = await evaluateAndNotifyActivePreReservation({
+          db,
+          conv,
+          cleanTarget,
+          incomingInfo,
+          saveDatabase,
+          createNotification,
+          sendZapiMessage,
+          appendMessageFn
+        });
+      } catch (err) {
+        console.warn("[Active Pre-Reservation Assistant] Erro ao avaliar conversa em modo copilot:", err.message);
+      }
+    }
     // Modo apenas Copiloto: não responde sozinho
-    return { skipped: true, reason: "mode_copilot_only" };
+    return {
+      skipped: true,
+      reason: "mode_copilot_only",
+      ...(activePreResEval ? { activePreReservation: activePreResEval } : {})
+    };
   }
 
   if (aiConfig.mode === "off_hours" && !isDev) {
@@ -9607,8 +9721,29 @@ export async function processAiInboundMessage({
     }
 
     if (!isOffHours) {
+      let activePreResEval = null;
+      if (conv) {
+        try {
+          activePreResEval = await evaluateAndNotifyActivePreReservation({
+            db,
+            conv,
+            cleanTarget,
+            incomingInfo,
+            saveDatabase,
+            createNotification,
+            sendZapiMessage,
+            appendMessageFn
+          });
+        } catch (err) {
+          console.warn("[Active Pre-Reservation Assistant] Erro ao avaliar conversa em horário comercial:", err.message);
+        }
+      }
       console.log(`[WhatsApp AI] Modo Fora do Expediente ativo, mas está em horário comercial (${brDate.toLocaleTimeString()}).`);
-      return { skipped: true, reason: "business_hours_active" };
+      return {
+        skipped: true,
+        reason: "business_hours_active",
+        ...(activePreResEval ? { activePreReservation: activePreResEval } : {})
+      };
     }
   }
 
@@ -9968,3 +10103,533 @@ Retorne EXCLUSIVAMENTE um objeto JSON no seguinte formato:
   };
 }
 
+
+/**
+ * Motor da Sofia Assistente Ativa em Tempo Real para o WhatsApp Web (/sofia-assist)
+ * Gera simultaneamente:
+ * 1. Sugestões de respostas prontas para a última mensagem do hóspede;
+ * 2. Ações operacionais no sistema (1 clique) conforme o teor da conversa;
+ * 3. Botões de envio rápido dinâmicos ordenados pelo momento da estadia e assunto atual.
+ */
+export async function generateSofiaRealtimeAssistance({
+  db,
+  phone,
+  draftText = "",
+  reservationCode = null,
+  skipLlm = false
+}) {
+  const cleanPhone = cleanWhatsAppPhone(phone) || normalizePhone(phone);
+  const conv = (db?.whatsappConversations || []).find(c => {
+    const p = cleanWhatsAppPhone(c.phone);
+    return p && cleanPhone && (p.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(p.slice(-8)));
+  });
+
+  const history = Array.isArray(conv?.messages) ? conv.messages : [];
+  const guestContext = buildGuestContext({ db, phone: cleanPhone, history });
+
+  let res = guestContext.reservation || null;
+  if (reservationCode && Array.isArray(db?.reservations)) {
+    const explicitRes = db.reservations.find(r => String(r?.code || "").toLowerCase() === String(reservationCode).toLowerCase());
+    if (explicitRes) res = explicitRes;
+  }
+
+  const guestName = res?.guestName || conv?.name || guestContext.guestName || "Hóspede";
+  const firstName = String(guestName).trim().split(/\s+/)[0] || "Hóspede";
+  const flatNumber = String(res?.flatNumber || conv?.flatNumber || guestContext.flatNumber || "").trim();
+  const resCode = String(res?.code || conv?.reservationCode || "").trim();
+  const stayStage = guestContext.stayStatus || (res ? "reserva_futura" : "sem_reserva");
+
+  const inboundMessages = history.filter(m => m && !m.fromMe && m.text);
+  const lastInbound = inboundMessages.length > 0 ? inboundMessages[inboundMessages.length - 1] : null;
+  const lastInboundText = String(lastInbound?.text || "").trim();
+  const recentGuestText = inboundMessages.slice(-3).map(m => m.text).join(" \n ");
+
+  const aiConfig = getWhatsAppAiConfig(db);
+  const preAnalysis = prepareAgenticPreAnalysis({
+    queryText: lastInboundText || draftText || "Olá",
+    guestContext,
+    db,
+    aiConfig,
+    history
+  });
+  const convState = preAnalysis.convState || {};
+
+  // 1. Detecção de Entidades e Intenções em Tempo Real
+  const lowerLast = lastInboundText.toLowerCase();
+
+  const plateMatch = lastInboundText.match(/\b([A-Z]{3}[-\s]?[0-9][A-Z0-9][0-9]{2})\b/i) ||
+                     recentGuestText.match(/\b(?:placa|carro|ve[ií]culo|garagem)[:\s-]*([A-Z]{3}[-\s]?[0-9][A-Z0-9][0-9]{2})\b/i);
+  const plateDetected = plateMatch ? plateMatch[1].replace(/[-\s]/g, "").toUpperCase() : null;
+
+  const carModelMatch = lastInboundText.match(/\b(corolla|hilux|compass|renegade|toro|onix|hb20|creta|tracker|t-cross|nivus|polo|virtus|gol|civic|hr-v|hrv|kicks|versa|sentra|strada|pulse|fastback|argo|cronos|mobi|ranger|s10|amarok|sw4|byd|dolphin|song|haval|bmw|mercedes|audi)\b/i);
+  const vehicleModelDetected = carModelMatch ? carModelMatch[1] : null;
+
+  let arrivalTimeDetected = null;
+  if (/\b(chegando\s+agora|j[aá]\s+cheguei|estou\s+na\s+porta|na\s+recep[cç][aã]o|na\s+portaria)\b/i.test(lowerLast)) {
+    arrivalTimeDetected = "Chegando agora";
+  } else {
+    const arrMatch = lastInboundText.match(/(?:cheg(?:o|ar|aremos|ada)|previs[aã]o|por\s+volta\s+d[ea]s?|[aà]s)\s*([0-2]?\d)(?:[:hH](\d{2}))?\s*(?:h|horas)?\b/i);
+    if (arrMatch) {
+      const hh = parseInt(arrMatch[1], 10);
+      const mm = parseInt(arrMatch[2] || "0", 10);
+      if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+        arrivalTimeDetected = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+      }
+    }
+  }
+
+  const maintenanceMatch = lowerLast.match(/\b(ar[- ]?condicionado|chuveiro|[aá]gua\s+fria|vazamento|goteira|l[aã]mpada|luz\s+queimada|fechadura|porta\s+n[aã]o\s+abre|tv|televis[aã]o|frigobar|tomada|pia\s+entupida|vaso|ralo|n[aã]o\s+funciona|quebrad[oa]|defeito|parou\s+de\s+funcionar)\b/i);
+  const maintenanceDetected = maintenanceMatch ? maintenanceMatch[1] : null;
+
+  const hkMatch = lowerLast.match(/\b(toalha|toalhas|travesseiro|travesseiros|len[cç]ol|cobertor|manta|papel\s+higi[eê]nico|sabonete|shampoo|ferro\s+de\s+passar|cabide|limpeza\s+no\s+quarto|arrumar\s+o\s+quarto)\b/i);
+  const housekeepingItemDetected = hkMatch ? hkMatch[1] : null;
+
+  const checkoutAnnounced = /\b(j[aá]\s+sa[ií]|j[aá]\s+sa[ií]mos|j[aá]\s+desocupei|j[aá]\s+desocupamos|deixei\s+a\s+chave|deixei\s+o\s+cart[aã]o|entreguei\s+a\s+chave|fiz\s+o\s+check-?out|estou\s+saindo\s+do\s+flat|acabamos\s+de\s+sair)\b/i.test(lowerLast);
+
+  const topicFlags = {
+    wifi: /\b(wi-?fi|internet|senha|rede|conectar)\b/i.test(lowerLast),
+    cafe: /\b(caf[eé]|desjejum|bandeja|card[aá]pio|p[aã]o)\b/i.test(lowerLast),
+    checkin: /\b(check-?in|ficha|cadastro|entrar|portaria|hor[aá]rio\s+de\s+entrada|early)\b/i.test(lowerLast),
+    checkout: /\b(check-?out|sa[ií]da|hor[aá]rio\s+de\s+sair|late\s+check|prorrogar|estender)\b/i.test(lowerLast) || checkoutAnnounced,
+    garagem: /\b(garagem|estacionamento|vaga|placa|carro|ve[ií]culo|port[aã]o)\b/i.test(lowerLast) || Boolean(plateDetected),
+    localizacao: /\b(endere[cç]o|localiza[cç][aã]o|onde\s+fica|maps|chegar|rua|bairro)\b/i.test(lowerLast),
+    pagamento: /\b(pix|pagamento|pagar|valor|total|sinal|comprovante|cart[aã]o|cobran[cç]a)\b/i.test(lowerLast),
+    cotacao: /\b(di[aá]ria|quanto\s+custa|quanto\s+t[aá]|pre[cç]o|cota[cç][aã]o|vaga|disponibilidade|reservar|reserva)\b/i.test(lowerLast),
+    nfse: /\b(nota\s+fiscal|nfs-?e|nf|recibo|cnpj|reembolso|fatura)\b/i.test(lowerLast),
+    manual: /\b(manual|guia|instru[cç][oõ]es|piscina|academia|cobertura|lazer|regra|pet|voltagem)\b/i.test(lowerLast)
+  };
+
+  let detectedIntent = "atendimento_geral";
+  for (const [k, v] of Object.entries(topicFlags)) {
+    if (v) {
+      detectedIntent = k;
+      break;
+    }
+  }
+  if (maintenanceDetected) detectedIntent = "manutencao";
+  else if (housekeepingItemDetected) detectedIntent = "governanca";
+  else if (plateDetected) detectedIntent = "garagem_placa";
+  else if (arrivalTimeDetected) detectedIntent = "previsao_chegada";
+
+  // 2. Construção das Ações Sugeridas no Sistema (1-Clique)
+  const suggestedActions = [];
+
+  if (plateDetected && res) {
+    suggestedActions.push({
+      id: "act_register_plate",
+      actionType: "register_vehicle_plate",
+      icon: "🚗",
+      label: `Salvar Placa ${plateDetected}${vehicleModelDetected ? ` (${vehicleModelDetected})` : ""} • Flat ${flatNumber}`,
+      description: `Cadastra a placa ${plateDetected} na reserva ${resCode} e libera na Garagem/Portaria.`,
+      variant: "emerald",
+      payload: {
+        reservationCode: resCode,
+        flatNumber,
+        vehiclePlate: plateDetected,
+        vehicleModel: vehicleModelDetected || res.vehicleModel || ""
+      },
+      confirmReply: `Perfeito, *${firstName}*! Já cadastrei a placa *${plateDetected}*${vehicleModelDetected ? ` (${vehicleModelDetected})` : ""} na sua reserva do *Flat ${flatNumber}* e liberei sua entrada na garagem com a portaria 24h! 🚗✅`
+    });
+  }
+
+  if (arrivalTimeDetected && res && stayStage !== "checkout_concluido") {
+    suggestedActions.push({
+      id: "act_arrival_priority",
+      actionType: "prioritize_cleaning_arrival",
+      icon: "⚡",
+      label: `Registrar Chegada (${arrivalTimeDetected}) & Priorizar Flat ${flatNumber}`,
+      description: `Atualiza a previsão de chegada na reserva ${resCode} e marca o Flat ${flatNumber} como prioridade no painel de limpeza.`,
+      variant: "amber",
+      payload: {
+        reservationCode: resCode,
+        flatNumber,
+        arrivalTime: arrivalTimeDetected
+      },
+      confirmReply: `Combinado, *${firstName}*! Já registrei sua previsão de chegada para *${arrivalTimeDetected}* e alinhei com a nossa governança para priorizar a preparação do seu *Flat ${flatNumber}*! 🏨✨`
+    });
+  }
+
+  if (maintenanceDetected) {
+    suggestedActions.push({
+      id: "act_maintenance",
+      actionType: "create_maintenance_ticket",
+      icon: "🛠️",
+      label: `Abrir Manutenção: ${maintenanceDetected.toUpperCase()}${flatNumber ? ` (Flat ${flatNumber})` : ""}`,
+      description: `Cria ocorrência técnica prioritária em Ocorrências & Avarias para verificação imediata.`,
+      variant: "rose",
+      payload: {
+        flatNumber: flatNumber || "S/N",
+        reservationCode: resCode,
+        issue: maintenanceDetected,
+        description: lastInboundText,
+        guestName,
+        guestPhone: cleanPhone
+      },
+      confirmReply: `Olá, *${firstName}*! Sinto muito pelo inconveniente. Já abri um chamado prioritário para nossa manutenção verificar *${maintenanceDetected}* no *Flat ${flatNumber || ""}* com máxima urgência! 🛠️🙏`
+    });
+  }
+
+  if (housekeepingItemDetected) {
+    suggestedActions.push({
+      id: "act_housekeeping",
+      actionType: "create_housekeeping_request",
+      icon: "🧺",
+      label: `Solicitar à Governança: ${housekeepingItemDetected}${flatNumber ? ` (Flat ${flatNumber})` : ""}`,
+      description: `Registra solicitação de item/enxoval para atendimento pela equipe de governança.`,
+      variant: "indigo",
+      payload: {
+        flatNumber: flatNumber || "S/N",
+        reservationCode: resCode,
+        item: housekeepingItemDetected,
+        description: lastInboundText,
+        guestName,
+        guestPhone: cleanPhone
+      },
+      confirmReply: `Com certeza, *${firstName}*! Já acionei nossa governança para providenciar *${housekeepingItemDetected}* para o seu *Flat ${flatNumber || ""}*! 🧺✨`
+    });
+  }
+
+  if (checkoutAnnounced && res && !guestContext.isCheckoutCompleted) {
+    suggestedActions.push({
+      id: "act_confirm_checkout",
+      actionType: "confirm_guest_checkout",
+      icon: "🚪",
+      label: `Confirmar Check-out do Flat ${flatNumber} & Liberar Limpeza`,
+      description: `Encerra a estadia ${resCode} no PMS e marca o Flat ${flatNumber} como VAGO/SUJO para as camareiras.`,
+      variant: "purple",
+      payload: {
+        reservationCode: resCode,
+        flatNumber
+      },
+      confirmReply: `Muito obrigado por nos avisar, *${firstName}*! Já confirmamos o seu check-out do *Flat ${flatNumber}*. Foi um grande prazer recebê-lo no CorpFlats e esperamos vê-lo novamente em breve! 🏨✨`
+    });
+  }
+
+  if (!res && convState.hasDates) {
+    const inBr = String(convState.checkIn || "").split("-").reverse().join("/");
+    const outBr = String(convState.checkOut || "").split("-").reverse().join("/");
+    suggestedActions.push({
+      id: "act_create_preres",
+      actionType: "calculate_quote_or_prereserve",
+      icon: "📅",
+      label: `Gerar Cotação / Pré-Reserva (${inBr} a ${outBr})`,
+      description: `Verifica flat disponível para ${convState.nights || 1} noite(s), cria pré-reserva e gera código PIX.`,
+      variant: "emerald",
+      payload: {
+        checkIn: convState.checkIn,
+        checkOut: convState.checkOut,
+        guests: convState.guests || 1,
+        ratePlan: convState.breakfastPreference === "without_breakfast" ? "room_only" : "with_breakfast",
+        guestName,
+        guestPhone: cleanPhone
+      }
+    });
+  }
+
+  const totalAmt = Number(res?.totalAmount ?? res?.total_amount) || 0;
+  const paidAmt = Number(res?.paidAmount ?? res?.paid_amount) || 0;
+  const isResPaid = ["pago", "pago_total"].includes(String(res?.paymentStatus || "").toLowerCase()) || (paidAmt >= totalAmt && totalAmt > 0);
+  if (res && (!isResPaid || topicFlags.pagamento) && !guestContext.hideFinancialForGuest) {
+    const pendingVal = Math.max(0, totalAmt - paidAmt) || totalAmt;
+    const fmtPending = pendingVal > 0 ? pendingVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "";
+    suggestedActions.push({
+      id: "act_send_pix",
+      actionType: "send_pix_charge",
+      icon: "💳",
+      label: `Gerar PIX Copia e Cola${fmtPending ? ` (${fmtPending})` : ""}`,
+      description: `Gera o código PIX oficial da reserva ${resCode} pronto para envio ao hóspede.`,
+      variant: "amber",
+      payload: {
+        reservationCode: resCode,
+        amount: pendingVal
+      }
+    });
+  }
+
+  if (topicFlags.nfse || stayStage === "checkout_concluido") {
+    suggestedActions.push({
+      id: "act_prepare_nfse",
+      actionType: "prepare_nfse",
+      icon: "🧾",
+      label: `Emitir Nota Fiscal (NFS-e) • ${firstName}`,
+      description: `Abre o emissor fiscal com os dados de ${guestName}${flatNumber ? ` (Flat ${flatNumber})` : ""}.`,
+      variant: "blue",
+      payload: {
+        reservationCode: resCode,
+        guestName,
+        guestPhone: cleanPhone,
+        flatNumber,
+        totalAmount: totalAmt
+      }
+    });
+  }
+
+  // 3. Construção dos Botões de Envio Rápido Dinâmicos (por Teor e Fase)
+  const hostBase = "https://corpflats.onrender.com";
+  const checkinLink = res ? getCheckinUrlSync(res, 1, hostBase, db) : `${hostBase}/pre-checkin`;
+  const cafeLink = resCode ? `${hostBase}/minha-reserva/${resCode}/cafe` : `${hostBase}/cafe`;
+  const portalLink = resCode ? `${hostBase}/minha-reserva/${resCode}` : `${hostBase}/minha-reserva`;
+  const checkoutLink = resCode ? `${hostBase}/checkout/${resCode}` : `${hostBase}/checkout`;
+  const pixLink = resCode ? `${hostBase}/copiar-pix/${resCode}` : `${hostBase}/copiar-pix`;
+  const wifiNet = flatNumber ? `apto ${flatNumber}` : "apto {número do flat}";
+  const wifiPass = aiConfig.knowledgeBase?.wifiPassword || "1234567890123";
+  const mapsUrl = "https://share.google/LHu3541d5lhkdvbL2";
+  const manualPdfUrl = `${hostBase}/Manual_do_Hospede_CorpFlats.pdf`;
+
+  const allQuickButtons = [
+    {
+      id: "qb_wifi",
+      label: flatNumber ? `Wi-Fi (apto ${flatNumber})` : "Senha do Wi-Fi",
+      icon: "wifi",
+      emoji: "📶",
+      topics: ["wifi"],
+      stages: ["em_estadia", "checkin_hoje", "checkout_hoje", "reserva_futura"],
+      priorityScore: topicFlags.wifi ? 100 : (stayStage === "em_estadia" ? 85 : 50),
+      highlighted: topicFlags.wifi,
+      messageText: `Olá, *${firstName}*! 📶 Seguem os dados de conexão Wi-Fi exclusivos do seu *Flat ${flatNumber || ""}*:\n\n• *Rede:* \`${wifiNet}\`\n• *Senha:* \`${wifiPass}\`\n\nQualquer dúvida, estou à disposição! ✨`
+    },
+    {
+      id: "qb_checkin",
+      label: "Pré-Check-in Digital",
+      icon: "checkin",
+      emoji: "📝",
+      topics: ["checkin"],
+      stages: ["reserva_futura", "checkin_hoje", "sem_reserva"],
+      priorityScore: topicFlags.checkin ? 100 : (stayStage === "checkin_hoje" || stayStage === "reserva_futura" ? 90 : 20),
+      highlighted: topicFlags.checkin,
+      messageText: `Olá, *${firstName}*! 🌟 Para agilizar sua liberação na portaria 24h${flatNumber ? ` para o *Flat ${flatNumber}*` : ""}, preencha seu *Pré-Check-in Digital* rápido pelo link:\n\n📝 ${checkinLink}\n\nAssim que preencher, seu acesso já fica autorizado automaticamente!`,
+      buttons: [{ id: "btn_chk", type: "URL", label: "📝 Fazer Pré-Check-in", url: checkinLink }]
+    },
+    {
+      id: "qb_cafe",
+      label: "Link do Café no Flat",
+      icon: "cafe",
+      emoji: "🥐",
+      topics: ["cafe"],
+      stages: ["em_estadia", "checkin_hoje", "reserva_futura"],
+      priorityScore: topicFlags.cafe ? 100 : (stayStage === "em_estadia" || stayStage === "checkin_hoje" ? 82 : 45),
+      highlighted: topicFlags.cafe,
+      messageText: `Olá, *${firstName}*! ☕🥐 Nosso café da manhã é servido em bandeja diretamente no seu *Flat ${flatNumber || ""}* das *05:00 às 09:30*.\n\nVocê pode escolher os itens e o horário de entrega até a véspera pelo link:\n🥐 ${cafeLink}\n\nBom apetite! ✨`,
+      buttons: [{ id: "btn_cafe", type: "URL", label: "🥐 Escolher Café da Manhã", url: cafeLink }]
+    },
+    {
+      id: "qb_tarifas",
+      label: "Tabela de Diárias",
+      icon: "tarifas",
+      emoji: "💰",
+      topics: ["cotacao"],
+      stages: ["sem_reserva"],
+      priorityScore: topicFlags.cotacao ? 105 : (stayStage === "sem_reserva" ? 95 : 25),
+      highlighted: topicFlags.cotacao,
+      messageText: `Olá, *${firstName}*! 🏨✨ Será um prazer receber você no *CorpFlats (Edifício Soho Residence)*!\n\nNossos flats são completos, climatizados e contam com garagem gratuita e portaria 24h:\n\n☕ *Opção 1 — Com Café da Manhã no Flat (Recomendada):*\n• *1 pessoa:* R$ 272,00/diária\n• *2 pessoas (casal):* R$ 307,00/diária\n✅ *Benefício Exclusivo:* Isenção total da taxa de limpeza!\n\n🛏️ *Opção 2 — Sem Café da Manhã (Somente Acomodação):*\n• *A partir de:* R$ 237,00/diária (+ taxa única de limpeza de R$ 70,00)\n\nPara quais datas (entrada e saída) e quantas pessoas você gostaria de verificar disponibilidade? 😊`
+    },
+    {
+      id: "qb_pagamento_pix",
+      label: "Cobrança / Link PIX",
+      icon: "pix",
+      emoji: "💳",
+      topics: ["pagamento"],
+      stages: ["reserva_futura", "checkin_hoje", "sem_reserva", "em_estadia"],
+      priorityScore: topicFlags.pagamento ? 102 : (!isResPaid && res ? 88 : 35),
+      highlighted: topicFlags.pagamento || Boolean(res && !isResPaid),
+      messageText: `Olá, *${firstName}*! 💳 Para confirmar e garantir sua reserva${flatNumber ? ` no *Flat ${flatNumber}*` : ""}${resCode ? ` (*${resCode}*)` : ""}, acesse abaixo o código PIX Copia e Cola ou link seguro de pagamento:\n\n🔗 ${pixLink}\n\nAssim que concluir, envie o comprovante por aqui para baixa imediata! ✨`,
+      buttons: [{ id: "btn_pix", type: "URL", label: "💳 Copiar Código PIX", url: pixLink }]
+    },
+    {
+      id: "qb_garagem",
+      label: "Garagem & Placa",
+      icon: "garagem",
+      emoji: "🚗",
+      topics: ["garagem"],
+      stages: ["reserva_futura", "checkin_hoje", "em_estadia"],
+      priorityScore: topicFlags.garagem ? 100 : (stayStage === "checkin_hoje" ? 78 : 50),
+      highlighted: topicFlags.garagem,
+      messageText: `Olá, *${firstName}*! 🚗 Nossa garagem no Edifício Soho é rotativa e *100% gratuita* (você pode estacionar em qualquer vaga livre, altura limite de 2,10m).\n\nPara deixarmos sua entrada liberada na portaria 24h, poderia me informar o *modelo, cor e placa* do veículo?`
+    },
+    {
+      id: "qb_checkout",
+      label: "Check-out (12h)",
+      icon: "checkout",
+      emoji: "🚪",
+      topics: ["checkout"],
+      stages: ["checkout_hoje", "em_estadia"],
+      priorityScore: topicFlags.checkout ? 100 : (stayStage === "checkout_hoje" ? 95 : 40),
+      highlighted: topicFlags.checkout || stayStage === "checkout_hoje",
+      messageText: `Olá, *${firstName}*! ☀️ Esperamos que sua estadia no *Flat ${flatNumber || ""}* tenha sido excelente!\n\nLembramos que o horário de check-out é até às *12:00h*. Ao sair, basta desligar o ar-condicionado e luzes, entregar o cartão na portaria e confirmar sua saída em 1 clique:\n🚪 ${checkoutLink}\n\nDeseja prorrogar sua estadia ou já tem horário previsto de saída? Tenha uma ótima viagem!`,
+      buttons: [{ id: "btn_out", type: "URL", label: "🚪 Confirmar Check-out", url: checkoutLink }]
+    },
+    {
+      id: "qb_location",
+      label: "Localização GPS",
+      icon: "location",
+      emoji: "📍",
+      topics: ["localizacao"],
+      stages: ["sem_reserva", "reserva_futura", "checkin_hoje", "em_estadia"],
+      priorityScore: topicFlags.localizacao ? 100 : (stayStage === "checkin_hoje" ? 75 : 55),
+      highlighted: topicFlags.localizacao,
+      messageText: `Olá, *${firstName}*! 📍 Estamos localizados no *Edifício Soho Residence Service*:\n\n🏢 *Endereço:* Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes/RJ\n🗺️ *Google Maps:* ${mapsUrl}\n🔑 *Portaria:* 24 horas\n\nEstamos te aguardando! ✨`,
+      buttons: [{ id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: mapsUrl }]
+    },
+    {
+      id: "qb_manual",
+      label: "Manual do Flat (PDF)",
+      icon: "manual",
+      emoji: "📖",
+      topics: ["manual"],
+      stages: ["em_estadia", "checkin_hoje"],
+      priorityScore: topicFlags.manual ? 100 : (stayStage === "em_estadia" ? 76 : 42),
+      highlighted: topicFlags.manual,
+      mediaType: "document",
+      mediaUrl: manualPdfUrl,
+      fileName: "Manual_do_Hospede_CorpFlats.pdf",
+      messageText: `Olá, *${firstName}*! 📖✨ Segue o *Guia e Manual Completo do Flat ${flatNumber || ""}* com instruções de Wi-Fi, ar-condicionado, piscina aquecida (06h às 22h) e comodidades:\n\n📄 ${manualPdfUrl}\n🏨 Portal da Reserva: ${portalLink}`
+    },
+    {
+      id: "qb_nfse",
+      label: "Dados p/ Nota Fiscal",
+      icon: "nfse",
+      emoji: "🧾",
+      topics: ["nfse"],
+      stages: ["checkout_hoje", "checkout_concluido", "em_estadia"],
+      priorityScore: topicFlags.nfse ? 100 : (stayStage === "checkout_concluido" || stayStage === "checkout_hoje" ? 80 : 30),
+      highlighted: topicFlags.nfse,
+      messageText: `Olá, *${firstName}*! 🧾 Com certeza! Para emitirmos a sua *Nota Fiscal de Hospedagem (NFS-e)*, por favor me confirme:\n\n1️⃣ *CPF ou CNPJ* do tomador:\n2️⃣ *Nome Completo ou Razão Social*:\n3️⃣ *E-mail* (opcional para envio automático):\n\nAssim que me enviar, já providencio a emissão e te mando o PDF por aqui! ✨`
+    },
+    {
+      id: "qb_review",
+      label: "Avaliação 5★ Google",
+      icon: "review",
+      emoji: "⭐",
+      topics: [],
+      stages: ["checkout_concluido", "checkout_hoje"],
+      priorityScore: stayStage === "checkout_concluido" ? 92 : 38,
+      highlighted: stayStage === "checkout_concluido",
+      messageText: `Olá, *${firstName}*! ⭐ Foi um prazer recebê-lo no *CorpFlats*!\n\nSua opinião é muito importante para nós. Poderia nos avaliar com 5 estrelas no Google? Leva menos de 30 segundos:\n⭐ ${mapsUrl}\n\nMuito obrigado e até a próxima estadia! 🙏🏨`,
+      buttons: [{ id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: mapsUrl }]
+    }
+  ];
+
+  const filteredQuickButtons = allQuickButtons
+    .filter(btn => {
+      if (btn.id === "qb_checkin" && ["em_estadia", "checkout_hoje", "checkout_concluido"].includes(stayStage) && !topicFlags.checkin) {
+        return false;
+      }
+      if (btn.id === "qb_pagamento_pix" && guestContext.hideFinancialForGuest) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.priorityScore - a.priorityScore);
+
+  // 4. Geração de Sugestões de Resposta em Tempo Real
+  const suggestedReplies = [];
+
+  if (lastInboundText || draftText) {
+    let primaryReply = "";
+    let modelUsed = "heuristic";
+    let source = "heuristic";
+
+    if (!skipLlm) {
+      try {
+        const aiRes = await generateAiWhatsAppResponse({
+          db,
+          phone: cleanPhone,
+          messageText: draftText || lastInboundText,
+          history,
+          isCopilot: true
+        });
+        if (aiRes?.replyText) {
+          primaryReply = aiRes.replyText;
+          modelUsed = aiRes.modelUsed || "gemini";
+          source = aiRes.source || "gemini";
+        }
+      } catch (e) {
+        console.warn("[Sofia Realtime Assist] Fallback heurístico acionado:", e.message);
+      }
+    }
+
+    if (!primaryReply) {
+      const applicableFaqs = (db?.faqItems || []).filter(f => f && f.status === "ativo" && isFaqApplicableToClient(f, cleanPhone));
+      primaryReply = generateHeuristicResponse(draftText || lastInboundText, guestContext, aiConfig, applicableFaqs, db, history);
+    }
+
+    if (primaryReply) {
+      suggestedReplies.push({
+        id: "rep_sofia_main",
+        label: "✨ Resposta Recomendada pela Sofia",
+        tone: "completa",
+        text: primaryReply,
+        source,
+        modelUsed
+      });
+    }
+
+    if (suggestedActions.length > 0 && suggestedActions[0].confirmReply && suggestedActions[0].confirmReply !== primaryReply) {
+      suggestedReplies.push({
+        id: "rep_sofia_action",
+        label: `⚡ Confirmar: ${suggestedActions[0].label.slice(0, 32)}`,
+        tone: "operacional",
+        text: suggestedActions[0].confirmReply,
+        source: "action_template"
+      });
+    }
+
+    const topQuick = filteredQuickButtons.find(b => b.highlighted);
+    if (topQuick && topQuick.messageText !== primaryReply && suggestedReplies.length < 3) {
+      suggestedReplies.push({
+        id: `rep_quick_${topQuick.id}`,
+        label: `${topQuick.emoji} Atalho Direto: ${topQuick.label}`,
+        tone: "direta",
+        text: topQuick.messageText,
+        source: "quick_template"
+      });
+    }
+  } else {
+    if (stayStage === "checkin_hoje") {
+      suggestedReplies.push({
+        id: "rep_proactive_checkin",
+        label: "👋 Boas-vindas Check-in de Hoje",
+        tone: "proativa",
+        text: `Olá, *${firstName}*! Seja muito bem-vindo(a) ao *CorpFlats*! 🏨✨ Sua chegada no *Flat ${flatNumber}* é hoje. Você já tem um horário previsto de chegada para prepararmos tudo com prioridade?`
+      });
+    } else if (stayStage === "em_estadia") {
+      suggestedReplies.push({
+        id: "rep_proactive_inhouse",
+        label: "🌟 Acompanhamento de Estadia",
+        tone: "proativa",
+        text: `Olá, *${firstName}*! Tudo ótimo com sua estadia no *Flat ${flatNumber}*? 😊 Se precisar da senha do Wi-Fi, agendar seu café ou qualquer suporte, é só me chamar por aqui!`
+      });
+    } else if (stayStage === "checkout_hoje") {
+      suggestedReplies.push({
+        id: "rep_proactive_checkout",
+        label: "☀️ Bom dia Check-out Hoje",
+        tone: "proativa",
+        text: `Bom dia, *${firstName}*! ☀️ Esperamos que tenha tido uma excelente estadia no *Flat ${flatNumber}*. Lembramos que o check-out é hoje até às 12:00h. Caso deseje prorrogar sua estadia ou precise da Nota Fiscal, estou à disposição!`
+      });
+    }
+  }
+
+  return {
+    success: true,
+    phone: cleanPhone,
+    stayStage,
+    detectedIntent,
+    lastInboundMessageId: lastInbound?.id || lastInbound?.messageId || null,
+    lastInboundText,
+    guestSummary: {
+      name: guestName,
+      firstName,
+      flatNumber: flatNumber || null,
+      reservationCode: resCode || null,
+      checkinDate: res?.checkinDate || null,
+      checkoutDate: res?.checkoutDate || null,
+      isPaid: isResPaid,
+      cleaningStatus: guestContext.cleaningStatus || "unknown",
+      isRoomReady: Boolean(guestContext.isRoomReady),
+      vehiclePlate: res?.vehiclePlate || plateDetected || null
+    },
+    suggestedReplies,
+    suggestedActions,
+    dynamicQuickButtons: filteredQuickButtons
+  };
+}

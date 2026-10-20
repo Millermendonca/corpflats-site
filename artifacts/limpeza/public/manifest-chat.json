@@ -1,0 +1,55 @@
+{
+  "id": "/whatsapp-chat?standalone=1",
+  "name": "CorpFlats WhatsApp",
+  "short_name": "CF WhatsApp",
+  "description": "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real.",
+  "start_url": "/whatsapp-chat?standalone=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b141a",
+  "theme_color": "#008069",
+  "categories": ["business", "productivity", "social"],
+  "icons": [
+    {
+      "src": "/api/pwa/chat-icon.png?size=192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/chat-icon.png?size=512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/chat-icon.png?size=512&maskable=1",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/chat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Mensagens Não Lidas",
+      "short_name": "Não Lidas",
+      "description": "Ver conversas com mensagens não lidas",
+      "url": "/whatsapp-chat?standalone=1&tab=unread",
+      "icons": [{ "src": "/api/pwa/chat-icon.png?size=192", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Hóspedes de Hoje",
+      "short_name": "Hoje",
+      "description": "Conversas de hóspedes em estadia hoje",
+      "url": "/whatsapp-chat?standalone=1&tab=today",
+      "icons": [{ "src": "/api/pwa/chat-icon.png?size=192", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

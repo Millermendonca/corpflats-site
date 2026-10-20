@@ -51,7 +51,8 @@ import {
   isFiscalIntentMessage,
   findContactAndReservation,
   extractCnpj,
-  extractCpf
+  extractCpf,
+  generateSofiaRealtimeAssistance
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -7815,13 +7816,36 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       phone: bodyPhone, 
       message = "", 
       text = "",
-      mediaUrl = "", 
+      mediaUrl: rawMediaUrl = "", 
+      fileBase64 = "",
       fileName = "", 
       mediaType = "text", 
+      type: bodyType = "",
       buttons = [], 
       reservationCode = null,
       quickMessageId = null
     } = req.body || {};
+    const effectiveMediaType = (mediaType && mediaType !== "text") ? mediaType : (bodyType || "text");
+    let mediaUrl = rawMediaUrl;
+    if (fileBase64 && typeof fileBase64 === "string" && fileBase64.startsWith("data:")) {
+      try {
+        const chatUploadsDir = path.join(UPLOADS_DIR, "chat");
+        if (!fs.existsSync(chatUploadsDir)) fs.mkdirSync(chatUploadsDir, { recursive: true });
+        const m = /^data:([^;]+);base64,(.+)$/.exec(fileBase64);
+        if (m) {
+          const mime = m[1];
+          const b64 = m[2];
+          const extFromName = fileName && fileName.includes(".") ? fileName.split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+          const extFromMime = mime.includes("pdf") ? "pdf" : mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : mime.includes("ogg") ? "ogg" : mime.includes("mp3") || mime.includes("mpeg") ? "mp3" : mime.includes("webm") ? "webm" : mime.includes("mp4") ? "mp4" : "jpg";
+          const safeExt = extFromName || extFromMime;
+          const storedFile = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${safeExt}`;
+          fs.writeFileSync(path.join(chatUploadsDir, storedFile), Buffer.from(b64, "base64"));
+          mediaUrl = `/api/storage/files/chat/${storedFile}`;
+        }
+      } catch (uploadErr) {
+        console.warn("[WhatsApp Live Chat] Falha ao salvar arquivo base64:", uploadErr.message);
+      }
+    }
 
     const rawPhone = String(req.params?.phone || bodyPhone || "").trim();
     const isGroup = rawPhone.includes("@g.us");
@@ -7853,21 +7877,28 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       triggerEvent: "live_chat_manual_message"
     };
 
-    if (mediaType === "document" || fileName || (mediaUrl && mediaUrl.endsWith(".pdf"))) {
+    if (effectiveMediaType === "document" || (fileName && effectiveMediaType !== "image" && effectiveMediaType !== "audio") || (mediaUrl && mediaUrl.endsWith(".pdf"))) {
       sendOptions.documentUrl = mediaUrl || db.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
       sendOptions.documentName = fileName || db.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf";
       sendOptions.documentCaption = finalMessage || "";
-    } else if (mediaType === "image" && mediaUrl) {
+      if (fileBase64) sendOptions.fileBase64 = fileBase64;
+    } else if (effectiveMediaType === "image" && (mediaUrl || fileBase64)) {
       sendOptions.documentUrl = mediaUrl;
       sendOptions.documentName = fileName || "foto.jpg";
       sendOptions.documentCaption = finalMessage || "";
+      if (fileBase64) sendOptions.fileBase64 = fileBase64;
+    } else if (effectiveMediaType === "audio" && (mediaUrl || fileBase64)) {
+      sendOptions.documentUrl = mediaUrl;
+      sendOptions.documentName = fileName || "audio.ogg";
+      sendOptions.documentCaption = finalMessage || "";
+      if (fileBase64) sendOptions.fileBase64 = fileBase64;
     }
 
-    console.log(`[WhatsApp Live Chat] Enviando mensagem para ${cleanPhone}...`);
+    console.log(`[WhatsApp Live Chat] Enviando mensagem (${effectiveMediaType}) para ${cleanPhone}...`);
     const result = await sendZapiMessage(db.zapiConfig, sendOptions);
 
     const nowIso = new Date().toISOString();
-    const msgType = mediaType === "document" ? "document" : (mediaType === "image" ? "image" : (mediaType === "audio" ? "audio" : "text"));
+    const msgType = effectiveMediaType === "document" ? "document" : (effectiveMediaType === "image" ? "image" : (effectiveMediaType === "audio" ? "audio" : "text"));
 
     const updatedConv = appendMessageToConversation(db, {
       phone: cleanPhone,
@@ -8317,6 +8348,197 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         modelUsed: result.modelUsed
       });
     } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5.0.5 Assistente Ativa Sofia em Tempo Real (/api/whatsapp/chat/:phone/sofia-assist e /execute-action)
+  app.post("/api/whatsapp/chat/:phone/sofia-assist", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = String(req.params.phone || "");
+    const cleanPhone = cleanWhatsAppPhone(rawPhone);
+    const { draftText = "", reservationCode = null, skipLlm = false } = req.body || {};
+
+    try {
+      const assistance = await generateSofiaRealtimeAssistance({
+        db,
+        phone: cleanPhone,
+        draftText,
+        reservationCode,
+        skipLlm: Boolean(skipLlm)
+      });
+      res.json(assistance);
+    } catch (err) {
+      console.error("[Sofia Realtime Assist] Erro:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/chat/:phone/execute-action", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = String(req.params.phone || "");
+    const cleanPhone = cleanWhatsAppPhone(rawPhone);
+    const { actionType, payload = {}, sendConfirmReply = false, confirmReplyText = "" } = req.body || {};
+
+    const targetRes = payload.reservationCode
+      ? (db.reservations || []).find(r => r.code === payload.reservationCode || String(r.id) === String(payload.reservationId))
+      : findReservationByPhone(db, cleanPhone);
+
+    const nowIso = new Date().toISOString();
+    let executionResult = { success: false, message: "Ação não reconhecida." };
+
+    try {
+      if (actionType === "register_vehicle_plate") {
+        const plate = String(payload.plate || "").toUpperCase().trim();
+        if (!targetRes) {
+          return res.status(404).json({ error: "Reserva ativa não localizada para vincular a placa." });
+        }
+        targetRes.vehiclePlate = plate;
+        if (payload.vehicleModel && !targetRes.vehicleModel) targetRes.vehicleModel = payload.vehicleModel;
+        if (Array.isArray(targetRes.guests) && targetRes.guests[0]) {
+          targetRes.guests[0].vehiclePlate = plate;
+        }
+        targetRes.updatedAt = nowIso;
+        executionResult = {
+          success: true,
+          actionType,
+          message: `Placa ${plate} vinculada com sucesso à reserva ${targetRes.code} (Flat ${targetRes.flatNumber}).`,
+          reservation: targetRes
+        };
+      } else if (actionType === "prioritize_cleaning_arrival") {
+        const flatNumber = String(payload.flatNumber || targetRes?.flatNumber || "");
+        const room = (db.rooms || []).find(rm => String(rm.number || rm.flatNumber) === flatNumber);
+        if (room) {
+          room.priority = "high";
+          room.guestWaiting = true;
+          room.guestWaitingSince = nowIso;
+          room.notes = [room.notes, `⚡ Prioridade solicitada via Chat WhatsApp (${payload.guestName || targetRes?.guestName || "Hóspede"})`].filter(Boolean).join(" • ");
+        }
+        if (targetRes) {
+          targetRes.arrivalNotifiedAt = nowIso;
+        }
+        executionResult = {
+          success: true,
+          actionType,
+          message: `Flat ${flatNumber} marcado como PRIORIDADE MÁXIMA (Hóspede Aguardando) no painel de Governança!`,
+          room
+        };
+      } else if (actionType === "create_maintenance_ticket") {
+        const flatNumber = String(payload.flatNumber || targetRes?.flatNumber || "S/N");
+        if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+        const newOrder = {
+          id: `os_chat_${Date.now()}`,
+          code: `OS-${Math.floor(1000 + Math.random() * 9000)}`,
+          flatNumber,
+          roomNumber: flatNumber,
+          category: "manutencao",
+          priority: "urgente",
+          status: "aberta",
+          title: `Manutenção Flat ${flatNumber} (via WhatsApp)`,
+          description: payload.description || "Relato recebido via chat WhatsApp.",
+          reportedBy: payload.guestName || targetRes?.guestName || "Hóspede (WhatsApp)",
+          guestPhone: cleanPhone,
+          reservationCode: targetRes?.code || null,
+          createdAt: nowIso,
+          updatedAt: nowIso
+        };
+        db.serviceOrders.unshift(newOrder);
+        executionResult = {
+          success: true,
+          actionType,
+          message: `Ordem de Serviço ${newOrder.code} aberta para o Flat ${flatNumber}!`,
+          serviceOrder: newOrder
+        };
+      } else if (actionType === "create_housekeeping_request") {
+        const flatNumber = String(payload.flatNumber || targetRes?.flatNumber || "S/N");
+        if (!Array.isArray(db.housekeepingRequests)) db.housekeepingRequests = [];
+        const reqItem = {
+          id: `hk_chat_${Date.now()}`,
+          flatNumber,
+          guestName: payload.guestName || targetRes?.guestName || "Hóspede",
+          guestPhone: cleanPhone,
+          reservationCode: targetRes?.code || null,
+          description: payload.description || "Solicitação de enxoval/governança via WhatsApp",
+          status: "pending",
+          priority: "high",
+          createdAt: nowIso
+        };
+        db.housekeepingRequests.unshift(reqItem);
+        const room = (db.rooms || []).find(rm => String(rm.number || rm.flatNumber) === flatNumber);
+        if (room) {
+          room.hasPendingRequest = true;
+          room.lastRequestText = reqItem.description;
+        }
+        executionResult = {
+          success: true,
+          actionType,
+          message: `Pedido de governança registrado para o Flat ${flatNumber}!`,
+          request: reqItem
+        };
+      } else if (actionType === "confirm_guest_checkout") {
+        const outResult = await handleInformCheckout(
+          { reservation_code: targetRes?.code, flat_number: payload.flatNumber || targetRes?.flatNumber, notes: "Check-out confirmado em 1 clique via Sofia Assist no Chat" },
+          db,
+          cleanPhone
+        );
+        executionResult = {
+          success: Boolean(outResult?.success),
+          actionType,
+          message: outResult?.message || `Check-out do Flat ${payload.flatNumber || targetRes?.flatNumber} registrado e liberado para governança!`,
+          details: outResult
+        };
+      } else if (actionType === "send_pix_charge") {
+        executionResult = {
+          success: true,
+          actionType,
+          message: `Link de pagamento / PIX preparado para envio.`
+        };
+      } else {
+        executionResult = {
+          success: true,
+          actionType,
+          message: `Ação ${actionType} processada com sucesso.`
+        };
+      }
+
+      saveDatabase();
+
+      let sentReplyResult = null;
+      const replyToSend = String(confirmReplyText || payload.confirmReply || "").trim();
+      if (sendConfirmReply && replyToSend && cleanPhone) {
+        const baseUrl = `${req.protocol}://${req.get("host")}`;
+        const resolvedReply = targetRes ? resolveWhatsAppTags(replyToSend, targetRes, db, baseUrl) : replyToSend;
+        sentReplyResult = await sendZapiMessage(db.zapiConfig, {
+          phone: cleanPhone,
+          message: resolvedReply,
+          channelId: "transactional_chat",
+          recipientRole: "operator",
+          triggerEvent: `sofia_action_${actionType}`
+        });
+        appendMessageToConversation(db, {
+          phone: cleanPhone,
+          senderName: "CorpFlats",
+          senderPhone: db.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: resolvedReply,
+          type: "text",
+          triggerEvent: `sofia_action_${actionType}`,
+          reservationCode: targetRes?.code || null,
+          status: sentReplyResult.success ? "read" : "failed",
+          timestamp: nowIso,
+          messageId: sentReplyResult.messageId || `msg_act_${Date.now()}`
+        });
+        saveDatabase();
+      }
+
+      res.json({
+        ...executionResult,
+        sentReply: sentReplyResult
+      });
+    } catch (err) {
+      console.error("[Sofia Execute Action] Erro:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
