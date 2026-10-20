@@ -77,6 +77,8 @@ import {
   evaluateZapiChannelPolicy,
   scheduleUpcomingReservationTriggers,
   triggerCheckoutWhatsApp,
+  cancelPendingStayRemindersForCheckout,
+  isReservationOrFlatCheckedOut,
   resolveWhatsAppTags,
   detectAndRecordUnmetDemand,
   classifyUnmetDemand,
@@ -10563,6 +10565,13 @@ app.post("/api/public/checkout", async (req, res) => {
     });
   }
 
+  // Cancela qualquer lembrete pendente de check-out ou estadia na fila (WhatsApp e E-mail) para este flat
+  cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+    flatId: flat.id,
+    flatNumber: flat.number,
+    reason: "Cancelado: check-out realizado via link digital"
+  });
+
   // Reconciliar pedidos de café da manhã para hoje neste flat:
   // Apenas cancela se o check-out ocorreu ANTES do horário de entrega do café agendado!
   if (!db.breakfastOrders) db.breakfastOrders = [];
@@ -11565,6 +11574,15 @@ app.patch("/api/flats/:id", (req, res) => {
         }
         if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
         checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || "manual_card";
+        cancelPendingStayRemindersForCheckout(db, null, {
+          reservation: checkoutRes,
+          flatId: f.id,
+          flatNumber: f.number,
+          reason: "Cancelado: flat marcado como desocupado"
+        });
+        triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "manual_card").catch(e => {
+          console.warn("[Flat Vacancy Checkout Trigger Error]:", e.message);
+        });
       } else {
         checkoutRes.checkoutDone = false;
         if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
@@ -11574,6 +11592,12 @@ app.patch("/api/flats/:id", (req, res) => {
         checkoutRes.actualCheckoutTime = null;
       }
       checkoutRes.updatedAt = now;
+    } else if (!req.body.isOccupied) {
+      cancelPendingStayRemindersForCheckout(db, null, {
+        flatId: f.id,
+        flatNumber: f.number,
+        reason: "Cancelado: flat marcado como desocupado"
+      });
     }
   }
   saveDatabase();
@@ -12401,6 +12425,12 @@ function getRequestsForDate(dateStr, isNested = false) {
         pmsRes.status = "completed";
       }
       pmsRes.checkoutMethod = pmsRes.checkoutMethod || resolvedVacantSource || "checkout_sync";
+      cancelPendingStayRemindersForCheckout(db, null, {
+        reservation: pmsRes,
+        flatId: flat.id,
+        flatNumber: flat.number,
+        reason: "Cancelado: check-out sincronizado com governança"
+      });
       shouldSaveDb = true;
     }
 
@@ -13238,6 +13268,15 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         }
         if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
         checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || "manual_card";
+        cancelPendingStayRemindersForCheckout(db, null, {
+          reservation: checkoutRes,
+          flatId: item.flatId,
+          flatNumber: item.flatNumber || relatedFlat?.number,
+          reason: "Cancelado: card de limpeza marcado como desocupado"
+        });
+        triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "card_desocupado").catch(e => {
+          console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
+        });
       } else {
         checkoutRes.checkoutDone = false;
         if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
@@ -13247,6 +13286,12 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         checkoutRes.actualCheckoutTime = null;
       }
       checkoutRes.updatedAt = now;
+    } else if (isVacant) {
+      cancelPendingStayRemindersForCheckout(db, null, {
+        flatId: item.flatId,
+        flatNumber: item.flatNumber || relatedFlat?.number,
+        reason: "Cancelado: card de limpeza marcado como desocupado"
+      });
     }
   }
 
@@ -13295,6 +13340,21 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       if (!checkoutRes.actualCheckoutAt) checkoutRes.actualCheckoutAt = now;
       checkoutRes.checkoutMethod = checkoutRes.checkoutMethod || item.vacantSource || autoSource;
       checkoutRes.updatedAt = now;
+      cancelPendingStayRemindersForCheckout(db, null, {
+        reservation: checkoutRes,
+        flatId: item.flatId,
+        flatNumber: item.flatNumber || relatedFlat?.number,
+        reason: `Cancelado: card de limpeza marcado como ${status === "clean" ? "limpo" : "limpeza iniciada"}`
+      });
+      triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, autoSource).catch(e => {
+        console.warn("[Cleaning Started Checkout Trigger Error]:", e.message);
+      });
+    } else {
+      cancelPendingStayRemindersForCheckout(db, null, {
+        flatId: item.flatId,
+        flatNumber: item.flatNumber || relatedFlat?.number,
+        reason: `Cancelado: card de limpeza marcado como ${status === "clean" ? "limpo" : "limpeza iniciada"}`
+      });
     }
   }
 
@@ -20047,6 +20107,20 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   r.updatedAt = new Date().toISOString();
+  if (r.checkoutDone === true || r.status === "completed" || r.status === "checkout" || r.status === "checked_out") {
+    r.checkoutDone = true;
+    cancelPendingStayRemindersForCheckout(db, null, {
+      reservation: r,
+      flatId: r.flatId,
+      flatNumber: r.flatNumber,
+      reason: "Cancelado: reserva marcada como check-out concluído"
+    });
+    if (oldStatus !== "completed" && oldStatus !== "checkout" && oldStatus !== "checked_out") {
+      triggerCheckoutWhatsApp(db, saveDatabase, r, "pms_edit").catch(e => {
+        console.warn("[PMS Edit Checkout Trigger Error]:", e.message);
+      });
+    }
+  }
   saveDatabase();
 
   // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
@@ -25781,6 +25855,16 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
 export function ensureReservationScheduledEmails(db, saveDatabase, r) {
   if (!r || !r.guestEmail || r.status === "cancelada" || isPreReservationBlocked(r)) return;
   if (!db.emailQueue) db.emailQueue = [];
+
+  if (isReservationOrFlatCheckedOut(db, r)) {
+    cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+      reservation: r,
+      flatId: r.flatId,
+      flatNumber: r.flatNumber,
+      reason: "Cancelado: check-out já realizado no flat"
+    });
+    return;
+  }
 
   const resCode = r.code || `RES-${r.flatNumber || '00'}-${r.id}`;
   const guestEmail = r.guestEmail.trim();

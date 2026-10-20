@@ -3284,11 +3284,18 @@ export function handleRecordUnmetDemand(db, args = {}) {
   };
 }
 
-export function handleInformCheckout(db, args = {}) {
+export function handleInformCheckout(dbOrArgs, argsOrDb = {}, optionalPhone = "") {
+  let db = dbOrArgs;
+  let args = argsOrDb || {};
+  if (dbOrArgs && !Array.isArray(dbOrArgs.reservations) && !Array.isArray(dbOrArgs.flats) && argsOrDb && (Array.isArray(argsOrDb.reservations) || Array.isArray(argsOrDb.flats))) {
+    db = argsOrDb;
+    args = { ...(dbOrArgs || {}), ...(optionalPhone ? { phone: optionalPhone } : {}) };
+  }
   if (!db) return { success: false, error: "Database not available" };
 
-  const targetFlat = String(args.flatNumber || args.flatId || args.guestContext?.flatNumber || "").trim();
-  const phone = cleanWhatsAppPhone(args.phone || args.senderPhone || args.guestPhone || args.guestContext?.phone || "");
+  const targetFlat = String(args.flatNumber || args.flat_number || args.flatId || args.guestContext?.flatNumber || "").trim();
+  const resCodeArg = String(args.reservationCode || args.reservation_code || "").trim().toUpperCase();
+  const phone = cleanWhatsAppPhone(args.phone || args.senderPhone || args.guestPhone || args.guestContext?.phone || optionalPhone || "");
   const now = new Date().toISOString();
   const todayStr = getBrasiliaDateParts().todayStr;
 
@@ -3300,9 +3307,15 @@ export function handleInformCheckout(db, args = {}) {
     matchedFlat = flats.find(f => String(f.number) === targetFlat || String(f.id) === targetFlat);
   }
 
-  // Se não localizou pelo número do flat, tenta pelo telefone do hóspede em reserva ativa hoje
+  // Se informou código da reserva ou telefone do hóspede, tenta localizar a reserva ativa hoje
   let matchedRes = null;
-  if (phone) {
+  if (resCodeArg) {
+    matchedRes = reservations.find(r => String(r.code || r.reservationCode || "").trim().toUpperCase() === resCodeArg && r.status !== "cancelada" && r.status !== "cancelled");
+    if (matchedRes && !matchedFlat) {
+      matchedFlat = flats.find(f => f.id === matchedRes.flatId || String(f.number) === String(matchedRes.flatNumber));
+    }
+  }
+  if (!matchedRes && phone) {
     matchedRes = reservations.find(r => {
       const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
       const isPhoneMatch = rPhone && (phone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(phone.slice(-8)));
@@ -3405,6 +3418,48 @@ export function handleInformCheckout(db, args = {}) {
     matchedRes.updatedAt = now;
   }
 
+  // 3.5. Cancela lembretes pendentes de check-out, café da manhã ou estadia na fila (WhatsApp e E-mail)
+  const postCheckoutAllowed = new Set(["checkout_completed", "on_checkout", "post_checkout_review", "nps_approved", "payment_confirmed", "reservation_cancelled"]);
+  const targetCodes = new Set();
+  const targetIds = new Set();
+  if (matchedRes) {
+    if (matchedRes.code || matchedRes.reservationCode) targetCodes.add(String(matchedRes.code || matchedRes.reservationCode).trim().toUpperCase());
+    if (matchedRes.id !== undefined && matchedRes.id !== null) targetIds.add(String(matchedRes.id));
+  }
+  for (const r of reservations) {
+    if (!r || r.status === "cancelada" || r.status === "cancelled") continue;
+    if (String(r.flatNumber || "").replace(/\D/g, "") === String(resolvedFlatNum).replace(/\D/g, "") && r.checkoutDate === todayStr) {
+      if (r.code || r.reservationCode) targetCodes.add(String(r.code || r.reservationCode).trim().toUpperCase());
+      if (r.id !== undefined && r.id !== null) targetIds.add(String(r.id));
+    }
+  }
+  if (Array.isArray(db.whatsappQueue)) {
+    for (const qItem of db.whatsappQueue) {
+      if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending" && qItem.status !== "pending_approval")) continue;
+      if (postCheckoutAllowed.has(String(qItem.triggerEvent || "").trim())) continue;
+      const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
+      const qId = qItem.reservationId !== undefined && qItem.reservationId !== null ? String(qItem.reservationId) : "";
+      if ((qCode && targetCodes.has(qCode)) || (qId && (targetIds.has(qId) || targetCodes.has(qId)))) {
+        qItem.status = "cancelled";
+        qItem.error = "Cancelado: check-out comunicado pelo hóspede via WhatsApp";
+        qItem.updatedAt = now;
+      }
+    }
+  }
+  if (Array.isArray(db.emailQueue)) {
+    for (const eItem of db.emailQueue) {
+      if (!eItem || (eItem.status !== "scheduled" && eItem.status !== "pending")) continue;
+      if (postCheckoutAllowed.has(String(eItem.triggerEvent || eItem.type || "").trim())) continue;
+      const eCode = String(eItem.reservationCode || "").trim().toUpperCase();
+      const eId = eItem.reservationId !== undefined && eItem.reservationId !== null ? String(eItem.reservationId) : "";
+      if ((eCode && targetCodes.has(eCode)) || (eId && (targetIds.has(eId) || targetCodes.has(eId)))) {
+        eItem.status = "cancelled";
+        eItem.error = "Cancelado: check-out comunicado pelo hóspede via WhatsApp";
+        eItem.updatedAt = now;
+      }
+    }
+  }
+
   // 4. Cria notificação para governança e recepção se houver array no db
   if (Array.isArray(db.notifications)) {
     db.notifications.unshift({
@@ -3425,6 +3480,7 @@ export function handleInformCheckout(db, args = {}) {
     cleaningRequestId: cleanReq.id,
     isVacant: true,
     reservationId: matchedRes?.id || null,
+    reservation: matchedRes || null,
     message: `Check-out do Flat ${resolvedFlatNum} comunicado pelo hóspede via WhatsApp e registrado com sucesso.`
   };
 }

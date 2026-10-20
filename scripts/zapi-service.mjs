@@ -5285,6 +5285,13 @@ export async function handleConciergeGroupMessage({
       });
     }
 
+    // Garante o cancelamento de lembretes de estadia/check-out na fila para o flat mesmo se a reserva já estava como completed antes
+    cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+      flatId: flat.id,
+      flatNumber: flat.number,
+      reason: `Cancelado: check-out informado na portaria via WhatsApp (${senderLabel})`
+    });
+
     // 4. Reconciliação de café da manhã para hoje (cancela se checkout ocorreu antes do horário do café)
     if (!db.breakfastOrders) db.breakfastOrders = [];
     db.breakfastOrders.forEach(o => {
@@ -8560,11 +8567,24 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           request: reqItem
         };
       } else if (actionType === "confirm_guest_checkout") {
-        const outResult = await handleInformCheckout(
-          { reservation_code: targetRes?.code, flat_number: payload.flatNumber || targetRes?.flatNumber, notes: "Check-out confirmado em 1 clique via Sofia Assist no Chat" },
-          db,
-          cleanPhone
-        );
+        const outResult = await handleInformCheckout(db, {
+          reservationCode: targetRes?.code,
+          flatNumber: payload.flatNumber || targetRes?.flatNumber,
+          phone: cleanPhone,
+          guestName: targetRes?.guestName || payload.guestName,
+          notes: "Check-out confirmado em 1 clique via Sofia Assist no Chat"
+        });
+        const checkedOutRes = outResult?.reservation || targetRes || null;
+        cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+          reservation: checkedOutRes,
+          flatNumber: outResult?.flatNumber || payload.flatNumber || targetRes?.flatNumber,
+          reason: "Cancelado: check-out confirmado via WhatsApp / Sofia Assist"
+        });
+        if (checkedOutRes) {
+          await triggerCheckoutWhatsApp(db, saveDatabase, checkedOutRes, "whatsapp_sofia_assist").catch(e => {
+            console.warn("[Sofia Assist Checkout Trigger Error]:", e.message);
+          });
+        }
         executionResult = {
           success: Boolean(outResult?.success),
           actionType,
@@ -9152,6 +9172,28 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           continue;
         }
 
+        // Checagem dinâmica: se o flat ou reserva já teve check-out informado por qualquer canal
+        // (portaria WhatsApp, painel recepção, link digital, WhatsApp do hóspede ou card de limpeza desocupado/limpando),
+        // cancela imediatamente qualquer lembrete de check-out, café da manhã ou estadia pendente!
+        if (!POST_CHECKOUT_ALLOWED_EVENTS.has(item.triggerEvent)) {
+          if (isReservationOrFlatCheckedOut(db, resv, item.flatId, item.flatNumber)) {
+            console.log(`[Auto-WhatsApp] Descartando disparo de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: check-out já realizado no flat.`);
+            item.status = "cancelled";
+            item.error = "Cancelado: check-out já realizado no flat";
+            item.updatedAt = nowIso;
+            cancelPendingStayRemindersForCheckout(db, null, {
+              reservation: resv,
+              reservationId: item.reservationId,
+              reservationCode: item.reservationCode,
+              flatId: item.flatId || resv?.flatId,
+              flatNumber: item.flatNumber || resv?.flatNumber,
+              reason: "Cancelado: check-out já realizado no flat"
+            });
+            saveDatabase();
+            continue;
+          }
+        }
+
         // Checagem dinâmica: se for lembrete de pagamento pendente (+1h) e a reserva já foi paga ou confirmada
         if (item.triggerEvent === "payment_pending") {
           const isPaidOrConfirmed = resv && (
@@ -9433,12 +9475,297 @@ export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, c
   };
 }
 
+// Eventos permitidos APÓS a realização do check-out (agradecimento de saída, pesquisa de avaliação/NPS, recibo de pagamento ou cancelamento)
+export const POST_CHECKOUT_ALLOWED_EVENTS = new Set([
+  "checkout_completed",
+  "on_checkout",
+  "post_checkout_review",
+  "nps_approved",
+  "payment_confirmed",
+  "reservation_cancelled"
+]);
+
+/**
+ * Verifica de forma unificada se uma reserva (ou o respectivo flat na data de saída de hoje)
+ * já teve o check-out informado por QUALQUER canal:
+ *  - Portaria via WhatsApp
+ *  - Painel da Recepção / Calendário PMS
+ *  - Próprio hóspede via link digital ou WhatsApp (Sofia IA)
+ *  - Governança: card de limpeza marcado como "Desocupado", "Limpando" ou "Limpo"
+ */
+export function isReservationOrFlatCheckedOut(db, resv, flatIdOverride = null, flatNumberOverride = null) {
+  if (!db) return false;
+
+  const now = new Date();
+  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brDate = new Date(nowUtc - (3 * 3600000));
+  const todayStr = brDate.toISOString().substring(0, 10);
+
+  if (resv) {
+    const statusLower = String(resv.status || "").toLowerCase().trim();
+    if (
+      resv.checkoutDone === true ||
+      statusLower === "completed" ||
+      statusLower === "checkout" ||
+      statusLower === "checked_out"
+    ) {
+      return true;
+    }
+
+    if (resv.actualCheckoutAt) {
+      const actualBrDate = new Date(new Date(resv.actualCheckoutAt).getTime() - 3 * 3600 * 1000)
+        .toISOString()
+        .substring(0, 10);
+      if (!resv.checkinDate || actualBrDate >= resv.checkinDate) {
+        return true;
+      }
+    }
+
+    const rCode = String(resv.code || resv.reservationCode || "").trim().toUpperCase();
+    const rId = resv.id !== undefined && resv.id !== null ? String(resv.id) : "";
+
+    // Se a confirmação de check-out já foi enviada no histórico ou na fila
+    if (rCode || rId) {
+      const sentCheckoutInHistory = (db.whatsappHistory || []).some(h => {
+        if (h.status !== "sent" && h.status !== "delivered") return false;
+        if (h.triggerEvent !== "checkout_completed" && h.triggerEvent !== "on_checkout") return false;
+        const hCode = String(h.reservationCode || "").trim().toUpperCase();
+        const hId = h.reservationId !== undefined && h.reservationId !== null ? String(h.reservationId) : "";
+        return (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+      });
+      if (sentCheckoutInHistory) return true;
+
+      const sentCheckoutInQueue = (db.whatsappQueue || []).some(q => {
+        if (q.status !== "sent" && q.status !== "delivered") return false;
+        if (q.triggerEvent !== "checkout_completed" && q.triggerEvent !== "on_checkout" && q.templateId !== "tpl_checkout_completed") return false;
+        const qCode = String(q.reservationCode || "").trim().toUpperCase();
+        const qId = q.reservationId !== undefined && q.reservationId !== null ? String(q.reservationId) : "";
+        return (rCode && qCode === rCode) || (rId && (qId === rId || qCode === rId));
+      });
+      if (sentCheckoutInQueue) return true;
+    }
+  }
+
+  // Se a reserva é de um hóspede que está ENTRANDO hoje e só sai no futuro (turnover),
+  // o card de limpeza de hoje pertence à saída do hóspede anterior, não a esta reserva.
+  if (resv && resv.checkoutDate && resv.checkoutDate > todayStr) {
+    return false;
+  }
+
+  const targetDate = resv?.checkoutDate || todayStr;
+  const fId = resv?.flatId || flatIdOverride || null;
+  const rawFlatNum = resv?.flatNumber || flatNumberOverride || (fId && Array.isArray(db.flats) ? db.flats.find(f => f.id === fId)?.number : "");
+  const fNumClean = String(rawFlatNum || "").replace(/\D/g, "");
+
+  if (fId || fNumClean) {
+    const cleanReqs = (db.cleaningRequests || []).filter(c => {
+      if (!c || c.isDeleted || c.status === "deleted") return false;
+      if (c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only") return false;
+      const cNumClean = String(c.flatNumber || "").replace(/\D/g, "");
+      const sameFlat = (fId && Number(c.flatId) === Number(fId)) || (fNumClean && cNumClean === fNumClean);
+      if (!sameFlat) return false;
+      return c.requestDate === targetDate || (c.effectiveDate === targetDate && c.status === "clean");
+    });
+
+    for (const c of cleanReqs) {
+      if (c.status === "cleaning_now" || c.status === "in_progress" || c.status === "clean") {
+        return true;
+      }
+      if (
+        c.isVacant === true &&
+        (
+          c.isVacantExplicitlySet ||
+          c.vacantSource === "guest_checkout" ||
+          c.vacantSource === "reception_checkout" ||
+          c.vacantSource === "whatsapp_concierge" ||
+          c.vacantSource === "whatsapp_guest" ||
+          c.vacantSource === "cleaning_started" ||
+          c.vacantSource === "cleaning_completed" ||
+          c.vacantSource === "manual_card" ||
+          c.vacantSource === "admin" ||
+          c.source === "guest_checkout" ||
+          c.source === "whatsapp_concierge" ||
+          c.source === "whatsapp_guest"
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Cancela todos os agendamentos pendentes de estadia / pré-checkout (como checkout_reminder,
+ * breakfast_reminder, welcome_checkin, pre_checkin_reminder, etc.) tanto na fila do WhatsApp
+ * (db.whatsappQueue) quanto na fila de E-mail (db.emailQueue), preservando apenas eventos
+ * pós-checkout (checkout_completed, post_checkout_review, etc.).
+ */
+export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase = null, options = {}) {
+  const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+  if (!db) return { cancelledWhatsAppCount: 0, cancelledEmailCount: 0 };
+
+  const {
+    reservation = null,
+    reservationId = null,
+    reservationCode = null,
+    flatId = null,
+    flatNumber = null,
+    reason = "Cancelado: check-out já realizado no flat"
+  } = options || {};
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brDate = new Date(nowUtc - (3 * 3600000));
+  const todayStr = brDate.toISOString().substring(0, 10);
+
+  const targetReservations = [];
+  const seenResKeys = new Set();
+  const addTargetRes = (r) => {
+    if (!r) return;
+    const key = String(r.id || r.code || r.reservationCode || Math.random());
+    if (!seenResKeys.has(key)) {
+      seenResKeys.add(key);
+      targetReservations.push(r);
+    }
+  };
+
+  if (reservation) addTargetRes(reservation);
+
+  const fId = flatId || reservation?.flatId || null;
+  const rawFlatNum = flatNumber || reservation?.flatNumber || (fId && Array.isArray(db.flats) ? db.flats.find(f => f.id === fId)?.number : "");
+  const fNumClean = String(rawFlatNum || "").replace(/\D/g, "");
+  const targetCodeUpper = String(reservationCode || reservation?.code || reservation?.reservationCode || "").trim().toUpperCase();
+  const targetIdStr = (reservationId ?? reservation?.id) !== undefined && (reservationId ?? reservation?.id) !== null
+    ? String(reservationId ?? reservation?.id)
+    : "";
+
+  for (const r of (db.reservations || [])) {
+    if (!r || r.status === "cancelada" || r.status === "cancelled" || r.status === "cancelado") continue;
+    const rCode = String(r.code || r.reservationCode || "").trim().toUpperCase();
+    const rId = r.id !== undefined && r.id !== null ? String(r.id) : "";
+
+    if ((targetCodeUpper && rCode === targetCodeUpper) || (targetIdStr && (rId === targetIdStr || rCode === targetIdStr))) {
+      addTargetRes(r);
+      continue;
+    }
+
+    if (fId || fNumClean) {
+      const rFlatClean = String(r.flatNumber || "").replace(/\D/g, "");
+      const sameFlat = (fId && Number(r.flatId) === Number(fId)) || (fNumClean && rFlatClean === fNumClean);
+      if (sameFlat && r.checkoutDate === todayStr) {
+        addTargetRes(r);
+      }
+    }
+  }
+
+  const matchedCodes = new Set();
+  const matchedIds = new Set();
+  const matchedPhonesLast8 = new Set();
+
+  if (targetCodeUpper) matchedCodes.add(targetCodeUpper);
+  if (targetIdStr) matchedIds.add(targetIdStr);
+
+  for (const r of targetReservations) {
+    const c = String(r.code || r.reservationCode || "").trim().toUpperCase();
+    if (c) matchedCodes.add(c);
+    if (r.id !== undefined && r.id !== null) {
+      matchedIds.add(String(r.id));
+      if (r.flatNumber) {
+        matchedCodes.add(`RES-${r.flatNumber}-${r.id}`.toUpperCase());
+      }
+    }
+    const rawPhones = [r.guestPhone, r.phone, ...(Array.isArray(r.guests) ? r.guests.map(g => g?.phone) : [])];
+    for (const p of rawPhones) {
+      const digits = String(p || "").replace(/\D/g, "");
+      if (digits.length >= 8) matchedPhonesLast8.add(digits.slice(-8));
+    }
+  }
+
+  let cancelledWhatsAppCount = 0;
+  if (Array.isArray(db.whatsappQueue)) {
+    for (const qItem of db.whatsappQueue) {
+      if (!qItem) continue;
+      if (qItem.status !== "scheduled" && qItem.status !== "pending" && qItem.status !== "pending_approval") continue;
+
+      const ev = String(qItem.triggerEvent || "").trim();
+      const tplId = String(qItem.templateId || "").trim();
+      if (POST_CHECKOUT_ALLOWED_EVENTS.has(ev) || tplId === "tpl_checkout_completed" || tplId === "tpl_post_checkout_review") {
+        continue;
+      }
+
+      const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
+      const qId = qItem.reservationId !== undefined && qItem.reservationId !== null ? String(qItem.reservationId) : "";
+      let isMatch = (qCode && matchedCodes.has(qCode)) || (qId && (matchedIds.has(qId) || matchedCodes.has(qId)));
+
+      if (!isMatch && (ev === "checkout_reminder" || tplId === "tpl_checkout_reminder" || ev === "breakfast_reminder")) {
+        const qPhoneDigits = String(qItem.guestPhone || "").replace(/\D/g, "");
+        const qSchedDate = String(qItem.scheduledFor || "").substring(0, 10);
+        if (qPhoneDigits.length >= 8 && matchedPhonesLast8.has(qPhoneDigits.slice(-8)) && (!qSchedDate || qSchedDate === todayStr)) {
+          isMatch = true;
+        }
+      }
+
+      if (isMatch) {
+        qItem.status = "cancelled";
+        qItem.error = reason;
+        qItem.updatedAt = nowIso;
+        cancelledWhatsAppCount++;
+      }
+    }
+  }
+
+  let cancelledEmailCount = 0;
+  if (Array.isArray(db.emailQueue)) {
+    for (const eItem of db.emailQueue) {
+      if (!eItem) continue;
+      if (eItem.status !== "scheduled" && eItem.status !== "pending") continue;
+
+      const ev = String(eItem.triggerEvent || eItem.type || "").trim();
+      if (POST_CHECKOUT_ALLOWED_EVENTS.has(ev)) continue;
+
+      const eCode = String(eItem.reservationCode || "").trim().toUpperCase();
+      const eId = eItem.reservationId !== undefined && eItem.reservationId !== null ? String(eItem.reservationId) : "";
+      const isMatch = (eCode && matchedCodes.has(eCode)) || (eId && (matchedIds.has(eId) || matchedCodes.has(eId)));
+
+      if (isMatch) {
+        eItem.status = "cancelled";
+        eItem.error = reason;
+        eItem.updatedAt = nowIso;
+        cancelledEmailCount++;
+      }
+    }
+  }
+
+  if ((cancelledWhatsAppCount > 0 || cancelledEmailCount > 0)) {
+    console.log(`[Checkout Queue Cleanup] Cancelados ${cancelledWhatsAppCount} WhatsApp(s) e ${cancelledEmailCount} e-mail(s) pendentes de estadia/check-out (${reason}).`);
+    if (typeof saveDatabase === "function") {
+      saveDatabase();
+    }
+  }
+
+  return { cancelledWhatsAppCount, cancelledEmailCount };
+}
+
 /**
  * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
  */
 export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false } = {}) {
   const sendButtons = buttons || item.renderedButtons || [];
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
+
+  // Trava final anti-envio pós-checkout: se for lembrete de check-out ou estadia e o flat/reserva já teve check-out informado, cancela na hora
+  if (!POST_CHECKOUT_ALLOWED_EVENTS.has(item.triggerEvent) && isReservationOrFlatCheckedOut(db, resv, item.flatId, item.flatNumber)) {
+    console.log(`[Auto-WhatsApp] Bloqueando entrega de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: check-out já realizado.`);
+    item.status = "cancelled";
+    item.error = "Cancelado: check-out já realizado no flat";
+    item.updatedAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") saveDatabase();
+    return { waResult: null, emailLog: null, success: false, cancelled: true };
+  }
+
   let waResult = null;
   let emailLog = null;
 
@@ -9715,7 +10042,18 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   let hasChanges = false;
 
   for (const resv of reservationsToProcess) {
-    const isCompletedOrCheckedOut = resv.status === "completed" || resv.status === "checkout" || Boolean(resv.checkoutDone);
+    const isCompletedOrCheckedOut = isReservationOrFlatCheckedOut(db, resv);
+    if (isCompletedOrCheckedOut) {
+      const cleanupRes = cancelPendingStayRemindersForCheckout(db, null, {
+        reservation: resv,
+        flatId: resv.flatId,
+        flatNumber: resv.flatNumber,
+        reason: "Cancelado: check-out já realizado no flat"
+      });
+      if (cleanupRes.cancelledWhatsAppCount > 0 || cleanupRes.cancelledEmailCount > 0) {
+        hasChanges = true;
+      }
+    }
     const resvChannel = resv.channel || resv.source || "site";
     const recipients = getReservationRecipients(resv, db);
 
@@ -9978,6 +10316,16 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       }
     }
 
+    // Se o evento for confirmação de check-out, cancela imediatamente quaisquer lembretes pendentes de check-out ou estadia
+    if (eventName === "checkout_completed" || eventName === "on_checkout") {
+      cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+        reservation,
+        flatId: reservation.flatId,
+        flatNumber: reservation.flatNumber,
+        reason: "Cancelado: check-out já realizado"
+      });
+    }
+
     const recipients = getReservationRecipients(reservation, db);
     const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
     const rId = reservation.id ? String(reservation.id) : "";
@@ -10082,6 +10430,14 @@ export async function triggerCheckoutWhatsApp(dbOrGetter, saveDatabase, reservat
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db || !reservation) return;
+
+    // 0. Sempre cancela imediatamente qualquer lembrete pendente de check-out, café da manhã ou estadia na fila (WhatsApp e E-mail)
+    cancelPendingStayRemindersForCheckout(db, saveDatabase, {
+      reservation,
+      flatId: reservation.flatId,
+      flatNumber: reservation.flatNumber,
+      reason: `Cancelado: check-out realizado (${source})`
+    });
 
     const resCode = reservation.code || reservation.reservationCode;
     const resId = reservation.id;
