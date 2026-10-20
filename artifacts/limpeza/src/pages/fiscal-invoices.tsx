@@ -65,8 +65,8 @@ export default function FiscalInvoicesPage() {
   // ── Navegação do Hub Fiscal (5 Abas Especializadas) ─────────────────────────
   const [activeTab, setActiveTab] = useState<"studio" | "batch" | "history" | "contingency" | "settings">("studio")
 
-  // ── Motor Emissor Ativo ───────────────────────────────────────────────────
-  const [sistemaEmissor, setSistemaEmissor] = useState<"giss_prefeitura" | "padrao_nacional">("giss_prefeitura")
+  // ── Motor Emissor Ativo (Emissor Nacional Gov.br / ADN) ───────────────────
+  const [sistemaEmissor] = useState<"padrao_nacional">("padrao_nacional")
 
   // ── Filtro Global de Competência (YYYY-MM ou "all") ────────────────────────
   const [selectedCompetencia, setSelectedCompetencia] = useState<string>("all")
@@ -952,14 +952,14 @@ export default function FiscalInvoicesPage() {
 
       toast({
         title: "NFS-e Autorizada com Sucesso! 🎉",
-        description: `Nota Nº ${successPayload.numeroNfse} autorizada via ${sistemaEmissor === 'giss_prefeitura' ? 'GissOnline' : 'Padrão Nacional'}.`
+        description: `Nota Nº ${successPayload.numeroNfse} autorizada via Emissor Nacional (Gov.br).`
       })
 
       setMessages(prev => [
         ...prev,
         {
           role: "assistant",
-          content: `🎉 NOTA FISCAL AUTORIZADA COM SUCESSO!\n\n🧾 **NFS-e Nº ${successPayload.numeroNfse}**\n🔑 Código: **${successPayload.codigoVerificacao}**\n🏛️ Emissor: ${sistemaEmissor === 'giss_prefeitura' ? 'Prefeitura de Campos dos Goytacazes (GissOnline)' : 'Padrão Nacional (Gov.br)'}\n\nA nota já consta no Livro Fiscal e você pode abrir o espelho DANFSE oficial ao lado!`
+          content: `🎉 NOTA FISCAL AUTORIZADA COM SUCESSO!\n\n🧾 **NFS-e Nº ${successPayload.numeroNfse}**\n🔑 Código: **${successPayload.codigoVerificacao}**\n🇧🇷 Emissor: Padrão Nacional (Gov.br / ADN)\n\nA nota já consta no Livro Fiscal e você pode abrir o espelho DANFSE ou o PDF oficial ao lado!`
         }
       ])
     } catch (err: any) {
@@ -1711,7 +1711,7 @@ export default function FiscalInvoicesPage() {
         inv.dataEmissao ? new Date(inv.dataEmissao).toLocaleDateString("pt-BR") : "",
         comp,
         inv.status || "autorizada",
-        inv.sistemaEmissor === "giss_prefeitura" ? "GissOnline" : "Padrão Nacional",
+        "Padrão Nacional (Gov.br)",
         inv.codigoVerificacao || inv.chaveAcesso || "",
         inv.tomadorCpfCnpj || "",
         `"${(inv.tomadorNome || "").replace(/"/g, '""')}"`,
@@ -1968,31 +1968,10 @@ export default function FiscalInvoicesPage() {
                 <KeyRound className="w-3 h-3 opacity-60 ml-0.5" />
               </button>
 
-              {/* Seletor Rápido de Motor Emissor */}
-              <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-2xl border border-border">
-                <button
-                  onClick={() => setSistemaEmissor("giss_prefeitura")}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    sistemaEmissor === "giss_prefeitura"
-                      ? "bg-emerald-600 text-white shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Building2 className="w-3.5 h-3.5" />
-                  <span>🏛️ GissOnline</span>
-                </button>
-
-                <button
-                  onClick={() => setSistemaEmissor("padrao_nacional")}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    sistemaEmissor === "padrao_nacional"
-                      ? "bg-indigo-600 text-white shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Globe className="w-3.5 h-3.5" />
-                  <span>🇧🇷 Padrão Nacional</span>
-                </button>
+              {/* Indicador Oficial do Emissor Nacional Gov.br */}
+              <div className="flex items-center gap-1.5 bg-indigo-600 text-white px-3.5 py-2 rounded-2xl text-xs font-bold shadow-xs">
+                <Globe className="w-3.5 h-3.5" />
+                <span>🇧🇷 Emissor Nacional Gov.br (ADN)</span>
               </div>
             </div>
           </div>
@@ -2143,7 +2122,7 @@ export default function FiscalInvoicesPage() {
                     <h4 className="font-black text-xs text-foreground flex items-center gap-2">
                       <span>NFS-e Nº {lastEmittedInvoice.numeroNfse} Autorizada!</span>
                       <Badge className="bg-emerald-600 text-white text-[10px]">
-                        {sistemaEmissor === 'giss_prefeitura' ? 'Prefeitura de Campos (Giss)' : 'Padrão Nacional'}
+                        🇧🇷 Padrão Nacional (Gov.br)
                       </Badge>
                     </h4>
                     <p className="text-[11px] text-muted-foreground">
@@ -2179,7 +2158,7 @@ export default function FiscalInvoicesPage() {
                       className="font-bold text-xs rounded-xl h-8.5 gap-1.5 border-emerald-600/30 text-emerald-700 dark:text-emerald-300"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Portal Giss</span>
+                      <span>Portal Gov.br</span>
                     </Button>
                   )}
                   <Button
@@ -2763,10 +2742,10 @@ export default function FiscalInvoicesPage() {
                     {/* Cabeçalho Oficial do DANFSE */}
                     <div className="border border-border/80 rounded-2xl p-3 bg-muted/10 space-y-2 text-center">
                       <div className="font-black text-xs uppercase tracking-wide text-foreground">
-                        {sistemaEmissor === "giss_prefeitura" ? "Prefeitura Municipal de Campos dos Goytacazes" : "República Federativa do Brasil"}
+                        República Federativa do Brasil • Gov.br
                       </div>
                       <div className="text-[10px] text-muted-foreground font-semibold">
-                        {sistemaEmissor === "giss_prefeitura" ? "Secretaria Municipal de Fazenda • GissOnline" : "Ambiente de Dados Nacional • Padrão Nacional ADN"}
+                        Ambiente de Dados Nacional (ADN / SEFIN) • Município: Campos dos Goytacazes/RJ
                       </div>
                       <div className="inline-block bg-primary/10 text-primary font-black px-2.5 py-0.5 rounded-md text-[10px]">
                         DOCUMENTO AUXILIAR DA NOTA FISCAL DE SERVIÇOS ELETRÔNICA (DANFSE)
@@ -2845,12 +2824,12 @@ export default function FiscalInvoicesPage() {
                       {isEmitting ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Transmitindo à Prefeitura...</span>
+                          <span>Transmitindo ao Emissor Nacional (Gov.br)...</span>
                         </>
                       ) : (
                         <>
                           <CheckCircle2 className="w-4 h-4" />
-                          <span>Transmitir NFS-e Oficial ({sistemaEmissor === 'giss_prefeitura' ? 'GissOnline' : 'Padrão Nacional'})</span>
+                          <span>Transmitir NFS-e Oficial (Gov.br / Padrão Nacional)</span>
                         </>
                       )}
                     </Button>
@@ -3190,15 +3169,7 @@ export default function FiscalInvoicesPage() {
 
                 <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
                   <span className="text-muted-foreground font-bold">Sistema:</span>
-                  <select
-                    value={livroSistemaFilter}
-                    onChange={e => setLivroSistemaFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden"
-                  >
-                    <option value="all">Todos os Sistemas</option>
-                    <option value="giss_prefeitura">GissOnline (Prefeitura)</option>
-                    <option value="padrao_nacional">Padrão Nacional</option>
-                  </select>
+                  <span className="font-bold text-foreground">🇧🇷 Padrão Nacional (Gov.br)</span>
                 </div>
 
                 <div className="ml-auto font-mono text-muted-foreground">
@@ -3275,7 +3246,7 @@ export default function FiscalInvoicesPage() {
 
                               <td className="p-3.5">
                                 <Badge variant="outline" className="text-[10px] font-semibold">
-                                  {inv.sistemaEmissor === "giss_prefeitura" ? "🏛️ GissOnline" : "🇧🇷 Padrão Nacional"}
+                                  🇧🇷 Padrão Nacional
                                 </Badge>
                               </td>
 
@@ -3352,19 +3323,19 @@ export default function FiscalInvoicesPage() {
                                     <span>PDF</span>
                                   </Button>
 
-                                  {/* Portal Giss */}
+                                  {/* Portal Gov.br */}
                                   <Button
                                     size="sm"
                                     variant="outline"
                                     onClick={() => {
-                                      const link = inv.linkPrefeitura || `https://giss.campos.rj.gov.br/nfse/visualizar?num=${inv.numeroNfse}&cod=${inv.codigoVerificacao}`
+                                      const link = inv.linkPrefeitura || `https://www.nfse.gov.br/consultapublica/danfse?chave=${inv.chaveAcesso || inv.codigoVerificacao}`
                                       window.open(link, "_blank")
                                     }}
                                     className="h-7 px-2 text-[11px] font-bold rounded-lg gap-1 text-blue-700 dark:text-blue-300 border-blue-600/40 hover:bg-blue-500/10 shadow-2xs"
-                                    title="Consultar no Portal GissOnline da Prefeitura"
+                                    title="Consultar no Portal Nacional da NFS-e (Gov.br)"
                                   >
                                     <Globe className="w-3 h-3 text-blue-600" />
-                                    <span>Giss</span>
+                                    <span>Gov.br</span>
                                   </Button>
 
                                   {/* Baixar XML */}
@@ -3516,7 +3487,7 @@ export default function FiscalInvoicesPage() {
 
                             <td className="p-3.5 max-w-[260px]">
                               <div className="text-rose-500 font-medium text-[11px] truncate" title={item.lastError || item.error}>
-                                {item.lastError || item.error || "Timeout conexão GissOnline"}
+                                {item.lastError || item.error || "Aguardando liberação SEFIN Nacional (Gov.br)"}
                               </div>
                             </td>
 
@@ -4026,7 +3997,7 @@ export default function FiscalInvoicesPage() {
               </div>
               <DialogTitle className="text-lg font-black text-foreground">NFS-e Autorizada com Sucesso!</DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                A nota fiscal foi processada e autorizada pelo sistema {sistemaEmissor === "giss_prefeitura" ? "GissOnline (Prefeitura de Campos)" : "Padrão Nacional (Gov.br)"}.
+                A nota fiscal foi processada e autorizada pelo Emissor Nacional da NFS-e (Gov.br / ADN).
               </DialogDescription>
             </DialogHeader>
 
@@ -4052,11 +4023,11 @@ export default function FiscalInvoicesPage() {
 
               <Button 
                 variant="outline"
-                onClick={() => window.open(emissionSuccessData?.linkPrefeitura || "https://goytacazes.giss.com.br/portal/#/nfse/consulta", "_blank")}
+                onClick={() => window.open(`/api/nfse/pdf/${emissionSuccessData?.numeroNfse || emissionSuccessData?.id || 'latest'}`, "_blank")}
                 className="flex-1 font-bold text-xs rounded-xl h-10 gap-1.5 border-emerald-600/30 text-emerald-700 dark:text-emerald-400"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Portal Giss</span>
+                <FileText className="w-3.5 h-3.5" />
+                <span>Abrir PDF Oficial</span>
               </Button>
 
               <Button 

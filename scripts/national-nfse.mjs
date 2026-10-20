@@ -4,6 +4,8 @@ import crypto from "crypto";
 import zlib from "zlib";
 import https from "https";
 import { fileURLToPath } from "url";
+import PDFDocument from "pdfkit";
+import QRCode from "qrcode";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +30,6 @@ for (const envCandidate of [path.resolve(__dirname, "../../.env"), path.resolve(
     }
   } catch {}
 }
-
 
 const NFSE_A1_COMPAT_PROFILE = [
   "h+GD9LZi6H+icV2rsAOKtnR/YEH6vCPEC3XAv0AGyTF2ruVtJsVifXl4eWm19+AaD61cpjvJfMkLfteRzE",
@@ -249,8 +250,6 @@ export function ensureNfseCertFilesOnDisk() {
 const _nfseCompat = ensureNfseCertFilesOnDisk();
 const CERT_PASS = process.env.CERT_PASS || process.env.CERT_PFX_PASSWORD || _nfseCompat.pass || "";
 
-
-
 export function getBrasiliaTimeString(minutesAgo = 3) {
   const d = new Date(Date.now() - (minutesAgo * 60000));
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -298,6 +297,15 @@ try {
 // ─── 1. Pipeline de Sanitização & Validação Rigorosa ─────────────────────────
 
 const PREPOSITIONS = new Set(["de", "da", "do", "dos", "das", "e", "em", "para", "com", "por"]);
+
+function escXml(val) {
+  return String(val ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
 
 /**
  * Converte string para Title Case respeitando preposições e siglas corporativas (LTDA, S/A, ME, EPP).
@@ -461,7 +469,7 @@ export function buildNationalDpsPayload({
   discriminacao,
   flatNumber,
   reservationCode,
-  ambiente = "homologacao"
+  ambiente = "producao"
 }) {
   const rule = TAX_CATALOG[regraFiscalId] || TAX_CATALOG.hospedagem_corpflats;
   const cleanDoc = onlyDigits(tomador.cpfCnpj);
@@ -481,6 +489,18 @@ export function buildNationalDpsPayload({
     numeroDps: numeroDps
   });
 
+  const enderObj = {
+    endNac: {
+      cMun: onlyDigits(tomador.codigoMunicipio || rule.municipioIncidencia).padStart(7, "0").substring(0, 7) || "3301009",
+      CEP: tomadorCepSanitizado
+    },
+    xLgr: tomador.logradouro || tomador.endereco || "Av. Pelinca",
+    nro: tomador.numero || "100",
+    xCpl: tomador.complemento || undefined,
+    xBairro: tomador.bairro || "Pelinca",
+    UF: tomador.uf || "RJ"
+  };
+
   const dpsPayload = {
     versao: "1.00",
     ambiente: ambiente === "producao" ? 1 : 2,
@@ -489,6 +509,8 @@ export function buildNationalDpsPayload({
       tpAmb: ambiente === "producao" ? 1 : 2,
       dhEmi: dataHoraEmissao,
       verAplic: "CorpFlats_PMS_1.0",
+      serie: String(serie || "1"),
+      nDPS: String(numeroDps || 1),
       dCompet: dataHoraEmissao.substring(0, 10),
       tpEmit: 1, // Prestador
       cLocEmi: rule.municipioIncidencia,
@@ -504,17 +526,8 @@ export function buildNationalDpsPayload({
       toma: {
         ...(isCnpj ? { CNPJ: cleanDoc } : { CPF: cleanDoc }),
         xNome: tomadorNomeSanitizado,
-        ender: {
-          endNac: {
-            cMun: tomador.codigoMunicipio || rule.municipioIncidencia,
-            CEP: tomadorCepSanitizado
-          },
-          xLgr: tomador.logradouro || tomador.endereco || "Av. Pelinca",
-          nro: tomador.numero || "100",
-          xCpl: tomador.complemento || undefined,
-          xBairro: tomador.bairro || "Pelinca",
-          UF: tomador.uf || "RJ"
-        },
+        ender: enderObj,
+        end: enderObj,
         fone: tomadorTelefoneSanitizado || undefined,
         email: (tomador.email || "").trim().toLowerCase() || undefined
       },
@@ -562,12 +575,12 @@ export function buildNationalDpsPayload({
 
 // ─── 5. Emissor Nacional com Fila & Transmissão Real para o ADN ──────────────
 
-
 export function signDpsXmlContent({
   idDPS,
   infDPS,
   privateKeyPem,
-  certBase64Pure
+  certBase64Pure,
+  versao = "1.00"
 }) {
   // 1. DigestValue SHA-1 do infDPS canônico
   const digestValue = crypto.createHash("sha1").update(infDPS, "utf-8").digest("base64");
@@ -581,7 +594,12 @@ export function signDpsXmlContent({
   const signatureValue = signer.sign(privateKeyPem, "base64");
 
   // 4. XML Completo com Assinatura Envelopada
-  return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"', '')}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64Pure}</X509Certificate></X509Data></KeyInfo></Signature></DPS>`;
+  return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${versao}">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"', '')}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64Pure}</X509Certificate></X509Data></KeyInfo></Signature></DPS>`;
+}
+
+function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, tomaXml, xDescServ, valorNum, pAliq, includeFinNFSe = false }) {
+  const finTag = includeFinNFSe ? `<finNFSe>0</finNFSe>` : "";
+  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>CorpFlats_1.0</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><regTrib><opSimpNac>1</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090201</cTribNac><xDescServ>${escXml(xDescServ)}</xDescServ></cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN><pAliq>${pAliq}</pAliq></tribMun><totTrib><pTotTribSN>6.00</pTotTribSN></totTrib></trib></valores></infDPS>`;
 }
 
 export async function processNationalInvoiceEmission({
@@ -590,10 +608,9 @@ export async function processNationalInvoiceEmission({
 }) {
   const dps = invoiceData.dpsPayload?.infDPS || {};
   const cLocEmi = "3301009";
-  const tpEmit = "1";
   const cnpj = onlyDigits(invoiceData.rule?.cnpjPrestador || "47964813000165");
-  const serie = String(dps.serie || 1);
-  const nDPS = String(dps.nDPS || 1);
+  const serie = String(dps.serie || invoiceData.serie || 1);
+  const nDPS = String(dps.nDPS || invoiceData.numeroDps || 1);
 
   const seriePad = serie.padStart(5, "0");
   const nDPSPad = nDPS.padStart(15, "0");
@@ -603,37 +620,74 @@ export async function processNationalInvoiceEmission({
   const tomaDoc = onlyDigits(dps.toma?.CNPJ || dps.toma?.CPF || "12585736792");
   const isCnpj = tomaDoc.length === 14;
   const tomaTag = isCnpj ? `<CNPJ>${tomaDoc}</CNPJ>` : `<CPF>${tomaDoc}</CPF>`;
-  const valorNum = Number(invoiceData.valorServico || 250).toFixed(2);
+  const valorNum = Number(invoiceData.valorServico || dps.valores?.vServPrest?.vServ || 250).toFixed(2);
+  const pAliq = Number(dps.valores?.trib?.tribMun?.vAliq || invoiceData.rule?.aliquotaIss || 2.0).toFixed(2);
+
+  const ender = dps.toma?.ender || dps.toma?.end || {};
+  const endNac = ender.endNac || {};
+  const cMunToma = onlyDigits(endNac.cMun || cLocEmi).padStart(7, "0").substring(0, 7) || cLocEmi;
+  const cepToma = cleanCep(endNac.CEP || "28035000");
+  const xLgrToma = String(ender.xLgr || "Av. Pelinca").trim().substring(0, 255) || "Av. Pelinca";
+  const nroToma = String(ender.nro || "100").trim().substring(0, 60) || "100";
+  const xCplToma = ender.xCpl ? String(ender.xCpl).trim().substring(0, 156) : "";
+  const xBairroToma = String(ender.xBairro || "Pelinca").trim().substring(0, 60) || "Pelinca";
+  const foneToma = cleanPhone(dps.toma?.fone || "");
+  const emailToma = String(dps.toma?.email || "").trim().toLowerCase();
+
+  let tomaInner = `${tomaTag}<xNome>${escXml(dps.toma?.xNome || "Miller Pessanha")}</xNome>`;
+  tomaInner += `<end><endNac><cMun>${cMunToma}</cMun><CEP>${cepToma}</CEP></endNac><xLgr>${escXml(xLgrToma)}</xLgr><nro>${escXml(nroToma)}</nro>${xCplToma ? `<xCpl>${escXml(xCplToma)}</xCpl>` : ""}<xBairro>${escXml(xBairroToma)}</xBairro></end>`;
+  if (foneToma && foneToma.length >= 6 && foneToma.length <= 20) {
+    tomaInner += `<fone>${foneToma}</fone>`;
+  }
+  if (emailToma && emailToma.includes("@")) {
+    tomaInner += `<email>${escXml(emailToma)}</email>`;
+  }
+  const tomaXml = `<toma>${tomaInner}</toma>`;
 
   const { dhStr, dComp } = getBrasiliaTimeString(3);
+  const tpAmb = dps.tpAmb || 1;
+  const xDescServ = dps.serv?.cServ?.xDescServ || "Hospedagem em flat mobiliado";
 
-  // Montagem do infDPS canônico para assinatura
-  const infDPS = `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${dps.tpAmb || 1}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>1.00</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit><cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><regTrib><opSimpNac>1</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest><toma>${tomaTag}<xNome>${dps.toma?.xNome || 'Miller Pessanha'}</xNome></toma><serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090201</cTribNac><xDescServ>${dps.serv?.cServ?.xDescServ || 'Hospedagem em flat mobiliado'}</xDescServ></cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN><pAliq>2.00</pAliq></tribMun><totTrib><pTotTribSN>6.00</pTotTribSN></totTrib></trib></valores></infDPS>`;
+  const signOrWrapDps = (infDpsContent, versao = "1.00") => {
+    try {
+      ensureNfseCertFilesOnDisk();
+      const keyPath = path.join(process.cwd(), "storage/certs/private_key.pem");
+      const certPath = path.join(process.cwd(), "storage/certs/certificate.pem");
+      if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+        const privateKeyPem = fs.readFileSync(keyPath, "utf-8");
+        const rawCert = fs.readFileSync(certPath, "utf-8");
+        const begin = rawCert.indexOf("-----BEGIN CERTIFICATE-----");
+        const end = rawCert.indexOf("-----END CERTIFICATE-----");
+        const certBase64Pure = rawCert.substring(begin + 27, end).replace(/\s+/g, "");
+        return signDpsXmlContent({ idDPS, infDPS: infDpsContent, privateKeyPem, certBase64Pure, versao });
+      }
+    } catch {}
+    return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${versao}">${infDpsContent.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}</DPS>`;
+  };
 
-  // Carrega chaves para assinatura digital
-  let dpsXml = "";
-  try {
-    const keyPath = path.join(process.cwd(), "storage/certs/private_key.pem");
-    const certPath = path.join(process.cwd(), "storage/certs/certificate.pem");
-    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-      const privateKeyPem = fs.readFileSync(keyPath, "utf-8");
-      const rawCert = fs.readFileSync(certPath, "utf-8");
-      const begin = rawCert.indexOf("-----BEGIN CERTIFICATE-----");
-      const end = rawCert.indexOf("-----END CERTIFICATE-----");
-      const certBase64Pure = rawCert.substring(begin + 27, end).replace(/\s+/g, "");
-      dpsXml = signDpsXmlContent({ idDPS, infDPS, privateKeyPem, certBase64Pure });
-    } else {
-      dpsXml = `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}</DPS>`;
-    }
-  } catch {
-    dpsXml = `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}</DPS>`;
-  }
+  const infDPS100 = buildCanonicalInfDpsXml({
+    idDPS,
+    tpAmb,
+    dhStr,
+    serie,
+    nDPS,
+    dComp,
+    cLocEmi,
+    cnpj,
+    tomaXml,
+    xDescServ,
+    valorNum,
+    pAliq,
+    includeFinNFSe: false
+  });
+  let dpsXml = signOrWrapDps(infDPS100, "1.00");
 
   // 1. Chamada com a SEFIN Nacional (Gov.br) com fallback resiliente para teste
   let sefinResult;
+  const envMode = tpAmb === 1 ? "producao" : "homologacao";
   try {
     if (process.env.NODE_ENV === "test" && !process.env.TEST_REAL_SEFIN) {
-      const numNfseMock = String(dps.nDPS || Date.now() % 900000 + 100000);
+      const numNfseMock = String(nDPS || Date.now() % 900000 + 100000);
       const chaveMock = invoiceData.chaveAcesso || generateChaveAcessoNacional({
         codUf: "33",
         cnpj: cnpj,
@@ -650,11 +704,32 @@ export async function processNationalInvoiceEmission({
         }
       };
     } else {
-      sefinResult = await transmitDpsToNationalAdn(dpsXml, dps.tpAmb === 1 ? "producao" : "homologacao");
+      sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+      // Fallback automático para layout 1.01 caso a SEFIN solicite a tag finNFSe (E1235)
+      const firstErrors = sefinResult?.response?.erros || [];
+      if (Array.isArray(firstErrors) && firstErrors.some(e => String(e.Complemento || e.Descricao || "").includes("finNFSe"))) {
+        const infDPS101 = buildCanonicalInfDpsXml({
+          idDPS,
+          tpAmb,
+          dhStr,
+          serie,
+          nDPS,
+          dComp,
+          cLocEmi,
+          cnpj,
+          tomaXml,
+          xDescServ,
+          valorNum,
+          pAliq,
+          includeFinNFSe: true
+        });
+        dpsXml = signOrWrapDps(infDPS101, "1.01");
+        sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+      }
     }
   } catch (err) {
     if (process.env.NODE_ENV === "test") {
-      const numNfseMock = String(dps.nDPS || Date.now() % 900000 + 100000);
+      const numNfseMock = String(nDPS || Date.now() % 900000 + 100000);
       const chaveMock = invoiceData.chaveAcesso || generateChaveAcessoNacional({
         codUf: "33",
         cnpj: cnpj,
@@ -681,7 +756,7 @@ export async function processNationalInvoiceEmission({
 
   const resp = sefinResult.response;
 
-  // 2. Tratamento de Erros da Receita Federal (ex: E0037)
+  // 2. Tratamento de Erros da Receita Federal (ex: E0039, E0037)
   if (resp && resp.erros && resp.erros.length > 0) {
     const errosTxt = resp.erros.map(e => `[${e.Codigo}] ${e.Descricao}${e.Complemento ? ' - ' + e.Complemento : ''}`).join(" | ");
     return {
@@ -693,12 +768,19 @@ export async function processNationalInvoiceEmission({
     };
   }
 
-  // 3. Sucesso na Autorização
+  // 3. Sucesso na Autorização (HTTP 200 ou 201 Created no SefinNacional)
   if (sefinResult.statusCode === 200 || sefinResult.statusCode === 201) {
-    const numNfse = resp?.numeroNfse || String(dps.nDPS || 1);
+    let officialXmlDecoded = null;
+    if (resp?.nfseXmlGZipB64) {
+      try {
+        officialXmlDecoded = zlib.gunzipSync(Buffer.from(resp.nfseXmlGZipB64, "base64")).toString("utf-8");
+      } catch {}
+    }
+    const xmlNumMatch = officialXmlDecoded ? officialXmlDecoded.match(/<nNFSe>(\d+)<\/nNFSe>/) : null;
+    const numNfse = String(resp?.numeroNfse || (xmlNumMatch ? xmlNumMatch[1] : "") || nDPS || 1);
     const chaveAut = resp?.chaveAcesso || invoiceData.chaveAcesso;
-    const codVerif = resp?.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
-    const protocolo = resp?.protocolo || `SEFIN_${Date.now()}`;
+    const codVerif = resp?.codigoVerificacao || String(chaveAut || "").slice(-9) || crypto.randomBytes(4).toString("hex").toUpperCase();
+    const protocolo = resp?.protocolo || resp?.idDps || `SEFIN_${Date.now()}`;
 
     const now = new Date();
     const year = String(now.getFullYear());
@@ -707,7 +789,7 @@ export async function processNationalInvoiceEmission({
     try { fs.mkdirSync(vaultPath, { recursive: true }); } catch {}
 
     const xmlFileName = `NFS_E_${chaveAut}.xml`;
-    const xmlContent = generateNationalXmlContent({
+    const xmlContent = officialXmlDecoded || generateNationalXmlContent({
       ...invoiceData,
       numNfse,
       codVerif,
@@ -727,6 +809,7 @@ export async function processNationalInvoiceEmission({
       protocoloAutorizacao: protocolo,
       dataEmissao: invoiceData.dataHoraEmissao || new Date().toISOString(),
       sefinResponse: resp,
+      rawXml: xmlContent,
       xmlPath: `/invoices_vault/${cnpj}/${year}/${month}/${xmlFileName}`,
       qrCodeUrl: `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAut}`
     };
@@ -739,7 +822,6 @@ export async function processNationalInvoiceEmission({
     sefinResponse: resp
   };
 }
-
 
 // ─── 6. Gerador de XML Oficial Padrão Nacional ──────────────────────────────
 
@@ -760,15 +842,15 @@ export function generateNationalXmlContent(data) {
         <dhEmi>${dps.dhEmi}</dhEmi>
         <prest>
           <CNPJ>${dps.prest?.CNPJ}</CNPJ>
-          <xNome>${dps.prest?.xNome}</xNome>
+          <xNome>${escXml(dps.prest?.xNome)}</xNome>
         </prest>
         <toma>
           <CPF_CNPJ>${dps.toma?.CNPJ || dps.toma?.CPF}</CPF_CNPJ>
-          <xNome>${dps.toma?.xNome}</xNome>
+          <xNome>${escXml(dps.toma?.xNome)}</xNome>
         </toma>
         <serv>
           <cTribNac>${dps.serv?.cServ?.cTribNac}</cTribNac>
-          <xDescServ>${dps.serv?.cServ?.xDescServ}</xDescServ>
+          <xDescServ>${escXml(dps.serv?.cServ?.xDescServ)}</xDescServ>
         </serv>
         <valores>
           <vServ>${dps.valores?.vServPrest?.vServ}</vServ>
@@ -784,7 +866,7 @@ export function generateNationalXmlContent(data) {
       <SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
       <Reference URI="#NFS_${data.chaveAcesso}">
         <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
-        <DigestValue>${crypto.createHash("sha256").update(data.chaveAcesso).digest("base64")}</DigestValue>
+        <DigestValue>${crypto.createHash("sha256").update(String(data.chaveAcesso || "")).digest("base64")}</DigestValue>
       </Reference>
     </SignedInfo>
     <SignatureValue>${crypto.randomBytes(64).toString("base64")}</SignatureValue>
@@ -794,26 +876,35 @@ export function generateNationalXmlContent(data) {
 
 // ─── 7. Renderizador DANFSE Oficial (HTML/PDF Nacional com QR Code) ─────────
 
-export function renderDanfseHtml(invoice) {
+export function renderDanfseHtml(invoice = {}) {
+  const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.id || "1");
   const chaveFormatada = (invoice.chaveAcesso || "").replace(/(\d{4})/g, "$1 ").trim();
   const valor = Number(invoice.valorServico || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
-  const isCnpj = onlyDigits(invoice.tomadorCpfCnpj).length > 11;
-  const docFormatado = isCnpj 
-    ? invoice.tomadorCpfCnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")
-    : invoice.tomadorCpfCnpj.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  const cleanDoc = onlyDigits(invoice.tomadorCpfCnpj || "");
+  const isCnpj = cleanDoc.length > 11;
+  const docFormatado = isCnpj
+    ? cleanDoc.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")
+    : cleanDoc.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
 
-  const dataFormatada = invoice.dataEmissao 
+  const dataFormatada = invoice.dataEmissao
     ? new Date(invoice.dataEmissao).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
-    : new Date().toLocaleString("pt-BR");
+    : new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+
+  const isHomolog = invoice.ambiente === "homologacao";
+  const homologBanner = isHomolog
+    ? `<div style="background: #fef3c7; color: #92400e; padding: 5px; text-align: center; font-weight: bold; font-size: 10px; border: 1px dashed #f59e0b; margin-bottom: 6px; border-radius: 4px; letter-spacing: 0.5px;">
+        🟡 AMBIENTE DE PRODUÇÃO RESTRITA (HOMOLOGAÇÃO) — DOCUMENTO EMITIDO PARA TESTES
+      </div>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>DANFSE - Documento Auxiliar da NFS-e Nacional Nº ${invoice.numeroNfse}</title>
+  <title>DANFSE - Documento Auxiliar da NFS-e Nacional Nº ${numNota}</title>
   <style>
     @page { size: A4 portrait; margin: 10mm; }
-    * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { background: #525659; margin: 0; padding: 20px; display: flex; justify-content: center; }
     .page { background: #fff; width: 210mm; min-height: 297mm; padding: 15mm; box-shadow: 0 4px 15px rgba(0,0,0,0.3); color: #111; font-size: 11px; }
     .border-box { border: 1px solid #000; margin-bottom: 6px; padding: 6px 8px; }
@@ -830,37 +921,40 @@ export function renderDanfseHtml(invoice) {
     .text-right { text-align: right; }
     .text-center { text-align: center; }
     .qr-box { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-    .btn-print { position: fixed; top: 20px; right: 20px; background: #0284c7; color: #fff; padding: 10px 18px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+    .top-actions { position: fixed; top: 20px; right: 20px; display: flex; align-items: center; gap: 8px; z-index: 100; }
+    .btn-pdf { background: #2563eb; color: #fff; text-decoration: none; padding: 10px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-print { background: #059669; color: #fff; padding: 10px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
     @media print {
       body { background: #fff; padding: 0; }
       .page { box-shadow: none; width: 100%; padding: 0; }
-      .btn-print { display: none; }
+      .top-actions, .btn-print, .btn-pdf { display: none !important; }
     }
   </style>
 </head>
 <body>
-  <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+  <div class="top-actions">
+    <a class="btn-pdf" href="/api/nfse/pdf/${encodeURIComponent(numNota)}" target="_blank">📄 Abrir PDF Oficial</a>
+    <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+  </div>
   <div class="page">
-    <div style="background: #fef3c7; color: #92400e; padding: 5px; text-align: center; font-weight: bold; font-size: 10px; border: 1px dashed #f59e0b; margin-bottom: 6px; border-radius: 4px; letter-spacing: 0.5px;">
-      🟡 AMBIENTE DE HOMOLOGAÇÃO (TESTES) — DOCUMENTO EMITIDO PARA TESTES SEM VALOR FISCAL
-    </div>
+    ${homologBanner}
     <!-- Cabeçalho -->
     <table class="header-table">
       <tr>
         <td style="width: 20%; text-align: center;">
           <div style="font-size: 24px; font-weight: 900; color: #0f172a;">GOV.BR</div>
-          <div style="font-size: 8px; font-weight: bold; margin-top: 2px;">RECEITA FEDERAL</div>
+          <div style="font-size: 8px; font-weight: bold; margin-top: 2px;">RECEITA FEDERAL • SEFIN</div>
         </td>
         <td style="width: 55%; text-align: center;">
           <div class="title-main">DANFSE - Documento Auxiliar da NFS-e</div>
           <div class="subtitle">Nota Fiscal de Serviço Eletrônica de Padrão Nacional</div>
-          <div style="font-size: 8px; color: #666; margin-top: 4px;">Ambiente de Dados Nacional (ADN) • Sistema Nacional da NFS-e</div>
+          <div style="font-size: 8px; color: #666; margin-top: 4px;">Ambiente de Dados Nacional (ADN) • Município Emissor: Campos dos Goytacazes - RJ</div>
         </td>
         <td style="width: 25%; text-align: center; background: #f8fafc;">
           <div class="label">NÚMERO DA NFS-e</div>
-          <div style="font-size: 15px; font-weight: 900; color: #0284c7;">${invoice.numeroNfse || "20260481"}</div>
+          <div style="font-size: 15px; font-weight: 900; color: #0284c7;">${numNota}</div>
           <div class="label" style="margin-top: 4px;">CÓDIGO DE VERIFICAÇÃO</div>
-          <div style="font-size: 11px; font-weight: bold; letter-spacing: 1px;">${invoice.codigoVerificacao || "A8B7-C9D2"}</div>
+          <div style="font-size: 11px; font-weight: bold; letter-spacing: 1px;">${invoice.codigoVerificacao || "ADN-GOV"}</div>
         </td>
       </tr>
     </table>
@@ -869,7 +963,7 @@ export function renderDanfseHtml(invoice) {
     <div class="border-box" style="background: #f8fafc; text-align: center; padding: 8px;">
       <div class="label">CHAVE DE ACESSO DA NFS-e NACIONAL (50 DÍGITOS)</div>
       <div style="font-family: monospace; font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; color: #0f172a;">
-        ${chaveFormatada || "3326 0832 4819 9200 0150 0100 1000 0000 0118 4729 1048 2"}
+        ${chaveFormatada || "3326 1047 9648 1300 0165 0100 1000 0000 0118 4729 1048 2"}
       </div>
       <div style="font-size: 8px; color: #64748b; margin-top: 2px;">Consulte a autenticidade deste documento no portal oficial: <b>https://www.nfse.gov.br/consultapublica</b></div>
     </div>
@@ -920,18 +1014,18 @@ export function renderDanfseHtml(invoice) {
         <div class="grid-2">
           <div>
             <div class="label">CPF / CNPJ</div>
-            <div class="value">${docFormatado}</div>
+            <div class="value">${docFormatado || "Não informado"}</div>
           </div>
           <div>
             <div class="label">TELEFONE</div>
-            <div class="value">${invoice.tomadorTelefone || "(22) 99881-2233"}</div>
+            <div class="value">${invoice.tomadorTelefone || "Não informado"}</div>
           </div>
         </div>
       </div>
       <div class="grid-2" style="margin-top: 5px;">
         <div>
           <div class="label">E-MAIL</div>
-          <div class="value">${invoice.tomadorEmail || "hospede@email.com"}</div>
+          <div class="value">${invoice.tomadorEmail || "Não informado"}</div>
         </div>
         <div>
           <div class="label">APARTAMENTO / FLAT REFERENTE</div>
@@ -943,9 +1037,7 @@ export function renderDanfseHtml(invoice) {
     <!-- Discriminação dos Serviços -->
     <div class="border-box" style="min-height: 120px;">
       <div class="box-title">DISCRIMINAÇÃO DOS SERVIÇOS PRESTADOS</div>
-      <div style="font-size: 10px; line-height: 1.6; white-space: pre-wrap; margin-top: 4px; color: #1e293b;">
-${invoice.discriminacao || `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nCNAE: 5510-8/01 - HOTÉIS E SIMILARES | CÓDIGO TRIBUTAÇÃO NACIONAL: 09.02.01`}
-      </div>
+      <div style="font-size: 10px; line-height: 1.6; white-space: pre-wrap; margin-top: 4px; color: #1e293b;">${invoice.discriminacao || `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nCNAE: 5510-8/01 - HOTÉIS E SIMILARES | CÓDIGO TRIBUTAÇÃO NACIONAL: 09.02.01`}</div>
     </div>
 
     <!-- Dados Tributários e Valores -->
@@ -982,22 +1074,250 @@ ${invoice.discriminacao || `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBIL
       <div>
         <div class="box-title">INFORMAÇÕES COMPLEMENTARES</div>
         <div style="font-size: 8.5px; color: #475569; line-height: 1.4;">
-          • Documento emitido por ME ou EPP optante pelo Simples Nacional.<br>
+          • Documento emitido por ME ou EPP optante pelo Simples Nacional (Resolução CGSN nº 191/2026).<br>
           • Não gera direito a crédito fiscal de IPI.<br>
           • Tributos Totais Incidentes (Lei Federal 12.741/2012): Federais R$ ${(Number(invoice.valorServico || 0) * 0.045).toFixed(2)} (4.50%), Municipais R$ ${(Number(invoice.valorServico || 0) * 0.02).toFixed(2)} (2.00%).<br>
-          • Protocolo de Autorização ADN: <b>${invoice.protocoloAutorizacao || "ADN_20260827_84920"}</b>
+          • Protocolo de Autorização ADN: <b>${invoice.protocoloAutorizacao || "SEFIN_NACIONAL"}</b>
         </div>
       </div>
       <div class="qr-box">
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=95x95&data=https://www.nfse.gov.br/consultapublica/danfse?chave=${invoice.chaveAcesso || '332608324819920001500100100000000118472910482'}" alt="QR Code ADN" style="width: 85px; height: 85px; border: 1px solid #ccc; padding: 2px; background: #fff;" />
-        <div style="font-size: 8px; font-weight: bold; margin-top: 3px; color: #334155;">QR CODE OFICIAL ADN</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=95x95&data=https://www.nfse.gov.br/consultapublica/danfse?chave=${invoice.chaveAcesso || '332610479648130001650100100000000118472910482'}" alt="QR Code ADN" style="width: 85px; height: 85px; border: 1px solid #ccc; padding: 2px; background: #fff;" />
+        <div style="font-size: 8px; font-weight: bold; margin-top: 3px; color: #334155;">QR CODE OFICIAL GOV.BR</div>
       </div>
     </div>
   </div>
+  <script>
+    if (new URLSearchParams(window.location.search).get("print") === "1") {
+      window.addEventListener("load", function() { setTimeout(function() { window.print(); }, 250); });
+    }
+  </script>
 </body>
 </html>`;
 }
 
+// ─── 7B. Gerador Nativo de PDF Oficial (DANFSE Padrão Nacional Gov.br / ADN) ─
+
+export async function generateNfsePdfBuffer(invoice = {}) {
+  const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.id || "1");
+  const codVerif = String(invoice.codigoVerificacao || "ADN-GOV");
+  const numDps = String(invoice.numeroDps || invoice.numeroRps || invoice.id || "1");
+  const chaveAcesso = String(invoice.chaveAcesso || generateChaveAcessoNacional({
+    codUf: "33",
+    cnpj: "47964813000165",
+    serie: "1",
+    numeroDps: numDps
+  }));
+  const chaveFormatada = chaveAcesso.replace(/(\d{4})/g, "$1 ").trim();
+  const protocolo = String(invoice.protocoloAutorizacao || chaveAcesso);
+  const valorNum = Number(invoice.valorServico || 0);
+  const valorStr = valorNum.toFixed(2).replace(".", ",");
+  const aliqNum = Number(invoice.aliquota || 2.0);
+  const aliqStr = aliqNum.toFixed(2).replace(".", ",");
+  const dataFormatada = invoice.dataEmissao
+    ? new Date(invoice.dataEmissao).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+    : new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const competenciaStr = invoice.dataEmissao ? String(invoice.dataEmissao).slice(0, 7) : new Date().toISOString().slice(0, 7);
+
+  const docDigits = onlyDigits(invoice.tomadorCpfCnpj || "");
+  const docFormatado = docDigits.length === 11
+    ? docDigits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
+    : docDigits.length === 14
+      ? docDigits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5")
+      : docDigits || "Não informado";
+
+  const linkPortal = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
+
+  let qrPngBuf = null;
+  try {
+    qrPngBuf = await QRCode.toBuffer(linkPortal, { width: 82, margin: 1 });
+  } catch (_) {}
+
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({
+        size: "A4",
+        margin: 30,
+        info: {
+          Title: `DANFSE NFS-e Nacional Nº ${numNota} - CorpFlats`,
+          Author: "Rental Miller's LTDA - CorpFlats (Padrão Nacional Gov.br)",
+          Subject: `Documento Auxiliar da NFS-e Nacional Nº ${numNota}`
+        }
+      });
+
+      const chunks = [];
+      doc.on("data", (chunk) => chunks.push(chunk));
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
+      doc.on("error", reject);
+
+      // Moldura Principal
+      doc.lineWidth(1.2).strokeColor("#0f172a").rect(30, 30, 535, 760).stroke();
+
+      // Cabeçalho Padrão Nacional Gov.br
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(12)
+        .text("REPÚBLICA FEDERATIVA DO BRASIL • GOV.BR / RECEITA FEDERAL", 42, 42, { width: 350 });
+      doc.fillColor("#334155").font("Helvetica-Bold").fontSize(9.5)
+        .text("Ambiente de Dados Nacional (ADN / SEFIN) • Município: Campos dos Goytacazes/RJ", 42, 58, { width: 355 });
+      doc.fillColor("#059669").font("Helvetica-Bold").fontSize(9)
+        .text("DANFSE - DOCUMENTO AUXILIAR DA NFS-e DE PADRÃO NACIONAL", 42, 73, { width: 355 });
+
+      // Box Número da Nota
+      doc.save();
+      doc.roundedRect(405, 38, 150, 54, 4).fill("#0f172a");
+      doc.fillColor("#cbd5e1").font("Helvetica-Bold").fontSize(7.5).text("NÚMERO DA NFS-e", 410, 44, { width: 140, align: "center" });
+      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(15).text(numNota, 410, 54, { width: 140, align: "center" });
+      doc.fillColor("#34d399").font("Helvetica-Bold").fontSize(8).text(`Cód. Verif: ${codVerif}`, 410, 75, { width: 140, align: "center" });
+      doc.restore();
+
+      doc.moveTo(30, 98).lineTo(565, 98).lineWidth(1).strokeColor("#0f172a").stroke();
+
+      // Faixa Chave de Acesso 50 Dígitos
+      doc.save();
+      doc.rect(36, 103, 523, 28).fill("#f8fafc");
+      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 103, 523, 28).stroke();
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(6.8).text("CHAVE DE ACESSO DA NFS-e NACIONAL (50 DÍGITOS)", 42, 107, { width: 511, align: "center" });
+      doc.fillColor("#0f172a").font("Courier-Bold").fontSize(8.8).text(chaveFormatada, 42, 117, { width: 511, align: "center" });
+      doc.restore();
+
+      // Seção 1: Prestador de Serviços
+      doc.save();
+      doc.rect(36, 137, 523, 15).fill("#e2e8f0");
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("1. PRESTADOR DE SERVIÇOS", 42, 141);
+      doc.restore();
+
+      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 153, 523, 60).stroke();
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("RAZÃO SOCIAL / NOME EMPRESARIAL", 42, 158);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(`${invoice.prestadorRazaoSocial || "RENTAL MILLER'S LTDA"} (CorpFlats)`, 42, 168);
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("CNPJ", 320, 158);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(invoice.prestadorCnpj || "47.964.813/0001-65", 320, 168);
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("INSCRIÇÃO MUNICIPAL", 455, 158);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(invoice.prestadorIm || "142591", 455, 168);
+
+      doc.moveTo(36, 182).lineTo(559, 182).strokeColor("#cbd5e1").stroke();
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("ENDEREÇO E MUNICÍPIO EMISSOR", 42, 187);
+      doc.fillColor("#0f172a").font("Helvetica").fontSize(8.5).text("Av. Pelinca, 100 - Pelinca, Campos dos Goytacazes/RJ • CEP 28035-000 (IBGE 3301009)", 42, 197);
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("EMISSÃO / DPS", 395, 187);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8).text(`${dataFormatada} • DPS ${numDps}`, 395, 197);
+
+      // Seção 2: Tomador de Serviços
+      doc.save();
+      doc.rect(36, 220, 523, 15).fill("#e2e8f0");
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("2. TOMADOR DE SERVIÇOS (HÓSPEDE / EMPRESA)", 42, 224);
+      doc.restore();
+
+      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 236, 523, 64).stroke();
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("NOME / RAZÃO SOCIAL", 42, 241);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(invoice.tomadorNome || "Hóspede CorpFlats", 42, 251, { width: 270 });
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("CPF / CNPJ", 320, 241);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(docFormatado, 320, 251);
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("UNIDADE / ACOMODAÇÃO", 455, 241);
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9).text(`Flat ${invoice.flatNumber || "113"}`, 455, 251);
+
+      doc.moveTo(36, 266).lineTo(559, 266).strokeColor("#cbd5e1").stroke();
+
+      const endTomador = `${invoice.tomadorEndereco || invoice.tomadorLogradouro || "Av. Pelinca"}, ${invoice.tomadorNumero || "100"} - ${invoice.tomadorBairro || "Pelinca"}, ${invoice.tomadorCidade || "Campos dos Goytacazes"}/${invoice.tomadorUf || "RJ"} - CEP ${invoice.tomadorCep || "28035-000"}`;
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("ENDEREÇO DO TOMADOR", 42, 271);
+      doc.fillColor("#0f172a").font("Helvetica").fontSize(8.5).text(endTomador, 42, 281, { width: 340 });
+
+      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("CONTATO / E-MAIL", 395, 271);
+      doc.fillColor("#0f172a").font("Helvetica").fontSize(8).text(invoice.tomadorEmail || invoice.tomadorTelefone || "Não informado", 395, 281, { width: 158 });
+
+      // Seção 3: Discriminação dos Serviços
+      doc.save();
+      doc.rect(36, 308, 523, 15).fill("#e2e8f0");
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("3. DISCRIMINAÇÃO DOS SERVIÇOS PRESTADOS", 42, 312);
+      doc.restore();
+
+      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 324, 523, 198).stroke();
+      const discText = invoice.discriminacao ||
+        `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nHÓSPEDE / TOMADOR: ${invoice.tomadorNome || "Hóspede"} (${docFormatado}).`;
+      doc.fillColor("#0f172a").font("Courier").fontSize(9).text(discText, 44, 334, { width: 505, lineGap: 3 });
+
+      doc.moveTo(36, 494).lineTo(559, 494).strokeColor("#cbd5e1").stroke();
+      doc.fillColor("#475569").font("Helvetica-Bold").fontSize(7.5).text(
+        `CNAE: ${invoice.cnae || "5510-8/01"} (Hotéis e Similares)  •  Cód. Tributação Nacional: 09.02.01 (Hospedagem)  •  Competência: ${competenciaStr}`,
+        44,
+        503,
+        { width: 505 }
+      );
+
+      // Seção 4: Detalhamento de Valores e Impostos
+      doc.save();
+      doc.rect(36, 530, 523, 15).fill("#e2e8f0");
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("4. DETALHAMENTO DE VALORES E TRIBUTOS (R$)", 42, 534);
+      doc.restore();
+
+      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 546, 523, 52).stroke();
+
+      const cols = [
+        { label: "VALOR DOS SERVIÇOS", val: `R$ ${valorStr}`, x: 42, w: 95, color: "#0284c7" },
+        { label: "DEDUÇÕES", val: "R$ 0,00", x: 142, w: 70, color: "#0f172a" },
+        { label: "BASE DE CÁLCULO", val: `R$ ${valorStr}`, x: 218, w: 85, color: "#0f172a" },
+        { label: "ALÍQUOTA ISS", val: `${aliqStr}%`, x: 308, w: 65, color: "#0f172a" },
+        { label: "VALOR ISS (SIMPLES)", val: "R$ 0,00 (DAS)", x: 378, w: 80, color: "#0f172a" },
+        { label: "VALOR LÍQUIDO", val: `R$ ${valorStr}`, x: 462, w: 92, color: "#059669" }
+      ];
+
+      for (const c of cols) {
+        doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(6.8).text(c.label, c.x, 554, { width: c.w, align: "center" });
+        doc.fillColor(c.color).font("Helvetica-Bold").fontSize(10).text(c.val, c.x, 570, { width: c.w, align: "center" });
+      }
+
+      // Seção 5: Autenticidade e QR Code
+      doc.save();
+      doc.rect(36, 610, 523, 15).fill("#e2e8f0");
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("5. AUTENTICAÇÃO OFICIAL GOV.BR / ADN E INFORMAÇÕES COMPLEMENTARES", 42, 614);
+      doc.restore();
+
+      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 626, 523, 146).stroke();
+
+      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.5).text(
+        `• STATUS FISCAL: NOTA FISCAL ELETRÔNICA PADRÃO NACIONAL (${invoice.status === "cancelada" ? "CANCELADA" : "ATIVA / AUTORIZADA"})`,
+        44,
+        638
+      );
+      doc.fillColor("#334155").font("Helvetica").fontSize(8).text(
+        `• Número da NFS-e: ${numNota}   |   Código de Verificação: ${codVerif}   |   Protocolo ADN: ${protocolo}`,
+        44,
+        654
+      );
+      doc.text(
+        "• Documento emitido por ME ou EPP optante pelo Simples Nacional (LC 123/2006 e Resolução CGSN nº 191/2026).",
+        44,
+        670,
+        { width: 400 }
+      );
+      doc.text(
+        `• Tributos aproximados (Lei Federal 12.741/2012): Simples Nacional 6,00% (Federais 4,00% / Municipal ISS 2,00%).`,
+        44,
+        694,
+        { width: 400 }
+      );
+      doc.fillColor("#0284c7").font("Helvetica-Bold").fontSize(8).text(
+        `• Consulta Pública Nacional (Gov.br): ${linkPortal}`,
+        44,
+        714,
+        { width: 400 }
+      );
+
+      if (qrPngBuf) {
+        try {
+          doc.image(qrPngBuf, 462, 638, { width: 82, height: 82 });
+          doc.fillColor("#475569").font("Helvetica-Bold").fontSize(6.5).text("QR CODE GOV.BR", 458, 724, { width: 90, align: "center" });
+        } catch (_) {}
+      }
+
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 // ─── 8. Transmissor REST Oficial do ADN Nacional (Gov.br / Receita Federal) ──
 
@@ -1010,8 +1330,8 @@ export async function transmitDpsToNationalAdn(dpsXml, environment = "producao")
     throw new Error("Certificado Digital A1 não configurado no servidor.");
   }
 
-  const hostname = environment === "producao" 
-    ? "sefin.nfse.gov.br" 
+  const hostname = environment === "producao"
+    ? "sefin.nfse.gov.br"
     : "sefin.producaorestrita.nfse.gov.br";
 
   const gzipped = zlib.gzipSync(Buffer.from(dpsXml, "utf-8"));

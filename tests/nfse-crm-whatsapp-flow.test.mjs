@@ -380,9 +380,9 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       assert.strictEqual(data.invoice.valorServico, 480.00);
     });
 
-    it("T1.2 - Emite NFS-e via GissOnline Prefeitura com persistência de endereço completo do tomador em db.invoices", async () => {
+    it("T1.2 - Emite NFS-e PJ via Emissor Nacional Gov.br com persistência de endereço completo do tomador em db.invoices", async () => {
       const payload = {
-        sistemaEmissor: "giss_prefeitura",
+        sistemaEmissor: "padrao_nacional",
         tomadorNome: "Engenharia e Projetos Norte Fluminense LTDA",
         tomadorCpfCnpj: "47964813000165",
         tomadorEmail: "financeiro@engnorteflumi.com.br",
@@ -415,7 +415,7 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       assert.ok(data.numeroNfse, "numeroNfse must be present without ReferenceError");
       assert.ok(data.codigoVerificacao, "codigoVerificacao must be present without ReferenceError");
       assert.ok(data.danfseUrl, "danfseUrl must be present");
-      assert.strictEqual(data.invoice.sistemaEmissor, "giss_prefeitura");
+      assert.strictEqual(data.invoice.sistemaEmissor, "padrao_nacional");
       assert.strictEqual(data.invoice.tomadorEndereco, "Av. 28 de Março");
       assert.strictEqual(data.invoice.tomadorNumero, "1020");
       assert.strictEqual(data.invoice.tomadorComplemento, "Sala 501");
@@ -1078,7 +1078,7 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
         body: JSON.stringify({
           items: [
             { reservationId: 704, sistemaEmissor: "padrao_nacional" },
-            { reservationId: 705, sistemaEmissor: "giss_prefeitura" }
+            { reservationId: 705, sistemaEmissor: "padrao_nacional" }
           ]
         })
       });
@@ -1219,7 +1219,7 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sistemaEmissor: "giss_prefeitura",
+          sistemaEmissor: "padrao_nacional",
           tomadorNome: "Hóspede Para Substituir",
           tomadorCpfCnpj: "11144477735",
           tomadorEmail: "substituir@email.com",
@@ -1374,19 +1374,41 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       assert.ok(retryRes.status === 404 || retryRes.status === 200, "Retry action must return 404 or 200");
     });
 
-    it("T16.3 - GET /api/nfse/danfse/904 e GET /api/nfse/pdf/904 abrem espelho DANFSE e PDF binário válido da nota real Nº 904 (5FXJ1ZDHS)", async () => {
-      const danfseRes = await fetch(`${baseUrl}/api/nfse/danfse/904`);
-      assert.strictEqual(danfseRes.status, 200, "GET /api/nfse/danfse/904 must return 200");
+    it("T16.3 - GET /api/nfse/danfse/:id e GET /api/nfse/pdf/:id abrem espelho DANFSE e PDF binário válido no Padrão Nacional Gov.br", async () => {
+      const emitRes = await fetch(`${baseUrl}/api/nfse/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sistemaEmissor: "padrao_nacional",
+          tomadorNome: "Miller Mendonça Pessanha",
+          tomadorCpfCnpj: "12585736792",
+          tomadorEmail: "miller@corpflats.com.br",
+          tomadorCep: "28035260",
+          tomadorEndereco: "Rua Voluntários da Pátria",
+          tomadorNumero: "450",
+          tomadorBairro: "Centro",
+          tomadorCidade: "Campos dos Goytacazes",
+          tomadorUf: "RJ",
+          valorServico: 2.00,
+          flatNumber: "101",
+          discriminacao: "Hospedagem Flat 101 CorpFlats"
+        })
+      });
+      assert.strictEqual(emitRes.status, 201);
+      const emitData = await emitRes.json();
+      const num = emitData.numeroNfse;
+
+      const danfseRes = await fetch(`${baseUrl}/api/nfse/danfse/${num}`);
+      assert.strictEqual(danfseRes.status, 200, "GET /api/nfse/danfse/:id must return 200");
       const html = await danfseRes.text();
-      assert.ok(html.includes("904"), "DANFSE HTML must contain invoice number 904");
-      assert.ok(html.includes("5FXJ1ZDHS"), "DANFSE HTML must contain verification code 5FXJ1ZDHS");
+      assert.ok(html.includes(String(num)), "DANFSE HTML must contain invoice number");
       assert.ok(html.includes("Miller Mendonça Pessanha"), "DANFSE HTML must contain Miller Mendonça Pessanha");
 
-      const pdfRes = await fetch(`${baseUrl}/api/nfse/pdf/904`);
-      assert.strictEqual(pdfRes.status, 200, "GET /api/nfse/pdf/904 must return 200");
+      const pdfRes = await fetch(`${baseUrl}/api/nfse/pdf/${num}`);
+      assert.strictEqual(pdfRes.status, 200, "GET /api/nfse/pdf/:id must return 200");
       assert.ok(
         (pdfRes.headers.get("content-type") || "").includes("application/pdf"),
-        "GET /api/nfse/pdf/904 must return application/pdf content-type"
+        "GET /api/nfse/pdf/:id must return application/pdf content-type"
       );
       const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
       assert.ok(pdfBuf.length > 1500, "PDF buffer must have valid size > 1500 bytes");
@@ -1400,7 +1422,6 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
   describe("T8: Paridade Estrita dos Arquivos Gêmeos Twin-Server", () => {
     const twinFiles = [
       "demo-server.mjs",
-      "giss-soap.mjs",
       "national-nfse.mjs",
       "chat-service.mjs",
       "lookup.mjs",

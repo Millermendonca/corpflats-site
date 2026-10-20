@@ -50,7 +50,6 @@ const DEFAULT_FLATS = [
   { id: 21, number: "1304", colName: "1304 Solteiro(ferro unindo)", isOccupied: true }
 ];
 
-import { emitirNfseGissReal, COD_MUNICIPIO, renderGissDanfseHtml, ensureNfseCertFilesOnDisk, generateNfsePdfBuffer } from "./giss-soap.mjs";
 import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE } from "./chat-service.mjs";
 import { lookupCep, lookupCnpj } from "./lookup.mjs";
 import express from "express";
@@ -778,6 +777,7 @@ export const ALL_CANONICAL_MODULES = [
   "/notificacoes",
   // 3. 🧹 Governança & Manutenção
   "/dashboard",
+  "/raio-x-flats",
   "/reports",
   "/lista-compras",
   "/observations",
@@ -991,8 +991,12 @@ export const ROUTE_ALIASES = {
   // Vistorias
   "/vistorias": "/surveys",
 
-  // Serviços
+  // Serviços & Raio-X dos Flats
   "/service-orders": "/servicos",
+  "/diario-flats": "/raio-x-flats",
+  "/hub-manutencao": "/raio-x-flats",
+  "/raio-x": "/raio-x-flats",
+  "/prontuario-flats": "/raio-x-flats",
 
   // Propriedade
   "/hotel": "/propriedade",
@@ -1027,6 +1031,11 @@ export function hasModuleAccess(user, path) {
   const allowed = Array.isArray(user.allowedModules)
     ? user.allowedModules
     : getDefaultModulesForRole(user.role);
+  if (canonical === "/raio-x-flats") {
+    if (user.role === "admin" || user.role === "dev") return true;
+    const hubEquivalents = ["/raio-x-flats", "/servicos", "/tasks", "/observations", "/surveys"];
+    return allowed.some(m => hubEquivalents.includes(canonicalizeRoute(m)));
+  }
   return allowed.some(m => canonicalizeRoute(m) === canonical);
 }
 
@@ -1143,6 +1152,8 @@ let db = {
   periodicExecutions: [],
   serviceOrders: [],
   serviceWorkers: [],
+  serviceCatalog: [],
+  flatDiaryEntries: [],
   surveys: [],
   observations: [],
   guests: [],
@@ -4207,6 +4218,39 @@ function reconcileUniversalIntegrity(incomingState = null) {
         }
       });
     }
+
+    // 1.15 Diário dos Flats e Catálogo de Serviços (União não-destrutiva)
+    if (Array.isArray(incomingState.flatDiaryEntries) && incomingState.flatDiaryEntries.length > 0) {
+      if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
+      incomingState.flatDiaryEntries.forEach(incEntry => {
+        if (!incEntry || !incEntry.id) return;
+        const existingIdx = db.flatDiaryEntries.findIndex(e => String(e.id) === String(incEntry.id));
+        if (existingIdx === -1) {
+          db.flatDiaryEntries.push({ ...incEntry });
+          changed = true;
+        } else {
+          const existing = db.flatDiaryEntries[existingIdx];
+          const incDate = incEntry.updatedAt || incEntry.createdAt || "";
+          const curDate = existing.updatedAt || existing.createdAt || "";
+          if (incDate > curDate) {
+            db.flatDiaryEntries[existingIdx] = { ...existing, ...incEntry };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    if (Array.isArray(incomingState.serviceCatalog) && incomingState.serviceCatalog.length > 0) {
+      if (!Array.isArray(db.serviceCatalog)) db.serviceCatalog = [];
+      incomingState.serviceCatalog.forEach(incCat => {
+        if (!incCat || !incCat.id) return;
+        const existingIdx = db.serviceCatalog.findIndex(c => String(c.id) === String(incCat.id));
+        if (existingIdx === -1) {
+          db.serviceCatalog.push({ ...incCat });
+          changed = true;
+        }
+      });
+    }
   }
 
   // 2. Normalização Universal e Purga Definitiva de Flats Inválidos (Flat 502)
@@ -6192,7 +6236,9 @@ async function loadDatabase() {
             whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined,
             faqItems: (!pgLoaded.faqItems || pgLoaded.faqItems.length === 0) ? localFaqItems : pgLoaded.faqItems,
             serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
-            serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers
+            serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers,
+            flatDiaryEntries: (!pgLoaded.flatDiaryEntries || pgLoaded.flatDiaryEntries.length === 0) ? db.flatDiaryEntries : pgLoaded.flatDiaryEntries,
+            serviceCatalog: (!pgLoaded.serviceCatalog || pgLoaded.serviceCatalog.length === 0) ? db.serviceCatalog : pgLoaded.serviceCatalog
           });
           syncMaidCredits(2);
           syncMaidCredits(3);
@@ -8326,6 +8372,7 @@ function pruneDatabase() {
     garageAuthorizations: 500,
     reservationCommunications: 500,
     serviceOrders: 500,
+    flatDiaryEntries: 1500,
     auditLogs: 150,
     notifications: 200,
     nfseRetryQueue: 100,
@@ -11604,24 +11651,30 @@ app.patch("/api/flats/:id", (req, res) => {
   res.json(f);
 });
 
-// ── Atualização de Tags e Particularidades do Flat ───────────────────────────
+// ── Atualização de Tags, Particularidades e Ficha Técnica do Flat ───────────
 app.put("/api/flats/:id/tags", (req, res) => {
   const id = Number(req.params.id);
   const flat = (db.flats || []).find(f => f.id === id);
   if (!flat) return res.status(404).json({ error: "Flat não encontrado" });
 
-  const { tags = [], airConditionerType, bedType, hasMicrowave, features = [], notes = "" } = req.body;
+  const { tags, airConditionerType, bedType, hasMicrowave, features, notes, technicalSheet } = req.body;
 
-  flat.tags = Array.isArray(tags) ? tags : [];
+  if (Array.isArray(tags)) flat.tags = tags;
   if (airConditionerType !== undefined) flat.airConditionerType = airConditionerType;
   if (bedType !== undefined) flat.bedType = bedType;
   if (hasMicrowave !== undefined) flat.hasMicrowave = Boolean(hasMicrowave);
   if (Array.isArray(features)) flat.features = features;
   if (notes !== undefined) flat.notes = notes;
+  if (technicalSheet && typeof technicalSheet === "object") {
+    flat.technicalSheet = {
+      ...(flat.technicalSheet || {}),
+      ...technicalSheet
+    };
+  }
   flat.updatedAt = new Date().toISOString();
 
   saveDatabase();
-  console.log(`[Flats] Particularidades do Apt ${flat.number} atualizadas: ${flat.tags.join(", ") || "Sem tags"}`);
+  console.log(`[Flats] Particularidades e Ficha Técnica do Apt ${flat.number} atualizadas: ${(flat.tags || []).join(", ") || "Sem tags"}`);
   res.json({ success: true, flat });
 });
 
@@ -14332,6 +14385,238 @@ app.get("/api/periodic-tasks/pending", (req, res) => {
   res.json(result);
 });
 
+// ── Catálogo Oficial de Serviços & Reconciliação Automática ─────────────────
+export const DEFAULT_SERVICE_CATALOG = [
+  {
+    id: "higienizacao_ac",
+    name: "Higienização de Ar-Condicionado",
+    category: "climatizacao",
+    categoryLabel: "Climatização",
+    icon: "Wind",
+    color: "sky",
+    suggestedCycleDays: 180,
+    supportsItemRemoval: false,
+    description: "Limpeza técnica profunda de serpentina, turbina, bandeja, dreno e filtros do ar-condicionado.",
+    isSystemDefault: true
+  },
+  {
+    id: "dedetizacao",
+    name: "Dedetização & Controle de Pragas",
+    category: "sanitizacao",
+    categoryLabel: "Sanitização & Pragas",
+    icon: "ShieldCheck",
+    color: "emerald",
+    suggestedCycleDays: 180,
+    supportsItemRemoval: false,
+    description: "Aplicação preventiva ou corretiva contra insetos, formigas, baratas e pragas urbanas.",
+    isSystemDefault: true
+  },
+  {
+    id: "lavagem_cortina",
+    name: "Lavagem / Manutenção de Cortinas",
+    category: "enxoval",
+    categoryLabel: "Cortinas & Enxoval",
+    icon: "Sparkles",
+    color: "indigo",
+    suggestedCycleDays: 180,
+    supportsItemRemoval: true,
+    description: "Retirada de cortina ou blackout para lavanderia, higienização ou reparo de trilho/ilhós.",
+    isSystemDefault: true
+  },
+  {
+    id: "higienizacao_colchao",
+    name: "Higienização de Colchão & Estofados",
+    category: "enxoval",
+    categoryLabel: "Cortinas & Enxoval",
+    icon: "BedDouble",
+    color: "purple",
+    suggestedCycleDays: 180,
+    supportsItemRemoval: false,
+    description: "Lavagem a seco, higienização antiácaro ou impermeabilização de colchões, sofás e poltronas.",
+    isSystemDefault: true
+  },
+  {
+    id: "manutencao_fechadura",
+    name: "Fechadura Digital & Controle de Acesso",
+    category: "tecnologia",
+    categoryLabel: "Tecnologia & Acesso",
+    icon: "KeyRound",
+    color: "amber",
+    suggestedCycleDays: 180,
+    supportsItemRemoval: false,
+    description: "Troca de pilhas alcalinas, aferição de trava, configuração de senhas ou reparo de fechadura.",
+    isSystemDefault: true
+  },
+  {
+    id: "revisao_eletrica_hidraulica",
+    name: "Revisão Elétrica, Chuveiro & Hidráulica",
+    category: "infraestrutura",
+    categoryLabel: "Elétrica & Hidráulica",
+    icon: "Zap",
+    color: "orange",
+    suggestedCycleDays: 90,
+    supportsItemRemoval: false,
+    description: "Troca de resistência de chuveiro, revisão de tomadas, sifão, descargas, torneiras e ralos.",
+    isSystemDefault: true
+  },
+  {
+    id: "pintura_acabamento",
+    name: "Pintura, Marcenaria & Acabamento",
+    category: "infraestrutura",
+    categoryLabel: "Obra & Acabamento",
+    icon: "PaintRoller",
+    color: "rose",
+    suggestedCycleDays: 365,
+    supportsItemRemoval: false,
+    description: "Retoque de pintura, massa corrida, ajuste de portas/armários, rejunte e silicone.",
+    isSystemDefault: true
+  },
+  {
+    id: "manutencao_eletros",
+    name: "Manutenção de Eletrodomésticos & TV",
+    category: "eletros",
+    categoryLabel: "Eletrodomésticos",
+    icon: "Tv",
+    color: "blue",
+    suggestedCycleDays: null,
+    supportsItemRemoval: true,
+    description: "Conserto ou revisão de frigobar, micro-ondas, fogão/cooktop, cafeteira ou Smart TV.",
+    isSystemDefault: true
+  }
+];
+
+function normalizeTextForMatch(str) {
+  return String(str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+export function inferServiceTypeFromText(title = "") {
+  const norm = normalizeTextForMatch(title);
+  if (!norm) return null;
+
+  // 1. Tenta match direto com catálogo atual
+  const catalog = Array.isArray(db.serviceCatalog) && db.serviceCatalog.length > 0
+    ? db.serviceCatalog
+    : DEFAULT_SERVICE_CATALOG;
+
+  for (const item of catalog) {
+    if (normalizeTextForMatch(item.id) === norm || normalizeTextForMatch(item.name) === norm) {
+      return item;
+    }
+  }
+
+  // 2. Palavras-chave inteligentes (incluindo "higienização de ar condicionado" e "detetização"/"dedetização")
+  if (
+    norm.includes("ar condicionado") ||
+    norm.includes("ar-condicionado") ||
+    norm.includes("higienizacao de ar") ||
+    norm.includes("higienizacao ac") ||
+    norm.includes("limpeza de ar") ||
+    norm.includes("limpeza de filtro") ||
+    norm.includes("split")
+  ) {
+    return catalog.find(c => c.id === "higienizacao_ac") || DEFAULT_SERVICE_CATALOG[0];
+  }
+
+  if (
+    norm.includes("dedetiza") ||
+    norm.includes("detetiza") ||
+    norm.includes("desinsetiza") ||
+    norm.includes("praga") ||
+    norm.includes("inseto")
+  ) {
+    return catalog.find(c => c.id === "dedetizacao") || DEFAULT_SERVICE_CATALOG[1];
+  }
+
+  if (norm.includes("cortina") || norm.includes("blackout") || norm.includes("persiana")) {
+    return catalog.find(c => c.id === "lavagem_cortina") || DEFAULT_SERVICE_CATALOG[2];
+  }
+
+  if (norm.includes("colchao") || norm.includes("colchoes") || norm.includes("estofado") || norm.includes("sofa")) {
+    return catalog.find(c => c.id === "higienizacao_colchao") || DEFAULT_SERVICE_CATALOG[3];
+  }
+
+  if (norm.includes("fechadura") || norm.includes("pilha") || norm.includes("senha")) {
+    return catalog.find(c => c.id === "manutencao_fechadura") || DEFAULT_SERVICE_CATALOG[4];
+  }
+
+  if (
+    norm.includes("chuveiro") ||
+    norm.includes("eletric") ||
+    norm.includes("hidraulic") ||
+    norm.includes("torneira") ||
+    norm.includes("vazamento") ||
+    norm.includes("descarga") ||
+    norm.includes("pia") ||
+    norm.includes("ralo")
+  ) {
+    return catalog.find(c => c.id === "revisao_eletrica_hidraulica") || DEFAULT_SERVICE_CATALOG[5];
+  }
+
+  if (norm.includes("pintura") || norm.includes("parede") || norm.includes("marcenaria") || norm.includes("reforma")) {
+    return catalog.find(c => c.id === "pintura_acabamento") || DEFAULT_SERVICE_CATALOG[6];
+  }
+
+  if (
+    norm.includes("frigobar") ||
+    norm.includes("geladeira") ||
+    norm.includes("microondas") ||
+    norm.includes("micro-ondas") ||
+    norm.includes("tv") ||
+    norm.includes("televisao") ||
+    norm.includes("cafeteira")
+  ) {
+    return catalog.find(c => c.id === "manutencao_eletros") || DEFAULT_SERVICE_CATALOG[7];
+  }
+
+  // 3. Match parcial em serviços customizados do catálogo
+  for (const item of catalog) {
+    const itemNorm = normalizeTextForMatch(item.name);
+    if (itemNorm && (norm.includes(itemNorm) || itemNorm.includes(norm))) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+export function ensureServiceCatalogAndReconcileOrders() {
+  if (!Array.isArray(db.serviceCatalog)) db.serviceCatalog = [];
+  let changed = false;
+
+  for (const def of DEFAULT_SERVICE_CATALOG) {
+    if (!db.serviceCatalog.some(c => c.id === def.id)) {
+      db.serviceCatalog.push({ ...def });
+      changed = true;
+    }
+  }
+
+  if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+  for (const order of db.serviceOrders) {
+    if (!order) continue;
+    if (!order.serviceTypeId) {
+      const inferred = inferServiceTypeFromText(order.title);
+      if (inferred) {
+        order.serviceTypeId = inferred.id;
+        order.serviceTypeName = inferred.name;
+        changed = true;
+      }
+    } else if (!order.serviceTypeName) {
+      const found = db.serviceCatalog.find(c => c.id === order.serviceTypeId);
+      if (found) {
+        order.serviceTypeName = found.name;
+        changed = true;
+      }
+    }
+  }
+
+  if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
+  return changed;
+}
+
 // ── External Service Orders (Ordens de Serviço de Prestadores Externos) ───────
 
 // GET /api/service-orders — Lista todas as ordens de serviço (Admin)
@@ -14340,11 +14625,18 @@ app.get("/api/service-orders", (req, res) => {
   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
   if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
 
-  if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+  if (ensureServiceCatalogAndReconcileOrders()) {
+    saveDatabase("auto_reconcile_service_catalog");
+  }
+
   const list = [...db.serviceOrders].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(o => {
     const worker = (db.serviceWorkers || []).find(w => w.token === o.token || w.serviceOrderId === o.id);
+    const catalogItem = o.serviceTypeId ? (db.serviceCatalog || []).find(c => c.id === o.serviceTypeId) : inferServiceTypeFromText(o.title);
     return {
       ...o,
+      serviceTypeId: o.serviceTypeId || catalogItem?.id || null,
+      serviceTypeName: o.serviceTypeName || catalogItem?.name || o.title,
+      serviceCategory: catalogItem?.categoryLabel || "Serviço Geral",
       workerName: worker?.mainWorker?.name || o.workerName || null,
       workerCpf: worker?.mainWorker?.cpf || o.workerCpf || null,
       workerPhone: worker?.mainWorker?.phone || o.workerPhone || null,
@@ -14474,9 +14766,17 @@ app.post("/api/service-orders", (req, res) => {
     ? rawCleanFlatMode
     : (Array.isArray(rawAllowedStatuses) ? "always" : "priority");
 
+  ensureServiceCatalogAndReconcileOrders();
+  const requestedServiceTypeId = req.body?.serviceTypeId ? String(req.body.serviceTypeId).trim() : null;
+  const matchedCatalog = requestedServiceTypeId
+    ? (db.serviceCatalog || []).find(c => c.id === requestedServiceTypeId)
+    : inferServiceTypeFromText(title);
+
   const newOrder = {
     id: `so_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     title: String(title).trim(),
+    serviceTypeId: matchedCatalog ? matchedCatalog.id : (requestedServiceTypeId || null),
+    serviceTypeName: matchedCatalog ? matchedCatalog.name : String(title).trim(),
     token,
     status: req.body.status || "active",
     createdAt: new Date().toISOString(),
@@ -14598,6 +14898,17 @@ app.patch("/api/service-orders/:id", (req, res) => {
       return res.status(400).json({ success: false, error: "Título do serviço não pode ser vazio." });
     }
     order.title = trimmedTitle;
+  }
+  if (body.serviceTypeId !== undefined) {
+    const foundCat = (db.serviceCatalog || []).find(c => c.id === String(body.serviceTypeId));
+    order.serviceTypeId = body.serviceTypeId || null;
+    if (foundCat) order.serviceTypeName = foundCat.name;
+  } else if (!order.serviceTypeId && order.title) {
+    const inferred = inferServiceTypeFromText(order.title);
+    if (inferred) {
+      order.serviceTypeId = inferred.id;
+      order.serviceTypeName = inferred.name;
+    }
   }
   if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
   if (body.cleanFlatMode !== undefined && ["never", "priority", "always"].includes(body.cleanFlatMode)) order.cleanFlatMode = body.cleanFlatMode;
@@ -15000,6 +15311,519 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
     message: flat.forceReleased
       ? `Flat ${flat.flatNumber} liberado manualmente para execução.`
       : `Liberação manual do Flat ${flat.flatNumber} revogada.`
+  });
+});
+
+// POST /api/service-orders/:id/flats/:flatId/admin-complete — Marca flat como concluído diretamente pelo Admin
+app.post("/api/service-orders/:id/flats/:flatId/admin-complete", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin" && userAuth.role !== "dev") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  const nowIso = req.body?.finishedAt ? new Date(req.body.finishedAt).toISOString() : new Date().toISOString();
+  if (!flat.startedAt) flat.startedAt = nowIso;
+  flat.status = "done";
+  flat.finishedAt = nowIso;
+  flat.workerName = req.body?.workerName || flat.workerName || order.workerName || userAuth.name || userAuth.username || "Administração";
+  flat.observations = req.body?.observations !== undefined ? String(req.body.observations).trim() : (flat.observations || "Concluído via painel administrativo");
+  flat.estimatedFinishAt = null;
+  if (typeof req.body?.needsCleaning === "boolean") {
+    flat.needsCleaning = req.body.needsCleaning;
+  }
+
+  if (flat.needsCleaning === true) {
+    if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+    const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const existingReq = db.cleaningRequests.find(r =>
+      (Number(r.flatId) === Number(flat.flatId) || String(r.flatNumber) === String(flat.flatNumber)) &&
+      r.requestDate === getTodayStr()
+    );
+    const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada. Obs: ${flat.observations || "Nenhuma"}`.trim();
+    if (existingReq) {
+      existingReq.isDeleted = false;
+      existingReq.status = "dirty";
+      existingReq.source = "service_order";
+      existingReq.adminNote = cleanNote;
+      existingReq.updatedAt = new Date().toISOString();
+    } else {
+      db.cleaningRequests.unshift({
+        id: maxReqId + 1,
+        flatId: flat.flatId,
+        flatNumber: flat.flatNumber,
+        requestDate: getTodayStr(),
+        source: "service_order",
+        status: "dirty",
+        isVacant: false,
+        adminNote: cleanNote,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  syncServiceOrderRoomBlocks(order);
+  saveDatabase("admin_complete_service_flat");
+  checkAndNotifyAvailableServiceFlats(order.id);
+
+  res.json({
+    success: true,
+    flat,
+    message: `Flat ${flat.flatNumber} marcado como concluído com sucesso.`
+  });
+});
+
+// ── Catálogo Oficial de Serviços (CRUD) & Diário / Raio-X dos Flats ──────────
+
+app.get("/api/service-catalog", (req, res) => {
+  if (ensureServiceCatalogAndReconcileOrders()) {
+    saveDatabase("init_service_catalog");
+  }
+  res.json(db.serviceCatalog || DEFAULT_SERVICE_CATALOG);
+});
+
+app.post("/api/service-catalog", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem gerenciar o catálogo de serviços." });
+  }
+  ensureServiceCatalogAndReconcileOrders();
+  const { name, category = "geral", categoryLabel = "Geral", icon = "Wrench", color = "indigo", suggestedCycleDays = null, supportsItemRemoval = false, description = "" } = req.body || {};
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: "O nome do serviço é obrigatório." });
+  }
+  const cleanId = `srv_${normalizeTextForMatch(name).replace(/[^a-z0-9]+/g, "_")}_${Date.now().toString(36).slice(-4)}`;
+  const newItem = {
+    id: cleanId,
+    name: String(name).trim(),
+    category: String(category).trim(),
+    categoryLabel: String(categoryLabel || category).trim(),
+    icon: String(icon || "Wrench").trim(),
+    color: String(color || "indigo").trim(),
+    suggestedCycleDays: suggestedCycleDays ? Number(suggestedCycleDays) : null,
+    supportsItemRemoval: Boolean(supportsItemRemoval),
+    description: String(description || "").trim(),
+    isSystemDefault: false,
+    createdAt: new Date().toISOString()
+  };
+  db.serviceCatalog.push(newItem);
+  saveDatabase("create_service_catalog_item");
+  res.status(201).json(newItem);
+});
+
+app.put("/api/service-catalog/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem editar o catálogo de serviços." });
+  }
+  ensureServiceCatalogAndReconcileOrders();
+  const item = (db.serviceCatalog || []).find(c => String(c.id) === String(req.params.id));
+  if (!item) return res.status(404).json({ error: "Serviço não encontrado no catálogo." });
+
+  const { name, category, categoryLabel, icon, color, suggestedCycleDays, supportsItemRemoval, description } = req.body || {};
+  if (name !== undefined && String(name).trim()) item.name = String(name).trim();
+  if (category !== undefined) item.category = String(category).trim();
+  if (categoryLabel !== undefined) item.categoryLabel = String(categoryLabel).trim();
+  if (icon !== undefined) item.icon = String(icon).trim();
+  if (color !== undefined) item.color = String(color).trim();
+  if (suggestedCycleDays !== undefined) item.suggestedCycleDays = suggestedCycleDays ? Number(suggestedCycleDays) : null;
+  if (supportsItemRemoval !== undefined) item.supportsItemRemoval = Boolean(supportsItemRemoval);
+  if (description !== undefined) item.description = String(description).trim();
+  item.updatedAt = new Date().toISOString();
+
+  saveDatabase("update_service_catalog_item");
+  res.json(item);
+});
+
+app.delete("/api/service-catalog/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem excluir serviços do catálogo." });
+  }
+  ensureServiceCatalogAndReconcileOrders();
+  db.serviceCatalog = (db.serviceCatalog || []).filter(c => String(c.id) !== String(req.params.id));
+  saveDatabase("delete_service_catalog_item");
+  res.json({ success: true });
+});
+
+// ── Diário do Flat & Controle de Itens Retirados / Em Lavanderia ─────────────
+
+app.get("/api/flats/diary", (req, res) => {
+  ensureServiceCatalogAndReconcileOrders();
+  const { flatId, serviceTypeId, status } = req.query;
+  let entries = Array.isArray(db.flatDiaryEntries) ? [...db.flatDiaryEntries] : [];
+  if (flatId) entries = entries.filter(e => Number(e.flatId) === Number(flatId) || String(e.flatNumber) === String(flatId));
+  if (serviceTypeId) entries = entries.filter(e => String(e.serviceTypeId) === String(serviceTypeId));
+  if (status) entries = entries.filter(e => String(e.status) === String(status));
+  entries.sort((a, b) => new Date(b.executedAt || b.createdAt || 0).getTime() - new Date(a.executedAt || a.createdAt || 0).getTime());
+  res.json(entries);
+});
+
+app.post("/api/flats/diary", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  ensureServiceCatalogAndReconcileOrders();
+
+  const {
+    flatId,
+    flatIds,
+    serviceTypeId = null,
+    entryType = "service", // "service" | "item_removed" | "note" | "inspection"
+    title,
+    description = "",
+    itemName = null,
+    status = "done", // "done" | "in_progress_outside"
+    executedAt = null,
+    expectedReturnDate = null,
+    authorName = null,
+    photos = []
+  } = req.body || {};
+
+  const targetFlatIds = Array.isArray(flatIds) && flatIds.length > 0
+    ? flatIds.map(Number).filter(Boolean)
+    : (flatId ? [Number(flatId)] : []);
+
+  if (targetFlatIds.length === 0) {
+    return res.status(400).json({ error: "Selecione pelo menos um flat para registrar no diário." });
+  }
+
+  const catalogItem = serviceTypeId
+    ? (db.serviceCatalog || []).find(c => c.id === serviceTypeId)
+    : inferServiceTypeFromText(title || itemName || "");
+
+  const resolvedTitle = String(title || catalogItem?.name || itemName || "Registro no Diário").trim();
+  const nowIso = new Date().toISOString();
+  const execIso = executedAt
+    ? (String(executedAt).length === 10 ? `${executedAt}T12:00:00.000Z` : new Date(executedAt).toISOString())
+    : nowIso;
+
+  if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
+  const createdEntries = [];
+
+  for (const fId of targetFlatIds) {
+    const flatObj = (db.flats || []).find(f => Number(f.id) === Number(fId));
+    const entry = {
+      id: `diary_${Date.now()}_${fId}_${Math.random().toString(36).substring(2, 6)}`,
+      flatId: Number(fId),
+      flatNumber: flatObj ? String(flatObj.number) : String(fId),
+      serviceTypeId: catalogItem ? catalogItem.id : (serviceTypeId || null),
+      serviceTypeName: catalogItem ? catalogItem.name : resolvedTitle,
+      entryType: ["service", "item_removed", "note", "inspection"].includes(entryType) ? entryType : "service",
+      title: resolvedTitle,
+      description: String(description || "").trim(),
+      itemName: itemName ? String(itemName).trim() : null,
+      status: status === "in_progress_outside" ? "in_progress_outside" : "done",
+      executedAt: execIso,
+      expectedReturnDate: expectedReturnDate || null,
+      returnedAt: null,
+      returnedBy: null,
+      returnNotes: null,
+      authorName: authorName || userAuth.name || userAuth.username || "Administração",
+      photos: Array.isArray(photos) ? photos : [],
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    db.flatDiaryEntries.unshift(entry);
+    createdEntries.push(entry);
+  }
+
+  saveDatabase("create_flat_diary_entries");
+  res.status(201).json({
+    success: true,
+    entries: createdEntries,
+    entry: createdEntries[0]
+  });
+});
+
+app.patch("/api/flats/diary/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
+
+  const entry = db.flatDiaryEntries.find(e => String(e.id) === String(req.params.id));
+  if (!entry) return res.status(404).json({ error: "Registro do diário não encontrado." });
+
+  const { status, title, description, itemName, executedAt, returnedAt, returnNotes, serviceTypeId } = req.body || {};
+  const nowIso = new Date().toISOString();
+
+  if (status !== undefined) {
+    entry.status = status;
+    if (status === "done" && !entry.returnedAt && entry.entryType === "item_removed") {
+      entry.returnedAt = returnedAt ? new Date(returnedAt).toISOString() : nowIso;
+      entry.returnedBy = userAuth.name || userAuth.username || "Administração";
+    }
+  }
+  if (title !== undefined) entry.title = String(title).trim();
+  if (description !== undefined) entry.description = String(description).trim();
+  if (itemName !== undefined) entry.itemName = itemName ? String(itemName).trim() : null;
+  if (executedAt !== undefined && executedAt) {
+    entry.executedAt = String(executedAt).length === 10 ? `${executedAt}T12:00:00.000Z` : new Date(executedAt).toISOString();
+  }
+  if (returnNotes !== undefined) entry.returnNotes = String(returnNotes).trim();
+  if (serviceTypeId !== undefined) {
+    entry.serviceTypeId = serviceTypeId;
+    const cat = (db.serviceCatalog || []).find(c => c.id === serviceTypeId);
+    if (cat) entry.serviceTypeName = cat.name;
+  }
+  entry.updatedAt = nowIso;
+
+  saveDatabase("update_flat_diary_entry");
+  res.json({ success: true, entry });
+});
+
+app.delete("/api/flats/diary/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem excluir registros do diário." });
+  }
+  db.flatDiaryEntries = (db.flatDiaryEntries || []).filter(e => String(e.id) !== String(req.params.id));
+  saveDatabase("delete_flat_diary_entry");
+  res.json({ success: true });
+});
+
+// ── Endpoint Consolidado Raio-X 360º dos Flats (GET /api/flats/xray) ─────────
+app.get("/api/flats/xray", (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  if (ensureServiceCatalogAndReconcileOrders()) {
+    saveDatabase("xray_reconcile_service_catalog");
+  }
+
+  const todayStr = getTodayStr();
+  const catalog = db.serviceCatalog || DEFAULT_SERVICE_CATALOG;
+  const activeFlats = (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9);
+  const allOrders = db.serviceOrders || [];
+  const allDiary = db.flatDiaryEntries || [];
+  const allObservations = db.observations || [];
+  const allPeriodicTasks = (db.periodicTasks || []).filter(t => t.isActive);
+  const allPeriodicExecs = db.periodicExecutions || [];
+  const allSurveys = db.surveys || [];
+
+  const flatsXray = activeFlats.map(flat => {
+    const flatId = Number(flat.id);
+    const flatNumber = String(flat.number);
+    const realtime = getFlatRealtimeStatus(flatId, flatNumber, todayStr);
+    const serviceInProgress = getFlatServiceInProgress(flatId, flatNumber);
+
+    // 1. Timeline Unificada do Flat (Diário + Ordens de Serviço + Preventivas + Ocorrências + Vistorias)
+    const timeline = [];
+
+    // 1a. Eventos de Ordens de Serviço (Campanhas Externas/Internas) neste Flat
+    for (const order of allOrders) {
+      const oflat = (order.flats || []).find(f => Number(f.flatId) === flatId || String(f.flatNumber) === flatNumber);
+      if (!oflat) continue;
+      const catItem = order.serviceTypeId ? catalog.find(c => c.id === order.serviceTypeId) : inferServiceTypeFromText(order.title);
+      if (oflat.status === "done" || oflat.status === "in_progress") {
+        timeline.push({
+          id: `os_${order.id}_${flatId}`,
+          source: "service_order",
+          orderId: order.id,
+          serviceTypeId: order.serviceTypeId || catItem?.id || null,
+          serviceTypeName: order.serviceTypeName || catItem?.name || order.title,
+          title: order.title,
+          status: oflat.status, // "done" | "in_progress"
+          date: oflat.finishedAt || oflat.startedAt || order.createdAt,
+          startedAt: oflat.startedAt || null,
+          finishedAt: oflat.finishedAt || null,
+          actor: oflat.workerName || order.workerName || "Prestador",
+          description: oflat.observations || oflat.instructions || "",
+          photos: Array.isArray(oflat.photos) ? oflat.photos : []
+        });
+      }
+    }
+
+    // 1b. Eventos do Diário do Flat & Itens Retirados
+    const flatDiary = allDiary.filter(e => Number(e.flatId) === flatId || String(e.flatNumber) === flatNumber);
+    for (const entry of flatDiary) {
+      timeline.push({
+        id: entry.id,
+        source: "diary",
+        entryType: entry.entryType,
+        serviceTypeId: entry.serviceTypeId || null,
+        serviceTypeName: entry.serviceTypeName || entry.title,
+        title: entry.title,
+        itemName: entry.itemName || null,
+        status: entry.status, // "done" | "in_progress_outside"
+        date: entry.executedAt || entry.createdAt,
+        returnedAt: entry.returnedAt || null,
+        returnedBy: entry.returnedBy || null,
+        returnNotes: entry.returnNotes || null,
+        expectedReturnDate: entry.expectedReturnDate || null,
+        actor: entry.authorName || "Administração",
+        description: entry.description || "",
+        photos: Array.isArray(entry.photos) ? entry.photos : []
+      });
+    }
+
+    // 1c. Execuções de Tarefas Preventivas neste Flat
+    const flatExecs = allPeriodicExecs.filter(e => Number(e.flatId) === flatId);
+    for (const ex of flatExecs) {
+      const taskObj = (db.periodicTasks || []).find(t => Number(t.id) === Number(ex.periodicTaskId));
+      const userObj = (db.users || []).find(u => Number(u.id) === Number(ex.executedByUserId));
+      const inferredCat = taskObj ? inferServiceTypeFromText(taskObj.name) : null;
+      timeline.push({
+        id: `pexec_${ex.id}`,
+        source: "preventive",
+        taskId: ex.periodicTaskId,
+        serviceTypeId: inferredCat?.id || null,
+        serviceTypeName: taskObj ? taskObj.name : "Tarefa Preventiva",
+        title: taskObj ? taskObj.name : `Preventiva #${ex.periodicTaskId}`,
+        status: "done",
+        date: ex.executedAt || ex.createdAt,
+        actor: userObj ? (userObj.name || userObj.username) : "Equipe",
+        description: ex.notes || "",
+        photos: []
+      });
+    }
+
+    // 1d. Ocorrências / Avarias deste Flat
+    const flatObs = allObservations.filter(o => Number(o.flatId) === flatId || String(o.flatNumber) === flatNumber);
+    for (const obs of flatObs) {
+      timeline.push({
+        id: `obs_${obs.id}`,
+        source: "observation",
+        obsId: obs.id,
+        category: obs.category,
+        title: `Avaria / ${obs.category === "defeito" ? "Defeito" : "Manutenção"}`,
+        status: obs.status === "resolvida" ? "done" : "open_issue",
+        date: obs.resolvedAt || obs.createdAt,
+        createdAt: obs.createdAt,
+        resolvedAt: obs.resolvedAt,
+        actor: obs.status === "resolvida" ? (obs.resolvedByUsername || "Admin") : (obs.authorUsername || "Camareira"),
+        description: obs.text + (obs.resolvedNote ? ` — Solução: ${obs.resolvedNote}` : ""),
+        photos: []
+      });
+    }
+
+    // 1e. Respostas de Vistorias das Camareiras neste Flat
+    const flatSurveyResponses = [];
+    for (const survey of allSurveys) {
+      const resps = (survey.responses || []).filter(r => Number(r.flatId) === flatId || String(r.flatNumber) === flatNumber);
+      for (const r of resps) {
+        const summaryAnswers = (r.answers || [])
+          .map(a => `${a.questionText}: ${Array.isArray(a.answer) ? a.answer.join(", ") : a.answer}`)
+          .join(" | ");
+        const photos = (r.answers || []).map(a => a.photoUrl).filter(Boolean);
+        const item = {
+          id: `surv_${survey.id}_${r.id}`,
+          surveyId: survey.id,
+          responseId: r.id,
+          surveyTitle: survey.title,
+          answeredBy: r.answeredByUsername || "Camareira",
+          answeredAt: r.answeredAt,
+          answers: r.answers || [],
+          photos
+        };
+        flatSurveyResponses.push(item);
+        timeline.push({
+          id: item.id,
+          source: "survey",
+          surveyId: survey.id,
+          title: `Vistoria: ${survey.title}`,
+          status: "done",
+          date: r.answeredAt,
+          actor: r.answeredByUsername || "Camareira",
+          description: summaryAnswers,
+          answers: r.answers || [],
+          photos
+        });
+      }
+    }
+
+    timeline.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
+    // 2. Matriz de Cobertura por Tipo de Serviço do Catálogo para este Flat
+    const serviceCoverage = {};
+    for (const srv of catalog) {
+      // Eventos concluídos deste tipo de serviço (OS concluída ou Diário concluído)
+      const matchingDone = timeline.filter(ev =>
+        ev.serviceTypeId === srv.id &&
+        ev.status === "done" &&
+        (ev.source === "service_order" || ev.source === "diary" || ev.source === "preventive")
+      );
+      const lastDone = matchingDone[0] || null;
+
+      // Verifica se está pendente ou em andamento em alguma OS ativa ou item fora do flat
+      let activeOrderState = null;
+      for (const order of allOrders) {
+        if (order.status === "closed") continue;
+        const ordTypeId = order.serviceTypeId || inferServiceTypeFromText(order.title)?.id;
+        if (ordTypeId !== srv.id) continue;
+        const oflat = (order.flats || []).find(f => Number(f.flatId) === flatId || String(f.flatNumber) === flatNumber);
+        if (oflat) {
+          activeOrderState = {
+            orderId: order.id,
+            orderTitle: order.title,
+            flatStatus: oflat.status, // "pending" | "in_progress" | "done"
+            finishedAt: oflat.finishedAt || null,
+            startedAt: oflat.startedAt || null,
+            workerName: oflat.workerName || order.workerName || null
+          };
+          break;
+        }
+      }
+
+      const daysSinceLast = lastDone && lastDone.date
+        ? calcDaysDiff(todayStr, String(lastDone.date).substring(0, 10))
+        : null;
+
+      serviceCoverage[srv.id] = {
+        serviceTypeId: srv.id,
+        lastExecutedAt: lastDone ? lastDone.date : null,
+        lastActor: lastDone ? lastDone.actor : null,
+        lastSource: lastDone ? lastDone.source : null,
+        lastTitle: lastDone ? lastDone.title : null,
+        daysSinceLast,
+        isCycleOverdue: Boolean(srv.suggestedCycleDays && daysSinceLast !== null && daysSinceLast > srv.suggestedCycleDays),
+        activeOrder: activeOrderState
+      };
+    }
+
+    // 3. Status das Preventivas aplicáveis a este Flat
+    const preventiveStatuses = [];
+    for (const pt of allPeriodicTasks) {
+      const applies = !Array.isArray(pt.flatIds) || pt.flatIds.length === 0 || pt.flatIds.map(Number).includes(flatId);
+      if (!applies) continue;
+      preventiveStatuses.push(computePeriodicTaskStatus(pt, flat, todayStr));
+    }
+
+    // 4. Itens Atualmente Fora do Flat / Em Lavanderia ou Manutenção Externa
+    const itemsOutside = flatDiary.filter(e => e.status === "in_progress_outside");
+
+    // 5. Ocorrências Abertas
+    const openIssues = flatObs.filter(o => o.status === "aberta");
+
+    return {
+      ...flat,
+      technicalSheet: flat.technicalSheet || {},
+      tags: Array.isArray(flat.tags) ? flat.tags : [],
+      notes: flat.notes || "",
+      isOccupied: realtime.isOccupied,
+      isDirty: realtime.isDirty,
+      cleaningStatus: realtime.cleaningStatus,
+      occupancyStatus: realtime.occupancyStatus,
+      currentGuest: realtime.currentGuest,
+      hasCheckinToday: realtime.hasCheckinToday,
+      hasCheckoutToday: realtime.hasCheckoutToday,
+      serviceInProgress,
+      itemsOutside,
+      openIssues,
+      preventiveStatuses,
+      surveyResponses: flatSurveyResponses,
+      serviceCoverage,
+      timeline: timeline.slice(0, 80)
+    };
+  });
+
+  res.json({
+    catalog,
+    flats: flatsXray
   });
 });
 
@@ -16114,8 +16938,8 @@ app.get("/api/settings", (req, res) => {
   });
 });
 
-app.patch("/api/settings", (req, res) => {
-  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, childPolicy, cancellationPolicy, checkinProvider, serproConfig } = req.body;
+app.patch("/api/settings", async (req, res) => {
+  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, childPolicy, cancellationPolicy, checkinProvider, serproConfig, validateConnection } = req.body;
   if (onedriveShareUrl !== undefined) db.settings.onedriveShareUrl = onedriveShareUrl;
   if (syncIntervalMinutes !== undefined) db.settings.syncIntervalMinutes = syncIntervalMinutes;
   if (sheetName !== undefined) db.settings.sheetName = sheetName;
@@ -16133,17 +16957,7 @@ app.patch("/api/settings", (req, res) => {
   if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "promenadesoho@pfbestacionamentos.com.br";
   if (buildingName !== undefined) db.settings.buildingName = buildingName;
 
-  // Validação e persistência do checkinProvider
-  if (checkinProvider !== undefined) {
-    if (checkinProvider !== "proprio" && checkinProvider !== "gov_fnrh") {
-      return res.status(400).json({
-        error: "checkinProvider inválido. Deve ser 'proprio' ou 'gov_fnrh'."
-      });
-    }
-    db.settings.checkinProvider = checkinProvider;
-  }
-
-  // Validação e mesclagem de serproConfig
+  // Validação e mesclagem de serproConfig (antes da validação de ativação do provedor)
   if (serproConfig !== undefined) {
     if (typeof serproConfig !== "object" || serproConfig === null) {
       return res.status(400).json({ error: "serproConfig deve ser um objeto válido." });
@@ -16161,6 +16975,38 @@ app.patch("/api/settings", (req, res) => {
     }
     if (serproConfig.env !== undefined) cleanSerpro.env = serproConfig.env;
     db.settings.serproConfig = cleanSerpro;
+
+    // Auto-detecção de ambiente (Produção vs Homologação) ao salvar credenciais
+    if (cleanSerpro.user && cleanSerpro.password && !cleanSerpro.mock && process.env.SERPRO_MOCK !== "true") {
+      try {
+        const health = await fnrhSerproService.checkHealth(db.settings);
+        if (health.ok && health.env && db.settings.serproConfig.env !== health.env) {
+          db.settings.serproConfig.env = health.env;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Validação e persistência do checkinProvider
+  if (checkinProvider !== undefined) {
+    if (checkinProvider !== "proprio" && checkinProvider !== "gov_fnrh") {
+      return res.status(400).json({
+        error: "checkinProvider inválido. Deve ser 'proprio' ou 'gov_fnrh'."
+      });
+    }
+    if (checkinProvider === "gov_fnrh" && validateConnection === true) {
+      const health = await fnrhSerproService.checkHealth(db.settings);
+      if (!health.ok) {
+        return res.status(400).json({
+          error: health.message || "Não foi possível ativar o Check-in Oficial Gov.br: verifique as credenciais SERPRO antes de ativar.",
+          serproHealth: health
+        });
+      }
+      if (health.env && db.settings.serproConfig && db.settings.serproConfig.env !== health.env) {
+        db.settings.serproConfig.env = health.env;
+      }
+    }
+    db.settings.checkinProvider = checkinProvider;
   }
 
   if (petPolicy !== undefined) {
@@ -16194,6 +17040,12 @@ app.patch("/api/settings", (req, res) => {
   res.json({
     ...db.settings,
     checkinProvider: db.settings.checkinProvider || "proprio",
+    serproConfig: {
+      user: db.settings?.serproConfig?.user || process.env.SERPRO_USER || "",
+      hasPassword: Boolean(db.settings?.serproConfig?.password || process.env.SERPRO_PASSWORD),
+      cpfSolicitante: db.settings?.serproConfig?.cpfSolicitante || process.env.SERPRO_CPF_SOLICITANTE || "12585736792",
+      env: db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao"
+    },
     petPolicy: currentPetPolicy,
     childPolicy: currentChildPolicy,
     cancellationPolicy: currentCancellationPolicy,
@@ -16207,6 +17059,10 @@ app.get("/api/fnrh-serpro/status", async (req, res) => {
   try {
     const provider = db.settings?.checkinProvider || "proprio";
     const health = await fnrhSerproService.checkHealth(db.settings);
+    if (health.ok && health.detectedEnv && db.settings?.serproConfig && db.settings.serproConfig.env !== health.detectedEnv) {
+      db.settings.serproConfig.env = health.detectedEnv;
+      saveDatabase("serpro_auto_env_detect");
+    }
     return res.json({
       ok: Boolean(health.ok),
       provider,
@@ -20121,6 +20977,41 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       });
     }
   }
+
+  // ── Sincronização Automática de Ciclo de Vida com SERPRO FNRH (Cancelamento / Alteração de Datas) ──
+  if (r.status === "cancelada" || r.status === "CANCELLED") {
+    if (r.serproReservaId && r.serproStatus !== "CANCELADA") {
+      const oldSerproId = r.serproReservaId;
+      r.serproStatus = "CANCELADA";
+      r.serproCancelledAt = new Date().toISOString();
+      fnrhSerproService.cancelReserva(oldSerproId, db.settings).catch(err => {
+        console.warn(`[FNRH SERPRO] Aviso ao cancelar reserva ${r.code} (${oldSerproId}) no SERPRO:`, err.message);
+      });
+    }
+  } else if (
+    db.settings?.checkinProvider === "gov_fnrh" &&
+    !isPreReservationBlocked(r) &&
+    (oldCheckin !== r.checkinDate || oldCheckout !== r.checkoutDate || (oldStatus === "pre_reserva" && r.status === "confirmada") || (!r.serproPrecheckinUrl && !r.link_precheckin))
+  ) {
+    try {
+      if (r.serproReservaId && (oldCheckin !== r.checkinDate || oldCheckout !== r.checkoutDate)) {
+        await fnrhSerproService.cancelReserva(r.serproReservaId, db.settings).catch(() => {});
+      }
+      const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
+      if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+        r.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+        r.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+        r.serproUpdatedAt = new Date().toISOString();
+        delete r.serproError;
+      }
+    } catch (serproUpdateErr) {
+      console.warn(`[FNRH SERPRO PUT] Falha ao atualizar reserva ${r.code} no SERPRO:`, serproUpdateErr.message);
+      r.serproError = serproUpdateErr.message;
+    }
+  }
+
   saveDatabase();
 
   // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
@@ -20741,10 +21632,33 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     } catch {}
   }
 
+  // Se modo Gov.br (FNRH SERPRO) estiver ativo e a reserva confirmada ainda não tiver link SERPRO, registra automaticamente
+  if (db.settings?.checkinProvider === "gov_fnrh" && !isCancelledRes && isPaid && !isPreReservationBlocked(r) && !r.serproPrecheckinUrl && !r.link_precheckin) {
+    try {
+      const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
+      if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+        r.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+        r.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+        r.serproCreatedAt = new Date().toISOString();
+        delete r.serproError;
+        saveDatabase("guest_portal_serpro_lazy_register");
+      }
+    } catch (serproLazyErr) {
+      r.serproError = serproLazyErr.message;
+    }
+  }
+
   res.json({
+    checkinProvider: db.settings?.checkinProvider || "proprio",
     reservation: {
       id: r.id,
       code: r.code,
+      serproReservaId: r.serproReservaId || null,
+      serproPrecheckinUrl: r.serproPrecheckinUrl || r.link_precheckin || null,
+      link_precheckin: r.link_precheckin || r.serproPrecheckinUrl || null,
+      serproStatus: r.serproStatus || null,
       status: (r.status === "CHECKED_IN" || !r.status) ? "confirmada" : r.status,
       isCancelled: isCancelledRes,
       cancelledAt: r.cancelledAt || null,
@@ -23711,6 +24625,16 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
 
+  // Cancela reserva no SERPRO FNRH se possuir vínculo ativo
+  if (r.serproReservaId && r.serproStatus !== "CANCELADA") {
+    const oldSerproId = r.serproReservaId;
+    r.serproStatus = "CANCELADA";
+    r.serproCancelledAt = new Date().toISOString();
+    fnrhSerproService.cancelReserva(oldSerproId, db.settings).catch(err => {
+      console.warn(`[FNRH SERPRO] Aviso ao cancelar reserva ${r.code} (${oldSerproId}) no SERPRO:`, err.message);
+    });
+  }
+
   // Gatilho B: Notificação de cancelamento para a recepção/portaria (apenas se a portaria já recebeu a reserva)
   if (hasReceptionReceivedReservation(r, db)) {
     try {
@@ -25712,7 +26636,7 @@ const handleCheckout = async (req, res) => {
         codigoVerificacao: codVerif,
         chaveAcesso: `3326084796481300016501001${String(nextId).padStart(9, "0")}1${codVerif}`,
         dataEmissao: new Date().toISOString(),
-        sistemaEmissor: db.nfseConfig?.padrao === "nacional_adn" ? "padrao_nacional" : "giss_prefeitura",
+        sistemaEmissor: "padrao_nacional",
         prestadorRazaoSocial: "Rental Miller's LTDA",
         prestadorCnpj: "47.964.813/0001-65",
         prestadorIm: "142591",
@@ -27314,10 +28238,29 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
 
 
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────
-app.get("/api/pms/pre-checkin/:code", (req, res) => {
+app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   const code = req.params.code;
   const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  // Se o modo Gov.br (FNRH SERPRO) estiver ativo e a reserva ainda não tiver link SERPRO, registra sob demanda com fallback seguro
+  if (db.settings?.checkinProvider === "gov_fnrh" && !isPreReservationBlocked(r) && r.status !== "cancelada" && !r.serproPrecheckinUrl && !r.link_precheckin) {
+    try {
+      const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
+      if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+        r.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+        r.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+        r.serproCreatedAt = new Date().toISOString();
+        delete r.serproError;
+        saveDatabase("precheckin_serpro_lazy_register");
+      }
+    } catch (serproErr) {
+      console.warn(`[FNRH SERPRO Lazy Pre-Checkin] Falha ao registrar reserva ${r.code}:`, serproErr.message);
+      r.serproError = serproErr.message;
+    }
+  }
 
   if (!db.guests) db.guests = [];
 
@@ -27536,12 +28479,17 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
   }
 
   const preCheckinBlocked = isPreReservationBlocked(r);
+  const activeCheckinProvider = db.settings?.checkinProvider || "proprio";
+  const resolvedSerproUrl = r.serproPrecheckinUrl || r.link_precheckin || null;
   res.json({
     reservation: r,
     guest: guest || {},
     guestCount,
     guests: r.guests,
     tokenStatus,
+    checkinProvider: activeCheckinProvider,
+    serproPrecheckinUrl: resolvedSerproUrl,
+    serproStatus: r.serproStatus || null,
     preCheckinBlocked,
     preCheckinBlockedReason: preCheckinBlocked
       ? "Esta é uma pré-reserva aguardando pagamento. Apenas após a confirmação do pagamento o check-in digital é liberado e a reserva é enviada para a recepção/portaria."
@@ -27867,6 +28815,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   let whatsapp2faVerified = false;
   let verifiedOtpRecord = null;
   const submittedOtp = String(whatsappOtp || otp || "").replace(/\D/g, "").trim();
+  const isGovTriagemMode = Boolean(req.body.govTriagemMode || db.settings?.checkinProvider === "gov_fnrh");
 
   if (submittedOtp && Array.isArray(db.fnrhWhatsappOtps)) {
     const now = Date.now();
@@ -27882,12 +28831,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       whatsapp2faVerified = true;
       verifiedOtpRecord.verified = true;
       verifiedOtpRecord.verifiedAt = new Date().toISOString();
-    } else {
+    } else if (!isGovTriagemMode) {
       return res.status(400).json({
         error: "Código de confirmação do WhatsApp incorreto ou expirado. Por favor, confira o código de 6 dígitos recebido ou solicite um novo."
       });
     }
-  } else if (!submittedOtp) {
+  } else if (!submittedOtp && !isGovTriagemMode) {
     const now = Date.now();
     const activeOtp = (db.fnrhWhatsappOtps || []).find(t =>
       (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
@@ -28567,12 +29516,27 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     console.log(`[MailService ℹ️] Pré-check-in concluído com antecedência para ${r.code}. FNRH gerada e salva. Notificação à recepção agendada para o dia do check-in (${r.checkinDate}) às 07:00.`);
   }
 
+  if (db.settings?.checkinProvider === "gov_fnrh" && !r.serproPrecheckinUrl && !r.link_precheckin) {
+    try {
+      const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
+      if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+        r.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+        r.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        r.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+        r.serproCreatedAt = new Date().toISOString();
+      }
+    } catch (_) {}
+  }
+
   reconcileAndMergeGuests(db);
   saveDatabase();
 
   res.json({
     success: true,
     message: "Ficha de Check-in Digital registrada com sucesso! Entrada autorizada.",
+    checkinProvider: db.settings?.checkinProvider || "proprio",
+    serproPrecheckinUrl: r.serproPrecheckinUrl || r.link_precheckin || null,
     reservation: r,
     guest,
     fnrhDocument: fnrhDocument ? {
@@ -31725,7 +32689,9 @@ import {
   processNationalInvoiceEmission,
   renderDanfseHtml,
   generateNationalXmlContent,
-  generateChaveAcessoNacional
+  generateChaveAcessoNacional,
+  ensureNfseCertFilesOnDisk,
+  generateNfsePdfBuffer
 } from "./national-nfse.mjs";
 
 function formatCpf(cpf = "") {
@@ -31764,6 +32730,7 @@ function getFiscalData() {
   } catch (_) {}
   if (db.nfseConfig) {
     db.nfseConfig.ambiente = "producao";
+    db.nfseConfig.padrao = "nacional_adn";
   }
   if (!db.nfseConfig || db.nfseConfig.cnpjPrestador !== "47.964.813/0001-65") {
     db.nfseConfig = {
@@ -31846,117 +32813,21 @@ function getFiscalData() {
     ];
   }
 
-  // Sincroniza notas reais emitidas no GissOnline Produção (ws-goytacazes.giss.com.br)
-  if (process.env.NODE_ENV !== "test" && Array.isArray(db.invoices)) {
-    const realGissInvoices = [
-      {
-        id: 904,
-        numeroRps: 706606,
-        numeroNfse: "904",
-        numeroNota: "904",
-        codigoVerificacao: "5FXJ1ZDHS",
-        chaveAcesso: "8013317",
-        protocoloAutorizacao: "8013317",
-        dataEmissao: "2026-10-20T11:30:22.914-03:00",
-        sistemaEmissor: "giss_prefeitura",
-        municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
-        regraFiscalId: "hospedagem_corpflats",
-        prestadorRazaoSocial: "Rental Miller's LTDA",
-        prestadorCnpj: "47.964.813/0001-65",
-        prestadorIm: "142591",
-        tomadorNome: "Miller Mendonça Pessanha",
-        tomadorCpfCnpj: "12585736792",
-        tomadorEmail: "miller@corpflats.com.br",
-        tomadorTelefone: "22999999999",
-        tomadorEndereco: "Av. Pelinca",
-        tomadorLogradouro: "Av. Pelinca",
-        tomadorNumero: "100",
-        tomadorBairro: "Pelinca",
-        tomadorCep: "28035000",
-        tomadorCidade: "Campos dos Goytacazes",
-        tomadorUf: "RJ",
-        tomadorCodigoMunicipio: "3301009",
-        flatNumber: "113",
-        valorServico: 2.00,
-        aliquota: 2.0,
-        cnae: "5510801",
-        codigoServico: "09.02",
-        codigoTributacaoMunicipio: "799020000",
-        discriminacao: "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. HÓSPEDE: MILLER MENDONÇA PESSANHA (CPF 125.857.367-92). DIÁRIA COM WI-FI, ENERGIA E LIMPEZA INCLUSA.",
-        status: "autorizada",
-        linkPrefeitura: "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
-        danfseUrl: "/api/nfse/danfse/904",
-        pdfUrl: "/api/nfse/pdf/904",
-        createdAt: "2026-10-20T14:30:22.914Z"
-      },
-      {
-        id: 903,
-        numeroRps: 632018,
-        numeroNfse: "903",
-        numeroNota: "903",
-        codigoVerificacao: "PTOD8PPQE",
-        chaveAcesso: "7780797",
-        protocoloAutorizacao: "7780797",
-        dataEmissao: "2026-04-04T19:33:46.392-03:00",
-        sistemaEmissor: "giss_prefeitura",
-        municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
-        regraFiscalId: "hospedagem_corpflats",
-        prestadorRazaoSocial: "Rental Miller's LTDA",
-        prestadorCnpj: "47.964.813/0001-65",
-        prestadorIm: "142591",
-        tomadorNome: "Bruno Terra",
-        tomadorCpfCnpj: "11495140740",
-        tomadorEmail: "",
-        tomadorTelefone: "",
-        tomadorEndereco: "Rua Voluntários da Pátria",
-        tomadorLogradouro: "Rua Voluntários da Pátria",
-        tomadorNumero: "500",
-        tomadorBairro: "Centro",
-        tomadorCep: "28035260",
-        tomadorCidade: "Campos dos Goytacazes",
-        tomadorUf: "RJ",
-        tomadorCodigoMunicipio: "3301009",
-        flatNumber: "113",
-        valorServico: 2.00,
-        aliquota: 2.0,
-        cnae: "5510801",
-        codigoServico: "09.02",
-        codigoTributacaoMunicipio: "799020000",
-        discriminacao: "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - HÓSPEDE: BRUNO TERRA - APARTAMENTO 113.",
-        status: "autorizada",
-        linkPrefeitura: "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
-        danfseUrl: "/api/nfse/danfse/903",
-        pdfUrl: "/api/nfse/pdf/903",
-        createdAt: "2026-04-04T22:33:46.392Z"
-      }
-    ];
-
-    for (const realInv of realGissInvoices.reverse()) {
-      const exists = db.invoices.some(i =>
-        String(i.numeroNfse) === String(realInv.numeroNfse) ||
-        String(i.codigoVerificacao).toUpperCase() === String(realInv.codigoVerificacao).toUpperCase()
-      );
-      if (!exists) {
-        db.invoices.unshift(realInv);
-      }
-    }
-
-    // Limpa automaticamente da fila de contingência qualquer item que já tenha NFS-e autorizada
-    if (Array.isArray(db.nfseRetryQueue) && db.nfseRetryQueue.length > 0) {
-      const authorizedDocs = new Set(
-        db.invoices
-          .filter(i => i.status === "autorizada")
-          .map(i => `${onlyDigits(i.tomadorCpfCnpj)}_${Number(i.valorServico || 0).toFixed(2)}`)
-      );
-      const beforeLen = db.nfseRetryQueue.length;
-      db.nfseRetryQueue = db.nfseRetryQueue.filter(q => {
-        const p = q?.payload || {};
-        const key = `${onlyDigits(p.tomadorCpfCnpj || q.tomadorCpfCnpj || "")}_${Number(p.valorServico || q.valorServico || 0).toFixed(2)}`;
-        return !authorizedDocs.has(key);
-      });
-      if (db.nfseRetryQueue.length !== beforeLen) {
-        try { saveDatabase(); } catch (_) {}
-      }
+  // Limpa automaticamente da fila de contingência qualquer item que já tenha NFS-e autorizada
+  if (process.env.NODE_ENV !== "test" && Array.isArray(db.invoices) && Array.isArray(db.nfseRetryQueue) && db.nfseRetryQueue.length > 0) {
+    const authorizedDocs = new Set(
+      db.invoices
+        .filter(i => i.status === "autorizada")
+        .map(i => `${onlyDigits(i.tomadorCpfCnpj)}_${Number(i.valorServico || 0).toFixed(2)}`)
+    );
+    const beforeLen = db.nfseRetryQueue.length;
+    db.nfseRetryQueue = db.nfseRetryQueue.filter(q => {
+      const p = q?.payload || {};
+      const key = `${onlyDigits(p.tomadorCpfCnpj || q.tomadorCpfCnpj || "")}_${Number(p.valorServico || q.valorServico || 0).toFixed(2)}`;
+      return !authorizedDocs.has(key);
+    });
+    if (db.nfseRetryQueue.length !== beforeLen) {
+      try { saveDatabase(); } catch (_) {}
     }
   }
 }
@@ -32478,11 +33349,8 @@ async function executeNfseEmissionInternal(payload) {
   const resolvedCheckout = payload.checkoutDate || payload.checkOut || null;
   const resolvedAliquota = Number(payload.aliquota || payload.aliquotaIss || 2.0);
 
-  // Determinação do motor (giss_prefeitura ou padrao_nacional)
-  const reqEngine = (payload.sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura").toLowerCase();
-  const motorEscolhido = (reqEngine === "padrao_nacional" || reqEngine === "nacional_adn")
-    ? "padrao_nacional"
-    : "giss_prefeitura";
+  // Motor Oficial Unificado: Padrão Nacional ADN (Gov.br / SEFIN Nacional)
+  const motorEscolhido = "padrao_nacional";
 
   const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
   const rpsCandidates = (db.invoices || []).map(i => Number(i.numeroRps || 0)).filter(n => n > 0 && n < 10000000);
@@ -32501,110 +33369,67 @@ async function executeNfseEmissionInternal(payload) {
   let emissionResult;
 
   try {
-    if (motorEscolhido === "padrao_nacional") {
-      const dpsData = buildNationalDpsPayload({
-        numeroDps: nextDpsNumber,
-        serie: "1",
-        regraFiscalId: payload.regraFiscalId || "hospedagem_corpflats",
-        tomador: {
-          cpfCnpj: cleanDoc,
-          nome: toTitleCase(tomadorNome),
-          telefone: cleanTel,
-          email: cleanEmail,
-          logradouro: endLogradouro || "Av. Pelinca",
-          numero: endNumero || "100",
-          complemento: endComplemento,
-          bairro: endBairro || "Pelinca",
-          cep: endCep,
-          uf: endUf,
-          codigoMunicipio: endCodMun
-        },
-        valorServico: valor,
-        discriminacao: resolvedDiscriminacao,
-        flatNumber: payload.flatNumber,
-        reservationCode: payload.reservationCode,
-        ambiente: db.nfseConfig?.ambiente || "homologacao"
-      });
+    const dpsData = buildNationalDpsPayload({
+      numeroDps: nextDpsNumber,
+      serie: "1",
+      regraFiscalId: payload.regraFiscalId || "hospedagem_corpflats",
+      tomador: {
+        cpfCnpj: cleanDoc,
+        nome: toTitleCase(tomadorNome),
+        telefone: cleanTel,
+        email: cleanEmail,
+        logradouro: endLogradouro || "Av. Pelinca",
+        numero: endNumero || "100",
+        complemento: endComplemento,
+        bairro: endBairro || "Pelinca",
+        cep: endCep,
+        uf: endUf,
+        codigoMunicipio: endCodMun
+      },
+      valorServico: valor,
+      discriminacao: resolvedDiscriminacao,
+      flatNumber: payload.flatNumber,
+      reservationCode: payload.reservationCode,
+      ambiente: db.nfseConfig?.ambiente || "producao"
+    });
 
-      try {
-        emissionResult = await processNationalInvoiceEmission({
-          invoiceData: {
-            ...dpsData,
-            valorServico: valor,
-            discriminacao: resolvedDiscriminacao
-          }
-        });
-      } catch (procErr) {
-        if (process.env.NODE_ENV === "test") {
-          emissionResult = {
-            success: true,
-            status: "autorizada",
-            numeroNfse: String(nextDpsNumber),
-            numeroNota: String(nextDpsNumber),
-            codigoVerificacao: crypto.randomBytes(4).toString("hex").toUpperCase(),
-            chaveAcesso: dpsData.chaveAcesso,
-            protocoloAutorizacao: `SEFIN_${Date.now()}`
-          };
-        } else {
-          throw procErr;
+    try {
+      emissionResult = await processNationalInvoiceEmission({
+        invoiceData: {
+          ...dpsData,
+          valorServico: valor,
+          discriminacao: resolvedDiscriminacao
         }
-      }
-
-      if (!emissionResult.success && process.env.NODE_ENV !== "test") {
-        const errMsg = emissionResult.error || "Falha na autorização pela SEFIN Nacional";
-        const retryItem = enqueueNfseRetry(payload, errMsg, motorEscolhido);
-        return { success: false, error: errMsg, retryQueued: true, retryId: retryItem?.id };
-      }
-
-      numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
-      codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
-      chaveAcesso = emissionResult.chaveAcesso || dpsData.chaveAcesso;
-      protocoloAutorizacao = emissionResult.protocoloAutorizacao || `SEFIN_${Date.now()}`;
-      linkPrefeitura = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
-      qrCodeUrl = emissionResult.qrCodeUrl || `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
-      dataEmissao = emissionResult.dataEmissao || dataEmissao;
-    } else {
-      // giss_prefeitura
-      emissionResult = await emitirNfseGissReal({
-        numeroRps: nextRpsNumber,
-        numeroLote: nextDpsNumber,
-        valorServico: valor,
-        aliquota: resolvedAliquota,
-        cnae: payload.cnae || "5510801",
-        codigoServico: payload.codigoServico || "09.02",
-        codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000",
-        discriminacao: resolvedDiscriminacao,
-        tomadorNome: String(tomadorNome).trim(),
-        tomadorCpfCnpj: cleanDoc,
-        tomadorEmail: cleanEmail,
-        tomadorTelefone: cleanTel,
-        tomadorEndereco: endLogradouro,
-        tomadorLogradouro: endLogradouro,
-        tomadorNumero: endNumero,
-        tomadorComplemento: endComplemento,
-        tomadorBairro: endBairro,
-        tomadorCep: endCep,
-        tomadorCidade: endCidade,
-        tomadorUf: endUf,
-        tomadorCodigoMunicipio: endCodMun,
-        flatNumber: payload.flatNumber ? String(payload.flatNumber) : "",
-        reservationCode: payload.reservationCode
       });
-
-      if (!emissionResult.ok && process.env.NODE_ENV !== "test") {
-        const errMsg = (emissionResult.errors || []).join(" | ") || "Falha na emissão pela Prefeitura Municipal (GissOnline)";
-        const retryItem = enqueueNfseRetry(payload, errMsg, motorEscolhido);
-        return { success: false, error: errMsg, retryQueued: true, retryId: retryItem?.id };
+    } catch (procErr) {
+      if (process.env.NODE_ENV === "test") {
+        emissionResult = {
+          success: true,
+          status: "autorizada",
+          numeroNfse: String(nextDpsNumber),
+          numeroNota: String(nextDpsNumber),
+          codigoVerificacao: crypto.randomBytes(4).toString("hex").toUpperCase(),
+          chaveAcesso: dpsData.chaveAcesso,
+          protocoloAutorizacao: `SEFIN_${Date.now()}`
+        };
+      } else {
+        throw procErr;
       }
-
-      numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
-      codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
-      chaveAcesso = emissionResult.protocoloAutorizacao || null;
-      protocoloAutorizacao = emissionResult.protocoloAutorizacao || null;
-      linkPrefeitura = emissionResult.linkNota || "https://goytacazes.giss.com.br/portal/#/nfse/consulta";
-      qrCodeUrl = emissionResult.qrCodeUrl || null;
-      dataEmissao = emissionResult.dataEmissao || dataEmissao;
     }
+
+    if (!emissionResult.success && process.env.NODE_ENV !== "test") {
+      const errMsg = emissionResult.error || "Falha na autorização pela SEFIN Nacional (Gov.br)";
+      const retryItem = enqueueNfseRetry(payload, errMsg, motorEscolhido);
+      return { success: false, error: errMsg, retryQueued: true, retryId: retryItem?.id };
+    }
+
+    numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
+    codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
+    chaveAcesso = emissionResult.chaveAcesso || dpsData.chaveAcesso;
+    protocoloAutorizacao = emissionResult.protocoloAutorizacao || `SEFIN_${Date.now()}`;
+    linkPrefeitura = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
+    qrCodeUrl = emissionResult.qrCodeUrl || `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
+    dataEmissao = emissionResult.dataEmissao || dataEmissao;
 
     const newInvoice = {
       id: nextDpsNumber,
@@ -32649,12 +33474,13 @@ async function executeNfseEmissionInternal(payload) {
       aliquota: resolvedAliquota,
       cnae: payload.cnae || "5510801",
       codigoServico: payload.codigoServico || "09.02",
-      codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000",
+      codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "090201",
       discriminacao: resolvedDiscriminacao,
       status: "autorizada",
       linkPrefeitura: linkPrefeitura,
       qrCodeUrl: qrCodeUrl,
       danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
+      pdfUrl: `/api/nfse/pdf/${numeroNfse}`,
       createdAt: new Date().toISOString()
     };
 
@@ -32683,8 +33509,8 @@ async function executeNfseEmissionInternal(payload) {
     logAuditEvent({
       level: "info",
       category: "financial",
-      action: motorEscolhido === "padrao_nacional" ? "NFSE_EMITTED_NATIONAL" : "NFSE_EMITTED_GISSONLINE",
-      actor: { name: motorEscolhido === "padrao_nacional" ? "Motor Nacional ADN" : "Motor GissOnline Campos", role: "admin" },
+      action: "NFSE_EMITTED_NATIONAL",
+      actor: { name: "Motor Nacional ADN (Gov.br)", role: "admin" },
       details: {
         numeroNfse: newInvoice.numeroNfse,
         codigoVerificacao: newInvoice.codigoVerificacao,
@@ -32692,7 +33518,7 @@ async function executeNfseEmissionInternal(payload) {
         valor: newInvoice.valorServico,
         link: newInvoice.linkPrefeitura
       },
-      source: motorEscolhido === "padrao_nacional" ? "national_engine" : "giss_engine"
+      source: "national_engine"
     });
 
     return {
@@ -32700,6 +33526,7 @@ async function executeNfseEmissionInternal(payload) {
       invoice: newInvoice,
       numeroNfse: numeroNfse,
       danfseUrl: newInvoice.danfseUrl,
+      pdfUrl: newInvoice.pdfUrl,
       linkPrefeitura: newInvoice.linkPrefeitura,
       qrCodeUrl: newInvoice.qrCodeUrl
     };
@@ -32710,7 +33537,7 @@ async function executeNfseEmissionInternal(payload) {
   }
 }
 
-// Emit NFS-e Individual (Dual Engine: Municipal GissOnline ou Padrão Nacional ADN)
+// Emit NFS-e Individual (Emissor Nacional Gov.br / Padrão Nacional ADN)
 app.post("/api/nfse/emit", async (req, res) => {
   getFiscalData();
   const emissionResult = await executeNfseEmissionInternal(req.body);
@@ -32732,9 +33559,10 @@ app.post("/api/nfse/emit", async (req, res) => {
     numeroNota: emissionResult.numeroNfse,
     codigoVerificacao: emissionResult.invoice.codigoVerificacao,
     danfseUrl: emissionResult.danfseUrl,
+    pdfUrl: emissionResult.pdfUrl,
     linkPrefeitura: emissionResult.linkPrefeitura,
     qrCodeUrl: emissionResult.qrCodeUrl,
-    message: `Nota Fiscal Nº ${emissionResult.numeroNfse} emitida com sucesso pelo ${emissionResult.invoice.sistemaEmissor === "padrao_nacional" ? "Padrão Nacional ADN" : "GissOnline Municipal"}!`
+    message: `Nota Fiscal Nº ${emissionResult.numeroNfse} emitida com sucesso pelo Emissor Nacional Gov.br (Padrão Nacional ADN)!`
   });
 });
 
@@ -32795,7 +33623,7 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
           reservationCode: reservationObj.code,
           guestId: guest?.id || reservationObj.guestId,
           companyId: company?.id ? Number(company.id) : null,
-          sistemaEmissor: sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura",
+          sistemaEmissor: "padrao_nacional",
           tomadorNome,
           tomadorCpfCnpj: tomadorDoc,
           tomadorEmail: isPj ? (company?.financialEmail || guest?.email) : (reservationObj.guestEmail || guest?.email),
@@ -33007,7 +33835,7 @@ CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qua
     reservationIds: selectedReservations.map(r => Number(r.id)),
     reservationCodes: selectedReservations.map(r => r.code).filter(Boolean),
     consolidatedStaysCount: selectedReservations.length,
-    sistemaEmissor: sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura",
+    sistemaEmissor: "padrao_nacional",
     tomadorNome: toTitleCase(company.corporateName),
     tomadorCpfCnpj: cleanCnpj,
     tomadorEmail: (company.financialEmail || "").trim().toLowerCase(),
@@ -33052,8 +33880,8 @@ CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qua
   });
 });
 
-// ── Fila Persistente de Retry Fiscal (NFS-e GISS / ADN) com Backoff Exponencial ──
-function enqueueNfseRetry(payload, errorMessage, engine = "giss_prefeitura") {
+// ── Fila Persistente de Retry Fiscal (NFS-e Padrão Nacional ADN) com Backoff Exponencial ──
+function enqueueNfseRetry(payload, errorMessage, engine = "padrao_nacional") {
   if (!payload || typeof payload !== "object") return null;
   if (!Array.isArray(db.nfseRetryQueue)) db.nfseRetryQueue = [];
   const cleanDoc = onlyDigits(payload.tomadorCpfCnpj || "");
@@ -33176,8 +34004,7 @@ async function processSingleNfseRetryItem(item) {
     return { ok: true, success: true, invoice: existingAuthorized };
   }
 
-  const engine = (item.engine || p.sistemaEmissor || "giss_prefeitura").toLowerCase();
-  const motorEscolhido = (engine === "padrao_nacional" || engine === "nacional_adn") ? "padrao_nacional" : "giss_prefeitura";
+  const motorEscolhido = "padrao_nacional";
 
   const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
   const rpsCandidates = (db.invoices || []).map(i => Number(i.numeroRps || 0)).filter(n => n > 0 && n < 10000000);
@@ -33196,104 +34023,62 @@ async function processSingleNfseRetryItem(item) {
     let dataEmissao = new Date().toISOString();
     let emissionResult;
 
-    if (motorEscolhido === "padrao_nacional") {
-      const dpsData = buildNationalDpsPayload({
-        numeroDps: nextDpsNumber,
-        serie: "1",
-        regraFiscalId: p.regraFiscalId || "hospedagem_corpflats",
-        tomador: {
-          cpfCnpj: onlyDigits(p.tomadorCpfCnpj),
-          nome: toTitleCase(p.tomadorNome),
-          telefone: cleanPhone(p.tomadorTelefone),
-          email: p.tomadorEmail,
-          logradouro: p.tomadorEndereco || p.tomadorLogradouro || "Av. Pelinca",
-          numero: p.tomadorNumero || "100",
-          complemento: p.tomadorComplemento || "",
-          bairro: p.tomadorBairro || "Pelinca",
-          cep: cleanCep(p.tomadorCep || "28035000"),
-          uf: p.tomadorUf || "RJ",
-          codigoMunicipio: p.tomadorCodigoMunicipio || "3301009"
-        },
-        valorServico: Number(p.valorServico),
-        discriminacao: p.discriminacao,
-        flatNumber: p.flatNumber,
-        reservationCode: p.reservationCode,
-        ambiente: db.nfseConfig?.ambiente || "homologacao"
+    const dpsData = buildNationalDpsPayload({
+      numeroDps: nextDpsNumber,
+      serie: "1",
+      regraFiscalId: p.regraFiscalId || "hospedagem_corpflats",
+      tomador: {
+        cpfCnpj: onlyDigits(p.tomadorCpfCnpj),
+        nome: toTitleCase(p.tomadorNome),
+        telefone: cleanPhone(p.tomadorTelefone),
+        email: p.tomadorEmail,
+        logradouro: p.tomadorEndereco || p.tomadorLogradouro || "Av. Pelinca",
+        numero: p.tomadorNumero || "100",
+        complemento: p.tomadorComplemento || "",
+        bairro: p.tomadorBairro || "Pelinca",
+        cep: cleanCep(p.tomadorCep || "28035000"),
+        uf: p.tomadorUf || "RJ",
+        codigoMunicipio: p.tomadorCodigoMunicipio || "3301009"
+      },
+      valorServico: Number(p.valorServico),
+      discriminacao: p.discriminacao,
+      flatNumber: p.flatNumber,
+      reservationCode: p.reservationCode,
+      ambiente: db.nfseConfig?.ambiente || "producao"
+    });
+
+    try {
+      emissionResult = await processNationalInvoiceEmission({
+        invoiceData: { ...dpsData, valorServico: Number(p.valorServico), discriminacao: p.discriminacao }
       });
-
-      try {
-        emissionResult = await processNationalInvoiceEmission({
-          invoiceData: { ...dpsData, valorServico: Number(p.valorServico), discriminacao: p.discriminacao }
-        });
-      } catch (procErr) {
-        if (process.env.NODE_ENV === "test") {
-          emissionResult = {
-            success: true,
-            status: "autorizada",
-            numeroNfse: String(nextDpsNumber),
-            numeroNota: String(nextDpsNumber),
-            codigoVerificacao: crypto.randomBytes(4).toString("hex").toUpperCase(),
-            chaveAcesso: dpsData.chaveAcesso,
-            protocoloAutorizacao: `SEFIN_${Date.now()}`
-          };
-        } else {
-          throw procErr;
-        }
+    } catch (procErr) {
+      if (process.env.NODE_ENV === "test") {
+        emissionResult = {
+          success: true,
+          status: "autorizada",
+          numeroNfse: String(nextDpsNumber),
+          numeroNota: String(nextDpsNumber),
+          codigoVerificacao: crypto.randomBytes(4).toString("hex").toUpperCase(),
+          chaveAcesso: dpsData.chaveAcesso,
+          protocoloAutorizacao: `SEFIN_${Date.now()}`
+        };
+      } else {
+        throw procErr;
       }
-
-      if (!emissionResult.success && process.env.NODE_ENV !== "test") {
-        enqueueNfseRetry(p, emissionResult.error || "Falha na autorização pela SEFIN Nacional", motorEscolhido);
-        return { ok: false, error: emissionResult.error || "Falha na autorização pela SEFIN Nacional" };
-      }
-
-      numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
-      codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
-      chaveAcesso = emissionResult.chaveAcesso || dpsData.chaveAcesso;
-      protocoloAutorizacao = emissionResult.protocoloAutorizacao || `SEFIN_${Date.now()}`;
-      linkPrefeitura = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
-      qrCodeUrl = emissionResult.qrCodeUrl || linkPrefeitura;
-      dataEmissao = emissionResult.dataEmissao || dataEmissao;
-    } else {
-      emissionResult = await emitirNfseGissReal({
-        numeroRps: nextRpsNumber,
-        numeroLote: nextDpsNumber,
-        valorServico: Number(p.valorServico),
-        aliquota: p.aliquota || 2.0,
-        cnae: p.cnae || "5510801",
-        codigoServico: p.codigoServico || "09.02",
-        codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
-        discriminacao: p.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${p.flatNumber || ''}.`,
-        tomadorNome: String(p.tomadorNome || "").trim(),
-        tomadorCpfCnpj: onlyDigits(p.tomadorCpfCnpj || ""),
-        tomadorEmail: String(p.tomadorEmail || "").trim().toLowerCase(),
-        tomadorTelefone: cleanPhone(p.tomadorTelefone || ""),
-        tomadorEndereco: p.tomadorEndereco || "",
-        tomadorLogradouro: p.tomadorLogradouro || p.tomadorEndereco || "",
-        tomadorNumero: p.tomadorNumero || "",
-        tomadorComplemento: p.tomadorComplemento || "",
-        tomadorBairro: p.tomadorBairro || "",
-        tomadorCep: cleanCep(p.tomadorCep || "28035000"),
-        tomadorCidade: p.tomadorCidade || "Campos dos Goytacazes",
-        tomadorUf: p.tomadorUf || "RJ",
-        tomadorCodigoMunicipio: p.tomadorCodigoMunicipio || "3301009",
-        flatNumber: p.flatNumber ? String(p.flatNumber) : "",
-        reservationCode: p.reservationCode || null
-      });
-
-      if (!emissionResult.ok && process.env.NODE_ENV !== "test") {
-        const errMsg = (emissionResult.errors || []).join(" | ") || "Falha no reprocessamento GissOnline";
-        enqueueNfseRetry(p, errMsg, motorEscolhido);
-        return { ok: false, error: errMsg };
-      }
-
-      numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextRpsNumber);
-      codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
-      chaveAcesso = emissionResult.protocoloAutorizacao || null;
-      protocoloAutorizacao = emissionResult.protocoloAutorizacao || null;
-      linkPrefeitura = emissionResult.linkNota || "https://goytacazes.giss.com.br/portal/#/nfse/consulta";
-      qrCodeUrl = emissionResult.qrCodeUrl || null;
-      dataEmissao = emissionResult.dataEmissao || dataEmissao;
     }
+
+    if (!emissionResult.success && process.env.NODE_ENV !== "test") {
+      enqueueNfseRetry(p, emissionResult.error || "Falha na autorização pela SEFIN Nacional", motorEscolhido);
+      return { ok: false, error: emissionResult.error || "Falha na autorização pela SEFIN Nacional" };
+    }
+
+    numeroNfse = emissionResult.numeroNfse || emissionResult.numeroNota || String(nextDpsNumber);
+    codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
+    chaveAcesso = emissionResult.chaveAcesso || dpsData.chaveAcesso;
+    protocoloAutorizacao = emissionResult.protocoloAutorizacao || `SEFIN_${Date.now()}`;
+    linkPrefeitura = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
+    qrCodeUrl = emissionResult.qrCodeUrl || linkPrefeitura;
+    dataEmissao = emissionResult.dataEmissao || dataEmissao;
 
     const newInvoice = {
       id: nextDpsNumber,
@@ -33337,12 +34122,13 @@ async function processSingleNfseRetryItem(item) {
       aliquota: Number(p.aliquota || 2.0),
       cnae: p.cnae || "5510801",
       codigoServico: p.codigoServico || "09.02",
-      codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "799020000",
+      codigoTributacaoMunicipio: p.codigoTributacaoMunicipio || "090201",
       discriminacao: p.discriminacao || "",
       status: "autorizada",
       linkPrefeitura,
       qrCodeUrl,
       danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
+      pdfUrl: `/api/nfse/pdf/${numeroNfse}`,
       createdAt: new Date().toISOString()
     };
 
@@ -33410,48 +34196,6 @@ function findNfseInvoiceByAnyId(rawIdInput) {
     (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
   );
 
-  if (!inv && (rawId === "904" || rawId.toUpperCase() === "5FXJ1ZDHS")) {
-    inv = {
-      id: 904,
-      numeroRps: 706606,
-      numeroNfse: "904",
-      numeroNota: "904",
-      codigoVerificacao: "5FXJ1ZDHS",
-      chaveAcesso: "8013317",
-      protocoloAutorizacao: "8013317",
-      dataEmissao: "2026-10-20T11:30:22.914-03:00",
-      sistemaEmissor: "giss_prefeitura",
-      municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
-      regraFiscalId: "hospedagem_corpflats",
-      prestadorRazaoSocial: "Rental Miller's LTDA",
-      prestadorCnpj: "47.964.813/0001-65",
-      prestadorIm: "142591",
-      tomadorNome: "Miller Mendonça Pessanha",
-      tomadorCpfCnpj: "12585736792",
-      tomadorEmail: "miller@corpflats.com.br",
-      tomadorTelefone: "22999999999",
-      tomadorEndereco: "Av. Pelinca",
-      tomadorLogradouro: "Av. Pelinca",
-      tomadorNumero: "100",
-      tomadorBairro: "Pelinca",
-      tomadorCep: "28035000",
-      tomadorCidade: "Campos dos Goytacazes",
-      tomadorUf: "RJ",
-      tomadorCodigoMunicipio: "3301009",
-      flatNumber: "113",
-      valorServico: 2.00,
-      aliquota: 2.0,
-      cnae: "5510801",
-      codigoServico: "09.02",
-      codigoTributacaoMunicipio: "799020000",
-      discriminacao: "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. HÓSPEDE: MILLER MENDONÇA PESSANHA (CPF 125.857.367-92). DIÁRIA COM WI-FI, ENERGIA E LIMPEZA INCLUSA.",
-      status: "autorizada",
-      linkPrefeitura: "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
-      danfseUrl: "/api/nfse/danfse/904",
-      pdfUrl: "/api/nfse/pdf/904"
-    };
-  }
-
   if (!inv && (rawId === "latest" || db.invoices?.length > 0)) {
     inv = db.invoices[0];
   }
@@ -33480,9 +34224,7 @@ app.get("/api/nfse/danfse/:id", async (req, res) => {
     }
   }
 
-  const html = inv.sistemaEmissor === "padrao_nacional"
-    ? renderDanfseHtml(inv)
-    : renderGissDanfseHtml(inv);
+  const html = renderDanfseHtml(inv);
   res.type("html").send(html);
 });
 
@@ -33507,12 +34249,12 @@ app.get("/api/nfse/pdf/:id", async (req, res) => {
   }
 });
 
-// Download XML Oficial Padrão Nacional ou ABRASF 2.04 GissOnline
+// Download XML Oficial Padrão Nacional ADN (Gov.br)
 app.get("/api/nfse/xml/:id", (req, res) => {
   getFiscalData();
   const rawId = String(req.params.id || "").trim();
   const numId = Number(rawId);
-  let inv = (db.invoices || []).find(i =>
+  const inv = (db.invoices || []).find(i =>
     (numId && i.id === numId) ||
     String(i.id) === rawId ||
     String(i.numeroNfse) === rawId ||
@@ -33520,9 +34262,6 @@ app.get("/api/nfse/xml/:id", (req, res) => {
     String(i.chaveAcesso) === rawId ||
     (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
   );
-  if (!inv && (rawId === "904" || rawId.toUpperCase() === "5FXJ1ZDHS")) {
-    inv = findNfseInvoiceByAnyId(rawId);
-  }
   if (!inv) return res.status(404).json({ error: "Nota não encontrada" });
 
   const xmlContent = generateNationalXmlContent({
@@ -33560,7 +34299,7 @@ app.get("/api/nfse/xml/:id", (req, res) => {
   res.send(xmlContent);
 });
 
-// Cancelamento de NFS-e (GissOnline ou ADN)
+// Cancelamento de NFS-e (Padrão Nacional ADN / Gov.br)
 app.post("/api/nfse/cancel/:id", (req, res) => {
   getFiscalData();
   const rawId = String(req.params.id || "").trim();
@@ -33608,16 +34347,16 @@ app.post("/api/nfse/cancel/:id", (req, res) => {
   logAuditEvent({
     level: "warn",
     category: "financial",
-    action: inv.sistemaEmissor === "padrao_nacional" ? "NFSE_CANCELLED_NATIONAL" : "NFSE_CANCELLED_GISSONLINE",
+    action: "NFSE_CANCELLED_NATIONAL",
     actor: { name: (getAuthUser(req)?.username || "Gestor"), role: "admin" },
-    details: { numeroNfse: inv.numeroNfse, chaveAcesso: inv.chaveAcesso, motivo, sistemaEmissor: inv.sistemaEmissor },
+    details: { numeroNfse: inv.numeroNfse, chaveAcesso: inv.chaveAcesso, motivo, sistemaEmissor: "padrao_nacional" },
     source: "nfse_engine"
   });
 
   res.json({
     success: true,
     invoice: inv,
-    message: `NFS-e Nº ${inv.numeroNfse} cancelada com sucesso (${inv.sistemaEmissor === "padrao_nacional" ? "Ambiente Nacional ADN" : "GissOnline Municipal"}).`
+    message: `NFS-e Nº ${inv.numeroNfse} cancelada com sucesso (Ambiente Nacional ADN / Gov.br).`
   });
 });
 
