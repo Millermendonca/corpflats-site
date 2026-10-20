@@ -287,6 +287,7 @@ const TAG_GROUPS = [
       { tag: "{{link_checkout}}", label: "🚪 Check-out Expresso", example: "https://.../checkout/RES-..." },
       { tag: "{{link_avaliacao_google}}", label: "⭐ Avaliação Google Maps", example: "https://g.page/r/.../review" },
       { tag: "{{link_guia_hospede}}", label: "📖 Manual do Hóspede (PDF)", example: "https://.../Manual_do_Hospede.pdf" },
+      { tag: "{{aviso_acompanhante_pendente_pos_checkin}}", label: "👥 Link 2º Hóspede Pendente (Pós Check-in)", example: "👥 Acompanhante Pendente (2º Hóspede): envie o link..." },
     ]
   }
 ]

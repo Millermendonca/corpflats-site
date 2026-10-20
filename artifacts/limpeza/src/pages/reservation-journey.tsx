@@ -357,6 +357,50 @@ Para que a portaria libere sua entrada imediatamente na chegada sem filas, acess
     editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_checkin_reminder",
     category: "pre_estadia"
   },
+  {
+    id: "node_pre_checkin_completed",
+    stageNumber: 3,
+    stageName: "3. Pré-Estadia (Véspera)",
+    title: "Check-in Online Concluído • Confirmação & Instruções na Recepção",
+    subtitle: "Disparado imediatamente após o hóspede assinar a Ficha Digital (FNRH)",
+    triggerEvent: "pre_checkin_completed",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Imediato à conclusão do Check-in Online",
+    condition: "Hóspede (Titular ou Acompanhante) conclui o preenchimento da ficha digital",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Confirma que o Check-in Online já está pronto e orienta o hóspede a se identificar na recepção 24h informando que fez o check-in online, que reservou pela CorpFlats e dizendo seu nome ou número do Flat. Se for o titular e houver 2º hóspede pendente, inclui automaticamente o link para o acompanhante preencher a ficha dele.",
+    messagePreview: `Olá, *{{primeiro_nome}}*! ✅🎉
+Seu *Check-in Online* foi concluído com sucesso e já está *tudo pronto* para a sua chegada!
+
+🏨 *Como funciona na Recepção 24h:*
+Ao chegar no edifício, basta seguir estas orientações simples na recepção:
+• Identifique-se na recepção;
+• Diga que já fez o *Check-in Online*;
+• Informe que fez a reserva pela *CorpFlats*;
+• Informe o seu nome (*{{nome_destinatario}}*) ou o número do *Flat {{quarto}}*.
+
+📋 *Resumo da sua Hospedagem:*
+• Acomodação: *Flat {{quarto}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Endereço: {{endereco_hotel}}
+• Localização no Maps: {{link_maps}}
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
+
+{{aviso_acompanhante_pendente_pos_checkin}}
+
+Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos à disposição.`,
+    buttons: [
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_checkin_completed",
+    category: "pre_estadia"
+  },
 
   // ── ETAPA 4: DIA DO CHECK-IN & ENTRADA ─────────────────────────────────────
   {

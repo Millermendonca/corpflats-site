@@ -25850,6 +25850,7 @@ function formatTriggerTitle(trigger) {
     pre_reservation_created: "Pré-Reserva • Confirmação & Aguardando Pagamento",
     payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
     sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
+    pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
     room_ready: "Apartamento Pronto • Acesso Liberado",
     checkin_completed: "Check-in Realizado • Boas-Vindas",
     checkout_completed: "Check-out Realizado • Agradecimento",
@@ -28079,6 +28080,25 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   const brToday = getBrasiliaTodayStr();
   const isCheckinTodayOrPast = isReservationForTodayOrPast(r);
   const shouldNotifyReception = Boolean(wasReSignature || isCheckinTodayOrPast);
+
+  // Gatilho E: Envio Automático de Confirmação e Instruções de Recepção via WhatsApp para o Hóspede que concluiu o Check-in Online
+  if (typeof triggerImmediateWhatsApp === "function") {
+    try {
+      await triggerImmediateWhatsApp(
+        db,
+        saveDatabase,
+        "pre_checkin_completed",
+        {
+          ...r,
+          _checkinGuestIndex: Number(guestIndex) || 1,
+          _wasReSignature: wasReSignature
+        },
+        originHeader
+      );
+    } catch (waPreErr) {
+      console.warn("[POST /api/pms/pre-checkin] Erro ao disparar WhatsApp de confirmação pós-check-in:", waPreErr?.message || waPreErr);
+    }
+  }
 
   if (shouldNotifyReception) {
     try {
