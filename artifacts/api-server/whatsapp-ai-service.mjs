@@ -9420,7 +9420,7 @@ export async function processAiInboundMessage({
     const allowed = rawWhitelist
       .map(p => cleanWhatsAppPhone(p))
       .filter(Boolean);
-    const isAllowed = allowed.some(a => targetNorm.endsWith(a.slice(-8)) || a.endsWith(targetNorm.slice(-8)));
+    const isAllowed = isDev || allowed.some(a => targetNorm.endsWith(a.slice(-8)) || a.endsWith(targetNorm.slice(-8)));
     if (!isAllowed && aiChannel?.redirectToWhitelistOnTest !== true) {
       let activePreResTestEval = null;
       if (!isDev && conv && isOperatorConductingConversation(conv, db, incomingInfo)) {
@@ -10674,8 +10674,9 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
   const monthStart = `${yearStr}-${monthStr}-01`;
-  const lastDay = new Date(year, month, 0).getDate();
-  const monthEnd = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
+  const nextM = month === 12 ? 1 : month + 1;
+  const nextY = month === 12 ? year + 1 : year;
+  const monthEnd = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
   const nowMs = Date.now();
   const allReservations = Array.isArray(db?.reservations) ? db.reservations : [];
@@ -10693,6 +10694,8 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
     return true;
   });
 
+  const { todayStr } = getBrasiliaDateParts();
+
   const stats = activeFlats.map(flat => {
     const flatRes = validReservations.filter(r =>
       (r.flatId != null && String(r.flatId) === String(flat.id)) ||
@@ -10704,7 +10707,7 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
     let lastCheckoutStr = null;
 
     for (const r of flatRes) {
-      if (r.checkinDate && r.checkoutDate && r.checkinDate <= monthEnd && r.checkoutDate > monthStart) {
+      if (r.checkinDate && r.checkoutDate && r.checkinDate < monthEnd && r.checkoutDate > monthStart) {
         const start = r.checkinDate < monthStart ? monthStart : r.checkinDate;
         const end = r.checkoutDate > monthEnd ? monthEnd : r.checkoutDate;
         const sD = new Date(`${start}T12:00:00Z`);
@@ -10744,10 +10747,24 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
     });
 
     const hasServiceOrderConflict = (db?.serviceOrders || []).some(o => {
+      if (!o) return false;
+      if (o.status === "active" && Array.isArray(o.flats)) {
+        return o.flats.some(oflat => {
+          if (!oflat || oflat.status !== "in_progress") return false;
+          const sameNestedFlat =
+            (oflat.flatId != null && String(oflat.flatId) === String(flat.id)) ||
+            (oflat.flatNumber != null && String(oflat.flatNumber) === String(flat.number));
+          if (!sameNestedFlat) return false;
+          const sDate = oflat.startedAt ? String(oflat.startedAt).slice(0, 10) : todayStr;
+          const estDate = oflat.estimatedFinishAt ? String(oflat.estimatedFinishAt).slice(0, 10) : sDate;
+          const eDate = [sDate, estDate, todayStr].filter(Boolean).sort().pop() || todayStr;
+          return sDate <= checkoutDate && eDate >= checkinDate;
+        });
+      }
       const sameFlat =
         (o.flatId != null && String(o.flatId) === String(flat.id)) ||
         (o.flatNumber != null && String(o.flatNumber) === String(flat.number));
-      if (!sameFlat || o.status !== "em_andamento" || !o.startDate || !o.endDate) return false;
+      if (!sameFlat || (o.status !== "em_andamento" && o.status !== "in_progress") || !o.startDate || !o.endDate) return false;
       return o.startDate <= checkoutDate && o.endDate >= checkinDate;
     });
 
@@ -10818,7 +10835,7 @@ function isAutomatedOrSofiaMessage(msg) {
   const text = String(msg.text || msg.message || "").trim();
   if (!text) return false;
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|assistente\s+ativa\s+de\s+pre-reservas|pre-reserva\s+garantida|pix\s+copia\s+e\s+cola.*expira\s+em)\b/.test(lower)) {
+  if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|assistente\s+ativa\s+de\s+pre-reservas|resumo\s+atualizado\s+da\s+pre-reserva|pre-reserva\s+criada\s+com\s+sucesso\s+no\s+sistema|proposta\s+de\s+pre-reserva\s+cancelada|possui\s+conflito\s+de\s+ocupacao\/bloqueio|nao\s+encontrei\s+o\s+\*?flat|nao\s+foi\s+possivel\s+criar\s+a\s+pre-reserva|pre-reserva\s+garantida|pix\s+copia\s+e\s+cola.*expira\s+em)\b/.test(lower)) {
     return true;
   }
 
@@ -10930,7 +10947,10 @@ function parseSingleDateToken(rawToken, refYear = null) {
 function sanitizeFullNameCandidate(rawCandidate) {
   if (!rawCandidate || typeof rawCandidate !== "string") return null;
   let cleaned = rawCandidate
-    .replace(/(?:cpf|cnpj|e-?mail|telefone|celular|whatsapp|whats|rg|endere[cç]o|cep|check-?in|check-?out|valor|total|di[aá]ria|flat|apto|apartamento)\s*[:\-]?.*/i, "")
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi, " ")
+    .replace(/\b(?:e\s+coloca|coloca\s+no|muda\s+p(?:ara|ro)|vai\s+no|cria\s+no|reserva\s+no|no\s+(?:flat|apto|apartamento|quarto|unidade)|com\s+caf[eé]|sem\s+caf[eé]|inclui(?:r)?\s+caf[eé]|tira(?:r)?\s+(?:o\s+)?caf[eé]|para\s+(?:eu\s+)?revisar|pra\s+(?:eu\s+)?revisar|para\s+revisar|antes\s+de\s+criar|antes\s+de\s+confirmar|por\s+r?\$?\s*\d)\b.*/i, "")
+    .replace(/\b(?:cpf|cnpj|e-?mail|telefone|celular|whatsapp|whats|rg|endere[cç]o|cep|check-?in|check-?out|valor|total|di[aá]ria|flat|apto|apartamento)\b\s*[:=\-–]?.*/i, "")
+    .replace(/\b([A-Za-zÀ-ÖØ-öø-ÿ])\.(?=\s|$)/g, "$1")
     .replace(/[0-9@#$_=*~`<>[\]{}|\\^/]+/g, " ")
     .replace(/^[\s,.;:\-–—•*]+|[\s,.;:\-–—•*]+$/g, "")
     .replace(/\s+/g, " ")
@@ -10941,13 +10961,15 @@ function sanitizeFullNameCandidate(rawCandidate) {
   const words = cleaned.split(" ").filter(Boolean);
   if (words.length < 2 || words.length > 7) return null;
 
-  // Todas as palavras devem ser alfabéticas (permitindo acentos, apóstrofo e hífen)
+  // Palavras principais (>= 2 letras alfabéticas), conectores (da/de/do/das/dos/e) ou iniciais intermediárias de 1 letra
   const validWordRegex = /^[A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,}$/;
+  const singleInitialRegex = /^[A-Za-zÀ-ÖØ-öø-ÿ]$/;
   const connectorRegex = /^(?:da|de|do|das|dos|e)$/i;
   let mainWordCount = 0;
 
   for (const w of words) {
     if (connectorRegex.test(w)) continue;
+    if (singleInitialRegex.test(w)) continue;
     if (!validWordRegex.test(w)) return null;
     mainWordCount++;
   }
@@ -10955,42 +10977,47 @@ function sanitizeFullNameCandidate(rawCandidate) {
   if (mainWordCount < 2) return null;
 
   const normFull = cleaned.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const forbiddenTokens = /\b(?:bom\s+dia|boa\s+tarde|boa\s+noite|ola|oi|tudo\s+bem|quero\s+reservar|gostaria|preciso|pode\s+ser|pode\s+criar|confirmo|confirmar|reserva|pre\s+reserva|disponibilidade|disponivel|orcamento|cotacao|valor|diaria|reais|cafe\s+da\s+manha|sem\s+cafe|com\s+cafe|nota\s+fiscal|nfse|obrigado|obrigada|por\s+favor|segue|seguem|meus\s+dados|dados\s+abaixo|aqui\s+esta|pix|pagamento|cartao|hospede|cliente|recepcao|corpflats|edificio\s+soho|campos\s+dos\s+goytacazes|rio\s+de\s+janeiro|rua\s+conselheiro|avenida|bairro|centro|casal|solteiro|pessoa|pessoas|adultos|noites|diarias|entrada|saida|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/;
+  // Nota: não incluir "marco" isolado para não bloquear hóspedes chamados Marco (ex: Marco Aurélio, Marco Antônio)
+  const forbiddenTokens = /\b(?:meu|minha|meus|minhas|chamo|nome|sobrenome|completo|titular|bom\s+dia|boa\s+tarde|boa\s+noite|ola|oi|tudo|certo|certinho|combinado|combinamos|fechado|fechar|perfeito|otimo|excelente|maravilha|beleza|valeu|show|bola|bacana|entao|agora|depois|vou|vamos|fazer|pagar|transferir|mandar|enviar|enviando|aguardo|aguardando|retorno|resposta|sim|nao|certeza|muito|grato|grata|amigo|amiga|voce|voces|estou|estamos|seria|pode|poderia|consigo|consegue|tenho|temos|quero|queria|gostaria|preciso|precisamos|confirmo|confirmar|reserva|reservar|pre\s+reserva|disponibilidade|disponivel|orcamento|cotacao|valor|diaria|diarias|reais|cafe|manha|tarde|noite|madrugada|ontem|amanha|hoje|nota\s+fiscal|nfse|obrigado|obrigada|por\s+favor|segue|seguem|meus\s+dados|dados\s+abaixo|aqui\s+esta|pix|pagamento|cartao|hospede|hospedes|cliente|recepcao|corpflats|edificio\s+soho|campos\s+dos\s+goytacazes|rio\s+de\s+janeiro|rua\s+conselheiro|avenida|bairro|centro|casal|solteiro|pessoa|pessoas|adultos|noites|entrada|saida|quarto|flat|apartamento|hotel|pousada|predio|garagem|vaga|estacionamento|carro|placa|horario|horas|segunda|terca|quarta|quinta|sexta|sabado|domingo|janeiro|fevereiro|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/;
   if (forbiddenTokens.test(normFull)) return null;
 
   return toTitleCase(cleaned);
 }
 
 /**
- * Extrai um Nome Completo (>= 2 palavras) a partir do histórico de mensagens da conversa.
+ * Extrai um Nome Completo (>= 2 palavras) a partir do histórico de mensagens da conversa,
+ * priorizando padrões rotulados (Tier 1) e fichas cadastrais com CPF/E-mail (Tier 2)
+ * sobre mensagens curtas avulsas (Tier 3), para que mensagens posteriores de chat nunca sobrescrevam o nome.
  */
 function extractFullNameFromMessages(messages = []) {
-  let extractedName = null;
+  let labeledName = null;
+  let registrationCardName = null;
+  let bareMessageName = null;
 
   for (const msg of messages) {
     const text = String(msg?.text || msg?.message || "").trim();
     if (!text) continue;
     if (msg.fromMe && isAutomatedOrSofiaMessage(msg)) continue;
 
-    // 1. Padrões rotulados explícitos ("Nome completo: ...", "Nome: ...", "Meu nome é ...", "Hóspede: ...", "no nome de ...")
+    // Tier 1: Padrões rotulados explícitos ("Nome completo: ...", "Nome: ...", "Meu nome é ...", "Hóspede: ...", "no nome de ...")
     const labeledRegexes = [
       /(?:nome\s+completo|nome\s+do\s+h[oó]spede|h[oó]spede|titular|nome)\s*[:=\-–]\s*([^\n\r,;•|]+)/i,
-      /\b(?:meu\s+nome\s+[eé]|me\s+chamo|(?:no|em)\s+nome\s+d[eo]|nome\s+completo\s+[eé])\s+([A-Za-zÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’\-]+){1,6})/i
+      /\b(?:meu\s+nome\s+[eé]|me\s+chamo|(?:no|em)\s+nome\s+d[eo]|nome\s+completo\s+[eé])\s+([A-Za-zÀ-ÖØ-öø-ÿ'’\-.]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’\-.]+){1,6})/i
     ];
     for (const rx of labeledRegexes) {
       const m = text.match(rx);
       if (m && m[1]) {
         const candidate = sanitizeFullNameCandidate(m[1]);
-        if (candidate) extractedName = candidate;
+        if (candidate) labeledName = candidate;
       }
     }
 
-    // 2. Mensagem contendo CPF ou E-mail (ficha cadastral em múltiplas linhas ou separada por ponto, dois-pontos, vírgula, traço ou barra)
-    const hasCpfInMsg = /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/.test(text);
+    // Tier 2: Mensagem contendo CPF ou E-mail (ficha cadastral em múltiplas linhas ou separada por ponto, dois-pontos, vírgula, traço ou barra)
+    const hasCpfInMsg = /\b(?:\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})\b/.test(text);
     const hasEmailInMsg = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(text);
     if (hasCpfInMsg || hasEmailInMsg) {
       const segments = text
-        .split(/(?:[\r\n,;•|]+|(?<!\d)\.(?!\d|[a-zA-Z])|\s+[-–—/]\s+)/)
+        .split(/(?:[\r\n,;!•|?]+|(?<!\d)\.(?!\d|[a-zA-Z])|\s+[-–—/]\s+)/)
         .map(s => s.trim())
         .filter(Boolean);
       for (const seg of segments) {
@@ -11001,66 +11028,83 @@ function extractFullNameFromMessages(messages = []) {
             .trim();
           const candidate = sanitizeFullNameCandidate(cleanSeg);
           if (candidate) {
-            extractedName = candidate;
+            registrationCardName = candidate;
           }
         }
       }
     }
 
-    // 3. Mensagem curta enviada pelo hóspede contendo apenas o Nome Completo
-    if (!msg.fromMe && !text.includes("?") && text.length <= 65) {
+    // Tier 3: Mensagem curta enviada pelo hóspede contendo apenas o Nome Completo
+    if (!msg.fromMe && !text.includes("?") && text.length <= 65 && !/\b(?:meu\s+nome|me\s+chamo|nome\s*[:=])\b/i.test(text)) {
       const candidate = sanitizeFullNameCandidate(text);
       if (candidate) {
-        extractedName = candidate;
+        bareMessageName = candidate;
       }
     }
   }
 
-  return extractedName;
+  return labeledName || registrationCardName || bareMessageName;
 }
 
 /**
- * Extrai CPF (11 dígitos) das mensagens da conversa, evitando confundir com o telefone do contato.
+ * Extrai CPF (11 dígitos) das mensagens da conversa, evitando confundir com telefones ou chave PIX
+ * e priorizando CPFs formatados/rotulados (Tier 1) sobre sequências avulsas de 11 dígitos (Tier 2).
  */
-function extractCpfFromMessages(messages = [], guestPhone = "") {
+function extractCpfFromMessages(messages = [], guestPhone = "", db = null) {
   const cleanGuestPhone = onlyDigits(guestPhone);
   const guestPhoneNoCountry = cleanGuestPhone.startsWith("55") && cleanGuestPhone.length >= 12
     ? cleanGuestPhone.slice(2)
     : cleanGuestPhone;
 
-  let foundCpf = null;
+  const managerPhone = getManagerWhatsAppPhone(db);
+  const managerPhoneNoCountry = managerPhone.startsWith("55") && managerPhone.length >= 12
+    ? managerPhone.slice(2)
+    : managerPhone;
+  const pixKeyDigits = onlyDigits(db?.settings?.interConfig?.pixKey || "47964813000165");
+
+  let highConfidenceCpf = null;
+  let bareElevenDigitCpf = null;
 
   for (const msg of messages) {
     const text = String(msg?.text || msg?.message || "").trim();
     if (!text) continue;
     if (msg.fromMe && isAutomatedOrSofiaMessage(msg)) continue;
 
-    // 1. Formato pontuado XXX.XXX.XXX-XX
+    // 1. Formato pontuado XXX.XXX.XXX-XX (Tier 1)
     const formattedMatch = text.match(/\b(\d{3}\.\d{3}\.\d{3}-\d{2})\b/);
     if (formattedMatch) {
-      foundCpf = onlyDigits(formattedMatch[1]);
+      highConfidenceCpf = onlyDigits(formattedMatch[1]);
       continue;
     }
 
-    // 2. Rotulado com "CPF"
+    // 2. Rotulado com "CPF" (Tier 1)
     const labeledMatch = text.match(/\bcpf\s*[:=\-–]?\s*(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}|\d{11})\b/i);
     if (labeledMatch) {
-      foundCpf = onlyDigits(labeledMatch[1]);
+      highConfidenceCpf = onlyDigits(labeledMatch[1]);
       continue;
     }
 
-    // 3. Sequência de 11 dígitos que não seja telefone do hóspede nem chave PIX da empresa
-    const elevenMatches = text.match(/(?:^|\D)(\d{11})(?!\d)/g) || [];
-    for (const rawM of elevenMatches) {
-      const digits = onlyDigits(rawM);
+    // 3. Sequência de 11 dígitos que não seja telefone nem chave PIX (Tier 2)
+    const elevenRegex = /(?:^|\D)(\d{11})(?!\d)/g;
+    let m;
+    while ((m = elevenRegex.exec(text)) !== null) {
+      const digits = onlyDigits(m[1]);
       if (digits.length !== 11) continue;
       if (guestPhoneNoCountry && digits === guestPhoneNoCountry) continue;
+      if (managerPhoneNoCountry && digits === managerPhoneNoCountry) continue;
+      if (pixKeyDigits && digits === pixKeyDigits) continue;
       if (/^(\d)\1{10}$/.test(digits)) continue;
-      foundCpf = digits;
+
+      // Verifica se os dígitos são precedidos por rótulo de telefone/celular/whatsapp/pix
+      const prefixSlice = text.slice(Math.max(0, m.index - 35), m.index + 1).toLowerCase();
+      if (/\b(?:tel|telefone|cel|celular|whatsapp|whats|zap|contato|fone|ligar|numero|n[uú]mero|pix|chave)\s*[:=\-–]?\s*$/i.test(prefixSlice)) {
+        continue;
+      }
+      bareElevenDigitCpf = digits;
     }
   }
 
-  return foundCpf;
+  return highConfidenceCpf || bareElevenDigitCpf;
 }
 
 /**
@@ -11101,6 +11145,8 @@ function extractDatesFromMessages(messages = []) {
     if (parsed && parsed.checkIn && parsed.checkOut && parsed.checkIn < parsed.checkOut) {
       checkIn = parsed.checkIn;
       checkOut = parsed.checkOut;
+      explicitIn = parsed.checkIn;
+      explicitOut = parsed.checkOut;
     }
 
     // 2. Rótulos individuais de Check-in / Entrada e Check-out / Saída (na mesma mensagem ou em mensagens separadas)
@@ -11114,7 +11160,7 @@ function extractDatesFromMessages(messages = []) {
       const dOut = parseSingleDateToken(outMatch[1]);
       if (dOut) explicitOut = dOut;
     }
-    if (explicitIn && explicitOut && explicitIn < explicitOut) {
+    if ((inMatch || outMatch) && explicitIn && explicitOut && explicitIn < explicitOut) {
       checkIn = explicitIn;
       checkOut = explicitOut;
     }
@@ -11148,17 +11194,25 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
   let dailyRate = null;
   let dualOptionRates = null; // { withoutBfDaily, withBfDaily, withoutBfTotal, withBfTotal }
 
+  const totalPhraseRx = /\b(?:total|pacote|no\s+total|valor\s+final|valor\s+total|fechado\s+em|fechamos\s+(?:em|por)|(?:para|pelas?|nas|as|por)\s+(?:as\s+|os\s+)?\d+\s*(?:di[aá]rias|noites|dias)|pelos?\s+\d+\s*dias|\b\d+\s*(?:di[aá]rias|noites|dias)\s+(?:fica|ficam|sai|saem)\b|no\s+per[ií]odo|para\s+o\s+per[ií]odo|hospedagem\s+fica)\b/;
+  const dailyPhraseRx = /\b(?:di[aá]ria|valor\s+das\s+di[aá]rias|valores\s+das\s+di[aá]rias|por\s+di[aá]ria|cada\s+di[aá]ria|por\s+noite|\/\s*noite|\/\s*dia|ao\s+dia|a\s+noite|\d+\s*(?:di[aá]rias|noites)\s+(?:de|a|x)\s*r?\$?\s*\d)\b/;
+
   for (const msg of messages) {
     const text = String(msg?.text || msg?.message || "").trim();
     if (!text) continue;
 
-    // Ignora linhas que não têm relação com preço/orçamento
+    const normMsg = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    // Ignora mensagens que não têm relação com preço/orçamento
     const hasCurrencyOrPriceContext =
       /R\$\s*\d/i.test(text) ||
       /\b\d+(?:[.,]\d{1,2})?\s*reais\b/i.test(text) ||
-      /\b(?:valor|total|or[cç]amento|di[aá]ria|pacote|fica|fechamos|fechado\s+por|cota[cç][aã]o)\b[\s:=-]*R?\$?\s*\d/i.test(text);
+      /\b(?:valor|total|or[cç]amento|di[aá]rias?|pacote|fica|ficam|fechamos|fechado|cota[cç][aã]o|sem\s+caf[eé]|com\s+caf[eé])\b[^\n\r0-9]{0,25}\d{2,5}(?:[.,]\d{1,2})?\b/i.test(text);
 
     if (!hasCurrencyOrPriceContext) continue;
+
+    const msgMentionsTotal = totalPhraseRx.test(normMsg);
+    const msgMentionsDaily = dailyPhraseRx.test(normMsg);
 
     const lines = text.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
     let msgTotal = null;
@@ -11175,11 +11229,15 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
       const isBreakfastAddonLine = /\bcafe\b/.test(lowerLine) && /\b(?:avulso|adicional|por\s+pessoa)\b/.test(lowerLine) && !/\b(?:diaria|total|com\s+cafe\s+incluso)\b/.test(lowerLine);
       if (isBreakfastAddonLine) continue;
 
-      // Extrai todos os valores monetários da linha
+      // Extrai todos os valores monetários da linha (sem capturar números de "2 diárias", datas ou flats)
+      const lineSanitizedForNumbers = line
+        .replace(/\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g, " ")
+        .replace(/\b(?:flat|apto|apartamento|quarto|unidade)\s*\d{3,4}\b/gi, " ");
+
       const currencyMatches = [];
-      const rxCurrency = /(?:R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)|(\d{2,5}(?:[.,]\d{1,2})?)\s*reais|(?:valor|total|or[cç]amento|di[aá]ria|fica|por)\s*(?:de|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?))/gi;
+      const rxCurrency = /(?:R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)|(\d{2,5}(?:[.,]\d{1,2})?)\s*reais|(?:valor(?:\s+total|\s+da\s+di[aá]ria)?|total(?:\s+d[aeo]s?\s+\d+\s*di[aá]rias)?|or[cç]amento|di[aá]ria(?:\s+sem\s+caf[eé]|\s+com\s+caf[eé])?|sem\s+caf[eé](?:\s+da\s+manh[aã])?|com\s+caf[eé](?:\s+da\s+manh[aã])?|pacote|fica(?:\s+em)?|fechamos(?:\s+em|\s+por)?|por)\s*(?:de|[eé]|em|:|=|-)?\s*R?\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d{2,5}(?:[.,]\d{1,2})?))/gi;
       let m;
-      while ((m = rxCurrency.exec(line)) !== null) {
+      while ((m = rxCurrency.exec(lineSanitizedForNumbers)) !== null) {
         const rawNum = m[1] || m[2] || m[3];
         const parsed = parseBrlAmountValue(rawNum);
         if (parsed && parsed >= 50 && parsed <= 100000) {
@@ -11191,17 +11249,18 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
 
       const mentionsWithBf = /\b(?:com\s+cafe|c\/\s*cafe|cafe\s+incluso|incluindo\s+cafe|op[cç][aã]o\s*1)\b/.test(lowerLine);
       const mentionsWithoutBf = /\b(?:sem\s+cafe|s\/\s*cafe|apenas\s+hospedagem|somente\s+hospedagem|op[cç][aã]o\s*2)\b/.test(lowerLine);
-      const mentionsTotal = /\b(?:total|pacote|pelas?\s+\d+\s*di[aá]rias|as\s+\d+\s*di[aá]rias|no\s+total|valor\s+final|valor\s+total|fechado\s+em|fica\s+r?\$?\s*\d+\s+pelas)\b/.test(lowerLine);
-      const mentionsDaily = /\b(?:di[aá]ria|por\s+noite|\/\s*noite|\/\s*dia|a\s+noite|cada\s+di[aá]ria)\b/.test(lowerLine);
+      const mentionsTotal = totalPhraseRx.test(lowerLine) || (!dailyPhraseRx.test(lowerLine) && msgMentionsTotal && !msgMentionsDaily);
+      const mentionsDaily = dailyPhraseRx.test(lowerLine) || (!totalPhraseRx.test(lowerLine) && msgMentionsDaily && !msgMentionsTotal);
 
-      // Caso a mesma linha mencione AMBOS "sem café" e "com café" com 2 valores (ex: "R$ 237 sem café ou R$ 272 com café")
+      // Caso a mesma linha mencione AMBOS "sem café" e "com café" com 2 valores (ex: "R$ 237 sem café ou R$ 272 com café" ou "Para 2 diárias fica R$ 540 sem café ou R$ 614 com café")
       if (mentionsWithBf && mentionsWithoutBf && currencyMatches.length >= 2) {
         const idxWith = lowerLine.search(/\b(?:com\s+cafe|c\/\s*cafe|cafe\s+incluso)\b/);
         const idxWithout = lowerLine.search(/\b(?:sem\s+cafe|s\/\s*cafe)\b/);
         const firstVal = currencyMatches[0].value;
         const secondVal = currencyMatches[1].value;
+        const isTotalDual = mentionsTotal && !mentionsDaily;
         if (idxWithout < idxWith) {
-          if (mentionsTotal && !mentionsDaily) {
+          if (isTotalDual) {
             msgWithoutBfTotal = firstVal;
             msgWithBfTotal = secondVal;
           } else {
@@ -11209,7 +11268,7 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
             msgWithBfDaily = secondVal;
           }
         } else {
-          if (mentionsTotal && !mentionsDaily) {
+          if (isTotalDual) {
             msgWithBfTotal = firstVal;
             msgWithoutBfTotal = secondVal;
           } else {
@@ -11229,8 +11288,10 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
           const sorted = [...currencyMatches.map(c => c.value)].sort((a, b) => a - b);
           msgWithBfDaily = sorted[0];
           msgWithBfTotal = sorted[sorted.length - 1];
-        } else {
+        } else if (msgWithoutBfDaily != null) {
           msgWithBfDaily = currencyMatches[0].value;
+        } else {
+          msgWithBfTotal = currencyMatches[0].value;
         }
         continue;
       }
@@ -11244,8 +11305,10 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
           const sorted = [...currencyMatches.map(c => c.value)].sort((a, b) => a - b);
           msgWithoutBfDaily = sorted[0];
           msgWithoutBfTotal = sorted[sorted.length - 1];
-        } else {
+        } else if (msgWithBfDaily != null) {
           msgWithoutBfDaily = currencyMatches[0].value;
+        } else {
+          msgWithoutBfTotal = currencyMatches[0].value;
         }
         continue;
       }
@@ -11393,7 +11456,7 @@ export function extractActivePreReservationData(convOrMessages, db = null, guest
 
   const quoteInfo = extractQuoteFromMessages(messages, dateInfo.nights || 1, breakfastPreference);
   const fullName = extractFullNameFromMessages(messages);
-  const cpf = extractCpfFromMessages(messages, resolvedPhone);
+  const cpf = extractCpfFromMessages(messages, resolvedPhone, db);
   const email = extractEmailFromMessages(messages);
 
   const hasDates = Boolean(dateInfo.hasDates && dateInfo.checkIn && dateInfo.checkOut);
@@ -11572,7 +11635,7 @@ export async function evaluateAndNotifyActivePreReservation({
     };
   }
 
-  // Seleciona o Flat da Vez (Fair-Share) entre os flats disponíveis no período
+  // Seleciona sempre o Flat da Vez (Fair-Share) entre os flats disponíveis no período
   const fairShare = selectFairShareFlat(db, extracted.checkIn, extracted.checkOut);
   if (!fairShare.recommendedFlat) {
     return {
@@ -11582,15 +11645,11 @@ export async function evaluateAndNotifyActivePreReservation({
     };
   }
 
-  // Se o operador/hóspede mencionou explicitamente um flat específico na conversa e ele está disponível, usa-o;
-  // caso contrário, usa rigorosamente o Flat da Vez (Fair-Share)
-  let selectedFlat = fairShare.recommendedFlat;
-  if (extracted.preferredFlatNumber) {
-    const matchPref = fairShare.availableFlats.find(f => String(f.number) === String(extracted.preferredFlatNumber));
-    if (matchPref) {
-      selectedFlat = matchPref;
-    }
-  }
+  const selectedFlat = fairShare.recommendedFlat;
+  const preferredFlatNote =
+    extracted.preferredFlatNumber && String(extracted.preferredFlatNumber) !== String(selectedFlat.number)
+      ? `Flat ${extracted.preferredFlatNumber} foi citado na conversa`
+      : "";
 
   const proposalId = existingProposal && existingProposal.status === "pending_manager"
     ? existingProposal.id
@@ -11615,8 +11674,9 @@ export async function evaluateAndNotifyActivePreReservation({
     flatId: selectedFlat.id,
     flatNumber: String(selectedFlat.number),
     fairShareFlatNumber: String(fairShare.recommendedFlat.number),
+    preferredFlatNumber: extracted.preferredFlatNumber || null,
     availableFlatNumbers: fairShare.availableFlats.map(f => String(f.number)),
-    notes: "",
+    notes: preferredFlatNote,
     createdAt: existingProposal?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -11790,8 +11850,35 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
   });
 
   const nowIso = new Date().toISOString();
-  const guestsCount = Math.max(1, Number(proposal.guests || 1));
+  const guestsCount = Math.min(Math.max(1, Number(proposal.guests || 1)), 4);
   const includeBreakfast = Boolean(proposal.includeBreakfast);
+
+  const preparedGuests = [];
+  for (let i = 1; i <= guestsCount; i++) {
+    if (i === 1) {
+      preparedGuests.push({
+        index: 1,
+        guestId: guestRecord.id,
+        name: cleanGuestName,
+        cpf: cleanGuestCpf,
+        phone: cleanGuestPhone,
+        email: cleanGuestEmail,
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
+      });
+    } else {
+      preparedGuests.push({
+        index: i,
+        guestId: null,
+        name: `Hóspede ${i}`,
+        cpf: "",
+        phone: "",
+        email: "",
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
+      });
+    }
+  }
 
   const newReservation = {
     id: nextResId,
@@ -11822,32 +11909,45 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
     ratePlan: includeBreakfast ? "with_breakfast" : "room_only",
     includeBreakfast,
     breakfastIncluded: includeBreakfast,
+    guestCount: guestsCount,
     guestsCount,
     numGuests: guestsCount,
-    guests: [
-      {
-        index: 1,
-        guestId: guestRecord.id,
-        name: cleanGuestName,
-        cpf: cleanGuestCpf,
-        phone: cleanGuestPhone,
-        email: cleanGuestEmail,
-        hasCompletedCheckin: false,
-        checkinCompletedAt: null
-      }
-    ],
+    adults: guestsCount,
+    children: 0,
+    guests: preparedGuests,
     pixCopiaECola: pixPayload,
     pixTxId: cleanTxId,
     notes: proposal.notes || "Pré-reserva criada pela Assistente Ativa Sofia mediante confirmação do gestor via WhatsApp.",
-    createdBy: "Sofia (Assistente Ativa WhatsApp)",
+    createdBy: {
+      userId: null,
+      userName: "Sofia (Assistente Ativa WhatsApp)",
+      name: "Sofia (Assistente Ativa WhatsApp)",
+      role: "ai_assistant",
+      source: "Assistente Ativa WhatsApp",
+      createdAt: nowIso
+    },
     createdAt: nowIso,
     updatedAt: nowIso,
     auditLogs: [
       {
-        id: Date.now(),
+        id: `audit_${Date.now()}`,
         timestamp: nowIso,
-        action: "Pré-reserva criada via Assistente Ativa Sofia (confirmada pelo gestor no WhatsApp)",
-        user: "Sofia / Gestor"
+        action: "created",
+        actor: {
+          id: null,
+          name: "Sofia / Gestor",
+          role: "admin",
+          type: "user"
+        },
+        source: "Assistente Ativa WhatsApp",
+        description: "Pré-reserva criada via Assistente Ativa Sofia (confirmada pelo gestor no WhatsApp)",
+        changes: [
+          { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat ${flat.number}` },
+          { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${proposal.checkIn} a ${proposal.checkOut}` },
+          { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: cleanGuestName },
+          { field: "status", label: "Status da Reserva", oldValue: null, newValue: "Pré-Reserva" },
+          { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${totalAmount.toFixed(2)}` }
+        ]
       }
     ]
   };
@@ -11888,6 +11988,11 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
 
   const trimmed = text.trim();
   const norm = trimmed.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Evita interceptar mensagens geradas pela própria Sofia (ecos de webhook Z-API)
+  if (isAutomatedOrSofiaMessage({ text: trimmed })) {
+    return { matched: false };
+  }
 
   // Evita interceptar comandos explícitos de treinamento/calibração da Sofia que não tratam da pré-reserva
   if (/^sofia\s*[,:]?\s*(?:seja\s+mais|use\s+tom|nao\s+use\s+emojis|lembre-se\s+que|sempre\s+que\s+um\s+hospede|a\s+partir\s+de\s+agora\s+responda)/i.test(norm)) {
@@ -11940,12 +12045,13 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
   const effectiveNights = updates.nights || proposal.nights || 1;
 
   // 3. Alteração de Valor Total ou Diária
-  // Remove ocorrências de "flat 509" e datas da string para não confundir números de flat/data com valor
+  // Remove ocorrências de "flat 509", datas e CPF da string para não confundir números de flat/data/CPF com valor
   const textWithoutFlatAndDates = trimmed
     .replace(/\b(?:flat|apto|apartamento|unidade|quarto)\s*[:=\-]?\s*\d{3,4}\b/gi, " ")
     .replace(/\b(?:coloca\s+no|muda\s+p(?:ara\s+o|ro)|vai\s+no|cria\s+no|reserva\s+no)\s+\d{3,4}\b/gi, " ")
     .replace(/\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g, " ")
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ")
+    .replace(/\bcpf\s*(?:para|[eé]|:|=|-|\s)*\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}\b/gi, " ")
     .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ");
 
   const dailyUpdateMatch =
@@ -12003,16 +12109,16 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
   }
 
   // 6. Alteração de Nome, CPF ou E-mail
-  const nameUpdateMatch = trimmed.match(/\bnome\s*(?:para|:|=|-)\s*([^\n\r,;]+)/i);
+  const nameUpdateMatch = trimmed.match(/\bnome(?:\s+do\s+h[oó]spede)?\s*(?:para|[eé]|:|=|-)+\s*([^\n\r,;]+)/i);
   if (nameUpdateMatch && nameUpdateMatch[1]) {
-    const cleanNewName = sanitizeFullNameCandidate(nameUpdateMatch[1]) || toTitleCase(nameUpdateMatch[1].trim());
+    const cleanNewName = sanitizeFullNameCandidate(nameUpdateMatch[1]);
     if (cleanNewName && cleanNewName.split(/\s+/).length >= 2) {
       updates.guestName = cleanNewName;
       hasFieldUpdates = true;
     }
   }
 
-  const cpfUpdateMatch = trimmed.match(/\bcpf\s*(?:para|:|=|-)?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
+  const cpfUpdateMatch = trimmed.match(/\bcpf\s*(?:para|[eé]|:|=|-|\s)*(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}|\d{11})\b/i);
   if (cpfUpdateMatch && cpfUpdateMatch[1]) {
     updates.guestCpf = onlyDigits(cpfUpdateMatch[1]);
     hasFieldUpdates = true;
@@ -12024,10 +12130,16 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     hasFieldUpdates = true;
   }
 
+  // Remove eventual prefixo de identificação da proposta (ex: "#PRERES-123 sim" ou "Roberto: cancelar") para avaliar intenção
+  const normWithoutProposalPrefix = norm
+    .replace(/^#?preres-[a-z0-9]+\s*[,:\-]?\s*/i, "")
+    .replace(/^(?:para\s+[oa]\s+|d[eo]\s+|a\s+d[eo]\s+)?[a-z]+\s*[,:\-]\s*/i, "")
+    .trim();
+
   // 7. Classificação da Intenção do Gestor
   const isCancel =
-    /^(?:nao|não|cancela|cancelar|descarta|descartar|ignora|ignorar|aborta|abortar)\b/.test(norm) ||
-    /\b(?:nao\s+precisa\s+criar|nao\s+cria|nao\s+faca|deixa\s+quieto|ja\s+criei|ja\s+fiz\s+manualmente|pode\s+cancelar|pode\s+descartar)\b/.test(norm);
+    /^(?:nao|não|cancela|cancelar|descarta|descartar|ignora|ignorar|aborta|abortar)\b/.test(normWithoutProposalPrefix) ||
+    /\b(?:nao\s+precisa\s+criar|nao\s+cria|nao\s+faca|deixa\s+quieto|ja\s+criei|ja\s+fiz\s+manualmente|pode\s+cancelar|pode\s+descartar|cancela\s+a\s+d[eo]|cancelar\s+a\s+d[eo])\b/.test(norm);
 
   if (isCancel && !hasFieldUpdates) {
     return {
@@ -12041,8 +12153,8 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     /\b(?:para\s+eu\s+revisar|pra\s+eu\s+revisar|para\s+revisar|para\s+eu\s+ver|pra\s+eu\s+ver|antes\s+de\s+criar|antes\s+de\s+confirmar|sem\s+criar\s+ainda|nao\s+cria\s+ainda|so\s+altera|apenas\s+altera|so\s+muda|apenas\s+muda|me\s+mostra\s+como\s+fica)\b/.test(norm);
 
   const hasConfirmIntent =
-    /^(?:sim|s|ok|okay|confirmo|confirmado|confirma|aprovo|aprovado|autorizo|pode\s+criar|pode\s+fazer|pode\s+gerar|pode\s+confirmar|cria|criar|gera|gerar|fechado|perfeito|isso\s+mesmo|manda\s+bala)\b/.test(norm) ||
-    /\b(?:pode\s+criar|pode\s+fazer|pode\s+gerar|pode\s+lancar|confirmo|confirmado|aprovo|aprovado|cria\s+no|cria\s+com|cria\s+a\s+pre|gera\s+a\s+pre)\b/.test(norm);
+    /^(?:sim|s|ok|okay|confirmo|confirmado|confirma|aprovo|aprovado|autorizo|pode\s+criar|pode\s+fazer|pode\s+gerar|pode\s+confirmar|cria|criar|gera|gerar|fechado|perfeito|isso\s+mesmo|manda\s+bala)\b/.test(normWithoutProposalPrefix) ||
+    /\b(?:pode\s+criar|pode\s+fazer|pode\s+gerar|pode\s+confirmar|pode\s+lancar|confirmo|confirmado|aprovo|aprovado|cria\s+no|cria\s+com|cria\s+a\s+(?:pre|d[eo])|cria\s+para|gera\s+a\s+pre)\b/.test(norm);
 
   if (hasConfirmIntent && !hasReviewOnlyIntent) {
     return {
@@ -12088,13 +12200,23 @@ export async function handleManagerPreReservationReply({
 
   // Se houver mais de uma proposta pendente, permite selecionar pelo ID (#PRERES-...) ou nome do hóspede; padrão é a mais recente
   const normText = String(messageText).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const normTextWithoutRename = normText.replace(/\bnome(?:\s+do\s+hospede)?\s*(?:para|e|:|=|-)+\s*[^\n\r,;]+/i, "");
   let targetProposal = pendingList[0];
-  for (const p of pendingList) {
+
+  const matchedById = pendingList.find(p => {
     const idLower = String(p.id || "").toLowerCase();
-    const firstName = String(p.guestName || "").split(/\s+/)[0].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    if ((idLower && normText.includes(idLower)) || (firstName.length >= 3 && normText.includes(firstName))) {
-      targetProposal = p;
-      break;
+    return idLower && normText.includes(idLower);
+  });
+
+  if (matchedById) {
+    targetProposal = matchedById;
+  } else {
+    for (const p of pendingList) {
+      const firstName = String(p.guestName || "").split(/\s+/)[0].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (firstName.length >= 3 && normTextWithoutRename.includes(firstName)) {
+        targetProposal = p;
+        break;
+      }
     }
   }
 

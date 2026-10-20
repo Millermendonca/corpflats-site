@@ -1416,7 +1416,7 @@ export function isBotMessage(text) {
   }
 
   // 5. Modelos de mensagens rápidas do sistema e Assistente Ativa de Pré-Reservas
-  if (/\b(?:corpflats\s*•\s*agradecemos\s+sua\s+prefer[eê]ncia|corpflats\s*•\s*sua\s+opini[aã]o\s+vale\s+muito|corpflats\s*•\s*guia\s+de\s+conviv[eê]ncia|manual_do_hospede_corpflats\.pdf|assistente\s+ativa\s+de\s+pre-reservas|resumo\s+atualizado\s+da\s+pre-reserva|pre-reserva\s+criada\s+com\s+sucesso\s+no\s+sistema|proposta\s+de\s+pre-reserva\s+cancelada)\b/i.test(lower)) {
+  if (/\b(?:corpflats\s*•\s*agradecemos\s+sua\s+prefer[eê]ncia|corpflats\s*•\s*sua\s+opini[aã]o\s+vale\s+muito|corpflats\s*•\s*guia\s+de\s+conviv[eê]ncia|manual_do_hospede_corpflats\.pdf|assistente\s+ativa\s+de\s+pre-reservas|resumo\s+atualizado\s+da\s+pre-reserva|pre-reserva\s+criada\s+com\s+sucesso\s+no\s+sistema|proposta\s+de\s+pre-reserva\s+cancelada|possui\s+conflito\s+de\s+ocupacao\/bloqueio|nao\s+encontrei\s+o\s+\*?flat|nao\s+foi\s+possivel\s+criar\s+a\s+pre-reserva)\b/i.test(lower)) {
     return true;
   }
 

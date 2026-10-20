@@ -267,7 +267,7 @@ function createMockDb() {
   assert.match(sentMessages[0].message, /345\.678\.901-23/, "Resumo deve conter o CPF formatado");
   assert.match(sentMessages[0].message, /roberto\.nascimento@empresa\.com\.br/, "Resumo deve conter o e-mail");
   assert.match(sentMessages[0].message, /20\/11\/2026 a 22\/11\/2026/, "Resumo deve conter as datas");
-  assert.match(sentMessages[0].message, /540,00/, "Resumo deve conter o valor de R$ 540,00 (opção sem café escolhida)");
+  assert.match(sentMessages[0].message, /\*Valor Total:\*\s*R\$\s*540,00\s*\(Diária:\s*R\$\s*270,00\)/, "Resumo deve conter exatamente Valor Total R$ 540,00 e Diária R$ 270,00 (sem dobrar valor)");
   assert.match(sentMessages[0].message, /Flat 509/, "Resumo deve sugerir o Flat 509 (Flat da Vez)");
 
   // Verifica deduplicação se outra mensagem chegar sem alterar os dados
@@ -294,6 +294,17 @@ function createMockDb() {
   assert.equal(conflictReply.action, "flat_unavailable");
   assert.match(conflictReply.replyText, /Flat 404.*conflito/i);
   assert.equal(db.reservations.length, 4, "Não deve ter criado reserva em flat ocupado");
+
+  // 4.1b Se o webhook da Z-API ecoar a própria mensagem de conflito da Sofia, ela NÃO deve ser tratada como comando do gestor
+  const echoCheck = await handleManagerPreReservationReply({
+    db,
+    cleanTarget: managerPhone,
+    messageText: conflictReply.replyText,
+    sendZapiMessage: mockSendZapi,
+    appendMessageFn: mockAppendMsg,
+    triggerImmediateFn: mockTriggerImmediate
+  });
+  assert.equal(echoCheck.handled, false, "Eco da mensagem de conflito da Sofia deve ser ignorado");
 
   // 4.2 Gestor pede para alterar para o Flat 501 e valor 480 para revisar antes de criar
   const reviewReply = await handleManagerPreReservationReply({
@@ -336,6 +347,12 @@ function createMockDb() {
   assert.equal(created.guestCpf, "34567890123");
   assert.equal(created.guestEmail, "roberto.nascimento@empresa.com.br");
   assert.equal(created.guestsCount, 2, "Deve preservar 2 hóspedes (casal) detectado na conversa");
+  assert.equal(created.guestCount, 2, "Deve preencher guestCount padrão do PMS");
+  assert.equal(created.adults, 2, "Deve preencher adults padrão do PMS");
+  assert.equal(created.guests.length, 2, "Lista guests deve conter 2 entradas para reserva de casal");
+  assert.equal(typeof created.createdBy, "object", "createdBy deve ser objeto estruturado compatível com pms-calendar");
+  assert.ok(created.createdBy.userName.includes("Sofia"), "createdBy.userName deve identificar a Sofia");
+  assert.equal(created.auditLogs[0].action, "created", "auditLogs[0].action deve ser 'created'");
   assert.ok(created.code.startsWith("RES-509-"), "Código deve seguir o padrão PMS RES-{flat}-{id}");
   assert.ok(created.pixCopiaECola && created.pixCopiaECola.length > 20, "Deve gerar payload PIX Copia e Cola");
 
@@ -437,5 +454,139 @@ function createMockDb() {
   console.log("✅ 5. Casos de borda (operador completando 5º item, edição de datas/diária, não-interceptação de coaching e cancelamento) validados com sucesso.");
 }
 
+// ----------------------------------------------------------------------------
+// 6. Regressões Avançadas: "Flat da Vez" Imutável por Chat, Nome "Marco", Sobrescrita de Nome/CPF/Datas, OS Ativa e Paridade de Arquivos
+// ----------------------------------------------------------------------------
+{
+  const fs = await import("node:fs");
+  const { isBotMessage } = await import("../artifacts/api-server/zapi-service.mjs");
+
+  const db = createMockDb();
+  const guestPhone = "5522999001122";
+  const sentMessages = [];
+  const mockSendZapi = async (_cfg, payload) => {
+    sentMessages.push(payload);
+    return { success: true, messageId: `mock_reg_${sentMessages.length}` };
+  };
+
+  // 6.1 Hóspede chamado "Marco Aurélio Silva", menciona "flat 301" na conversa, muda datas após usar "Check-in:",
+  // operador passa valores sem "R$" ("Diária sem café: 240,00 / Diária com café: 275,00"),
+  // e depois hóspede manda telefone de 11 dígitos e mensagem curta "Tudo certo" / "Pode fechar"
+  const convMarco = {
+    id: "conv_marco",
+    phone: guestPhone,
+    name: "Marco",
+    aiPaused: true,
+    messages: [
+      { fromMe: false, text: "Olá! Da última vez fiquei no flat 301. Queria ver Check-in: 10/11/2026 e Check-out: 12/11/2026" },
+      { fromMe: false, text: "Na verdade mudamos os planos, queremos reservar de 20/11/2026 a 22/11/2026." },
+      { fromMe: true, senderName: "Operador", text: "Temos vaga sim! Diária sem café: 240,00 ou Diária com café: 275,00." },
+      { fromMe: false, text: "Vamos fechar com café! Marco Aurélio Silva, CPF 123.456.789-01, marco.silva@dominio.com.br" },
+      { fromMe: false, text: "Meu outro telefone de contato: 22999112233" },
+      { fromMe: false, text: "Tudo certo" },
+      { fromMe: false, text: "Pode fechar" }
+    ]
+  };
+  db.whatsappConversations.push(convMarco);
+
+  const evalMarco = await evaluateAndNotifyActivePreReservation({
+    db,
+    conv: convMarco,
+    cleanTarget: guestPhone,
+    sendZapiMessage: mockSendZapi
+  });
+
+  assert.equal(evalMarco.triggered, true, "Deve disparar a proposta mesmo com nome 'Marco' e orçamento sem 'R$'");
+  assert.equal(evalMarco.proposal.guestName, "Marco Aurélio Silva", "Nome 'Marco Aurélio Silva' deve ser aceito e não sobrescrito por 'Tudo certo'/'Pode fechar'");
+  assert.equal(evalMarco.proposal.guestCpf, "12345678901", "CPF formatado não deve ser sobrescrito por telefone de 11 dígitos posterior");
+  assert.equal(evalMarco.proposal.checkIn, "2026-11-20", "Datas devem refletir a mudança posterior e não ficar presas no primeiro Check-in explícito");
+  assert.equal(evalMarco.proposal.checkOut, "2026-11-22");
+  assert.equal(evalMarco.proposal.includeBreakfast, true);
+  assert.equal(evalMarco.proposal.dailyRate, 275);
+  assert.equal(evalMarco.proposal.totalAmount, 550);
+  assert.equal(evalMarco.proposal.flatNumber, "509", "O Flat sugerido DEVE ser sempre o Flat da Vez (509), mesmo se o hóspede mencionou o flat 301 no chat");
+  assert.equal(evalMarco.proposal.preferredFlatNumber, "301", "A menção ao flat 301 deve ficar apenas registrada como observação");
+  assert.match(sentMessages[0].message, /Flat Sugerido \(Flat da Vez\):\* \*Flat 509\*/);
+  assert.match(sentMessages[0].message, /Flat 301 foi citado na conversa/);
+
+  // 6.2 Parser de comando composto do gestor: "Pode criar, mas muda o nome para João Pedro Silva e coloca no flat 501"
+  const compoundCmd = parseManagerPreReservationCommand(
+    "Pode criar, mas muda o nome para João Pedro Silva e coloca no flat 501",
+    evalMarco.proposal,
+    db
+  );
+  assert.equal(compoundCmd.matched, true);
+  assert.equal(compoundCmd.action, "confirm_and_create");
+  assert.equal(compoundCmd.updates.guestName, "João Pedro Silva", "Não deve capturar 'e coloca no' junto com o nome do hóspede");
+  assert.equal(compoundCmd.updates.flatNumber, "501");
+
+  // 6.3 Comandos com código explícito (#PRERES-XXXX sim / #PRERES-XXXX cancelar)
+  const codeConfirmCmd = parseManagerPreReservationCommand(
+    `#${evalMarco.proposal.id} sim`,
+    evalMarco.proposal,
+    db
+  );
+  assert.equal(codeConfirmCmd.matched, true);
+  assert.equal(codeConfirmCmd.action, "confirm_and_create");
+
+  const codeCancelCmd = parseManagerPreReservationCommand(
+    `#${evalMarco.proposal.id} cancelar`,
+    evalMarco.proposal,
+    db
+  );
+  assert.equal(codeCancelCmd.matched, true);
+  assert.equal(codeCancelCmd.action, "cancel");
+
+  // 6.4 Fair-Share com Ordem de Serviço ativa (schema real do PMS: status 'active' e array flats[]) e última noite do mês (30/11 a 01/12)
+  const dbOs = createMockDb();
+  dbOs.serviceOrders = [
+    {
+      id: "OS-1",
+      status: "active",
+      flats: [
+        {
+          flatId: 4,
+          flatNumber: "509",
+          status: "in_progress",
+          startedAt: "2026-11-20T08:00:00.000Z",
+          estimatedFinishAt: "2026-11-22T18:00:00.000Z"
+        }
+      ]
+    }
+  ];
+  const fairShareOs = selectFairShareFlat(dbOs, "2026-11-20", "2026-11-22");
+  assert.equal(fairShareOs.recommendedFlat.number, "501", "Flat 509 com OS em andamento no período deve ser excluído, recomendando o próximo Flat da Vez (501)");
+
+  // Verifica contagem da última noite do mês (30/11 a 01/12)
+  dbOs.reservations.push({
+    id: 99,
+    code: "RES-501-0099",
+    flatId: 3,
+    flatNumber: "501",
+    checkinDate: "2026-11-30",
+    checkoutDate: "2026-12-01",
+    status: "confirmada"
+  });
+  const fairShareEndMonth = selectFairShareFlat(dbOs, "2026-11-16", "2026-11-18");
+  const flat501Stats = fairShareEndMonth.availableFlats.find(f => f.number === "501");
+  assert.equal(flat501Stats.monthOccupiedDays, 4, "Reserva de 30/11 a 01/12 deve somar 1 diária ocupada em novembro (3 + 1 = 4)");
+
+  // 6.5 isBotMessage em zapi-service.mjs reconhece todas as mensagens da Assistente Ativa de Pré-Reservas
+  assert.equal(isBotMessage("⚠️ O *Flat 404* possui conflito de ocupação/bloqueio no período"), true);
+  assert.equal(isBotMessage("⚠️ Não encontrei o *Flat 999* cadastrado/ativo no sistema."), true);
+
+  // 6.6 Paridade byte-a-byte entre artifacts/api-server/ e scripts/
+  const apiAi = fs.readFileSync(new URL("../artifacts/api-server/whatsapp-ai-service.mjs", import.meta.url));
+  const scriptsAi = fs.readFileSync(new URL("../scripts/whatsapp-ai-service.mjs", import.meta.url));
+  assert.equal(Buffer.compare(apiAi, scriptsAi), 0, "scripts/whatsapp-ai-service.mjs deve estar idêntico a artifacts/api-server/whatsapp-ai-service.mjs");
+
+  const apiZapi = fs.readFileSync(new URL("../artifacts/api-server/zapi-service.mjs", import.meta.url));
+  const scriptsZapi = fs.readFileSync(new URL("../scripts/zapi-service.mjs", import.meta.url));
+  assert.equal(Buffer.compare(apiZapi, scriptsZapi), 0, "scripts/zapi-service.mjs deve estar idêntico a artifacts/api-server/zapi-service.mjs");
+
+  console.log("✅ 6. Regressões avançadas (Flat da Vez imutável por chat, nome 'Marco', não-sobrescrita de Nome/CPF/Datas, OS ativa e paridade scripts/) validadas com sucesso.");
+}
+
 console.log("🎉 Todos os testes pontuais da Assistente Ativa de Pré-Reservas passaram com 100% de sucesso!");
+
 
