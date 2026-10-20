@@ -32,7 +32,7 @@ export default function GarageDashboard() {
   const [flatNumber, setFlatNumber] = useState("")
   const [checkinDate, setCheckinDate] = useState("")
   const [checkoutDate, setCheckoutDate] = useState("")
-  const [recipientEmail, setRecipientEmail] = useState("millerpessanha@gmail.com")
+  const [recipientEmail, setRecipientEmail] = useState("promenadesoho@pfbestacionamentos.com.br")
 
   // Função centralizada com suporte a modo silencioso
   const fetchGarageData = useCallback(async (silent = false) => {
@@ -94,11 +94,11 @@ export default function GarageDashboard() {
           flatNumber: v.flatNumber,
           checkinDate: v.checkinDate,
           checkoutDate: v.checkoutDate,
-          recipientEmail: "millerpessanha@gmail.com"
+          recipientEmail: "promenadesoho@pfbestacionamentos.com.br"
         })
       })
       if (res.ok) {
-        alert(`Autorização de garagem para a placa ${v.plate} (Flat ${v.flatNumber}) enviada com sucesso para millerpessanha@gmail.com!`)
+        alert(`Autorização de garagem para a placa ${v.plate} (Flat ${v.flatNumber}) enviada com sucesso para promenadesoho@pfbestacionamentos.com.br!`)
         fetchGarageData(true)
       } else {
         const err = await res.json()
@@ -374,7 +374,7 @@ export default function GarageDashboard() {
                       disabled={resendingPlate === v.plate}
                       onClick={() => handleResendGarageEmail(v)}
                       className="bg-blue-950/60 border-blue-800 text-blue-300 hover:bg-blue-900 hover:text-white text-xs font-bold gap-1.5 h-8.5 rounded-xl"
-                      title="Disparar autorização de entrada por e-mail para millerpessanha@gmail.com"
+                      title="Disparar autorização de entrada por e-mail para promenadesoho@pfbestacionamentos.com.br"
                     >
                       <Mail className="w-3.5 h-3.5 text-blue-400" />
                       <span>{resendingPlate === v.plate ? "Enviando..." : "E-mail Garagem"}</span>

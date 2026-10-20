@@ -847,7 +847,7 @@ export function renderWhatsAppMirrorEmail({
 
 /**
  * Gatilho C: Template de Liberação / Autorização de Garagem
- * Destinado ao estacionamento (millerpessanha@gmail.com - original: promenadesoho@pfbestacionamentos.com.br) e portaria
+ * Destinado ao estacionamento (promenadesoho@pfbestacionamentos.com.br) e portaria
  */
 export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, settings }) {
   const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
@@ -1221,7 +1221,7 @@ export function hasReceptionReceivedReservation(reservation, db = {}) {
 
   // 2. E-mail oficial da recepção para o flat/hotel
   const flat = (db?.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
-  const receptionEmail = (flat?.receptionEmail || db?.settings?.receptionEmail || db?.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com").toLowerCase().trim();
+  const receptionEmail = (flat?.receptionEmail || db?.settings?.receptionEmail || db?.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br").toLowerCase().trim();
 
   // 3. Checa histórico de comunicações
   const comms = db?.reservationCommunications || [];

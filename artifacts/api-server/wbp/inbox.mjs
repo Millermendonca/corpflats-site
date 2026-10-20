@@ -1046,7 +1046,7 @@ export async function processIncomingOTA(rawPayload, options = {}) {
 
     // B. Reception / Front-desk email (regardless of checkinDate === todayStr)
     if (alertsManager && typeof alertsManager.sendEmail === "function") {
-      const receptionEmail = db.settings?.receptionEmail || "millerpessanha@gmail.com";
+      const receptionEmail = db.settings?.receptionEmail || "soho@promenade.com.br";
       const emailSubject = `[RESERVA OTA] Flat ${flatNumber} - ${normalized.guestName} (${normalized.channel.toUpperCase()})`;
       const emailBody = `Nova reserva OTA importada com sucesso:
 - Hóspede: ${normalized.guestName}

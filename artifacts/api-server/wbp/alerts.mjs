@@ -29,7 +29,7 @@ export const DEFAULT_ALERT_SETTINGS = {
   },
   recipients: {
     adminWhatsApp: "5522997124021",
-    receptionEmail: "millerpessanha@gmail.com",
+    receptionEmail: "soho@promenade.com.br",
     managerEmail: "millerpessanha@gmail.com"
   },
   triggers: {
