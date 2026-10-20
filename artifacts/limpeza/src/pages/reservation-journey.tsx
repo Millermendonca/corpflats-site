@@ -583,15 +583,15 @@ Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Liberado* para rece
     id: "node_checkin_cleaning_delay",
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Tarde - Regular)",
-    title: "Check-in 14:00 • Limpeza em Andamento & Previsão de Chegada",
-    subtitle: "Se der 14:00 e o flat não estiver limpo, consulta horário para priorizar na governança",
+    title: "Check-in 13:45 • Limpeza em Andamento & Previsão de Chegada",
+    subtitle: "Se der 13:45 e o flat ainda estiver sendo limpo, consulta horário para priorizar na governança",
     triggerEvent: "checkin_cleaning_delay",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Pontualmente às 14:00 (se flat ainda não limpo)",
-    condition: "Check-in previsto para hoje com flat ainda pendente de limpeza às 14:00",
+    timingLabel: "Pontualmente às 13:45 (apenas se flat ainda sendo limpo)",
+    condition: "Check-in previsto para hoje, hóspede ainda não entrou e flat ainda sendo limpo às 13:45",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Disparado proativamente às 14:00 caso o flat ainda esteja em higienização. Avisa que a equipe está finalizando os preparativos e solicita a previsão de chegada para priorizar o card de limpeza ou remanejar acomodação.",
+    description: "Disparado proativamente às 13:45 exclusivamente caso o flat ainda esteja sendo limpo e o hóspede ainda não tenha entrado. Avisa que a equipe está finalizando os preparativos e solicita a previsão de chegada para priorizar o card de limpeza ou remanejar acomodação.",
     messagePreview: `Olá, *{{primeiro_nome}}*! Tudo bem? 🌟
 Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 

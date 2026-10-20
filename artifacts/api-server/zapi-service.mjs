@@ -542,15 +542,15 @@ Desejamos uma chegada tranquila e uma estadia incrível! Qualquer dúvida, estam
   {
     id: "tpl_checkin_cleaning_delay",
     triggerEvent: "checkin_cleaning_delay",
-    title: "Check-in 14:00 • Limpeza em Andamento & Previsão de Chegada",
-    description: "Disparado no dia do check-in às 14:00 (ou logo após) caso o flat ainda esteja em higienização. Pergunta a previsão de chegada do hóspede para priorizar a limpeza ou remanejar acomodação.",
+    title: "Check-in 13:45 • Limpeza em Andamento & Previsão de Chegada",
+    description: "Disparado no dia do check-in às 13:45 (ou logo após) exclusivamente caso o flat ainda esteja sendo limpo e o hóspede ainda não tenha entrado. Pergunta a previsão de chegada do hóspede para priorizar a limpeza ou remanejar acomodação.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
     offsetUnit: "hours",
-    fixedTime: "14:00",
+    fixedTime: "13:45",
     message: `Olá, *{{primeiro_nome}}*! Tudo bem? 🌟
 Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 
@@ -6167,7 +6167,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
           tpl.triggerEvent = "checkin_cleaning_delay";
           tpl.recipientTarget = "guest";
-          tpl.fixedTime = "14:00";
+          if (!tpl.fixedTime || tpl.fixedTime === "14:00") {
+            tpl.fixedTime = "13:45";
+          }
+          if (tpl.title && tpl.title.includes("14:00")) {
+            tpl.title = tpl.title.replace("14:00", "13:45");
+          }
+          if (tpl.description && tpl.description.includes("14:00")) {
+            tpl.description = tpl.description.replace("14:00", "13:45");
+          }
         }
         if (tpl.id === "tpl_breakfast_reminder") {
           if (tpl.footer?.includes("Artesanal") || tpl.footer?.includes("artesanal")) {
@@ -6246,6 +6254,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             if (item.renderedButtons.length < beforeLen) {
               sanitizedQueueCafeCount++;
             }
+          }
+        }
+        if (item.status === "scheduled" || item.status === "pending") {
+          if (item.triggerEvent === "checkin_cleaning_delay" || item.templateId === "tpl_checkin_cleaning_delay") {
+            item.status = "cancelled";
+            item.error = "Cancelado: alerta de limpeza em andamento é avaliado dinamicamente às 13:45 apenas para flats ainda sendo limpos";
+            item.updatedAt = nowIso;
+            cleanedOldCount++;
+            continue;
           }
         }
         if (item.status === "scheduled") {
@@ -9337,6 +9354,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
+        // Checagem dinâmica: alerta de limpeza em andamento (13:45) NUNCA deve ser disparado pela fila estática
+        // ou para quem já entrou / está em flat já limpo
+        if (item.triggerEvent === "checkin_cleaning_delay" || item.templateId === "tpl_checkin_cleaning_delay") {
+          console.log(`[Auto-WhatsApp] Cancelando item estático de 'checkin_cleaning_delay' na fila para ${item.recipientName || item.guestName}: avaliação deve ocorrer exclusivamente em tempo real às 13:45.`);
+          item.status = "cancelled";
+          item.error = "Cancelado: alerta de limpeza em andamento é avaliado dinamicamente às 13:45 apenas para flats ainda sendo limpos";
+          item.updatedAt = nowIso;
+          saveDatabase();
+          continue;
+        }
+
         // Checagem dinâmica: se for lembrete de café da manhã e o hóspede já fez o pedido de amanhã
         if (item.triggerEvent === "breakfast_reminder") {
           const tomorrowDate = new Date(brDate);
@@ -9855,6 +9883,19 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
     return { waResult: null, emailLog: null, success: false, cancelled: true };
   }
 
+  // Trava final para alerta de limpeza em andamento: nunca entregar via fila estática nem para quem já entrou ou flat já limpo
+  if (item.triggerEvent === "checkin_cleaning_delay" || item.templateId === "tpl_checkin_cleaning_delay") {
+    const { todayStr } = getBrasiliaDateParts(new Date());
+    if (!resv || hasReservationEnteredOrCompletedCheckin(db, resv, todayStr) || !isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
+      console.log(`[Auto-WhatsApp] Bloqueando entrega de 'checkin_cleaning_delay' na fila para ${item.recipientName || item.guestName}: hóspede já entrou ou flat já está limpo/pronto.`);
+      item.status = "cancelled";
+      item.error = "Cancelado: hóspede já realizou check-in/entrada ou flat já está limpo/pronto";
+      item.updatedAt = new Date().toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+      return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+  }
+
   let waResult = null;
   let emailLog = null;
 
@@ -10106,12 +10147,52 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   if (!db || !db.whatsappTemplates || !db.reservations) return;
 
   const now = new Date();
+  const nowIso = now.toISOString();
   const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
   const brDate = new Date(nowUtc - (3 * 3600000));
   const todayStr = brDate.toISOString().substring(0, 10);
 
-  const activeTemplates = db.whatsappTemplates.filter(t => t.enabled && t.triggerTiming !== "immediate");
-  if (activeTemplates.length === 0) return;
+  let hasChanges = false;
+
+  // 0. Higienização preventiva: 'checkin_cleaning_delay' NUNCA deve ficar pré-agendado na fila estática,
+  // pois depende exclusivamente de o flat ainda estar sendo limpo às 13:45 no dia do check-in.
+  if (Array.isArray(db.whatsappQueue)) {
+    for (const qItem of db.whatsappQueue) {
+      if (!qItem) continue;
+      if ((qItem.status === "scheduled" || qItem.status === "pending") &&
+          (qItem.triggerEvent === "checkin_cleaning_delay" || qItem.templateId === "tpl_checkin_cleaning_delay")) {
+        qItem.status = "cancelled";
+        qItem.error = "Cancelado: alerta de limpeza em andamento é avaliado dinamicamente às 13:45 apenas para flats ainda sendo limpos";
+        qItem.updatedAt = nowIso;
+        hasChanges = true;
+      }
+    }
+  }
+  if (Array.isArray(db.emailQueue)) {
+    for (const eItem of db.emailQueue) {
+      if (!eItem) continue;
+      const ev = String(eItem.triggerEvent || eItem.type || "").trim();
+      if ((eItem.status === "scheduled" || eItem.status === "pending") &&
+          (ev === "checkin_cleaning_delay" || eItem.templateId === "tpl_checkin_cleaning_delay")) {
+        eItem.status = "cancelled";
+        eItem.error = "Cancelado: alerta de limpeza em andamento é avaliado dinamicamente às 13:45 apenas para flats ainda sendo limpos";
+        eItem.updatedAt = nowIso;
+        hasChanges = true;
+      }
+    }
+  }
+
+  // Exclui explicitamente 'checkin_cleaning_delay' do pré-agendamento automático na fila
+  const activeTemplates = db.whatsappTemplates.filter(t =>
+    t.enabled &&
+    t.triggerTiming !== "immediate" &&
+    t.triggerEvent !== "checkin_cleaning_delay" &&
+    t.id !== "tpl_checkin_cleaning_delay"
+  );
+  if (activeTemplates.length === 0) {
+    if (hasChanges && typeof saveDatabase === "function") saveDatabase();
+    return;
+  }
 
   // Data limite para considerar reservas recentes para NPS (+24h pós-checkout)
   const twoDaysAgo = new Date(brDate);
@@ -10127,8 +10208,6 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
     r.checkoutDate >= twoDaysAgoStr &&
     reservationHasAnyContact(r, db)
   );
-
-  let hasChanges = false;
 
   for (const resv of reservationsToProcess) {
     const isCompletedOrCheckedOut = isReservationOrFlatCheckedOut(db, resv);
@@ -10315,10 +10394,23 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     const resvChannel = reservation.channel || reservation.source || "site";
 
+    // Trava estrita para 'checkin_cleaning_delay': nunca disparar se o hóspede já realizou check-in/entrada
+    // ou se o flat já está limpo/pronto.
+    if (eventName === "checkin_cleaning_delay") {
+      if (hasReservationEnteredOrCompletedCheckin(db, reservation, todayStr)) {
+        console.log(`[WhatsApp Trigger] Evento 'checkin_cleaning_delay' IGNORADO para ${reservation.code || reservation.id} (${reservation.guestName}): hóspede já entrou / marcou check-in como feito ou já recebeu aviso de quarto pronto.`);
+        return;
+      }
+      if (!isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr)) {
+        console.log(`[WhatsApp Trigger] Evento 'checkin_cleaning_delay' IGNORADO para ${reservation.code || reservation.id} (${reservation.guestName}): Flat ${reservation.flatNumber} já está limpo/pronto.`);
+        return;
+      }
+    }
+
     let templates = (db.whatsappTemplates || []).filter(t => 
       t.enabled && 
       t.triggerEvent === eventName && 
-      t.triggerTiming === "immediate" &&
+      (t.triggerTiming === "immediate" || eventName === "checkin_cleaning_delay") &&
       isTemplateAllowedForChannel(t, resvChannel)
     );
 
@@ -10354,6 +10446,15 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "pre_checkin_completed") {
       const defPreChkDone = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_completed" || t.triggerEvent === "pre_checkin_completed");
       if (defPreChkDone) templates = [defPreChkDone];
+    } else if (templates.length === 0 && eventName === "checkin_cleaning_delay") {
+      const hasExplicitlyDisabled = (db.whatsappTemplates || []).some(
+        t => (t.id === "tpl_checkin_cleaning_delay" || t.triggerEvent === "checkin_cleaning_delay") &&
+             (t.enabled === false || !isTemplateAllowedForChannel(t, resvChannel))
+      );
+      if (!hasExplicitlyDisabled) {
+        const defDelay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_cleaning_delay" || t.triggerEvent === "checkin_cleaning_delay");
+        if (defDelay && isTemplateAllowedForChannel(defDelay, resvChannel)) templates = [defDelay];
+      }
     }
 
     // Se o evento for check-in digital concluído, cancela lembretes pendentes (pre_checkin_reminder) na fila para este hóspede
@@ -10706,24 +10807,211 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
   }
 }
 
-// ── Alerta Proativo das 14:00: Flat Pendente de Limpeza & Previsão de Chegada ──
-export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabase, createNotification, baseUrl = "") {
+// ── Verificadores Estritos de Entrada e Limpeza em Andamento (13:45) ──────────
+/**
+ * Verifica se o hóspede da reserva já entrou no flat / marcou check-in como feito
+ * ou se já recebeu o aviso de "Quarto Liberado / Pronto" hoje.
+ * Obs.: Assinatura antecipada da FNRH (r.checkedInAt / r.fnhrCompleted) sozinha NÃO representa entrada física no flat.
+ */
+export function hasReservationEnteredOrCompletedCheckin(db, resv, todayStr = "") {
+  if (!resv) return false;
+
+  const statusLower = String(resv.status || "").toLowerCase().trim();
+  if (
+    statusLower === "checkin" ||
+    statusLower === "checked_in" ||
+    statusLower === "in_house" ||
+    statusLower === "hospedado" ||
+    statusLower === "checkin_realizado" ||
+    statusLower === "completed" ||
+    statusLower === "checked_out" ||
+    statusLower === "checkout"
+  ) {
+    return true;
+  }
+
+  if (
+    resv.guestSelfCheckin === true ||
+    Boolean(resv.guestSelfCheckinAt) ||
+    Boolean(resv.actualCheckinAt) ||
+    resv.checkinDone === true ||
+    resv.checkedIn === true ||
+    resv.checkoutDone === true ||
+    Boolean(resv.actualCheckoutAt)
+  ) {
+    return true;
+  }
+
+  if (Array.isArray(resv.guests) && resv.guests.some(g => g && (g.entryAuthorized === true || Boolean(g.entryAuthorizedAt)))) {
+    return true;
+  }
+
+  if (todayStr && resv.roomReadySentDate === todayStr) {
+    return true;
+  }
+
+  const rCode = String(resv.code || resv.reservationCode || "").trim().toUpperCase();
+  const rId = resv.id !== undefined && resv.id !== null ? String(resv.id) : "";
+
+  if (db && (rCode || rId)) {
+    const matchesRes = (item) => {
+      if (!item) return false;
+      const iCode = String(item.reservationCode || "").trim().toUpperCase();
+      const iId = item.reservationId !== undefined && item.reservationId !== null ? String(item.reservationId) : "";
+      return (rCode && iCode === rCode) || (rId && (iId === rId || iCode === rId));
+    };
+
+    const sentOrQueuedRoomReadyOrCheckin = (db.whatsappHistory || []).some(h =>
+      matchesRes(h) &&
+      (h.status === "sent" || h.status === "delivered") &&
+      (h.triggerEvent === "checkin_completed" || ROOM_READY_GROUP_EVENTS.has(h.triggerEvent))
+    ) || (db.whatsappQueue || []).some(q =>
+      matchesRes(q) &&
+      (q.status === "scheduled" || q.status === "pending" || q.status === "sent") &&
+      (q.triggerEvent === "checkin_completed" || ROOM_READY_GROUP_EVENTS.has(q.triggerEvent))
+    );
+
+    if (sentOrQueuedRoomReadyOrCheckin) {
+      return true;
+    }
+  }
+
+  if (db?.smartFlats && typeof db.smartFlats === "object") {
+    const flatKey = String(resv.flatNumber || resv.flatId || "");
+    const sf = db.smartFlats[flatKey] || Object.values(db.smartFlats).find(s =>
+      s && (String(s.flatNumber) === String(resv.flatNumber) || (resv.flatId && Number(s.flatId) === Number(resv.flatId)))
+    );
+    if (sf?.presence && (sf.presence.enteredAt || sf.presence.isPresent === true)) {
+      const sfResId = sf.presence.reservationId ? String(sf.presence.reservationId) : "";
+      const sfResCode = String(sf.presence.reservationCode || "").trim().toUpperCase();
+      if ((!sfResId && !sfResCode) || (rId && sfResId === rId) || (rCode && sfResCode === rCode)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Verifica se o flat alocado para a reserva AINDA está sendo limpo (ou pendente de limpeza) hoje.
+ * Retorna `false` sempre que o flat já estiver limpo/pronto (seja porque foi limpo hoje, seja porque
+ * já estava limpo antes de hoje e não teve check-out/limpeza pendente hoje).
+ */
+export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
+  if (!db || !resv || !todayStr) return false;
+
+  const flatId = resv.flatId !== undefined && resv.flatId !== null ? Number(resv.flatId) : null;
+  const rawFlatNum = resv.flatNumber || (flatId && Array.isArray(db.flats) ? db.flats.find(f => Number(f.id) === flatId)?.number : "");
+  const flatNumClean = String(rawFlatNum || "").replace(/\D/g, "");
+  if (!flatId && !flatNumClean) return false;
+
+  const isSameFlat = (c) => {
+    if (!c) return false;
+    const cNumClean = String(c.flatNumber || "").replace(/\D/g, "");
+    return (flatId && Number(c.flatId) === flatId) || (flatNumClean && cNumClean === flatNumClean);
+  };
+
+  const isRegularCleaningRecord = (c) => {
+    if (!c) return false;
+    if (c.isInstructionOnly || c.isBedAdjustmentOnly) return false;
+    if (c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only") return false;
+    return true;
+  };
+
+  const flatAllCleanings = (db.cleaningRequests || []).filter(c => isSameFlat(c) && isRegularCleaningRecord(c));
+  const flatActiveCleanings = flatAllCleanings.filter(c => !c.isDeleted && c.status !== "deleted");
+
+  // 1. Regra de Ouro da Governança: se existir QUALQUER limpeza concluída hoje para o flat (ou auditoria de conclusão hoje),
+  // o flat já está limpo e liberado — nunca enviar alerta de atraso!
+  const cleanedToday = flatActiveCleanings.some(c =>
+    (c.status === "clean" || c.status === "completed") &&
+    (
+      c.requestDate === todayStr ||
+      c.effectiveDate === todayStr ||
+      (c.completedAt && String(c.completedAt).startsWith(todayStr))
+    )
+  );
+  if (cleanedToday) return false;
+
+  const auditCleanToday = (db.auditLogs || []).some(l =>
+    (l?.action === "CLEANING_STATUS_CLEAN" || l?.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
+    String(l?.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
+    String(l?.timestamp || "").startsWith(todayStr)
+  );
+  if (auditCleanToday) return false;
+
+  // 2. Verifica se existe solicitação de limpeza ativa hoje ainda pendente ou em andamento
+  const pendingStatuses = new Set(["dirty", "will_clean", "cleaning_now", "in_progress", "pending_issue"]);
+  const hasTodayPendingOrInProgress = flatActiveCleanings.some(c =>
+    (c.requestDate === todayStr || c.effectiveDate === todayStr) &&
+    pendingStatuses.has(String(c.status || "").toLowerCase())
+  );
+  if (hasTodayPendingOrInProgress) return true;
+
+  // 3. Verifica se houve check-out hoje neste flat (turnover no mesmo dia) cujo card não foi excluído nem concluído
+  const exactTodayDeleted = flatAllCleanings.some(c => c.requestDate === todayStr && (c.isDeleted || c.status === "deleted"));
+  if (!exactTodayDeleted) {
+    const hasCheckoutToday = (db.reservations || []).some(r => {
+      if (!r || r.id === resv.id || (resv.code && r.code === resv.code)) return false;
+      const st = String(r.status || "").toLowerCase();
+      if (st === "cancelada" || st === "cancelled" || st === "no_show" || st === "pre_reserva" || st === "pendente" || st === "expirada") {
+        return false;
+      }
+      const rFlatClean = String(r.flatNumber || "").replace(/\D/g, "");
+      const sameFlat = (flatId && Number(r.flatId) === flatId) || (flatNumClean && rFlatClean === flatNumClean);
+      return sameFlat && r.checkoutDate === todayStr;
+    });
+    if (hasCheckoutToday) return true;
+  }
+
+  // 4. Verifica se há limpeza em andamento agora ("cleaning_now" / "in_progress" / "will_clean") ou pendência de dia anterior ainda não limpa
+  const hasUnresolvedPreviousCleaning = flatActiveCleanings.some(c => {
+    const st = String(c.status || "").toLowerCase();
+    if (!pendingStatuses.has(st)) return false;
+    if (st === "cleaning_now" || st === "in_progress" || st === "will_clean") return true;
+    if (!c.requestDate || c.requestDate >= todayStr || c.requestDate < "2026-09-01") return false;
+    // Verifica se já houve limpeza concluída ou exclusão em data igual ou posterior a esta solicitação antiga
+    const resolvedOnOrAfter = flatAllCleanings.some(other => {
+      const otherDate = other.effectiveDate || (other.completedAt ? String(other.completedAt).substring(0, 10) : other.requestDate) || "";
+      if (otherDate < c.requestDate) return false;
+      if (other.status === "clean" || other.status === "completed") return true;
+      if ((other.isDeleted || other.status === "deleted") && (!c.createdAt || !other.deletedAt || other.deletedAt >= c.createdAt)) return true;
+      return false;
+    });
+    return !resolvedOnOrAfter;
+  });
+
+  if (hasUnresolvedPreviousCleaning) return true;
+
+  // Se não há solicitação pendente hoje, não houve check-out hoje e não há limpeza em aberto, o flat já estava limpo e pronto!
+  return false;
+}
+
+// ── Alerta Proativo das 13:45: Flat Pendente de Limpeza & Previsão de Chegada ──
+export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabase, createNotification, baseUrl = "", nowOverride = null) {
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db || !db.zapiConfig?.enabled) return;
 
-    const now = new Date();
+    const delayTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_checkin_cleaning_delay" || t.triggerEvent === "checkin_cleaning_delay");
+    if (delayTpl && delayTpl.enabled === false) return;
+
+    const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
     const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
 
-    const checkinTime = db.settings?.checkinTime || "14:00";
-    const [checkHour, checkMin] = checkinTime.split(":").map(Number);
-    const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
+    const rawAlertTime = (delayTpl?.fixedTime && /^\d{1,2}:\d{2}$/.test(delayTpl.fixedTime) && delayTpl.fixedTime !== "14:00")
+      ? delayTpl.fixedTime
+      : "13:45";
+    const [alertHour, alertMin] = rawAlertTime.split(":").map(Number);
+    const isAtOrAfterAlertTime = brHour > alertHour || (brHour === alertHour && brMinute >= alertMin);
 
-    // Só dispara se o horário de check-in (14:00) tiver sido atingido hoje (e antes das 22:00)
-    if (!isAtOrAfterCheckin || brHour >= 22) return;
+    // Só dispara se o horário do alerta (13:45) tiver sido atingido hoje (e antes das 22:00)
+    if (!isAtOrAfterAlertTime || brHour >= 22) return;
 
-    // Busca reservas ativas com check-in previsto para hoje
+    // Busca reservas ativas com check-in previsto para hoje que ainda NÃO entraram no flat
     const arrivingToday = (db.reservations || []).filter(r =>
+      r &&
       r.status !== "cancelada" &&
       r.status !== "cancelled" &&
       r.status !== "no_show" &&
@@ -10731,51 +11019,18 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
       r.status !== "pre_reserva" &&
       r.status !== "pendente" &&
       r.status !== "expirada" &&
-      !r.checkedInAt &&
-      r.status !== "checked_in" &&
       r.checkinDate === todayStr &&
       r.guestPhone &&
       r.cleaningDelayAlertSentDate !== todayStr &&
-      r.roomReadySentDate !== todayStr
+      r.roomReadySentDate !== todayStr &&
+      !hasReservationEnteredOrCompletedCheckin(db, r, todayStr)
     );
 
     for (const resv of arrivingToday) {
       const flatNum = String(resv.flatNumber || "");
-      const flatId = resv.flatId;
 
-      // Localiza a solicitação de limpeza de hoje (excluindo instruções avulsas)
-      const cleanReq = (db.cleaningRequests || []).find(c =>
-        (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
-        !c.isInstructionOnly &&
-        c.source !== "manual_instruction" &&
-        c.type !== "instruction" &&
-        c.type !== "bed_adjustment_only" &&
-        (c.requestDate === todayStr || c.effectiveDate === todayStr || (c.completedAt && c.completedAt.startsWith(todayStr)))
-      );
-
-      // Se a limpeza de hoje já foi concluída, não envia o alerta
-      if (cleanReq && (cleanReq.status === "clean" || cleanReq.status === "completed")) {
-        continue;
-      }
-
-      // Verifica se houve check-out hoje neste flat ou se há limpeza efetivamente em andamento ("cleaning_now")
-      const hasCheckoutToday = (db.reservations || []).some(r =>
-        r.id !== resv.id &&
-        r.status !== "cancelada" &&
-        r.status !== "cancelled" &&
-        r.status !== "no_show" &&
-        (r.flatId === flatId || String(r.flatNumber) === flatNum) &&
-        r.checkoutDate === todayStr
-      );
-      const hasActiveCleaningNow = (db.cleaningRequests || []).some(c =>
-        (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
-        !c.isInstructionOnly &&
-        (c.status === "cleaning_now" || c.status === "in_progress")
-      );
-
-      // Se não há solicitação pendente de hoje, não houve checkout hoje e não há camareira limpando agora,
-      // significa que o flat já estava limpo antes de hoje — nunca disparar alerta falso de atraso!
-      if (!cleanReq && !hasCheckoutToday && !hasActiveCleaningNow) {
+      // Só envia se o flat alocado AINDA estiver sendo limpo / pendente de limpeza hoje
+      if (!isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
         continue;
       }
 
@@ -10803,7 +11058,7 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
       if (typeof createNotification === "function") {
         createNotification({
           category: "cleaning_alert",
-          title: `⚠️ 14h: Flat ${flatNum} ainda em limpeza`,
+          title: `⚠️ ${rawAlertTime}: Flat ${flatNum} ainda em limpeza`,
           message: `Hóspede ${resv.guestName} (Reserva ${resv.code}) notificado(a) no WhatsApp para envio de previsão de chegada. Flat ${flatNum} ainda pendente de limpeza.`,
           type: "cleaning_governance",
           targetUrl: "/limpeza",
