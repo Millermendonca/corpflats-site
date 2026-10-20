@@ -50,7 +50,7 @@ const DEFAULT_FLATS = [
   { id: 21, number: "1304", colName: "1304 Solteiro(ferro unindo)", isOccupied: true }
 ];
 
-import { emitirNfseGissReal, COD_MUNICIPIO, renderGissDanfseHtml } from "./giss-soap.mjs";
+import { emitirNfseGissReal, COD_MUNICIPIO, renderGissDanfseHtml, ensureNfseCertFilesOnDisk } from "./giss-soap.mjs";
 import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE } from "./chat-service.mjs";
 import { lookupCep, lookupCnpj } from "./lookup.mjs";
 import express from "express";
@@ -114,6 +114,25 @@ import {
   resolveReservationAttachments,
   ensureReservationAttachmentsReady
 } from "./mail-service.mjs";
+import {
+  ensureWebmailCollections,
+  getZohoOAuthConfig,
+  exchangeZohoGrantCode,
+  getZohoAccessToken,
+  discoverZohoAccountId,
+  callZohoMailApi,
+  getZohoStatusSummary,
+  getWebmailFoldersAndCounts,
+  listWebmailMessages,
+  getWebmailMessageDetail,
+  saveWebmailDraft,
+  deleteWebmailDraft,
+  sendWebmailMessage,
+  performWebmailBulkAction,
+  createWebmailCustomFolder,
+  createWebmailLabel,
+  buildComposerReservationTemplate
+} from "./zoho-mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR, rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 import {
   fnrhSerproService,
@@ -6125,6 +6144,11 @@ async function loadDatabase() {
           const localSerproConfig = db.settings?.serproConfig;
           const pgSerproConfig = pgLoaded.settings?.serproConfig;
           const preservedSerproConfig = pgSerproConfig || localSerproConfig || null;
+          const localZohoOAuth = db.settings?.zohoOAuth;
+          const pgZohoOAuth = pgLoaded.settings?.zohoOAuth;
+          const preservedZohoOAuth = (pgZohoOAuth?.clientId && pgZohoOAuth?.refreshToken)
+            ? pgZohoOAuth
+            : ((localZohoOAuth?.clientId && localZohoOAuth?.refreshToken) ? localZohoOAuth : (pgZohoOAuth || localZohoOAuth || null));
 
           Object.assign(db, pgLoaded);
 
@@ -6142,6 +6166,7 @@ async function loadDatabase() {
           if (preservedGarageEmail) db.settings.garageEmail = preservedGarageEmail;
           if (preservedCheckinProvider) db.settings.checkinProvider = preservedCheckinProvider;
           if (preservedSerproConfig) db.settings.serproConfig = preservedSerproConfig;
+          if (preservedZohoOAuth) db.settings.zohoOAuth = preservedZohoOAuth;
 
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
@@ -26397,6 +26422,300 @@ app.post("/api/emails/send-manual", async (req, res) => {
   res.json({ success: true, communication: commLog });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTERPRISE WEBMAIL CLIENT REST API + ZOHO MAIL OAUTH2 INTEGRATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// W1. Status consolidado do Webmail (Zoho OAuth2 + Motor SMTP + Pastas + Reservas Ativas)
+app.get("/api/webmail/status", (req, res) => {
+  ensureWebmailCollections(db);
+  const status = getZohoStatusSummary(db);
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  const oauthCfg = getZohoOAuthConfig(db);
+
+  // Lista compacta de reservas recentes/ativas para o seletor rápido do Compositor Flutuante
+  const activeReservations = (db.reservations || [])
+    .filter(r => r && r.status !== "cancelada")
+    .slice(0, 60)
+    .map(r => ({
+      id: r.id,
+      code: r.code || `RES-${r.flatNumber || "00"}-${r.id}`,
+      flatNumber: r.flatNumber || "",
+      guestName: r.guestName || "Hóspede",
+      guestEmail: r.guestEmail || "",
+      checkinDate: r.checkinDate || "",
+      checkoutDate: r.checkoutDate || "",
+      status: r.status || "confirmada",
+      fnhrCompleted: Boolean(r.fnhrCompleted || r.fnrhDocumentUuid || r.guests?.[0]?.hasCompletedCheckin)
+    }));
+
+  res.json({
+    ...status,
+    oauthConfigMasked: {
+      clientId: oauthCfg.clientId || "",
+      hasClientSecret: Boolean(oauthCfg.clientSecret),
+      hasRefreshToken: Boolean(oauthCfg.refreshToken),
+      accountId: oauthCfg.accountId || "",
+      dc: oauthCfg.dc || "com"
+    },
+    systemFolders,
+    customFolders,
+    labels,
+    activeReservations
+  });
+});
+
+// W2. Salvar / Validar Configuração Zoho OAuth2 + Trocar Self-Client Grant Code
+app.post("/api/webmail/oauth-config", async (req, res) => {
+  ensureWebmailCollections(db);
+  const { clientId, clientSecret, refreshToken, accountId, dc, grantCode, testNow } = req.body || {};
+
+  if (!db.settings.zohoOAuth) db.settings.zohoOAuth = {};
+  if (clientId !== undefined) db.settings.zohoOAuth.clientId = String(clientId).trim();
+  if (clientSecret !== undefined && clientSecret !== "••••••••" && clientSecret !== "") {
+    db.settings.zohoOAuth.clientSecret = String(clientSecret).trim();
+  }
+  if (refreshToken !== undefined && refreshToken !== "••••••••" && refreshToken !== "") {
+    db.settings.zohoOAuth.refreshToken = String(refreshToken).trim();
+  }
+  if (accountId !== undefined) db.settings.zohoOAuth.accountId = String(accountId).trim();
+  if (dc !== undefined) db.settings.zohoOAuth.dc = String(dc).trim() || "com";
+
+  // Se o usuário enviou um Grant Code temporário do Zoho Self-Client, troca automaticamente por Refresh Token
+  if (grantCode && String(grantCode).trim()) {
+    const exRes = await exchangeZohoGrantCode(db, saveDatabase, {
+      grantCode: String(grantCode).trim(),
+      clientId: db.settings.zohoOAuth.clientId,
+      clientSecret: db.settings.zohoOAuth.clientSecret,
+      dc: db.settings.zohoOAuth.dc
+    });
+    if (!exRes.ok) {
+      return res.status(400).json({ error: exRes.error });
+    }
+    return res.json({
+      success: true,
+      message: exRes.message,
+      status: getZohoStatusSummary(db)
+    });
+  }
+
+  saveDatabase();
+
+  if (testNow) {
+    const accRes = await discoverZohoAccountId(db);
+    if (!accRes.ok) {
+      return res.status(400).json({
+        error: accRes.error,
+        status: getZohoStatusSummary(db)
+      });
+    }
+    saveDatabase();
+    return res.json({
+      success: true,
+      message: `Zoho Mail API conectada com sucesso! Conta descoberta: ${accRes.primaryEmailAddress || accRes.accountId}`,
+      status: getZohoStatusSummary(db)
+    });
+  }
+
+  res.json({
+    success: true,
+    message: "Configurações Zoho OAuth2 salvas com sucesso!",
+    status: getZohoStatusSummary(db)
+  });
+});
+
+// W3. Listagem, Busca Instantânea e Filtros Rápidos de Mensagens (Coluna 2)
+app.get("/api/webmail/messages", async (req, res) => {
+  const {
+    folder = "inbox",
+    labelId = "",
+    quickFilter = "all",
+    search = "",
+    sync = "false"
+  } = req.query;
+
+  const result = await listWebmailMessages(db, {
+    folder: String(folder),
+    labelId: String(labelId),
+    quickFilter: String(quickFilter),
+    search: String(search),
+    syncRemote: sync === "true" || sync === "1"
+  });
+
+  res.json(result);
+});
+
+// W4. Detalhe da Mensagem + Thread em Acordeão + Anexos + Reserva Vinculada (Coluna 3)
+app.get("/api/webmail/messages/:id", async (req, res) => {
+  const result = await getWebmailMessageDetail(db, saveDatabase, req.params.id);
+  if (!result.ok) {
+    return res.status(404).json({ error: result.error });
+  }
+  res.json(result);
+});
+
+// W5. Ações em Lote ou Individuais (Lido/Não lido, Estrela, Arquivar, Mover, Etiquetas, Lixeira)
+app.put("/api/webmail/messages/bulk", async (req, res) => {
+  const { messageIds, action, targetFolderId, labelId } = req.body || {};
+  const result = await performWebmailBulkAction(db, saveDatabase, {
+    messageIds,
+    action,
+    targetFolderId,
+    labelId
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  res.json({
+    success: true,
+    ...result,
+    systemFolders,
+    customFolders,
+    labels
+  });
+});
+
+// W6. Salvar / Auto-save de Rascunho (Docked Compose)
+app.post("/api/webmail/drafts", async (req, res) => {
+  const result = await saveWebmailDraft(db, saveDatabase, req.body || {});
+  const { systemFolders } = getWebmailFoldersAndCounts(db);
+  res.json({
+    success: true,
+    draft: result.draft,
+    systemFolders
+  });
+});
+
+// W7. Excluir Rascunho
+app.delete("/api/webmail/drafts/:id", (req, res) => {
+  const result = deleteWebmailDraft(db, saveDatabase, req.params.id);
+  const { systemFolders } = getWebmailFoldersAndCounts(db);
+  res.json({
+    success: true,
+    ...result,
+    systemFolders
+  });
+});
+
+// W8. Enviar E-mail pelo Webmail (Novo, Responder, Encaminhar, com Anexos FNRH/Upload)
+app.post("/api/webmail/send", async (req, res) => {
+  const result = await sendWebmailMessage(db, saveDatabase, req.body || {});
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  res.json({
+    success: true,
+    method: result.method,
+    communication: result.communication,
+    systemFolders,
+    customFolders,
+    labels
+  });
+});
+
+// W9. Criar Pasta Personalizada
+app.post("/api/webmail/folders", async (req, res) => {
+  const result = await createWebmailCustomFolder(db, saveDatabase, req.body || {});
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  res.json({ success: true, folder: result.folder, systemFolders, customFolders, labels });
+});
+
+// W10. Excluir Pasta Personalizada
+app.delete("/api/webmail/folders/:id", (req, res) => {
+  ensureWebmailCollections(db);
+  const id = req.params.id;
+  db.emailCustomFolders = (db.emailCustomFolders || []).filter(f => f.id !== id);
+  for (const k of Object.keys(db.emailStateMeta || {})) {
+    if (db.emailStateMeta[k]?.folder === id) {
+      db.emailStateMeta[k].folder = "inbox";
+    }
+  }
+  saveDatabase();
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  res.json({ success: true, systemFolders, customFolders, labels });
+});
+
+// W11. Criar Etiqueta Colorida
+app.post("/api/webmail/labels", async (req, res) => {
+  const result = await createWebmailLabel(db, saveDatabase, req.body || {});
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  res.json({ success: true, label: result.label, systemFolders, customFolders, labels });
+});
+
+// W12. Excluir Etiqueta Colorida
+app.delete("/api/webmail/labels/:id", (req, res) => {
+  ensureWebmailCollections(db);
+  const id = req.params.id;
+  db.emailLabels = (db.emailLabels || []).filter(l => l.id !== id);
+  saveDatabase();
+  const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
+  res.json({ success: true, systemFolders, customFolders, labels });
+});
+
+// W13. Gerar Template Preenchido para Reserva Selecionada no Compositor
+app.post("/api/webmail/composer-template", (req, res) => {
+  const { templateKey, reservationId } = req.body || {};
+  const result = buildComposerReservationTemplate(db, { templateKey, reservationId });
+  res.json({ success: true, ...result });
+});
+
+// W14. Download / Visualização de Anexo Oficial da Reserva (FNRH PDF ou Documento)
+app.get("/api/webmail/reservation-attachment/:resId/:index", async (req, res) => {
+  const resId = req.params.resId;
+  const idx = Number(req.params.index) || 0;
+  const r = (db.reservations || []).find(x => String(x.id) === String(resId) || x.code === resId);
+  if (!r) return res.status(404).send("Reserva não encontrada.");
+
+  const atts = await ensureReservationAttachmentsReady({ reservation: r, db });
+  const att = atts[idx];
+  if (!att) return res.status(404).send("Anexo não encontrado.");
+
+  if (att.content) {
+    res.setHeader("Content-Type", att.contentType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${att.filename || "documento.pdf"}"`);
+    return res.send(att.content);
+  }
+  if (att.path && String(att.path).startsWith("http")) {
+    return res.redirect(att.path);
+  }
+  if (att.path && fs.existsSync(att.path)) {
+    return res.download(att.path, att.filename);
+  }
+  res.status(404).send("Arquivo físico não localizado.");
+});
+
+// W15. Proxy de Download de Anexo da Zoho Mail API
+app.get("/api/webmail/attachments/:folderId/:messageId/:attachmentId", async (req, res) => {
+  const { folderId, messageId, attachmentId } = req.params;
+  const fileName = req.query.name || `anexo_${attachmentId}`;
+  const tokenRes = await getZohoAccessToken(db);
+  if (!tokenRes.ok) return res.status(400).send(tokenRes.error);
+
+  let accountId = tokenRes.config.accountId;
+  if (!accountId) {
+    const acc = await discoverZohoAccountId(db);
+    accountId = acc.accountId;
+  }
+
+  try {
+    const url = `${tokenRes.config.mailApiBase}/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`;
+    const zRes = await fetch(url, {
+      headers: { Authorization: `Zoho-oauthtoken ${tokenRes.accessToken}` }
+    });
+    if (!zRes.ok) return res.status(zRes.status).send("Falha ao baixar anexo do Zoho Mail.");
+    const buf = Buffer.from(await zRes.arrayBuffer());
+    res.setHeader("Content-Type", zRes.headers.get("content-type") || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(buf);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
 // ── Sincronização Bidirecional Atômica: Perfil (Minha Conta) & CRM & Check-in Digital ──
 export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) {
   if (!db) return null;
@@ -31338,6 +31657,15 @@ function formatCnpj(cnpj = "") {
 }
 
 function getFiscalData() {
+  try {
+    ensureNfseCertFilesOnDisk();
+    if (db.nfseConfig?.certificadoA1?.pfxBase64) {
+      process.env.CERT_PFX_BASE64 = db.nfseConfig.certificadoA1.pfxBase64;
+      if (db.nfseConfig.certificadoA1.passphrase) {
+        process.env.CERT_PFX_PASSWORD = db.nfseConfig.certificadoA1.passphrase;
+      }
+    }
+  } catch (_) {}
   if (db.nfseConfig) {
     db.nfseConfig.ambiente = "producao";
   }
@@ -31935,6 +32263,10 @@ async function executeNfseEmissionInternal(payload) {
   const endCodMun = (payload.tomadorCodigoMunicipio || "3301009").trim();
   const cleanEmail = (payload.tomadorEmail || "").trim().toLowerCase();
   const cleanTel = cleanPhone(payload.tomadorTelefone);
+  const resolvedDiscriminacao = payload.discriminacao || payload.descricaoServico || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`;
+  const resolvedCheckin = payload.checkinDate || payload.checkIn || null;
+  const resolvedCheckout = payload.checkoutDate || payload.checkOut || null;
+  const resolvedAliquota = Number(payload.aliquota || payload.aliquotaIss || 2.0);
 
   // Determinação do motor (giss_prefeitura ou padrao_nacional)
   const reqEngine = (payload.sistemaEmissor || db.nfseConfig?.padrao || "giss_prefeitura").toLowerCase();
@@ -31978,7 +32310,7 @@ async function executeNfseEmissionInternal(payload) {
           codigoMunicipio: endCodMun
         },
         valorServico: valor,
-        discriminacao: payload.discriminacao,
+        discriminacao: resolvedDiscriminacao,
         flatNumber: payload.flatNumber,
         reservationCode: payload.reservationCode,
         ambiente: db.nfseConfig?.ambiente || "homologacao"
@@ -31989,7 +32321,7 @@ async function executeNfseEmissionInternal(payload) {
           invoiceData: {
             ...dpsData,
             valorServico: valor,
-            discriminacao: payload.discriminacao
+            discriminacao: resolvedDiscriminacao
           }
         });
       } catch (procErr) {
@@ -32027,11 +32359,11 @@ async function executeNfseEmissionInternal(payload) {
         numeroRps: nextRpsNumber,
         numeroLote: nextDpsNumber,
         valorServico: valor,
-        aliquota: payload.aliquota || 2.0,
+        aliquota: resolvedAliquota,
         cnae: payload.cnae || "5510801",
         codigoServico: payload.codigoServico || "09.02",
         codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000",
-        discriminacao: payload.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`,
+        discriminacao: resolvedDiscriminacao,
         tomadorNome: String(tomadorNome).trim(),
         tomadorCpfCnpj: cleanDoc,
         tomadorEmail: cleanEmail,
@@ -32095,8 +32427,8 @@ async function executeNfseEmissionInternal(payload) {
       tomadorUf: endUf,
       tomadorCodigoMunicipio: endCodMun,
       flatNumber: payload.flatNumber ? String(payload.flatNumber) : "",
-      checkinDate: payload.checkinDate || null,
-      checkoutDate: payload.checkoutDate || null,
+      checkinDate: resolvedCheckin,
+      checkoutDate: resolvedCheckout,
       reservationId: payload.reservationId ? Number(payload.reservationId) : null,
       reservationCode: payload.reservationCode || null,
       isConsolidated: Boolean(payload.isConsolidated),
@@ -32104,11 +32436,11 @@ async function executeNfseEmissionInternal(payload) {
       reservationCodes: Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (payload.reservationCode ? [payload.reservationCode] : []),
       consolidatedStaysCount: payload.consolidatedStaysCount || (payload.reservationId ? 1 : (Array.isArray(payload.reservationIds) ? payload.reservationIds.length : 1)),
       valorServico: valor,
-      aliquota: Number(payload.aliquota || 2.0),
+      aliquota: resolvedAliquota,
       cnae: payload.cnae || "5510801",
       codigoServico: payload.codigoServico || "09.02",
       codigoTributacaoMunicipio: payload.codigoTributacaoMunicipio || "799020000",
-      discriminacao: payload.discriminacao || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`,
+      discriminacao: resolvedDiscriminacao,
       status: "autorizada",
       linkPrefeitura: linkPrefeitura,
       qrCodeUrl: qrCodeUrl,
@@ -32117,6 +32449,17 @@ async function executeNfseEmissionInternal(payload) {
     };
 
     db.invoices.unshift(newInvoice);
+
+    if (Array.isArray(db.reservations) && (payload.reservationId || payload.reservationCode)) {
+      const matchedRes = db.reservations.find(r =>
+        (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
+        (payload.reservationCode && String(r.code) === String(payload.reservationCode))
+      );
+      if (matchedRes) {
+        matchedRes.invoiceId = newInvoice.id;
+        matchedRes.numeroNfse = newInvoice.numeroNfse;
+      }
+    }
 
     // Se havia item na fila de retentativa fiscal para esta reserva/documento, remove
     if (Array.isArray(db.nfseRetryQueue)) {
@@ -32188,7 +32531,11 @@ app.post("/api/nfse/emit", async (req, res) => {
 // Emissão em Lote Sequencial Segura (Batch Emission)
 app.post("/api/nfse/emit-batch", async (req, res) => {
   getFiscalData();
-  const { items = [], sistemaEmissor } = req.body || {};
+  const rawItems = Array.isArray(req.body?.items) && req.body.items.length > 0
+    ? req.body.items
+    : (Array.isArray(req.body?.reservationIds) ? req.body.reservationIds : []);
+  const items = rawItems;
+  const { sistemaEmissor } = req.body || {};
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "O campo 'items' deve ser um array não vazio de reservas ou notas." });
@@ -32203,11 +32550,15 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
       let payload = null;
       let reservationObj = null;
 
-      if (typeof item === "number" || (typeof item === "string" && !isNaN(Number(item)))) {
+      if (typeof item === "number" || typeof item === "string") {
         const resId = Number(item);
-        reservationObj = (db.reservations || []).find(r => Number(r.id) === resId);
+        reservationObj = (db.reservations || []).find(r =>
+          (!isNaN(resId) && Number(r.id) === resId) ||
+          String(r.code) === String(item) ||
+          String(r.id) === String(item)
+        );
         if (!reservationObj) {
-          results.push({ success: false, reservationId: resId, error: `Reserva #${resId} não encontrada.` });
+          results.push({ success: false, reservationId: item, error: `Reserva #${item} não encontrada.` });
           failedCount++;
           continue;
         }
@@ -32385,7 +32736,11 @@ app.post("/api/nfse/emit-consolidated", async (req, res) => {
 
   const selectedReservations = [];
   for (const id of reservationIds) {
-    const r = (db.reservations || []).find(res => Number(res.id) === Number(id));
+    const r = (db.reservations || []).find(res =>
+      Number(res.id) === Number(id) ||
+      String(res.code) === String(id) ||
+      String(res.id) === String(id)
+    );
     if (!r) {
       return res.status(404).json({ error: `Reserva #${id} não encontrada no banco.` });
     }
@@ -32429,7 +32784,7 @@ app.post("/api/nfse/emit-consolidated", async (req, res) => {
   }).join("\n");
 
   const formattedCnpj = formatCnpj(cleanCnpj);
-  const discriminacaoConsolidada = discriminacaoCustom || `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLATS MOBILIADOS CORPFLATS.
+  const discriminacaoConsolidada = discriminacaoCustom || req.body?.discriminacao || req.body?.descricaoServico || `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLATS MOBILIADOS CORPFLATS.
 TOMADOR: ${toTitleCase(company.corporateName)} - CNPJ: ${formattedCnpj}
 FATURAMENTO CONSOLIDADO DE ESTADIAS CORPORATIVAS:
 ${staysBreakdown}
@@ -33136,12 +33491,18 @@ app.post("/api/nfse/certificate/upload", (req, res) => {
 
     const validade = new Date(Date.now() + 365 * 86400000).toISOString();
 
+    const cleanB64 = buffer.toString("base64");
+    process.env.CERT_PFX_BASE64 = cleanB64;
+    if (passphrase) process.env.CERT_PFX_PASSWORD = passphrase;
+
     db.nfseConfig.certificadoA1 = {
       configurado: true,
       nomeArquivo: fileName,
       validade: validade,
       emissor: "Autoridade Certificadora ICP-Brasil",
       titular: `${db.nfseConfig.razaoSocial}:${onlyDigits(db.nfseConfig.cnpjPrestador)}`,
+      pfxBase64: cleanB64,
+      passphrase: passphrase || process.env.CERT_PFX_PASSWORD || "",
       atualizadoEm: new Date().toISOString()
     };
     saveDatabase();

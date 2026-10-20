@@ -1105,14 +1105,14 @@ export default function FiscalInvoicesPage() {
   const pendingReservationsList = useMemo(() => {
     return reservations.filter(r => {
       // Ignora canceladas
-      if (r.status === "cancelada" || r.status === "cancelled") return false
+      if (r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") return false
 
       // Verifica se já existe NFS-e autorizada para esta reserva
       const hasInvoice = invoices.some(inv => {
         if (inv.status !== "autorizada") return false
         const matchResId = inv.reservationId && String(inv.reservationId) === String(r.id)
         const matchResCode = inv.reservationCode && (String(inv.reservationCode) === String(r.code) || String(inv.reservationCode) === String(r.id))
-        const matchConsolidated = inv.reservationIds && Array.isArray(inv.reservationIds) && inv.reservationIds.includes(String(r.id))
+        const matchConsolidated = inv.reservationIds && Array.isArray(inv.reservationIds) && inv.reservationIds.some((id: any) => String(id) === String(r.id) || String(id) === String(r.code))
         return matchResId || matchResCode || matchConsolidated
       })
 
@@ -1120,16 +1120,18 @@ export default function FiscalInvoicesPage() {
     }).map(r => {
       const guest = guests.find(g => 
         (r.guestId && String(g.id) === String(r.guestId)) ||
+        (r.guestPhone && (g.phone || "").replace(/\D/g, "") && (g.phone || "").replace(/\D/g, "") === String(r.guestPhone).replace(/\D/g, "")) ||
+        (r.guestDocument && (g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === String(r.guestDocument).replace(/\D/g, "")) ||
         (r.guestName && (g.fullName || g.name || "").toLowerCase() === String(r.guestName).toLowerCase())
-      ) || (r.guestName ? { fullName: r.guestName, email: r.guestEmail, phone: r.guestPhone } : null)
+      ) || (r.guestName ? { fullName: r.guestName, email: r.guestEmail, phone: r.guestPhone, documentNumber: r.guestDocument || r.document || r.cpf } : null)
 
       const company = guest?.companyId 
         ? companies.find(c => String(c.id) === String(guest.companyId))
         : (r.companyId ? companies.find(c => String(c.id) === String(r.companyId)) : null)
 
-      const doc = (company?.cnpj || guest?.documentNumber || guest?.document || guest?.cpf || "").replace(/\D/g, "")
+      const doc = (company?.cnpj || r.guestDocument || r.document || r.cpf || guest?.documentNumber || guest?.document || guest?.cpf || "").replace(/\D/g, "")
       const hasDoc = doc.length >= 11
-      const isPj = Boolean(company)
+      const isPj = Boolean(company) || doc.length === 14
 
       let diarias = 1
       if (r.checkinDate && r.checkoutDate) {
@@ -1140,15 +1142,18 @@ export default function FiscalInvoicesPage() {
         }
       }
 
+      const resolvedTotalAmount = Number(r.totalAmount || r.totalPrice || r.price || (Number(r.dailyRate || 0) * diarias) || 250)
+
       return {
         ...r,
+        totalAmount: resolvedTotalAmount,
         diarias,
         guest,
         company,
         doc,
         hasDoc,
         isPj,
-        tomadorDefaultName: isPj ? (company.corporateName || company.name) : (guest?.fullName || guest?.name || r.guestName),
+        tomadorDefaultName: isPj ? (company?.corporateName || company?.tradeName || company?.name || r.guestName) : (guest?.fullName || guest?.name || r.guestName),
         tomadorDefaultDoc: doc
       }
     })
@@ -1201,35 +1206,52 @@ export default function FiscalInvoicesPage() {
 
   // Emissão 1-Clique de Reserva Pendente
   const handleEmitPendingSingle = async (res: any) => {
-    const isPj = res.isPj && res.company
+    const isPj = Boolean(res.isPj && res.company)
+    const valorNum = Number(res.totalAmount || res.price || res.totalPrice || 250)
     const stayInfo = {
-      flatNumber: String(res.flatNumber),
+      flatNumber: String(res.flatNumber || ""),
       checkIn: res.checkinDate,
       checkOut: res.checkoutDate,
-      quantidadeDiarias: res.diarias,
-      valorServico: res.totalAmount || res.price || "0"
+      quantidadeDiarias: res.diarias || 1,
+      valorServico: String(valorNum)
     }
 
     if (isPj) {
       applyTomadorPJ(res.company, res.guest, stayInfo)
     } else {
-      applyTomadorPF(res.guest || { fullName: res.guestName }, stayInfo)
+      applyTomadorPF(res.guest || { fullName: res.guestName, documentNumber: res.doc }, stayInfo)
     }
+
+    const desc = isPj
+      ? buildCorporateDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias)
+      : buildStandardDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias)
 
     const payload = {
       sistemaEmissor,
       reservationId: res.id,
       reservationCode: res.code,
-      tomadorNome: isPj ? (res.company.corporateName || res.company.name) : (res.guest?.fullName || res.guestName),
+      companyId: res.company?.id || null,
+      guestId: res.guest?.id || res.guestId || null,
+      tomadorNome: isPj ? (res.company.corporateName || res.company.tradeName || res.company.name) : (res.guest?.fullName || res.guestName),
       tomadorCpfCnpj: res.doc,
-      flatNumber: String(res.flatNumber),
+      tomadorEmail: isPj ? (res.company.financialEmail || res.company.email || res.guest?.email || "") : (res.guestEmail || res.guest?.email || ""),
+      tomadorTelefone: isPj ? (res.company.phone || res.guest?.phone || "") : (res.guestPhone || res.guest?.phone || ""),
+      tomadorEndereco: isPj ? (res.company.address || res.company.logradouro || res.guest?.address || "Av. Pelinca") : (res.guest?.address || res.guest?.logradouro || "Av. Pelinca"),
+      tomadorNumero: isPj ? (res.company.number || res.guest?.number || "100") : (res.guest?.number || "100"),
+      tomadorComplemento: isPj ? (res.company.complement || res.guest?.complement || "") : (res.guest?.complement || ""),
+      tomadorBairro: isPj ? (res.company.neighborhood || res.guest?.neighborhood || "Pelinca") : (res.guest?.neighborhood || "Pelinca"),
+      tomadorCep: isPj ? (res.company.cep || res.guest?.cep || "28035000") : (res.guest?.cep || "28035000"),
+      tomadorCidade: isPj ? (res.company.city || res.guest?.city || "Campos dos Goytacazes") : (res.guest?.city || "Campos dos Goytacazes"),
+      tomadorUf: isPj ? (res.company.state || res.guest?.state || "RJ") : (res.guest?.state || "RJ"),
+      flatNumber: String(res.flatNumber || ""),
+      checkinDate: res.checkinDate,
+      checkoutDate: res.checkoutDate,
       checkIn: res.checkinDate,
       checkOut: res.checkoutDate,
-      quantidadeDiarias: res.diarias,
-      valorServico: res.totalAmount || res.price || "0",
-      descricaoServico: isPj 
-        ? buildCorporateDescription(res.guest?.fullName || res.guestName, String(res.flatNumber), res.checkinDate, res.checkoutDate, res.diarias)
-        : buildStandardDescription(res.guest?.fullName || res.guestName, String(res.flatNumber), res.checkinDate, res.checkoutDate, res.diarias)
+      quantidadeDiarias: res.diarias || 1,
+      valorServico: valorNum,
+      discriminacao: desc,
+      descricaoServico: desc
     }
 
     await handleEmitInvoice(payload)
@@ -1262,6 +1284,7 @@ export default function FiscalInvoicesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sistemaEmissor,
+          items: selectedPendingIds,
           reservationIds: selectedPendingIds
         }),
         credentials: "include"
@@ -1271,7 +1294,9 @@ export default function FiscalInvoicesPage() {
         const data = await res.json()
         setBatchResults(data)
         fetchInvoices()
+        fetchReservations()
         setSelectedPendingIds([])
+        setBatchEmitting(false)
         return
       }
     } catch {}
