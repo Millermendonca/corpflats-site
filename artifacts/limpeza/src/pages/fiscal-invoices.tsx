@@ -2167,8 +2167,25 @@ export default function FiscalInvoicesPage() {
                     {...bindZapiClickOrHoldWaWeb({
                       toast,
                       onClickZapi: async () => {
-                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${lastEmittedInvoice.id || lastEmittedInvoice.numeroNfse}`
+                        const invId = lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id
                         const phone = (lastEmittedInvoice.tomadorTelefone || "").replace(/\D/g, "")
+                        try {
+                          const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ phone, sendZapi: true }),
+                            credentials: "include"
+                          })
+                          const d = await r.json()
+                          if (r.ok && d.pdfSent) {
+                            toast({
+                              title: "📄 PDF da NFS-e Enviado no WhatsApp!",
+                              description: `Arquivo ${d.fileName} entregue via Z-API para ${lastEmittedInvoice.tomadorNome}.`
+                            })
+                            return
+                          }
+                        } catch {}
+                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
                         await sendDirectZapiWithFallback({
                           phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
                           message,
@@ -2179,7 +2196,8 @@ export default function FiscalInvoicesPage() {
                         })
                       },
                       getWaUrl: () => {
-                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${lastEmittedInvoice.id || lastEmittedInvoice.numeroNfse}`
+                        const invId = lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id
+                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
                         return buildDirectWaWebUrl(lastEmittedInvoice.tomadorTelefone, message)
                       }
                     })}
@@ -3356,8 +3374,25 @@ export default function FiscalInvoicesPage() {
                                     {...bindZapiClickOrHoldWaWeb({
                                       toast,
                                       onClickZapi: async () => {
-                                        const message = `Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`
+                                        const invId = inv.numeroNfse || inv.id
                                         const phone = (inv.tomadorTelefone || "").replace(/\D/g, "")
+                                        try {
+                                          const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ phone, sendZapi: true }),
+                                            credentials: "include"
+                                          })
+                                          const d = await r.json()
+                                          if (r.ok && d.pdfSent) {
+                                            toast({
+                                              title: "📄 PDF da NFS-e Enviado no WhatsApp!",
+                                              description: `Arquivo ${d.fileName} entregue via Z-API para ${inv.tomadorNome}.`
+                                            })
+                                            return
+                                          }
+                                        } catch {}
+                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
                                         await sendDirectZapiWithFallback({
                                           phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
                                           message,
@@ -3368,7 +3403,8 @@ export default function FiscalInvoicesPage() {
                                         })
                                       },
                                       getWaUrl: () => {
-                                        const message = `Olá, ${inv.tomadorNome}! Segue sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`
+                                        const invId = inv.numeroNfse || inv.id
+                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
                                         return buildDirectWaWebUrl(inv.tomadorTelefone, message)
                                       }
                                     })}

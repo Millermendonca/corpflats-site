@@ -72,6 +72,7 @@ import {
   triggerRoomReadyWhatsApp,
   cleanWhatsAppPhone,
   sendZapiMessage,
+  sendZapiDocument,
   sendZapiOtpButton,
   evaluateZapiChannelPolicy,
   scheduleUpcomingReservationTriggers,
@@ -34749,23 +34750,70 @@ app.post("/api/nfse/adn-sync", async (req, res) => {
   }
 });
 
-// Generate WhatsApp sharing link for NFS-e Nacional
-app.post("/api/nfse/whatsapp/:id", (req, res) => {
+// Disparo Integrado do PDF Oficial da NFS-e no WhatsApp (Z-API send-document/pdf + Link Fallback)
+app.post("/api/nfse/whatsapp/:id", async (req, res) => {
   getFiscalData();
-  const id = Number(req.params.id);
-  const inv = db.invoices.find(i => i.id === id);
+  const inv = findNfseInvoiceByAnyId(req.params.id);
   if (!inv) return res.status(404).json({ error: "Nota não encontrada" });
 
-  const cleanPhoneNum = onlyDigits(inv.tomadorTelefone);
+  const rawPhone = req.body?.phone || inv.tomadorTelefone || "";
+  const cleanPhoneNum = onlyDigits(rawPhone);
   const firstName = (inv.tomadorNome || "Hóspede").split(" ")[0];
-  const danfseUrl = `https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`;
+  const numNota = String(inv.numeroNfse || inv.numeroNota || inv.id);
+  const danfseUrl = `https://corpflats.onrender.com/api/nfse/danfse/${numNota}`;
+  const pdfUrl = `https://corpflats.onrender.com/api/nfse/pdf/${numNota}`;
+  const fileName = `NFSe_${numNota}_CorpFlats.pdf`;
 
-  const msg = encodeURIComponent(
-    `Olá, ${firstName}! Tudo bem? 🧾\n\nSegue o Documento Auxiliar da sua Nota Fiscal de Serviços (NFS-e Padrão Nacional Nº ${inv.numeroNfse}) referente ao Flat ${inv.flatNumber || ""}:\n\n🔗 ${danfseUrl}\n\nChave de Acesso Nacional:\n${inv.chaveAcesso || ""}\n\nAgradecemos a sua preferência e esperamos você de volta em breve! ✨`
-  );
-  const whatsappUrl = `https://wa.me/55${cleanPhoneNum}?text=${msg}`;
+  const captionText =
+    `Olá, *${firstName}*! Tudo bem? 🧾\n\n` +
+    `Segue em anexo o *PDF oficial da sua Nota Fiscal de Serviços Eletrônica (NFS-e Padrão Nacional Nº ${numNota})* — *CorpFlats (Rental Miller's LTDA)*${inv.flatNumber ? ` referente ao Flat ${inv.flatNumber}` : ""}.\n\n` +
+    `🔑 *Chave de Acesso Nacional (Gov.br):*\n${inv.chaveAcesso || ""}\n\n` +
+    `📄 *Link direto do PDF:* ${pdfUrl}\n\n` +
+    `Agradecemos a sua preferência e esperamos você de volta em breve! ✨`;
 
-  res.json({ success: true, whatsappUrl });
+  const whatsappUrl = `https://wa.me/${cleanPhoneNum.startsWith("55") ? cleanPhoneNum : `55${cleanPhoneNum}`}?text=${encodeURIComponent(captionText)}`;
+
+  let pdfSent = false;
+  let zapiResult = null;
+  let pdfBytes = 0;
+
+  try {
+    const pdfBuf = await generateNfsePdfBuffer(inv);
+    pdfBytes = pdfBuf.length;
+    try {
+      const vaultDir = path.join(process.cwd(), "storage/invoices_vault");
+      fs.mkdirSync(vaultDir, { recursive: true });
+      fs.writeFileSync(path.join(vaultDir, fileName), pdfBuf);
+    } catch (_) {}
+
+    if (cleanPhoneNum.length >= 10 && req.body?.sendZapi !== false) {
+      const pdfBase64Uri = `data:application/pdf;base64,${pdfBuf.toString("base64")}`;
+      zapiResult = await sendZapiDocument(db.zapiConfig || {}, {
+        phone: cleanPhoneNum,
+        document: pdfBase64Uri,
+        fileName,
+        caption: captionText,
+        channelId: "reservations",
+        recipientRole: "guest",
+        triggerEvent: "nfse_pdf_dispatch",
+        db
+      });
+      pdfSent = Boolean(zapiResult?.success);
+    }
+  } catch (err) {
+    console.warn("[NFS-e WhatsApp PDF Dispatch Error]:", err.message);
+  }
+
+  res.json({
+    success: true,
+    pdfSent,
+    fileName,
+    pdfBytes,
+    pdfUrl,
+    danfseUrl,
+    whatsappUrl,
+    zapiResult
+  });
 });
 
 // Lookup CNPJ publicly via BrasilAPI + MinhaReceita Fallback + Local CRM DB
