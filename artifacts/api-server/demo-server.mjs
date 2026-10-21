@@ -87,7 +87,10 @@ import {
   sendMirrorEmail,
   buildMirrorEmailSubject,
   renderTemplateButtons,
-  DEFAULT_WHATSAPP_TEMPLATES
+  DEFAULT_WHATSAPP_TEMPLATES,
+  rebuildNpsImprovementsSummary,
+  sendNpsManagerAlertWhatsApp,
+  syncNpsCommentToReviews
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -799,6 +802,9 @@ export const ALL_CANONICAL_MODULES = [
   "/garagem",
   "/avaliacoes-ia",
   "/editor-site",
+  "/frigobar",
+  "/anserve",
+  "/frigobar-reposicao",
   // 6. 🛠️ Engenharia & Dev
   "/configuracoes",
   "/zapi-conexao",
@@ -843,6 +849,10 @@ export function getDefaultModulesForRole(role) {
       return [...ALL_CANONICAL_MODULES];
     case "admin":
       return [...OPERATIONAL_MODULES];
+    case "anserve_gestor":
+      return ["/anserve", "/frigobar-reposicao"];
+    case "anserve_repositora":
+      return ["/frigobar-reposicao"];
     case "recepcao":
     case "reception":
       return [...RECEPCAO_DEFAULT_MODULES];
@@ -853,6 +863,10 @@ export function getDefaultModulesForRole(role) {
 }
 
 export const ROUTE_ALIASES = {
+  // Frigobar / Anserve
+  "/frigobar-gestao": "/anserve",
+  "/anserve/reposicao": "/frigobar-reposicao",
+
   // Equipe / Usuários
   "/usuarios": "/equipe",
   "/usuarios-equipe": "/equipe",
@@ -1133,7 +1147,41 @@ export function ensureSystemUsers(database) {
     database.fnrhInternalAuditLogs = [];
   }
 
-  // 4. Garantia de allowedModules para todos os usuários da base
+  // 4. Garantia dos usuários operacionais da Anserve (Repositora e Supervisão)
+  const repositoraUser = database.users.find(u => u.username && u.username.toLowerCase() === "repositora");
+  if (!repositoraUser) {
+    const maxId = database.users.length > 0 ? Math.max(...database.users.map(u => Number(u.id) || 0)) : 0;
+    database.users.push({
+      id: Math.max(10, maxId + 1),
+      username: "repositora",
+      name: "Repositora Anserve",
+      role: "anserve_repositora",
+      allowedModules: getDefaultModulesForRole("anserve_repositora"),
+      passwordHash: hashPassword("1234"),
+      active: true,
+      whatsapp: "5522997124021",
+      phone: "5522997124021"
+    });
+    changed = true;
+  }
+  const anserveGestorUser = database.users.find(u => u.username && u.username.toLowerCase() === "anserve_gestor");
+  if (!anserveGestorUser) {
+    const maxId = database.users.length > 0 ? Math.max(...database.users.map(u => Number(u.id) || 0)) : 0;
+    database.users.push({
+      id: Math.max(11, maxId + 1),
+      username: "anserve_gestor",
+      name: "Supervisão Anserve",
+      role: "anserve_gestor",
+      allowedModules: getDefaultModulesForRole("anserve_gestor"),
+      passwordHash: hashPassword("anserve123"),
+      active: true,
+      whatsapp: "5522997124021",
+      phone: "5522997124021"
+    });
+    changed = true;
+  }
+
+  // 5. Garantia de allowedModules para todos os usuários da base
   for (const u of database.users) {
     if (!Array.isArray(u.allowedModules)) {
       u.allowedModules = getDefaultModulesForRole(u.role);
@@ -1142,6 +1190,169 @@ export function ensureSystemUsers(database) {
   }
 
   return changed;
+}
+
+export function getDefaultMinibarProducts() {
+  return [
+    {
+      id: "prod_agua_sem_gas",
+      name: "Água Mineral sem Gás 500ml",
+      category: "bebidas",
+      price: 6.00,
+      cost: 3.00,
+      imageUrl: "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=400&q=80",
+      description: "Água mineral natural sem gás 500ml",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_agua_com_gas",
+      name: "Água Mineral com Gás 500ml",
+      category: "bebidas",
+      price: 6.00,
+      cost: 3.00,
+      imageUrl: "https://images.unsplash.com/photo-1560023907-5f339617ea30?w=400&q=80",
+      description: "Água mineral natural com gás 500ml",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 2,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_coca_cola",
+      name: "Coca-Cola Lata 350ml",
+      category: "bebidas",
+      price: 8.00,
+      cost: 4.50,
+      imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&q=80",
+      description: "Refrigerante Coca-Cola original lata 350ml",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 3,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_coca_zero",
+      name: "Coca-Cola Sem Açúcar 350ml",
+      category: "bebidas",
+      price: 8.00,
+      cost: 4.50,
+      imageUrl: "https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400&q=80",
+      description: "Refrigerante Coca-Cola sem açúcar lata 350ml",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 4,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_heineken",
+      name: "Cerveja Heineken Long Neck 330ml",
+      category: "cervejas",
+      price: 14.00,
+      cost: 8.00,
+      imageUrl: "https://images.unsplash.com/photo-1618886614638-80e3c103d31a?w=400&q=80",
+      description: "Cerveja Heineken puro malte garrafa 330ml",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 5,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_stella",
+      name: "Cerveja Stella Artois Long Neck 330ml",
+      category: "cervejas",
+      price: 12.00,
+      cost: 7.00,
+      imageUrl: "https://images.unsplash.com/photo-1608270199049-5f25ebff2783?w=400&q=80",
+      description: "Cerveja Stella Artois garrafa 330ml",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 6,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_cortesia_kit",
+      name: "Kit Cortesia Boas-Vindas (2 Nespresso + Snacks)",
+      category: "cortesias",
+      price: 0.00,
+      cost: 6.50,
+      imageUrl: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80",
+      description: "Cortesia de boas-vindas CorpFlats: 2 cápsulas Nespresso + amendoim e balas (gratuito 1x por estadia)",
+      active: true,
+      isCourtesy: true,
+      courtesyLimitPerStay: 1,
+      extraPaidProductId: "prod_nespresso_extra",
+      sortOrder: 7,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_nespresso_extra",
+      name: "Cápsula Nespresso Avulsa",
+      category: "bebidas",
+      price: 5.00,
+      cost: 3.00,
+      imageUrl: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80",
+      description: "Cápsula Nespresso avulsa adicional para estadias longas",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 8,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    {
+      id: "prod_amendoim_extra",
+      name: "Amendoim Japonês Crocante 60g",
+      category: "snacks",
+      price: 6.00,
+      cost: 3.00,
+      imageUrl: "https://images.unsplash.com/photo-1563227812-0ea4c22e6cc8?w=400&q=80",
+      description: "Snack de amendoim crocante pacote 60g",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 9,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+  ];
+}
+
+export function getDefaultMinibarStock() {
+  return {
+    globalTemplate: [
+      { productId: "prod_agua_sem_gas", defaultQuantity: 4 },
+      { productId: "prod_agua_com_gas", defaultQuantity: 2 },
+      { productId: "prod_coca_cola", defaultQuantity: 2 },
+      { productId: "prod_coca_zero", defaultQuantity: 2 },
+      { productId: "prod_heineken", defaultQuantity: 2 },
+      { productId: "prod_stella", defaultQuantity: 2 },
+      { productId: "prod_cortesia_kit", defaultQuantity: 1, isCourtesy: true },
+      { productId: "prod_nespresso_extra", defaultQuantity: 2 },
+      { productId: "prod_amendoim_extra", defaultQuantity: 2 }
+    ],
+    flatOverrides: {}
+  };
+}
+
+export function getDefaultMinibarSettings() {
+  return {
+    anservePin: "1234",
+    anserveMobileTokenSecret: "corpflats-anserve-secret",
+    creditCardFeePercent: 3.99,
+    pixFeeFixed: 0.0,
+    corpFlatsCommissionPercent: 0,
+    courtesyReimbursementEnabled: true,
+    autoNotifySofiaOnDiscrepancy: true,
+    notificationManagerWhatsApp: "5522997124021"
+  };
 }
 
 let db = {
@@ -1159,6 +1370,11 @@ let db = {
   observations: [],
   guests: [],
   guestAccounts: [],
+  minibarProducts: getDefaultMinibarProducts(),
+  minibarDefaultStock: getDefaultMinibarStock(),
+  minibarOrders: [],
+  minibarInspections: [],
+  minibarSettings: getDefaultMinibarSettings(),
   reviews: [],
   reviewInsights: null,
   garageAuthorizations: [],
@@ -4251,6 +4467,68 @@ function reconcileUniversalIntegrity(incomingState = null) {
           changed = true;
         }
       });
+    }
+
+    // 1.X Minibar Orders (db.minibarOrders)
+    if (Array.isArray(incomingState.minibarOrders) && incomingState.minibarOrders.length > 0) {
+      if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+      incomingState.minibarOrders.forEach(incOrder => {
+        if (!incOrder || !incOrder.id) return;
+        const existingIdx = db.minibarOrders.findIndex(o => String(o.id) === String(incOrder.id));
+        if (existingIdx === -1) {
+          db.minibarOrders.push({ ...incOrder });
+          changed = true;
+        } else {
+          const cur = db.minibarOrders[existingIdx];
+          const incDate = incOrder.updatedAt || incOrder.paidAt || incOrder.createdAt || "";
+          const curDate = cur.updatedAt || cur.paidAt || cur.createdAt || "";
+          if (incDate > curDate || (incOrder.paymentStatus === "pago" && cur.paymentStatus !== "pago") || (incOrder.invoice?.status === "anexada" && cur.invoice?.status !== "anexada")) {
+            db.minibarOrders[existingIdx] = { ...cur, ...incOrder };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    // 1.Y Minibar Inspections (db.minibarInspections)
+    if (Array.isArray(incomingState.minibarInspections) && incomingState.minibarInspections.length > 0) {
+      if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+      incomingState.minibarInspections.forEach(incInsp => {
+        if (!incInsp || !incInsp.id) return;
+        const existingIdx = db.minibarInspections.findIndex(i => String(i.id) === String(incInsp.id));
+        if (existingIdx === -1) {
+          db.minibarInspections.push({ ...incInsp });
+          changed = true;
+        } else {
+          const cur = db.minibarInspections[existingIdx];
+          const incDate = incInsp.updatedAt || incInsp.inspectedAt || incInsp.createdAt || "";
+          const curDate = cur.updatedAt || cur.inspectedAt || cur.createdAt || "";
+          if (incDate > curDate) {
+            db.minibarInspections[existingIdx] = { ...cur, ...incInsp };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    // 1.Z Minibar Products, Stock and Settings
+    if (Array.isArray(incomingState.minibarProducts) && incomingState.minibarProducts.length > 0) {
+      if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0) {
+        db.minibarProducts = incomingState.minibarProducts;
+        changed = true;
+      }
+    }
+    if (incomingState.minibarDefaultStock && typeof incomingState.minibarDefaultStock === "object") {
+      if (!db.minibarDefaultStock) {
+        db.minibarDefaultStock = incomingState.minibarDefaultStock;
+        changed = true;
+      }
+    }
+    if (incomingState.minibarSettings && typeof incomingState.minibarSettings === "object") {
+      if (!db.minibarSettings) {
+        db.minibarSettings = incomingState.minibarSettings;
+        changed = true;
+      }
     }
   }
 
@@ -39047,6 +39325,7 @@ app.post("/api/ai/clear-test-data", (req, res) => {
     db.reviewInsights = null;
     db.guestSentiment = [];
     db.npsResponses = [];
+    db.npsImprovements = null;
     if (db.observations) {
       db.observations = db.observations.filter(o =>
         !o.description?.includes("[IA Auto-Ticket]") &&
@@ -39247,7 +39526,7 @@ app.post("/api/ai/analyze-reviews", async (req, res) => {
 });
 
 // 3.3 Importar Nova Avaliação
-app.post("/api/ai/import-review", (req, res) => {
+app.post("/api/ai/import-review", async (req, res) => {
   try {
     const { author, rating, channel, comment, flatMentioned } = req.body;
     if (!author || !comment) {
@@ -39269,6 +39548,9 @@ app.post("/api/ai/import-review", (req, res) => {
     };
 
     db.reviews.unshift(newRev);
+    if (Number(newRev.rating) <= 4) {
+      await rebuildNpsImprovementsSummary(db);
+    }
     saveDatabase();
 
     res.json({ success: true, review: newRev });
@@ -39502,6 +39784,7 @@ app.get("/api/ai/sentiment/overview", (req, res) => {
     whatsapp: { analyzed: wppAnalyzed.length, avgScore: avgWppScore, positive: wppPositive, neutral: wppNeutral, negative: wppNegative, positivePercent: wppAnalyzed.length > 0 ? Math.round((wppPositive / wppAnalyzed.length) * 100) : null },
     nps: { sent: npsTotal, responded: npsResponded, promoters: npsPromoters, neutrals: npsNeutrals, detractors: npsDetractors, googleLinkSent, filterRate },
     reviews: { total: reviews.length, avgScore: Number(avgReviewScore) },
+    improvements: db.npsImprovements || { executiveSummary: "", pendingCount: 0, resolvedCount: 0, items: [] },
     topNegativeKeywords,
     lastUpdated: new Date().toISOString()
   });
@@ -39768,11 +40051,115 @@ app.post("/api/ai/nps-response", async (req, res) => {
     };
 
     const idx = (db.npsResponses || []).findIndex(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
-    if (idx >= 0) { db.npsResponses[idx] = { ...db.npsResponses[idx], ...npsEntry, id: db.npsResponses[idx].id }; }
-    else { db.npsResponses.unshift(npsEntry); }
+    let targetNpsEntry = npsEntry;
+    if (idx >= 0) {
+      db.npsResponses[idx] = { ...db.npsResponses[idx], ...npsEntry, id: db.npsResponses[idx].id };
+      targetNpsEntry = db.npsResponses[idx];
+    } else {
+      db.npsResponses.unshift(npsEntry);
+    }
+
+    let improvements = null;
+    if (numScore <= 4) {
+      if (comment && String(comment).trim()) {
+        syncNpsCommentToReviews(db, targetNpsEntry);
+      }
+      improvements = await rebuildNpsImprovementsSummary(db);
+      await sendNpsManagerAlertWhatsApp(db, targetNpsEntry, {
+        reason: "manual_or_portal_nps_response",
+        saveDatabase
+      });
+    }
 
     saveDatabase();
-    res.json({ success: true, npsEntry, googleLinkSent, autoAction });
+    res.json({ success: true, npsEntry: targetNpsEntry, googleLinkSent, autoAction, improvements });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.4B — Obter e gerenciar o "Resumo de Melhorias a Fazer (Notas 1 a 4)"
+app.get("/api/ai/improvements-summary", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const improvements = await rebuildNpsImprovementsSummary(db);
+    const npsTemplatesIds = [
+      "tpl_post_checkout_review",
+      "tpl_nps_score_4",
+      "tpl_nps_score_3",
+      "tpl_nps_score_2",
+      "tpl_nps_score_1",
+      "tpl_nps_feedback_thanks"
+    ];
+    const npsTemplates = npsTemplatesIds.map(id => {
+      const tpl = (db.whatsappTemplates || []).find(t => t.id === id) ||
+                  DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === id);
+      return tpl ? {
+        id: tpl.id,
+        triggerEvent: tpl.triggerEvent,
+        title: tpl.title,
+        enabled: tpl.enabled !== false,
+        message: tpl.message,
+        editUrl: `/whatsapp?tab=rules&tpl=${tpl.id}`
+      } : null;
+    }).filter(Boolean);
+
+    res.json({
+      success: true,
+      improvements,
+      npsTemplates,
+      managerAlertPhone: db?.zapiConfig?.npsManagerAlertPhone || "22998505276"
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/ai/improvements-summary/refresh", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+    const improvements = await rebuildNpsImprovementsSummary(db, {
+      aiGenerateFn: apiKey ? async (pendingItems) => {
+        if (!pendingItems || pendingItems.length === 0) return "";
+        const sample = pendingItems.map(it =>
+          `- [${it.category}] ${it.title} (Flats: ${it.flats.join(", ") || "Geral"} | ${it.mentionsCount}x | menor nota ${it.minScore}⭐): ${it.quotes.slice(0, 2).map(q => `"${q.comment}"`).join("; ")}`
+        ).join("\n");
+        const prompt = `Você é o consultor de gestão do hotel CorpFlats. Com base ESTRITAMENTE nos pontos de melhoria reais abaixo (extraídos das respostas de hóspedes que deram nota de 1 a 4), escreva um resumo executivo direto (em tópicos curtos, máximo 5 linhas no total) indicando o que deve ser melhorado com prioridade:\n${sample}\nNUNCA invente informações fora da lista.`;
+        const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+        if (aiRes.ok) {
+          return aiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        }
+        return "";
+      } : null
+    });
+    saveDatabase();
+    res.json({ success: true, improvements });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/ai/improvements-summary/items/:id", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    if (!db.npsImprovements) await rebuildNpsImprovementsSummary(db);
+    const items = db.npsImprovements?.items || [];
+    const target = items.find(i => i.id === id || i.key === id);
+    if (!target) return res.status(404).json({ error: "Item de melhoria não encontrado." });
+
+    const nextStatus = status === "resolved" || status === "pending"
+      ? status
+      : (target.status === "resolved" ? "pending" : "resolved");
+    target.status = nextStatus;
+    target.resolvedAt = nextStatus === "resolved" ? new Date().toISOString() : null;
+    target.updatedAt = new Date().toISOString();
+
+    const updated = await rebuildNpsImprovementsSummary(db);
+    saveDatabase();
+    res.json({ success: true, item: target, improvements: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

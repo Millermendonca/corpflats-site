@@ -794,6 +794,28 @@ Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no 
     editUrl: "/whatsapp?tab=rules&tpl=tpl_post_checkout_review",
     category: "pos_estadia"
   },
+  {
+    id: "node_nps_score_below_5",
+    stageNumber: 9,
+    stageName: "9. Pós Check-out (Reputação)",
+    title: "Retorno Automático Notas 1 a 4 • Coleta de Melhorias & Alerta Gestão 📋",
+    subtitle: "Mensagens personalizadas por nota (4, 3, 2 e 1) + Resumo de Melhorias + Alerta 22998505276",
+    triggerEvent: "nps_score_4",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Imediato após resposta com nota 1, 2, 3 ou 4",
+    condition: "Hóspede respondeu com nota 4, 3, 2 ou 1 na pesquisa pós-checkout",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Para cada nota abaixo de 5 (4, 3, 2 ou 1), envia um template específico convidando o hóspede a digitar o que podemos melhorar. Quando ele responde, envia agradecimento automático, atualiza o Resumo de Melhorias a Fazer em /avaliacoes-ia e dispara alerta no WhatsApp do gestor (22998505276).",
+    messagePreview: `Muito obrigado pela sua avaliação, *{{primeiro_nome}}*! 😊⭐⭐⭐⭐
+
+Como buscamos sempre a excelência nota 5, conta pra gente rapidinho: *o que você sentiu falta ou o que poderíamos ter feito melhor na sua hospedagem?*
+
+Pode digitar sua sugestão aqui mesmo no WhatsApp. Sua resposta vai direto para o meu resumo de melhorias da gestão! 💙`,
+    buttons: [],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_nps_score_4",
+    category: "pos_estadia"
+  },
 
   // ── ETAPA 10: EVENTOS DE EXCEÇÃO & ATUALIZAÇÕES ─────────────────────────────
   {
@@ -898,7 +920,8 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
       "node_post_checkout_review",
-      "node_nps_approved"
+      "node_nps_approved",
+      "node_nps_score_below_5"
     ],
     description: "Jornada direta perfeita: Confirmação com Manual em anexo e link do café + Early Check-in a partir das 10h + FNRH digital + Rotina 07h para Recepção e Garagem com PDF + Reforço de pré-checkin às 07h se pendente + Acolhimento caloroso + Lembrete de café às 18h apenas se ainda não pediu + Pesquisa NPS 24h pós 12:00 de checkout + Google Review 5 estrelas."
   },
@@ -922,7 +945,8 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
       "node_post_checkout_review",
-      "node_nps_approved"
+      "node_nps_approved",
+      "node_nps_score_below_5"
     ],
     description: "Nunca menciona valores ou pagamento. Oculta o número do flat até a liberação no dia (às 12:00 se limpo ou 14:00 padrão). Regra Estrita da Garagem: caso o hóspede chegue sem ter cadastrado a placa, a entrada na garagem não é autorizada até que ele preencha a ficha digital no próprio celular, disparando na hora o e-mail de autorização para a guarita."
   },
@@ -989,7 +1013,8 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
       "node_post_checkout_review",
-      "node_nps_approved"
+      "node_nps_approved",
+      "node_nps_score_below_5"
     ],
     description: "Disparado pontualmente 24h após as 12:00 da data de check-out, independente de baixa manual no sistema. Solicita nota de 1 a 5. Se o hóspede responder com nota 5, o sistema dispara imediatamente o convite com link oficial do Google Maps para avaliação 5 estrelas. Se a nota for inferior a 5, preserva a reputação pública."
   }
@@ -1160,7 +1185,8 @@ export default function ReservationJourney() {
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
         "node_post_checkout_review",
-        "node_nps_approved"
+        "node_nps_approved",
+        "node_nps_score_below_5"
       ]
     },
     {
@@ -1192,7 +1218,8 @@ export default function ReservationJourney() {
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
         "node_post_checkout_review",
-        "node_nps_approved"
+        "node_nps_approved",
+        "node_nps_score_below_5"
       ]
     },
     {
@@ -1220,7 +1247,8 @@ export default function ReservationJourney() {
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
         "node_post_checkout_review",
-        "node_nps_approved"
+        "node_nps_approved",
+        "node_nps_score_below_5"
       ]
     }
   ]

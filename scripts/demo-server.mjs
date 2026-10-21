@@ -87,7 +87,10 @@ import {
   sendMirrorEmail,
   buildMirrorEmailSubject,
   renderTemplateButtons,
-  DEFAULT_WHATSAPP_TEMPLATES
+  DEFAULT_WHATSAPP_TEMPLATES,
+  rebuildNpsImprovementsSummary,
+  sendNpsManagerAlertWhatsApp,
+  syncNpsCommentToReviews
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -39047,6 +39050,7 @@ app.post("/api/ai/clear-test-data", (req, res) => {
     db.reviewInsights = null;
     db.guestSentiment = [];
     db.npsResponses = [];
+    db.npsImprovements = null;
     if (db.observations) {
       db.observations = db.observations.filter(o =>
         !o.description?.includes("[IA Auto-Ticket]") &&
@@ -39247,7 +39251,7 @@ app.post("/api/ai/analyze-reviews", async (req, res) => {
 });
 
 // 3.3 Importar Nova Avaliação
-app.post("/api/ai/import-review", (req, res) => {
+app.post("/api/ai/import-review", async (req, res) => {
   try {
     const { author, rating, channel, comment, flatMentioned } = req.body;
     if (!author || !comment) {
@@ -39269,6 +39273,9 @@ app.post("/api/ai/import-review", (req, res) => {
     };
 
     db.reviews.unshift(newRev);
+    if (Number(newRev.rating) <= 4) {
+      await rebuildNpsImprovementsSummary(db);
+    }
     saveDatabase();
 
     res.json({ success: true, review: newRev });
@@ -39502,6 +39509,7 @@ app.get("/api/ai/sentiment/overview", (req, res) => {
     whatsapp: { analyzed: wppAnalyzed.length, avgScore: avgWppScore, positive: wppPositive, neutral: wppNeutral, negative: wppNegative, positivePercent: wppAnalyzed.length > 0 ? Math.round((wppPositive / wppAnalyzed.length) * 100) : null },
     nps: { sent: npsTotal, responded: npsResponded, promoters: npsPromoters, neutrals: npsNeutrals, detractors: npsDetractors, googleLinkSent, filterRate },
     reviews: { total: reviews.length, avgScore: Number(avgReviewScore) },
+    improvements: db.npsImprovements || { executiveSummary: "", pendingCount: 0, resolvedCount: 0, items: [] },
     topNegativeKeywords,
     lastUpdated: new Date().toISOString()
   });
@@ -39768,11 +39776,115 @@ app.post("/api/ai/nps-response", async (req, res) => {
     };
 
     const idx = (db.npsResponses || []).findIndex(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
-    if (idx >= 0) { db.npsResponses[idx] = { ...db.npsResponses[idx], ...npsEntry, id: db.npsResponses[idx].id }; }
-    else { db.npsResponses.unshift(npsEntry); }
+    let targetNpsEntry = npsEntry;
+    if (idx >= 0) {
+      db.npsResponses[idx] = { ...db.npsResponses[idx], ...npsEntry, id: db.npsResponses[idx].id };
+      targetNpsEntry = db.npsResponses[idx];
+    } else {
+      db.npsResponses.unshift(npsEntry);
+    }
+
+    let improvements = null;
+    if (numScore <= 4) {
+      if (comment && String(comment).trim()) {
+        syncNpsCommentToReviews(db, targetNpsEntry);
+      }
+      improvements = await rebuildNpsImprovementsSummary(db);
+      await sendNpsManagerAlertWhatsApp(db, targetNpsEntry, {
+        reason: "manual_or_portal_nps_response",
+        saveDatabase
+      });
+    }
 
     saveDatabase();
-    res.json({ success: true, npsEntry, googleLinkSent, autoAction });
+    res.json({ success: true, npsEntry: targetNpsEntry, googleLinkSent, autoAction, improvements });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.4B — Obter e gerenciar o "Resumo de Melhorias a Fazer (Notas 1 a 4)"
+app.get("/api/ai/improvements-summary", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const improvements = await rebuildNpsImprovementsSummary(db);
+    const npsTemplatesIds = [
+      "tpl_post_checkout_review",
+      "tpl_nps_score_4",
+      "tpl_nps_score_3",
+      "tpl_nps_score_2",
+      "tpl_nps_score_1",
+      "tpl_nps_feedback_thanks"
+    ];
+    const npsTemplates = npsTemplatesIds.map(id => {
+      const tpl = (db.whatsappTemplates || []).find(t => t.id === id) ||
+                  DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === id);
+      return tpl ? {
+        id: tpl.id,
+        triggerEvent: tpl.triggerEvent,
+        title: tpl.title,
+        enabled: tpl.enabled !== false,
+        message: tpl.message,
+        editUrl: `/whatsapp?tab=rules&tpl=${tpl.id}`
+      } : null;
+    }).filter(Boolean);
+
+    res.json({
+      success: true,
+      improvements,
+      npsTemplates,
+      managerAlertPhone: db?.zapiConfig?.npsManagerAlertPhone || "22998505276"
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/ai/improvements-summary/refresh", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+    const improvements = await rebuildNpsImprovementsSummary(db, {
+      aiGenerateFn: apiKey ? async (pendingItems) => {
+        if (!pendingItems || pendingItems.length === 0) return "";
+        const sample = pendingItems.map(it =>
+          `- [${it.category}] ${it.title} (Flats: ${it.flats.join(", ") || "Geral"} | ${it.mentionsCount}x | menor nota ${it.minScore}⭐): ${it.quotes.slice(0, 2).map(q => `"${q.comment}"`).join("; ")}`
+        ).join("\n");
+        const prompt = `Você é o consultor de gestão do hotel CorpFlats. Com base ESTRITAMENTE nos pontos de melhoria reais abaixo (extraídos das respostas de hóspedes que deram nota de 1 a 4), escreva um resumo executivo direto (em tópicos curtos, máximo 5 linhas no total) indicando o que deve ser melhorado com prioridade:\n${sample}\nNUNCA invente informações fora da lista.`;
+        const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+        if (aiRes.ok) {
+          return aiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        }
+        return "";
+      } : null
+    });
+    saveDatabase();
+    res.json({ success: true, improvements });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/ai/improvements-summary/items/:id", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    if (!db.npsImprovements) await rebuildNpsImprovementsSummary(db);
+    const items = db.npsImprovements?.items || [];
+    const target = items.find(i => i.id === id || i.key === id);
+    if (!target) return res.status(404).json({ error: "Item de melhoria não encontrado." });
+
+    const nextStatus = status === "resolved" || status === "pending"
+      ? status
+      : (target.status === "resolved" ? "pending" : "resolved");
+    target.status = nextStatus;
+    target.resolvedAt = nextStatus === "resolved" ? new Date().toISOString() : null;
+    target.updatedAt = new Date().toISOString();
+
+    const updated = await rebuildNpsImprovementsSummary(db);
+    saveDatabase();
+    res.json({ success: true, item: target, improvements: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -3419,7 +3419,19 @@ export function handleInformCheckout(dbOrArgs, argsOrDb = {}, optionalPhone = ""
   }
 
   // 3.5. Cancela lembretes pendentes de check-out, café da manhã ou estadia na fila (WhatsApp e E-mail)
-  const postCheckoutAllowed = new Set(["checkout_completed", "on_checkout", "post_checkout_review", "nps_approved", "payment_confirmed", "reservation_cancelled"]);
+  const postCheckoutAllowed = new Set([
+    "checkout_completed",
+    "on_checkout",
+    "post_checkout_review",
+    "nps_approved",
+    "nps_score_4",
+    "nps_score_3",
+    "nps_score_2",
+    "nps_score_1",
+    "nps_feedback_thanks",
+    "payment_confirmed",
+    "reservation_cancelled"
+  ]);
   const targetCodes = new Set();
   const targetIds = new Set();
   if (matchedRes) {

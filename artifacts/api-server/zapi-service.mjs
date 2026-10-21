@@ -848,6 +848,110 @@ Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no 
     ]
   },
   {
+    id: "tpl_nps_score_4",
+    triggerEvent: "nps_score_4",
+    title: "Pós Check-out • Retorno Nota 4 (Muito Bom) ⭐⭐⭐⭐",
+    description: "Enviado automaticamente quando o hóspede avalia com nota 4 na pesquisa pós-checkout. Agradece a avaliação positiva e convida a digitar o que faltou para a experiência ser nota 5.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Muito obrigado pela sua avaliação, *{{primeiro_nome}}*! 😊💙
+
+Ficamos muito felizes que tenha gostado da estadia no *Flat {{quarto}}* do *{{nome_hotel}}*!
+
+Como buscamos sempre a excelência para nossos hóspedes, *o que você acha que faltou ou o que poderíamos melhorar para que sua próxima experiência conosco seja nota 5?*
+
+Pode digitar aqui mesmo no WhatsApp, sua sugestão vai direto para a nossa gerência! 👇`,
+    footer: "CorpFlats • Evoluindo com você",
+    buttons: []
+  },
+  {
+    id: "tpl_nps_score_3",
+    triggerEvent: "nps_score_3",
+    title: "Pós Check-out • Retorno Nota 3 (Regular) ⭐⭐⭐",
+    description: "Enviado automaticamente quando o hóspede avalia com nota 3 na pesquisa pós-checkout. Agradece a sinceridade e pergunta o que pode ser melhorado.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{primeiro_nome}}*! Muito obrigado por responder à nossa pesquisa. 🙏
+
+Vimos que sua experiência no *Flat {{quarto}}* foi avaliada com nota 3 e queremos muito evoluir!
+
+*Você poderia nos contar brevemente o que não saiu como esperado ou o que podemos melhorar no flat e no atendimento?*
+
+Basta digitar sua resposta aqui abaixo. Nossa gerência acompanha cada ponto pessoalmente! 👇`,
+    footer: "CorpFlats • Ouvidoria & Qualidade",
+    buttons: []
+  },
+  {
+    id: "tpl_nps_score_2",
+    triggerEvent: "nps_score_2",
+    title: "Pós Check-out • Retorno Nota 2 (Insatisfeito) ⭐⭐",
+    description: "Enviado automaticamente quando o hóspede avalia com nota 2 na pesquisa pós-checkout. Pede desculpas e solicita relato para correção imediata.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{primeiro_nome}}*. Sentimos muito que sua experiência no *Flat {{quarto}}* do *{{nome_hotel}}* não tenha atendido às suas expectativas. 😔
+
+Nosso compromisso é oferecer sempre uma hospedagem impecável e gostaríamos de corrigir imediatamente qualquer falha.
+
+*Por favor, conte para nós aqui no WhatsApp o que aconteceu durante sua estadia e o que precisamos melhorar:* 👇`,
+    footer: "CorpFlats • Atenção Prioritária ao Hóspede",
+    buttons: []
+  },
+  {
+    id: "tpl_nps_score_1",
+    triggerEvent: "nps_score_1",
+    title: "Pós Check-out • Retorno Nota 1 (Crítico / Detrator) ⭐",
+    description: "Enviado automaticamente quando o hóspede avalia com nota 1 na pesquisa pós-checkout. Acolhimento prioritário da gerência pedindo detalhes do ocorrido.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{primeiro_nome}}*. Pedimos sinceras desculpas por sua experiência no *Flat {{quarto}}* ter sido negativa. 😔🙏
+
+Sua avaliação acendeu um alerta prioritário em nossa gerência e queremos muito entender tudo o que houve para tomarmos providências imediatas.
+
+*Você poderia digitar aqui o que aconteceu ou os pontos que falharam em sua estadia?* Estamos prontos para ouvir você e resolver: 👇`,
+    footer: "CorpFlats • Gerência & Ouvidoria",
+    buttons: []
+  },
+  {
+    id: "tpl_nps_feedback_thanks",
+    triggerEvent: "nps_feedback_thanks",
+    title: "Pós Check-out • Agradecimento após Sugestão de Melhoria (Notas 1 a 4) 🙏",
+    description: "Enviado automaticamente assim que o hóspede (que deu nota 1 a 4) termina de digitar sua crítica ou sugestão de melhoria.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Muito obrigado pelo seu retorno detalhado, *{{primeiro_nome}}*! 🙏💙
+
+Já registramos suas observações sobre o *Flat {{quarto}}* diretamente em nosso *Plano de Melhorias da Gerência* para providenciarmos os ajustes necessários.
+
+Valorizamos imensamente sua sinceridade — é graças ao seu feedback que evoluímos a cada dia. Esperamos ter a oportunidade de recebê-lo(a) novamente em breve para proporcionar uma experiência 5 estrelas! ✨`,
+    footer: "CorpFlats • Obrigado por nos ajudar a melhorar",
+    buttons: []
+  },
+  {
     id: "tpl_reservation_cancelled",
     triggerEvent: "reservation_cancelled",
     title: "Cancelamento de Reserva",
@@ -7155,190 +7259,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   });
 
   // ── Processador Automático de Sentimento e NPS de Mensagens Inbound ──────────
-  async function processInboundSentimentAndNps({ db, phone, senderName, text, messageId, timestamp, updatedConv, saveDatabase, createNotification, analyzeSentimentFn }) {
-    if (!db) return;
-    const cleanText = (text || "").trim();
-    if (!cleanText) return;
-
-    // 1. Armazena no histórico de mensagens inbound
-    if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
-    db.whatsappInboundMessages.unshift({
-      id: messageId || `in_${Date.now()}`,
-      from: phone,
-      senderName: senderName || "Hóspede",
-      text: cleanText,
-      receivedAt: timestamp || new Date().toISOString()
-    });
-    if (db.whatsappInboundMessages.length > 300) {
-      db.whatsappInboundMessages = db.whatsappInboundMessages.slice(0, 300);
-    }
-
-    // 2. Busca reserva associada ao telefone e extrai flat/quarto se citado no texto
-    const cleanP = cleanWhatsAppPhone(phone) || phone;
-    const reservation = (db.reservations || []).find(r => {
-      const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
-      return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
-    }) || (db.reservations || []).find(r => (Array.isArray(r.guests) ? r.guests.slice(1) : []).some(g => {
-      const gP = cleanWhatsAppPhone(g?.phone || "");
-      return gP && (cleanP.endsWith(gP.slice(-8)) || gP.endsWith(cleanP.slice(-8)));
-    }));
-    const flatMatch = cleanText.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
-    const flatNumber = reservation?.flatNumber || reservation?.flat || updatedConv?.flatNumber || (flatMatch ? flatMatch[1] : null);
-
-    // 3. Detecção de Resposta NPS (1 a 5)
-    const npsMatch = cleanText.match(/^([1-5])$/) || cleanText.match(/^nota\s*([1-5])$/i);
-    if (npsMatch) {
-      const score = Number(npsMatch[1]);
-      if (!db.npsResponses) db.npsResponses = [];
-      let npsItem = db.npsResponses.find(n => n.guestPhone === phone);
-      if (!npsItem) {
-        npsItem = {
-          id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          guestPhone: phone,
-          guestName: senderName || reservation?.guestName || "Hóspede",
-          sentAt: new Date().toISOString()
-        };
-        db.npsResponses.unshift(npsItem);
-      }
-      npsItem.score = score;
-      npsItem.respondedAt = new Date().toISOString();
-      npsItem.pendingResponse = false;
-      npsItem.flatNumber = flatNumber;
-
-      if (score === 5) {
-        npsItem.autoAction = "google_link_sent";
-        npsItem.googleLinkSent = true;
-        const googleLink = db.zapiConfig?.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
-        sendZapiMessage(db.zapiConfig, {
-          phone,
-          message: `Ficamos muito felizes que sua experiência foi nota 5! ⭐⭐⭐⭐⭐\n\nVocê nos ajudaria muito compartilhando sua opinião no Google? Leva menos de 1 minuto e faz toda a diferença para nossa equipe:\n\n${googleLink}\n\nMuito obrigado e até a próxima estadia!`
-        }).catch(err => console.warn("[NPS Google Link] Falha no disparo automático:", err.message));
-      } else if (score <= 2) {
-        npsItem.autoAction = "recovery_ticket_created";
-        if (!db.observations) db.observations = [];
-        const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
-        db.observations.push({
-          id: obsId,
-          flatNumber: flatNumber || "N/A",
-          guestPhone: phone,
-          type: "reclamacao",
-          description: `[NPS Auto-Ticket] Hóspede ${senderName || phone} deu nota ${score}/5 pós-checkout. Entrar em contato com urgência para recuperação.`,
-          severity: score === 1 ? "alta" : "media",
-          status: "pendente",
-          createdAt: new Date().toISOString(),
-          generatedFromNps: true
-        });
-      } else {
-        npsItem.autoAction = "feedback_collected";
-      }
-    }
-
-    // 4. Análise de Sentimento em Tempo Real e Detecção de Defeitos / Críticas
-    const isNegative = /ruim|péssimo|pessimo|terrível|terrivel|horrível|horrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|gotejando|pingando|vazamento|frio|calor|demora|demorado|atraso|descaso|decepção|decepcionado|chateado|vergonha|absurdo|não funciona|nao funciona|estragado|estragou|goteira|cheiro|mofo/i.test(cleanText);
-    const isPositive = /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|gostei muito|recomendo|nota 10/i.test(cleanText);
-    const isMaintenanceIssue = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno|colchão|colchao|travesseiro/i.test(cleanText);
-
-    if (!db.guestSentiment) db.guestSentiment = [];
-    let sentEntry = db.guestSentiment.find(s => s.guestPhone === phone);
-    if (!sentEntry) {
-      sentEntry = {
-        id: `sent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        guestPhone: phone,
-        guestName: senderName || reservation?.guestName || "Hóspede",
-        reservationId: reservation?.id,
-        flatNumber: flatNumber,
-        messageCount: 0,
-        inboundCount: 0,
-        positiveKeywords: [],
-        negativeKeywords: [],
-        keywords: [],
-        suggestions: []
-      };
-      db.guestSentiment.unshift(sentEntry);
-    }
-
-    sentEntry.messageCount = (sentEntry.messageCount || 0) + 1;
-    sentEntry.inboundCount = (sentEntry.inboundCount || 0) + 1;
-    sentEntry.analyzedAt = new Date().toISOString();
-    if (flatNumber && !sentEntry.flatNumber) sentEntry.flatNumber = flatNumber;
-
-    if (isNegative) {
-      sentEntry.overallTone = "negative";
-      sentEntry.overallScore = Math.min(sentEntry.overallScore || 50, 25);
-      sentEntry.summary = `Crítica/problema relatado via WhatsApp: "${cleanText.substring(0, 110)}"`;
-
-      const words = cleanText.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      const foundNeg = words.filter(w => /ruim|péssimo|pessimo|terrível|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|gotejando|pingando|vazamento|frio|calor|demora|demorado/i.test(w));
-      if (foundNeg.length > 0) {
-        sentEntry.negativeKeywords = Array.from(new Set([...(sentEntry.negativeKeywords || []), ...foundNeg]));
-      }
-
-      // Auto-Ticket para manutenção se relatar defeito/crítica
-      if (!db.observations) db.observations = [];
-      const alreadyHasTicket = db.observations.some(o =>
-        (o.guestPhone === phone || o.description?.includes(phone)) &&
-        o.status === "pendente" &&
-        o.generatedFromWhatsApp
-      );
-      if (!alreadyHasTicket) {
-        const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
-        const ticketTitle = isMaintenanceIssue ? "[WhatsApp Defeito]" : "[WhatsApp Crítica]";
-        db.observations.push({
-          id: obsId,
-          flatNumber: flatNumber || "N/A",
-          guestPhone: phone,
-          type: "reclamacao",
-          description: `${ticketTitle} Hóspede ${senderName || phone}${flatNumber ? ` (Flat ${flatNumber})` : ""}: "${cleanText.substring(0, 140)}"`,
-          severity: "alta",
-          status: "pendente",
-          createdAt: new Date().toISOString(),
-          generatedFromWhatsApp: true
-        });
-      }
-
-      if (typeof createNotification === "function") {
-        createNotification({
-          category: "whatsapp",
-          title: `⚠️ WhatsApp Alerta: ${senderName || phone}`,
-          message: cleanText.substring(0, 120),
-          type: "guest_negative_sentiment",
-          targetUrl: `/avaliacoes-ia`,
-          link: `/avaliacoes-ia`
-        });
-      }
-    } else if (isPositive) {
-      sentEntry.overallTone = "positive";
-      sentEntry.overallScore = Math.max(sentEntry.overallScore || 70, 85);
-      sentEntry.summary = `Elogio recebido via WhatsApp: "${cleanText.substring(0, 110)}"`;
-      const words = cleanText.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      const foundPos = words.filter(w => /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|recomendo/i.test(w));
-      if (foundPos.length > 0) {
-        sentEntry.positiveKeywords = Array.from(new Set([...(sentEntry.positiveKeywords || []), ...foundPos]));
-      }
-    } else {
-      sentEntry.overallTone = sentEntry.overallTone || "neutral";
-      sentEntry.overallScore = sentEntry.overallScore || 65;
-      sentEntry.summary = `Mensagem via WhatsApp: "${cleanText.substring(0, 110)}"`;
-    }
-
-    // Se houver analisador de IA configurado, enriquece assincronamente em segundo plano
-    if (typeof analyzeSentimentFn === "function") {
-      analyzeSentimentFn(cleanText, "WhatsApp Inbound Hóspede")
-        .then(aiRes => {
-          if (aiRes?.usingAI) {
-            sentEntry.overallScore = aiRes.score;
-            sentEntry.overallTone = aiRes.tone;
-            if (aiRes.summary) sentEntry.summary = aiRes.summary;
-            if (aiRes.positiveKeywords?.length) sentEntry.positiveKeywords = Array.from(new Set([...(sentEntry.positiveKeywords || []), ...aiRes.positiveKeywords]));
-            if (aiRes.negativeKeywords?.length) sentEntry.negativeKeywords = Array.from(new Set([...(sentEntry.negativeKeywords || []), ...aiRes.negativeKeywords]));
-            if (aiRes.suggestions?.length) sentEntry.suggestions = Array.from(new Set([...(sentEntry.suggestions || []), ...aiRes.suggestions]));
-            if (typeof saveDatabase === "function") saveDatabase();
-          }
-        })
-        .catch(err => console.warn("[Z-API Webhook AI Background]", err.message));
-    }
-
-    if (typeof saveDatabase === "function") saveDatabase();
+  async function processInboundSentimentAndNps(params) {
+    return processInboundNpsAndSentiment(params);
   }
 
   // 17. Webhook Z-API: Mensagem Recebida (/api/whatsapp/webhook/received)
@@ -7507,9 +7429,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
 
     // 3. Processamento em Tempo Real de Sentimento e NPS de Hóspedes
+    let npsInboundResult = null;
     if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
       try {
-        await processInboundSentimentAndNps({
+        npsInboundResult = await processInboundSentimentAndNps({
           db,
           phone: cleanTarget,
           senderName: incomingInfo.senderName || updatedConv?.name || "Hóspede",
@@ -7626,7 +7549,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano / Assistente Fiscal)
     let aiProcessResult = null;
-    if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+    if (npsInboundResult?.npsHandled) {
+      aiProcessResult = {
+        skipped: true,
+        reason: "nps_flow_handled",
+        action: npsInboundResult.action,
+        score: npsInboundResult.score
+      };
+    } else if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
       try {
         aiProcessResult = await processAiInboundMessage({
           db,
@@ -7642,7 +7572,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
     }
 
-    res.status(200).json({ success: true, result, aiProcessResult, chatUpdated: Boolean(updatedConv) });
+    res.status(200).json({ success: true, result, aiProcessResult, npsInboundResult, chatUpdated: Boolean(updatedConv) });
   });
 
   // 18. Webhook Z-API: WhatsApp Desconectado (/api/whatsapp/webhook/disconnected)
@@ -9441,8 +9371,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       // 2. Garante que reservas confirmadas tenham suas réguas agendadas
       scheduleUpcomingReservationTriggers(db, saveDatabase);
 
-      // 3. Verifica flats de check-in hoje ainda não limpos após as 14h e dispara solicitação de previsão
+      // 3. Verifica flats de check-in hoje ainda não limpos após as 13:45 e dispara solicitação de previsão
       await checkAndTriggerCleaningDelayAlerts(db, saveDatabase, createNotification, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
+
+      // 4. Verifica respostas NPS < 5 sem comentário após 15 minutos para enviar alerta de fallback ao gestor (22998505276)
+      await checkPendingNpsManagerAlerts(db, saveDatabase, createNotification);
 
     } catch (err) {
       console.error("[Auto-WhatsApp Cron Error]:", err.message);
@@ -11069,4 +11002,966 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
   } catch (err) {
     console.error("[Checkin Cleaning Delay Error]:", err.message);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MÓDULO NPS POR NOTA (1 A 5) + RESUMO INTELIGENTE DE MELHORIAS A FAZER (< 5)
+// ══════════════════════════════════════════════════════════════════════════════
+
+export const DEFAULT_MANAGER_NPS_ALERT_PHONE = "22998505276";
+
+const NPS_SCORE_TEMPLATE_MAP = {
+  5: { id: "tpl_post_checkout_review", triggerEvent: "nps_approved" },
+  4: { id: "tpl_nps_score_4", triggerEvent: "nps_score_4" },
+  3: { id: "tpl_nps_score_3", triggerEvent: "nps_score_3" },
+  2: { id: "tpl_nps_score_2", triggerEvent: "nps_score_2" },
+  1: { id: "tpl_nps_score_1", triggerEvent: "nps_score_1" }
+};
+
+export function getNpsScoreTemplate(db, score) {
+  const numScore = Number(score);
+  const spec = NPS_SCORE_TEMPLATE_MAP[numScore];
+  if (!spec) return null;
+  const fromDb = (db?.whatsappTemplates || []).find(t => t.id === spec.id || t.triggerEvent === spec.triggerEvent);
+  if (fromDb) {
+    return fromDb.enabled === false ? null : fromDb;
+  }
+  return DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === spec.id || t.triggerEvent === spec.triggerEvent) || null;
+}
+
+export function getNpsThanksTemplate(db) {
+  const fromDb = (db?.whatsappTemplates || []).find(
+    t => t.id === "tpl_nps_feedback_thanks" || t.triggerEvent === "nps_feedback_thanks"
+  );
+  if (fromDb) {
+    return fromDb.enabled === false ? null : fromDb;
+  }
+  return DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_nps_feedback_thanks") || null;
+}
+
+const IMPROVEMENT_CATEGORY_RULES = [
+  {
+    key: "conforto_enxoval",
+    category: "Conforto & Enxoval",
+    title: "Revisar conforto de camas, travesseiros, toalhas e cortinas",
+    actionSuggestion: "Inspecionar estado de travesseiros, colchões, roupa de cama/banho e vedação das cortinas nos flats citados.",
+    regex: /travesseir|colch[aã]o|cama|len[cç]ol|cobertor|edredom|toalh|enxoval|cortina|blackout|sof[aá]|coberta/i
+  },
+  {
+    key: "ar_climatizacao",
+    category: "Ar-Condicionado & Climatização",
+    title: "Manutenção e higienização de Ar-Condicionado Split",
+    actionSuggestion: "Executar revisão técnica (dreno, gás, limpeza de filtro e controle remoto) nos aparelhos de ar-condicionado.",
+    regex: /ar[- ]?condicionado|split|climatiza|pingando|gotejando|gelando|calor|abafado|ventilador|controle do ar/i
+  },
+  {
+    key: "banheiro_hidraulica",
+    category: "Banheiro & Hidráulica",
+    title: "Reparo hidráulico, chuveiro e acessórios de banheiro",
+    actionSuggestion: "Verificar aquecimento/pressão do chuveiro, escoamento de ralo/pia, vazamentos e reposição de tapetes/itens de banheiro.",
+    regex: /chuveiro|[aá]gua|aquecedor|pia|ralo|vaso|descarga|vazamento|press[aã]o|tapete|box|ducha|torneira|banheiro/i
+  },
+  {
+    key: "limpeza_governanca",
+    category: "Limpeza & Governança",
+    title: "Reforço no padrão de limpeza e revisão pós-faxina",
+    actionSuggestion: "Reforçar checklist de vistoria de saída/entrada com a equipe de governança (piso, superfícies, odores e reposição).",
+    regex: /limpeza|suj[oa]|poeira|cheiro|mofo|cabelo|ch[aã]o|faxina|higien|mancha|odor|lixo|formiga|inseto/i
+  },
+  {
+    key: "tv_wifi_eletronicos",
+    category: "TV, Wi-Fi & Eletrônicos",
+    title: "Estabilidade de Wi-Fi, Smart TV, iluminação e fechadura",
+    actionSuggestion: "Testar sinal de Wi-Fi, login/canais da TV, pilhas de controles, lâmpadas/tomadas e funcionamento da fechadura.",
+    regex: /wi-?fi|internet|sinal|tv|televis[aã]o|smart\s*tv|controle|netflix|tomada|l[aâ]mpada|luz|ilumina[cç][aã]o|fechadura|porta|senha|chave/i
+  },
+  {
+    key: "cozinha_eletros",
+    category: "Cozinha & Eletrodomésticos",
+    title: "Reposição de utensílios de copa e revisão de eletrodomésticos",
+    actionSuggestion: "Conferir funcionamento de frigobar/micro-ondas/cafeteira e completar kit de utensílios (pratos, talheres, copos).",
+    regex: /frigobar|geladeira|micro-?ondas|cafeteira|fog[aã]o|cooktop|talher|prato|copo|panela|utens[ií]lio|x[ií]cara|ta[cç]a|abridor|sanduicheira|air\s*fryer/i
+  },
+  {
+    key: "barulho_acustica",
+    category: "Barulho & Acústica",
+    title: "Controle de ruídos e vedação acústica",
+    actionSuggestion: "Avaliar vedação de janelas/portas e orientar portaria sobre controle de silêncio nos corredores.",
+    regex: /barulh|ru[ií]do|som\b|vizinh|corredor|elevador|janela|ac[uú]stic|obra/i
+  },
+  {
+    key: "atendimento_checkin",
+    category: "Atendimento & Check-in",
+    title: "Agilidade na liberação de entrada, portaria e comunicação",
+    actionSuggestion: "Alinhar fluxo de autorização na portaria e tempo de resposta no check-in.",
+    regex: /atendimento|recep[cç][aã]o|portaria|porteiro|check-?in|demora|cadastr|libera[cç][aã]o|hor[aá]rio|espera/i
+  },
+  {
+    key: "cafe_da_manha",
+    category: "Café da Manhã",
+    title: "Melhoria nos itens e entrega do Café da Manhã",
+    actionSuggestion: "Revisar variedade, temperatura e pontualidade na entrega das bandejas de café da manhã.",
+    regex: /caf[eé]|bandeja|p[aã]o|fruta|desjejum|leite|suco|bolo/i
+  }
+];
+
+/**
+ * Classifica um texto de feedback (< 5 estrelas) em uma ou mais categorias acionáveis de melhoria.
+ */
+export function categorizeImprovementFeedback(text = "") {
+  const clean = String(text || "").trim();
+  if (!clean) return [];
+  const matched = IMPROVEMENT_CATEGORY_RULES.filter(rule => rule.regex.test(clean));
+  if (matched.length > 0) return matched;
+  return [
+    {
+      key: "outros_geral",
+      category: "Estrutura & Outros",
+      title: "Avaliar sugestões gerais reportadas pelos hóspedes",
+      actionSuggestion: "Analisar relato específico do hóspede e aplicar melhoria pontual na unidade.",
+      regex: /.*/
+    }
+  ];
+}
+
+/**
+ * Sincroniza um feedback NPS com comentário dentro de db.reviews para manter o histórico unificado.
+ */
+export function syncNpsCommentToReviews(db, npsItem) {
+  if (!db || !npsItem || !npsItem.comment || !String(npsItem.comment).trim()) return null;
+  if (!Array.isArray(db.reviews)) db.reviews = [];
+
+  const commentText = String(npsItem.comment).trim();
+  const score = Number(npsItem.score) || 4;
+  const sentiment = score >= 4 ? "positive" : score === 3 ? "mixed" : "negative";
+
+  let existing = db.reviews.find(r =>
+    (npsItem.id && r.fromNpsId === npsItem.id) ||
+    (r.channel === "whatsapp" && r.author === (npsItem.guestName || "Hóspede") && r.comment === commentText)
+  );
+
+  if (existing) {
+    existing.rating = score;
+    existing.comment = commentText;
+    existing.flatMentioned = npsItem.flatNumber || existing.flatMentioned || null;
+    existing.sentiment = sentiment;
+    return existing;
+  }
+
+  const newId = db.reviews.length > 0 ? Math.max(...db.reviews.map(r => Number(r.id) || 0)) + 1 : 1;
+  const newRev = {
+    id: newId,
+    fromNpsId: npsItem.id || null,
+    author: npsItem.guestName || "Hóspede",
+    guestPhone: npsItem.guestPhone || null,
+    rating: score,
+    channel: "whatsapp",
+    date: new Date().toISOString().substring(0, 10),
+    flatMentioned: npsItem.flatNumber || null,
+    comment: commentText,
+    sentiment,
+    analyzed: false
+  };
+  db.reviews.unshift(newRev);
+  return newRev;
+}
+
+/**
+ * Reconstrói e atualiza o "Resumo de Melhorias a Fazer (Notas 1 a 4)" a partir de todas as
+ * respostas digitadas por hóspedes que avaliaram com nota <= 4.
+ * Preserva itens já marcados como "resolved" (concluídos) pelo gestor, reabrindo apenas se
+ * surgir um novo comentário posterior à data de resolução.
+ */
+export async function rebuildNpsImprovementsSummary(db, { aiGenerateFn = null } = {}) {
+  if (!db) return null;
+  if (!db.npsImprovements) {
+    db.npsImprovements = {
+      executiveSummary: "",
+      lastUpdatedAt: new Date().toISOString(),
+      totalFeedbacksAnalyzed: 0,
+      pendingCount: 0,
+      resolvedCount: 0,
+      items: []
+    };
+  }
+
+  const existingItemsByKey = new Map();
+  for (const item of (db.npsImprovements.items || [])) {
+    if (item && item.key) {
+      existingItemsByKey.set(item.key, item);
+    } else if (item && item.id) {
+      existingItemsByKey.set(item.id, item);
+    }
+  }
+
+  // Coleta respostas escritas de notas 1 a 4 em db.npsResponses e db.reviews (sem duplicar)
+  const rawFeedbacks = [];
+  const seenKeys = new Set();
+
+  for (const n of (db.npsResponses || [])) {
+    const score = Number(n?.score);
+    const comment = String(n?.comment || "").trim();
+    if (!n || isNaN(score) || score < 1 || score > 4 || !comment) continue;
+    const dedupKey = `${cleanWhatsAppPhone(n.guestPhone || "") || n.guestName || ""}:${comment.toLowerCase()}`;
+    if (seenKeys.has(dedupKey)) continue;
+    seenKeys.add(dedupKey);
+    if (n.id) seenKeys.add(`npsid:${n.id}`);
+
+    const flatMatch = comment.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+    rawFeedbacks.push({
+      id: n.id || `nps_${Date.now()}`,
+      source: "nps_whatsapp",
+      guestName: n.guestName || "Hóspede",
+      guestPhone: n.guestPhone || null,
+      flatNumber: n.flatNumber || (flatMatch ? flatMatch[1] : null),
+      score,
+      comment,
+      date: n.commentReceivedAt || n.respondedAt || n.sentAt || new Date().toISOString()
+    });
+  }
+
+  for (const r of (db.reviews || [])) {
+    const score = Number(r?.rating);
+    const comment = String(r?.comment || "").trim();
+    if (!r || isNaN(score) || score < 1 || score > 4 || !comment) continue;
+    if (r.fromNpsId && seenKeys.has(`npsid:${r.fromNpsId}`)) continue;
+    const dedupKey = `${cleanWhatsAppPhone(r.guestPhone || "") || r.author || ""}:${comment.toLowerCase()}`;
+    if (seenKeys.has(dedupKey)) continue;
+    seenKeys.add(dedupKey);
+
+    const flatMatch = comment.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+    rawFeedbacks.push({
+      id: `rev_${r.id}`,
+      source: r.channel || "review",
+      guestName: r.author || "Hóspede",
+      guestPhone: r.guestPhone || null,
+      flatNumber: r.flatMentioned || (flatMatch ? flatMatch[1] : null),
+      score,
+      comment,
+      date: r.date || r.createdAt || new Date().toISOString()
+    });
+  }
+
+  // Agrupa os feedbacks por categoria/tópico de melhoria
+  const grouped = new Map();
+  for (const fb of rawFeedbacks) {
+    const cats = categorizeImprovementFeedback(fb.comment);
+    for (const cat of cats) {
+      if (!grouped.has(cat.key)) {
+        grouped.set(cat.key, {
+          key: cat.key,
+          category: cat.category,
+          title: cat.title,
+          actionSuggestion: cat.actionSuggestion,
+          quotes: [],
+          flatsSet: new Set()
+        });
+      }
+      const g = grouped.get(cat.key);
+      g.quotes.push(fb);
+      if (fb.flatNumber) g.flatsSet.add(String(fb.flatNumber));
+    }
+  }
+
+  const nextItems = [];
+  for (const [key, group] of grouped.entries()) {
+    const prev = existingItemsByKey.get(key);
+    const quotes = group.quotes.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+    const scores = quotes.map(q => Number(q.score) || 4);
+    const minScore = Math.min(...scores);
+    const avgScore = Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1));
+    const flats = Array.from(group.flatsSet);
+
+    // Se o item estava marcado como "resolved", verifica se entrou algum feedback NOVO após resolvedAt
+    let status = prev?.status === "resolved" ? "resolved" : "pending";
+    let resolvedAt = prev?.resolvedAt || null;
+    if (status === "resolved" && resolvedAt) {
+      const resolvedTime = new Date(resolvedAt).getTime();
+      const hasNewerQuote = quotes.some(q => {
+        const qTime = new Date(q.date || 0).getTime();
+        return !isNaN(qTime) && qTime > resolvedTime + 1000;
+      });
+      if (hasNewerQuote) {
+        status = "pending";
+        resolvedAt = null;
+      }
+    }
+
+    // Constrói resumo conciso baseado nos comentários reais deste grupo
+    const sampleSnippets = quotes.slice(0, 3).map(q => {
+      const flatTag = q.flatNumber ? ` (Flat ${q.flatNumber})` : "";
+      const shortComment = q.comment.length > 90 ? `${q.comment.substring(0, 87)}...` : q.comment;
+      return `"${shortComment}" — ${q.guestName}${flatTag} [${q.score}⭐]`;
+    });
+
+    const summary = `${quotes.length === 1 ? "1 relato registrado" : `${quotes.length} relatos registrados`}${flats.length > 0 ? ` nos flats ${flats.join(", ")}` : ""}: ${sampleSnippets.join(" | ")}`;
+
+    nextItems.push({
+      id: prev?.id || `imp_${key}`,
+      key,
+      category: group.category,
+      title: prev?.customTitle || group.title,
+      actionSuggestion: group.actionSuggestion,
+      summary,
+      flats,
+      mentionsCount: quotes.length,
+      minScore,
+      avgScore,
+      status,
+      quotes,
+      createdAt: prev?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      resolvedAt
+    });
+  }
+
+  // Ordena: pendentes primeiro, depois por menor nota e maior número de menções
+  nextItems.sort((a, b) => {
+    if (a.status !== b.status) return a.status === "pending" ? -1 : 1;
+    if (b.mentionsCount !== a.mentionsCount) return b.mentionsCount - a.mentionsCount;
+    return a.minScore - b.minScore;
+  });
+
+  const pendingItems = nextItems.filter(i => i.status === "pending");
+  const resolvedItems = nextItems.filter(i => i.status === "resolved");
+
+  let executiveSummary = "";
+  if (pendingItems.length === 0) {
+    executiveSummary = rawFeedbacks.length === 0
+      ? "Nenhuma resposta escrita de avaliação abaixo de 5 estrelas registrada até o momento."
+      : `Todas as ${resolvedItems.length} frente(s) de melhoria apontadas anteriormente já foram marcadas como resolvidas!`;
+  } else {
+    const bulletLines = pendingItems.map((it, idx) => {
+      const flatStr = it.flats.length > 0 ? ` [Flat(s): ${it.flats.join(", ")}]` : "";
+      const latestQuote = it.quotes[0]?.comment
+        ? ` — Ex: "${it.quotes[0].comment.substring(0, 80)}${it.quotes[0].comment.length > 80 ? "..." : ""}"`
+        : "";
+      return `${idx + 1}. ${it.category}: ${it.title}${flatStr} (${it.mentionsCount}x, menor nota: ${it.minScore}⭐)${latestQuote}`;
+    });
+    executiveSummary = `Resumo de ${pendingItems.length} melhoria(s) prioritária(s) a fazer com base nas respostas de notas 1 a 4:\n` + bulletLines.join("\n");
+
+    if (typeof aiGenerateFn === "function") {
+      try {
+        const customSummary = await aiGenerateFn(pendingItems, rawFeedbacks);
+        if (customSummary && typeof customSummary === "string" && customSummary.trim().length > 15) {
+          executiveSummary = customSummary.trim();
+        }
+      } catch (err) {
+        console.warn("[NPS Improvements AI Summary Fallback]:", err.message);
+      }
+    }
+  }
+
+  db.npsImprovements = {
+    executiveSummary,
+    lastUpdatedAt: new Date().toISOString(),
+    totalFeedbacksAnalyzed: rawFeedbacks.length,
+    pendingCount: pendingItems.length,
+    resolvedCount: resolvedItems.length,
+    items: nextItems,
+    recentFeedbacks: rawFeedbacks.slice(0, 30)
+  };
+
+  return db.npsImprovements;
+}
+
+/**
+ * Envia o alerta de avaliação abaixo de 5 estrelas para o WhatsApp do Gestor (22998505276),
+ * contendo a explicação digitada pelo hóspede + o resumo atualizado de melhorias pendentes.
+ */
+export async function sendNpsManagerAlertWhatsApp(db, npsItem, { reason = "comment_received", sendZapiFn = sendZapiMessage, saveDatabase } = {}) {
+  if (!db || !npsItem) return { sent: false, reason: "missing_data" };
+  const score = Number(npsItem.score);
+  if (isNaN(score) || score >= 5) return { sent: false, reason: "not_below_5" };
+
+  const managerPhone = cleanWhatsAppPhone(
+    db?.zapiConfig?.npsManagerAlertPhone || DEFAULT_MANAGER_NPS_ALERT_PHONE
+  ) || DEFAULT_MANAGER_NPS_ALERT_PHONE;
+
+  // Garante que o resumo de melhorias está atualizado antes de montar a mensagem
+  const improvements = await rebuildNpsImprovementsSummary(db);
+  const pendingItems = (improvements?.items || []).filter(i => i.status === "pending");
+
+  const starsStr = "⭐".repeat(Math.max(1, Math.min(4, score)));
+  const flatLabel = npsItem.flatNumber ? `Flat ${npsItem.flatNumber}` : "Flat não identificado";
+  const guestLabel = npsItem.guestName || "Hóspede";
+  const phoneLabel = npsItem.guestPhone || "N/A";
+  const commentText = String(npsItem.comment || "").trim();
+
+  let msg = `🚨 *Alerta de Avaliação Abaixo de 5 (${score}/5 ${starsStr})*\n\n`;
+  msg += `👤 *Hóspede:* ${guestLabel} (${phoneLabel})\n`;
+  msg += `🏢 *Unidade:* ${flatLabel}\n`;
+  msg += `⭐ *Nota atribuída:* ${score} de 5\n\n`;
+
+  if (commentText) {
+    msg += `💬 *O que melhorar (resposta do hóspede):*\n"${commentText}"\n\n`;
+  } else {
+    msg += `ℹ️ _O hóspede enviou apenas a nota ${score} há 15 minutos e ainda não digitou explicação detalhada._\n\n`;
+  }
+
+  msg += `📋 *Resumo Atualizado de Melhorias a Fazer (${pendingItems.length} pendente${pendingItems.length === 1 ? "" : "s"}):*\n`;
+  if (pendingItems.length === 0) {
+    msg += `_Nenhuma melhoria com comentário pendente no momento._\n`;
+  } else {
+    pendingItems.slice(0, 5).forEach((item, idx) => {
+      const fStr = item.flats?.length ? ` [Flat ${item.flats.join(", ")}]` : "";
+      const latest = item.quotes?.[0]?.comment ? ` — "${item.quotes[0].comment.substring(0, 65)}${item.quotes[0].comment.length > 65 ? "..." : ""}"` : "";
+      msg += `${idx + 1}. *${item.category}:* ${item.title}${fStr} (${item.mentionsCount}x)${latest}\n`;
+    });
+  }
+  msg += `\n🔗 _Gerencie e conclua itens em: corpflats.onrender.com/avaliacoes-ia_`;
+
+  const sendRes = await sendZapiFn(db.zapiConfig, {
+    phone: managerPhone,
+    message: msg,
+    channelId: "internal_alerts",
+    recipientRole: "manager",
+    triggerEvent: "nps_manager_improvement_alert",
+    bypassTestMode: true,
+    db
+  });
+
+  npsItem.managerAlertSent = true;
+  npsItem.managerAlertSentAt = new Date().toISOString();
+  npsItem.managerAlertReason = reason;
+  if (commentText) {
+    npsItem.managerCommentAlertSent = true;
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { sent: Boolean(sendRes?.success), managerPhone, message: msg, sendRes };
+}
+
+/**
+ * Intercepta e processa respostas de NPS (nota 1 a 5) e também a resposta escrita subsequente
+ * de hóspedes que deram nota de 1 a 4.
+ */
+export async function handleInboundNpsScoreOrComment({
+  db,
+  phone,
+  rawPhone,
+  senderName,
+  cleanText,
+  reservation,
+  flatNumber,
+  saveDatabase,
+  createNotification,
+  sendZapiFn = sendZapiMessage
+}) {
+  if (!db || !cleanText || !phone) return { npsHandled: false };
+  if (!Array.isArray(db.npsResponses)) db.npsResponses = [];
+
+  const targetPhone = cleanWhatsAppPhone(phone) || phone;
+  const matchPhone = (p) => {
+    const cP = cleanWhatsAppPhone(p || "");
+    return Boolean(cP && targetPhone && (cP.endsWith(targetPhone.slice(-8)) || targetPhone.endsWith(cP.slice(-8))));
+  };
+
+  let existingNps = db.npsResponses.find(n => matchPhone(n.guestPhone));
+
+  // 1. Verifica se a mensagem é uma nota de 1 a 5 (isolada ou com comentário na mesma linha, ex: "4" ou "4 - faltou tapete")
+  const pureScoreMatch = cleanText.match(/^([1-5])$/) || cleanText.match(/^nota\s*([1-5])$/i) || cleanText.match(/^([1-5])\s*estrelas?$/i);
+  const inlineScoreMatch = !pureScoreMatch
+    ? cleanText.match(/^(?:nota\s*)?([1-5])(?:\s*estrelas?)?\s*[-–:,.]\s*(.{3,})$/i)
+    : null;
+
+  // Só interpreta "4 - texto..." como nota com comentário se não for horário (ex: "14:00") e se houver contexto de NPS ou pós-checkout
+  const isTimeExpression = /^\d{1,2}:\d{2}\b/.test(cleanText);
+  const hasNpsContext = Boolean(
+    existingNps ||
+    isReservationOrFlatCheckedOut(db, reservation) ||
+    (db.whatsappHistory || []).some(h => matchPhone(h.guestPhone) && (h.triggerEvent === "post_checkout_review" || h.templateId === "tpl_nps_satisfaction_check"))
+  );
+
+  if (pureScoreMatch || (inlineScoreMatch && !isTimeExpression && hasNpsContext)) {
+    const score = Number((pureScoreMatch || inlineScoreMatch)[1]);
+    const inlineComment = inlineScoreMatch ? String(inlineScoreMatch[2] || "").trim() : "";
+
+    if (!existingNps) {
+      existingNps = {
+        id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationId: reservation?.id || reservation?.code || null,
+        reservationCode: reservation?.code || null,
+        guestPhone: rawPhone || targetPhone,
+        guestName: senderName || reservation?.guestName || "Hóspede",
+        sentAt: new Date().toISOString()
+      };
+      db.npsResponses.unshift(existingNps);
+    }
+
+    existingNps.score = score;
+    existingNps.respondedAt = new Date().toISOString();
+    existingNps.pendingResponse = false;
+    existingNps.flatNumber = flatNumber || existingNps.flatNumber || reservation?.flatNumber || null;
+    existingNps.guestName = senderName || existingNps.guestName || reservation?.guestName || "Hóspede";
+    existingNps.channel = reservation?.channel || existingNps.channel || "whatsapp";
+
+    const reservationForTags = reservation || {
+      guestName: existingNps.guestName,
+      guestPhone: rawPhone || targetPhone,
+      flatNumber: existingNps.flatNumber || "",
+      code: existingNps.reservationCode || existingNps.reservationId || ""
+    };
+
+    const tpl = getNpsScoreTemplate(db, score);
+    let renderedReply = "";
+    let renderedButtons = [];
+
+    if (tpl) {
+      renderedReply = resolveWhatsAppTags(tpl.message, reservationForTags, db, "", "guest", tpl);
+      renderedButtons = renderTemplateButtons(tpl.buttons, reservationForTags, db, "", "guest", tpl);
+      // Para nota 5, garante que o link do Google conste na mensagem caso o usuário não tenha suporte a botões URL ou o template não inclua a tag no corpo
+      if (score === 5) {
+        const googleLink = db.zapiConfig?.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
+        if (!renderedReply.includes(googleLink) && !renderedReply.includes("http")) {
+          renderedReply = `${renderedReply}\n\n${googleLink}`;
+        }
+      }
+    }
+
+    if (score === 5) {
+      existingNps.autoAction = "google_link_sent";
+      existingNps.googleLinkSent = true;
+      existingNps.awaitingFeedbackComment = false;
+    } else {
+      existingNps.googleLinkSent = false;
+      if (score <= 2) {
+        existingNps.autoAction = "recovery_ticket_created";
+        if (!db.observations) db.observations = [];
+        const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+        db.observations.push({
+          id: obsId,
+          flatNumber: existingNps.flatNumber || "N/A",
+          guestPhone: rawPhone || targetPhone,
+          type: "reclamacao",
+          description: `[NPS Auto-Ticket] Hóspede ${existingNps.guestName} deu nota ${score}/5 pós-checkout.${inlineComment ? ` Relato: "${inlineComment}"` : " Aguardando detalhes do hóspede."}`,
+          severity: score === 1 ? "alta" : "media",
+          status: "pendente",
+          createdAt: new Date().toISOString(),
+          generatedFromNps: true
+        });
+      } else {
+        existingNps.autoAction = "feedback_collected";
+      }
+
+      if (inlineComment) {
+        existingNps.comment = inlineComment;
+        existingNps.commentReceivedAt = new Date().toISOString();
+        existingNps.awaitingFeedbackComment = false;
+        syncNpsCommentToReviews(db, existingNps);
+      } else {
+        existingNps.awaitingFeedbackComment = true;
+        existingNps.awaitingFeedbackSince = new Date().toISOString();
+        existingNps.managerAlertSent = false;
+        existingNps.managerCommentAlertSent = false;
+      }
+    }
+
+    // Dispara a mensagem configurada para a respectiva nota (1 a 5)
+    if (renderedReply) {
+      const triggerEv = tpl?.triggerEvent || (score === 5 ? "nps_approved" : `nps_score_${score}`);
+      const sendRes = await sendZapiFn(db.zapiConfig, {
+        phone: rawPhone || targetPhone,
+        message: renderedReply,
+        title: tpl?.title,
+        footer: tpl?.footer,
+        buttons: renderedButtons,
+        channelId: "guest_schedule",
+        recipientRole: "guest",
+        triggerEvent: triggerEv,
+        db
+      }).catch(err => {
+        console.warn(`[NPS Auto-Reply Score ${score}] Falha no envio:`, err.message);
+        return { success: false, error: err.message };
+      });
+
+      const sentAtIso = new Date().toISOString();
+      if (!db.whatsappHistory) db.whatsappHistory = [];
+      db.whatsappHistory.push({
+        id: `nps_reply_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationCode: reservationForTags.code || null,
+        reservationId: reservation?.id || null,
+        title: tpl?.title || `Retorno NPS Nota ${score}`,
+        guestName: existingNps.guestName,
+        guestPhone: rawPhone || targetPhone,
+        recipientType: "guest",
+        recipientName: existingNps.guestName,
+        triggerEvent: triggerEv,
+        message: renderedReply,
+        buttons: renderedButtons,
+        status: sendRes?.success ? "sent" : "failed",
+        method: sendRes?.method || "automated",
+        error: sendRes?.error || null,
+        sentAt: sentAtIso
+      });
+
+      appendMessageToConversation(db, {
+        phone: targetPhone,
+        senderName: "CorpFlats",
+        senderPhone: db?.zapiConfig?.instanceId || "",
+        fromMe: true,
+        text: renderedReply,
+        type: "text",
+        buttons: renderedButtons,
+        triggerEvent: triggerEv,
+        reservationCode: reservationForTags.code || null,
+        status: sendRes?.success ? "read" : "failed",
+        timestamp: sentAtIso,
+        messageId: sendRes?.messageId || `msg_nps_${Date.now()}`
+      });
+    }
+
+    // Se já veio com comentário na mesma mensagem (nota 1 a 4), atualiza o resumo de melhorias e alerta o gestor imediatamente
+    if (score <= 4 && inlineComment) {
+      await rebuildNpsImprovementsSummary(db);
+      await sendNpsManagerAlertWhatsApp(db, existingNps, {
+        reason: "inline_comment_with_score",
+        sendZapiFn,
+        saveDatabase
+      });
+    }
+
+    if (typeof saveDatabase === "function") saveDatabase();
+    return {
+      npsHandled: true,
+      action: "score_received",
+      score,
+      awaitingFeedbackComment: Boolean(existingNps.awaitingFeedbackComment),
+      npsItem: existingNps
+    };
+  }
+
+  // 2. Verifica se o hóspede deu nota de 1 a 4 recentemente (awaitingFeedbackComment === true) e agora está digitando a explicação
+  if (
+    existingNps &&
+    Number(existingNps.score) >= 1 &&
+    Number(existingNps.score) <= 4 &&
+    existingNps.awaitingFeedbackComment === true
+  ) {
+    const sinceMs = existingNps.awaitingFeedbackSince ? new Date(existingNps.awaitingFeedbackSince).getTime() : Date.now();
+    const ageHours = (Date.now() - sinceMs) / (3600 * 1000);
+
+    // Janela de 48h após a nota para capturar a resposta escrita do hóspede
+    if (ageHours <= 48) {
+      existingNps.comment = existingNps.comment
+        ? `${existingNps.comment} | ${cleanText}`
+        : cleanText;
+      existingNps.commentReceivedAt = new Date().toISOString();
+      existingNps.awaitingFeedbackComment = false;
+      if (flatNumber && !existingNps.flatNumber) existingNps.flatNumber = flatNumber;
+
+      // Atualiza observação/ticket se já havia sido criado para nota 1-2
+      if (Array.isArray(db.observations)) {
+        const relatedObs = db.observations.find(
+          o => o.generatedFromNps && matchPhone(o.guestPhone) && o.status === "pendente"
+        );
+        if (relatedObs && !relatedObs.description.includes(cleanText.substring(0, 40))) {
+          relatedObs.description = `[NPS Auto-Ticket] Hóspede ${existingNps.guestName} (Nota ${existingNps.score}/5): "${existingNps.comment}"`;
+        }
+      }
+
+      // Sincroniza em db.reviews para constar também na aba de Feedbacks
+      syncNpsCommentToReviews(db, existingNps);
+
+      // Envia template de agradecimento pós-comentário (tpl_nps_feedback_thanks)
+      const thanksTpl = getNpsThanksTemplate(db);
+      if (thanksTpl) {
+        const reservationForTags = reservation || {
+          guestName: existingNps.guestName,
+          guestPhone: rawPhone || targetPhone,
+          flatNumber: existingNps.flatNumber || "",
+          code: existingNps.reservationCode || existingNps.reservationId || ""
+        };
+        const thanksMsg = resolveWhatsAppTags(thanksTpl.message, reservationForTags, db, "", "guest", thanksTpl);
+        const thanksButtons = renderTemplateButtons(thanksTpl.buttons, reservationForTags, db, "", "guest", thanksTpl);
+
+        const sendThanksRes = await sendZapiFn(db.zapiConfig, {
+          phone: rawPhone || targetPhone,
+          message: thanksMsg,
+          title: thanksTpl.title,
+          footer: thanksTpl.footer,
+          buttons: thanksButtons,
+          channelId: "guest_schedule",
+          recipientRole: "guest",
+          triggerEvent: "nps_feedback_thanks",
+          db
+        }).catch(err => {
+          console.warn("[NPS Feedback Thanks] Falha no envio:", err.message);
+          return { success: false, error: err.message };
+        });
+
+        const sentAtIso = new Date().toISOString();
+        if (!db.whatsappHistory) db.whatsappHistory = [];
+        db.whatsappHistory.push({
+          id: `nps_thanks_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          reservationCode: reservationForTags.code || null,
+          reservationId: reservation?.id || null,
+          title: thanksTpl.title,
+          guestName: existingNps.guestName,
+          guestPhone: rawPhone || targetPhone,
+          recipientType: "guest",
+          recipientName: existingNps.guestName,
+          triggerEvent: "nps_feedback_thanks",
+          message: thanksMsg,
+          buttons: thanksButtons,
+          status: sendThanksRes?.success ? "sent" : "failed",
+          method: sendThanksRes?.method || "automated",
+          error: sendThanksRes?.error || null,
+          sentAt: sentAtIso
+        });
+
+        appendMessageToConversation(db, {
+          phone: targetPhone,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: thanksMsg,
+          type: "text",
+          buttons: thanksButtons,
+          triggerEvent: "nps_feedback_thanks",
+          reservationCode: reservationForTags.code || null,
+          status: sendThanksRes?.success ? "read" : "failed",
+          timestamp: sentAtIso,
+          messageId: sendThanksRes?.messageId || `msg_nps_thanks_${Date.now()}`
+        });
+      }
+
+      // Atualiza o Resumo de Melhorias a Fazer e dispara o alerta no WhatsApp 22998505276
+      const improvements = await rebuildNpsImprovementsSummary(db);
+      await sendNpsManagerAlertWhatsApp(db, existingNps, {
+        reason: "comment_received",
+        sendZapiFn,
+        saveDatabase
+      });
+
+      if (typeof createNotification === "function") {
+        createNotification({
+          category: "whatsapp",
+          title: `📋 Nova Melhoria Registrada (Nota ${existingNps.score}/5 • ${existingNps.guestName})`,
+          message: `"${cleanText.substring(0, 120)}" — Resumo de melhorias atualizado (${improvements?.pendingCount || 0} pendentes).`,
+          type: "nps_improvement_feedback",
+          targetUrl: "/avaliacoes-ia",
+          link: "/avaliacoes-ia"
+        });
+      }
+
+      if (typeof saveDatabase === "function") saveDatabase();
+      return {
+        npsHandled: true,
+        action: "feedback_comment_received",
+        score: existingNps.score,
+        comment: existingNps.comment,
+        npsItem: existingNps,
+        improvements
+      };
+    }
+  }
+
+  return { npsHandled: false };
+}
+
+/**
+ * Verifica respostas NPS de notas 1 a 4 que aguardam explicação há mais de 15 minutos
+ * e ainda não enviaram o alerta para o WhatsApp do gestor (22998505276).
+ */
+export async function checkPendingNpsManagerAlerts(dbOrGetter, saveDatabase, createNotification, { nowOverride = null, sendZapiFn = sendZapiMessage } = {}) {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !Array.isArray(db.npsResponses)) return { triggeredCount: 0 };
+
+    const nowMs = nowOverride instanceof Date
+      ? nowOverride.getTime()
+      : (nowOverride ? new Date(nowOverride).getTime() : Date.now());
+
+    let triggeredCount = 0;
+    for (const npsItem of db.npsResponses) {
+      if (!npsItem) continue;
+      const score = Number(npsItem.score);
+      if (isNaN(score) || score < 1 || score > 4) continue;
+      if (npsItem.managerAlertSent) continue;
+
+      const refTime = npsItem.awaitingFeedbackSince || npsItem.respondedAt;
+      if (!refTime) continue;
+      const elapsedMs = nowMs - new Date(refTime).getTime();
+      if (elapsedMs >= 15 * 60 * 1000) {
+        await sendNpsManagerAlertWhatsApp(db, npsItem, {
+          reason: "timeout_15m_without_comment",
+          sendZapiFn,
+          saveDatabase
+        });
+        triggeredCount++;
+      }
+    }
+
+    return { triggeredCount };
+  } catch (err) {
+    console.warn("[NPS 15m Manager Alert Check Error]:", err.message);
+    return { triggeredCount: 0, error: err.message };
+  }
+}
+
+/**
+ * Função exportada que processa sentimento e NPS de mensagens inbound do WhatsApp.
+ */
+export async function processInboundNpsAndSentiment({
+  db,
+  phone,
+  senderName,
+  text,
+  messageId,
+  timestamp,
+  updatedConv,
+  saveDatabase,
+  createNotification,
+  analyzeSentimentFn,
+  sendZapiFn = sendZapiMessage
+}) {
+  if (!db) return { npsHandled: false };
+  const cleanText = (text || "").trim();
+  if (!cleanText) return { npsHandled: false };
+
+  // 1. Armazena no histórico de mensagens inbound
+  if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+  db.whatsappInboundMessages.unshift({
+    id: messageId || `in_${Date.now()}`,
+    from: phone,
+    senderName: senderName || "Hóspede",
+    text: cleanText,
+    receivedAt: timestamp || new Date().toISOString()
+  });
+  if (db.whatsappInboundMessages.length > 300) {
+    db.whatsappInboundMessages = db.whatsappInboundMessages.slice(0, 300);
+  }
+
+  // 2. Busca reserva associada ao telefone e extrai flat/quarto se citado no texto
+  const cleanP = cleanWhatsAppPhone(phone) || phone;
+  const reservation = (db.reservations || []).find(r => {
+    const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+    return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
+  }) || (db.reservations || []).find(r => (Array.isArray(r.guests) ? r.guests.slice(1) : []).some(g => {
+    const gP = cleanWhatsAppPhone(g?.phone || "");
+    return gP && (cleanP.endsWith(gP.slice(-8)) || gP.endsWith(cleanP.slice(-8)));
+  }));
+  const flatMatch = cleanText.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+  const flatNumber = reservation?.flatNumber || reservation?.flat || updatedConv?.flatNumber || (flatMatch ? flatMatch[1] : null);
+
+  // 3. Processamento Estruturado de NPS (Notas 1 a 5 + Coleta de Resposta Digitada + Resumo de Melhorias + Alerta 22998505276)
+  const npsFlowResult = await handleInboundNpsScoreOrComment({
+    db,
+    phone: cleanP,
+    rawPhone: phone,
+    senderName: senderName || reservation?.guestName || "Hóspede",
+    cleanText,
+    reservation,
+    flatNumber,
+    saveDatabase,
+    createNotification,
+    sendZapiFn
+  });
+
+  // 4. Análise de Sentimento em Tempo Real e Detecção de Defeitos / Críticas
+  const isNegative = /ruim|péssimo|pessimo|terrível|terrivel|horrível|horrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|gotejando|pingando|vazamento|frio|calor|demora|demorado|atraso|descaso|decepção|decepcionado|chateado|vergonha|absurdo|não funciona|nao funciona|estragado|estragou|goteira|cheiro|mofo/i.test(cleanText);
+  const isPositive = /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|gostei muito|recomendo|nota 10/i.test(cleanText);
+  const isMaintenanceIssue = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno|colchão|colchao|travesseiro/i.test(cleanText);
+
+  if (!db.guestSentiment) db.guestSentiment = [];
+  let sentEntry = db.guestSentiment.find(s => s.guestPhone === phone);
+  if (!sentEntry) {
+    sentEntry = {
+      id: `sent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      guestPhone: phone,
+      guestName: senderName || reservation?.guestName || "Hóspede",
+      reservationId: reservation?.id,
+      flatNumber: flatNumber,
+      messageCount: 0,
+      inboundCount: 0,
+      positiveKeywords: [],
+      negativeKeywords: [],
+      keywords: [],
+      suggestions: []
+    };
+    db.guestSentiment.unshift(sentEntry);
+  }
+
+  sentEntry.messageCount = (sentEntry.messageCount || 0) + 1;
+  sentEntry.inboundCount = (sentEntry.inboundCount || 0) + 1;
+  sentEntry.analyzedAt = new Date().toISOString();
+  if (flatNumber && !sentEntry.flatNumber) sentEntry.flatNumber = flatNumber;
+
+  if (isNegative) {
+    sentEntry.overallTone = "negative";
+    sentEntry.overallScore = Math.min(sentEntry.overallScore || 50, 25);
+    sentEntry.summary = `Crítica/problema relatado via WhatsApp: "${cleanText.substring(0, 110)}"`;
+
+    const words = cleanText.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const foundNeg = words.filter(w => /ruim|péssimo|pessimo|terrível|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|gotejando|pingando|vazamento|frio|calor|demora|demorado/i.test(w));
+    if (foundNeg.length > 0) {
+      sentEntry.negativeKeywords = Array.from(new Set([...(sentEntry.negativeKeywords || []), ...foundNeg]));
+    }
+
+    if (!db.observations) db.observations = [];
+    const alreadyHasTicket = db.observations.some(o =>
+      (o.guestPhone === phone || o.description?.includes(phone)) &&
+      o.status === "pendente" &&
+      (o.generatedFromWhatsApp || o.generatedFromNps)
+    );
+    if (!alreadyHasTicket) {
+      const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+      const ticketTitle = isMaintenanceIssue ? "[WhatsApp Defeito]" : "[WhatsApp Crítica]";
+      db.observations.push({
+        id: obsId,
+        flatNumber: flatNumber || "N/A",
+        guestPhone: phone,
+        type: "reclamacao",
+        description: `${ticketTitle} Hóspede ${senderName || phone}${flatNumber ? ` (Flat ${flatNumber})` : ""}: "${cleanText.substring(0, 140)}"`,
+        severity: "alta",
+        status: "pendente",
+        createdAt: new Date().toISOString(),
+        generatedFromWhatsApp: true
+      });
+    }
+
+    if (typeof createNotification === "function" && !npsFlowResult?.npsHandled) {
+      createNotification({
+        category: "whatsapp",
+        title: `⚠️ WhatsApp Alerta: ${senderName || phone}`,
+        message: cleanText.substring(0, 120),
+        type: "guest_negative_sentiment",
+        targetUrl: `/avaliacoes-ia`,
+        link: `/avaliacoes-ia`
+      });
+    }
+  } else if (isPositive) {
+    sentEntry.overallTone = "positive";
+    sentEntry.overallScore = Math.max(sentEntry.overallScore || 70, 85);
+    sentEntry.summary = `Elogio recebido via WhatsApp: "${cleanText.substring(0, 110)}"`;
+    const words = cleanText.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const foundPos = words.filter(w => /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|recomendo/i.test(w));
+    if (foundPos.length > 0) {
+      sentEntry.positiveKeywords = Array.from(new Set([...(sentEntry.positiveKeywords || []), ...foundPos]));
+    }
+  } else {
+    sentEntry.overallTone = sentEntry.overallTone || "neutral";
+    sentEntry.overallScore = sentEntry.overallScore || 65;
+    sentEntry.summary = `Mensagem via WhatsApp: "${cleanText.substring(0, 110)}"`;
+  }
+
+  if (typeof analyzeSentimentFn === "function") {
+    analyzeSentimentFn(cleanText, "WhatsApp Inbound Hóspede")
+      .then(aiRes => {
+        if (aiRes?.usingAI) {
+          sentEntry.overallScore = aiRes.score;
+          sentEntry.overallTone = aiRes.tone;
+          if (aiRes.summary) sentEntry.summary = aiRes.summary;
+          if (aiRes.positiveKeywords?.length) sentEntry.positiveKeywords = Array.from(new Set([...(sentEntry.positiveKeywords || []), ...aiRes.positiveKeywords]));
+          if (aiRes.negativeKeywords?.length) sentEntry.negativeKeywords = Array.from(new Set([...(sentEntry.negativeKeywords || []), ...aiRes.negativeKeywords]));
+          if (aiRes.suggestions?.length) sentEntry.suggestions = Array.from(new Set([...(sentEntry.suggestions || []), ...aiRes.suggestions]));
+          if (typeof saveDatabase === "function") saveDatabase();
+        }
+      })
+      .catch(err => console.warn("[Z-API Webhook AI Background]", err.message));
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+  return npsFlowResult || { npsHandled: false };
 }
