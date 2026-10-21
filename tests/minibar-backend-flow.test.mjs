@@ -247,7 +247,7 @@ describe("Milestone M1 — Minibar Backend Core & APIs Suite", () => {
       assert.ok(Array.isArray(dataOk.catalog));
       assert.ok(dataOk.defaultStock);
 
-      // Validação com dígitos incorretos -> deve retornar 400
+      // Validação com dígitos incorretos -> deve retornar 401 Unauthorized
       const resFail = await fetch(`${BASE_URL}/api/minibar/flat-context`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -256,7 +256,7 @@ describe("Milestone M1 — Minibar Backend Core & APIs Suite", () => {
           last4Digits: "0000"
         })
       });
-      assert.strictEqual(resFail.status, 400);
+      assert.strictEqual(resFail.status, 401);
       const dataFail = await resFail.json();
       assert.strictEqual(dataFail.success, false);
       assert.match(dataFail.error, /Dígitos incorretos/);
@@ -423,16 +423,29 @@ describe("Milestone M1 — Minibar Backend Core & APIs Suite", () => {
     });
 
     it("F07: Simulação de Webhook Mercado Pago liquida pedido com Cartão de Crédito", async () => {
-      // Dispara webhook simulando aprovação de pagamento Cartão
+      // Dispara webhook simulando aprovação de pagamento Cartão com external_reference e status approved
       const resWebhook = await fetch(`${BASE_URL}/api/pms/mercadopago/webhook`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "payment",
-          data: { id: "MP_PAY_TEST_9988" }
+          data: {
+            id: "MP_PAY_TEST_9988",
+            external_reference: `MB-${testCardOrderId}`,
+            status: "approved",
+            transaction_amount: 16.00
+          },
+          external_reference: `MB-${testCardOrderId}`,
+          status: "approved"
         })
       });
       assert.strictEqual(resWebhook.status, 200);
+
+      // Consulta status novamente via polling para confirmar liquidação do pedido para 'pago'
+      const resStatusAfter = await fetch(`${BASE_URL}/api/minibar/orders/${testCardOrderId}/status`);
+      const dataStatusAfter = await resStatusAfter.json();
+      assert.strictEqual(dataStatusAfter.status, "pago", "Pedido cartão deve ser liquidado com status 'pago' após webhook MP");
+      assert.ok(dataStatusAfter.paidAt);
     });
 
     // ── F08: Upload de Nota Fiscal & Disparo Multicanal ──────────────────────
@@ -462,10 +475,34 @@ describe("Milestone M1 — Minibar Backend Core & APIs Suite", () => {
       assert.strictEqual(attachedOrder.invoice?.status, "anexada");
       assert.strictEqual(attachedOrder.invoice?.invoiceFileName, `NF_Frigobar_${testPixOrderId}.pdf`);
       assert.ok(dataPortal.minibarUrl);
+
+      // F08 Edge Case: Preservação de URLs externas longas (> 200 caracteres) sem converter para Base64
+      const longExternalUrl = "https://corpflats-storage.s3.sa-east-1.amazonaws.com/invoices/2026/10/21/nota-fiscal-servico-eletronica-hospedagem-frigobar-comprovante-autenticidade-verificacao-hash-longa-url-sem-truncamento-ou-corrupcao-base64-test.pdf?signature=abcdef1234567890&expires=1792614000";
+      assert.ok(longExternalUrl.length > 200, "URL de teste deve possuir mais de 200 caracteres");
+      const resLongUrl = await fetch(`${BASE_URL}/api/minibar/orders/${testPixOrderId}/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileData: longExternalUrl,
+          fileName: `NF_Url_${testPixOrderId}.pdf`,
+          invoiceNumber: "10983"
+        })
+      });
+      assert.strictEqual(resLongUrl.status, 200);
+      const dataLongUrl = await resLongUrl.json();
+      assert.strictEqual(dataLongUrl.invoice.invoiceFileUrl, longExternalUrl, "URL externa longa deve ser preservada intacta sem ser tratada como Base64");
     });
 
     // ── F09: Inspeção, Divergência e Alerta da Sofia ─────────────────────────
     it("F09: POST /api/minibar/inspections registra conformidade sem divergência", async () => {
+      // Validação de RBAC quando autenticação é explicitamente forçada (x-enforce-auth: true)
+      const resUnauth = await fetch(`${BASE_URL}/api/minibar/inspections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-enforce-auth": "true" },
+        body: JSON.stringify({ flatNumber: testFlatNumber, status: "conforme" })
+      });
+      assert.strictEqual(resUnauth.status, 401, "Requisição sem autenticação deve retornar 401 quando auth forçado");
+
       const resInsp = await fetch(`${BASE_URL}/api/minibar/inspections`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -577,11 +614,15 @@ describe("Milestone M1 — Minibar Backend Core & APIs Suite", () => {
       assert.strictEqual(res.status, 200);
       const data = await res.json();
       assert.strictEqual(data.success, true);
-      assert.ok(data.totalOrdersAmount > 0, "Deve calcular total vendido");
-      assert.ok(typeof data.cardFees === "number");
-      assert.ok(typeof data.courtesyRestockCost === "number", "Deve compensar custo de reposição de cortesias");
-      assert.ok(typeof data.netPayableToAnserve === "number", "Deve apurar líquido a repassar");
-      assert.ok(data.inspectionsCount > 0);
+      assert.strictEqual(data.totalOrdersAmount, 54.00, "Deve calcular total vendido de R$ 54.00");
+      assert.strictEqual(data.ordersCount, 4, "Devem ser 4 pedidos pagos");
+      assert.strictEqual(data.pixOrdersAmount, 38.00, "Vendas PIX devem somar R$ 38.00 (26 + 12)");
+      assert.strictEqual(data.cardOrdersAmount, 16.00, "Vendas Cartão devem somar R$ 16.00");
+      assert.strictEqual(data.pixFees, 0.38, "Taxa PIX de 0.99% sobre R$ 38.00 deve ser R$ 0.38");
+      assert.strictEqual(data.cardFees, 0.64, "Taxa Cartão de 3.99% sobre R$ 16.00 deve ser R$ 0.64");
+      assert.strictEqual(data.courtesyRestockCost, 6.50, "Deve compensar custo de reposição de cortesias de R$ 6.50");
+      assert.strictEqual(data.netPayableToAnserve, 59.49, "Líquido a repassar deve ser R$ 59.49 (54.00 - 0.64 - 0.38 + 6.50)");
+      assert.strictEqual(data.inspectionsCount, 2);
     });
 
     it("F10: GET /api/minibar/analytics retorna ranking de consumo e cruzamento demográfico", async () => {
