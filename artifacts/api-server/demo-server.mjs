@@ -32691,7 +32691,11 @@ import {
   generateNationalXmlContent,
   generateChaveAcessoNacional,
   ensureNfseCertFilesOnDisk,
-  generateNfsePdfBuffer
+  generateNfsePdfBuffer,
+  consultNationalNfseByChave,
+  consultNationalDpsById,
+  fetchNationalDfeFromAdn,
+  checkMunicipalConvenioParams
 } from "./national-nfse.mjs";
 
 function formatCpf(cpf = "") {
@@ -32811,6 +32815,18 @@ function getFiscalData() {
         createdAt: new Date(Date.now() - 1 * 86400000).toISOString()
       }
     ];
+  }
+
+  if (Array.isArray(db.invoices)) {
+    const inv904 = db.invoices.find(i => String(i.numeroNfse) === "904" || Number(i.id) === 904);
+    if (inv904) {
+      inv904.chaveAcesso = "33010091247964813000165000000000090426106901763295";
+      inv904.nDFSe = "129197744";
+      inv904.nsuAdn = 274;
+      inv904.sistemaEmissor = "padrao_nacional";
+      inv904.linkPrefeitura = "https://www.nfse.gov.br/consultapublica/danfse?chave=33010091247964813000165000000000090426106901763295";
+      inv904.qrCodeUrl = "https://www.nfse.gov.br/consultapublica/danfse?chave=33010091247964813000165000000000090426106901763295";
+    }
   }
 
   // Limpa automaticamente da fila de contingência qualquer item que já tenha NFS-e autorizada
@@ -34621,6 +34637,116 @@ app.patch("/api/nfse/channel-rules", (req, res) => {
 // Catálogo de Regras Tributárias
 app.get("/api/nfse/tax-catalog", (req, res) => {
   res.json(TAX_CATALOG);
+});
+
+// Consulta Parâmetros do Convênio Municipal no ADN Nacional (Gov.br)
+app.get("/api/nfse/convenio-status", async (req, res) => {
+  try {
+    const codMun = String(req.query.codigoMunicipio || "3301009");
+    const result = await checkMunicipalConvenioParams(codMun, "producao");
+    res.json({
+      success: result.statusCode === 200,
+      codigoMunicipio: codMun,
+      statusCode: result.statusCode,
+      convenio: result.response
+    });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+// Consulta NFS-e por Chave de Acesso (50 dígitos) direto na SEFIN Nacional
+app.get("/api/nfse/consult-chave/:chave", async (req, res) => {
+  try {
+    const result = await consultNationalNfseByChave(req.params.chave, "producao");
+    res.json({
+      success: result.statusCode === 200,
+      statusCode: result.statusCode,
+      sefin: result.response,
+      xmlDecoded: result.xmlDecoded || null
+    });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+// Sincroniza DF-e de NFS-e emitidas no ADN Nacional (https://adn.nfse.gov.br/contribuintes/DFe)
+app.post("/api/nfse/adn-sync", async (req, res) => {
+  getFiscalData();
+  try {
+    const startNsu = Number(req.body?.nsu ?? 270);
+    const result = await fetchNationalDfeFromAdn(startNsu, "producao");
+    const lote = Array.isArray(result.response?.LoteDFe) ? result.response.LoteDFe : [];
+    let syncedCount = 0;
+    for (const item of lote) {
+      if (item.TipoDocumento !== "NFSE" || !item.xmlDecoded) continue;
+      const xml = item.xmlDecoded;
+      const nNfse = (xml.match(/<nNFSe>(\d+)<\/nNFSe>/) || [])[1];
+      const nDfse = (xml.match(/<nDFSe>(\d+)<\/nDFSe>/) || [])[1];
+      const dhEmi = (xml.match(/<dhProc>([^<]+)<\/dhProc>/) || xml.match(/<dhEmi>([^<]+)<\/dhEmi>/) || [])[1];
+      const vServ = Number((xml.match(/<vServ>([^<]+)<\/vServ>/) || [])[1] || 0);
+      const tomaBlock = (xml.match(/<toma>([\s\S]*?)<\/toma>/) || [])[1] || "";
+      const tomaDoc = (tomaBlock.match(/<(?:CPF|CNPJ)>(\d+)<\/(?:CPF|CNPJ)>/) || [])[1] || "";
+      const tomaNome = (tomaBlock.match(/<xNome>([^<]+)<\/xNome>/) || [])[1] || "Hóspede";
+      const xDescServ = (xml.match(/<xDescServ>([\s\S]*?)<\/xDescServ>/) || [])[1] || "";
+      if (!nNfse) continue;
+
+      const existing = (db.invoices || []).find(i => String(i.numeroNfse) === String(nNfse) || i.chaveAcesso === item.ChaveAcesso);
+      if (existing) {
+        existing.chaveAcesso = item.ChaveAcesso;
+        existing.nDFSe = nDfse || existing.nDFSe;
+        existing.nsuAdn = item.NSU;
+        existing.sistemaEmissor = "padrao_nacional";
+        existing.linkPrefeitura = `https://www.nfse.gov.br/consultapublica/danfse?chave=${item.ChaveAcesso}`;
+        existing.qrCodeUrl = `https://www.nfse.gov.br/consultapublica/danfse?chave=${item.ChaveAcesso}`;
+      } else {
+        db.invoices.unshift({
+          id: Number(nNfse),
+          numeroRps: Number(nNfse),
+          numeroNfse: String(nNfse),
+          numeroNota: String(nNfse),
+          nDFSe: nDfse || null,
+          nsuAdn: item.NSU,
+          codigoVerificacao: item.ChaveAcesso.slice(-9),
+          chaveAcesso: item.ChaveAcesso,
+          protocoloAutorizacao: `ADN_NSU_${item.NSU}`,
+          dataEmissao: dhEmi || item.DataHoraGeracao || new Date().toISOString(),
+          sistemaEmissor: "padrao_nacional",
+          municipioEmissor: "Campos dos Goytacazes - RJ (3301009)",
+          regraFiscalId: "hospedagem_corpflats",
+          prestadorRazaoSocial: "Rental Miller's LTDA",
+          prestadorCnpj: "47.964.813/0001-65",
+          prestadorIm: "142591",
+          tomadorNome: toTitleCase(tomaNome),
+          tomadorCpfCnpj: tomaDoc,
+          valorServico: vServ,
+          aliquota: 2.0,
+          cnae: "5510801",
+          codigoServico: "09.02",
+          codigoTributacaoMunicipio: "090202",
+          discriminacao: xDescServ,
+          status: "autorizada",
+          linkPrefeitura: `https://www.nfse.gov.br/consultapublica/danfse?chave=${item.ChaveAcesso}`,
+          qrCodeUrl: `https://www.nfse.gov.br/consultapublica/danfse?chave=${item.ChaveAcesso}`,
+          danfseUrl: `/api/nfse/danfse/${nNfse}`,
+          pdfUrl: `/api/nfse/pdf/${nNfse}`,
+          createdAt: dhEmi || new Date().toISOString()
+        });
+      }
+      syncedCount++;
+    }
+    if (syncedCount > 0 && process.env.NODE_ENV !== "test") {
+      saveDatabase();
+    }
+    res.json({
+      success: true,
+      syncedCount,
+      totalLote: lote.length,
+      maxNsu: lote.length > 0 ? Math.max(...lote.map(i => Number(i.NSU || 0))) : startNsu
+    });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
 });
 
 // Generate WhatsApp sharing link for NFS-e Nacional

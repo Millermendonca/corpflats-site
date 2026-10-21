@@ -411,9 +411,13 @@ export const TAX_CATALOG = {
     cnpjPrestador: "47.964.813/0001-65",
     inscricaoMunicipal: "142591",
     cnae: "5510-8/01", // Hotéis e similares
-    codigoTributacaoNacional: "09.02.01", // Hospedagem de qualquer natureza
+    codigoTributacaoNacional: "09.02.02", // Hospedagens e congêneres (padrão ADN Rental Miller's)
+    codigoTributacaoMunicipal: "006",
     codigoItemListaServico: "09.02",
     codigoNbs: "1.0101.10.00",
+    opSimpNac: 3, // 3 = Optante Simples Nacional ME/EPP (Anexo I SNNFSe)
+    regApTribSN: 1, // 1 = Apuração dos tributos federais e municipal pelo SN
+    regEspTrib: 0, // 0 = Nenhum
     aliquotaIss: 2.00,
     issRetido: false,
     exigibilidadeIss: 1, // Exigível
@@ -502,14 +506,14 @@ export function buildNationalDpsPayload({
   };
 
   const dpsPayload = {
-    versao: "1.00",
+    versao: "1.01",
     ambiente: ambiente === "producao" ? 1 : 2,
     infDPS: {
       id: `DPS_${chaveAcesso}`,
       tpAmb: ambiente === "producao" ? 1 : 2,
       dhEmi: dataHoraEmissao,
-      verAplic: "CorpFlats_PMS_1.0",
-      serie: String(serie || "1"),
+      verAplic: "1.00",
+      serie: String(serie || "900"),
       nDPS: String(numeroDps || 1),
       dCompet: dataHoraEmissao.substring(0, 10),
       tpEmit: 1, // Prestador
@@ -519,8 +523,9 @@ export function buildNationalDpsPayload({
         IM: rule.inscricaoMunicipal,
         xNome: rule.empresa,
         cRegTrib: {
-          opSimpNac: 1, // Optante Simples Nacional
-          regApTribSN: 1
+          opSimpNac: 3, // 3 = Optante Simples Nacional ME/EPP (Anexo I SNNFSe)
+          regApTribSN: 1,
+          regEspTrib: 0
         }
       },
       toma: {
@@ -536,8 +541,8 @@ export function buildNationalDpsPayload({
           cLocPrestacao: rule.municipioIncidencia
         },
         cServ: {
-          cTribNac: rule.codigoTributacaoNacional,
-          cTribMun: rule.codigoTributacaoNacional.replace(/\D/g, ""),
+          cTribNac: rule.codigoTributacaoNacional.replace(/\D/g, "") || "090202",
+          cTribMun: rule.codigoTributacaoMunicipal || "006",
           CNAE: rule.cnae.replace(/\D/g, ""),
           xDescServ: discriminacao || `${rule.padraoDescricao} - APARTAMENTO ${flatNumber || ""}${reservationCode ? ` (RESERVA ${reservationCode})` : ""}.`
         }
@@ -549,11 +554,14 @@ export function buildNationalDpsPayload({
         trib: {
           tribMun: {
             tribISSQN: 1, // Operação tributável
-            cPaisResult: "BR",
-            vAliq: rule.aliquotaIss.toFixed(2),
             tpRetISSQN: 1 // Não retido
           },
           totTrib: {
+            pTotTrib: {
+              pTotTribFed: "0.00",
+              pTotTribEst: "0.00",
+              pTotTribMun: "0.00"
+            },
             vTotTrib: {
               vTotTribFed: (valor * 0.045).toFixed(2),
               vTotTribEst: "0.00",
@@ -597,9 +605,9 @@ export function signDpsXmlContent({
   return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${versao}">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"', '')}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64Pure}</X509Certificate></X509Data></KeyInfo></Signature></DPS>`;
 }
 
-function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, tomaXml, xDescServ, valorNum, pAliq, includeFinNFSe = false }) {
+function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, im = "142591", tomaXml, xDescServ, valorNum, includeFinNFSe = false }) {
   const finTag = includeFinNFSe ? `<finNFSe>0</finNFSe>` : "";
-  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>CorpFlats_1.0</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><regTrib><opSimpNac>1</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090201</cTribNac><xDescServ>${escXml(xDescServ)}</xDescServ></cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN><pAliq>${pAliq}</pAliq></tribMun><totTrib><pTotTribSN>6.00</pTotTribSN></totTrib></trib></valores></infDPS>`;
+  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>1.00</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><IM>${im}</IM><regTrib><opSimpNac>3</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090202</cTribNac><cTribMun>006</cTribMun><xDescServ>${escXml(xDescServ)}</xDescServ></cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun><totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib></trib></valores></infDPS>`;
 }
 
 export async function processNationalInvoiceEmission({
@@ -1037,7 +1045,7 @@ export function renderDanfseHtml(invoice = {}) {
     <!-- Discriminação dos Serviços -->
     <div class="border-box" style="min-height: 120px;">
       <div class="box-title">DISCRIMINAÇÃO DOS SERVIÇOS PRESTADOS</div>
-      <div style="font-size: 10px; line-height: 1.6; white-space: pre-wrap; margin-top: 4px; color: #1e293b;">${invoice.discriminacao || `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nCNAE: 5510-8/01 - HOTÉIS E SIMILARES | CÓDIGO TRIBUTAÇÃO NACIONAL: 09.02.01`}</div>
+      <div style="font-size: 10px; line-height: 1.6; white-space: pre-wrap; margin-top: 4px; color: #1e293b;">${invoice.discriminacao || `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nCNAE: 5510-8/01 - HOTÉIS E SIMILARES | CÓDIGO TRIBUTAÇÃO NACIONAL: 09.02.02`}</div>
     </div>
 
     <!-- Dados Tributários e Valores -->
@@ -1240,7 +1248,7 @@ export async function generateNfsePdfBuffer(invoice = {}) {
 
       doc.moveTo(36, 494).lineTo(559, 494).strokeColor("#cbd5e1").stroke();
       doc.fillColor("#475569").font("Helvetica-Bold").fontSize(7.5).text(
-        `CNAE: ${invoice.cnae || "5510-8/01"} (Hotéis e Similares)  •  Cód. Tributação Nacional: 09.02.01 (Hospedagem)  •  Competência: ${competenciaStr}`,
+        `CNAE: ${invoice.cnae || "5510-8/01"} (Hotéis e Similares)  •  Cód. Tributação Nacional: 09.02.02 (Hospedagem)  •  Competência: ${competenciaStr}`,
         44,
         503,
         { width: 505 }
@@ -1383,3 +1391,80 @@ export async function transmitDpsToNationalAdn(dpsXml, environment = "producao")
     req.end();
   });
 }
+
+function mtlsGetJson(hostname, reqPath) {
+  const pfx = getCertPfxBuffer();
+  if (!pfx) {
+    return Promise.reject(new Error("Certificado Digital A1 não configurado no servidor."));
+  }
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname,
+      port: 443,
+      path: reqPath,
+      method: "GET",
+      pfx,
+      passphrase: CERT_PASS,
+      rejectUnauthorized: false,
+      timeout: 15000,
+      headers: { Accept: "application/json" }
+    }, (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", () => {
+        try {
+          resolve({ statusCode: res.statusCode, response: JSON.parse(data), raw: data });
+        } catch {
+          resolve({ statusCode: res.statusCode, response: null, raw: data });
+        }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error(`Timeout na consulta mTLS em ${hostname}${reqPath}`));
+    });
+    req.end();
+  });
+}
+
+export async function consultNationalNfseByChave(chaveAcesso, environment = "producao") {
+  const cleanChave = onlyDigits(chaveAcesso);
+  const hostname = environment === "producao" ? "sefin.nfse.gov.br" : "sefin.producaorestrita.nfse.gov.br";
+  const res = await mtlsGetJson(hostname, `/sefinnacional/nfse/${cleanChave}`);
+  if (res.statusCode === 200 && res.response?.nfseXmlGZipB64) {
+    try {
+      res.xmlDecoded = zlib.gunzipSync(Buffer.from(res.response.nfseXmlGZipB64, "base64")).toString("utf-8");
+    } catch {}
+  }
+  return res;
+}
+
+export async function consultNationalDpsById(idDps, environment = "producao") {
+  const hostname = environment === "producao" ? "sefin.nfse.gov.br" : "sefin.producaorestrita.nfse.gov.br";
+  return mtlsGetJson(hostname, `/sefinnacional/dps/${encodeURIComponent(String(idDps || "").trim())}`);
+}
+
+export async function fetchNationalDfeFromAdn(nsu = 0, environment = "producao") {
+  const hostname = environment === "producao" ? ADN_HOST_PROD : ADN_HOST_HOMOLOG;
+  const res = await mtlsGetJson(hostname, `/contribuintes/DFe/${Number(nsu) || 0}`);
+  if (Array.isArray(res.response?.LoteDFe)) {
+    res.response.LoteDFe = res.response.LoteDFe.map((item) => {
+      let xmlDecoded = null;
+      if (item.ArquivoXml) {
+        try {
+          xmlDecoded = zlib.gunzipSync(Buffer.from(item.ArquivoXml, "base64")).toString("utf-8");
+        } catch {}
+      }
+      return { ...item, xmlDecoded };
+    });
+  }
+  return res;
+}
+
+export async function checkMunicipalConvenioParams(codigoMunicipio = "3301009", environment = "producao") {
+  const hostname = environment === "producao" ? ADN_HOST_PROD : ADN_HOST_HOMOLOG;
+  const cleanMun = onlyDigits(codigoMunicipio) || "3301009";
+  return mtlsGetJson(hostname, `/parametrizacao/${cleanMun}/convenio`);
+}
+
