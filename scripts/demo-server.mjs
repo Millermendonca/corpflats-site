@@ -39299,17 +39299,79 @@ app.delete("/api/v2/auth/account", (req, res) => {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MÓDULO 2: PAINEL DE OPERAÇÕES AO VIVO PARA TELA DE 27" / TV (`/painel-aovivo`)
+// MÓDULO 2: PAINEL DE OPERAÇÕES AO VIVO PARA MONITOR 32" HORIZONTAL (`/painel-aovivo`)
 // ══════════════════════════════════════════════════════════════════════════════
 
 app.get("/api/live-ops/metrics", (req, res) => {
   try {
-    const todayStr = getIsoDateStr(new Date());
-    const totalFlats = (db.flats || []).length || 10;
+    if (typeof ensureSentimentDB === "function") ensureSentimentDB();
+    if (typeof initDefaultReviews === "function") initDefaultReviews();
+
+    const now = new Date();
+    const todayStr = getIsoDateStr(now);
+    const brTimeParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).formatToParts(now);
+    const currentHourBr = Number(brTimeParts.find(p => p.type === "hour")?.value || now.getHours());
+    const currentMinBr = Number(brTimeParts.find(p => p.type === "minute")?.value || now.getMinutes());
+    const currentMinutesOfDay = currentHourBr * 60 + currentMinBr;
+
+    // Garante as 19 unidades ativas da CorpFlats (113 a 1304)
+    const rawDbFlats = Array.isArray(db.flats) && db.flats.length >= 19 ? db.flats : DEFAULT_FLATS;
+    const activeFlatsList = rawDbFlats
+      .filter(f => f && String(f.number) !== "502" && f.id !== 9 && f.isActive !== false)
+      .sort((a, b) => Number(a.number) - Number(b.number));
+    const totalFlats = activeFlatsList.length || 19;
+
+    // Helpers de verificação de reserva
+    const isResPaidHelper = (r) => {
+      if (!r) return false;
+      const ch = String(r.channel || "").toLowerCase();
+      const pm = String(r.paymentMethod || "").toLowerCase();
+      const isOta = ch === "booking" || ch === "airbnb" || pm === "booking" || pm === "airbnb";
+      const isGwPaid = Boolean(r.mpPaymentId || r.gatewayPaidAt || r.paidAt);
+      const isUnpaidPre = r.status === "pre_reserva" && !isOta && !isGwPaid;
+      return !isUnpaidPre && (
+        isGwPaid ||
+        r.paymentStatus === "pago_total" ||
+        r.paymentStatus === "pago" ||
+        (Number(r.paidAmount || 0) >= Number(r.totalAmount || 0) && Number(r.totalAmount || 0) > 0)
+      );
+    };
+
+    const isResFnrhDoneHelper = (r) => {
+      if (!r) return false;
+      return Boolean(
+        r.fnhrCompleted ||
+        r.fnrhCompleted ||
+        r.fnrhSigned ||
+        r.hasCompletedCheckin ||
+        r.checkinDone ||
+        r.status === "checked_in" ||
+        (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin || g.checkinCompletedAt))
+      );
+    };
+
+    const isResPasswordSentHelper = (r) => {
+      if (!r) return false;
+      return Boolean(
+        r.checkinInstructionsSent ||
+        r.passwordSent ||
+        r.lockCodeSent ||
+        r.accessSent ||
+        r.checkinDone ||
+        r.status === "checked_in"
+      );
+    };
+
+    const allValidReservations = (db.reservations || []).filter(r => r && r.status !== "cancelada" && r.status !== "cancelled");
 
     // 1. Ocupação Hoje
-    const occupiedReservationsToday = (db.reservations || []).filter(r =>
-      r.checkinDate <= todayStr && r.checkoutDate > todayStr
+    const occupiedReservationsToday = allValidReservations.filter(r =>
+      r.checkinDate <= todayStr && r.checkoutDate > todayStr && r.status !== "pre_reserva"
     );
     const occupiedCount = occupiedReservationsToday.length;
     const occupancyRate = totalFlats > 0 ? Math.round((occupiedCount / totalFlats) * 100) : 0;
@@ -39317,9 +39379,9 @@ app.get("/api/live-ops/metrics", (req, res) => {
     // Previsão de Ocupação dos Próximos 7 Dias
     const next7Days = [];
     for (let i = 0; i < 7; i++) {
-      const targetDate = addDaysNative(new Date(), i);
+      const targetDate = addDaysNative(now, i);
       const targetStr = getIsoDateStr(targetDate);
-      const occDay = (db.reservations || []).filter(r => r.checkinDate <= targetStr && r.checkoutDate > targetStr).length;
+      const occDay = allValidReservations.filter(r => r.checkinDate <= targetStr && r.checkoutDate > targetStr && r.status !== "pre_reserva").length;
       next7Days.push({
         date: targetStr,
         dayName: getDayNamePt(targetDate),
@@ -39329,26 +39391,234 @@ app.get("/api/live-ops/metrics", (req, res) => {
       });
     }
 
-    // 2. Check-ins de Hoje
-    const checkinsToday = (db.reservations || []).filter(r => r.checkinDate === todayStr);
-    const checkinsDone = checkinsToday.filter(r => r.status === "checked_in" || r.checkinDone).length;
-    const checkinsPending = checkinsToday.length - checkinsDone;
+    // 2. Check-ins e Check-outs de Hoje + Limpezas de Hoje
+    const todayCleanings = (db.cleaningRequests || []).filter(r => r && r.requestDate === todayStr);
+    const checkinsTodayRaw = allValidReservations.filter(r => r.checkinDate === todayStr);
+    const checkoutsTodayRaw = allValidReservations.filter(r => r.checkoutDate === todayStr && r.status !== "pre_reserva");
 
-    // 3. Check-outs de Hoje
-    const checkoutsToday = (db.reservations || []).filter(r => r.checkoutDate === todayStr);
-    const checkoutsDone = checkoutsToday.filter(r => r.status === "checked_out" || r.checkoutDone).length;
-    const checkoutsPending = checkoutsToday.length - checkoutsDone;
+    // Sentimentos WhatsApp indexados por flat e telefone
+    const sentimentList = Array.isArray(db.guestSentiment) ? db.guestSentiment : [];
+    const findGuestSentiment = (flatNum, phone, guestName) => {
+      const cleanP = String(phone || "").replace(/\D/g, "");
+      let match = null;
+      if (cleanP && cleanP.length >= 8) {
+        match = sentimentList.find(s => {
+          const sp = String(s.guestPhone || "").replace(/\D/g, "");
+          return sp && (sp.endsWith(cleanP.slice(-8)) || cleanP.endsWith(sp.slice(-8)));
+        });
+      }
+      if (!match && flatNum) {
+        match = sentimentList.find(s => String(s.flatNumber) === String(flatNum));
+      }
+      if (!match && guestName) {
+        const gn = String(guestName).toLowerCase().trim();
+        match = sentimentList.find(s => String(s.guestName || "").toLowerCase().trim() === gn);
+      }
+      return match || null;
+    };
 
-    // 4. Governança e Limpeza de Hoje
-    const todayCleanings = (db.cleaningRequests || []).filter(r => r.requestDate === todayStr);
+    // Ordens de Serviço (OS) e Ocorrências (Observations) ativas
+    const activeServiceOrders = (db.serviceOrders || []).filter(o => o && o.status === "active");
+    const pendingObservations = (db.observations || []).filter(o => o && o.status === "pendente");
+
+    // Check-ins enriquecidos
+    const checkinsEnriched = checkinsTodayRaw.map(r => {
+      const flatNum = String(r.flatNumber || r.flatId || "");
+      const cleanReq = todayCleanings.find(c => String(c.flatNumber) === flatNum || Number(c.flatId) === Number(r.flatId));
+      const cleanSt = cleanReq ? (cleanReq.status || "pending") : "clean";
+      const isRoomReady = cleanSt === "clean" || cleanSt === "inspected" || cleanSt === "no_show";
+      const isDone = r.status === "checked_in" || Boolean(r.checkinDone);
+      const isFnrhDone = isResFnrhDoneHelper(r);
+      const isPaid = isResPaidHelper(r);
+      const isPasswordSent = isResPasswordSentHelper(r);
+      const sent = findGuestSentiment(flatNum, r.guestPhone, r.guestName);
+      return {
+        id: r.id,
+        code: r.code,
+        guestName: r.guestName || "Hóspede",
+        flatNumber: flatNum,
+        channel: r.channel || "site",
+        phone: r.guestPhone || "",
+        checkinTime: r.checkinTime || "14:00",
+        status: r.status,
+        isPreReserva: r.status === "pre_reserva",
+        isDone,
+        isFnrhDone,
+        isPaid,
+        isPasswordSent,
+        cleanStatus: isRoomReady ? "clean" : (cleanSt === "in_progress" || cleanSt === "assigned" ? "in_progress" : "dirty"),
+        maidName: cleanReq?.assignedToName || null,
+        whatsappTone: sent?.overallTone || null,
+        whatsappScore: sent?.overallScore ?? null
+      };
+    });
+
+    const checkinsDone = checkinsEnriched.filter(c => c.isDone).length;
+    const checkinsPending = checkinsEnriched.length - checkinsDone;
+
+    // Check-outs enriquecidos
+    const checkoutsEnriched = checkoutsTodayRaw.map(r => {
+      const flatNum = String(r.flatNumber || r.flatId || "");
+      const cleanReq = todayCleanings.find(c => String(c.flatNumber) === flatNum || Number(c.flatId) === Number(r.flatId));
+      const hasSameDayCheckin = checkinsEnriched.some(ci => String(ci.flatNumber) === flatNum);
+      const isDone = r.status === "checked_out" || Boolean(r.checkoutDone) || Boolean(cleanReq && (cleanReq.status === "in_progress" || cleanReq.status === "clean" || cleanReq.status === "inspected"));
+      return {
+        id: r.id,
+        code: r.code,
+        guestName: r.guestName || "Hóspede",
+        flatNumber: flatNum,
+        channel: r.channel || "site",
+        checkoutTime: r.checkoutTime || "12:00",
+        isDone,
+        hasTurnaround: hasSameDayCheckin,
+        cleanStatus: cleanReq ? (cleanReq.status || "pending") : "pending",
+        maidName: cleanReq?.assignedToName || null
+      };
+    });
+
+    const checkoutsDone = checkoutsEnriched.filter(c => c.isDone).length;
+    const checkoutsPending = checkoutsEnriched.length - checkoutsDone;
+
+    // Dobradinhas do Dia (Turnarounds: Sai hoje e Entra hoje no mesmo Flat)
+    const turnarounds = [];
+    checkinsEnriched.forEach(ci => {
+      const co = checkoutsEnriched.find(o => String(o.flatNumber) === String(ci.flatNumber));
+      if (co) {
+        const cleanReq = todayCleanings.find(c => String(c.flatNumber) === String(ci.flatNumber));
+        turnarounds.push({
+          flatNumber: ci.flatNumber,
+          leavingGuest: co.guestName,
+          checkoutDone: co.isDone,
+          cleanStatus: ci.cleanStatus,
+          maidName: cleanReq?.assignedToName || ci.maidName || null,
+          arrivingGuest: ci.guestName,
+          arrivingChannel: ci.channel,
+          checkinTime: ci.checkinTime || "14:00",
+          checkinDone: ci.isDone,
+          isFnrhDone: ci.isFnrhDone,
+          isPaid: ci.isPaid,
+          isPasswordSent: ci.isPasswordSent,
+          isUrgentDelay: ci.cleanStatus !== "clean" && currentMinutesOfDay >= 13 * 60 + 15
+        });
+      }
+    });
+
+    // 4. Governança & Mapa Completo dos 19 Flats (Zona B)
     const cleanCount = todayCleanings.filter(r => r.status === "clean" || r.status === "inspected" || r.status === "no_show").length;
     const inProgressCount = todayCleanings.filter(r => r.status === "in_progress" || r.status === "assigned").length;
     const dirtyCount = todayCleanings.filter(r => r.status === "pending" || !r.status).length;
-    const maintenanceCount = (db.observations || []).filter(o => o.status === "pendente").length;
+    const maintenanceCount = pendingObservations.length;
 
-    // 5. Cafés da Manhã de Hoje
-    const breakfastOrdersToday = (db.cleaningRequests || []).filter(r =>
-      r.requestDate === todayStr && (r.hasBreakfast || r.breakfastOrder)
+    const flatsGrid = activeFlatsList.map(f => {
+      const fNum = String(f.number);
+      const req = todayCleanings.find(c => String(c.flatNumber) === fNum || Number(c.flatId) === Number(f.id));
+      const resCurrent = occupiedReservationsToday.find(r => String(r.flatNumber || r.flatId) === fNum);
+      const ciToday = checkinsEnriched.find(c => String(c.flatNumber) === fNum) || null;
+      const coToday = checkoutsEnriched.find(c => String(c.flatNumber) === fNum) || null;
+      const isTurnaround = Boolean(ciToday && coToday);
+
+      // Verifica OS externa ou avaria pendente no flat
+      let osMatch = null;
+      let osFlatEntry = null;
+      for (const ord of activeServiceOrders) {
+        const mf = (ord.flats || []).find(of => String(of.flatNumber) === fNum && of.status !== "done");
+        if (mf) {
+          osMatch = ord;
+          osFlatEntry = mf;
+          break;
+        }
+      }
+      const obsMatches = pendingObservations.filter(o => String(o.flatNumber) === fNum);
+
+      // Status de limpeza normalizado
+      let cleanSt = "clean";
+      if (req) {
+        if (req.status === "clean" || req.status === "inspected" || req.status === "no_show") cleanSt = "clean";
+        else if (req.status === "in_progress" || req.status === "assigned") cleanSt = "in_progress";
+        else cleanSt = "dirty";
+      } else if (coToday && !coToday.isDone) {
+        cleanSt = "dirty";
+      }
+
+      // Determina visualState principal do Card do Flat
+      let visualState = "available_clean";
+      if (osFlatEntry && osFlatEntry.status === "in_progress") {
+        visualState = "maintenance";
+      } else if (cleanSt === "in_progress") {
+        visualState = "cleaning";
+      } else if (cleanSt === "dirty") {
+        visualState = (ciToday || isTurnaround) ? "turnaround_dirty" : "dirty";
+      } else if (ciToday && !ciToday.isDone) {
+        visualState = "ready_checkin_today";
+      } else if (resCurrent) {
+        visualState = "occupied";
+      } else if (osMatch || obsMatches.length > 0) {
+        visualState = "maintenance";
+      }
+
+      // Hóspede principal de referência para o Card
+      const refRes = ciToday || (resCurrent ? {
+        guestName: resCurrent.guestName,
+        code: resCurrent.code,
+        channel: resCurrent.channel || "site",
+        checkinDate: resCurrent.checkinDate,
+        checkoutDate: resCurrent.checkoutDate,
+        isFnrhDone: isResFnrhDoneHelper(resCurrent),
+        isPaid: isResPaidHelper(resCurrent),
+        isPasswordSent: isResPasswordSentHelper(resCurrent),
+        phone: resCurrent.guestPhone
+      } : null);
+
+      const sentimentObj = refRes ? findGuestSentiment(fNum, refRes.phone, refRes.guestName) : findGuestSentiment(fNum, null, null);
+
+      const rawLabel = String(f.colName || f.name || "").replace(fNum, "").replace(/^X\s*/i, "").replace(/\s*X$/i, "").trim();
+      const shortType = rawLabel ? rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1) : "Flat";
+
+      return {
+        id: f.id,
+        number: fNum,
+        shortType,
+        visualState,
+        cleanStatus: cleanSt,
+        maidName: req?.assignedToName || null,
+        cleanCompletedAt: req?.completedAt || null,
+        isOccupied: Boolean(resCurrent),
+        isTurnaround,
+        currentGuest: resCurrent ? resCurrent.guestName : null,
+        checkoutDate: resCurrent ? resCurrent.checkoutDate : null,
+        channel: refRes?.channel || null,
+        arrivingToday: ciToday ? {
+          guestName: ciToday.guestName,
+          checkinTime: ciToday.checkinTime,
+          isDone: ciToday.isDone,
+          isPreReserva: ciToday.isPreReserva,
+          channel: ciToday.channel
+        } : null,
+        leavingToday: coToday ? {
+          guestName: coToday.guestName,
+          checkoutTime: coToday.checkoutTime,
+          isDone: coToday.isDone
+        } : null,
+        badges: refRes ? {
+          fnrh: Boolean(refRes.isFnrhDone),
+          paid: Boolean(refRes.isPaid),
+          password: Boolean(refRes.isPasswordSent),
+          whatsappTone: sentimentObj?.overallTone || null,
+          whatsappScore: sentimentObj?.overallScore ?? null
+        } : null,
+        maintenance: {
+          hasIssue: Boolean(osMatch || obsMatches.length > 0),
+          inProgress: Boolean(osFlatEntry?.status === "in_progress"),
+          count: (osMatch ? 1 : 0) + obsMatches.length,
+          title: osMatch ? osMatch.title : (obsMatches[0]?.description || null),
+          workerName: osMatch?.workerName || null
+        }
+      };
+    });
+
+    // 5. Cafés da Manhã de Hoje (Sem dados de garagem)
+    const breakfastOrdersToday = todayCleanings.filter(r =>
+      r.hasBreakfast || r.breakfastOrder
     ).map(r => ({
       flatNumber: r.flatNumber,
       deliveryTime: r.breakfastOrder?.deliveryTime || "07:30",
@@ -39357,43 +39627,266 @@ app.get("/api/live-ops/metrics", (req, res) => {
       status: r.breakfastDelivered ? "Entregue" : "Preparando"
     }));
 
-    // 6. Financeiro Hoje e Mês
+    // 6. Financeiro Hoje, Mês & Canais
     const todayRevenue = occupiedReservationsToday.reduce((acc, r) => acc + (Number(r.dailyRate) || 250), 0);
     const currentMonth = todayStr.substring(0, 7);
-    const monthReservations = (db.reservations || []).filter(r => r.checkinDate && r.checkinDate.startsWith(currentMonth));
+    const monthReservations = allValidReservations.filter(r => r.checkinDate && r.checkinDate.startsWith(currentMonth) && r.status !== "pre_reserva");
     const monthRevenue = monthReservations.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
     const adr = occupiedCount > 0 ? Math.round(todayRevenue / occupiedCount) : 250;
     const revpar = totalFlats > 0 ? Math.round(todayRevenue / totalFlats) : 0;
 
-    // Benchmark Concorrente (Preço médio de outros flats no Soho Residence)
+    const channelCounts = { site: 0, whatsapp: 0, booking: 0, airbnb: 0, corporate: 0 };
+    monthReservations.forEach(r => {
+      const ch = String(r.channel || "site").toLowerCase();
+      if (ch.includes("booking")) channelCounts.booking++;
+      else if (ch.includes("airbnb")) channelCounts.airbnb++;
+      else if (ch.includes("whats") || ch.includes("sofia")) channelCounts.whatsapp++;
+      else if (r.clientType === "empresa" || ch.includes("corp") || ch.includes("faturado")) channelCounts.corporate++;
+      else channelCounts.site++;
+    });
+
     const benchmarkSohoPrice = 289;
     const corpFlatsPrice = 250;
     const benchmarkSavingsPercent = Math.round(((benchmarkSohoPrice - corpFlatsPrice) / benchmarkSohoPrice) * 100);
 
     // 7. Funil de Conversões / Anúncios
-    const cartSessions = (db.cartSessions || []).filter(s => s.updatedAt && s.updatedAt.startsWith(todayStr));
+    const cartSessions = (db.cartSessions || []).filter(s => s && s.updatedAt && s.updatedAt.startsWith(todayStr));
     const siteVisitorsToday = Math.max(cartSessions.length + 12, 18);
-    const convertedBookingsToday = (db.reservations || []).filter(r => r.createdAt && r.createdAt.startsWith(todayStr) && r.channel === "site").length;
+    const convertedBookingsToday = allValidReservations.filter(r => r.createdAt && r.createdAt.startsWith(todayStr)).length;
     const conversionRate = siteVisitorsToday > 0 ? ((convertedBookingsToday / siteVisitorsToday) * 100).toFixed(1) : "0.0";
 
-    // 8. Stream de Eventos Ao Vivo (Últimos 30 eventos)
-    const liveEvents = [];
+    // 8. Clima no WhatsApp, Sentimento IA, Demandas & Pré-Reservas da Sofia (Zona C Inferior)
+    const wppAnalyzed = sentimentList.filter(s => s && s.overallScore != null);
+    const avgWppScore = wppAnalyzed.length > 0
+      ? Math.round(wppAnalyzed.reduce((a, s) => a + (Number(s.overallScore) || 0), 0) / wppAnalyzed.length)
+      : 88;
+    const wppPositive = wppAnalyzed.filter(s => s.overallTone === "positive").length;
+    const wppNeutral = wppAnalyzed.filter(s => s.overallTone === "neutral").length;
+    const wppNegative = wppAnalyzed.filter(s => s.overallTone === "negative").length;
+    const totalWppTones = Math.max(wppPositive + wppNeutral + wppNegative, 1);
 
-    // Reservas recentes
-    (db.reservations || []).slice(-10).reverse().forEach(r => {
-      liveEvents.push({
-        id: `res_${r.id}`,
-        type: "reserva",
-        title: `Nova Reserva (${(r.channel || "Site").toUpperCase()})`,
-        subtitle: `${r.guestName} • Apt ${r.flatNumber || r.flatId}`,
-        detail: `${r.checkinDate} a ${r.checkoutDate} • R$ ${Number(r.totalAmount || 0).toLocaleString("pt-BR")}`,
-        time: r.createdAt || new Date().toISOString(),
-        badge: "Reserva",
-        badgeColor: "bg-emerald-600"
+    const attentionQueue = [...wppAnalyzed]
+      .sort((a, b) => {
+        const rank = (t) => t === "negative" ? 0 : t === "neutral" ? 1 : 2;
+        if (rank(a.overallTone) !== rank(b.overallTone)) return rank(a.overallTone) - rank(b.overallTone);
+        return new Date(b.analyzedAt || b.updatedAt || 0).getTime() - new Date(a.analyzedAt || a.updatedAt || 0).getTime();
+      })
+      .slice(0, 6)
+      .map(s => ({
+        guestName: s.guestName || "Hóspede",
+        flatNumber: s.flatNumber || "--",
+        tone: s.overallTone || "neutral",
+        score: s.overallScore ?? 75,
+        summary: s.summary || (Array.isArray(s.negativeKeywords) && s.negativeKeywords.length > 0 ? `Pontos: ${s.negativeKeywords.join(", ")}` : "Conversa monitorada pela IA"),
+        keywords: s.overallTone === "negative" ? (s.negativeKeywords || []) : (s.positiveKeywords || []),
+        updatedAt: s.analyzedAt || s.updatedAt || null
+      }));
+
+    const activePreReservations = allValidReservations
+      .filter(r => r.status === "pre_reserva" && r.checkinDate >= todayStr)
+      .slice(-5)
+      .reverse()
+      .map(r => ({
+        code: r.code,
+        guestName: r.guestName || "Interessado",
+        flatNumber: r.flatNumber || r.flatId,
+        checkinDate: r.checkinDate,
+        totalAmount: Number(r.totalAmount || 0)
+      }));
+
+    const unmetDemands = (db.unmetDemands || db.botDemands || []).filter(d => d && d.status !== "resolved" && d.status !== "done");
+
+    // 9. Avaliações, NPS & Melhorias IA (Slide 2 do Carrossel)
+    const reviewsList = Array.isArray(db.reviews) ? db.reviews : [];
+    const avgReviewScore = reviewsList.length > 0
+      ? Number((reviewsList.reduce((a, r) => a + (Number(r.rating) || 5), 0) / reviewsList.length).toFixed(1))
+      : 4.9;
+
+    const npsList = Array.isArray(db.npsResponses) ? db.npsResponses : [];
+    const npsResponded = npsList.filter(n => n && n.score != null);
+    const npsPromoters = npsResponded.filter(n => Number(n.score) === 5).length;
+    const npsNeutrals = npsResponded.filter(n => Number(n.score) >= 3 && Number(n.score) <= 4).length;
+    const npsDetractors = npsResponded.filter(n => Number(n.score) <= 2).length;
+    const npsSatisfactionRate = npsResponded.length > 0 ? Math.round((npsPromoters / npsResponded.length) * 100) : 100;
+
+    const recentFeedbacks = [
+      ...npsResponded.slice(-5).reverse().map(n => ({
+        id: `nps_${n.id || n.phone}`,
+        author: n.guestName || "Hóspede NPS",
+        rating: Number(n.score || 5),
+        channel: "WhatsApp NPS",
+        flatNumber: n.flatNumber || null,
+        comment: n.feedbackComment || n.comment || (Number(n.score) === 5 ? "Avaliação 5 estrelas no pós-checkout!" : `Nota ${n.score} registrada no WhatsApp`),
+        tone: Number(n.score) >= 4 ? "positive" : Number(n.score) === 3 ? "neutral" : "negative",
+        date: n.respondedAt || n.createdAt || null
+      })),
+      ...reviewsList.slice(-5).reverse().map(r => ({
+        id: `rev_${r.id}`,
+        author: r.author || "Hóspede",
+        rating: Number(r.rating || 5),
+        channel: (r.channel || "OTA").toUpperCase(),
+        flatNumber: r.flatMentioned || null,
+        comment: r.comment || r.sentimentSummary || "",
+        tone: r.sentiment || (Number(r.rating) >= 4 ? "positive" : Number(r.rating) === 3 ? "neutral" : "negative"),
+        date: r.date || r.createdAt || null
+      }))
+    ].slice(0, 5);
+
+    const improvementsObj = db.npsImprovements || { pendingCount: 0, resolvedCount: 0, items: [] };
+    const pendingImprovementItems = (improvementsObj.items || [])
+      .filter(i => i && i.status !== "resolved")
+      .slice(0, 4)
+      .map(i => ({
+        id: i.id,
+        title: i.title || i.category || "Melhoria Sugerida",
+        description: i.description || i.suggestion || "",
+        flatNumber: i.flatNumber || null,
+        priority: i.priority || "medium"
+      }));
+
+    // 10. Manutenção (OS), Frigobar & Vistorias (Slide 3 do Carrossel)
+    const serviceOrdersSummary = [];
+    activeServiceOrders.forEach(ord => {
+      const pendingFlats = (ord.flats || []).filter(f => f.status !== "done");
+      const inProgFlats = pendingFlats.filter(f => f.status === "in_progress");
+      serviceOrdersSummary.push({
+        id: ord.id,
+        title: ord.title || "Ordem de Serviço",
+        workerName: ord.workerName || "Prestador",
+        flatsText: pendingFlats.map(f => f.flatNumber).join(", ") || "Concluído",
+        status: inProgFlats.length > 0 ? "in_progress" : "pending",
+        isExternalOs: true
+      });
+    });
+    pendingObservations.slice(-5).reverse().forEach(obs => {
+      serviceOrdersSummary.push({
+        id: `obs_${obs.id}`,
+        title: obs.description || "Avaria registrada",
+        workerName: obs.reportedBy || "Governança",
+        flatsText: String(obs.flatNumber || "--"),
+        status: "pending",
+        isExternalOs: false
       });
     });
 
-    // Limpezas recentes
+    const minibarOrdersToday = (db.minibarOrders || []).filter(o => o && (o.createdAt || "").startsWith(todayStr));
+    const minibarPaidToday = minibarOrdersToday.filter(o => o.paymentStatus === "pago");
+    const minibarRevenueToday = minibarPaidToday.reduce((sum, o) => sum + Number(o.totalAmount || o.total || 0), 0);
+
+    // 11. Saúde Técnica do Sistema (Zona A)
+    const quarantineList = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+    const quarantinePendingCount = quarantineList.filter(q => q && q.status === "pending").length;
+    const memUsage = process.memoryUsage();
+    const zapiConnected = db.zapiConfig?.connectionState !== "disconnected" && db.zapiConfig?.enabled !== false;
+
+    const systemHealth = {
+      zapi: {
+        connected: zapiConnected,
+        state: db.zapiConfig?.connectionState || "connected",
+        label: zapiConnected ? "Z-API Online" : "Z-API Alerta"
+      },
+      sofiaAi: {
+        active: true,
+        activePreReservationsCount: activePreReservations.length,
+        unmetDemandsCount: unmetDemands.length
+      },
+      otaWbp: {
+        synced: quarantinePendingCount === 0,
+        quarantinePendingCount
+      },
+      server: {
+        rssMB: Math.round(memUsage.rss / (1024 * 1024)),
+        heapUsedMB: Math.round(memUsage.heapUsed / (1024 * 1024)),
+        uptimeHours: Math.max(1, Math.round(process.uptime() / 3600)),
+        cloudSynced: true
+      }
+    };
+
+    // 12. Radar de Alertas Operacionais Críticos (Pulsantes no Topo)
+    const criticalAlerts = [];
+
+    checkinsEnriched.forEach(ci => {
+      if (!ci.isDone && ci.cleanStatus !== "clean") {
+        if (currentMinutesOfDay >= 13 * 60 + 30) {
+          criticalAlerts.push({
+            id: `delay_clean_${ci.flatNumber}`,
+            severity: "critical",
+            category: "governanca",
+            title: `RISCO DE ATRASO CHECK-IN: Flat ${ci.flatNumber} (${ci.guestName}) ainda ${ci.cleanStatus === "in_progress" ? "EM FAXINA" : "SUJO"}!`,
+            flatNumber: ci.flatNumber
+          });
+        } else if (currentMinutesOfDay >= 11 * 60 + 30) {
+          criticalAlerts.push({
+            id: `turnaround_watch_${ci.flatNumber}`,
+            severity: "warning",
+            category: "governanca",
+            title: `Prioridade de Giro: Flat ${ci.flatNumber} tem entrada hoje (${ci.guestName}) e aguarda conclusão da limpeza.`,
+            flatNumber: ci.flatNumber
+          });
+        }
+      }
+    });
+
+    checkoutsEnriched.forEach(co => {
+      if (!co.isDone && currentMinutesOfDay >= 12 * 60 + 15) {
+        criticalAlerts.push({
+          id: `late_co_${co.flatNumber}`,
+          severity: co.hasTurnaround ? "critical" : "warning",
+          category: "checkout",
+          title: `CHECK-OUT PENDENTE: Flat ${co.flatNumber} (${co.guestName}) ainda não liberado após 12h${co.hasTurnaround ? " — TEM ENTRADA HOJE!" : ""}`,
+          flatNumber: co.flatNumber
+        });
+      }
+    });
+
+    if (wppNegative > 0) {
+      const negGuest = attentionQueue.find(a => a.tone === "negative");
+      criticalAlerts.push({
+        id: `wpp_neg_${negGuest?.flatNumber || "alert"}`,
+        severity: "critical",
+        category: "whatsapp",
+        title: `CLIMA CRÍTICO WHATSAPP: ${negGuest ? `${negGuest.guestName} (Flat ${negGuest.flatNumber}) — ${negGuest.summary}` : `${wppNegative} conversa(s) com tom negativo detectado`}`,
+        flatNumber: negGuest?.flatNumber || null
+      });
+    }
+
+    if (quarantinePendingCount > 0) {
+      criticalAlerts.push({
+        id: "wbp_quarantine",
+        severity: "critical",
+        category: "ota",
+        title: `RESERVA EM QUARENTENA: ${quarantinePendingCount} reserva(s) OTA aguardando alocação/reconciliação manual!`,
+        flatNumber: null
+      });
+    }
+
+    if (unmetDemands.length > 0) {
+      criticalAlerts.push({
+        id: "sofia_demands",
+        severity: "warning",
+        category: "sofia",
+        title: `FILA DA SOFIA: ${unmetDemands.length} solicitação(ões) de hóspedes aguardando retorno da gestão.`,
+        flatNumber: null
+      });
+    }
+
+    // 13. Stream de Eventos Ao Vivo (Rodapé Ticker + Histórico)
+    const liveEvents = [];
+
+    allValidReservations.slice(-10).reverse().forEach(r => {
+      const isPaid = isResPaidHelper(r);
+      liveEvents.push({
+        id: `res_${r.id}`,
+        type: "reserva",
+        title: `${r.status === "pre_reserva" ? "Pré-Reserva" : "Reserva"} (${(r.channel || "Site").toUpperCase()})`,
+        subtitle: `${r.guestName} • Flat ${r.flatNumber || r.flatId}`,
+        detail: `${r.checkinDate} a ${r.checkoutDate} • R$ ${Number(r.totalAmount || 0).toLocaleString("pt-BR")}${isPaid ? " (Pago)" : ""}`,
+        time: r.createdAt || now.toISOString(),
+        badge: r.status === "pre_reserva" ? "Pré-Reserva" : "Reserva",
+        badgeColor: r.status === "pre_reserva" ? "bg-amber-600" : "bg-emerald-600"
+      });
+    });
+
     todayCleanings.slice(-8).reverse().forEach(c => {
       let timeStr = "--:--";
       if (c.completedAt) {
@@ -39403,24 +39896,23 @@ app.get("/api/live-ops/metrics", (req, res) => {
       liveEvents.push({
         id: `clean_${c.id}`,
         type: "limpeza",
-        title: c.status === "clean" ? `Flat ${c.flatNumber} Limpo e Inspecionado` : `Limpeza no Apt ${c.flatNumber}`,
-        subtitle: `Responsável: ${c.assignedToName || 'Governança'}`,
+        title: c.status === "clean" ? `Flat ${c.flatNumber} Limpo e Pronto` : `Faxina no Flat ${c.flatNumber}`,
+        subtitle: `Camareira: ${c.assignedToName || "Governança"}`,
         detail: c.completedAt ? `Concluído às ${timeStr}` : "Em andamento",
-        time: c.updatedAt || c.createdAt || new Date().toISOString(),
+        time: c.updatedAt || c.createdAt || now.toISOString(),
         badge: c.status === "clean" ? "Limpo" : "Faxina",
         badgeColor: c.status === "clean" ? "bg-sky-600" : "bg-amber-600"
       });
     });
 
-    // Vistorias e Avarias
-    (db.observations || []).slice(-5).reverse().forEach(o => {
+    pendingObservations.slice(-5).reverse().forEach(o => {
       liveEvents.push({
         id: `obs_${o.id}`,
         type: "avaria",
-        title: `Manutenção / Alerta: Apt ${o.flatNumber}`,
+        title: `Manutenção: Flat ${o.flatNumber}`,
         subtitle: o.description || "Ocorrência registrada",
-        detail: `Status: ${o.status || 'Pendente'}`,
-        time: o.createdAt || new Date().toISOString(),
+        detail: `Status: ${o.status || "Pendente"}`,
+        time: o.createdAt || now.toISOString(),
         badge: "Manutenção",
         badgeColor: "bg-rose-600"
       });
@@ -39428,10 +39920,22 @@ app.get("/api/live-ops/metrics", (req, res) => {
 
     liveEvents.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
+    const soundCounters = {
+      reservationsCount: allValidReservations.filter(r => r.status !== "pre_reserva").length,
+      paidReservationsCount: allValidReservations.filter(r => isResPaidHelper(r)).length,
+      cleanFlatsTodayCount: cleanCount,
+      criticalAlertsCount: criticalAlerts.filter(a => a.severity === "critical").length
+    };
+
     res.json({
-      timestamp: new Date().toISOString(),
+      timestamp: now.toISOString(),
       todayStr,
       totalFlats,
+      systemHealth,
+      criticalAlerts,
+      soundCounters,
+      flatsGrid,
+      turnarounds,
       occupancy: {
         occupiedCount,
         totalFlats,
@@ -39439,50 +39943,68 @@ app.get("/api/live-ops/metrics", (req, res) => {
         next7Days
       },
       checkins: {
-        total: checkinsToday.length,
+        total: checkinsEnriched.length,
         done: checkinsDone,
         pending: checkinsPending,
-        list: checkinsToday.map(r => ({
-          code: r.code,
-          guestName: r.guestName,
-          flatNumber: r.flatNumber || r.flatId,
-          channel: r.channel,
-          phone: r.guestPhone,
-          vehicle: r.vehicle || null,
-          isDone: r.status === "checked_in" || r.checkinDone
-        }))
+        list: checkinsEnriched
       },
       checkouts: {
-        total: checkoutsToday.length,
+        total: checkoutsEnriched.length,
         done: checkoutsDone,
         pending: checkoutsPending,
-        list: checkoutsToday.map(r => ({
-          code: r.code,
-          guestName: r.guestName,
-          flatNumber: r.flatNumber || r.flatId,
-          channel: r.channel,
-          isDone: r.status === "checked_out" || r.checkoutDone
-        }))
+        list: checkoutsEnriched
       },
       governance: {
         clean: cleanCount,
         inProgress: inProgressCount,
         dirty: dirtyCount,
         maintenance: maintenanceCount,
-        flatsMap: (db.flats || []).map(f => {
-          const req = todayCleanings.find(c => c.flatNumber === f.number || c.flatId === f.id);
-          const resCurrent = occupiedReservationsToday.find(r => r.flatNumber === f.number || r.flatId === f.id);
-          return {
-            id: f.id,
-            number: f.number,
-            cleanStatus: req ? req.status : "clean",
-            isOccupied: Boolean(resCurrent),
-            currentGuest: resCurrent ? resCurrent.guestName : null
-          };
-        })
+        flatsMap: flatsGrid.map(fg => ({
+          id: fg.id,
+          number: fg.number,
+          cleanStatus: fg.cleanStatus,
+          isOccupied: fg.isOccupied,
+          currentGuest: fg.currentGuest
+        }))
+      },
+      whatsappClimate: {
+        analyzedCount: wppAnalyzed.length,
+        avgScore: avgWppScore,
+        positiveCount: wppPositive,
+        neutralCount: wppNeutral,
+        negativeCount: wppNegative,
+        positivePercent: wppAnalyzed.length > 0 ? Math.round((wppPositive / totalWppTones) * 100) : 85,
+        neutralPercent: wppAnalyzed.length > 0 ? Math.round((wppNeutral / totalWppTones) * 100) : 15,
+        negativePercent: wppAnalyzed.length > 0 ? Math.round((wppNegative / totalWppTones) * 100) : 0,
+        attentionQueue,
+        activePreReservations,
+        unmetDemandsCount: unmetDemands.length
+      },
+      reputationAndNps: {
+        avgReviewScore,
+        totalReviews: reviewsList.length,
+        npsSent: npsList.length,
+        npsResponded: npsResponded.length,
+        npsPromoters,
+        npsNeutrals,
+        npsDetractors,
+        npsSatisfactionRate,
+        recentFeedbacks,
+        pendingImprovementsCount: improvementsObj.pendingCount || pendingImprovementItems.length,
+        resolvedImprovementsCount: improvementsObj.resolvedCount || 0,
+        pendingImprovementItems
+      },
+      maintenanceAndOps: {
+        activeOsCount: activeServiceOrders.length,
+        pendingObsCount: pendingObservations.length,
+        serviceOrdersList: serviceOrdersSummary.slice(0, 6),
+        minibarOrdersTodayCount: minibarOrdersToday.length,
+        minibarRevenueToday
       },
       breakfast: {
         count: breakfastOrdersToday.length,
+        deliveredCount: breakfastOrdersToday.filter(b => b.status === "Entregue").length,
+        pendingCount: breakfastOrdersToday.filter(b => b.status !== "Entregue").length,
         orders: breakfastOrdersToday
       },
       financial: {
@@ -39492,7 +40014,8 @@ app.get("/api/live-ops/metrics", (req, res) => {
         revpar,
         benchmarkSohoPrice,
         corpFlatsPrice,
-        benchmarkSavingsPercent
+        benchmarkSavingsPercent,
+        channelCounts
       },
       traffic: {
         visitorsToday: siteVisitorsToday,

@@ -344,6 +344,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "📅 Reservas & Hospedagem",
       items: [
         { href: "/reservas", label: "Mapa de Reservas (PMS)", icon: CalendarDays, description: "Calendário de ocupação e reservas" },
+        ...(isAdminOrDev ? [{ href: "/painel-aovivo", label: "Painel Ao Vivo (Monitor 32\")", icon: Activity, badge: "LIVE", description: "Centro de comando das 19 unidades, giro do dia, WhatsApp, NPS e financeiro" }] : []),
         { href: "/caixa-entrada-ota", label: "Caixa de Entrada OTA", icon: Inbox, badge: quarantineCount > 0 ? quarantineCount : null, description: "Reservas Booking/Airbnb, quarentena e conciliação" },
         { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", icon: TrendingUp, description: "Taxa de ocupação, diária média, RevPAR e ranking" },
         { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },

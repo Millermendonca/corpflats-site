@@ -69,10 +69,12 @@ function playSynthesizedSound(type: "booking" | "clean" | "alert") {
   }
 }
 
-const DEFAULT_15_FLATS = [
-  "113", "114", "116", "211", "212",
-  "215", "313", "408", "509", "511",
-  "512", "605", "712", "715", "904"
+const DEFAULT_19_FLATS = [
+  "113", "114", "116", "211",
+  "212", "215", "313", "408",
+  "509", "511", "512", "605",
+  "712", "715", "904", "905",
+  "907", "1004", "1304"
 ]
 
 const CAROUSEL_INTERVAL_MS = 15000 // 15 segundos por slide
@@ -198,30 +200,34 @@ export default function LiveOperationsPanel() {
   const criticalAlerts: any[] = data?.criticalAlerts || []
   const currentAlert = criticalAlerts[activeAlertIdx] || null
 
-  const occ = data?.occupancy || { rate: 0, occupiedCount: 0, totalFlats: 15, next7Days: [] }
+  const occ = data?.occupancy || { rate: 0, occupiedCount: 0, totalFlats: 19, next7Days: [] }
   const checkins = data?.checkins || { total: 0, done: 0, pending: 0, list: [] }
   const checkouts = data?.checkouts || { total: 0, done: 0, pending: 0, list: [] }
   const turnarounds: any[] = data?.turnarounds || []
   const gov = data?.governance || { clean: 0, inProgress: 0, dirty: 0, maintenance: 0 }
 
   const rawFlatsGrid: any[] = data?.flatsGrid || []
-  const flatsGrid = rawFlatsGrid.length > 0
+  const flatsGrid = rawFlatsGrid.length >= 19
     ? rawFlatsGrid
-    : DEFAULT_15_FLATS.map((num, i) => ({
-        id: i + 1,
-        number: num,
-        shortType: "Flat",
-        visualState: "available_clean",
-        cleanStatus: "clean",
-        maidName: null,
-        isOccupied: false,
-        isTurnaround: false,
-        currentGuest: null,
-        arrivingToday: null,
-        leavingToday: null,
-        badges: null,
-        maintenance: { hasIssue: false }
-      }))
+    : DEFAULT_19_FLATS.map((num, i) => {
+        const existing = rawFlatsGrid.find((f: any) => String(f.number) === num)
+        if (existing) return existing
+        return {
+          id: i + 1,
+          number: num,
+          shortType: "Flat",
+          visualState: "available_clean",
+          cleanStatus: "clean",
+          maidName: null,
+          isOccupied: false,
+          isTurnaround: false,
+          currentGuest: null,
+          arrivingToday: null,
+          leavingToday: null,
+          badges: null,
+          maintenance: { hasIssue: false }
+        }
+      })
 
   const wppClimate = data?.whatsappClimate || {
     analyzedCount: 0,
@@ -448,8 +454,15 @@ export default function LiveOperationsPanel() {
             </span>
           </div>
 
-          {/* Botões Discretos: Som & Tela Cheia */}
+          {/* Botões Discretos: Voltar ao PMS, Som & Tela Cheia */}
           <div className="flex items-center gap-1">
+            <a
+              href="/reservas"
+              title="Voltar ao Mapa de Reservas (PMS)"
+              className="h-8 px-2.5 bg-slate-950 border border-slate-800 text-slate-300 hover:text-white rounded-xl text-[10px] font-bold flex items-center gap-1"
+            >
+              ← PMS
+            </a>
             <Button
               variant="outline"
               size="sm"
@@ -483,7 +496,7 @@ export default function LiveOperationsPanel() {
       ════════════════════════════════════════════════════════════════════════ */}
       <main className="grid grid-cols-12 gap-3 my-2.5 flex-1 min-h-0">
         {/* ════════════════════════════════════════════════════════════════════
-            🏢 ZONA B — MAPA VISUAL AO VIVO DOS 15 FLATS (5 Colunas • Fixo)
+            🏢 ZONA B — MAPA VISUAL AO VIVO DOS 19 FLATS (5 Colunas • Fixo • Grid 4x5)
         ════════════════════════════════════════════════════════════════════ */}
         <section className="col-span-5 bg-slate-900/75 border border-slate-800/90 rounded-2xl p-3 flex flex-col justify-between min-h-0 shadow-xl">
           {/* Header da Zona B + Resumo de Governança */}
@@ -491,7 +504,7 @@ export default function LiveOperationsPanel() {
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-amber-400" />
               <h2 className="text-xs font-black uppercase tracking-wider text-white">
-                Mapa Ao Vivo das 15 Unidades
+                Mapa Ao Vivo das 19 Unidades
               </h2>
             </div>
 
@@ -515,9 +528,9 @@ export default function LiveOperationsPanel() {
             </div>
           </div>
 
-          {/* Grid 3x5 dos 15 Flats */}
-          <div className="grid grid-cols-3 grid-rows-5 gap-2 flex-1 min-h-0">
-            {flatsGrid.slice(0, 15).map((flat: any) => {
+          {/* Grid 4x5 (19 Flats + 1 Card de Fechamento da Grade) */}
+          <div className="grid grid-cols-4 grid-rows-5 gap-1.5 flex-1 min-h-0">
+            {flatsGrid.slice(0, 19).map((flat: any) => {
               const st = getFlatCardStyle(flat)
               const guestDisplay = flat.arrivingToday
                 ? formatShortGuestName(flat.arrivingToday.guestName)
@@ -528,24 +541,24 @@ export default function LiveOperationsPanel() {
               return (
                 <div
                   key={flat.id || flat.number}
-                  className={`rounded-xl border p-2 flex flex-col justify-between transition-all overflow-hidden ${st.card}`}
+                  className={`rounded-xl border p-1.5 flex flex-col justify-between transition-all overflow-hidden ${st.card}`}
                 >
                   {/* Topo do Card: Número do Flat + Badge de Status */}
                   <div className="flex items-start justify-between gap-1">
-                    <div className="flex items-baseline gap-1.5 leading-none">
-                      <span className={`text-lg xl:text-xl font-black font-mono tracking-tight ${st.numColor}`}>
+                    <div className="flex items-baseline gap-1 leading-none">
+                      <span className={`text-base xl:text-lg font-black font-mono tracking-tight ${st.numColor}`}>
                         {flat.number}
                       </span>
                       {flat.isTurnaround && (
                         <span
-                          className="text-[9px] font-black bg-amber-500 text-slate-950 px-1 py-0.5 rounded uppercase"
+                          className="text-[8px] font-black bg-amber-500 text-slate-950 px-1 py-0 rounded uppercase"
                           title="Dobradinha: Sai hoje e Entra hoje!"
                         >
                           GIRO
                         </span>
                       )}
                     </div>
-                    <span className={`text-[8px] xl:text-[9px] font-bold px-1.5 py-0.5 rounded-md truncate ${st.badge}`}>
+                    <span className={`text-[7px] xl:text-[8px] font-bold px-1 py-0.5 rounded truncate ${st.badge}`}>
                       {st.badgeText}
                     </span>
                   </div>
@@ -553,42 +566,42 @@ export default function LiveOperationsPanel() {
                   {/* Meio do Card: Hóspede / Camareira / Manutenção */}
                   <div className="my-auto py-0.5 min-w-0">
                     {flat.cleanStatus === "in_progress" && flat.maidName ? (
-                      <div className="text-[10px] text-amber-200 font-bold truncate flex items-center gap-1">
-                        <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+                      <div className="text-[9px] text-amber-200 font-bold truncate flex items-center gap-1">
+                        <Sparkles className="w-2.5 h-2.5 text-amber-400 shrink-0" />
                         <span className="truncate">{flat.maidName}</span>
                       </div>
                     ) : flat.maintenance?.hasIssue ? (
-                      <div className="text-[10px] text-purple-200 font-bold truncate flex items-center gap-1">
-                        <Wrench className="w-3 h-3 text-purple-400 shrink-0" />
+                      <div className="text-[9px] text-purple-200 font-bold truncate flex items-center gap-1">
+                        <Wrench className="w-2.5 h-2.5 text-purple-400 shrink-0" />
                         <span className="truncate">{flat.maintenance.title || "OS Aberta"}</span>
                       </div>
                     ) : guestDisplay ? (
                       <div className="min-w-0">
-                        <p className="text-[11px] font-extrabold text-white truncate leading-tight">
+                        <p className="text-[10px] font-extrabold text-white truncate leading-tight">
                           {guestDisplay}
                         </p>
-                        <p className="text-[9px] text-slate-400 font-medium truncate">
+                        <p className="text-[8px] text-slate-400 font-medium truncate">
                           {flat.arrivingToday
                             ? `Entra hoje (${flat.arrivingToday.checkinTime || "14:00"})`
                             : flat.leavingToday && !flat.leavingToday.isDone
-                            ? `Sai hoje às ${flat.leavingToday.checkoutTime || "12:00"}`
+                            ? `Sai às ${flat.leavingToday.checkoutTime || "12:00"}`
                             : flat.checkoutDate
                             ? `Até ${flat.checkoutDate.slice(8, 10)}/${flat.checkoutDate.slice(5, 7)}`
                             : flat.shortType}
                         </p>
                       </div>
                     ) : (
-                      <p className="text-[10px] text-slate-400 font-medium truncate">
-                        {flat.shortType} • Disponível
+                      <p className="text-[9px] text-slate-400 font-medium truncate">
+                        {flat.shortType} • Livre
                       </p>
                     )}
                   </div>
 
                   {/* Rodapé do Card: Micro-Indicadores (FNRH, Pagto, Senha, Humor WhatsApp) */}
-                  <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-800/70 text-[9px] font-bold">
+                  <div className="flex items-center justify-between gap-1 pt-0.5 border-t border-slate-800/70 text-[8px] font-bold">
                     {flat.badges ? (
                       <>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5">
                           <span
                             className={`px-1 py-0 rounded ${
                               flat.badges.fnrh
@@ -636,7 +649,7 @@ export default function LiveOperationsPanel() {
                               😊
                             </span>
                           ) : (
-                            <span className="text-slate-500 uppercase text-[8px]">
+                            <span className="text-slate-500 uppercase text-[7px]">
                               {(flat.channel || "SITE").slice(0, 4)}
                             </span>
                           )}
@@ -644,7 +657,7 @@ export default function LiveOperationsPanel() {
                       </>
                     ) : (
                       <div className="flex items-center justify-between w-full text-[8px] text-slate-500">
-                        <span>PRONTO P/ VENDA</span>
+                        <span>DISPONÍVEL</span>
                         <span className="text-emerald-400">✓ 100%</span>
                       </div>
                     )}
@@ -652,6 +665,32 @@ export default function LiveOperationsPanel() {
                 </div>
               )
             })}
+
+            {/* 20º Bloco do Grid 4x5: Card Consolidado de Taxa de Ocupação das 19 Unidades */}
+            <div className="rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-950 p-1.5 flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-[8px] font-black uppercase tracking-wider text-amber-300">
+                  19 UNIDADES
+                </span>
+                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[8px] px-1 py-0">
+                  HOJE
+                </Badge>
+              </div>
+              <div className="my-auto text-center">
+                <span className="text-xl xl:text-2xl font-black font-mono text-amber-400 leading-none block">
+                  {occ.rate}%
+                </span>
+                <span className="text-[8px] text-slate-300 font-bold block mt-0.5">
+                  {occ.occupiedCount} ocup • {Math.max(0, occ.totalFlats - occ.occupiedCount)} livres
+                </span>
+              </div>
+              <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
+                <div
+                  className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full"
+                  style={{ width: `${Math.min(100, Math.max(0, occ.rate))}%` }}
+                />
+              </div>
+            </div>
           </div>
         </section>
 
