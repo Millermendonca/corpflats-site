@@ -22,6 +22,7 @@ import BookingEngine from '@/pages/booking-engine';
 import GuestBreakfast from '@/pages/guest-breakfast';
 import GuestCheckout from '@/pages/guest-checkout';
 import GuestPortal from '@/pages/guest-portal';
+import GuestMinibar from '@/pages/guest-minibar';
 import MyAccount from '@/pages/my-account';
 import ServiceOrders from '@/pages/service-orders';
 import ServiceWorkerPortal from '@/pages/service-worker-portal';
@@ -295,6 +296,18 @@ function Router() {
         <Route path="/minha-reserva/:code/room-service" component={GuestBreakfast} />
         <Route path="/portal-hospede/:code/cafe" component={GuestBreakfast} />
         <Route path="/guest-portal/:code/cafe" component={GuestBreakfast} />
+
+        {/* Public Minibar / Frigobar Guest Routes (Precedência Obrigatória no Wouter) */}
+        <Route path="/minha-reserva/:code/frigobar" component={GuestMinibar} />
+        <Route path="/minha-reserva/:code/minibar" component={GuestMinibar} />
+        <Route path="/portal-hospede/:code/frigobar" component={GuestMinibar} />
+        <Route path="/guest-portal/:code/frigobar" component={GuestMinibar} />
+        <Route path="/frigobar/flat/:flatNumber" component={GuestMinibar} />
+        <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
+        <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
+        <Route path="/minibar/:flatNumber" component={GuestMinibar} />
+        <Route path="/frigobar" component={GuestMinibar} />
+        <Route path="/minibar" component={GuestMinibar} />
         <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
         <Route path="/minha-reserva" component={GuestPortalWrapper} />
         <Route path="/copiar-pix/:code" component={GuestPortalWrapper} />

@@ -14,7 +14,7 @@ import {
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
   CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical,
-  Download, Printer, PenTool
+  Download, Printer, PenTool, Refrigerator
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -1868,6 +1868,13 @@ export default function GuestPortal() {
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem
+                    onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
+                    className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
+                  >
+                    <Refrigerator className="w-4 h-4 text-cyan-600 shrink-0" />
+                    <span>Frigobar & Bebidas</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     onClick={() => {
                       setTermsModalTab("rules")
                       setTermsModalOpen(true)
@@ -3336,6 +3343,53 @@ export default function GuestPortal() {
             </div>
           </Card>
         )}
+
+        {/* ── Card: Frigobar & Autoatendimento no Flat ── */}
+        <Card className="bg-gradient-to-b from-cyan-50/60 via-white to-cyan-50/30 border border-cyan-200/80 rounded-3xl p-5 sm:p-6 shadow-md space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cyan-200/60 pb-3.5">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-cyan-100/80 text-cyan-700 border border-cyan-300/70 flex items-center justify-center shrink-0 shadow-xs">
+                <Refrigerator className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
+                  Frigobar & Bebidas
+                </h2>
+                <span className="text-xs text-cyan-950/80 font-medium block mt-0.5">
+                  Água, refrigerantes, cervejas, snacks e café disponíveis no flat
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center self-start sm:self-auto">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-100/70 border border-cyan-200/70 text-cyan-900 text-xs font-bold shrink-0">
+                🧊 Autoatendimento 24h
+              </span>
+            </div>
+          </div>
+
+          <div className="text-xs text-slate-600 leading-relaxed space-y-2.5">
+            <p>
+              Consuma livremente durante sua estadia. Selecione os itens consumidos para registrar e efetuar o pagamento instantâneo via PIX ou Cartão de Crédito.
+            </p>
+            <div className="p-3 bg-amber-50 border border-amber-200/80 rounded-2xl text-[11px] text-amber-900 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                <strong>Aviso importante:</strong> O consumo de frigobar é um serviço independente e não pode ser faturado junto com a diária de hospedagem. A nota fiscal é emitida separadamente pela distribuidora.
+              </span>
+            </div>
+          </div>
+
+          <div className="pt-1 w-full">
+            <Button
+              onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
+              className="w-full h-auto min-h-12 py-3 px-5 bg-cyan-700 hover:bg-cyan-800 active:scale-[0.99] text-white font-bold text-xs sm:text-sm rounded-2xl shadow-sm inline-flex items-center justify-center gap-2.5 transition-all"
+            >
+              <Refrigerator className="w-5 h-5 shrink-0" />
+              <span>Acessar Frigobar do Flat {reservation.flatNumber}</span>
+              <ArrowRight className="w-5 h-5 shrink-0" />
+            </Button>
+          </div>
+        </Card>
 
         {/* ── 4. Card: Rede Wi-Fi ──────────────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
