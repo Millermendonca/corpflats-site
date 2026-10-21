@@ -484,7 +484,18 @@ export function buildNationalDpsPayload({
   // Sanitização rigorosa
   const tomadorNomeSanitizado = toTitleCase(tomador.nome || tomador.razaoSocial || "Hóspede");
   const tomadorTelefoneSanitizado = cleanPhone(tomador.telefone);
-  const tomadorCepSanitizado = cleanCep(tomador.cep || "28035000");
+  const normAddr = normalizeTomadorAddressFields({
+    tomadorStreet: tomador.street || tomador.logradouro,
+    tomadorEndereco: tomador.endereco || tomador.logradouro,
+    tomadorNumero: tomador.numero || tomador.streetNumber || tomador.number,
+    tomadorComplemento: tomador.complemento || tomador.complement,
+    tomadorBairro: tomador.bairro || tomador.neighborhood,
+    tomadorCidade: tomador.cidade || tomador.city,
+    tomadorUf: tomador.uf || tomador.state,
+    tomadorCep: tomador.cep,
+    tomadorCodigoMunicipio: tomador.codigoMunicipio || rule.municipioIncidencia
+  });
+  const tomadorCepSanitizado = normAddr.cep;
 
   const chaveAcesso = generateChaveAcessoNacional({
     codUf: "33",
@@ -495,14 +506,14 @@ export function buildNationalDpsPayload({
 
   const enderObj = {
     endNac: {
-      cMun: onlyDigits(tomador.codigoMunicipio || rule.municipioIncidencia).padStart(7, "0").substring(0, 7) || "3301009",
+      cMun: onlyDigits(normAddr.ibge || rule.municipioIncidencia).padStart(7, "0").substring(0, 7) || "3301009",
       CEP: tomadorCepSanitizado
     },
-    xLgr: tomador.logradouro || tomador.endereco || "Av. Pelinca",
-    nro: tomador.numero || "100",
-    xCpl: tomador.complemento || undefined,
-    xBairro: tomador.bairro || "Pelinca",
-    UF: tomador.uf || "RJ"
+    xLgr: normAddr.logradouro,
+    nro: normAddr.numero,
+    xCpl: normAddr.complemento || undefined,
+    xBairro: normAddr.bairro,
+    UF: normAddr.uf
   };
 
   const dpsPayload = {
@@ -819,7 +830,7 @@ export async function processNationalInvoiceEmission({
       sefinResponse: resp,
       rawXml: xmlContent,
       xmlPath: `/invoices_vault/${cnpj}/${year}/${month}/${xmlFileName}`,
-      qrCodeUrl: `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAut}`
+      qrCodeUrl: `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${chaveAut}`
     };
   }
 
@@ -884,214 +895,392 @@ export function generateNationalXmlContent(data) {
 
 // ─── 7. Renderizador DANFSE Oficial (HTML/PDF Nacional com QR Code) ─────────
 
+const DANFSE_LOGO_PNG_B64 = [
+  "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"
+].join("");
+
+
+export function normalizeTomadorAddressFields(invoice = {}) {
+  let rawEnd = String(invoice.tomadorStreet || invoice.tomadorLogradouro || invoice.tomadorEndereco || "").trim();
+  let rawNum = String(invoice.tomadorNumero || invoice.tomadorStreetNumber || "").trim();
+  let rawComp = String(invoice.tomadorComplemento || "").trim();
+  let rawBairro = String(invoice.tomadorBairro || "").trim();
+  let rawCidade = String(invoice.tomadorCidade || "Campos dos Goytacazes").trim();
+  let rawUf = String(invoice.tomadorUf || "RJ").trim().toUpperCase();
+  let rawCep = cleanCep(invoice.tomadorCep || "28035000");
+  let rawIbge = onlyDigits(invoice.tomadorCodigoMunicipio || "3301009") || "3301009";
+
+  // Se cidade veio no formato "Campos dos Goytacazes / RJ" do pré-checkin
+  if (rawCidade.includes("/")) {
+    const parts = rawCidade.split("/").map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2 && parts[parts.length - 1].length === 2) {
+      rawUf = parts[parts.length - 1].toUpperCase();
+      rawCidade = parts.slice(0, -1).join(" / ");
+    }
+  }
+
+  // Se logradouro veio concatenado do syncAddress ("Rua Sebastião Rangel, 26 - Parque Turf Club")
+  if (rawEnd.includes(" - ")) {
+    const dashParts = rawEnd.split(" - ").map(s => s.trim()).filter(Boolean);
+    if (dashParts.length >= 2) {
+      const lastPart = dashParts[dashParts.length - 1];
+      if (!rawBairro || rawBairro.toLowerCase() === "pelinca" || rawBairro.toLowerCase() === lastPart.toLowerCase()) {
+        rawBairro = lastPart;
+        rawEnd = dashParts.slice(0, -1).join(" - ");
+      }
+    }
+  }
+  const commaMatch = rawEnd.match(/^(.+?),\s*(\d+[A-Za-z0-9\/-]*|S\/?N)$/i);
+  if (commaMatch) {
+    rawEnd = commaMatch[1].trim();
+    if (!rawNum || rawNum === "100" || rawNum === commaMatch[2].trim()) {
+      rawNum = commaMatch[2].trim();
+    }
+  }
+
+  return {
+    logradouro: rawEnd || "Av. Pelinca",
+    numero: rawNum || "100",
+    complemento: rawComp,
+    bairro: rawBairro || "Pelinca",
+    cidade: rawCidade || "Campos dos Goytacazes",
+    uf: rawUf || "RJ",
+    cep: rawCep,
+    ibge: rawIbge
+  };
+}
+
+function buildOfficialQrCodeSvgDataUri(qrUrl) {
+  try {
+    const qr = QRCode.create([{ data: qrUrl, mode: "byte" }], { errorCorrectionLevel: "M" });
+    const size = qr.modules.size;
+    const margin = 2;
+    const total = size + margin * 2;
+    let paths = "";
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (qr.modules.get(r, c)) {
+          paths += `M${c + margin},${r + margin}h1v1h-1z`;
+        }
+      }
+    }
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges"><rect width="${total}" height="${total}" fill="#fff"/><path d="${paths}" fill="#000"/></svg>`;
+    return `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+  } catch (_) {
+    return `https://api.qrserver.com/v1/create-qr-code/?size=95x95&ecc=M&data=${encodeURIComponent(qrUrl)}`;
+  }
+}
+
 export function renderDanfseHtml(invoice = {}) {
-  const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.id || "1");
-  const chaveFormatada = (invoice.chaveAcesso || "").replace(/(\d{4})/g, "$1 ").trim();
-  const valor = Number(invoice.valorServico || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  const chaveAcesso = String(invoice.chaveAcesso || "");
+  const chaveNumNota = onlyDigits(chaveAcesso).length === 50 ? onlyDigits(chaveAcesso).slice(23, 36).replace(/^0+/, "") : "";
+  const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.numero || chaveNumNota || invoice.id || "1");
+  const numDps = String(invoice.numeroDps || invoice.numeroRps || numNota);
+  const serieDps = String(invoice.serieDps || invoice.serie || "10000");
+  const valor = Number(invoice.valorServico || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const aliq = Number(invoice.aliquota || 2.0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const cleanDoc = onlyDigits(invoice.tomadorCpfCnpj || "");
   const isCnpj = cleanDoc.length > 11;
   const docFormatado = isCnpj
     ? cleanDoc.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")
     : cleanDoc.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
 
-  const dataFormatada = invoice.dataEmissao
-    ? new Date(invoice.dataEmissao).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
-    : new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const foneDigits = cleanPhone(invoice.tomadorTelefone || "");
+  const foneFormatado = foneDigits.length === 11
+    ? foneDigits.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3")
+    : foneDigits.length === 10
+      ? foneDigits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
+      : foneDigits || "-";
 
-  const isHomolog = invoice.ambiente === "homologacao";
-  const homologBanner = isHomolog
-    ? `<div style="background: #fef3c7; color: #92400e; padding: 5px; text-align: center; font-weight: bold; font-size: 10px; border: 1px dashed #f59e0b; margin-bottom: 6px; border-radius: 4px; letter-spacing: 0.5px;">
-        🟡 AMBIENTE DE PRODUÇÃO RESTRITA (HOMOLOGAÇÃO) — DOCUMENTO EMITIDO PARA TESTES
-      </div>`
-    : "";
+  const addr = normalizeTomadorAddressFields(invoice);
+  const cepFmt = addr.cep.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2-$3");
+  const ibgeFmt = addr.ibge.replace(/^(\d{2})(\d{5})$/, "$1.$2");
+  const endParts = [addr.logradouro, addr.numero];
+  if (addr.complemento) endParts.push(addr.complemento);
+  if (addr.bairro) endParts.push(addr.bairro);
+  const endFormatado = endParts.filter(Boolean).join(", ");
+
+  const emiDate = invoice.dataEmissao ? new Date(invoice.dataEmissao) : new Date();
+  const dataFormatada = emiDate.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }).replace(",", "");
+  const competenciaFmt = dataFormatada.slice(0, 10);
+  const qrUrl = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${chaveAcesso}`;
+  const qrImgSrc = buildOfficialQrCodeSvgDataUri(qrUrl);
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>DANFSE - Documento Auxiliar da NFS-e Nacional Nº ${numNota}</title>
+  <title>DANFSe v2.0 - Documento Auxiliar da NFS-e Nº ${numNota}</title>
   <style>
-    @page { size: A4 portrait; margin: 10mm; }
-    * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4 portrait; margin: 5mm; }
+    * { box-sizing: border-box; font-family: Arial, 'Microsoft Sans Serif', sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { background: #525659; margin: 0; padding: 20px; display: flex; justify-content: center; }
-    .page { background: #fff; width: 210mm; min-height: 297mm; padding: 15mm; box-shadow: 0 4px 15px rgba(0,0,0,0.3); color: #111; font-size: 11px; }
-    .border-box { border: 1px solid #000; margin-bottom: 6px; padding: 6px 8px; }
-    .header-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-    .header-table td { border: 1px solid #000; padding: 6px; vertical-align: middle; }
-    .title-main { font-size: 14px; font-weight: bold; text-align: center; text-transform: uppercase; }
-    .subtitle { font-size: 9px; text-align: center; color: #333; margin-top: 2px; }
-    .box-title { font-size: 9px; font-weight: bold; text-transform: uppercase; margin-bottom: 3px; color: #222; border-bottom: 0.5px solid #ccc; padding-bottom: 2px; }
-    .label { font-size: 8px; font-weight: bold; color: #555; text-transform: uppercase; }
-    .value { font-size: 10.5px; font-weight: 600; color: #000; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
-    .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; }
-    .text-right { text-align: right; }
-    .text-center { text-align: center; }
-    .qr-box { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    .page { background: #fff; width: 210mm; min-height: 297mm; padding: 4mm; box-shadow: 0 4px 15px rgba(0,0,0,0.3); color: #000; font-size: 9.5px; }
+    .outer { border: 1.5px solid #000; padding: 3px; min-height: 287mm; display: flex; flex-direction: column; justify-content: space-between; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    td { padding: 3px 5px; vertical-align: top; }
+    .row-line { border-top: 1px solid #000; }
+    .shaded { background: #f2f2f2; }
+    .lbl { font-size: 8px; font-weight: bold; color: #000; margin-bottom: 2px; }
+    .val { font-size: 9.5px; color: #000; word-break: break-all; }
+    .sec-title { font-size: 9.5px; font-weight: bold; color: #000; }
     .top-actions { position: fixed; top: 20px; right: 20px; display: flex; align-items: center; gap: 8px; z-index: 100; }
-    .btn-pdf { background: #2563eb; color: #fff; text-decoration: none; padding: 10px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
-    .btn-print { background: #059669; color: #fff; padding: 10px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-pdf { background: #2563eb; color: #fff; text-decoration: none; padding: 10px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; }
+    .btn-print { background: #059669; color: #fff; padding: 10px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.25); font-size: 12px; }
     @media print {
       body { background: #fff; padding: 0; }
       .page { box-shadow: none; width: 100%; padding: 0; }
-      .top-actions, .btn-print, .btn-pdf { display: none !important; }
+      .top-actions { display: none !important; }
     }
   </style>
 </head>
 <body>
   <div class="top-actions">
-    <a class="btn-pdf" href="/api/nfse/pdf/${encodeURIComponent(numNota)}" target="_blank">📄 Abrir PDF Oficial</a>
+    <a class="btn-pdf" href="/api/nfse/pdf/${encodeURIComponent(numNota)}" target="_blank">📄 Abrir PDF Oficial (DANFSe v2.0)</a>
     <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
   </div>
   <div class="page">
-    ${homologBanner}
-    <!-- Cabeçalho -->
-    <table class="header-table">
-      <tr>
-        <td style="width: 20%; text-align: center;">
-          <div style="font-size: 24px; font-weight: 900; color: #0f172a;">GOV.BR</div>
-          <div style="font-size: 8px; font-weight: bold; margin-top: 2px;">RECEITA FEDERAL • SEFIN</div>
-        </td>
-        <td style="width: 55%; text-align: center;">
-          <div class="title-main">DANFSE - Documento Auxiliar da NFS-e</div>
-          <div class="subtitle">Nota Fiscal de Serviço Eletrônica de Padrão Nacional</div>
-          <div style="font-size: 8px; color: #666; margin-top: 4px;">Ambiente de Dados Nacional (ADN) • Município Emissor: Campos dos Goytacazes - RJ</div>
-        </td>
-        <td style="width: 25%; text-align: center; background: #f8fafc;">
-          <div class="label">NÚMERO DA NFS-e</div>
-          <div style="font-size: 15px; font-weight: 900; color: #0284c7;">${numNota}</div>
-          <div class="label" style="margin-top: 4px;">CÓDIGO DE VERIFICAÇÃO</div>
-          <div style="font-size: 11px; font-weight: bold; letter-spacing: 1px;">${invoice.codigoVerificacao || "ADN-GOV"}</div>
-        </td>
-      </tr>
-    </table>
-
-    <!-- Chave de Acesso -->
-    <div class="border-box" style="background: #f8fafc; text-align: center; padding: 8px;">
-      <div class="label">CHAVE DE ACESSO DA NFS-e NACIONAL (50 DÍGITOS)</div>
-      <div style="font-family: monospace; font-size: 12px; font-weight: bold; letter-spacing: 1px; margin-top: 3px; color: #0f172a;">
-        ${chaveFormatada || "3326 1047 9648 1300 0165 0100 1000 0000 0118 4729 1048 2"}
-      </div>
-      <div style="font-size: 8px; color: #64748b; margin-top: 2px;">Consulte a autenticidade deste documento no portal oficial: <b>https://www.nfse.gov.br/consultapublica</b></div>
-    </div>
-
-    <!-- Prestador de Serviços -->
-    <div class="border-box">
-      <div class="box-title">PRESTADOR DE SERVIÇOS</div>
-      <div class="grid-2">
-        <div>
-          <div class="label">RAZÃO SOCIAL / NOME EMPRESARIAL</div>
-          <div class="value">${invoice.prestadorRazaoSocial || "RENTAL MILLER'S LTDA"}</div>
-        </div>
-        <div class="grid-2">
-          <div>
-            <div class="label">CNPJ</div>
-            <div class="value">${invoice.prestadorCnpj || "47.964.813/0001-65"}</div>
-          </div>
-          <div>
-            <div class="label">INSCRIÇÃO MUNICIPAL</div>
-            <div class="value">${invoice.prestadorIm || "142591"}</div>
-          </div>
-        </div>
-      </div>
-      <div class="grid-3" style="margin-top: 5px;">
-        <div>
-          <div class="label">MUNICÍPIO DE INCIDÊNCIA</div>
-          <div class="value">Campos dos Goytacazes - RJ (3301009)</div>
-        </div>
-        <div>
-          <div class="label">REGIME DE TRIBUTAÇÃO</div>
-          <div class="value">Simples Nacional (Microempresa)</div>
-        </div>
-        <div>
-          <div class="label">DATA E HORA DE EMISSÃO</div>
-          <div class="value">${dataFormatada}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tomador de Serviços -->
-    <div class="border-box">
-      <div class="box-title">TOMADOR DE SERVIÇOS (HÓSPEDE / EMPRESA)</div>
-      <div class="grid-2">
-        <div>
-          <div class="label">NOME / RAZÃO SOCIAL</div>
-          <div class="value">${toTitleCase(invoice.tomadorNome || "Hóspede")}</div>
-        </div>
-        <div class="grid-2">
-          <div>
-            <div class="label">CPF / CNPJ</div>
-            <div class="value">${docFormatado || "Não informado"}</div>
-          </div>
-          <div>
-            <div class="label">TELEFONE</div>
-            <div class="value">${invoice.tomadorTelefone || "Não informado"}</div>
-          </div>
-        </div>
-      </div>
-      <div class="grid-2" style="margin-top: 5px;">
-        <div>
-          <div class="label">E-MAIL</div>
-          <div class="value">${invoice.tomadorEmail || "Não informado"}</div>
-        </div>
-        <div>
-          <div class="label">APARTAMENTO / FLAT REFERENTE</div>
-          <div class="value">Flat ${invoice.flatNumber || "113"}${invoice.reservationId ? ` • Reserva #${invoice.reservationId}` : ""}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Discriminação dos Serviços -->
-    <div class="border-box" style="min-height: 120px;">
-      <div class="box-title">DISCRIMINAÇÃO DOS SERVIÇOS PRESTADOS</div>
-      <div style="font-size: 10px; line-height: 1.6; white-space: pre-wrap; margin-top: 4px; color: #1e293b;">${invoice.discriminacao || `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nCNAE: 5510-8/01 - HOTÉIS E SIMILARES | CÓDIGO TRIBUTAÇÃO NACIONAL: 09.02.02`}</div>
-    </div>
-
-    <!-- Dados Tributários e Valores -->
-    <div class="border-box">
-      <div class="box-title">DETALHAMENTO DE VALORES E TRIBUTOS (R$)</div>
-      <div class="grid-4" style="text-align: right; background: #f8fafc; padding: 6px; border-radius: 4px;">
-        <div>
-          <div class="label" style="text-align: right;">VALOR DOS SERVIÇOS</div>
-          <div class="value" style="font-size: 13px; color: #0284c7;">R$ ${valor}</div>
-        </div>
-        <div>
-          <div class="label" style="text-align: right;">DEDUÇÕES / DESCONTOS</div>
-          <div class="value">R$ 0,00</div>
-        </div>
-        <div>
-          <div class="label" style="text-align: right;">BASE DE CÁLCULO</div>
-          <div class="value">R$ ${valor}</div>
-        </div>
-        <div>
-          <div class="label" style="text-align: right;">VALOR LÍQUIDO DA NFS-e</div>
-          <div class="value" style="font-size: 14px; font-weight: 900; color: #15803d;">R$ ${valor}</div>
-        </div>
-      </div>
-      <div class="grid-4" style="margin-top: 6px; font-size: 9px;">
-        <div><b>PIS:</b> R$ 0,00</div>
-        <div><b>COFINS:</b> R$ 0,00</div>
-        <div><b>INSS:</b> R$ 0,00</div>
-        <div><b>IR:</b> R$ 0,00 / <b>CSLL:</b> R$ 0,00</div>
-      </div>
-    </div>
-
-    <!-- Autenticidade & QR Code -->
-    <div class="border-box grid-2" style="align-items: center; background: #f8fafc;">
+    <div class="outer">
       <div>
-        <div class="box-title">INFORMAÇÕES COMPLEMENTARES</div>
-        <div style="font-size: 8.5px; color: #475569; line-height: 1.4;">
-          • Documento emitido por ME ou EPP optante pelo Simples Nacional (Resolução CGSN nº 191/2026).<br>
-          • Não gera direito a crédito fiscal de IPI.<br>
-          • Tributos Totais Incidentes (Lei Federal 12.741/2012): Federais R$ ${(Number(invoice.valorServico || 0) * 0.045).toFixed(2)} (4.50%), Municipais R$ ${(Number(invoice.valorServico || 0) * 0.02).toFixed(2)} (2.00%).<br>
-          • Protocolo de Autorização ADN: <b>${invoice.protocoloAutorizacao || "SEFIN_NACIONAL"}</b>
-        </div>
+        <table>
+          <tr class="shaded" style="border-bottom: 1px solid #000;">
+            <td style="width: 25%; vertical-align: middle;">
+              <img src="data:image/png;base64,${DANFSE_LOGO_PNG_B64}" style="height: 30px; width: auto;" alt="NFS-e" />
+            </td>
+            <td style="width: 50%; text-align: center; vertical-align: middle;">
+              <div style="font-size: 12px; font-weight: bold;">DANFSe v2.0</div>
+              <div style="font-size: 12px; font-weight: bold;">Documento Auxiliar da NFS-e</div>
+            </td>
+            <td style="width: 25%; font-size: 8.5px;">
+              <div style="font-size: 10.5px;">Município: CAMPOS DOS<br>GOYTACAZES - RJ</div>
+              <div>Ambiente Gerador: 1</div>
+              <div>Tipo de Ambiente: 1</div>
+            </td>
+          </tr>
+        </table>
+        <table>
+          <tr>
+            <td style="width: 75%; padding: 0;">
+              <table>
+                <tr>
+                  <td colspan="3">
+                    <div class="lbl">CHAVE DE ACESSO DA NFS-e</div>
+                    <div class="val">${chaveAcesso}</div>
+                  </td>
+                </tr>
+                <tr>
+                  <td><div class="lbl">NÚMERO DA NFS-e</div><div class="val">${numNota}</div></td>
+                  <td><div class="lbl">COMPETÊNCIA DA NFS-e</div><div class="val">${competenciaFmt}</div></td>
+                  <td><div class="lbl">DATA E HORA DA EMISSÃO DA NFS-e</div><div class="val">${dataFormatada}</div></td>
+                </tr>
+                <tr>
+                  <td><div class="lbl">NÚMERO DA DPS</div><div class="val">${numDps}</div></td>
+                  <td><div class="lbl">SÉRIE DA DPS</div><div class="val">${serieDps}</div></td>
+                  <td><div class="lbl">DATA E HORA DA EMISSÃO DA DPS</div><div class="val">${dataFormatada}</div></td>
+                </tr>
+                <tr>
+                  <td class="shaded"><div class="lbl">EMITENTE DA NFS-e</div><div class="val">Prestador</div></td>
+                  <td><div class="lbl">SITUAÇÃO DA NFS-e</div><div class="val">${invoice.status === "cancelada" ? "NFS-e Cancelada" : "NFS-e Gerada"}</div></td>
+                  <td><div class="lbl">FINALIDADE</div><div class="val">-</div></td>
+                </tr>
+              </table>
+            </td>
+            <td style="width: 25%; text-align: center; vertical-align: middle;">
+              <a href="${qrUrl}" target="_blank" rel="noopener noreferrer" title="Consultar Autenticidade no Portal Nacional da NFS-e">
+                <img src="${qrImgSrc}" alt="QR Code Oficial NFS-e" style="width: 66px; height: 66px;" />
+              </a>
+              <div style="font-size: 7.5px; text-align: left; margin-top: 4px; line-height: 1.25;">
+                A autenticidade desta NFS-e pode ser verificada pela leitura deste código QR ou pela consulta da chave de acesso no portal nacional da NFS-e
+              </div>
+            </td>
+          </tr>
+        </table>
+        <table>
+          <tr class="row-line">
+            <td class="shaded sec-title">PRESTADOR / FORNECEDOR</td>
+            <td><div class="lbl">CNPJ / CPF / NIF</div><div class="val">${invoice.prestadorCnpj || "47.964.813/0001-65"}</div></td>
+            <td><div class="lbl">Indicador Municipal (Inscrição)</div><div class="val">${invoice.prestadorIm || "142591"}</div></td>
+            <td><div class="lbl">Telefone</div><div class="val">-</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><div class="lbl">Nome / Nome Empresarial</div><div class="val">RENTAL MILLERS LTDA</div></td>
+            <td><div class="lbl">Município / Sigla UF</div><div class="val">Campos dos Goytacazes / RJ</div></td>
+            <td><div class="lbl">Código IBGE / CEP</div><div class="val">33.01009 / 28.020-140</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><div class="lbl">Endereço</div><div class="val">Sem tipo de logradouro Doutor Júlio Barcelos, 3, BLOCO:06;APT:204, Parque Jóquei Club</div></td>
+            <td colspan="2"><div class="lbl">E-mail</div><div class="val">-</div></td>
+          </tr>
+          <tr>
+            <td><div class="lbl">Simples Nacional na Data de Competência</div><div class="val">Optante - Microempresa ou Empresa de ...</div></td>
+            <td colspan="3"><div class="lbl">Regime de Apuração Tributária pelo SN</div><div class="val">Regime de apuração dos tributos federais e municipal pelo Simples Nacional</div></td>
+          </tr>
+          <tr class="row-line">
+            <td class="shaded sec-title">TOMADOR / ADQUIRENTE</td>
+            <td><div class="lbl">CNPJ / CPF / NIF</div><div class="val">${docFormatado || "-"}</div></td>
+            <td><div class="lbl">Indicador Municipal (Inscrição)</div><div class="val">-</div></td>
+            <td><div class="lbl">Telefone</div><div class="val">${foneFormatado}</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><div class="lbl">Nome / Nome Empresarial</div><div class="val">${toTitleCase(invoice.tomadorNome || "Hóspede")}</div></td>
+            <td><div class="lbl">Município / Sigla UF</div><div class="val">${addr.cidade} / ${addr.uf}</div></td>
+            <td><div class="lbl">Código IBGE / CEP</div><div class="val">${ibgeFmt} / ${cepFmt}</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><div class="lbl">Endereço</div><div class="val">${endFormatado}</div></td>
+            <td colspan="2"><div class="lbl">E-mail</div><div class="val">${invoice.tomadorEmail || "-"}</div></td>
+          </tr>
+          <tr class="row-line"><td colspan="4" style="text-align: center; padding: 2px;">DESTINATÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e</td></tr>
+          <tr class="row-line"><td colspan="4" style="text-align: center; padding: 2px;">INTERMEDIÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e</td></tr>
+          <tr class="row-line">
+            <td class="shaded sec-title">SERVIÇO PRESTADO</td>
+            <td><div class="lbl">Código de Tributação Nacional/Municipal</div><div class="val">09.02.02 / 006</div></td>
+            <td><div class="lbl">Código da NBS</div><div class="val">-</div></td>
+            <td><div class="lbl">Local da Prestação / Sigla UF / País</div><div class="val">CAMPOS DOS GOYTACAZES / RJ / -</div></td>
+          </tr>
+          <tr><td colspan="4"><div class="val">Organização, Promoção E Execução De Programas De Turismo, Passeios, Viagens, Excursões, Hospedagens E Congêneres.</div></td></tr>
+          <tr><td colspan="4"><div class="lbl">Descrição do Serviço</div><div class="val" style="white-space: pre-wrap;">${invoice.discriminacao || ""}</div></td></tr>
+          <tr class="row-line">
+            <td class="shaded sec-title">TRIBUTAÇÃO MUNICIPAL (ISSQN)</td>
+            <td><div class="lbl">Tipo de Tributação do ISSQN</div><div class="val">Operação Tributável</div></td>
+            <td colspan="2"><div class="lbl">Município / Sigla UF / País de Incidência do ISSQN</div><div class="val">CAMPOS DOS GOYTACAZES / RJ / -</div></td>
+          </tr>
+          <tr>
+            <td><div class="lbl">BC ISSQN</div><div class="val">R$ ${valor}</div></td>
+            <td><div class="lbl">Alíquota Aplicada</div><div class="val">${aliq} %</div></td>
+            <td><div class="lbl">Retenção do ISSQN</div><div class="val">Não Retido</div></td>
+            <td><div class="lbl">ISSQN Apurado</div><div class="val">-</div></td>
+          </tr>
+          <tr class="row-line">
+            <td class="shaded sec-title">VALOR TOTAL DA NFS-e</td>
+            <td><div class="lbl">VALOR DA OPERAÇÃO / SERVIÇO</div><div class="val">R$ ${valor}</div></td>
+            <td><div class="lbl">Desconto Incondicionado</div><div class="val">-</div></td>
+            <td><div class="lbl">Desconto Condicionado</div><div class="val">-</div></td>
+          </tr>
+          <tr>
+            <td><div class="lbl">Total das Retenções (ISSQN / Federais)</div><div class="val">R$ 0,00</div></td>
+            <td><div class="lbl">VALOR LÍQUIDO DA NFS-e</div><div class="val">R$ ${valor}</div></td>
+            <td><div class="lbl">Total do IBS/CBS</div><div class="val">R$ 0,00</div></td>
+            <td class="shaded"><div class="lbl">VALOR LÍQUIDO DA NFS-e + IBS/CBS</div><div class="val">R$ 0,00</div></td>
+          </tr>
+          <tr class="row-line">
+            <td colspan="4">
+              <div class="sec-title" style="margin-bottom: 6px;">INFORMAÇÕES COMPLEMENTARES</div>
+              <div class="val">Totais aproximados dos Tributos cfe. Lei n° 12.741/2012: Federais: 0,00 %; Estaduais: 0,00 %; Municipais: 0,00 %;</div>
+            </td>
+          </tr>
+        </table>
       </div>
-      <div class="qr-box">
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=95x95&data=https://www.nfse.gov.br/consultapublica/danfse?chave=${invoice.chaveAcesso || '332610479648130001650100100000000118472910482'}" alt="QR Code ADN" style="width: 85px; height: 85px; border: 1px solid #ccc; padding: 2px; background: #fff;" />
-        <div style="font-size: 8px; font-weight: bold; margin-top: 3px; color: #334155;">QR CODE OFICIAL GOV.BR</div>
-      </div>
+      <table style="border: 1px solid #000; margin-top: 12px;">
+        <tr>
+          <td style="width: 25%; border-right: 1px solid #000; height: 28px;"><div class="lbl">DATA CIENTIFICAÇÃO:</div></td>
+          <td style="width: 25%; border-right: 1px solid #000;"><div class="lbl">IDENTIFICAÇÃO E ASSINATURA</div></td>
+          <td style="width: 50%;"><div class="lbl">N° NFS-e / CHAVE NFS-e</div><div class="val">${numNota} / ${chaveAcesso}</div></td>
+        </tr>
+      </table>
     </div>
   </div>
   <script>
@@ -1103,7 +1292,7 @@ export function renderDanfseHtml(invoice = {}) {
 </html>`;
 }
 
-// ─── 7B. Gerador Nativo de PDF Oficial (DANFSE v1.0 Padrão Nacional Gov.br) ──
+// ─── 7B. Gerador Nativo de PDF Oficial (DANFSe v2.0 Padrão Nacional Gov.br) ──
 
 function tryFetchOfficialAdnDanfsePdf(chaveAcesso) {
   const cleanChave = onlyDigits(chaveAcesso);
@@ -1146,16 +1335,17 @@ function tryFetchOfficialAdnDanfsePdf(chaveAcesso) {
 }
 
 export async function generateNfsePdfBuffer(invoice = {}) {
-  const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.id || "1");
-  const codVerif = String(invoice.codigoVerificacao || "ADN-GOV");
-  const numDps = String(invoice.numeroDps || invoice.numeroRps || invoice.numeroNfse || invoice.id || "1");
+  const rawChave = String(invoice.chaveAcesso || "");
+  const chaveNumNota = onlyDigits(rawChave).length === 50 ? onlyDigits(rawChave).slice(23, 36).replace(/^0+/, "") : "";
+  const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.numero || chaveNumNota || invoice.id || "1");
+  const numDps = String(invoice.numeroDps || invoice.numeroRps || numNota);
   const serieDps = String(invoice.serieDps || invoice.serie || "10000");
-  const chaveAcesso = String(invoice.chaveAcesso || generateChaveAcessoNacional({
+  const chaveAcesso = rawChave || generateChaveAcessoNacional({
     codUf: "33",
     cnpj: "47964813000165",
     serie: "1",
     numeroDps: numDps
-  }));
+  });
 
   const adnPdf = await tryFetchOfficialAdnDanfsePdf(chaveAcesso);
   if (adnPdf) return adnPdf;
@@ -1183,25 +1373,37 @@ export async function generateNfsePdfBuffer(invoice = {}) {
       ? foneDigits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
       : foneDigits || "-";
 
-  const cepDigits = cleanCep(invoice.tomadorCep || "28035000");
-  const cepFormatado = cepDigits.replace(/(\d{5})(\d{3})/, "$1-$2");
+  const addr = normalizeTomadorAddressFields(invoice);
+  const cepFormatado = addr.cep.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2-$3");
+  const ibgeFormatado = addr.ibge.replace(/^(\d{2})(\d{5})$/, "$1.$2");
+  const endParts = [addr.logradouro, addr.numero];
+  if (addr.complemento) endParts.push(addr.complemento);
+  if (addr.bairro) endParts.push(addr.bairro);
+  const endTomador = endParts.filter(Boolean).join(", ");
 
-  const linkPortal = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
+  // URL oficial exata do QR Code do DANFSe v2.0 (Portal Nacional NFS-e)
+  const qrPortalUrl = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${chaveAcesso}`;
 
   let qrPngBuf = null;
   try {
-    qrPngBuf = await QRCode.toBuffer(linkPortal, { width: 72, margin: 1 });
+    qrPngBuf = await QRCode.toBuffer([{ data: qrPortalUrl, mode: "byte" }], {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      scale: 10
+    });
   } catch (_) {}
+
+  const logoPngBuf = Buffer.from(DANFSE_LOGO_PNG_B64, "base64");
 
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
-        size: "A4",
-        margin: 20,
+        size: [595, 842],
+        margin: 0,
         info: {
-          Title: `DANFSE v1.0 - NFS-e Nº ${numNota}`,
-          Author: "Sistema Nacional NFS-e - Sefin Nacional / ADN",
-          Subject: `Documento Auxiliar da Nota Fiscal de Serviço Eletrônica Nº ${numNota}`
+          Title: `DANFSe v2.0 - NFS-e Nº ${numNota}`,
+          Creator: "PDFsharp 6.2.4 (www.pdfsharp.com)",
+          Producer: "PDFsharp 6.2.4"
         }
       });
 
@@ -1210,239 +1412,256 @@ export async function generateNfsePdfBuffer(invoice = {}) {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      const X0 = 24;
-      const W = 547;
-      const X_END = X0 + W;
-      const BORDER = "#333333";
-      const MUTED = "#444444";
+      const X0 = 8.5039;
+      const W_COL = 144.5669;
+      const X1 = X0 + W_COL;       // 153.0708
+      const X2 = X0 + W_COL * 2;   // 297.6377
+      const X3 = X0 + W_COL * 3;   // 442.2046
+      const X4 = X0 + W_COL * 4;   // 586.7715
+      const W_TOTAL = W_COL * 4;   // 578.2676
+      const SHADE = "#F2F2F2";
       const BLACK = "#000000";
 
-      const drawCell = (x, y, w, h, label, value, opts = {}) => {
-        if (opts.box !== false) {
-          doc.lineWidth(0.5).strokeColor(BORDER).rect(x, y, w, h).stroke();
-        }
+      // Moldura Externa Oficial (5, 5, 585, 832)
+      doc.lineWidth(1).strokeColor(BLACK).rect(5, 5, 585, 832).stroke();
+
+      const hLine = (y, xStart = X0, xEnd = X4, lw = 0.5) => {
+        doc.lineWidth(lw).strokeColor(BLACK).moveTo(xStart, y).lineTo(xEnd, y).stroke();
+      };
+
+      const shadeRect = (x, y, w, h) => {
+        doc.save();
+        doc.rect(x, y, w, h).fill(SHADE);
+        doc.restore();
+      };
+
+      const field = (x, y, label, value, opts = {}) => {
         if (label) {
-          doc.fillColor(MUTED).font("Helvetica").fontSize(6.2)
-            .text(label, x + 4, y + 3, { width: w - 8, align: opts.align || "left", lineBreak: false });
+          doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(opts.labelSize || 6)
+            .text(label, x + 3.4, y + 1.8, { width: (opts.width || W_COL) - 6, lineBreak: false });
         }
         if (value !== undefined && value !== null) {
-          doc.fillColor(BLACK).font(opts.bold ? "Helvetica-Bold" : "Helvetica").fontSize(opts.fontSize || 7.6)
-            .text(String(value), x + 4, y + (label ? 11.5 : 4), {
-              width: w - 8,
-              align: opts.align || "left",
-              lineBreak: opts.multiline || false
+          doc.fillColor(BLACK).font(opts.bold ? "Helvetica-Bold" : "Helvetica").fontSize(opts.valueSize || 7)
+            .text(String(value), x + 3.4, y + (label ? 9.5 : 2.5), {
+              width: (opts.width || W_COL) - 6,
+              lineBreak: opts.multiline || false,
+              lineGap: opts.lineGap || 0.8
             });
         }
       };
 
-      const drawSectionTitle = (y, title) => {
-        doc.save();
-        doc.rect(X0, y, W, 13).fill("#efefef");
-        doc.lineWidth(0.6).strokeColor(BORDER).rect(X0, y, W, 13).stroke();
-        doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.2)
-          .text(title, X0 + 5, y + 3.2, { width: W - 10, align: "left", lineBreak: false });
-        doc.restore();
-        return y + 13;
+      const sectionBadge = (y, title) => {
+        shadeRect(X0, y + 0.25, W_COL, 19.0742);
+        doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7)
+          .text(title, X0 + 3.4, y + 6.4, { width: W_COL - 6, lineBreak: false });
       };
 
-      let y = 22;
+      // ── 1. FAIXA DE TOPO (y = 5.67 .. 39.685) ────────────────────────────
+      const Y_TOP = 5.6693;
+      const H_TOP = 34.0157;
+      shadeRect(X0, Y_TOP, W_TOTAL, H_TOP);
 
-      // ── 1. CABEÇALHO OFICIAL DANFSE v1.0 (3 Colunas) ──────────────────────
-      const H_TOP = 42;
-      doc.lineWidth(0.7).strokeColor(BORDER).rect(X0, y, W, H_TOP).stroke();
-      doc.moveTo(X0 + 125, y).lineTo(X0 + 125, y + H_TOP).lineWidth(0.5).strokeColor(BORDER).stroke();
-      doc.moveTo(X0 + 375, y).lineTo(X0 + 375, y + H_TOP).lineWidth(0.5).strokeColor(BORDER).stroke();
+      try {
+        doc.image(logoPngBuf, 11.9055, 10.3229, { width: 115.6536, height: 22.9165 });
+      } catch (_) {}
 
-      // Coluna 1: Logo NFS-e Padrão Nacional
-      doc.fillColor("#15803d").font("Helvetica-Bold").fontSize(17)
-        .text("NFS-", X0 + 12, y + 7, { continued: true })
-        .fillColor("#ca8a04").text("e");
-      doc.fillColor("#1e3a8a").font("Helvetica-Bold").fontSize(6.8)
-        .text("Nota Fiscal de", X0 + 66, y + 9, { lineBreak: false });
-      doc.fillColor("#15803d").font("Helvetica-Bold").fontSize(6.8)
-        .text("Serviço eletrônica", X0 + 66, y + 17, { lineBreak: false });
-      doc.fillColor(MUTED).font("Helvetica").fontSize(5.8)
-        .text("Padrão Nacional • Gov.br", X0 + 12, y + 29, { width: 105, align: "center", lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(9)
+        .text("DANFSe v2.0", X1, 13.5, { width: W_COL * 2, align: "center", lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(9)
+        .text("Documento Auxiliar da NFS-e", X1, 23.85, { width: W_COL * 2, align: "center", lineBreak: false });
 
-      // Coluna 2: Título DANFSE v1.0
-      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(10.5)
-        .text("DANFSE v1.0", X0 + 130, y + 8, { width: 240, align: "center", lineBreak: false });
-      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.4)
-        .text("DOCUMENTO AUXILIAR DA NOTA FISCAL", X0 + 130, y + 21, { width: 240, align: "center", lineBreak: false });
-      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.4)
-        .text("DE SERVIÇO ELETRÔNICA", X0 + 130, y + 30, { width: 240, align: "center", lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica").fontSize(8)
+        .text("Município: CAMPOS DOS", X3 + 3.4, 7.6, { width: W_COL - 6, lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica").fontSize(8)
+        .text("GOYTACAZES - RJ", X3 + 3.4, 16.65, { width: W_COL - 6, lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica").fontSize(6)
+        .text("Ambiente Gerador: 1", X3 + 3.4, 25.1, { width: W_COL - 6, lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica").fontSize(6)
+        .text("Tipo de Ambiente: 1", X3 + 3.4, 31.9, { width: W_COL - 6, lineBreak: false });
 
-      // Coluna 3: Prefeitura Municipal de Campos dos Goytacazes
-      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.2)
-        .text("Prefeitura Municipal de Campos", X0 + 380, y + 7, { width: 162, align: "center", lineBreak: false });
-      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.2)
-        .text("dos Goytacazes - RJ", X0 + 380, y + 16, { width: 162, align: "center", lineBreak: false });
-      doc.fillColor(MUTED).font("Helvetica").fontSize(6.3)
-        .text("Secretaria Municipal de Fazenda", X0 + 380, y + 27, { width: 162, align: "center", lineBreak: false });
-      y += H_TOP;
+      hLine(39.935);
 
-      // ── 2. IDENTIFICAÇÃO DA NFS-e, CHAVE DE ACESSO E QR CODE ─────────────
-      const W_LEFT_ID = 390;
-      const W_RIGHT_QR = W - W_LEFT_ID;
-      const H_ID_ROW = 23;
-      const H_ID_TOTAL = H_ID_ROW * 3;
+      // ── 2. IDENTIFICAÇÃO DA NFS-e + QR CODE (y = 39.935 .. 125.5836) ─────
+      field(X0, 44.0, "CHAVE DE ACESSO DA NFS-e", chaveAcesso, { labelSize: 7, valueSize: 7, width: W_COL * 3 });
 
-      // Linha 1: Chave de Acesso da NFS-e (50 dígitos)
-      drawCell(X0, y, W_LEFT_ID, H_ID_ROW, "Chave de Acesso da NFS-e", chaveAcesso, { bold: true, fontSize: 8.2 });
+      field(X0, 63.0, "NÚMERO DA NFS-e", numNota, { labelSize: 7, valueSize: 7 });
+      field(X1, 63.0, "COMPETÊNCIA DA NFS-e", competenciaBr, { labelSize: 7, valueSize: 7 });
+      field(X2, 63.0, "DATA E HORA DA EMISSÃO DA NFS-e", dataHoraBr, { labelSize: 7, valueSize: 7 });
 
-      // Linha 2: Número da NFS-e | Competência | Data e Hora da emissão da NFS-e
-      drawCell(X0, y + H_ID_ROW, 120, H_ID_ROW, "Número da NFS-e", numNota, { bold: true, fontSize: 9 });
-      drawCell(X0 + 120, y + H_ID_ROW, 115, H_ID_ROW, "Competência da NFS-e", competenciaBr, { bold: true });
-      drawCell(X0 + 235, y + H_ID_ROW, 155, H_ID_ROW, "Data e Hora da emissão da NFS-e", dataHoraBr, { bold: true });
+      field(X0, 83.2, "NÚMERO DA DPS", numDps, { labelSize: 7, valueSize: 7 });
+      field(X1, 83.2, "SÉRIE DA DPS", serieDps, { labelSize: 7, valueSize: 7 });
+      field(X2, 83.2, "DATA E HORA DA EMISSÃO DA DPS", dataHoraBr, { labelSize: 7, valueSize: 7 });
 
-      // Linha 3: Número da DPS | Série da DPS | Data e Hora da emissão da DPS
-      drawCell(X0, y + H_ID_ROW * 2, 120, H_ID_ROW, "Número da DPS", numDps);
-      drawCell(X0 + 120, y + H_ID_ROW * 2, 115, H_ID_ROW, "Série da DPS", serieDps);
-      drawCell(X0 + 235, y + H_ID_ROW * 2, 155, H_ID_ROW, "Data e Hora da emissão da DPS", dataHoraBr);
+      shadeRect(X0, 105.1095, W_COL, 20.2241);
+      field(X0, 104.2, "EMITENTE DA NFS-e", "Prestador", { labelSize: 7, valueSize: 7 });
+      const situacaoStr = invoice.status === "cancelada" ? "NFS-e Cancelada" : (invoice.status === "substituida" ? "NFS-e Substituída" : "NFS-e Gerada");
+      field(X1, 104.2, "SITUAÇÃO DA NFS-e", situacaoStr, { labelSize: 7, valueSize: 7 });
+      field(X2, 104.2, "FINALIDADE", "-", { labelSize: 7, valueSize: 7 });
 
-      // Bloco Direito: QR Code + Texto de Autenticidade Oficial
-      doc.lineWidth(0.5).strokeColor(BORDER).rect(X0 + W_LEFT_ID, y, W_RIGHT_QR, H_ID_TOTAL).stroke();
       if (qrPngBuf) {
         try {
-          doc.image(qrPngBuf, X0 + W_LEFT_ID + 4, y + 3, { width: 63, height: 63 });
+          doc.image(qrPngBuf, 491.9882, 44.7642, { width: 45, height: 45 });
         } catch (_) {}
       }
-      doc.fillColor(MUTED).font("Helvetica").fontSize(5.5)
-        .text(
-          "A autenticidade desta NFS-e pode ser verificada pela leitura deste código QR ou pela consulta da chave de acesso no portal nacional da NFS-e.",
-          X0 + W_LEFT_ID + 70,
-          y + 10,
-          { width: W_RIGHT_QR - 74, align: "left", lineGap: 1.2 }
-        );
-      y += H_ID_TOTAL;
+      doc.fillColor(BLACK).font("Helvetica").fontSize(6)
+        .text("A autenticidade desta NFS-e pode ser verificada", X3 + 3.4, 92.2, { width: W_COL - 6, lineBreak: false })
+        .text("pela leitura deste código QR ou pela consulta da", X3 + 3.4, 99.0, { width: W_COL - 6, lineBreak: false })
+        .text("chave de acesso no portal nacional da NFS-e", X3 + 3.4, 105.8, { width: W_COL - 6, lineBreak: false });
 
-      // ── 3. EMITENTE DA NFS-e (Prestador do Serviço) ──────────────────────
-      y = drawSectionTitle(y, "EMITENTE DA NFS-e (Prestador do Serviço)");
-      const H_ROW = 21;
-      drawCell(X0, y, 180, H_ROW, "CNPJ / CPF / NIF", invoice.prestadorCnpj || "47.964.813/0001-65", { bold: true });
-      drawCell(X0 + 180, y, 160, H_ROW, "Inscrição Municipal", invoice.prestadorIm || "142591", { bold: true });
-      drawCell(X0 + 340, y, W - 340, H_ROW, "Telefone", "(22) 2724-2302");
-      y += H_ROW;
+      // ── 3. PRESTADOR / FORNECEDOR (y = 125.5836 .. 202.3805) ─────────────
+      let y = 125.5836;
+      hLine(y);
+      sectionBadge(y, "PRESTADOR / FORNECEDOR");
+      field(X1, y, "CNPJ / CPF / NIF", invoice.prestadorCnpj || "47.964.813/0001-65");
+      field(X2, y, "Indicador Municipal (Inscrição)", invoice.prestadorIm || "142591");
+      field(X3, y, "Telefone", "-");
+      y += 19.32;
 
-      drawCell(X0, y, 340, H_ROW, "Nome / Empresarial", "RENTAL MILLERS LTDA", { bold: true });
-      drawCell(X0 + 340, y, W - 340, H_ROW, "E-mail", "contato@corpflats.com.br");
-      y += H_ROW;
+      field(X0, y, "Nome / Nome Empresarial", "RENTAL MILLERS LTDA", { width: W_COL * 2 });
+      field(X2, y, "Município / Sigla UF", "Campos dos Goytacazes / RJ");
+      field(X3, y, "Código IBGE / CEP", "33.01009 / 28.020-140");
+      y += 19.07;
 
-      drawCell(X0, y, 300, H_ROW, "Endereço", "Doutor Júlio Barcelos, 3, BLOCO:06;APT:204 - Parque Jóquei Club");
-      drawCell(X0 + 300, y, 160, H_ROW, "Município", "Campos dos Goytacazes - RJ");
-      drawCell(X0 + 460, y, W - 460, H_ROW, "CEP", "28020-140");
-      y += H_ROW;
+      field(X0, y, "Endereço", "Sem tipo de logradouro Doutor Júlio Barcelos, 3, BLOCO:06;APT:204, Parque Jóquei Club", { width: W_COL * 2 });
+      field(X2, y, "E-mail", "-", { width: W_COL * 2 });
+      y += 19.07;
 
-      drawCell(X0, y, 275, H_ROW, "Simples Nacional na Data de Competência", "Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)");
-      drawCell(X0 + 275, y, W - 275, H_ROW, "Regime de Apuração Tributária pelo SN", "Apuração dos tributos federais e municipal pelo Simples Nacional");
-      y += H_ROW;
+      field(X0, y, "Simples Nacional na Data de Competência", "Optante - Microempresa ou Empresa de ...");
+      field(X1, y, "Regime de Apuração Tributária pelo SN", "Regime de apuração dos tributos federais e municipal pelo Simples Nacional", { width: W_COL * 3 });
 
-      // ── 4. TOMADOR DO SERVIÇO ────────────────────────────────────────────
-      y = drawSectionTitle(y, "TOMADOR DO SERVIÇO");
-      drawCell(X0, y, 180, H_ROW, "CNPJ / CPF / NIF", docFormatado, { bold: true });
-      drawCell(X0 + 180, y, 160, H_ROW, "Inscrição Municipal", "-");
-      drawCell(X0 + 340, y, W - 340, H_ROW, "Telefone", foneFormatado);
-      y += H_ROW;
+      // ── 4. TOMADOR / ADQUIRENTE (y = 202.3805 .. 260.1032) ───────────────
+      y = 202.3805;
+      hLine(y);
+      sectionBadge(y, "TOMADOR / ADQUIRENTE");
+      field(X1, y, "CNPJ / CPF / NIF", docFormatado);
+      field(X2, y, "Indicador Municipal (Inscrição)", "-");
+      field(X3, y, "Telefone", foneFormatado);
+      y += 19.32;
 
-      drawCell(X0, y, 340, H_ROW, "Nome / Empresarial", invoice.tomadorNome || "Hóspede", { bold: true });
-      drawCell(X0 + 340, y, W - 340, H_ROW, "E-mail", invoice.tomadorEmail || "-");
-      y += H_ROW;
+      field(X0, y, "Nome / Nome Empresarial", toTitleCase(invoice.tomadorNome || "Hóspede"), { width: W_COL * 2 });
+      field(X2, y, "Município / Sigla UF", `${addr.cidade} / ${addr.uf}`);
+      field(X3, y, "Código IBGE / CEP", `${ibgeFormatado} / ${cepFormatado}`);
+      y += 19.07;
 
-      const endTomador = `${invoice.tomadorEndereco || invoice.tomadorLogradouro || "Av. Pelinca"}, ${invoice.tomadorNumero || "100"}${invoice.tomadorComplemento ? ` (${invoice.tomadorComplemento})` : ""} - ${invoice.tomadorBairro || "Pelinca"}`;
-      const munTomador = `${invoice.tomadorCidade || "Campos dos Goytacazes"} - ${invoice.tomadorUf || "RJ"}`;
-      drawCell(X0, y, 300, H_ROW, "Endereço", endTomador);
-      drawCell(X0 + 300, y, 160, H_ROW, "Município", munTomador);
-      drawCell(X0 + 460, y, W - 460, H_ROW, "CEP", cepFormatado);
-      y += H_ROW;
+      field(X0, y, "Endereço", endTomador, { width: W_COL * 2 });
+      field(X2, y, "E-mail", invoice.tomadorEmail || "-", { width: W_COL * 2 });
 
-      // ── 5. INTERMEDIÁRIO DO SERVIÇO ──────────────────────────────────────
-      doc.lineWidth(0.5).strokeColor(BORDER).rect(X0, y, W, 14).stroke();
-      doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(6.5)
-        .text("INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e", X0, y + 4, { width: W, align: "center", lineBreak: false });
-      y += 14;
+      // ── 5. DESTINATÁRIO E INTERMEDIÁRIO (y = 260.1032 .. 276.9489) ───────
+      hLine(260.1032);
+      doc.fillColor(BLACK).font("Helvetica").fontSize(7)
+        .text("DESTINATÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e", X0, 261.3, { width: W_TOTAL, align: "center", lineBreak: false });
 
-      // ── 6. SERVIÇO PRESTADO ──────────────────────────────────────────────
-      y = drawSectionTitle(y, "SERVIÇO PRESTADO");
-      drawCell(X0, y, 185, H_ROW, "Código de Tributação Nacional", "09.02.02 - Hospedagens e Congêneres");
-      drawCell(X0 + 185, y, 135, H_ROW, "Código de Tributação Municipal", "006 - Hospedagem");
-      drawCell(X0 + 320, y, 145, H_ROW, "Local da Prestação", "Campos dos Goytacazes - RJ");
-      drawCell(X0 + 465, y, W - 465, H_ROW, "País da Prestação", "Brasil");
-      y += H_ROW;
+      hLine(268.526);
+      doc.fillColor(BLACK).font("Helvetica").fontSize(7)
+        .text("INTERMEDIÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e", X0, 269.7, { width: W_TOTAL, align: "center", lineBreak: false });
 
-      const H_DESC = 68;
-      const discText = invoice.discriminacao ||
-        `Nota relativa à hospedagem de ${invoice.tomadorNome || "Hóspede"}, no Flat ${invoice.flatNumber || "113"}. Local: CorpFlats. Av. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ, CEP 28035-000. Quantidade de diárias: 1.`;
-      drawCell(X0, y, W, H_DESC, "Descrição do Serviço", discText, { multiline: true, fontSize: 7.8 });
-      y += H_DESC;
+      // ── 6. SERVIÇO PRESTADO (y = 276.9489 .. 335.695) ────────────────────
+      y = 276.9489;
+      hLine(y);
+      sectionBadge(y, "SERVIÇO PRESTADO");
+      field(X1, y, "Código de Tributação Nacional/Municipal", "09.02.02 / 006");
+      field(X2, y, "Código da NBS", "-");
+      field(X3, y, "Local da Prestação / Sigla UF / País", "CAMPOS DOS GOYTACAZES / RJ / -");
+      y += 19.32;
 
-      // ── 7. TRIBUTAÇÃO MUNICIPAL ──────────────────────────────────────────
-      y = drawSectionTitle(y, "TRIBUTAÇÃO MUNICIPAL");
-      const C4 = W / 4;
-      drawCell(X0, y, C4, H_ROW, "Tributação do ISSQN", "Operação Tributável");
-      drawCell(X0 + C4, y, C4, H_ROW, "País Resultado da Prestação do Serviço", "-");
-      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Município de Incidência do ISSQN", "Campos dos Goytacazes - RJ");
-      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Regime Especial de Tributação", "Nenhum");
-      y += H_ROW;
+      doc.fillColor(BLACK).font("Helvetica").fontSize(7)
+        .text("Organização, Promoção E Execução De Programas De Turismo, Passeios, Viagens, Excursões, Hospedagens E Congêneres.", X0 + 3.4, y + 1.2, { width: W_TOTAL - 6, lineBreak: false });
+      y += 11.35;
 
-      drawCell(X0, y, C4, H_ROW, "Tipo de Imunidade", "-");
-      drawCell(X0 + C4, y, C4, H_ROW, "Suspensão da Exigibilidade do ISSQN", "Não");
-      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Número Processo Suspensão", "-");
-      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Benefício Municipal", "-");
-      y += H_ROW;
+      const discText = String(invoice.discriminacao ||
+        `Nota relativa à hospedagem de ${invoice.tomadorNome || "Hóspede"}, no Flat ${invoice.flatNumber || "113"}. Local: CorpFlats. Quantidade de diárias: 1.`)
+        .replace(/\s*\n\s*/g, " ");
+      field(X0, y, "Descrição do Serviço", discText, { width: W_TOTAL, multiline: true });
 
-      drawCell(X0, y, C4, H_ROW, "Valor do Serviço", `R$ ${valorStr}`, { bold: true });
-      drawCell(X0 + C4, y, C4, H_ROW, "Desconto Incondicionado", "R$ 0,00");
-      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Total Deduções/Reduções", "-");
-      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Cálculo do BM", "-");
-      y += H_ROW;
+      // ── 7. TRIBUTAÇÃO MUNICIPAL (ISSQN) (y = 335.695 .. 374.3435) ────────
+      y = 335.695;
+      hLine(y);
+      sectionBadge(y, "TRIBUTAÇÃO MUNICIPAL (ISSQN)");
+      field(X1, y, "Tipo de Tributação do ISSQN", "Operação Tributável");
+      field(X2, y, "Município / Sigla UF / País de Incidência do ISSQN", "CAMPOS DOS GOYTACAZES / RJ / -", { width: W_COL * 2 });
+      y += 19.32;
 
-      drawCell(X0, y, C4, H_ROW, "BC ISSQN", `R$ ${valorStr}`);
-      drawCell(X0 + C4, y, C4, H_ROW, "Alíquota Aplicada", `${aliqStr}%`);
-      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Retenção do ISSQN", "Não Retido");
-      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "ISSQN Apurado", "-");
-      y += H_ROW;
+      field(X0, y, "BC ISSQN", `R$ ${valorStr}`);
+      field(X1, y, "Alíquota Aplicada", `${aliqStr} %`);
+      field(X2, y, "Retenção do ISSQN", "Não Retido");
+      field(X3, y, "ISSQN Apurado", "-");
 
-      // ── 8. TRIBUTAÇÃO FEDERAL ────────────────────────────────────────────
-      y = drawSectionTitle(y, "TRIBUTAÇÃO FEDERAL");
-      drawCell(X0, y, C4, H_ROW, "IRRF", "-");
-      drawCell(X0 + C4, y, C4, H_ROW, "CP", "-");
-      drawCell(X0 + C4 * 2, y, C4, H_ROW, "CSLL", "-");
-      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Retenção do PIS/COFINS", "-");
-      y += H_ROW;
+      // ── 8. TRIBUTAÇÃO FEDERAL (EXCETO CBS) (y = 374.3435 .. 412.992) ─────
+      y = 374.3435;
+      hLine(y);
+      sectionBadge(y, "TRIBUTAÇÃO FEDERAL (EXCETO CBS)");
+      field(X1, y, "IRRF", "-");
+      field(X2, y, "Contribuição Previdenciária - Retida", "-");
+      field(X3, y, "Contribuições Sociais - Retidas", "-");
+      y += 19.32;
 
-      drawCell(X0, y, C4, H_ROW, "PIS - Débito Apuração Própria", "-");
-      drawCell(X0 + C4, y, C4, H_ROW, "COFINS - Débito Apuração Própria", "-");
-      drawCell(X0 + C4 * 2, y, W - C4 * 2, H_ROW, "Descrição Tributação Federal", "-");
-      y += H_ROW;
+      field(X0, y, "PIS - Débito Apuração Própria", "-");
+      field(X1, y, "COFINS - Débito Apuração Própria", "-");
+      field(X2, y, "Descrição Contrib. Sociais - Retidas", "-", { width: W_COL * 2 });
 
-      // ── 9. VALOR TOTAL DA NFS-E ──────────────────────────────────────────
-      y = drawSectionTitle(y, "VALOR TOTAL DA NFS-E");
-      drawCell(X0, y, C4, H_ROW, "Valor do Serviço", `R$ ${valorStr}`, { bold: true });
-      drawCell(X0 + C4, y, C4, H_ROW, "Desconto Condicionado", "R$ 0,00");
-      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Desconto Incondicionado", "R$ 0,00");
-      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "ISSQN Retido", "-");
-      y += H_ROW;
+      // ── 9. TRIBUTAÇÃO IBS/CBS (y = 412.992 .. 489.7889) ──────────────────
+      y = 412.992;
+      hLine(y);
+      sectionBadge(y, "TRIBUTAÇÃO IBS/CBS");
+      field(X1, y, "CST / cClassTrib", "- / -");
+      field(X2, y, "Indicador de Operação / Código IBGE Incidência / Município Incidência / Sigla UF", "- / - / - / -", { width: W_COL * 2 });
+      y += 19.32;
 
-      const C3 = W / 3;
-      drawCell(X0, y, C3, H_ROW, "Total das Retenções Federais", "R$ 0,00");
-      drawCell(X0 + C3, y, C3, H_ROW, "PIS/COFINS - Débito Apuração Própria", "-");
-      drawCell(X0 + C3 * 2, y, W - C3 * 2, H_ROW, "Valor Líquido da NFS-e", `R$ ${valorStr}`, { bold: true, fontSize: 8.6 });
-      y += H_ROW;
+      field(X0, y, "Exclusões e Reduções da Base de Cálculo", "R$ 0,00");
+      field(X1, y, "Base de Cálculo Após Exclusões e Reduções", "-");
+      field(X2, y, "Red. Alíquota IBS / Red. Alíquota CBS", "- / - / -");
+      field(X3, y, "Alíquota - IBS UF / IBS Mun", "- / -");
+      y += 19.07;
 
-      // ── 10. TOTAIS APROXIMADOS DOS TRIBUTOS ──────────────────────────────
-      y = drawSectionTitle(y, "TOTAIS APROXIMADOS DOS TRIBUTOS");
-      drawCell(X0, y, C3, H_ROW, "Federais", "0,00%", { align: "center" });
-      drawCell(X0 + C3, y, C3, H_ROW, "Estaduais", "0,00%", { align: "center" });
-      drawCell(X0 + C3 * 2, y, W - C3 * 2, H_ROW, "Municipais", "0,00%", { align: "center" });
-      y += H_ROW;
+      field(X0, y, "Alíq. Efetiva Municipal - IBS", "-");
+      field(X1, y, "Valor Apurado Municipal - IBS", "-");
+      field(X2, y, "Alíq. Efetiva Estadual - IBS", "-");
+      field(X3, y, "Valor Apurado Estadual - IBS", "-");
+      y += 19.07;
 
-      // ── 11. INFORMAÇÕES COMPLEMENTARES ───────────────────────────────────
-      y = drawSectionTitle(y, "INFORMAÇÕES COMPLEMENTARES");
-      const H_INF = Math.max(36, 815 - y);
-      const infoComp =
-        `Documento emitido por ME ou EPP optante pelo Simples Nacional. Não gera direito a crédito fiscal de IPI.\n` +
-        `Número DF-e Nacional (ADN): ${invoice.nDFSe || "129197744"}   |   Código de Verificação: ${codVerif}   |   Consulta Pública: ${linkPortal}`;
-      drawCell(X0, y, W, H_INF, "", infoComp, { multiline: true, fontSize: 7 });
+      field(X0, y, "Valor Total Apurado - IBS", "-");
+      field(X1, y, "Alíquota - CBS", "-");
+      field(X2, y, "Alíquota Efetiva - CBS", "-");
+      field(X3, y, "Valor Total Apurado - CBS", "-");
+
+      // ── 10. VALOR TOTAL DA NFS-e (y = 489.7889 .. 528.4374) ──────────────
+      y = 489.7889;
+      hLine(y);
+      sectionBadge(y, "VALOR TOTAL DA NFS-e");
+      field(X1, y, "VALOR DA OPERAÇÃO / SERVIÇO", `R$ ${valorStr}`);
+      field(X2, y, "Desconto Incondicionado", "-");
+      field(X3, y, "Desconto Condicionado", "-");
+      y += 19.32;
+
+      field(X0, y, "Total das Retenções (ISSQN / Federais)", "R$ 0,00");
+      field(X1, y, "VALOR LÍQUIDO DA NFS-e", `R$ ${valorStr}`);
+      field(X2, y, "Total do IBS/CBS", "R$ 0,00");
+      shadeRect(X3, y, W_COL, 19.0742);
+      field(X3, y, "VALOR LÍQUIDO DA NFS-e + IBS/CBS", "R$ 0,00");
+
+      // ── 11. INFORMAÇÕES COMPLEMENTARES (y = 528.4374 .. 795.8) ───────────
+      y = 528.4374;
+      hLine(y);
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7)
+        .text("INFORMAÇÕES COMPLEMENTARES", X0 + 3.4, y + 3.5, { width: W_TOTAL - 6, lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica").fontSize(7)
+        .text("Totais aproximados dos Tributos cfe. Lei n° 12.741/2012: Federais: 0,00 %; Estaduais: 0,00 %; Municipais: 0,00 %;", X0 + 3.4, y + 20.0, { width: W_TOTAL - 6 });
+
+      // ── 12. CANHOTO INFERIOR OFICIAL (y = 795.8038 .. 816.378) ───────────
+      const Y_STUB = 795.8038;
+      const H_STUB = 20.0742;
+      doc.lineWidth(1).strokeColor(BLACK)
+        .rect(X0, Y_STUB, W_COL, H_STUB)
+        .rect(X1, Y_STUB, W_COL, H_STUB)
+        .rect(X2, Y_STUB, W_COL * 2, H_STUB)
+        .stroke();
+
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(6)
+        .text("DATA CIENTIFICAÇÃO:", X0 + 4.4, Y_STUB + 1.8, { lineBreak: false })
+        .text("IDENTIFICAÇÃO E ASSINATURA", X1 + 4.4, Y_STUB + 1.8, { lineBreak: false })
+        .text("N° NFS-e / CHAVE NFS-e", X2 + 4.4, Y_STUB + 1.8, { lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica").fontSize(7)
+        .text(`${numNota} / ${chaveAcesso}`, X2 + 4.4, Y_STUB + 9.5, { width: W_COL * 2 - 8, lineBreak: false });
 
       doc.end();
     } catch (err) {

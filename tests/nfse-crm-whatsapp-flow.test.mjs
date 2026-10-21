@@ -1414,6 +1414,49 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       assert.ok(pdfBuf.length > 1500, "PDF buffer must have valid size > 1500 bytes");
       assert.strictEqual(pdfBuf.subarray(0, 4).toString("ascii"), "%PDF", "PDF binary must start with %PDF header");
     });
+
+    it("T16.4 - Resolve automaticamente o endereço real do Check-in Digital (Rua Sebastião Rangel, 26, Parque Turf Club, CEP 28024-030) e gera QR Code oficial Gov.br", async () => {
+      const lookupRes = await fetch(`${baseUrl}/api/nfse/lookup-cpf/12585736792`);
+      assert.strictEqual(lookupRes.status, 200);
+      const lookupData = await lookupRes.json();
+      assert.strictEqual(lookupData.found, true);
+      assert.strictEqual(lookupData.logradouro, "Rua Sebastião Rangel");
+      assert.strictEqual(lookupData.numero, "26");
+      assert.strictEqual(lookupData.bairro, "Parque Turf Club");
+      assert.strictEqual(lookupData.cep, "28024030");
+
+      const emitRes = await fetch(`${baseUrl}/api/nfse/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sistemaEmissor: "padrao_nacional",
+          tomadorNome: "Miller Mendonça Pessanha",
+          tomadorCpfCnpj: "12585736792",
+          tomadorEndereco: "Av. Pelinca",
+          tomadorNumero: "100",
+          tomadorBairro: "Pelinca",
+          tomadorCep: "28035000",
+          valorServico: 2.00,
+          flatNumber: "101",
+          discriminacao: "Hospedagem Flat 101 CorpFlats"
+        })
+      });
+      assert.strictEqual(emitRes.status, 201);
+      const emitData = await emitRes.json();
+      assert.strictEqual(emitData.invoice.tomadorEndereco, "Rua Sebastião Rangel");
+      assert.strictEqual(emitData.invoice.tomadorNumero, "26");
+      assert.strictEqual(emitData.invoice.tomadorBairro, "Parque Turf Club");
+      assert.strictEqual(emitData.invoice.tomadorCep, "28024030");
+      assert.ok(emitData.linkPrefeitura.startsWith("https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave="));
+
+      const danfseRes = await fetch(`${baseUrl}/api/nfse/danfse/${emitData.numeroNfse}`);
+      assert.strictEqual(danfseRes.status, 200);
+      const html = await danfseRes.text();
+      assert.ok(html.includes("DANFSe v2.0"), "DANFSe HTML must follow official DANFSe v2.0 layout");
+      assert.ok(html.includes("Rua Sebastião Rangel, 26, Parque Turf Club"), "DANFSe HTML must display the guest's real digital check-in address");
+      assert.ok(html.includes("https://www.nfse.gov.br/ConsultaPublica?tpc=1"), "DANFSe HTML must include the official Gov.br ConsultaPublica URL");
+      assert.ok(html.includes("data:image/png;base64,"), "DANFSe HTML must embed the Byte-mode EC-Level-M QR code PNG");
+    });
   });
 
   // =========================================================================

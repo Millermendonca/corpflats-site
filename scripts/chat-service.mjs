@@ -38,7 +38,7 @@ export function formatarDescricaoComTemplate(params, templateStr = DEFAULT_FISCA
     tomadorNome = "Hóspede",
     tomadorCpfCnpj = "",
     localNome = "CorpFlats",
-    localEndereco = "Av. Pelinca, 100 - Campos dos Goytacazes/RJ",
+    localEndereco = "Rua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes/RJ",
     flatNumber = "",
     checkIn = "",
     checkOut = "",
@@ -147,12 +147,13 @@ export async function processChatConversation({
     tomadorCpfCnpj: onlyDigits(baseData.tomadorCpfCnpj || ""),
     tomadorEmail: baseData.tomadorEmail || "",
     tomadorTelefone: onlyDigits(baseData.tomadorTelefone || ""),
-    tomadorEndereco: baseData.tomadorEndereco || "Av. Pelinca, 100",
-    tomadorNumero: baseData.tomadorNumero || "100",
-    tomadorBairro: baseData.tomadorBairro || "Pelinca",
+    tomadorEndereco: baseData.tomadorEndereco || "",
+    tomadorNumero: baseData.tomadorNumero || "",
+    tomadorBairro: baseData.tomadorBairro || "",
+    tomadorCidade: baseData.tomadorCidade || "Campos dos Goytacazes",
     tomadorCodigoMunicipio: baseData.tomadorCodigoMunicipio || "3301009",
     tomadorUf: baseData.tomadorUf || "RJ",
-    tomadorCep: onlyDigits(baseData.tomadorCep || "28035000"),
+    tomadorCep: onlyDigits(baseData.tomadorCep || ""),
     valorServico: baseData.valorServico || "",
     checkIn: baseData.checkIn || new Date().toISOString().substring(0, 10),
     checkOut: baseData.checkOut || new Date(Date.now() + 86400000).toISOString().substring(0, 10),
@@ -252,12 +253,25 @@ export async function processChatConversation({
     if (lastVal) data.valorServico = lastVal;
   }
 
+  // Permite enriquecer com o cadastro / check-in digital do hóspede antes de aplicar fallbacks
+  if (typeof onGuestDiscovered === "function") {
+    try {
+      await onGuestDiscovered(data);
+    } catch {}
+  }
+
+  // Fallbacks apenas se continuarem vazios após a busca no banco de hóspedes
+  if (!data.tomadorEndereco) data.tomadorEndereco = "Av. Pelinca";
+  if (!data.tomadorNumero) data.tomadorNumero = "100";
+  if (!data.tomadorBairro) data.tomadorBairro = "Pelinca";
+  if (!data.tomadorCep) data.tomadorCep = "28035000";
+
   // Atualiza descrição oficial usando o template dinâmico configurado
   data.descricaoServico = formatarDescricaoComTemplate({
     tomadorNome: data.tomadorNome || "Hóspede CorpFlats",
     tomadorCpfCnpj: data.tomadorCpfCnpj,
     localNome: "CorpFlats",
-    localEndereco: "Av. Pelinca, 100 - Campos dos Goytacazes/RJ",
+    localEndereco: "Rua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes/RJ",
     flatNumber: data.flatNumber,
     checkIn: data.checkIn,
     checkOut: data.checkOut,
