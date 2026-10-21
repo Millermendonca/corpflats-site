@@ -6302,6 +6302,11 @@ async function loadDatabase() {
       if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
       if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
       if (!db.smartFlats || typeof db.smartFlats !== "object" || Array.isArray(db.smartFlats)) db.smartFlats = {};
+      if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0) db.minibarProducts = getDefaultMinibarProducts();
+      if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate)) db.minibarDefaultStock = getDefaultMinibarStock();
+      if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+      if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+      if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
       if (db.settings) {
         if (!db.settings.receptionEmail || db.settings.receptionEmail === "millerpessanha@gmail.com" || db.settings.receptionEmail === "portaria.soho@corpflats.com.br") {
           db.settings.receptionEmail = "soho@promenade.com.br";
@@ -6543,6 +6548,11 @@ async function loadDatabase() {
     if (!db.reservationCommunications) db.reservationCommunications = [];
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+    if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0) db.minibarProducts = getDefaultMinibarProducts();
+    if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate)) db.minibarDefaultStock = getDefaultMinibarStock();
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+    if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
     if (ensureSystemUsers(db)) {
       saveDatabase("manual_migrate_system_users_dev_and_gestor");
     }
@@ -8721,6 +8731,25 @@ function pruneDatabase() {
       (r.checkoutDate && r.checkoutDate >= cutoffDate) ||
       (r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "CANCELLED" && r.status !== "expirada")
     );
+  }
+
+  // Preserva histórico fiscal e contábil de pedidos de frigobar (mínimo de 730 dias).
+  // Apenas remove pedidos cancelados/não pagos com mais de 730 dias se a coleção ultrapassar 3000 itens.
+  if (Array.isArray(db.minibarOrders) && db.minibarOrders.length > 3000) {
+    const cutoffDate = getOffsetDateStr(-730);
+    db.minibarOrders = db.minibarOrders.filter(o => {
+      const orderDate = String(o.paidAt || o.createdAt || "").split("T")[0];
+      return (orderDate >= cutoffDate) || (o.paymentStatus === "pago");
+    });
+  }
+
+  // Preserva auditoria de inspeções da repositora da Anserve (mínimo de 730 dias)
+  if (Array.isArray(db.minibarInspections) && db.minibarInspections.length > 3000) {
+    const cutoffDate = getOffsetDateStr(-730);
+    db.minibarInspections = db.minibarInspections.filter(i => {
+      const inspDate = String(i.inspectedAt || i.createdAt || "").split("T")[0];
+      return (inspDate >= cutoffDate);
+    });
   }
 
   // Truncar mensagens dentro de conversas WhatsApp (máx 50 msgs por conversa)
@@ -22066,7 +22095,19 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     termsAndRules: db.settings.termsAndRules || DEFAULT_TERMS_AND_RULES,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS,
-    adminWhatsApp: db.settings.adminWhatsApp || "5522997124021"
+    adminWhatsApp: db.settings.adminWhatsApp || "5522997124021",
+    minibarOrders: (db.minibarOrders || [])
+      .filter(o => o.reservationCode === r.code || String(o.reservationId) === String(r.id))
+      .map(o => ({
+        id: o.id,
+        createdAt: o.createdAt,
+        totalAmount: o.totalAmount,
+        paymentStatus: o.paymentStatus,
+        paymentMethod: o.paymentMethod,
+        items: o.items,
+        invoice: o.invoice || null
+      })),
+    minibarUrl: `/minha-reserva/${r.code}/frigobar`
   });
 });
 
@@ -41392,6 +41433,26 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
             if (isFullPayment) {
               confirmedItems.push({ r, wasPreReserva });
             }
+          } else {
+            // Verifica se o pagamento é referente a um pedido de Frigobar (db.minibarOrders)
+            const mbOrder = (db.minibarOrders || []).find(o => 
+              o.pixTxId === txid || 
+              o.id === txid || 
+              (txid && o.id && txid.includes(o.id))
+            );
+            if (mbOrder && mbOrder.paymentStatus !== "pago") {
+              mbOrder.paymentStatus = "pago";
+              mbOrder.paidAt = item.horario || new Date().toISOString();
+              mbOrder.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+              createNotification({
+                category: "checkout",
+                title: `🍾 Frigobar Pago (PIX): R$ ${valorPago.toLocaleString("pt-BR")} (Flat ${mbOrder.flatNumber})`,
+                message: `Pedido ${mbOrder.id} de frigobar pago via PIX Banco Inter por ${mbOrder.guestName}!`,
+                severity: "success",
+                metadata: { orderId: mbOrder.id, txid, amount: valorPago },
+                targetUrl: `/anserve`
+              });
+            }
           }
         }
       }
@@ -42489,15 +42550,35 @@ app.post("/api/pms/mercadopago/webhook", async (req, res) => {
           const valorPago = paymentRes.transaction_amount || paymentRes.total_paid_amount;
 
           if (resCode) {
-            const r = (db.reservations || []).find(resItem => resItem.code === resCode || String(resItem.id) === resCode);
-            if (r) {
-              await confirmReservationPayment(r, {
-                amount: valorPago || r.totalAmount,
-                paidAt: paymentRes.date_approved || new Date().toISOString(),
-                mpPaymentId: String(queryId),
-                paymentMethod: "cartao_credito",
-                source: "Mercado Pago Webhook"
-              });
+            if (resCode.startsWith("MB-")) {
+              const orderId = resCode.replace(/^MB-/, "");
+              const mbOrder = (db.minibarOrders || []).find(o => o.id === orderId || o.id === resCode);
+              if (mbOrder && mbOrder.paymentStatus !== "pago") {
+                mbOrder.paymentStatus = "pago";
+                mbOrder.paidAt = paymentRes.date_approved || new Date().toISOString();
+                mbOrder.mpPaymentId = String(queryId);
+                mbOrder.paymentMethod = "cartao_credito";
+                createNotification({
+                  category: "checkout",
+                  title: `💳 Frigobar Pago (Cartão): R$ ${valorPago.toLocaleString("pt-BR")} (Flat ${mbOrder.flatNumber})`,
+                  message: `Pedido ${mbOrder.id} de frigobar pago via Cartão Mercado Pago por ${mbOrder.guestName}!`,
+                  severity: "success",
+                  metadata: { orderId: mbOrder.id, paymentId: queryId, amount: valorPago },
+                  targetUrl: `/anserve`
+                });
+                saveDatabase();
+              }
+            } else {
+              const r = (db.reservations || []).find(resItem => resItem.code === resCode || String(resItem.id) === resCode);
+              if (r) {
+                await confirmReservationPayment(r, {
+                  amount: valorPago || r.totalAmount,
+                  paidAt: paymentRes.date_approved || new Date().toISOString(),
+                  mpPaymentId: String(queryId),
+                  paymentMethod: "cartao_credito",
+                  source: "Mercado Pago Webhook"
+                });
+              }
             }
           }
         }
@@ -45668,6 +45749,1318 @@ app.post("/api/smart-flat/:target/simulate", (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── ECOSSISTEMA DE FRIGOBAR (CORPFLATS + ANSERVE) — FEATURES F01 A F10 ──────
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: valida se usuário é admin, dev ou gestor anserve
+function isMinibarAdmin(user) {
+  if (!user) return false;
+  return user.role === "dev" || user.role === "admin" || user.role === "anserve_gestor";
+}
+
+// Helper: busca reserva ativa/recente para um flat
+function findActiveOrRecentReservationForFlat(flatNumber) {
+  if (!Array.isArray(db.reservations)) return null;
+  const flatStr = String(flatNumber).trim();
+  const validReservations = db.reservations.filter(r => {
+    if (!r) return false;
+    const rFlat = String(r.flatNumber || r.flatId || "").trim();
+    if (rFlat !== flatStr) return false;
+    const status = (r.status || "").toLowerCase();
+    if (status === "cancelada" || status === "cancelled") return false;
+    return true;
+  });
+
+  if (validReservations.length === 0) return null;
+
+  const todayStr = getBrasiliaNow().date;
+  // Prioridade:
+  // 1. Em andamento hoje (checkin <= hoje <= checkout)
+  // 2. Checkin hoje
+  // 3. Checkout hoje
+  // 4. Mais recente por checkin
+  const inHouse = validReservations.find(r => r.checkinDate <= todayStr && r.checkoutDate >= todayStr);
+  if (inHouse) return inHouse;
+
+  const checkinToday = validReservations.find(r => r.checkinDate === todayStr);
+  if (checkinToday) return checkinToday;
+
+  const checkoutToday = validReservations.find(r => r.checkoutDate === todayStr);
+  if (checkoutToday) return checkoutToday;
+
+  // Ordena decrescente por checkinDate
+  validReservations.sort((a, b) => String(b.checkinDate || "").localeCompare(String(a.checkinDate || "")));
+  return validReservations[0];
+}
+
+// ── F02: Catálogo de Produtos e Gabarito Padrão ──────────────────────────────
+app.get("/api/minibar/products", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    const isAdmin = isMinibarAdmin(user);
+    const { category, activeOnly } = req.query;
+
+    let prods = Array.isArray(db.minibarProducts) ? [...db.minibarProducts] : [];
+    if (!isAdmin || activeOnly === "true") {
+      prods = prods.filter(p => p.active !== false);
+    }
+    if (category) {
+      prods = prods.filter(p => p.category === category);
+    }
+
+    // Ordenação
+    prods.sort((a, b) => (Number(a.sortOrder) || 99) - (Number(b.sortOrder) || 99));
+
+    // Se hóspede / não-admin, omite custo por privacidade comercial
+    if (!isAdmin) {
+      prods = prods.map(p => {
+        const { cost, ...safe } = p;
+        return safe;
+      });
+    }
+
+    res.json({ success: true, products: prods });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/products", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração e supervisão." });
+    }
+
+    const { name, category, price, cost, imageUrl, description, active, isCourtesy, courtesyLimitPerStay, extraPaidProductId, sortOrder } = req.body || {};
+    if (!name || typeof price !== "number") {
+      return res.status(400).json({ success: false, error: "Nome e preço são obrigatórios." });
+    }
+
+    if (!Array.isArray(db.minibarProducts)) db.minibarProducts = [];
+    const id = "prod_" + name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "_").slice(0, 30) + "_" + Date.now().toString(36);
+    const newProd = {
+      id,
+      name: String(name).trim(),
+      category: category || "bebidas",
+      price: Number(price) || 0,
+      cost: Number(cost) || 0,
+      imageUrl: imageUrl || "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=400&q=80",
+      description: description || "",
+      active: active !== false,
+      isCourtesy: Boolean(isCourtesy),
+      courtesyLimitPerStay: Number(courtesyLimitPerStay) || 1,
+      extraPaidProductId: extraPaidProductId || null,
+      sortOrder: Number(sortOrder) || (db.minibarProducts.length + 1),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    db.minibarProducts.push(newProd);
+    saveDatabase("minibar_product_created");
+    res.json({ success: true, product: newProd });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch("/api/minibar/products/:id", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração." });
+    }
+
+    if (!Array.isArray(db.minibarProducts)) db.minibarProducts = [];
+    const prod = db.minibarProducts.find(p => p.id === req.params.id);
+    if (!prod) {
+      return res.status(404).json({ success: false, error: "Produto não encontrado." });
+    }
+
+    const fields = ["name", "category", "price", "cost", "imageUrl", "description", "active", "isCourtesy", "courtesyLimitPerStay", "extraPaidProductId", "sortOrder"];
+    for (const f of fields) {
+      if (req.body?.[f] !== undefined) {
+        prod[f] = req.body[f];
+      }
+    }
+    prod.updatedAt = new Date().toISOString();
+    saveDatabase("minibar_product_updated");
+    res.json({ success: true, product: prod });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete("/api/minibar/products/:id", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração." });
+    }
+
+    if (!Array.isArray(db.minibarProducts)) db.minibarProducts = [];
+    const prod = db.minibarProducts.find(p => p.id === req.params.id);
+    if (!prod) {
+      return res.status(404).json({ success: false, error: "Produto não encontrado." });
+    }
+
+    prod.active = false;
+    prod.updatedAt = new Date().toISOString();
+    saveDatabase("minibar_product_deleted");
+    res.json({ success: true, message: "Produto desativado com sucesso." });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/minibar/default-stock", (req, res) => {
+  try {
+    if (!db.minibarDefaultStock) db.minibarDefaultStock = getDefaultMinibarStock();
+    res.json({ success: true, defaultStock: db.minibarDefaultStock });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put("/api/minibar/default-stock", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração." });
+    }
+
+    const { globalTemplate, flatOverrides } = req.body || {};
+    if (!db.minibarDefaultStock) db.minibarDefaultStock = getDefaultMinibarStock();
+
+    if (Array.isArray(globalTemplate)) {
+      db.minibarDefaultStock.globalTemplate = globalTemplate;
+    }
+    if (flatOverrides && typeof flatOverrides === "object") {
+      db.minibarDefaultStock.flatOverrides = flatOverrides;
+    }
+    saveDatabase("minibar_default_stock_updated");
+    res.json({ success: true, defaultStock: db.minibarDefaultStock });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F03 & F04: Contexto Mobile (QR Code do Flat + Reserva) ───────────────────
+app.post("/api/minibar/flat-context", (req, res) => {
+  try {
+    const { flatNumber, last4Digits } = req.body || {};
+    const flatStr = String(flatNumber || "").trim();
+    const digits = String(last4Digits || "").replace(/\D/g, "");
+
+    if (!flatStr || digits.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        error: "Número do flat e os 4 últimos dígitos do celular são obrigatórios."
+      });
+    }
+
+    const reservation = findActiveOrRecentReservationForFlat(flatStr);
+    if (!reservation) {
+      return res.status(404).json({
+        success: false,
+        error: "Nenhuma reserva ativa ou recente encontrada para este flat."
+      });
+    }
+
+    const phoneDigits = String(reservation.guestPhone || "").replace(/\D/g, "");
+    const docDigits = String(reservation.guestDocument || "").replace(/\D/g, "");
+    const matchesPhone = phoneDigits.endsWith(digits);
+    const matchesDoc = docDigits.endsWith(digits);
+
+    if (!matchesPhone && !matchesDoc) {
+      return res.status(400).json({
+        success: false,
+        error: "Dígitos incorretos ou nenhuma reserva ativa no flat"
+      });
+    }
+
+    const guestName = reservation.guestName || "Hóspede";
+    const firstName = guestName.trim().split(" ")[0];
+    const resCode = reservation.code || `RES-${reservation.id}`;
+
+    // Itens já pagos na reserva
+    const paidOrders = (db.minibarOrders || []).filter(o =>
+      (o.reservationCode === resCode || String(o.reservationId) === String(reservation.id)) &&
+      o.paymentStatus === "pago"
+    );
+
+    const paidItemsMap = {};
+    for (const ord of paidOrders) {
+      if (Array.isArray(ord.items)) {
+        for (const it of ord.items) {
+          if (!paidItemsMap[it.productId]) {
+            paidItemsMap[it.productId] = {
+              productId: it.productId,
+              productName: it.productName || it.name,
+              quantity: 0,
+              isCourtesy: Boolean(it.isCourtesy)
+            };
+          }
+          paidItemsMap[it.productId].quantity += Number(it.quantity) || 0;
+        }
+      }
+    }
+    const paidItems = Object.values(paidItemsMap);
+    const courtesyConsumed = paidItems.some(i => i.isCourtesy);
+
+    // Gabarito padrão do flat
+    const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatStr] || db.minibarDefaultStock?.globalTemplate || [];
+    const defaultStock = {};
+    for (const item of defaultTemplate) {
+      defaultStock[item.productId] = item.defaultQuantity;
+    }
+
+    const catalog = (db.minibarProducts || [])
+      .filter(p => p.active !== false)
+      .map(p => {
+        const { cost, ...safe } = p;
+        return safe;
+      })
+      .sort((a, b) => (Number(a.sortOrder) || 99) - (Number(b.sortOrder) || 99));
+
+    res.json({
+      success: true,
+      guestName,
+      firstName,
+      phone: reservation.guestPhone || "",
+      email: reservation.guestEmail || "",
+      document: reservation.guestDocument || "",
+      reservationCode: resCode,
+      reservationId: reservation.id,
+      flatNumber: flatStr,
+      checkIn: reservation.checkinDate || reservation.checkIn,
+      checkOut: reservation.checkoutDate || reservation.checkOut,
+      catalog,
+      defaultStock,
+      paidItems,
+      courtesyConsumed
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/minibar/reservation-context/:code", (req, res) => {
+  try {
+    const code = (req.params.code || "").trim();
+    if (!code) {
+      return res.status(400).json({ success: false, error: "Código da reserva é obrigatório." });
+    }
+
+    const reservation = findReservationByLocatorOrContact(code) ||
+      (db.reservations || []).find(r => r.code === code || String(r.id) === code);
+
+    if (!reservation) {
+      return res.status(404).json({ success: false, error: "Reserva não encontrada." });
+    }
+
+    const flatStr = String(reservation.flatNumber || reservation.flatId || "").trim();
+    const guestName = reservation.guestName || "Hóspede";
+    const firstName = guestName.trim().split(" ")[0];
+    const resCode = reservation.code || `RES-${reservation.id}`;
+
+    // Itens já pagos na reserva
+    const paidOrders = (db.minibarOrders || []).filter(o =>
+      (o.reservationCode === resCode || String(o.reservationId) === String(reservation.id)) &&
+      o.paymentStatus === "pago"
+    );
+
+    const paidItemsMap = {};
+    for (const ord of paidOrders) {
+      if (Array.isArray(ord.items)) {
+        for (const it of ord.items) {
+          if (!paidItemsMap[it.productId]) {
+            paidItemsMap[it.productId] = {
+              productId: it.productId,
+              productName: it.productName || it.name,
+              quantity: 0,
+              isCourtesy: Boolean(it.isCourtesy)
+            };
+          }
+          paidItemsMap[it.productId].quantity += Number(it.quantity) || 0;
+        }
+      }
+    }
+    const paidItems = Object.values(paidItemsMap);
+    const courtesyConsumed = paidItems.some(i => i.isCourtesy);
+
+    // Gabarito padrão do flat
+    const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatStr] || db.minibarDefaultStock?.globalTemplate || [];
+    const defaultStock = {};
+    for (const item of defaultTemplate) {
+      defaultStock[item.productId] = item.defaultQuantity;
+    }
+
+    const catalog = (db.minibarProducts || [])
+      .filter(p => p.active !== false)
+      .map(p => {
+        const { cost, ...safe } = p;
+        return safe;
+      })
+      .sort((a, b) => (Number(a.sortOrder) || 99) - (Number(b.sortOrder) || 99));
+
+    res.json({
+      success: true,
+      guestName,
+      firstName,
+      phone: reservation.guestPhone || "",
+      email: reservation.guestEmail || "",
+      document: reservation.guestDocument || "",
+      reservationCode: resCode,
+      reservationId: reservation.id,
+      flatNumber: flatStr,
+      checkIn: reservation.checkinDate || reservation.checkIn,
+      checkOut: reservation.checkoutDate || reservation.checkOut,
+      catalog,
+      defaultStock,
+      paidItems,
+      courtesyConsumed
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F05, F06, F07: Criação de Pedidos e Checkout Desacoplado ─────────────────
+app.post("/api/minibar/orders", async (req, res) => {
+  try {
+    const {
+      reservationCode,
+      flatNumber,
+      items,
+      paymentMethod,
+      invoicePreference,
+      document,
+      documentType,
+      email,
+      companyName,
+      notes
+    } = req.body || {};
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: "Nenhum item selecionado para o pedido." });
+    }
+
+    // Localiza a reserva
+    let reservation = null;
+    if (reservationCode) {
+      reservation = findReservationByLocatorOrContact(reservationCode) ||
+        (db.reservations || []).find(r => r.code === reservationCode || String(r.id) === reservationCode);
+    }
+    if (!reservation && flatNumber) {
+      reservation = findActiveOrRecentReservationForFlat(flatNumber);
+    }
+
+    const flatStr = String(flatNumber || reservation?.flatNumber || reservation?.flatId || "").trim();
+    const finalResCode = reservation?.code || reservationCode || "";
+
+    // Verifica cortesias já consumidas anteriormente nesta reserva
+    const paidOrders = (db.minibarOrders || []).filter(o =>
+      (o.reservationCode === finalResCode || String(o.reservationId) === String(reservation?.id)) &&
+      o.paymentStatus === "pago"
+    );
+    const alreadyConsumedCourtesy = paidOrders.some(o => (o.items || []).some(i => i.isCourtesy));
+
+    const orderItems = [];
+    let totalAmount = 0;
+
+    for (const it of items) {
+      const prod = (db.minibarProducts || []).find(p => p.id === it.productId);
+      if (!prod) continue;
+      const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
+
+      let unitPrice = Number(prod.price) || 0;
+      let isCourtesy = Boolean(prod.isCourtesy);
+
+      if (isCourtesy) {
+        if (alreadyConsumedCourtesy) {
+          // Cortesia gratuita já foi usufruída nesta estadia. Redireciona para produto pago se houver
+          if (prod.extraPaidProductId) {
+            const extraProd = (db.minibarProducts || []).find(p => p.id === prod.extraPaidProductId);
+            if (extraProd) {
+              unitPrice = Number(extraProd.price) || 0;
+              isCourtesy = false;
+            }
+          } else {
+            unitPrice = Number(prod.price) || 0;
+            if (unitPrice === 0) {
+              return res.status(400).json({
+                success: false,
+                error: "O kit de cortesia gratuito já foi usufruído nesta estadia."
+              });
+            }
+          }
+        } else {
+          unitPrice = 0;
+        }
+      }
+
+      const itemTotal = unitPrice * qty;
+      totalAmount += itemTotal;
+      orderItems.push({
+        productId: prod.id,
+        productName: prod.name,
+        quantity: qty,
+        unitPrice,
+        totalPrice: itemTotal,
+        isCourtesy
+      });
+    }
+
+    if (orderItems.length === 0) {
+      return res.status(400).json({ success: false, error: "Nenhum produto válido encontrado nos itens." });
+    }
+
+    const orderId = `ORD-MB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const cleanDoc = String(document || reservation?.guestDocument || "").replace(/\D/g, "");
+    const cleanEmail = String(email || reservation?.guestEmail || "").trim();
+
+    const fiscalPreferences = {
+      invoiceDescriptionType: invoicePreference || "detailed",
+      documentType: documentType || (cleanDoc.length === 14 ? "cnpj" : "cpf"),
+      documentNumber: cleanDoc,
+      companyName: companyName || "",
+      email: cleanEmail
+    };
+
+    // Caso de Cortesia Gratuita (total 0)
+    if (totalAmount <= 0) {
+      const courtesyOrder = {
+        id: orderId,
+        flatNumber: flatStr,
+        reservationId: reservation?.id || null,
+        reservationCode: finalResCode,
+        guestName: reservation?.guestName || "Hóspede CorpFlats",
+        guestPhone: reservation?.guestPhone || "",
+        guestDocument: cleanDoc,
+        guestEmail: cleanEmail,
+        items: orderItems,
+        totalAmount: 0,
+        paymentMethod: "cortesia",
+        paymentStatus: "pago",
+        paidAt: new Date().toISOString(),
+        source: "guest_mobile",
+        fiscalPreferences,
+        invoice: { status: "nao_aplicavel" },
+        notes: notes || "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+      db.minibarOrders.push(courtesyOrder);
+      saveDatabase("minibar_courtesy_order");
+
+      return res.json({
+        success: true,
+        orderId,
+        totalAmount: 0,
+        paymentStatus: "pago",
+        isCourtesyOnly: true,
+        order: courtesyOrder
+      });
+    }
+
+    // Pedido Pago: PIX ou Cartão
+    if (paymentMethod === "credit_card") {
+      let pref = null;
+      try {
+        pref = await createMercadoPagoPreference({
+          reservationCode: "MB-" + orderId,
+          amount: totalAmount,
+          guestName: reservation?.guestName || "Hospede CorpFlats",
+          guestEmail: cleanEmail || "hospede@corpflats.com.br",
+          nights: 1,
+          flatNumber: flatStr
+        });
+      } catch (mpErr) {
+        console.warn("[Minibar MP] Aviso na preferência Mercado Pago:", mpErr.message);
+      }
+
+      const initPoint = pref?.initPoint || `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=mock_${orderId}`;
+      const newOrder = {
+        id: orderId,
+        flatNumber: flatStr,
+        reservationId: reservation?.id || null,
+        reservationCode: finalResCode,
+        guestName: reservation?.guestName || "Hóspede CorpFlats",
+        guestPhone: reservation?.guestPhone || "",
+        guestDocument: cleanDoc,
+        guestEmail: cleanEmail,
+        items: orderItems,
+        totalAmount,
+        paymentMethod: "credit_card",
+        paymentStatus: "pendente",
+        source: "guest_mobile",
+        mpPreferenceId: pref?.id || `pref_${orderId}`,
+        mpInitPoint: initPoint,
+        fiscalPreferences,
+        invoice: { status: "pendente" },
+        notes: notes || "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+      db.minibarOrders.push(newOrder);
+      saveDatabase("minibar_order_created_card");
+
+      return res.json({
+        success: true,
+        orderId,
+        totalAmount,
+        paymentMethod: "credit_card",
+        paymentStatus: "pendente",
+        initPoint,
+        order: newOrder
+      });
+    }
+
+    // Padrão: PIX Banco Inter
+    let cob = null;
+    try {
+      cob = await createInterPixCob({
+        amount: totalAmount,
+        description: `Frigobar Flat ${flatStr}`,
+        debtorName: reservation?.guestName || "Hospede CorpFlats",
+        debtorDocument: cleanDoc,
+        reservationCode: orderId
+      });
+    } catch (interErr) {
+      console.warn("[Minibar Inter PIX] Falha no mTLS ou API real. Gerando mock/simulado:", interErr.message);
+    }
+
+    let txid = cob?.txid;
+    let copiaECola = cob?.pixCopiaECola;
+    if (!txid || !copiaECola) {
+      txid = "TXMB" + crypto.randomBytes(12).toString("hex").toUpperCase();
+      try {
+        copiaECola = generateStaticPixPayload({
+          pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+          amount: totalAmount,
+          merchantName: "CORPFLATS LTDA",
+          merchantCity: "CAMPOS DOS GOYTACAZES",
+          txid
+        });
+      } catch (_) {
+        copiaECola = `00020126580014br.gov.bcb.pix0136${txid}520400005303986540${totalAmount.toFixed(2)}5802BR5915CORPFLATS LTDA6014CAMPOS62070503***6304`;
+      }
+    }
+
+    const expiresAt = new Date(Date.now() + 86400000).toISOString();
+    const newOrder = {
+      id: orderId,
+      flatNumber: flatStr,
+      reservationId: reservation?.id || null,
+      reservationCode: finalResCode,
+      guestName: reservation?.guestName || "Hóspede CorpFlats",
+      guestPhone: reservation?.guestPhone || "",
+      guestDocument: cleanDoc,
+      guestEmail: cleanEmail,
+      items: orderItems,
+      totalAmount,
+      paymentMethod: "pix",
+      paymentStatus: "pendente",
+      source: "guest_mobile",
+      pixTxId: txid,
+      pixCopiaECola: copiaECola,
+      pixExpiresAt: expiresAt,
+      fiscalPreferences,
+      invoice: { status: "pendente" },
+      notes: notes || "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    db.minibarOrders.push(newOrder);
+    saveDatabase("minibar_order_created_pix");
+
+    return res.json({
+      success: true,
+      orderId,
+      totalAmount,
+      paymentMethod: "pix",
+      paymentStatus: "pendente",
+      pixQrCode: copiaECola,
+      pixCopiaECola: copiaECola,
+      expiresAt,
+      order: newOrder
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/minibar/orders/:id/status", async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    const order = db.minibarOrders.find(o => o.id === orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Pedido não encontrado." });
+    }
+
+    // Se estiver pendente, faz polling ativo
+    if (order.paymentStatus === "pendente") {
+      if (order.paymentMethod === "credit_card") {
+        try {
+          const mpApproved = await checkMercadoPagoPaymentByRef("MB-" + order.id);
+          if (mpApproved) {
+            order.paymentStatus = "pago";
+            order.paidAt = mpApproved.date_approved || new Date().toISOString();
+            order.mpPaymentId = String(mpApproved.id);
+            saveDatabase("minibar_card_settled_polling");
+          }
+        } catch (_) {}
+      } else if (order.paymentMethod === "pix" && order.pixTxId) {
+        try {
+          const extrato = await getCachedInterExtratoCompleto();
+          if (extrato && Array.isArray(extrato.transacoes)) {
+            const found = extrato.transacoes.find(t =>
+              t.tipoTransacao === "PIX" &&
+              t.tipoOperacao === "C" &&
+              (String(t.codigoTransacao || t.txid || "").includes(order.pixTxId) ||
+               Math.abs(Number(t.valor) - Number(order.totalAmount)) < 0.01)
+            );
+            if (found) {
+              order.paymentStatus = "pago";
+              order.paidAt = found.dataHora || new Date().toISOString();
+              order.pixEndToEndId = found.endToEndId || `E2E_${Date.now()}`;
+              saveDatabase("minibar_pix_settled_polling");
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    res.json({
+      success: true,
+      status: order.paymentStatus,
+      paidAt: order.paidAt || null,
+      order
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F08: Upload de Nota Fiscal e Disparo Multicanal ───────────────────────────
+app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    }
+
+    const orderId = req.params.id;
+    if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+    const order = db.minibarOrders.find(o => o.id === orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Pedido não encontrado." });
+    }
+
+    const { fileData, fileName, invoiceNumber } = req.body || {};
+    if (!fileData) {
+      return res.status(400).json({ success: false, error: "Arquivo da Nota Fiscal (Base64 ou URL) é obrigatório." });
+    }
+
+    const safeFileName = fileName || `NF_Frigobar_${order.flatNumber}_${order.id}.pdf`;
+    const invoicesDir = path.join(UPLOADS_DIR, "invoices");
+    if (!fs.existsSync(invoicesDir)) {
+      fs.mkdirSync(invoicesDir, { recursive: true });
+    }
+
+    const diskFileName = `${Date.now()}_${safeFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const filePath = path.join(invoicesDir, diskFileName);
+
+    let invoiceFileUrl = `/api/storage/files/invoices/${diskFileName}`;
+
+    if (String(fileData).startsWith("data:") || String(fileData).length > 200) {
+      const base64Content = String(fileData).replace(/^data:.*?;base64,/, "");
+      await fs.promises.writeFile(filePath, Buffer.from(base64Content, "base64"));
+    } else {
+      invoiceFileUrl = fileData;
+    }
+
+    order.invoice = {
+      status: "anexada",
+      invoiceFileUrl,
+      invoiceFileName: safeFileName,
+      invoiceNumber: invoiceNumber || null,
+      attachedAt: new Date().toISOString(),
+      attachedBy: user?.name || "Supervisão Anserve",
+      whatsappSentAt: null,
+      emailSentAt: null
+    };
+
+    // Disparo WhatsApp via Z-API
+    if (order.guestPhone && typeof sendZapiDocument === "function") {
+      try {
+        const caption = `Olá, ${order.guestName}! Segue em anexo a Nota Fiscal do seu consumo de frigobar no Flat ${order.flatNumber} da CorpFlats. Agradecemos a sua preferência! ✨`;
+        const zapiRes = await sendZapiDocument(db.settings?.zapiConfig || {}, {
+          phone: order.guestPhone,
+          document: invoiceFileUrl,
+          fileName: safeFileName,
+          caption,
+          recipientRole: "guest",
+          channelId: "guest",
+          triggerEvent: "minibar_invoice",
+          db
+        });
+        if (zapiRes?.success !== false) {
+          order.invoice.whatsappSentAt = new Date().toISOString();
+        }
+        if (typeof appendMessageToConversation === "function") {
+          appendMessageToConversation(db, {
+            phone: order.guestPhone,
+            text: caption,
+            type: "document",
+            mediaUrl: invoiceFileUrl,
+            fileName: safeFileName,
+            sender: "CorpFlats (Financeiro)"
+          });
+        }
+      } catch (wErr) {
+        console.warn("[Minibar Invoice] Falha no disparo WhatsApp:", wErr.message);
+      }
+    }
+
+    // Disparo E-mail via SMTP Zoho
+    const targetEmail = order.fiscalPreferences?.email || order.guestEmail;
+    if (targetEmail && typeof sendEmailAsync === "function") {
+      try {
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: order.reservationId || 0,
+          recipient: targetEmail,
+          subject: `Nota Fiscal — Consumo de Frigobar Flat ${order.flatNumber} (CorpFlats)`,
+          bodyHtml: `<p>Olá, <strong>${order.guestName}</strong>!</p>
+<p>Segue em anexo a sua Nota Fiscal referente ao consumo de frigobar no Flat ${order.flatNumber}.</p>
+<p>Valor total: <strong>R$ ${Number(order.totalAmount).toFixed(2)}</strong></p>
+<p>Agradecemos imensamente a sua estadia!</p>
+<br/><p>Atenciosamente,<br/><strong>Equipe CorpFlats & Anserve</strong></p>`,
+          attachments: fs.existsSync(filePath) ? [{ filename: safeFileName, path: filePath }] : []
+        });
+        order.invoice.emailSentAt = new Date().toISOString();
+      } catch (mErr) {
+        console.warn("[Minibar Invoice] Falha no envio de e-mail:", mErr.message);
+      }
+    }
+
+    saveDatabase("minibar_invoice_attached");
+    res.json({ success: true, invoice: order.invoice, order });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F09: Inspeções da Anserve, Divergência e Alerta da Sofia ─────────────────
+app.post("/api/minibar/inspections", async (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    const {
+      flatNumber,
+      reservationCode,
+      inspectedBy,
+      status,
+      missingItems,
+      photos,
+      notes,
+      restockedItems
+    } = req.body || {};
+
+    const flatStr = String(flatNumber || "").trim();
+    if (!flatStr) {
+      return res.status(400).json({ success: false, error: "Número do flat é obrigatório." });
+    }
+
+    let reservation = null;
+    if (reservationCode) {
+      reservation = findReservationByLocatorOrContact(reservationCode) ||
+        (db.reservations || []).find(r => r.code === reservationCode || String(r.id) === reservationCode);
+    }
+    if (!reservation) {
+      reservation = findActiveOrRecentReservationForFlat(flatStr);
+    }
+
+    const finalResCode = reservation?.code || reservationCode || "";
+    const inspStatus = status === "divergencia" ? "divergencia" : "conforme";
+
+    // Cálculo do custo de reposição
+    let restockedCourtesyTotalCost = 0;
+    let restockedPaidItemsTotalCost = 0;
+    const processedRestocked = [];
+
+    if (Array.isArray(restockedItems)) {
+      for (const item of restockedItems) {
+        const prod = (db.minibarProducts || []).find(p => p.id === item.productId);
+        const qty = Number(item.quantity) || 0;
+        const unitCost = Number(prod?.cost || item.unitCost) || 0;
+        const totalCost = qty * unitCost;
+        const isCourtesy = item.isCourtesy !== undefined ? Boolean(item.isCourtesy) : Boolean(prod?.isCourtesy);
+
+        if (isCourtesy) {
+          restockedCourtesyTotalCost += totalCost;
+        } else {
+          restockedPaidItemsTotalCost += totalCost;
+        }
+
+        processedRestocked.push({
+          productId: item.productId,
+          productName: prod?.name || item.productName || item.productId,
+          quantity: qty,
+          isCourtesy,
+          unitCost,
+          totalCost
+        });
+      }
+    }
+
+    // Tratamento de Divergência
+    let hasDiscrepancy = false;
+    let chargeOrderId = null;
+    let discrepancyItems = [];
+    let discrepancyTotalAmount = 0;
+    let whatsappSofiaAlertSent = false;
+
+    if (inspStatus === "divergencia" && Array.isArray(missingItems) && missingItems.length > 0) {
+      // Itens já pagos na reserva
+      const paidOrders = (db.minibarOrders || []).filter(o =>
+        (o.reservationCode === finalResCode || String(o.reservationId) === String(reservation?.id)) &&
+        o.paymentStatus === "pago"
+      );
+
+      const paidMap = {};
+      for (const ord of paidOrders) {
+        for (const it of ord.items || []) {
+          paidMap[it.productId] = (paidMap[it.productId] || 0) + (Number(it.quantity) || 0);
+        }
+      }
+
+      // Compara missingItems com paidMap para apurar consumo não declarado
+      for (const m of missingItems) {
+        const prod = (db.minibarProducts || []).find(p => p.id === m.productId);
+        if (!prod || prod.isCourtesy) continue;
+
+        const missingQty = Number(m.quantity) || 0;
+        const alreadyPaidQty = paidMap[m.productId] || 0;
+        const undeclaredQty = Math.max(0, missingQty - alreadyPaidQty);
+
+        if (undeclaredQty > 0) {
+          const unitPrice = Number(prod.price) || 0;
+          const totalPrice = undeclaredQty * unitPrice;
+          discrepancyItems.push({
+            productId: prod.id,
+            productName: prod.name,
+            quantity: undeclaredQty,
+            unitPrice,
+            totalPrice
+          });
+          discrepancyTotalAmount += totalPrice;
+        }
+      }
+
+      if (discrepancyItems.length > 0 && discrepancyTotalAmount > 0) {
+        hasDiscrepancy = true;
+        chargeOrderId = `ORD-MB-DIV-${Date.now()}`;
+
+        const pendingOrder = {
+          id: chargeOrderId,
+          flatNumber: flatStr,
+          reservationId: reservation?.id || null,
+          reservationCode: finalResCode,
+          guestName: reservation?.guestName || "Hóspede CorpFlats",
+          guestPhone: reservation?.guestPhone || "",
+          guestDocument: reservation?.guestDocument || "",
+          guestEmail: reservation?.guestEmail || "",
+          items: discrepancyItems,
+          totalAmount: discrepancyTotalAmount,
+          paymentMethod: "pendente",
+          paymentStatus: "pendente",
+          source: "anserve_discrepancy",
+          fiscalPreferences: {
+            invoiceDescriptionType: "detailed",
+            documentType: "cpf",
+            documentNumber: (reservation?.guestDocument || "").replace(/\D/g, ""),
+            email: reservation?.guestEmail || ""
+          },
+          invoice: { status: "pendente" },
+          notes: notes || "Divergência apurada na vistoria do frigobar",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+        db.minibarOrders.push(pendingOrder);
+
+        // Disparo cordial da IA Sofia no WhatsApp do hóspede
+        if (reservation?.guestPhone && db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false) {
+          const firstName = (reservation.guestName || "Hóspede").trim().split(" ")[0];
+          const itemsListStr = discrepancyItems
+            .map(it => `• ${it.quantity}x ${it.productName} — R$ ${Number(it.totalPrice).toFixed(2)}`)
+            .join("\n");
+          const sofiaMsg = `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\nDurante a conferência e reposição do frigobar pela nossa equipe de governança, identificamos o consumo dos seguintes itens:\n${itemsListStr}\n\nTotal do consumo: R$ ${discrepancyTotalAmount.toFixed(2)}\n\nComo o frigobar não pode ser lançado junto à fatura da hospedagem, você pode efetuar o pagamento diretamente via PIX ou Cartão pelo link exclusivo abaixo:\n🔗 https://corpflats.onrender.com/minha-reserva/${finalResCode}/frigobar?ord=${chargeOrderId}\n\nCaso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
+
+          try {
+            if (typeof sendZapiMessage === "function") {
+              sendZapiMessage(db.settings?.zapiConfig || {}, {
+                phone: reservation.guestPhone,
+                message: sofiaMsg,
+                channelId: "guest",
+                triggerEvent: "minibar_discrepancy",
+                db
+              });
+              whatsappSofiaAlertSent = true;
+            }
+            if (typeof appendMessageToConversation === "function") {
+              appendMessageToConversation(db, {
+                phone: reservation.guestPhone,
+                text: sofiaMsg,
+                type: "text",
+                sender: "Sofia (IA)"
+              });
+            }
+          } catch (sErr) {
+            console.warn("[Minibar Sofia Alert] Erro ao disparar mensagem:", sErr.message);
+          }
+        }
+      }
+    }
+
+    const inspection = {
+      id: `INSP-MB-${Date.now()}`,
+      flatNumber: flatStr,
+      reservationId: reservation?.id || null,
+      reservationCode: finalResCode,
+      guestName: reservation?.guestName || null,
+      guestPhone: reservation?.guestPhone || null,
+      inspectorId: user?.id || null,
+      inspectorName: inspectedBy || user?.name || "Repositora Anserve",
+      inspectedAt: new Date().toISOString(),
+      status: hasDiscrepancy ? "divergencia" : "conforme",
+      hasDiscrepancy,
+      missingItems: missingItems || [],
+      discrepancyItems,
+      discrepancyTotalAmount,
+      restockedItems: processedRestocked,
+      restockedCourtesyTotalCost,
+      restockedPaidItemsTotalCost,
+      photos: Array.isArray(photos) ? photos : [],
+      notes: notes || "",
+      chargeOrderId,
+      whatsappSofiaAlertSent,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+    db.minibarInspections.push(inspection);
+    saveDatabase("minibar_inspection_recorded");
+
+    res.json({
+      success: true,
+      inspectionId: inspection.id,
+      hasDiscrepancy,
+      chargeOrderId,
+      inspection
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/minibar/inspections/flats-status", (req, res) => {
+  try {
+    const todayStr = getBrasiliaNow().date;
+    const flats = getCanonicalFlats ? getCanonicalFlats() : DEFAULT_FLATS;
+
+    const list = flats.map(f => {
+      const flatNum = String(f.number || f.flatNumber || f.id);
+      const resActive = findActiveOrRecentReservationForFlat(flatNum);
+
+      let status = "livre";
+      if (resActive) {
+        if (resActive.checkoutDate === todayStr) {
+          status = "checkout_hoje";
+        } else if (resActive.checkinDate <= todayStr && resActive.checkoutDate >= todayStr) {
+          status = "ocupado";
+        } else {
+          status = "ocupado";
+        }
+      }
+
+      // Consumo declarado na reserva atual
+      const orders = (db.minibarOrders || []).filter(o =>
+        (o.reservationCode === resActive?.code || String(o.reservationId) === String(resActive?.id)) &&
+        o.paymentStatus === "pago"
+      );
+      const declaredAmount = orders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
+
+      // Última inspeção
+      const lastInsp = (db.minibarInspections || [])
+        .filter(i => String(i.flatNumber) === flatNum)
+        .sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")))[0] || null;
+
+      // Gabarito padrão
+      const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatNum] || db.minibarDefaultStock?.globalTemplate || [];
+
+      return {
+        flatNumber: flatNum,
+        colName: f.colName || `Flat ${flatNum}`,
+        status,
+        currentReservation: resActive ? {
+          code: resActive.code,
+          guestName: resActive.guestName,
+          checkIn: resActive.checkinDate,
+          checkOut: resActive.checkoutDate,
+          phone: resActive.guestPhone
+        } : null,
+        declaredAmount,
+        lastInspection: lastInsp,
+        defaultStock: defaultTemplate
+      };
+    });
+
+    res.json({ success: true, flats: list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/minibar/invoices/pending", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    }
+
+    const pending = (db.minibarOrders || []).filter(o =>
+      o.paymentStatus === "pago" &&
+      o.totalAmount > 0 &&
+      (!o.invoice || o.invoice.status !== "anexada")
+    );
+
+    res.json({
+      success: true,
+      count: pending.length,
+      pendingInvoices: pending
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F10: Extrato de Fechamento & Repasse Financeiro CorpFlats ↔ Anserve ───────
+app.get("/api/minibar/settlement", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    }
+
+    const { startDate, endDate } = req.query;
+
+    const filteredOrders = (db.minibarOrders || []).filter(o => {
+      if (o.paymentStatus !== "pago") return false;
+      const d = String(o.paidAt || o.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
+
+    const filteredInspections = (db.minibarInspections || []).filter(i => {
+      const d = String(i.inspectedAt || i.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
+
+    let totalOrdersAmount = 0;
+    let cardOrdersAmount = 0;
+    let pixOrdersAmount = 0;
+
+    for (const o of filteredOrders) {
+      const amt = Number(o.totalAmount) || 0;
+      totalOrdersAmount += amt;
+      if (o.paymentMethod === "credit_card") {
+        cardOrdersAmount += amt;
+      } else if (o.paymentMethod === "pix") {
+        pixOrdersAmount += amt;
+      }
+    }
+
+    const cardFeePercent = Number(db.minibarSettings?.creditCardFeePercent) || 3.99;
+    const cardFees = (cardOrdersAmount * cardFeePercent) / 100;
+    const pixFeeFixed = Number(db.minibarSettings?.pixFeeFixed) || 0;
+    const pixFees = filteredOrders.filter(o => o.paymentMethod === "pix").length * pixFeeFixed;
+
+    const commPercent = Number(db.minibarSettings?.corpFlatsCommissionPercent) || 0;
+    const commissionCorpFlats = (totalOrdersAmount * commPercent) / 100;
+
+    // Compensação de reposição de cortesias gratuitas (reembolsadas pela CorpFlats)
+    let courtesyRestockCost = 0;
+    for (const insp of filteredInspections) {
+      courtesyRestockCost += Number(insp.restockedCourtesyTotalCost) || 0;
+    }
+
+    const courtesyReimbursementEnabled = db.minibarSettings?.courtesyReimbursementEnabled !== false;
+    const netCourtesyCredit = courtesyReimbursementEnabled ? courtesyRestockCost : 0;
+
+    // Líquido a Repassar para a Anserve
+    const netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + netCourtesyCredit;
+
+    res.json({
+      success: true,
+      period: { startDate: startDate || null, endDate: endDate || null },
+      totalOrdersAmount: Number(totalOrdersAmount.toFixed(2)),
+      ordersCount: filteredOrders.length,
+      cardOrdersAmount: Number(cardOrdersAmount.toFixed(2)),
+      pixOrdersAmount: Number(pixOrdersAmount.toFixed(2)),
+      cardFees: Number(cardFees.toFixed(2)),
+      pixFees: Number(pixFees.toFixed(2)),
+      commissionCorpFlats: Number(commissionCorpFlats.toFixed(2)),
+      courtesyRestockCost: Number(courtesyRestockCost.toFixed(2)),
+      netPayableToAnserve: Number(netPayableToAnserve.toFixed(2)),
+      inspectionsCount: filteredInspections.length,
+      breakdowns: {
+        orders: filteredOrders,
+        inspections: filteredInspections
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Analytics & Insights de Consumo
+app.get("/api/minibar/analytics", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração." });
+    }
+
+    const orders = (db.minibarOrders || []).filter(o => o.paymentStatus === "pago");
+    const productStats = {};
+    let totalRevenue = 0;
+
+    for (const o of orders) {
+      totalRevenue += Number(o.totalAmount) || 0;
+      for (const it of o.items || []) {
+        if (!productStats[it.productId]) {
+          productStats[it.productId] = {
+            productId: it.productId,
+            name: it.productName || it.productId,
+            quantity: 0,
+            revenue: 0,
+            isCourtesy: Boolean(it.isCourtesy)
+          };
+        }
+        productStats[it.productId].quantity += Number(it.quantity) || 0;
+        productStats[it.productId].revenue += Number(it.totalPrice) || 0;
+      }
+    }
+
+    const ranking = Object.values(productStats).sort((a, b) => b.quantity - a.quantity);
+
+    // Auditoria de divergências
+    const inspections = db.minibarInspections || [];
+    const totalInspections = inspections.length;
+    const discrepancyCount = inspections.filter(i => i.hasDiscrepancy || i.status === "divergencia").length;
+    const discrepancyRate = totalInspections > 0 ? (discrepancyCount / totalInspections) * 100 : 0;
+
+    // Cruzamento Demográfico por Origem do Hóspede (UF / Cidade)
+    const demographicMap = {};
+    for (const o of orders) {
+      const resMatch = (db.reservations || []).find(r => r.code === o.reservationCode || String(r.id) === String(o.reservationId));
+      const guestMatch = (db.guests || []).find(g =>
+        (resMatch?.guestId && g.id === resMatch.guestId) ||
+        (o.guestDocument && g.document && g.document.replace(/\D/g, "") === o.guestDocument.replace(/\D/g, ""))
+      );
+      const state = guestMatch?.state || guestMatch?.uf || resMatch?.guestState || "Outros";
+
+      if (!demographicMap[state]) {
+        demographicMap[state] = { state, ordersCount: 0, totalAmount: 0, products: {} };
+      }
+      demographicMap[state].ordersCount++;
+      demographicMap[state].totalAmount += Number(o.totalAmount) || 0;
+
+      for (const it of o.items || []) {
+        demographicMap[state].products[it.productId] = (demographicMap[state].products[it.productId] || 0) + (Number(it.quantity) || 0);
+      }
+    }
+
+    res.json({
+      success: true,
+      totalRevenue: Number(totalRevenue.toFixed(2)),
+      ordersCount: orders.length,
+      ranking,
+      inspections: {
+        total: totalInspections,
+        withDiscrepancy: discrepancyCount,
+        discrepancyRate: Number(discrepancyRate.toFixed(1))
+      },
+      demographicInsights: Object.values(demographicMap)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Autenticação Rápida Mobile por PIN da Repositora
+app.post("/api/minibar/auth-pin", (req, res) => {
+  try {
+    const { pin } = req.body || {};
+    const configuredPin = db.minibarSettings?.anservePin || "1234";
+
+    if (!pin || String(pin).trim() !== String(configuredPin).trim()) {
+      return res.status(401).json({ success: false, error: "PIN de acesso incorreto." });
+    }
+
+    const repositoraUser = (db.users || []).find(u => u.username === "repositora") || {
+      id: 10,
+      username: "repositora",
+      name: "Repositora Anserve",
+      role: "anserve_repositora"
+    };
+
+    const token = createAuthToken({
+      id: repositoraUser.id,
+      username: repositoraUser.username,
+      role: repositoraUser.role,
+      v: AUTH_SESSION_VERSION
+    });
+
+    res.cookie(AUTH_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 3600 * 1000
+    });
+
+    res.json({
+      success: true,
+      user: {
+        id: repositoraUser.id,
+        name: repositoraUser.name,
+        role: repositoraUser.role,
+        allowedModules: getDefaultModulesForRole(repositoraUser.role)
+      },
+      token
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
