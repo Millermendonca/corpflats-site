@@ -1453,6 +1453,8 @@ describe("CorpFlats NFS-e, CRM 360° & WhatsApp Fiscal Flow Suite", () => {
       assert.strictEqual(danfseRes.status, 200);
       const html = await danfseRes.text();
       assert.ok(html.includes("DANFSe v2.0"), "DANFSe HTML must follow official DANFSe v2.0 layout");
+      assert.ok(html.includes("Rua Conselheiro Otaviano, 509, Centro"), "DANFSe HTML must display Rental Miller's Receita Federal address");
+      assert.ok(html.includes("28.010-140"), "DANFSe HTML must display Rental Miller's CEP 28.010-140");
       assert.ok(html.includes("Rua Sebastião Rangel, 26, Parque Turf Club"), "DANFSe HTML must display the guest's real digital check-in address");
       assert.ok(html.includes("https://www.nfse.gov.br/ConsultaPublica?tpc=1"), "DANFSe HTML must include the official Gov.br ConsultaPublica URL");
       assert.ok(html.includes("data:image/png;base64,"), "DANFSe HTML must embed the Byte-mode EC-Level-M QR code PNG");

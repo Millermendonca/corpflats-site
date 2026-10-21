@@ -362,7 +362,7 @@ export default function FiscalInvoicesPage() {
     let desc = `Nota fiscal de prestação de serviços de hospedagem corporativa referente ao colaborador ${guestName}`
     if (flat) desc += `, no Flat ${flat}`
     desc += ".\nLocal: CorpFlats."
-    desc += "\nRua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes - RJ"
+    desc += "\nRua Conselheiro Otaviano, 509 - Centro, Campos dos Goytacazes - RJ"
     if (diarias) desc += `\nQuantidade de diárias: ${diarias}`
     if (checkin) desc += `\nCheck-in: ${checkin}`
     if (checkout) desc += `\nCheck-out: ${checkout}`
@@ -373,7 +373,7 @@ export default function FiscalInvoicesPage() {
     let desc = `Nota relativa à hospedagem de ${guestName}`
     if (flat) desc += `, no Flat ${flat}`
     desc += ".\nLocal: CorpFlats."
-    desc += "\nRua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes - RJ"
+    desc += "\nRua Conselheiro Otaviano, 509 - Centro, Campos dos Goytacazes - RJ"
     if (diarias) desc += `\nQuantidade de diárias: ${diarias}`
     if (checkin) desc += `\nCheck-in: ${checkin}`
     if (checkout) desc += `\nCheck-out: ${checkout}`
@@ -405,7 +405,7 @@ export default function FiscalInvoicesPage() {
 
     const desc = guestName 
       ? buildCorporateDescription(guestName, flat, checkin, checkout, diarias)
-      : `Nota fiscal de prestação de serviços de hospedagem corporativa.\nLocal: CorpFlats.\nRua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes - RJ`
+      : `Nota fiscal de prestação de serviços de hospedagem corporativa.\nLocal: CorpFlats.\nRua Conselheiro Otaviano, 509 - Centro, Campos dos Goytacazes - RJ`
 
     setExtractedData(prev => ({
       ...prev,
@@ -1511,7 +1511,7 @@ export default function FiscalInvoicesPage() {
     selectedB2BItems.forEach(i => {
       corporateDesc += `• ${i.guestName || 'Colaborador'} (Flat ${i.flatNumber}, ${i.checkinDate} a ${i.checkoutDate} - ${i.diarias} diárias): R$ ${Number(i.totalAmount || 0).toFixed(2)}\n`
     })
-    corporateDesc += `Valor Total: R$ ${totalVal.toFixed(2)}.\nLocal: CorpFlats - Rua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes/RJ.`
+    corporateDesc += `Valor Total: R$ ${totalVal.toFixed(2)}.\nLocal: CorpFlats - Rua Conselheiro Otaviano, 509 - Centro, Campos dos Goytacazes/RJ.`
 
     try {
       const res = await fetch("/api/nfse/emit-consolidated", {
@@ -2917,7 +2917,7 @@ export default function FiscalInvoicesPage() {
                         CNPJ: <span className="font-mono font-bold">47.964.813/0001-65</span> • IM: <span className="font-mono">142591</span>
                       </div>
                       <div className="text-muted-foreground text-[10px]">
-                        RUA BARONESA DA LAGOA DOURADA, 144, PARQUE TAMANDARE • Campos dos Goytacazes/RJ • CEP 28035-211
+                        Rua Conselheiro Otaviano, 509, Centro • Campos dos Goytacazes/RJ • CEP 28010-140
                       </div>
                     </div>
 

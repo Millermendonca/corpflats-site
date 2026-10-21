@@ -1208,10 +1208,10 @@ export function renderDanfseHtml(invoice = {}) {
           <tr>
             <td colspan="2"><div class="lbl">Nome / Nome Empresarial</div><div class="val">RENTAL MILLERS LTDA</div></td>
             <td><div class="lbl">Município / Sigla UF</div><div class="val">Campos dos Goytacazes / RJ</div></td>
-            <td><div class="lbl">Código IBGE / CEP</div><div class="val">33.01009 / 28.020-140</div></td>
+            <td><div class="lbl">Código IBGE / CEP</div><div class="val">33.01009 / 28.010-140</div></td>
           </tr>
           <tr>
-            <td colspan="2"><div class="lbl">Endereço</div><div class="val">Sem tipo de logradouro Doutor Júlio Barcelos, 3, BLOCO:06;APT:204, Parque Jóquei Club</div></td>
+            <td colspan="2"><div class="lbl">Endereço</div><div class="val">Rua Conselheiro Otaviano, 509, Centro</div></td>
             <td colspan="2"><div class="lbl">E-mail</div><div class="val">-</div></td>
           </tr>
           <tr>
@@ -1519,10 +1519,10 @@ export async function generateNfsePdfBuffer(invoice = {}) {
 
       field(X0, y, "Nome / Nome Empresarial", "RENTAL MILLERS LTDA", { width: W_COL * 2 });
       field(X2, y, "Município / Sigla UF", "Campos dos Goytacazes / RJ");
-      field(X3, y, "Código IBGE / CEP", "33.01009 / 28.020-140");
+      field(X3, y, "Código IBGE / CEP", "33.01009 / 28.010-140");
       y += 19.07;
 
-      field(X0, y, "Endereço", "Sem tipo de logradouro Doutor Júlio Barcelos, 3, BLOCO:06;APT:204, Parque Jóquei Club", { width: W_COL * 2 });
+      field(X0, y, "Endereço", "Rua Conselheiro Otaviano, 509, Centro", { width: W_COL * 2 });
       field(X2, y, "E-mail", "-", { width: W_COL * 2 });
       y += 19.07;
 

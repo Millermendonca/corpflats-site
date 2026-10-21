@@ -26667,7 +26667,7 @@ const handleCheckout = async (req, res) => {
         tomadorNome: r.guestName,
         tomadorCpfCnpj: r.guestDocument || guest?.document || guest?.documentNumber || "",
         localNome: "CorpFlats",
-        localEndereco: "Rua Baronesa da Lagoa Dourada, 144 - Parque Tamandaré, Campos dos Goytacazes/RJ",
+        localEndereco: "Rua Conselheiro Otaviano, 509 - Centro, Campos dos Goytacazes/RJ",
         flatNumber: String(r.flatNumber || "113"),
         checkIn: r.checkinDate,
         checkOut: r.checkoutDate,
