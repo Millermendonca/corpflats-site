@@ -22,7 +22,7 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
   const activeSettings = activeDb?.settings || activeDb || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
@@ -446,7 +446,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   const checkinDateBr = formatDateBr(reservation?.checkinDate);
   const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
 
-  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   const checkinUrlGuest2 = getCheckinUrlSync(reservation, 2, hostBase, db || settings);
 
@@ -599,7 +599,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
       <p style="font-size: 13px; color: #6B7280; margin: 0 0 14px 0; line-height: 1.5;">
         Acesse pelo tablet ou computador da portaria para conferência de documentos, fotos dos hóspedes e baixa rápida de entrada.
       </p>
-      <a href="https://corpflats.onrender.com/portaria" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
+      <a href="https://corpflats.com.br/portaria" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
         Abrir Terminal da Portaria (/portaria)
       </a>
     </div>
@@ -619,7 +619,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
   const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
   const guestName = reservation?.guestName || "Hóspede Titular";
 
-  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   
   const allChanges = [...changes, ...changesSummary];
@@ -766,7 +766,7 @@ export function renderWhatsAppMirrorEmail({
   appOrigin = "",
   settings = null
 } = {}) {
-  const origin = String(appOrigin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/+$/, "");
+  const origin = String(appOrigin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/+$/, "");
   const absolutize = (url) => {
     const raw = String(url || "").trim();
     if (!raw) return "";
@@ -954,7 +954,7 @@ export function renderReservationConfirmationEmail({ reservation, flat, settings
   const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
   const checkoutTime = settings?.checkoutTime || reservation?.checkoutTime || "12:00";
   const resCode = reservation?.code || reservation?.id || "-";
-  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
 
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   const isGov = checkinUrl.includes("turismo.gov.br");
@@ -1021,7 +1021,7 @@ export function renderPreCheckinReminderEmail({ reservation, flat, settings, bas
   const checkinDateBr = formatDateBr(reservation?.checkinDate);
   const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
   const resCode = reservation?.code || reservation?.id || "-";
-  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
 
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   const checkinUrlGuest2 = getCheckinUrlSync(reservation, 2, hostBase, db || settings);
@@ -1095,7 +1095,7 @@ export function renderAccessInstructionsEmail({ reservation, flat, settings, bas
   const checkinDateBr = formatDateBr(reservation?.checkinDate);
   const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
   const resCode = reservation?.code || reservation?.id || "-";
-  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
 
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   const wifiNetwork = flat?.wifiNetwork || settings?.wifiNetwork || (flatDisplay ? `apto ${flatDisplay}` : "apto {quarto}");
@@ -1733,7 +1733,7 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
  * Garante que os arquivos físicos ou URLs R2 da FNRH estejam disponíveis antes do disparo do e-mail.
  * Caso o arquivo tenha sido apagado pelo reinício do Render e não haja URL R2, recompila on-the-fly.
  */
-export async function ensureReservationAttachmentsReady({ reservation, guest = null, db = null, appOrigin = "https://corpflats.onrender.com" }) {
+export async function ensureReservationAttachmentsReady({ reservation, guest = null, db = null, appOrigin = "https://corpflats.com.br" }) {
   if (!reservation) return resolveReservationAttachments({ reservation, guest, db });
 
   // 1. Titular

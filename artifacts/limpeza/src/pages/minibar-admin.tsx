@@ -115,7 +115,7 @@ export default function MinibarAdminPage() {
     if (typeof window !== "undefined") {
       return window.location.origin;
     }
-    return "https://corpflats.onrender.com";
+    return "https://corpflats.com.br";
   });
 
   // Extrato State

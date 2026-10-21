@@ -77,7 +77,7 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
   const activeSettings = activeDb?.settings || activeDb || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
@@ -174,7 +174,7 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
     leisureInfo: "Piscina/jacuzzi aquecida e academia na cobertura funcionando diariamente das 06:00 às 22:00, exclusivo para hóspedes cadastrados (não é permitida a entrada de visitantes na cobertura e proibido vidro na área molhada).",
     directBookingBenefits: "Melhor tarifa garantida sem taxas de intermediários, prioridade de early check-in a partir das 10h (quando disponível) e suporte direto com a nossa administração.",
     receptionPhone: "5522998505276",
-    siteUrl: "https://corpflats.onrender.com"
+    siteUrl: "https://corpflats.com.br"
   }
 };
 
@@ -733,7 +733,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     }
   }
 
-  const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
   const rawCheckinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, 1, appOrigin, db) : null;
   const isCheckinRelevant = !isCheckoutCompleted && (stayStatus === "checkin_hoje" || stayStatus === "reserva_futura");
   const isCheckoutDay = !isCheckoutCompleted && stayStatus === "checkout_hoje";
@@ -3012,7 +3012,7 @@ export function handleGetReservationDetails(db, args = {}) {
     };
   }
 
-  const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
   const rawCheckinUrl = getCheckinUrlSync(matched, 1, appOrigin, db);
 
   const isCheckoutCompleted = isReservationCheckoutCompleted(
@@ -6899,7 +6899,7 @@ export function validateAndRefineResponse({
         const hideFinGuest = Boolean(guestContext?.hideFinancialForGuest || r.hideFinancialForGuest);
         const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
         const statusSuffix = hideFinGuest ? "" : ` (${paymentStr})`;
-        const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+        const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
         const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
         if (isCheckoutDone) {
@@ -6973,7 +6973,7 @@ export function validateAndRefineResponse({
       (analysis.type === "GENERIC_FAQ" && analysis.primaryTopic === "checkout");
     const hasCheckoutDetails = /12:00|12h|hor[aá]rio\s+limite/i.test(replyText);
     if ((hadPreCheckinRemoved || guestAskedReservaOrCheckoutFaq) && !hasCheckoutDetails) {
-      const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+      const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
       const checkoutUrl = guestContext.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
       const checkoutLinkMsg = checkoutUrl && !replyText.includes(checkoutUrl) ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
       replyText += `\n\nLembramos que hoje é o dia do seu check-out, com horário limite de desocupação até as 12:00h.${checkoutLinkMsg}\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! ✨`;
@@ -7270,7 +7270,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       );
       if (checkoutGuideline) {
         const isCheckoutAlreadyDone = Boolean(guestContext?.isCheckoutCompleted || guestContext?.stayStatus === "checkout_concluido");
-        const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
+        const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.com.br";
         const checkoutUrl = !isCheckoutAlreadyDone ? (guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "")) : "";
         const linkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
         return ret(`${greetingSalutation} ${checkoutGuideline.text}${linkMsg}`);
@@ -7479,7 +7479,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const hideFinGuest = Boolean(guestContext?.hideFinancialForGuest || r.hideFinancialForGuest);
       const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
       const statusSuffix = hideFinGuest ? "" : ` (${paymentStr})`;
-      const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
+      const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.com.br";
       const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
       // 0. Check-out já concluído (estadia encerrada)
@@ -10433,7 +10433,7 @@ export async function generateSofiaRealtimeAssistance({
   }
 
   // 3. Construção dos Botões de Envio Rápido Dinâmicos (por Teor e Fase)
-  const hostBase = "https://corpflats.onrender.com";
+  const hostBase = "https://corpflats.com.br";
   const checkinLink = res ? getCheckinUrlSync(res, 1, hostBase, db) : `${hostBase}/pre-checkin`;
   const cafeLink = resCode ? `${hostBase}/minha-reserva/${resCode}/cafe` : `${hostBase}/cafe`;
   const portalLink = resCode ? `${hostBase}/minha-reserva/${resCode}` : `${hostBase}/minha-reserva`;

@@ -1,185 +1,190 @@
-# Handoff Report: Milestone 1 — Backend Auth, Roles & Dev Endpoints
+# Handoff Report — Review & Adversarial Challenge: Milestone M1 (Minibar Backend & Security)
 
 **Agent**: `reviewer_m1_1` (teamwork_preview_reviewer)  
-**Roles**: Reviewer, Critic  
-**Date**: 2026-10-19  
-**Working Directory**: `.agents/teamwork/reviewer_m1_1/`  
-**Recipient**: Project Orchestrator (`c4864abd-776b-4ad1-aef9-25c7af7463df`)  
-
----
-
-## Review Summary
-
-**Verdict**: **APPROVE**
-
-A reconciliação dos arquivos gêmeos `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` foi confirmada com 100% de paridade criptográfica SHA-256 (`33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`). A execução do teste pontual `node --test tests/auth-roles-permissions.test.mjs` passou em todos os 6 testes (1 teste de paridade e 5 testes de integração HTTP/RBAC) com 0 falhas em ~3.4 segundos. Todos os critérios de aceite do Milestone 1 foram estritamente cumpridos.
+**Roles**: reviewer, critic  
+**Date**: 2026-10-21T19:35:00Z  
+**Verdict**: **REQUEST_CHANGES**
 
 ---
 
 ## 1. Observation
 
-1. **Paridade SHA-256 dos Arquivos Gêmeos (Restabelecida e Verificada)**:
-   Comando executado:
-   ```powershell
-   Get-FileHash 'artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs' -Algorithm SHA256 | Format-List
-   ```
-   Resultado observado:
-   ```text
-   Algorithm : SHA256
-   Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
-   Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
+### Obs 1: Paridade SHA-256 dos Servidores Gêmeos Quebrada
+Comando executado:
+```powershell
+(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash
+(Get-FileHash 'scripts/demo-server.mjs').Hash
+(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+```
+Resultado verbatim observado:
+```
+CEAA95F59664B8AE45754C43BC18013E3F976980801988E6AF82BC9B6FD221ED
+D8EA1FCAA3EFAC57759B613CC2F484E8DC851F76DCDB680A78406525330BA5F8
+False
+```
+Diferença encontrada via `git diff scripts/demo-server.mjs artifacts/api-server/demo-server.mjs`:
+```diff
+diff --git a/artifacts/api-server/demo-server.mjs b/artifacts/api-server/demo-server.mjs
+index 37ca26d..101d64b 100644
+--- a/artifacts/api-server/demo-server.mjs
++++ b/artifacts/api-server/demo-server.mjs
+@@ -27255,6 +27255,7 @@ function formatTriggerTitle(trigger) {
+     payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
+     sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
+     pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
++    pre_checkin_enter_prompt: "Pós Check-in Online • Botão: Informar que Entrei",
+     room_ready: "Apartamento Pronto • Acesso Liberado",
+     checkin_completed: "Check-in Realizado • Boas-Vindas",
+     checkout_completed: "Check-out Realizado • Agradecimento",
+```
+Timestamp de modificação:
+- `artifacts/api-server/demo-server.mjs`: `2026-10-21T16:19:32`
+- `scripts/demo-server.mjs`: `2026-10-21T16:13:28`
 
-   Algorithm : SHA256
-   Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
-   Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
-   ```
-   Comando adicional `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` retornou código de saída 0 e saída vazia (identidade total).
+### Obs 2: Execução do Teste Pontual Obrigatório (`node --test tests/minibar-backend-flow.test.mjs`)
+Comando executado:
+```powershell
+node --test tests/minibar-backend-flow.test.mjs
+```
+Resultado verbatim observado:
+```
+TAP version 13
+# Subtest: Milestone M1 — Minibar Backend Core & APIs Suite
+    # Subtest: F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
+    not ok 1 - F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
+      ---
+      duration_ms: 20.262
+      location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/minibar-backend-flow.test.mjs:41:3'
+      failureType: 'testCodeFailure'
+      error: 'Arquivos gêmeos de demo-server.mjs devem possuir paridade exata SHA-256'
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'd8ea1fcaa3efac57759b613cc2f484e8dc851f76dcdb680a78406525330ba5f8'
+      actual: 'ceaa95f59664b8ae45754c43bc18013e3f976980801988e6af82bc9b6fd221ed'
+...
+# tests 20
+# suites 2
+# pass 19
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6322.0747
+```
+No `handoff.md` do `worker_m1`, linhas 16-24, foi atestado `pass 20, fail 0` e paridade `True`, o que diverge da execução real no repositório.
 
-2. **Verificação de Compilação Sintática**:
-   Comando executado:
-   ```bash
-   node -c artifacts/api-server/demo-server.mjs; node -c scripts/demo-server.mjs
-   ```
-   Resultado: Código de saída 0, sem erros de sintaxe em nenhum dos dois servidores.
+### Obs 3: Desacoplamento Financeiro Verificado
+Em `artifacts/api-server/demo-server.mjs`, linhas 46175-46263 e 46291-46400:
+- O valor do pedido de frigobar (`order.totalAmount`) é mantido exclusivamente dentro de `db.minibarOrders`.
+- Nenhuma operação das rotas `/api/minibar/*` ou dos webhooks `/api/pms/inter/webhook` e `/api/pms/mercadopago/webhook` altera o campo `r.totalAmount` de qualquer reserva em `db.reservations`.
+- O teste pontual (subtestes 6 e 8) valida explicitamente que após criação de pedidos PIX e Cartão, o `dataPortal.reservation.totalAmount` permanece estritamente `450.00`.
 
-3. **Execução da Suíte de Testes Pontuais (`tests/auth-roles-permissions.test.mjs`)**:
-   Comando executado:
-   ```bash
-   node --test tests/auth-roles-permissions.test.mjs
-   ```
-   Resultado observado:
-   ```text
-   TAP version 13
-   # Subtest: Milestone 1 — Auth, Roles & RBAC Separation Suite
-       # Subtest: File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
-       ok 1 - File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
-         ---
-         duration_ms: 11.4891
-         ...
-       # Subtest: HTTP Integration & RBAC Tests
-           # Subtest: ensureSystemUsers migrated database: admin is dev, gestor is created as admin
-           ok 1 - ensureSystemUsers migrated database: admin is dev, gestor is created as admin
-             ---
-             duration_ms: 16.3385
-             ...
-           # Subtest: /api/auth/me returns 'dev' for admin and 'admin' for gestor
-           ok 2 - /api/auth/me returns 'dev' for admin and 'admin' for gestor
-             ---
-             duration_ms: 10.9422
-             ...
-           # Subtest: Operational Endpoints: both dev and admin can access business routes
-           ok 3 - Operational Endpoints: both dev and admin can access business routes
-             ---
-             duration_ms: 72.6128
-             ...
-           # Subtest: Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
-           ok 4 - Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
-             ---
-             duration_ms: 101.0217
-             ...
-           # Subtest: User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
-           ok 5 - User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
-             ---
-             duration_ms: 166.0923
-             ...
-           1..5
-       ok 2 - HTTP Integration & RBAC Tests
-         ---
-         duration_ms: 3277.0302
-         type: 'suite'
-         ...
-       1..2
-   ok 1 - Milestone 1 — Auth, Roles & RBAC Separation Suite
-     ---
-     duration_ms: 3291.2814
-     type: 'suite'
-     ...
-   1..1
-   # tests 6
-   # suites 2
-   # pass 6
-   # fail 0
-   # cancelled 0
-   # skipped 0
-   # todo 0
-   # duration_ms 3440.5635
-   ```
+### Obs 4: Validação dos 4 Dígitos do Contexto do Flat (`/api/minibar/flat-context`)
+Em `artifacts/api-server/demo-server.mjs`, linhas 45954-45985:
+- Exige `digits.length === 4` e número do flat.
+- Testa contra os 4 últimos dígitos do celular (`reservation.guestPhone.endsWith(digits)`) e também contra o CPF (`reservation.guestDocument.endsWith(digits)`).
+- Retorna 400 se incorreto (`"Dígitos incorretos ou nenhuma reserva ativa no flat"`).
 
-4. **Verificação de `ensureSystemUsers` (`artifacts/api-server/demo-server.mjs:740-813`)**:
-   - `adminUser`: migra `role: "dev"` sem tocar no hash de senha existente (`passwordHash`).
-   - `gestorUser`: instancia ou garante `username: "gestor"`, `role: "admin"`, `name: "Administração CorpFlats"`, e senha inicial `"admin123"`.
-   - Idempotência: chamadas subsequentes não causam alterações redundantes.
-   - Persistência imediata: aciona `saveDatabase("manual_migrate_system_users_dev_and_gestor")`, que grava imediatamente no disco através de `atomicWriteFileSync(DB_FILE, stateJson)`.
+### Obs 5: Retenção Mínima em `pruneDatabase`
+Em `artifacts/api-server/demo-server.mjs`, linhas 8736-8753:
+- Se `db.minibarOrders.length > 3000`, expurga apenas pedidos cancelados/não pagos anteriores a `getOffsetDateStr(-730)`. Pedidos pagos (`paymentStatus === "pago"`) são retidos indefinidamente (`(orderDate >= cutoffDate) || (o.paymentStatus === "pago")`).
+- `db.minibarInspections` retém todas as inspeções por no mínimo 730 dias.
 
-5. **Verificação de `requireDevAuth` (`artifacts/api-server/demo-server.mjs:8693-8723`)**:
-   - Intercepta com HTTP 403 `{"error": "Acesso restrito a desenvolvedores."}` qualquer tentativa de acesso por `role !== "dev"` ou desautenticado.
-   - Cobre 19 rotas técnicas de nuvem, IA, logs e telemetria: `/api/whatsapp/config`, `/api/whatsapp/qr-code`, `/api/whatsapp/sync-webhooks`, `/api/whatsapp/connection-logs`, `/api/whatsapp/concierge-logs`, `/api/whatsapp/test-disconnection-alert`, `/api/whatsapp/queue/cancel-real-guests`, `/api/settings/gemini`, `/api/settings/email`, `/api/storage/config`, `/api/storage/cleanup-old-docs`, `/api/integrations/microsoft-graph/config`, `/api/integrations/microsoft-graph/test-sync`, `/api/integrations/microsoft-graph/test`, `/api/integrations/inter/config`, `/api/integrations/inter/test-connection`, `/api/integrations/mercadopago/config`, `/api/admin/server-monitor`, `/api/shopping-list/ai-test`, além de `/api/audit-logs`, `/api/audit-logs/export`, `/api/reservations/clear-all` e `/api/admin/reset-cleaning-cache`.
+### Obs 6: Anti-abuso de Cortesia e Brecha em Pedidos Mistos Pendentes
+Em `artifacts/api-server/demo-server.mjs`, linhas 46168-46173:
+```javascript
+const paidOrders = (db.minibarOrders || []).filter(o =>
+  (o.reservationCode === finalResCode || String(o.reservationId) === String(reservation?.id)) &&
+  o.paymentStatus === "pago"
+);
+const alreadyConsumedCourtesy = paidOrders.some(o => (o.items || []).some(i => i.isCourtesy));
+```
+- A verificação de cortesia já usufruída checa **apenas** `o.paymentStatus === "pago"`.
+- Se o hóspede fizer um pedido com cortesia + item pago (ex: kit cortesia + água), o pedido é criado com `paymentStatus: "pendente"`.
+- Enquanto o pedido estiver pendente, `alreadyConsumedCourtesy` permanece `false`. O hóspede pode abrir múltiplos checkouts simultâneos com cortesia e quitar todos, obtendo múltiplas cortesias gratuitas.
 
-6. **Verificação das Rotas Operacionais (`artifacts/api-server/demo-server.mjs`)**:
-   - Todas as rotas operacionais do hotel (PMS, Governança, Financeiro, Fiscal, Copiloto IA) aceitam `admin || dev`.
+### Obs 7: Seleção de Reserva em Flats Vagos (`findActiveOrRecentReservationForFlat`)
+Em `artifacts/api-server/demo-server.mjs`, linhas 45796-45798:
+```javascript
+// Ordena decrescente por checkinDate
+validReservations.sort((a, b) => String(b.checkinDate || "").localeCompare(String(a.checkinDate || "")));
+return validReservations[0];
+```
+- Se o flat estiver vago hoje e o hóspede tiver feito checkout recente (ontem), mas houver uma reserva futura cadastrada (ex: daqui a 1 mês), `b.checkinDate` selecionará a reserva **futura**.
+- Quando o hóspede recém-saído escanear o QR code para acertar o frigobar, seus 4 dígitos falharão porque o flat context foi vinculado à reserva futura do próximo hóspede.
 
-7. **Verificação de Gestão de Usuários (`artifacts/api-server/demo-server.mjs:9794-9954`)**:
-   - `GET /api/admin/users`: sanitiza e omite senhas.
-   - `POST /api/admin/users`: proíbe que `admin` cadastre usuários `dev`.
-   - `PATCH /api/admin/users/:id`: proíbe que `admin` promova usuários a `dev` ou altere dados de contas `dev`.
-   - `PATCH` e `POST /api/admin/users/:id/reset-password`: ambos suportados via `handleResetPassword`, proibindo `admin` de redefinir senha de `dev`.
-   - `DELETE /api/admin/users/:id`: proíbe auto-exclusão e exclusão de `dev` por `admin`.
+### Obs 8: TDZ ReferenceError no `loadDatabase`
+No boot do servidor (capturado nos logs):
+```
+[Database] Erro ao ler database: ReferenceError: Cannot access 'DEFAULT_INTER_CONFIG' before initialization
+    at getInterCertificates (artifacts/api-server/demo-server.mjs:41147:43)
+    at loadDatabase (artifacts/api-server/demo-server.mjs:6652:56)
+    at async artifacts/api-server/demo-server.mjs:9500:1
+```
+`DEFAULT_INTER_CONFIG` é declarada com `const` na linha 41147, mas referenciada por `loadDatabase` na linha 6652 antes de ser inicializada.
 
 ---
 
 ## 2. Logic Chain
 
-1. A única pendência que impediu a aprovação anterior foi a quebra de paridade SHA-256 causada pelo commit `035c16e`.
-2. A reconciliação entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` restabeleceu a paridade exata byte a byte (`33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
-3. Com a paridade restabelecida, o subteste 1 da suíte `tests/auth-roles-permissions.test.mjs` foi aprovado com sucesso.
-4. Os subtestes 2 a 6 (migração em disco, `/api/auth/me`, rotas operacionais, bloqueio de rotas técnicas e segurança em `/api/admin/users`) passaram com 100% de sucesso contra o servidor real em porta isolada com banco temporário.
-5. Nenhuma evidência de atalho, facade ou adulteração foi detectada (verificação de integridade aprovada).
-6. Portanto, a conclusão necessária e suficiente é a emissão do veredito **APPROVE**.
+1. **Paridade Twin-Server & Quebra de Teste** (Obs 1 e Obs 2):
+   - A regra R10 do projeto e o checklist do despacho exigem paridade exata SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+   - A execução de `Get-FileHash` resultou em `False` devido a uma inserção na linha 27255 de `artifacts/api-server/demo-server.mjs`.
+   - O primeiro teste do arquivo pontual `tests/minibar-backend-flow.test.mjs` falhou (`not ok 1 - F01 / Paridade SHA-256`), resultando em 19/20 testes passados e saída com código 1.
+   - Portanto, a entrega atual está formalmente quebrada e viola o critério de aceitação de entrega do Marco M1.
+
+2. **Divergência de Atestação no Handoff** (Obs 2):
+   - O `handoff.md` do `worker_m1` declarou 20 testes passados e paridade `True`.
+   - Como o hash está divergente e o teste falha na linha 41, o trabalho não pode ser aprovado sem a devida reconciliação.
+
+3. **Qualidade e Completude das Features F01 a F10** (Obs 3, Obs 4, Obs 5):
+   - As 19 rotas e funcionalidades de negócio (catálogo, gabarito, 4 dígitos, checkout PIX/Cartão, webhooks, NF-e, inspeção com Sofia WhatsApp, repasse financeiro e analytics) funcionam corretamente de ponta a ponta quando testadas no servidor.
+   - O desacoplamento financeiro foi rigorosamente respeitado: `r.totalAmount` permanece intacto em todos os fluxos.
+   - A retenção de 730 dias em `pruneDatabase` está devidamente implementada.
+
+4. **Vulnerabilidades de Borda Identificadas** (Obs 6, Obs 7, Obs 8):
+   - A verificação de cortesia em pedidos mistos pendentes permite bypass caso o hóspede faça pedidos simultâneos antes da compensação.
+   - A seleção de flat vago escolhe reservas do futuro em vez do hóspede de checkout recente.
+   - O TDZ no boot causa `ReferenceError` capturado no catch de `loadDatabase()`.
 
 ---
 
 ## 3. Caveats
 
-- **Escopo Exclusivo de Backend**: As rotas e proteções do frontend (rotas em `App.tsx`, nova página `/equipe`, remoção do manual WBP) pertencem aos Milestones 2 e 3 e não foram avaliadas neste relatório.
-- **Rota `/api/whatsapp/raw-webhook-logs`**: Identificada como não autenticada no arquivo auxiliar `zapi-service.mjs:6667`. Não faz parte da interface visual e não afeta os critérios de aceite de M1, mas foi registrada como recomendação preventiva.
+- As 19 asserções funcionais de frigobar em `tests/minibar-backend-flow.test.mjs` passam com sucesso. A única falha decorre da divergência de 1 linha (`pre_checkin_enter_prompt` adicionada por outra atividade paralela em `artifacts/api-server/demo-server.mjs` sem ser copiada para `scripts/demo-server.mjs`).
+- Como a role de reviewer proíbe modificação de código de implementação (`Review-only — do NOT modify implementation code`), a correção não foi aplicada diretamente pelo reviewer, sendo devolvida ao worker para ajuste.
 
 ---
 
 ## 4. Conclusion
 
-O Milestone 1 (Backend Auth, Roles & Dev Endpoints) atende integralmente a todos os requisitos técnicos, funcionais, de integridade e de repositório estabelecidos em `ORIGINAL_REQUEST.md`, `PROJECT.md` e `AGENTS.md`.
+**Veredito**: **REQUEST_CHANGES**
 
-**Veredito Oficial**: **APPROVE**
+O Marco M1 está com a sua lógica de negócio implementada com excelência e robustez (19 dos 20 testes de frigobar passando, desacoplamento financeiro total, auditoria e telemetria ativas). Contudo, **NÃO PODE SER APROVADO** pelos seguintes motivos mandatórios:
+1. **[CRÍTICO - BLOQUEANTE]**: Falha no subteste 1 de `tests/minibar-backend-flow.test.mjs` devido à quebra de paridade SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+2. **[MAJOR]**: Vulnerabilidade anti-abuso de cortesias para pedidos mistos pendentes (Obs 6).
+3. **[MAJOR]**: Precedência errônea de reservas futuras sobre checkout recente no QR Code de flat vago (Obs 7).
+4. **[MINOR]**: `ReferenceError` em `loadDatabase` por Temporal Dead Zone em `DEFAULT_INTER_CONFIG` (Obs 8).
 
 ---
 
 ## 5. Verification Method
 
-Para replicar independentemente a verificação:
+Para o worker ou orquestrador verificar a resolução:
 
 1. **Paridade SHA-256**:
    ```powershell
-   Get-FileHash 'artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs' -Algorithm SHA256 | Format-List
+   Copy-Item -Path 'artifacts/api-server/demo-server.mjs' -Destination 'scripts/demo-server.mjs' -Force
+   (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
    ```
-   *Critério*: Ambos os hashes devem ser estritamente iguais a `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`.
+   *Condição de invalidação*: Se retornar `False`, rejeitar imediatamente.
 
-2. **Diferença Binária / Texto**:
-   ```bash
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+2. **Execução Estrita do Teste Pontual**:
+   ```powershell
+   node --test tests/minibar-backend-flow.test.mjs
    ```
-   *Critério*: Saída vazia com código 0.
-
-3. **Execução do Teste Pontual do M1**:
-   ```bash
-   node --test tests/auth-roles-permissions.test.mjs
-   ```
-   *Critério*: Deve reportar 6 testes executados, 6 aprovados, 0 falhas, tempo < 10s.
-
----
-
-## Adversarial Review Summary
-
-- **Tentativa de Escalação de Privilégios (Admin → Dev)**: Bloqueada com HTTP 403 em `POST`, `PATCH`, `reset-password` e `DELETE`.
-- **Tentativa de Acesso a Ferramentas Técnicas por Admin**: Bloqueada com HTTP 403 via middleware `requireDevAuth`.
-- **Falha de Persistência no Boot**: Mitigada com gravação síncrona atômica imediata via `manual_migrate_system_users_dev_and_gestor`.
-- **Risco de Falso Positivo**: Descartado; o teste utiliza HTTP real com cookies de sessão assinados e asserções diretas no arquivo de banco persistido.
+   *Critério de aprovação*: Deve retornar exatamente:
+   `# tests 20`
+   `# pass 20`
+   `# fail 0`
+   com código de saída 0.

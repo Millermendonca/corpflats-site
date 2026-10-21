@@ -1,52 +1,59 @@
-# BRIEFING — 2026-10-11T01:41:20Z
+# BRIEFING — 2026-10-21T19:50:00Z
 
 ## Mission
-Remediation of CorpFlats Milestone M1 defects and edge cases across demo-server, tariff engine, and bot actions API with 100% test pass rate and twin-server parity.
+Executar as remediações e correções técnicas de M1 no backend do Frigobar/Minibar (`artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/minibar-backend-flow.test.mjs`), assegurando paridade SHA-256 twin-server, precisão contábil (taxa 0.99% PIX), RBAC staff, webhook Mercado Pago resiliente, anti-abuso de cortesia, status HTTP 401 na validação de 4 dígitos e aprovação em todos os testes pontuais.
 
 ## 🔒 My Identity
-- Archetype: worker
-- Roles: implementer, qa, specialist
+- Archetype: teamwork_preview_worker
+- Roles: implementer, qa
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M1 Remediation
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M1 Remediation (Minibar Backend Fixes)
 
 ## 🔒 Key Constraints
-- Genuine implementation only, no cheating or hardcoding test results.
-- Twin-server byte parity: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` must have identical SHA-256.
-- Git commit followed by `git push` by default per AGENTS.md rule.
-- 100% pass on all test suites: `tests/tariff-engine.test.mjs`, `tests/bot-actions-api.test.mjs`, `tests/challenger-m1-adversarial.test.mjs`, `tests/challenger-edge-probes.test.mjs`, `tests/challenger-tariff-stress.test.mjs`.
+- NUNCA trapacear ou criar implementações falsas/facades.
+- Sincronização exata SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+- AGENTS.md: NUNCA rodar testes globais (`tests/*.test.mjs`), apenas os 3 testes pontuais estritamente autorizados.
+- Sempre realizar `git push origin main` após commit.
+- `.agents/teamwork/` deve conter apenas metadados (nunca arquivos de código do projeto).
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T01:28:08Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T19:50:00Z
 
 ## Task Summary
-- **What to build**: Fixed race condition in pre-reserve via atomic synchronous placeholder reservation insertion before async QR code generation; handle pre-reservation lifecycle (`paymentStatus === "pago_total"` retention, expired reservation handling in commit-reservation, configurable hold minutes); fixed calendar without flatId to only apply global overrides; normalized channel comparison in calendar; supported numeric string daysOfWeek in bulk-update.
-- **Success criteria**: All 5 test suites pass cleanly with 100% green (55/55 tests passed), zero regressions, byte-identical twin servers, committed and pushed.
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, explorer reports 1, 2, 3.
-
-## Key Decisions Made
-- Selected Strategy A for concurrency: atomic synchronous insertion into `db.reservations` prior to `await QRCode.toDataURL` with rollback in catch block.
-- Extracted `findEffectiveTariffOverride` shared function used identically by `calculateDailyRate` and `GET /api/tariffs/calendar`.
-- Supported numeric strings in `daysOfWeek` via `.map(Number)`.
-
-## Artifact Index
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\DISPATCH.md`
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\progress.md`
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\handoff.md`
+- **What to build**: Correções pontuais no demo-server (twin-servers) e suíte de testes pontual de backend do Frigobar.
+- **Success criteria**:
+  1. Boot sem TDZ.
+  2. Paridade SHA-256 estrita entre os twin-servers.
+  3. Taxa 0.99% PIX no settlement e asserções matemáticas no teste.
+  4. RBAC em POST /api/minibar/inspections.
+  5. Webhook Mercado Pago com resolução de MB-* e teste com asserção real "pago".
+  6. Anti-abuso cortesia: bloqueio paralelo, limite de 1 kit e flat sem reserva ativa.
+  7. HTTP 401 para 4 dígitos incorretos e priorização de checkout recente.
+  8. Heurística base64 preservando URLs > 200 chars.
+  9. Coerção de quantidades (ignorar <= 0).
+  10. Testes pontuais passando 100%.
+  11. Git commit e git push concluídos.
+- **Interface contracts**: `.agents/teamwork/orchestrator_16/PROJECT.md`
+- **Code layout**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/minibar-backend-flow.test.mjs`
 
 ## Change Tracker
-- **Files modified**:
-  - `artifacts/api-server/demo-server.mjs`: atomic pre-reserve, lifecycle checks, configurable hold, findEffectiveTariffOverride, bulk-update map(Number).
-  - `scripts/demo-server.mjs`: mirrored 100% byte-for-byte with identical SHA-256.
-  - `tests/challenger-edge-probes.test.mjs`: added strict assertions for Probes A, B, C.
-- **Build status**: 55/55 tests PASSING (100%), twin match TRUE, frontend build PASSING.
-- **Pending issues**: None.
+- **Files modified**: [TBD]
+- **Build status**: Pending
+- **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: PASS (55/55 passed across all 5 M1 suites; 56/56 passed on additional regression suites).
-- **Lint status**: Zero errors.
-- **Tests added/modified**: Strengthened assertions in `tests/challenger-edge-probes.test.mjs`.
+- **Build/test result**: Not run yet
+- **Lint status**: Clean
+- **Tests added/modified**: `tests/minibar-backend-flow.test.mjs`
 
-## Loaded Skills
-- None requested
+## Key Decisions Made
+- [TBD]
+
+## Artifact Index
+- `DISPATCH.md` — Despacho e diretrizes recebidas do orquestrador
+- `BRIEFING.md` — Memória de trabalho persistente
+- `progress.md` — Heartbeat e rastreio de progresso
+- `changes.md` — Registro detalhado de alterações de código
+- `handoff.md` — Relatório final de handoff de 5 seções

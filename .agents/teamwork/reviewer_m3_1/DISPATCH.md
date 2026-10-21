@@ -1,21 +1,33 @@
-## 2026-10-11T03:10:11Z
-Você é o Reviewer 1 para o Milestone M3 do CorpFlats (Frontend Admin UI).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O arquivo de despacho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\DISPATCH.md
-O relatório do worker é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md
-Você DEVE LER esses arquivos antes de iniciar.
+## 2026-10-21T21:29:19Z
 
-Missão de Revisão de Código:
-1. Analise o código em `artifacts/limpeza/src/pages/whatsapp-automation.tsx`:
-   - Valide se o card da Chave Mestra Global (`apiActionsEnabled`) foi implementado com clareza visual, estado e sincronização com `/api/bot-actions/settings`.
-   - Valide se os 5 switches granulares (`allowedActions`) refletem o status e são suspensos visualmente quando a chave mestra estiver desligada.
-   - Valide se o Indicador Tri-modal de Status calcula e exibe corretamente "Bot Desativado", "Modo Respondedor Ativo" e "Modo Autônomo com Ações".
-2. Analise o código em `artifacts/limpeza/src/pages/tarifas.tsx`:
-   - Valide a estrutura das 2 abas ("Mapa de Tarifas Diárias" e "Parâmetros Base & Adicionais").
-   - Valide se a matriz exibe os flats, dias e canais, com badges visuais para SEBRAE vs Custom Override.
-   - Valide se o modal de edição individual e o modal de edição em lote (Bulk Update com preview) chamam os endpoints corretos (`/api/tariffs/*`).
-3. Execute a compilação do frontend: `npm --prefix artifacts/limpeza run build`.
-4. Escreva seu relatório em `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1\handoff.md` com veredicto APPROVE ou REQUEST_CHANGES.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+Você é o subagente reviewer_m3_1 (teamwork_preview_reviewer).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1
+
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M3, Features F19 a F28)
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md
+5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\changes.md
+
+Missão do Reviewer M3_1 (RBAC, Permissões, Equipe e Navegação):
+1. Inspecione `artifacts/limpeza/src/lib/permissions.ts`:
+   - Verifique se os papéis `anserve_repositora` (`["/frigobar-reposicao"]`) e `anserve_gestor` (`["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]`) foram configurados corretamente em `getDefaultModulesForRole`.
+   - Verifique a categoria `🧊 Frigobar & Anserve` em `PERMISSION_CATEGORIES` e os aliases canônicos em `ROUTE_ALIASES`.
+2. Inspecione `artifacts/limpeza/src/pages/equipe.tsx`:
+   - Verifique se os modais de criação, edição e permissões incluem as opções de perfil da Anserve.
+   - Verifique se a renderização de badges e pílulas de filtro funciona com consistência.
+3. Inspecione `artifacts/limpeza/src/components/layout.tsx`:
+   - Verifique se a barra lateral e a navegação móvel de rodapé (`BottomNav`) exibem os atalhos adequados conforme o papel (repositora vê Reposição + Mais; gestor vê Supervisão + Reposição + Estoque + Mais).
+4. Verifique a compilação do frontend:
+   `npm --prefix artifacts/limpeza run build` (deve ter código de saída 0).
+5. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
+NUNCA execute testes globais `tests/*.test.mjs`.
+
+Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

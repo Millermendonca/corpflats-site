@@ -1,133 +1,81 @@
-# Handoff Report: Challenger 2 (Fault Injection, Timeout Handling & Schema Validation)
-
-**Agent**: Challenger 2 (`challenger_m1_2`)  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2`  
-**Recipient**: Orchestrator (`84d9f696-67d5-4529-bec4-c0232e9abea0`)  
-**Verdict**: **APPROVE**  
-**Date**: 2026-10-13T22:48:00Z  
-
----
+# Handoff Report — Challenger M1_2: Desacoplamento Financeiro, Webhooks e Extrato Anserve
 
 ## 1. Observation
-
-1. **Adversarial Test Script Execution:**
-   - Command: `node --test tests/wbp-integration/challenger-m1-faults.test.mjs`
-   - Output:
-     ```
-     TAP version 13
-     # Subtest: Challenger 2: Fault Injection, Timeout Handling & Schema Validation
-         # Subtest: 1. OpenAPI Schema Validation: Rejection of Invalid Payloads
-             ok 1 - schema validator rejects payloads missing common envelope fields (guid, pms_cid, shared_secret, verb)
-             ok 2 - schema validator rejects endpoint-specific missing required fields across all verbs
-             ok 3 - simulator HTTP server rejects invalid payload missing required fields with HTTP 400
-             ok 4 - simulator HTTP server rejects ARIUpdate with invalid dates or missing inventory
-             ok 5 - empirical probe: simulator behavior under default configuration (strictSchemas: false)
-         ok 1 - 1. OpenAPI Schema Validation: Rejection of Invalid Payloads
-         # Subtest: 2. Terminal Error Codes: Strict Non-Retry Behavior
-             ok 1 - does NOT retry on Error 1001 (FAULT.OTA.LOGIN: Invalid credentials) — exactly 1 attempt
-             ok 2 - does NOT retry on Error 1002 (FAULT.OTA.NOTENABLED: Channel not enabled) — exactly 1 attempt
-             ok 3 - does NOT retry on Error 1102 (FAULT.OTA.CURRENCY: Currency mismatch) — exactly 1 attempt
-             ok 4 - verifies terminal error non-retry across HealthCheck, GetBookingList, GetBookingId, AckBooking
-         ok 2 - 2. Terminal Error Codes: Strict Non-Retry Behavior
-         # Subtest: 3. Transient Errors & Timeouts: Retries and GUID Preservation
-             ok 1 - retries on transient Error 1003 (FAULT.OTA.OFFLINE) reusing the EXACT SAME GUID across all attempts
-             ok 2 - retries on transient Error 1004 (FAULT.OTA.BROKEN) reusing the EXACT SAME GUID
-             ok 3 - succeeds when transient error recovers on retry attempt, preserving same GUID
-             ok 4 - retries on HTTP timeout (delay > client timeoutMs) reusing the EXACT SAME GUID across attempts
-             ok 5 - retries on network socket drop (connection dropped) reusing the EXACT SAME GUID
-             ok 6 - caller-supplied custom GUID is preserved across retries and returned on ARIUpdate
-         ok 3 - 3. Transient Errors & Timeouts: Retries and GUID Preservation
-     ok 1 - Challenger 2: Fault Injection, Timeout Handling & Schema Validation
-     # tests 15
-     # suites 4
-     # pass 15
-     # fail 0
-     # cancelled 0
-     # skipped 0
-     # duration_ms 1852.2768
-     ```
-
-2. **OpenAPI Schema Validation Inspection (`e2e/wbp-simulator/schemas/index.mjs`):**
-   - Lines 34-40: `if (!body.guid) errors.push("Campo obrigatório 'guid' ausente."); else if (!UUID_V4_REGEX.test(body.guid)) ...` correctly rejects missing or malformed non-UUID v4 GUIDs.
-   - Lines 42-52: Validates mandatory presence of `pms_cid` and `shared_secret`.
-   - Lines 105-139: In `ARIUpdate`, validates ISO 3-letter currency, non-empty `Inventory` array, `start_date` and `end_date` formatting and chronological ordering (`start_date <= end_date`), non-negative integer `units`, and valid decimal `rate`.
-   - Lines 153-163: Validates presence of `booking_id` on both `GetBookingId` and `AckBooking`.
-
-3. **Simulator HTTP Server Schema Rejection (`e2e/wbp-simulator/server.mjs`):**
-   - Lines 89-96:
-     ```javascript
-     const validation = validateRequest(verb, req.body, { tolerant: !this.strictSchemas });
-     if (!validation.valid && this.strictSchemas) {
-       return res.status(400).json({
-         success: false,
-         errors: validation.errors.map((msg, i) => ({ id: 4000 + i, msg }))
-       });
-     }
-     ```
-   - When configured with `strictSchemas: true`, simulator HTTP server returns HTTP 400 Bad Request with `{ success: false, errors: [...] }`.
-   - When instantiated with default options (`this.strictSchemas` is `false`), line 91 evaluates to false, causing the simulator to return HTTP 200 `{ success: true }` without rejecting invalid payloads.
-
-4. **Terminal Error Codes Non-Retry (`artifacts/api-server/wbp/client.mjs`):**
-   - Lines 61-68:
-     ```javascript
-     isRetryableError(code) {
-       const num = Number(code);
-       return [3, 1003, 1004].includes(num);
-     }
-     ```
-   - Lines 202-205:
-     ```javascript
-     if (err instanceof WbpApiError && !err.retryable) {
-       throw err;
-     }
-     ```
-   - For Error 1001 (Invalid login), Error 1002 (Channel not enabled), and Error 1102 (Currency mismatch), `isRetryableError` returns `false`, `retryable` is set to `false`, and the error is re-thrown immediately on attempt 1.
-   - In our empirical tests across `SetupProperty`, `ARIUpdate`, `HealthCheck`, `GetBookingList`, `GetBookingId`, and `AckBooking`, exactly 1 request was logged by the simulator with 0 retries.
-
-5. **Transient Errors, Timeout Handling & GUID Preservation:**
-   - In `client.mjs` lines 127-144, the unique UUID v4 `guid` is generated once before the `while (attempt < maxAttempts)` loop or received from caller options:
-     `const guid = options.guid || crypto.randomUUID();`
-   - During transient errors (codes 1003, 1004), socket hangups (`dropConnection`), and timeouts (`AbortError`), the client retries up to `maxRetries: 2` (3 attempts total) with exponential backoff (`delay = this.backoffBaseMs * Math.pow(2, attempt - 1)`).
-   - In all empirical tests, attempts 1, 2, and 3 transmitted the exact same `guid` byte-for-byte.
-   - When a transient error resolved on attempt 3, the client succeeded and returned `{ success: true }`.
-
----
+- **Arquivos inspecionados**:
+  - `artifacts/api-server/demo-server.mjs`: Linhas 41438-41457 (webhook Inter), 42521-42586 (webhook Mercado Pago), 46135-46404 (`POST /api/minibar/orders`), 46570-46782 (`POST /api/minibar/inspections`), 46866-46945 (`GET /api/minibar/settlement`).
+  - `tests/minibar-backend-flow.test.mjs`: Testes existentes criados pelo `worker_m1`.
+- **Suíte de teste de verificação empírica criada e executada**:
+  - Arquivo: `tests/challenger-m1-2-verification.test.mjs` (12 testes isolados pontuais, porta 4197, `DATA_FILE` em `os.tmpdir()`, `NODE_ENV=test`, `DATABASE_URL` removida).
+  - Execução: `node --test tests/challenger-m1-2-verification.test.mjs`
+  - Resultado:
+    ```
+    # tests 12
+    # suites 4
+    # pass 12
+    # fail 0
+    # cancelled 0
+    # skipped 0
+    # todo 0
+    # duration_ms 8882.9842
+    ```
+- **Achados observados**:
+  1. *Desacoplamento Financeiro*:
+     - Reserva com valor inicial `totalAmount: 880.00` e `paidAmount: 880.00` foi submetida a 6 operações consecutivas de frigobar:
+       - Pedido cortesia R$ 0.00 (`POST /api/minibar/orders`)
+       - Pedido PIX R$ 26.00 pendente (`POST /api/minibar/orders`)
+       - Liquidação de pedido PIX via webhook Banco Inter (`POST /api/pms/inter/webhook`)
+       - Pedido Cartão R$ 16.00 pendente (`POST /api/minibar/orders`)
+       - Vistoria com divergência não declarada de R$ 28.00 gerando cobrança pendente (`POST /api/minibar/inspections`)
+       - Cancelamento manual de pedido pendente
+     - Em TODAS as etapas, `r.totalAmount` permaneceu estritamente em `880.00` no banco e na API pública do portal do hóspede (`/api/pms/guest-portal/:code`). As ordens de frigobar ficam completamente isoladas em `minibarOrders`.
+  2. *Webhook Banco Inter*:
+     - O envio de payload ao `POST /api/pms/inter/webhook` contendo `{ pix: [{ txid, valor }] }` com `txid` correspondente ao pedido localiza a ordem em `db.minibarOrders` e transiciona `paymentStatus` para `"pago"`, preenchendo `paidAt` e `pixEndToEndId`.
+     - O envio com `txid` divergente/inválido mantém o pedido em `"pendente"`.
+  3. *Webhook Mercado Pago (FALHA / DEFECT)*:
+     - Em `artifacts/api-server/demo-server.mjs` (linhas 42521-42586), o webhook `POST /api/pms/mercadopago/webhook` ignora `external_reference` ou dados de pagamento enviados no corpo da requisição e tenta efetuar uma chamada HTTP externa para `https://api.mercadopago.com/v1/payments/${queryId}` utilizando `accessToken`.
+     - Quando um webhook é disparado com `payment.id` e `external_reference` (`MB-<orderId>`), sem credenciais de produção ativas ou sem resposta da API pública do Mercado Pago, a chamada HTTPS síncrona não obtém status `"approved"`, e o pedido PERMANECE com `paymentStatus = "pendente"`.
+     - Observação no teste do worker: em `tests/minibar-backend-flow.test.mjs` (linha 427), o worker apenas validou `resWebhook.status === 200`, mascarando o fato de que a ordem `testCardOrderId` jamais foi liquidada para `"pago"`.
+  4. *Extrato de Repasse Anserve (`/api/minibar/settlement`)*:
+     - A fórmula matemática implementada na linha 46922:
+       `netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + netCourtesyCredit`
+     - Validada rigorosamente com dados controlados:
+       - Vendas brutas pagas no período: R$ 300.00 (Cartão R$ 100.00 + PIX R$ 200.00 + Cortesia R$ 0.00; pedidos pendentes e pedidos de outras datas estritamente excluídos)
+       - Taxa de Cartão (3.99%): R$ 3.99
+       - Taxa fixa de PIX (R$ 1.00): R$ 1.00
+       - Comissão CorpFlats (10%): R$ 30.00
+       - Reembolso de cortesias da CorpFlats para a Anserve (4 kits x R$ 5.00): R$ 20.00
+       - Repasse líquido retornado pela API: R$ 285.01 (`300 - 3.99 - 1.00 - 30.00 + 20.00`), exato até o último centavo.
+     - Filtragem por data testada isolando datas distintas sem vazamento.
 
 ## 2. Logic Chain
-
-1. **Schema Validation Integrity:** Observations 1 and 2 prove that `validateRequest()` strictly rejects missing common envelope fields (guid, verb, pms_cid, shared_secret), malformed UUIDs, and endpoint-specific fields across all 8 verbs.
-2. **Terminal Non-Retry Rigor:** Observations 1 and 4 prove that the client never retries on fatal error codes 1001, 1002, and 1102, logging exactly 1 attempt on the server before immediately surfacing the failure to the application layer.
-3. **Transient Idempotency & Fault Tolerance:** Observations 1 and 5 prove that the client handles network drops, timeouts, and transient channel outages by retrying with exponential backoff while preserving the identical GUID across all attempts, ensuring idempotency at the channel manager.
-4. **Simulator Strict Mode Compatibility:** Observation 3 proves that when `strictSchemas: true` is enabled, the simulator faithfully enforces schema boundaries via HTTP 400 Bad Request.
-
----
+1. A especificação do Marco M1 exige expressamente no Ponto 2:
+   `Webhook do Mercado Pago com payment.id e external_reference liquida o pedido.`
+2. Ao auditar o código de `POST /api/pms/mercadopago/webhook`, constatou-se que o endpoint extrai apenas `queryId` e tenta resolver o pagamento exclusivamente via requisição externa `https.request("https://api.mercadopago.com/v1/payments/" + queryId)`.
+3. Não há fallback no webhook para aceitar `external_reference` ou status de pagamento do payload (`req.body.external_reference`, `req.body.payment`, ou `req.body.data.external_reference`), ao contrário do webhook do Banco Inter que processa diretamente os dados da notificação.
+4. Consequentemente, o disparo do webhook de teste com `payment.id` e `external_reference` não liquida o pedido de frigobar, deixando-o como `"pendente"`.
+5. Os demais itens (desacoplamento financeiro e extrato de repasse) foram aprovados com excelência matemática e isolamento comprovado.
 
 ## 3. Caveats
-
-1. **Default Simulator Configuration Gap:** In `e2e/wbp-simulator/server.mjs`, schema validation rejection over HTTP requires `strictSchemas: true` (e.g. `new WBPSimulator({ strictSchemas: true })`). When using default options (`strictSchemas: false`), line 91 bypasses rejection. This does not impair Milestone 1 client correctness, but for subsequent milestones (M2–M4), workers should be instructed to instantiate `WBPSimulator({ strictSchemas: true })` or the team can make `strictSchemas: true` the default in `server.mjs`.
-
----
+- O teste do Banco Inter depende do campo `pix[0].txid`. O sistema trata corretamente tanto pedidos gerados pelo mTLS do Inter quanto txIds estáticos.
+- A divergência no webhook Mercado Pago não afeta o fluxo do Banco Inter nem o cálculo do extrato de liquidação de pedidos que já estejam pagos.
 
 ## 4. Conclusion
+**Veredito: REQUEST_CHANGES**
 
-Milestone 1 satisfies all fault tolerance, timeout handling, and schema validation requirements.
-All 15 adversarial tests in `tests/wbp-integration/challenger-m1-faults.test.mjs` pass cleanly with 0 failures.
+O código atende com perfeição aos itens 1 (Desacoplamento Financeiro) e 3 (Extrato de Repasse Anserve), porém REPROVA no item 2 devido à incapacidade do webhook do Mercado Pago de liquidar o pedido quando recebe `payment.id` e `external_reference` via payload.
 
-**VERDICT**: **APPROVE**
-
----
+### Ação Necessária para o Worker (Remediação Pontual):
+Em `artifacts/api-server/demo-server.mjs` (linha ~42525) e `scripts/demo-server.mjs`:
+No endpoint `POST /api/pms/mercadopago/webhook`, adicionar suporte para ler `external_reference` e status aprovado diretamente do corpo da notificação (`req.body.external_reference`, `data?.external_reference`, ou `req.body.payment`) como fallback caso não haja `accessToken` configurado ou caso a requisição síncrona à API externa do Mercado Pago não seja necessária/esteja em teste, permitindo liquidar o pedido `MB-*` correspondente com `mbOrder.paymentStatus = "pago"` e `mbOrder.mpPaymentId = String(queryId)`.
+Atualizar o teste em `tests/minibar-backend-flow.test.mjs` para afirmar `assert.strictEqual(orderStatus.status, "pago")` após o webhook.
 
 ## 5. Verification Method
-
-To independently reproduce Challenger 2's empirical findings:
-
-1. **Execute strictly isolated adversarial test suite:**
-   ```powershell
-   node --test tests/wbp-integration/challenger-m1-faults.test.mjs
-   ```
-   *Expected result: 15 passed, 0 failed, duration ~1.8s.*
-
-2. **Invalidation Conditions:**
-   - Any test failure in `tests/wbp-integration/challenger-m1-faults.test.mjs`.
-   - Any modification that causes client retries on error codes 1001, 1002, or 1102.
-   - Any modification causing transient retries to regenerate GUIDs instead of reusing the initial GUID.
+Para reproduzir e auditar as constatações:
+```powershell
+node --test tests/challenger-m1-2-verification.test.mjs
+```
+O teste valida:
+- Desacoplamento financeiro total em 7 subcenários.
+- Liquidação por txId correto e rejeição de txId falso no Inter.
+- Comportamento de não-liquidação do webhook Mercado Pago quando enviado com `payment.id` e `external_reference`.
+- Cálculo matemático exato do repasse da Anserve (R$ 285.01) e filtros temporais.

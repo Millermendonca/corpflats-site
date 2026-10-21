@@ -1,106 +1,98 @@
-# Handoff Report — Explorer Survey 1 (Frontend & UI Sandbox)
+# Handoff Report — Explorer Survey 1 (Backend, Persistência e Pagamentos do Frigobar)
 
-**Milestone:** Smart Flat Hub — Frontend Architecture, UI Sandbox & Privacy Isolation  
-**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1`  
-**Date:** 2026-10-11T23:46:00Z  
+**Data**: 2026-10-21  
+**Agente**: `explorer_survey_1` (teamwork_preview_explorer)  
+**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
+**Tipo**: Hard Handoff (Investigação completa)
 
 ---
 
 ## 1. Observation
 
-Durante a investigação técnica dos diretórios `artifacts/limpeza/` e `scripts/`, foram diretamente observados os seguintes fatos:
-
-1. **Roteamento e Servidor SPA (`artifacts/limpeza/src/App.tsx` e `scripts/demo-server.mjs`):**
-   - `artifacts/limpeza/src/App.tsx:6`: Importa `Route`, `Switch`, `useLocation`, `Router as WouterRouter` de `wouter`.
-   - `artifacts/limpeza/src/App.tsx:411-413`: O app inicializa com `<WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter>`.
-   - `artifacts/limpeza/src/App.tsx:173-198`: Define rotas públicas de hóspedes (`/minha-reserva/:code`, `/portal-hospede/:code`, `/guest-portal/:code` mapeadas para `GuestPortal`).
-   - `scripts/demo-server.mjs:31989` e `artifacts/api-server/demo-server.mjs:31989`:
-     ```javascript
-     const distPath = path.resolve(__dirname, "../limpeza/dist/public");
-     function serveSpaWithMetadata(distFolder, req, res) { ... }
-     ```
-     Todas as rotas públicas que não coincidem com `/api/*` resolvem para `index.html`.
-
-2. **Fluxo e Estados do Portal do Hóspede (`artifacts/limpeza/src/pages/guest-portal.tsx`):**
-   - Linhas 46-59: Captura de parâmetros `:code` e query strings (`window.location.search`).
-   - Linhas 214-243: Bloco de Previsão de Chegada no Dia do Check-in (`selectedArrivalTime`, `customArrivalTime`, `handleSaveEstimatedArrival` disparando `POST /api/pms/guest-portal/${encodeURIComponent(code)}/estimated-arrival`).
-   - Linhas 626-631: Verificação de entrada confirmada:
-     ```typescript
-     const hasEnteredFlat = Boolean(
-       reservation?.guestSelfCheckin ||
-       reservation?.actualCheckinAt ||
-       reservation?.status === "in_house" ||
-       (reservation?.status === "checkin" && reservation?.guestSelfCheckin)
-     )
-     ```
-   - Linhas 1654-1671: Botão de autodeclaração de entrada `POST /api/pms/guest-portal/${encodeURIComponent(code)}/self-checkin` com texto `"🚪 Já Cheguei"`.
-
-3. **Backend Twin Parity para ETA e Autodeclaração (`scripts/demo-server.mjs`):**
-   - Linha 15986: `POST /api/pms/guest-portal/:code/estimated-arrival` persiste `r.estimatedArrivalTime`.
-   - Linha 16070: `app.all(["/api/pms/guest-portal/:code/self-checkin", ...])` marca `r.guestSelfCheckin = true`, `r.guestSelfCheckinAt = now.toISOString()`, `r.status = "checkin"` e gera notificação para a portaria.
-
-4. **Design System & Primitivas Radix Disponíveis:**
-   - `artifacts/limpeza/package.json`: Possui `@radix-ui/react-slider`, `@radix-ui/react-switch`, `@radix-ui/react-tabs`, `@radix-ui/react-progress`, `@radix-ui/react-dialog`, `lucide-react`, `tailwindcss` (v4 com `@theme inline`).
-   - Componentes prontos em `artifacts/limpeza/src/components/ui/`: `slider.tsx`, `switch.tsx`, `tabs.tsx`, `progress.tsx`, `badge.tsx`, `card.tsx`, `button.tsx`, `input.tsx`.
-
-5. **Build de Frontend (`npm run build`):**
-   - Comando executado: `npm --prefix artifacts/limpeza run build` (task-106).
-   - Saída: `✓ 3360 modules transformed. ✓ built in 49.56s`. Código de retorno: `0`.
-   - Arquivos gerados em `artifacts/limpeza/dist/public/` (`index.html`, `assets/index.js`, `assets/index.css`).
+1. **Persistência de Estado e Carregamento**:
+   - `artifacts/api-server/demo-server.mjs`:
+     - Linhas 1147–1218: Inicialização do objeto singleton `let db = { ... }`.
+     - Linhas 6013–6040: `loadDatabase()` lê `data/database.json` via `fs.promises.readFile(DB_FILE, "utf-8")` e faz `Object.assign(db, loaded)`.
+     - Linhas 6041–6135: Criação das tabelas PostgreSQL (`system_store`, `system_store_backups`, `media_blobs`, `reservation_communications`, `system_audit_logs`) e leitura de `SELECT value FROM system_store WHERE key = 'db_state'`.
+     - Linhas 8395–8456: Função `pruneDatabase()` que impõe limites máximos para coleções voláteis a fim de evitar OOM no contêiner de 2GB do Render.
+     - Linhas 8655–8714: `saveDatabase(reason)` executa invalidação de caches (`invalidateGuestCache()`, `invalidateFlatsCache()`), chama `pruneDatabase()` e grava em disco local com debounce de 300ms e no PostgreSQL com debounce de 800ms.
+2. **Motores de Pagamento Existentes**:
+   - **PIX Banco Inter**:
+     - `artifacts/api-server/demo-server.mjs`: Linha 40764 `getInterAccessToken()` (autenticação mTLS via certificados `certs/inter.crt` e `certs/inter.key` e token OAuth2 com escopo `cob.read cob.write pix.read pix.write extrato.read`).
+     - Linha 40816: `createInterPixCob({ amount, description, debtorName, debtorDocument, reservationCode })` executa chamada PUT em `https://cdpj.partners.bancointer.com.br/pix/v2/cob/${txid}`, retornando `{ txid, pixCopiaECola, ... }`.
+     - Linhas 41109–41259: Consulta ativa no extrato bancário completo `/banking/v2/extrato/completo` (`getCachedInterExtratoCompleto()`), realizando conciliação por `txId` ou por `valor + documento/nome do pagador`.
+     - Linha 40927: `POST /api/pms/inter/webhook` recebe notificações instantâneas.
+   - **Cartão de Crédito Mercado Pago**:
+     - `artifacts/api-server/demo-server.mjs`: Linha 41949 `createMercadoPagoPreference({ reservationCode, amount, guestName, guestEmail, nights, flatNumber })` chama `https://api.mercadopago.com/checkout/preferences` e retorna `{ id, initPoint, sandboxInitPoint }`.
+     - Linha 41073: `checkMercadoPagoPaymentByRef(externalRef)` consulta `/v1/payments/search?external_reference=${externalRef}`.
+     - Linha 42072: `POST /api/pms/mercadopago/webhook` recebe notificações de pagamentos aprovados.
+3. **Serviços de Mensageria e Envio de Anexos**:
+   - `artifacts/api-server/zapi-service.mjs`:
+     - Linha 3436: `sendZapiDocument(config, { phone, document, fileName, caption, ... })`. As linhas 3515–3525 demonstram que se `document` for um caminho em `/api/storage/files/...`, ele lê fisicamente de `artifacts/api-server/uploads`, converte em Base64 e dispara via API Z-API `/send-document/${extension}`.
+     - Linha 5582: `appendMessageToConversation(db, { phone, text, type, mediaUrl, fileName, caption, ... })` grava a mensagem diretamente no chat unificado do CRM/Recepção.
+   - `artifacts/api-server/mail-service.mjs`:
+     - Linha 1255: `sendEmailAsync({ db, saveDatabase, reservationId, recipient, subject, bodyHtml, attachments })` aceita `attachments: [{ filename, path }]` e envia via Nodemailer / Zoho SMTP, gravando auditoria em `reservation_communications`.
+   - `artifacts/api-server/storage-service.mjs`:
+     - Linha 96: `uploadImageToStorage(base64Data, filenamePrefix, db, folder)` suporta upload direto com SigV4 no Cloudflare R2 e fallback permanente em `/api/storage/files/...` ou data URLs.
+   - `artifacts/api-server/whatsapp-ai-service.mjs`:
+     - Linha 909: `querySystemData(db, { module, query, filters, ... })` possui arquitetura modular em switch-case.
+     - Linha 601: `buildGuestContext(db, phone, now)` centraliza o contexto da conversa da IA Sofia.
+4. **Controle de Acesso e Módulos Canônicos**:
+   - `artifacts/limpeza/src/lib/permissions.ts` (linhas 108–160) e `artifacts/api-server/demo-server.mjs` (linhas 755–850) sincronizam `DEV_ONLY_MODULES`, `ALL_CANONICAL_MODULES` e `getDefaultModulesForRole(role)`.
+5. **Paridade Twin-Server e Testes**:
+   - PowerShell verificou paridade SHA-256 idêntica entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+   - `tests/nfse-crm-whatsapp-flow.test.mjs` e `tests/auth-roles-permissions.test.mjs` comprovam o padrão de teste pontual obrigatório: porta dinâmica (`getAvailablePort()`), `NODE_ENV = "test"`, `DATABASE_URL` deletada, cópia de banco em `os.tmpdir()` e asserção de que `data/database.json` original não foi modificado.
 
 ---
 
 ## 2. Logic Chain
 
-1. **A partir da Observação 1 (Roteamento & Express SPA):**
-   - O Wouter processa rotas no cliente e o Express serve `dist/public/index.html` para qualquer caminho que não seja API.
-   - Logo, adicionar uma rota como `/preview/smart-flat` em `App.tsx` funciona imediatamente, sem exigir alterações em rotas de arquivos no Express.
-
-2. **A partir das Observações 2 e 3 (ETA e Self-Check-in no Portal e no Backend):**
-   - O sistema já possui endpoints operacionais para registrar previsão de chegada (`estimated-arrival`) e entrada no quarto (`self-checkin`).
-   - Logo, o Smart Flat Hub não precisa reinventar a infraestrutura de dados de chegada: ele deve consumir diretamente o ETA para calcular a janela de 30 minutos antes da chegada (`now < ETA - 30min` -> bloqueado) e a presença do hóspede (`hasEnteredFlat`) para governar os avisos preventivos e o desligamento fail-safe (`now > ETA + 30min` sem check-in -> desligamento automático).
-
-3. **A partir da Observação 1 e Requisito R1 (Privacidade Rigorosa & Sandbox Oculto):**
-   - Os clientes em produção acessam o portal através de `/minha-reserva/:code`.
-   - Se o Smart Flat Hub for condicionado estritamente a `new URLSearchParams(window.location.search).get("preview") === "smart_flat"`, nenhum card ou botão existirá no DOM para clientes reais.
-   - Ao mesmo tempo, fornecendo a rota dedicada `/preview/smart-flat` (com uma barra de controle de sandbox / relógio virtual), desenvolvedores e a gestão podem simular todas as regras temporais sem esperar horas reais.
-
-4. **A partir das Observações 4 e 5 (Design System e Build):**
-   - Com `Slider` (temperatura de 18°C a 26°C e volume), `Switch` (cafeteira e ar-condicionado), `Tabs` (modos do ar) e `Progress` (régua temporal de fail-safe), a interface atende integralmente ao design system e responsividade mobile-first.
-   - O build do frontend compila de forma limpa, garantindo estabilidade e deploy imediato.
+1. A partir das observações do ciclo de vida de `db` (Obs 1), constata-se que a inclusão das coleções `minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections` e `minibarSettings` em `db` garante a persistência nativa tanto em arquivo local (`data/database.json`) quanto no PostgreSQL (`system_store`), sem necessidade de criar tabelas relacionais adicionais.
+2. Como `pruneDatabase()` (Obs 1) remove itens de coleções que excedem seus limites, os dados de `minibarOrders` e `minibarInspections` devem receber blindagem explícita com retenção mínima de 730 dias para evitar a exclusão de comprovantes fiscais e transações financeiras.
+3. Observando os motores de pagamento existentes (Obs 2), verificou-se que `createInterPixCob` e `createMercadoPagoPreference` operam de forma agnóstica a parâmetros de hospedagem quando alimentados com descrições e identificadores próprios. Portanto, os novos endpoints `/api/minibar/orders` podem reutilizar diretamente essas funções, associando `reservationCode: "MB-" + order.id`, garantindo que o frigobar seja liquidado de forma 100% autônoma, sem alterar o valor da hospedagem (`r.totalAmount`).
+4. Observando os serviços de envio de documentos e e-mails (Obs 3), conclui-se que o upload de Nota Fiscal em `POST /api/minibar/orders/:id/invoice` pode gravar o arquivo em `uploads/invoices/` ou Cloudflare R2 e acionar imediatamente `sendZapiDocument` (com Base64 e sincronização via `appendMessageToConversation`) e `sendEmailAsync` (com `attachments`), além de expor o arquivo no retorno de `/api/pms/guest-portal/:code`.
+5. Da mesma forma, quando a repositora registrar divergência em `POST /api/minibar/inspections`, o backend pode criar a ordem pendente e chamar `sendZapiMessage` com o texto formatado da IA Sofia e link `/minha-reserva/:code/frigobar?ord=...`.
+6. Observando o RBAC e permissões (Obs 4), a criação dos perfis `anserve_repositora` e `anserve_gestor` com acesso a link rápido por PIN (`/frigobar-reposicao?pin=...`) resolve a exigência de operação mobile rápida sem atrito de login complexo.
+7. Observando a regra do AGENTS.md e os testes de referência (Obs 5), conclui-se que qualquer validação automatizada deve ser escrita em um arquivo pontual isolado (`tests/minibar-backend-flow.test.mjs`), sem varreduras globais e sem chamadas de rede externas reais.
 
 ---
 
 ## 3. Caveats
 
-1. **Hardware IoT Físico:** Esta análise concentrou-se exclusivamente no frontend, UI e modo de simulação/sandbox. A integração com protocolos de hardware reais (Tuya Local API, Zigbee, Tuya Cloud OpenAPI ou MQTT) é tratada em guia separado e não foi conectada diretamente no frontend (que opera em modo de simulação/mock no preview).
-2. **Autoplay de Áudio nos Navegadores:** Políticas modernas de navegadores (Chrome/Safari) bloqueiam reprodução automática de áudio sem interação prévia do usuário. No widget da Trilha Sonora de Boas-Vindas, o estado visual deve indicar "Reproduzindo" e a primeira interação do usuário (clique ou toque) inicializa o áudio.
-3. **Escopo Estrito de Testes (AGENTS.md):** Nenhum teste global ou varredura de pasta `tests/` foi executado, conforme diretriz mandatória do projeto.
+1. **Credenciais em Produção**: O ambiente local opera com certificados ou credenciais simuladas de Banco Inter e Mercado Pago caso as chaves reais de produção não estejam presentes nas variáveis de ambiente do desenvolvedor. A implementação deve manter os fallbacks simulados resilientes já existentes no código.
+2. **Cloudflare R2 vs Armazenamento Local**: Se as credenciais do Cloudflare R2 não estiverem ativas, o sistema grava automaticamente os uploads na pasta local `artifacts/api-server/uploads/invoices/` servida estaticamente em `/api/storage/files/invoices/`, o que é 100% funcional e compatível com `sendZapiDocument`.
+3. **Escopo de Leitura Estrita**: Por se tratar de uma missão de Explorer (investigação), nenhum arquivo de código-fonte foi alterado nesta etapa.
 
 ---
 
 ## 4. Conclusion
 
-A arquitetura do **Smart Flat Hub Frontend** está minuciosamente delineada e aprovada para execução:
+A arquitetura do backend do Guest-Flow-Manager está plenamente apta e preparada para receber o ecossistema completo de Frigobar:
+1. **Modelo de Dados**: 5 coleções limpas (`minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections`, `minibarSettings`), integradas a `loadDatabase`, `saveDatabase` e `pruneDatabase` blindado.
+2. **Pagamentos**: Reutilização direta do Banco Inter (mTLS + PUT cob + Webhook + Extrato) e Mercado Pago (Checkout Pro + Webhook + Busca Ativa), totalmente desacoplados da conta da hospedagem.
+3. **Mensageria e Documentos**: Fluxo imediato e automatizado de envio de NF (WhatsApp Z-API + E-mail SMTP Zoho + Portal do Hóspede) e cobrança automática pela Sofia ao detectar divergências.
+4. **Governança de Código**: O plano de implementação preserva a paridade SHA-256 e segue estritamente as regras de isolamento e não-varredura de testes do `AGENTS.md`.
 
-1. **Isolamento Total:** Rota `/preview/smart-flat` e `/preview/smart-flat/:code` no `App.tsx`, além de gating `?preview=smart_flat` em `guest-portal.tsx`. Zero vazamento para produção.
-2. **Interface e Componentes:** Componentização em `artifacts/limpeza/src/components/smart-flat/` utilizando `Slider` (18-26°C), `Switch` (cafeteira com alertas térmicos), `Tabs` (modos do ar), `Progress` (fail-safe) e Widget de Trilha Sonora com controles de play/pause e volume.
-3. **Barra de Simulação Sandbox:** Relógio virtual integrado para testar adiantamento de tempo, bloqueio de 30min, alerta de "Você já chegou?" e desligamento automático.
-4. **Build Verificado:** `npm --prefix artifacts/limpeza run build` aprovado com código 0 e tempo de 49.56s.
+O relatório técnico detalhado e especificação dos contratos de API encontra-se em `.agents/teamwork/explorer_survey_1/analysis.md`.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar de forma independente as constatações deste relatório:
+Para verificar independentemente todas as constatações deste relatório:
 
-1. **Inspecione a configuração de rotas:**
-   - Visualizar `artifacts/limpeza/src/App.tsx:173-198`.
-2. **Inspecione os endpoints de ETA e Self-Check-in:**
-   - Visualizar `scripts/demo-server.mjs:15986` (`estimated-arrival`) e `scripts/demo-server.mjs:16070` (`self-checkin`).
-3. **Inspecione o manuseio de self-checkin no frontend:**
-   - Visualizar `artifacts/limpeza/src/pages/guest-portal.tsx:626-631` e `1654-1671`.
-4. **Verifique o build do frontend:**
-   - Executar no terminal:
-     `npm --prefix artifacts/limpeza run build`
-   - O comando deve finalizar com código de saída 0 e gerar `artifacts/limpeza/dist/public/index.html`.
+1. **Verificação de Paridade Twin-Server**:
+   ```powershell
+   (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+   ```
+   *Condição de sucesso*: Retorna `True`.
+2. **Inspeção dos Motores de Pagamento**:
+   - Inspecionar linhas 40764–40920 de `artifacts/api-server/demo-server.mjs` para validar `createInterPixCob` e `getInterAccessToken`.
+   - Inspecionar linhas 41949–42120 de `artifacts/api-server/demo-server.mjs` para validar `createMercadoPagoPreference` e webhook do Mercado Pago.
+3. **Inspeção de Envio de Documentos e E-mails**:
+   - Inspecionar linhas 3436–3560 de `artifacts/api-server/zapi-service.mjs` para conferir a leitura e envio de arquivos locais em `sendZapiDocument`.
+   - Inspecionar linhas 1255–1310 de `artifacts/api-server/mail-service.mjs` para conferir `sendEmailAsync` com suporte a `attachments`.
+4. **Inspeção da IA Sofia**:
+   - Inspecionar linhas 601–796 e 909–1250 de `artifacts/api-server/whatsapp-ai-service.mjs` para conferir `buildGuestContext` e `querySystemData`.
+5. **Critério de Invalidação**:
+   - Se for constatada a necessidade de misturar a cobrança do frigobar com as diárias da reserva, ou se `sendZapiDocument` não suportar envio de arquivos locais, este diagnóstico precisará de revisão. Ambas as hipóteses foram refutadas pelas evidências diretas do código.

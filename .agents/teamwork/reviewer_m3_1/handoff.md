@@ -1,138 +1,129 @@
-# Handoff Report: Reviewer 1 — Milestone M3 (Frontend Admin UI)
+# Handoff Report: Revisão e Crítica Adversarial M3 (RBAC, Permissões, Equipe e Navegação)
 
-**Author**: Reviewer 1 (`reviewer_m3_1`)  
-**Target Recipient**: Orchestrator (`3364a657-c855-42a7-a46e-a5463bc245b7`)  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1`  
-**Date**: 2026-10-11T03:16:00Z  
-
----
-
-## Review Summary
-
-**Verdict**: **APPROVE**  
-**Integrity Violations**: **NONE DETECTED** (nenhum resultado hardcoded, nenhum facade simulado, lógica 100% autêntica).
+**Agente**: `reviewer_m3_1` (teamwork_preview_reviewer)  
+**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
+**Data**: 2026-10-21T21:38:00Z  
+**Tipo**: Hard (Revisão Concluída)  
+**Milestone**: M3 (Features F19 a F28)  
+**Veredito**: **APPROVE**
 
 ---
 
-## 1. Observation
+## 1. Observation (Observações Diretas)
 
-### 1.1 `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-- **Tipagem & Metadados (linhas 289–367)**:
-  - Declarada interface `BotActionsSettings` com campos `apiActionsEnabled: boolean`, `allowedActions: { checkAvailability, calculateQuote, generatePayment, createPreReservation, commitReservation }`, `preReservationHoldMinutes: number` e `handoverMessage: string`.
-  - Definida constante `BOT_ACTIONS_METADATA` mapeando rigorosamente os 5 endpoints do backend (`/api/bot-actions/availability`, `/api/bot-actions/quote`, `/api/bot-actions/payment-link`, `/api/bot-actions/pre-reserve`, `/api/bot-actions/commit-reservation`).
-- **Estado e Sincronização (linhas 547–688)**:
-  - Inicialização com `botActionsSettings` padrão seguro.
-  - Carregamento inicial em `useEffect` (linha 818: `fetchBotActionsSettings()`) disparando `GET /api/bot-actions/settings`.
-  - `handleToggleMasterBotActions(enabled)`: realiza atualização otimista, executa `POST /api/bot-actions/settings`, atualiza o estado com a resposta do servidor e reverte com toast de erro caso ocorra falha.
-  - `handleToggleGranularAction(actionKey, enabled)`: atualiza estado otimistamente, envia payload parcial `{ allowedActions: { [actionKey]: enabled } }`, trata rollback se a chamada falhar.
-  - `handleSaveBotActionsParams()`: persiste tempo de hold provisório e mensagem de transbordo amigável.
-- **Indicador Tri-modal de Status (linhas 691–725)**:
-  - `getBotOperationalMode()` avalia de forma estrita:
-    1. **"Bot Desativado"**: se `!statusInfo?.connected || !aiConfig.enabled`.
-    2. **"Modo Respondedor Ativo"**: se bot conectado e Sofia ligada, mas `!botActionsSettings.apiActionsEnabled`.
-    3. **"Modo Autônomo com Ações"**: se `botActionsSettings.apiActionsEnabled === true`. Informa contagem dinâmica `${activeCount} de 5 ações permitidas no PMS e financeiro`.
-- **Renderização Visual (linhas 1799–2050)**:
-  - Card 4 na barra de estatísticas superior exibe o Indicador Tri-modal com dot colorido e badge.
-  - Card da Chave Mestra Global com borda em gradiente (`border-emerald-500/40` vs `border-amber-500/40`), ícone animado, switch `#master-api-actions-switch` e banner explicativo tri-modal.
-  - Grid com os 5 switches granulares recebe `opacity-60 pointer-events-none` e banner de aviso quando a chave mestra está desligada. Cada interruptor individual recebe `disabled={!botActionsSettings.apiActionsEnabled}`.
+1. **Permissões Centrais e RBAC (`artifacts/limpeza/src/lib/permissions.ts`)**:
+   - Linhas 92–102: Categoria `🧊 Frigobar & Anserve` (`id: "frigobar"`) adicionada com 4 itens:
+     ```ts
+     { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
+     { href: "/anserve", label: "Painel de Supervisão Anserve", description: "Fila de NFs, emissão, anexo e conferência geral" },
+     { href: "/frigobar-reposicao", label: "Portal da Repositora", description: "Conferência rápida, apontamento de divergências e reposição" },
+     { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", description: "Métricas de saída, consumo de cortesias e auditoria" }
+     ```
+   - Linhas 152–160: Constantes de módulos dos papéis:
+     ```ts
+     export const ANSERVE_REPOSITORA_MODULES: string[] = [
+       "/frigobar-reposicao"
+     ];
+     export const ANSERVE_GESTOR_MODULES: string[] = [
+       "/anserve",
+       "/frigobar-reposicao",
+       "/frigobar-gestao"
+     ];
+     ```
+   - Linhas 176–179: Função `getDefaultModulesForRole`:
+     ```ts
+     case "anserve_gestor":
+       return [...ANSERVE_GESTOR_MODULES];
+     case "anserve_repositora":
+       return [...ANSERVE_REPOSITORA_MODULES];
+     ```
+   - Linhas 356–362: Aliases de rotas em `ROUTE_ALIASES`:
+     ```ts
+     "/frigobar-gestao": "/anserve",
+     "/anserve/reposicao": "/frigobar-reposicao",
+     "/admin/frigobar": "/frigobar",
+     "/minibar-admin": "/frigobar",
+     "/frigobar-admin": "/frigobar"
+     ```
 
-### 1.2 `artifacts/limpeza/src/pages/tarifas.tsx`
-- **Reorganização em 2 Abas (linhas 453–463)**:
-  - `Tabs` com `<TabsTrigger value="calendar">` ("Mapa de Tarifas Diárias") e `<TabsTrigger value="parameters">` ("Parâmetros Base & Adicionais").
-- **Aba 1: Mapa de Tarifas Diárias (linhas 468–660)**:
-  - Toolbar multi-canal com botões: Direto (0%), Booking (+18%), Airbnb (+15%).
-  - Alternância entre visualização Mensal e Semanal, controles de navegação temporal (`handlePrevMonth`, `handleNextMonth`, semanas anterior/próxima).
-  - Tabela com primeira coluna congelada (`sticky left-0`) para os flats e rolagem horizontal.
-  - Linha 1: `⭐ Geral (Todos)` exibindo diária base e badge `Custom` se houver override global.
-  - Linhas dos Flats (`Flat 101`, `Flat 113`, etc.): exibe diária efetiva considerando precedência de overrides do flat sobre overrides globais e cálculo SEBRAE base.
-  - Destaques visuais: Tarifa SEBRAE limpa, Fim de Semana em índigo (`bg-indigo-50/60`), Flat Override com badge `Override` em fundo âmbar e Geral Override com badge `Custom`.
-- **Modal de Ajuste Individual (linhas 1287–1340)**:
-  - Abre ao clicar em qualquer célula da matriz.
-  - Input para valor da diária (R$) e justificativa.
-  - Botão "Voltar ao SEBRAE" renderizado se a célula possuir override existente, invocando `DELETE /api/tariffs/overrides/:id` com feedback toast e recarga do calendário.
-  - Salva via `POST /api/tariffs/bulk-update` com payload de 1 dia para o flat/canal específico.
-- **Modal de Edição em Lote / Bulk Update (linhas 1345–1594)**:
-  - Intervalo de datas (`bulkStartDate` a `bulkEndDate`).
-  - Filtro de dias da semana (atalhos "Todos", "Sex/Sáb", "Dom-Qui" e 7 seletores individuais).
-  - Seleção de flats ("Todos os Flats" ou "Flats Específicos" com badges clicáveis).
-  - Seleção de canais ("Todos os Canais" ou "Canais Específicos").
-  - Tipo de ajuste: "Valor Fixo (R$)" ou "Acréscimo Percentual (%)" com cálculo de PREVIEW em tempo real (`Ex: R$ 237 + 15% = R$ 273`).
-  - Campo de motivo e submissão via `POST /api/tariffs/bulk-update`.
-- **Aba 2: Parâmetros Base & Adicionais (linhas 665–1280)**:
-  - Motor SEBRAE vs Manual Fixo, markups de canal, rate plans (Com Café / Sem Café), taxas adicionais (limpeza, cama extra, twin, pet policy).
-  - Botão "Salvar Todos os Parâmetros" que sincroniza concorrentemente `POST /api/tariffs/settings` e `PUT /api/site-content` via `Promise.all`.
-  - Botão "Restaurar Padrões".
+2. **Gestão de Equipe (`artifacts/limpeza/src/pages/equipe.tsx`)**:
+   - Modais de criação (linhas 1181–1182), edição (linhas 1308–1309) e permissões de acesso (linhas 1423–1424) contêm ambas as opções:
+     - `📦 Anserve - Repositora (Conferência & Reposição)` (`value="anserve_repositora"`)
+     - `🏢 Anserve - Gestor / Supervisão (Fila NFs & Repasse)` (`value="anserve_gestor"`)
+   - Badges visuais em `renderRoleBadge` (linhas 698–711):
+     - `anserve_repositora`: Badge sky (`bg-sky-600/15 text-sky-700 border-sky-500/30`) com ícone `Package`.
+     - `anserve_gestor`: Badge teal (`bg-teal-600/15 text-teal-700 border-teal-500/30`) com ícone `Building2`.
+   - Pílulas de filtro de perfil (linhas 844–845):
+     - `{ key: "anserve_repositora", label: "Repositora" }`
+     - `{ key: "anserve_gestor", label: "Gestor Anserve" }`
+   - Avatares (linhas 940–941):
+     - `u.role === "anserve_gestor" ? "bg-teal-600/10 text-teal-700 dark:text-teal-300"`
+     - `u.role === "anserve_repositora" ? "bg-sky-600/10 text-sky-700 dark:text-sky-300"`
 
-### 1.3 Compilação do Frontend
-- Comando executado: `npm --prefix artifacts/limpeza run build`
-- Resultado: Sucesso (código de saída `0` em 1m 1s).
-- Bundles gerados em `artifacts/limpeza/dist/public/` (`index.html`, `index.css`, `index.js`).
+3. **Menu Lateral Desktop e BottomNav Mobile (`artifacts/limpeza/src/components/layout.tsx`)**:
+   - Linhas 412–422: Categoria `🧊 Frigobar & Anserve` incluída em `rawNavCategories`.
+   - Linhas 440–446: Filtragem dinâmica de `navCategories` via `hasModuleAccess` oculta categorias vazias e telas não liberadas.
+   - Linhas 320–322: Detecção de rota ativa em `isItemActive`:
+     ```ts
+     if (href === "/anserve" && (location === "/frigobar-gestao")) return true
+     if (href === "/frigobar-reposicao" && (location === "/anserve/reposicao")) return true
+     if (href === "/frigobar" && (location === "/minibar" || location === "/minibar-admin" || location === "/admin/frigobar")) return true
+     ```
+   - Linhas 904–971: Barra de navegação móvel de rodapé (`BottomNav`):
+     - Para `isAnserveRepositora`: Exibe exatamente 2 itens: **Reposição** (`/frigobar-reposicao`) e botão **Mais** (drawer).
+     - Para `isAnserveGestor`: Exibe exatamente 4 itens: **Supervisão** (`/anserve`), **Reposição** (`/frigobar-reposicao`), **Estoque & NF** (`/frigobar-gestao`) e botão **Mais** (drawer).
+     - Camareiras e administradores continuam com seus layouts originais inalterados e sem contaminação.
 
-### 1.4 Suítes Automatizadas de Backend
-- Comando executado: `node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs tests/whatsapp-ai-agent.test.mjs`
-- Resultado: 33/33 testes aprovados com 0 falhas (100% de sucesso).
-
----
-
-## 2. Logic Chain
-
-1. **Atendimento aos Requisitos R5 e Dispatch**:
-   - Observou-se a presença de todos os elementos visuais e lógicos demandados no dispatch: card da chave mestra com visual destacado, os 5 switches granulares com suspensão visual e desativação quando a chave mestra estiver off, e o indicador tri-modal de status.
-   - Observou-se na página de tarifas a separação das duas abas, a renderização de flats x dias x canais com distinção entre cálculo SEBRAE e overrides manuais, e os dois modais de edição chamando os endpoints REST corretos.
-2. **Conformidade com Contratos REST**:
-   - As chamadas em `whatsapp-automation.tsx` aderem aos endpoints `/api/bot-actions/settings` (GET e POST) conforme especificado em `PROJECT.md`.
-   - As chamadas em `tarifas.tsx` aderem a `/api/tariffs/settings`, `/api/tariffs/calendar`, `/api/tariffs/bulk-update` e `/api/tariffs/overrides/:id` conforme testado nas suítes automatizadas.
-3. **Resiliência e UX**:
-   - Ambas as telas utilizam optimistic updates com reversão para o estado prévio caso o servidor responda com erro HTTP ou ocorra falha de rede.
-   - O preview em tempo real no Bulk Update previne erros de precificação pelo operador.
-4. **Zero Regressão e Build Limpo**:
-   - A compilação do Vite foi executada e confirmou ausência de erros de sintaxe ou tipagem.
-   - Todas as 3 suítes de testes de backend passaram integralmente, confirmando integridade entre frontend e backend.
-
----
-
-## 3. Caveats
-
-- **Virtualização de Grade para Grandes Redes**: A renderização da matriz de tarifas utiliza tabela padrão com `overflow-x-auto`. Para o escopo do CorpFlats (10 a 20 flats), a performance é instantânea. Caso a rede venha a operar centenas de unidades no futuro, uma virtualização de linhas poderá ser recomendada.
-- **Sincronização com Z-API Desconectada**: Quando a instância do WhatsApp estiver em transição ou desconectada, o modo tri-modal exibe corretamente "Bot Desativado" até o próximo polling ou verificação manual.
+4. **Compilação do Frontend (`npm --prefix artifacts/limpeza run build`)**:
+   - Comando executado diretamente via terminal:
+     `vite v7.3.6 building client environment for production...`
+     `✓ 3395 modules transformed.`
+     `✓ built in 52.70s`
+   - Código de saída: `0`.
+   - Bundles gerados em `artifacts/limpeza/dist/public/assets/`:
+     - `anserve-dashboard-Cyzb3u5w.js` (17.95 kB)
+     - `anserve-restock-DFwNxbA-.js` (22.30 kB)
+     - `minibar-admin-dz_yiZBj.js` (24.33 kB)
+     - `equipe-DwOMX49H.js` (37.17 kB)
 
 ---
 
-## 4. Adversarial Review & Stress-Test Results
+## 2. Logic Chain (Cadeia Lógica de Raciocínio)
 
-| Cenário de Teste / Ataque | Comportamento Esperado | Comportamento Observado | Status |
-|---|---|---|---|
-| Chave mestra desligada (`apiActionsEnabled = false`) | Switches granulares devem ser suspensos visualmente e bloqueados para clique | Grid recebe `opacity-60 pointer-events-none`, switches recebem `disabled`, banner de aviso surge | **PASS** |
-| Erro de rede ou HTTP 500 ao alternar switch | UI deve reverter imediatamente para o valor anterior | Reverte para o estado `previous` e exibe Toast de erro destrutivo | **PASS** |
-| Célula da matriz com override existente | Deve exibir opção de reverter ao SEBRAE original | Exibe botão "Voltar ao SEBRAE" e aciona `DELETE /api/tariffs/overrides/:id` | **PASS** |
-| Modal de Edição em Lote sem datas informadas | Deve impedir submissão e alertar o usuário | Bloqueia submissão com toast "Datas obrigatórias" | **PASS** |
-| Status Z-API desconectado | Modo tri-modal deve priorizar estado offline sobre switches | Exibe "Bot Desativado" com badge e alerta vermelho | **PASS** |
-
----
-
-## 5. Conclusion
-
-O Milestone M3 (Frontend Admin UI) foi verificado e cumpre com excelência todos os requisitos funcionais, visuais, de resiliência e integridade arquitetural.
-**Veredicto Oficial: APPROVE**.
+1. A partir de **Observation 1**, a configuração dos papéis `anserve_repositora` e `anserve_gestor` em `getDefaultModulesForRole` restringe o acesso canônico estritamente às rotas operacionais do ecossistema de frigobar, sem vazar módulos de reservas, financeiro ou engenharia.
+2. A partir de **Observation 2**, a interface de `/equipe` reflete integralmente os novos perfis em todos os três modais operacionais (criação, edição e permissões granulares), garantindo que a troca do perfil preenche automaticamente os módulos padrão (`getDefaultModulesForRole`), além de disponibilizar badges e filtros de busca rápidos.
+3. A partir de **Observation 3**, o layout adapta-se contextualmente tanto em telas largas (sidebar desktop) quanto em smartphones (`BottomNav`), assegurando que a repositora tenha acesso imediato de um clique à tela de conferência sem confusão visual ou menus irrelevantes.
+4. A partir de **Observation 4**, a ausência de erros de tipagem TypeScript ou de sintaxe no Vite garante que a aplicação compila de forma determinística e está pronta para publicação contínua em produção.
+5. Na análise adversarial e de integridade:
+   - Não foram detectados hardcodes de testes ou fachadas vazias.
+   - Os componentes implementam lógica completa de requisições REST autenticadas (`/api/minibar/*`).
+   - A guarda de rotas em `App.tsx` (`AdminGuard`) consulta `hasModuleAccess`, impedindo acessos não autorizados mesmo via digitação direta de URLs.
 
 ---
 
-## 6. Verification Method
+## 3. Caveats (Ressalvas)
 
-Para reproduzir e auditar as verificações executadas:
+1. Em estrita conformidade com `AGENTS.md`, **não foram executados testes globais ou em lote** (`tests/*.test.mjs`).
+2. **Observação Cosmética Menor (Não-Bloqueante)**: No rodapé do drawer lateral móvel de `layout.tsx` (linha 1243), a expressão ternária `{isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isRecepcao ? "Recepção" : "Camareira"}` exibe "Camareira" como fallback no subtítulo abaixo do nome do usuário quando logado com os perfis Anserve. Isso não afeta a segurança, o RBAC ou o BottomNav, mas recomenda-se adicionar os casos específicos dos perfis Anserve em um refino futuro.
+
+---
+
+## 4. Conclusion (Conclusão)
+
+O trabalho do `worker_m3` no que tange a RBAC, Permissões Centrais, Gestão de Equipe e Navegação Desktop/Mobile (Features F19 a F28) está **correto, completo, de alta qualidade e com integridade comprovada**.
+
+**Veredito Oficial**: **APPROVE**
+
+---
+
+## 5. Verification Method (Método de Verificação Independente)
 
 1. **Compilação do Frontend**:
    ```powershell
    npm --prefix artifacts/limpeza run build
    ```
-   *Critério de aceitação*: Código de saída 0 gerando bundles em `artifacts/limpeza/dist/public/`.
-
-2. **Bateria de Testes Automatizados**:
-   ```powershell
-   node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs tests/whatsapp-ai-agent.test.mjs
-   ```
-   *Critério de aceitação*: 33 testes passam com 0 falhas.
-
-3. **Inspeção de Código e Contratos**:
-   - `artifacts/limpeza/src/pages/whatsapp-automation.tsx` (linhas 547–725 e 1799–2050)
-   - `artifacts/limpeza/src/pages/tarifas.tsx` (linhas 453–660 e 1285–1594)
+   *Condição de invalidação*: Qualquer código de saída diferente de 0.
+2. **Inspeção Estática**:
+   - `artifacts/limpeza/src/lib/permissions.ts`: linhas 92–102, 152–160, 176–179, 356–362.
+   - `artifacts/limpeza/src/pages/equipe.tsx`: linhas 698–711, 844–845, 1181–1182, 1308–1309, 1423–1424.
+   - `artifacts/limpeza/src/components/layout.tsx`: linhas 320–322, 412–422, 904–971.

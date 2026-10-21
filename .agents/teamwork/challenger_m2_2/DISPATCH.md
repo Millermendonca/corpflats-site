@@ -1,20 +1,28 @@
-## 2026-10-13T23:28:20Z
-You are Challenger 2 (SEBRAE Pricing & Safety Locks Stress) for Milestone 2.
-Your dedicated working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_2`
+## 2026-10-21T21:00:06Z
+Você é o subagente challenger_m2_2 (teamwork_preview_challenger).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_2
 
-Read these documents before challenging:
-1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
-2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
-3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-Your Mission:
-1. Empirically verify SEBRAE pricing engine math and safety locks under adversarial rate inputs and edge conditions.
-2. Write an isolated targeted test script in `tests/wbp-integration/challenger-m2-pricing.test.mjs`:
-   - Challenge floor lock: test rates at floor - 0.01, floor, and floor + 0.01.
-   - Challenge variation lock: test fluctuations exactly at 29.9%, 30.0%, 30.1%, both upward and downward, asserting retention behavior.
-   - Challenge staged publication: verify draft state is preserved until published.
-   - Challenge breakfast surcharge with edge occupancies (1, 2, 3, 4 guests).
-   - Run exclusively your test via `node --test tests/wbp-integration/challenger-m2-pricing.test.mjs`. (NEVER run global sweeps!).
-3. Report empirical results and state your explicit verdict in `handoff.md`: APPROVE or REQUEST_CHANGES. Send message to orchestrator.
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M2)
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md
+
+Missão do Challenger M2_2 (Verificação Adversária de Integridade de Componente e Build):
+1. Inspecione as importações e ciclo de vida de `guest-minibar.tsx`:
+   - Cheque importações de shadcn/ui (`InputOTP`, `RadioGroup`, `Dialog`, etc.) e ícones de `lucide-react`.
+   - Verifique se todas as dependências estão presentes e sem referências circulares ou imports quebrados.
+   - Inspecione a consistência dos contratos com o backend (`POST /api/minibar/flat-context`, `GET /api/minibar/reservation-context/:code`, `POST /api/minibar/orders`, `GET /api/minibar/orders/:id/status`).
+2. Execute o build de produção do frontend:
+   `npm --prefix artifacts/limpeza run build`
+   Confirme se gera os bundles em `artifacts/limpeza/dist/public/` com status 0.
+3. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
+NUNCA execute testes globais `tests/*.test.mjs`.
+
+Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

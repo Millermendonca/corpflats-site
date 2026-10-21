@@ -7274,7 +7274,7 @@ export default function PmsCalendar() {
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              const link = `https://corpflats.onrender.com/minha-reserva/${selectedRes.code || selectedRes.id}`;
+                              const link = `https://corpflats.com.br/minha-reserva/${selectedRes.code || selectedRes.id}`;
                               navigator.clipboard.writeText(link);
                               toast({ title: "Link Copiado!", description: "Link do hóspede copiado para a área de transferência." });
                             }}
@@ -8655,7 +8655,7 @@ export default function PmsCalendar() {
             })()}
 
             {selectedRes && resModalTab === "links" && (() => {
-              const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
+              const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br"
               const resCode = selectedRes.code || selectedRes.id
               const guestName = selectedRes.guestName || "Hóspede"
               const flatNum = selectedRes.flatNumber || ""

@@ -1,66 +1,54 @@
-# BRIEFING — 2026-10-19T05:17:00Z
+# BRIEFING — 2026-10-21T19:28:50Z
 
 ## Mission
-Forensic integrity re-audit of Milestone 1: Backend Auth, Roles (dev vs admin), Dev Endpoints protection, Twin Parity, and WBP Manual Exclusions in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
+Forensic integrity audit of Milestone M1 (Minibar Backend Collections, Endpoints, Integrations, and Tests)
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
 - Roles: critic, specialist, auditor
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1
-- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Target: Milestone 1 (Foundation & WBP Router Mounting)
-- Added target 2026-10-19: Milestone 1 (Backend Auth, Roles dev vs admin & Dev Endpoints)
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Target: Milestone M1
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
 - Trust NOTHING — verify everything independently
-- NUNCA executar testes globais, varreduras ou em lote (AGENTS.md rule)
-- Apenas o teste estritamente pontual do que foi alterado (AGENTS.md rule)
-- Check Twin Parity: SHA-256 byte-for-byte identity between artifacts and scripts twins
-- Check Git & Branch Integrity: active branch feature/wbp-integration, no commit to main, uncommitted audit logs preserved
-- Check Test Isolation: DATABASE_URL unset/removed
-- Binary verdict in handoff.md: CLEAN or INTEGRITY VIOLATION
-- Added constraint 2026-10-19: Verify genuine implementation of `ensureSystemUsers`, `hashPassword`, `requireDevAuth`, and no test shortcuts
+- NENHUM teste global em lote (apenas teste estritamente pontual tests/minibar-backend-flow.test.mjs)
+- Nenhuma notificação real disparada para telefones reais de hóspedes
+- Paridade SHA-256 byte-a-byte entre artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs
+- Veredito BINÁRIO inegociável: CLEAN ou INTEGRITY VIOLATION
 
 ## Current Parent
-- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Updated: 2026-10-19T05:17:00Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T19:28:50Z
 
 ## Audit Scope
-- **Work product**: Milestone 1 changes in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/auth-roles-permissions.test.mjs`, and physical purge of WBP manual from `artifacts/limpeza/src/`.
+- **Work product**: artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, tests/minibar-backend-flow.test.mjs
 - **Profile loaded**: General Project (Integrity Forensics)
 - **Audit type**: forensic integrity check
-- **Integrity mode**: development (per ORIGINAL_REQUEST.md 2026-10-19T02:58:52Z)
 
 ## Audit Progress
 - **Phase**: reporting
-- **Checks completed**:
-  1. SHA-256 Twin Parity Check: PASS (both hashes match `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
-  2. Pontual Test Suite Execution `node --test tests/auth-roles-permissions.test.mjs`: PASS (6/6 tests passing, exit code 0).
-  3. Physical exclusion of `wbp-manual.tsx` and `WbpHelpManualPage.tsx`: PASS (both files deleted, 0 references in src/).
-  4. Frontend Build (`npm --prefix artifacts/limpeza run build`): PASS (built in 20.47s, exit code 0).
-  5. Cryptographic & Auth Implementation: PASS (genuine scrypt+salt hashing, timing-safe equality, robust RBAC).
-  6. Database isolation: PASS (`data/database.json` untouched).
-- **Checks remaining**: none.
-- **Findings so far**: CLEAN (All integrity checks verified empirically and passed).
-
-## Attack Surface
-- **Hypotheses tested**:
-  - H1: Fake / facade implementation of role checks or password hashing -> Refuted. Genuine implementation.
-  - H2: Desync in twin files between artifacts and scripts -> Refuted. Hashes 100% synchronized (`33C175...`).
-  - H3: Lingering routes or references to WBP manual -> Refuted. Zero references in `src/`, files physically removed.
-  - H4: Database state pollution in `data/database.json` -> Refuted. Database intact.
-- **Vulnerabilities found**: None.
-- **Untested angles**: None within M1 scope.
-
-## Loaded Skills
-- None specified by orchestrator.
+- **Checks completed**: Facade detection (PASS), Hardcoded output detection (PASS), Persistence & Querying logic check (PASS), Helper integrations (PASS), AGENTS.md compliance check (PASS), SHA-256 parity verification (FAIL), Empirical test run (FAIL - 1/20 failed)
+- **Checks remaining**: None
+- **Findings so far**: INTEGRITY VIOLATION due to twin-server SHA-256 hash mismatch and Subtest 1 failure in tests/minibar-backend-flow.test.mjs.
 
 ## Key Decisions Made
-- Binary verdict updated: CLEAN (Approved).
+- Confirmed genuine business logic, robust schema persistence and helper integrations.
+- Discovered SHA-256 mismatch between artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs caused by unstaged diff at line 27255.
+- Executed empirical test run which verified 19/20 tests passing but failed on Subtest 1 (AssertionError on twin-server SHA-256 parity).
+- Rendered binary verdict: INTEGRITY VIOLATION (Rejection required until parity is restored).
 
 ## Artifact Index
-- DISPATCH.md — audit assignment
-- BRIEFING.md — persistent state memory
-- progress.md — liveness heartbeat
-- handoff.md — final audit report
+- DISPATCH.md — Audit assignment instructions
+- BRIEFING.md — Auditor situational awareness
+- progress.md — Auditor activity log
+- handoff.md — Final forensic audit report
+
+## Attack Surface
+- **Hypotheses tested**: Twin-server SHA-256 parity, Endpoint logic facade/dummy check, DB retention/prune logic, Payment & messaging helper mocking vs reality.
+- **Vulnerabilities found**: Desynchronization between artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs.
+- **Untested angles**: Frontend interfaces (scheduled for Milestone M2/M3).
+
+## Loaded Skills
+- None

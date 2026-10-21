@@ -11,7 +11,7 @@ async function uploadToCloud() {
     console.log(`[Auto-Sync Watcher] Lendo planilha e enviando para o Render...`);
     const buf = fs.readFileSync(targetFile);
     const base64 = buf.toString("base64");
-    const res = await fetch("https://corpflats.onrender.com/api/sync/upload-sheet-json", {
+    const res = await fetch("https://corpflats.com.br/api/sync/upload-sheet-json", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base64 })

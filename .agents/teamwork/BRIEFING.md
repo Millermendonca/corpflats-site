@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-19T14:10:30Z
+# BRIEFING — 2026-10-21T18:30:00Z
 
 ## Mission
-Implementar controle visual e granular de permissões de acesso por usuário na página de Gestão de Equipe (/equipe) do Guest-Flow-Manager (CorpFlats), com allowedModules no backend e dinâmico no menu lateral e guardas de rota.
+Implementar o ecossistema completo de Venda e Gestão de Frigobar nos Flats (CorpFlats + Anserve) no projeto Guest-Flow-Manager: autoatendimento mobile do hóspede, checkout PIX/Cartão, 4 interfaces dedicadas, fluxo de NF automático via WhatsApp/E-mail, controle de cortesias, auditoria de divergências com Sofia e inteligência analítica no CRM.
 
 ## 🔒 My Identity
 - Archetype: sentinel
@@ -21,7 +21,9 @@ Implementar controle visual e granular de permissões de acesso por usuário na 
 - Parent Caller (UI Reorganization & Permissions): c918ec21-d268-4082-bdd6-d0c3dc1d3481
 - Orchestrator (orchestrator_13): c4864abd-776b-4ad1-aef9-25c7af7463df (completed, retired)
 - Victory Auditor (victory_auditor_11): 8208bf2a-33f9-4fb8-9ffd-72fea3816107 (completed, retired)
-- Active Orchestrator (swe_light_2): 17091fdb-497c-4bb6-83bb-cb42adbcc6db
+- Orchestrator (swe_light_2): 17091fdb-497c-4bb6-83bb-cb42adbcc6db (completed, retired)
+- Parent Caller (Minibar): 78fb27ce-9ba1-4b4f-9df0-1e49eae533a9
+- Active Orchestrator (orchestrator_16): d10c20e2-adfb-4695-835e-52dd3bebe9a9
 - Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
@@ -49,22 +51,25 @@ Implementar controle visual e granular de permissões de acesso por usuário na 
 - Escopo estrito de testes (AGENTS.md): NUNCA rodar testes globais/varreduras
 - Granular permissions: allowedModules per user, presets per role, safe devOnly module stripping for non-dev editors
 - Route: SWE Light (teamwork_preview_swe)
+- Minibar Ecosystem: autoatendimento mobile do hóspede, checkout PIX/Cartão, 4 interfaces dedicadas, fluxo de NF automático via WhatsApp/E-mail, controle de cortesias, auditoria de divergências com Sofia e inteligência analítica no CRM.
+- Route: General (teamwork_preview_orchestrator)
 
 ## User Context
-- **Last user request**: Implementar controle visual e granular de permissões de acesso por usuário na página de Gestão de Equipe (/equipe) com allowedModules no backend e dinâmico no menu lateral e guardas de rota.
+- **Last user request**: Implementar ecossistema completo de Venda e Gestão de Frigobar nos Flats (CorpFlats + Anserve).
 - **Pending clarifications**: none
 - **Delivered results**:
-  - Task dispatched to swe_light_2 (17091fdb-497c-4bb6-83bb-cb42adbcc6db).
-  - Monitoring Crons 1 & 2 scheduled.
+  - Task routed to General path (teamwork_preview_orchestrator).
+  - Orchestrator 16 spawned (d10c20e2-adfb-4695-835e-52dd3bebe9a9) with directory `.agents/teamwork/orchestrator_16`.
+  - Cron 1 (Reporting */8) and Cron 2 (Liveness */10) scheduled.
 
 ## Project Status
-- **Phase**: in progress
-- **Route**: SWE Light (teamwork_preview_swe)
-- **Active Orchestrator Dir**: .agents/teamwork/swe_light_2
-- **Active Orchestrator ID**: 17091fdb-497c-4bb6-83bb-cb42adbcc6db
+- **Phase**: in progress (Phase 0: Survey com 3 Explorers em paralelo)
+- **Route**: General (teamwork_preview_orchestrator)
+- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_16
+- **Active Orchestrator ID**: d10c20e2-adfb-4695-835e-52dd3bebe9a9
 - **Victory Auditor ID**: [TBD]
-- **Cron 1 (Reporting)**: e9abb18b-3068-432f-a9e7-82911d7b023d/task-22
-- **Cron 2 (Liveness)**: e9abb18b-3068-432f-a9e7-82911d7b023d/task-24
+- **Cron 1 (Reporting)**: 67a1db4f-0395-4e5c-be0d-887219d1c1e8/task-22
+- **Cron 2 (Liveness)**: 67a1db4f-0395-4e5c-be0d-887219d1c1e8/task-24
 
 ## Victory Audit Status
 - **Triggered**: no
@@ -73,5 +78,5 @@ Implementar controle visual e granular de permissões de acesso por usuário na 
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative user request
-- .agents/teamwork/swe_light_2/context.md — Initial orchestrator context
-- .agents/teamwork/swe_light_2/progress.md — Active orchestrator progress log
+- .agents/teamwork/orchestrator_16/context.md — Initial orchestrator context
+- .agents/teamwork/orchestrator_16/progress.md — Active orchestrator progress log

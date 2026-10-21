@@ -2316,7 +2316,7 @@ export default function FiscalInvoicesPage() {
                             return
                           }
                         } catch {}
-                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
+                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
                         await sendDirectZapiWithFallback({
                           phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
                           message,
@@ -2328,7 +2328,7 @@ export default function FiscalInvoicesPage() {
                       },
                       getWaUrl: () => {
                         const invId = lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id
-                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
+                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
                         return buildDirectWaWebUrl(lastEmittedInvoice.tomadorTelefone, message)
                       }
                     })}
@@ -3526,7 +3526,7 @@ export default function FiscalInvoicesPage() {
                                             return
                                           }
                                         } catch {}
-                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
+                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
                                         await sendDirectZapiWithFallback({
                                           phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
                                           message,
@@ -3538,7 +3538,7 @@ export default function FiscalInvoicesPage() {
                                       },
                                       getWaUrl: () => {
                                         const invId = inv.numeroNfse || inv.id
-                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.onrender.com/api/nfse/pdf/${invId}`
+                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
                                         return buildDirectWaWebUrl(inv.tomadorTelefone, message)
                                       }
                                     })}

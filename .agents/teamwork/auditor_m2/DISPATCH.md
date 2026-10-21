@@ -1,18 +1,31 @@
-## 2026-10-13T23:28:20Z
-You are the Forensic Integrity Auditor for Milestone 2.
-Your dedicated working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m2`
+## 2026-10-21T21:00:06Z
+Você é o subagente auditor_m2 (teamwork_preview_auditor).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m2
 
-Read these documents before auditing:
-1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
-2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
-3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-Your Mission:
-Execute systematic forensic integrity checks for Milestone 2:
-1. Check for Cheating: Search code for hardcoded test expectations, dummy facades, fake math implementations, or mocked responses masking missing logic. Verify genuine SEBRAE formulas and genuine availability scanning.
-2. Check Twin Parity: Verify SHA-256 byte-for-byte identity between `artifacts/` and `scripts/` for `availability.mjs`, `pricing.mjs`, and `demo-server.mjs`.
-3. Check Git & Branch Integrity: Verify active branch is `feature/wbp-integration`, no commits touched `main`, and commit `b213257` was pushed to remote.
-4. Check Test Isolation: Verify tests run with `DATABASE_URL` removed/unset, temporary DB copies are used, and real `data/database.json` has ZERO changes in mtime and SHA-256 hash.
-5. Provide a binary verdict in `handoff.md`: **CLEAN** or **INTEGRITY VIOLATION**. (Note: INTEGRITY VIOLATION is a hard binary veto). Send message to orchestrator.
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M2)
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md
+5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\changes.md
+
+Missão do Auditor M2 (Auditoria Forense de Integridade de M2):
+1. Verifique se há CHEATING, DUMMY IMPLEMENTATIONS ou FACADES:
+   - A página `artifacts/limpeza/src/pages/guest-minibar.tsx` é uma implementação autêntica completa ou apenas uma casca estática?
+   - Os fluxos de OTP, catálogo, gabarito não-editável, aviso de desacoplamento, preferências de NF, PIX dinâmico com polling e Mercado Pago foram genuinamente codificados?
+   - Os arquivos em `artifacts/limpeza/dist/` foram realmente gerados pelo build do Vite e commitados?
+2. Verifique conformidade com `AGENTS.md`:
+   - `git commit` e `git push` foram realizados?
+   - Nenhum teste global ou em lote (`tests/*.test.mjs`) foi executado?
+   - Nenhuma notificação real foi disparada para telefones reais de hóspedes?
+3. Execute a verificação de build:
+   `npm --prefix artifacts/limpeza run build`
+4. Conclua com veredito BINÁRIO inegociável: CLEAN ou INTEGRITY VIOLATION.
+
+Escreva seu relatório forense em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

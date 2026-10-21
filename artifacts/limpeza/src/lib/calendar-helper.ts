@@ -80,7 +80,7 @@ export function generateIcsContent(
     : `Hospedagem CorpFlats - Flat ${data.flatNumber} - Reserva #${data.reservationCode}`
 
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}, CEP ${prop.zipCode}`
-  const manageUrl = data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
+  const manageUrl = data.manageUrl || `https://corpflats.com.br/minha-reserva/${data.reservationCode}`
   const guestEmail = data.guestEmail || `hospede-${data.reservationCode}@corpflats.com.br`
 
   const descriptionLines: string[] = []
@@ -195,7 +195,7 @@ export function getGoogleCalendarUrl(data: ReservationCalendarData): string {
 
   const title = `Hospedagem CorpFlats - Flat ${data.flatNumber} (#${data.reservationCode})`
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}`
-  const manageUrl = data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
+  const manageUrl = data.manageUrl || `https://corpflats.com.br/minha-reserva/${data.reservationCode}`
 
   const details = [
     `🏨 HOSPEDAGEM CONFIRMADA NA CORPFLATS`,
@@ -232,7 +232,7 @@ export function getOutlookCalendarUrl(data: ReservationCalendarData): string {
 
   const title = `Hospedagem CorpFlats - Flat ${data.flatNumber} (#${data.reservationCode})`
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}`
-  const manageUrl = data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
+  const manageUrl = data.manageUrl || `https://corpflats.com.br/minha-reserva/${data.reservationCode}`
 
   const body = `Hospedagem confirmada no Flat ${data.flatNumber} (Reserva #${data.reservationCode}). Hóspede: ${data.guestName}. Gerenciar: ${manageUrl}`
 
@@ -311,6 +311,6 @@ export function generateLodgingJsonLd(data: ReservationCalendarData): Record<str
     "numGuests": data.numGuests || 2,
     "priceCurrency": "BRL",
     "price": data.totalAmount || undefined,
-    "url": data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
+    "url": data.manageUrl || `https://corpflats.com.br/minha-reserva/${data.reservationCode}`
   }
 }

@@ -1,63 +1,61 @@
-# BRIEFING — 2026-10-11T03:15:45Z
+# BRIEFING — 2026-10-21T21:37:00Z
 
 ## Mission
-Review and adversarially stress-test Milestone M3 (Frontend Admin UI: WhatsApp Automation switches & Tarifas Dynamic Matrix/Bulk Update) against original requirements, contract, build integrity, and adversarial failure modes.
+Revisão e crítica adversarial do Milestone M3 referente a RBAC, Permissões, Gestão de Equipe e Navegação (Desktop Sidebar e Mobile BottomNav) para os perfis Anserve (`anserve_repositora` e `anserve_gestor`).
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: teamwork_preview_reviewer
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M3
-- Instance: 1 of 1
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M3 (F19-F28) - Reviewer 1 (RBAC, Equipe, Navegação)
+- Instance: 1 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Report failures and findings; do not fix them directly
-- Check integrity violations (hardcoded results, dummy facades, shortcuts, self-certifications)
+- NUNCA executar testes globais `tests/*.test.mjs` ou varreduras completas
+- Executar build frontend `npm --prefix artifacts/limpeza run build` para validar compilação
+- Detecção estrita de violações de integridade (mockings falsos, hardcodes enganosos, fachadas)
+- Emitir veredito final explícito: APPROVE ou REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T03:15:45Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T21:37:00Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-  - `artifacts/limpeza/src/pages/tarifas.tsx`
-- **Interface contracts**:
-  - `.agents/teamwork/ORIGINAL_REQUEST.md`
-  - `.agents/teamwork/orchestrator_4/PROJECT.md`
-  - `.agents/teamwork/worker_m3/handoff.md`
-- **Review criteria**: correctness, completeness, UI state sync, visual feedback, build pass, adversarial robustness
-
-## Key Decisions Made
-- Confirmed that `whatsapp-automation.tsx` implements the master switch card, the 5 granular action switches with visual suspension, and the tri-modal status indicator.
-- Confirmed that `tarifas.tsx` implements the 2 tabs, the multi-channel calendar matrix with SEBRAE vs Custom override badges, the single-cell editor modal (including "Voltar ao SEBRAE" DELETE call), and the bulk update modal with real-time preview.
-- Executed `npm --prefix artifacts/limpeza run build` independently: returned exit code 0.
-- Executed backend test suites (`tariff-engine.test.mjs`, `bot-actions-api.test.mjs`, `whatsapp-ai-agent.test.mjs`): 33/33 tests passing (100%).
-- Verified contract alignment with `/api/bot-actions/settings`, `/api/tariffs/calendar`, `/api/tariffs/bulk-update`, `/api/tariffs/overrides/:id`.
-- Zero integrity violations detected. Verdict: APPROVE.
-
-## Artifact Index
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1\DISPATCH.md` — recorded dispatch message
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1\progress.md` — liveness heartbeat
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1\handoff.md` — comprehensive review report and verdict
+  - `artifacts/limpeza/src/lib/permissions.ts`
+  - `artifacts/limpeza/src/pages/equipe.tsx`
+  - `artifacts/limpeza/src/components/layout.tsx`
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/anserve-restock.tsx`
+  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`
+  - `artifacts/limpeza/src/pages/minibar-admin.tsx`
+- **Interface contracts**: `.agents/teamwork/orchestrator_16/PROJECT.md` (M3: F19-F28), `AGENTS.md`
+- **Review criteria**: RBAC correctness, UI completeness, mobile navigation ergonomics, TypeScript typing, build success, absence of regressions.
 
 ## Review Checklist
 - **Items reviewed**:
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-  - `artifacts/limpeza/src/pages/tarifas.tsx`
-  - Endpoint contracts in `artifacts/api-server/demo-server.mjs`
-  - Frontend build artifact generation in `artifacts/limpeza/dist/public/`
+  - `permissions.ts`: `getDefaultModulesForRole`, `PERMISSION_CATEGORIES`, `ROUTE_ALIASES`, `hasModuleAccess`
+  - `equipe.tsx`: Modais de criação, edição e permissões; `renderRoleBadge`; pílulas de filtro de perfil
+  - `layout.tsx`: `rawNavCategories`, `navCategories` filtering, `isItemActive`, `BottomNav` role branches
+  - Build: `npm --prefix artifacts/limpeza run build` executado com saída código 0
 - **Verdict**: APPROVE
-- **Unverified claims**: None. All claims verified empirically.
+- **Unverified claims**: Nenhuma pendente. Todas as alegações de compilação e rotas foram verificadas diretamente.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Master switch disabled suspension on granular toggles: PASSED (visual opacity, pointer-events disabled, switches disabled, warning banner).
-  - Tri-modal operational status state transitions: PASSED (correct logic for disconnected/disabled, responder mode, autonomous mode with active count).
-  - Single override rollback to SEBRAE: PASSED (calls `DELETE /api/tariffs/overrides/:id` and refreshes calendar).
-  - Bulk update preview calculation: PASSED (reactively previews fixed and percentage adjustments).
-  - Error rollback on optimistic UI state: PASSED (reverts to previous state on HTTP failure or network exception).
-- **Vulnerabilities found**: None critical or blocking.
-- **Untested angles**: Extreme volume of flats (>500) might require table virtualization in future iterations, but current property scope (10-20 flats) performs optimally.
+  - Vazamento de módulos restritos para equipe Anserve: Refutado. `hasModuleAccess` e filtragem por categoria bloqueiam completamente.
+  - Bloqueio indevido de supervisores no painel de supervisão: Refutado. `AdminGuard` usa `hasModuleAccess(user, location)` que aceita `anserve_gestor`.
+  - Quebra do build frontend com TypeScript/Vite: Refutado. Compilação gerou todos os assets com código 0.
+- **Vulnerabilities found**: Nenhuma falha de segurança ou integridade. Observação cosmética menor: subtítulo de função no footer do drawer móvel de `layout.tsx` exibe "Camareira" por fallback para usuários Anserve (não afeta permissões nem o BottomNav).
+- **Untested angles**: Testes globais e2e não foram rodados em conformidade estrita com a regra mandatória de AGENTS.md.
+
+## Key Decisions Made
+- Aprovação do Milestone M3 na dimensão RBAC, Equipe e Navegação, registrando veredito APPROVE com relatório circunstanciado de 5 componentes em handoff.md.
+
+## Artifact Index
+- `DISPATCH.md` — Despacho e diretrizes recebidas
+- `BRIEFING.md` — Memória e estado operacional
+- `progress.md` — Liveness heartbeat
+- `handoff.md` — Relatório final 5-componentes com veredito

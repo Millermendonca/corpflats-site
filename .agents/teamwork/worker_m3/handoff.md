@@ -1,129 +1,91 @@
-# Handoff Report: Milestone 3 — Layout Auto-Hide Sidebar, 6 Categorias Accordion, Busca Rápida e Remoção WBP
+# Handoff Report: Implementação dos Portais Anserve, Admin CorpFlats & RBAC (Milestone M3)
 
-**Subagente**: worker_m3 (TypeName: teamwork_preview_worker)  
-**Destinatário**: Project Orchestrator (`c4864abd-776b-4ad1-aef9-25c7af7463df`)  
-**Data**: 2026-10-19T05:03:00Z  
-**Status**: Concluído (Hard Handoff)  
-**Arquivo Exclusivo de Escopo**: `artifacts/limpeza/src/components/layout.tsx`
-
----
-
-## 1. Observation
-
-1. **Estrutura Original do Layout em `artifacts/limpeza/src/components/layout.tsx:470, 614`**:
-   - Linha 470: `<aside className={`hidden md:flex w-64 lg:w-72 bg-card border-r border-border flex-col shrink-0 print:hidden ...`}>`
-   - Linha 614: `<main className="flex-1 flex flex-col min-w-0 max-h-[100dvh] overflow-y-auto pb-20 md:pb-0 ...">`
-   - Verbatim: A barra lateral desktop ocupava largura estática de 256px (`w-64`) a 288px (`lg:w-72`) diretamente no fluxo flexbox do documento, comprimindo a largura útil da grade do calendário PMS (`/reservas`).
-2. **Ausência de Busca Desktop e Estrutura Contínua (`layout.tsx:470-550`)**:
-   - Verbatim: A barra lateral desktop renderizava as categorias em lista contínua vertical sem controle de expansão (accordion) e sem campo de busca (o campo `searchQuery` existia apenas dentro do drawer mobile nas linhas 773-783).
-3. **Categorias Antigas e Ordem Não Priorizada (`layout.tsx:250-324`)**:
-   - Verbatim: O menu anterior continha 7 categorias desordenadas (`🧹 Governança & Camareiras` em 1º, `📅 Reservas & Hospedagem` apenas em 3º, e ferramentas técnicas misturadas em Comunicação e Sistema).
-4. **Resíduos do Manual WBP (`layout.tsx:316, 564-573`)**:
-   - Linha 316: `{ href: "/ajuda-wbp", label: "Manual de Integração WBP", icon: HelpCircle, ... }`
-   - Linhas 564-573: Botão no rodapé com ícone `HelpCircle` apontando para `/ajuda-wbp`.
-5. **Resultado da Compilação (`npm run build` em `artifacts/limpeza`)**:
-   - Comando executado: `npm run build` na pasta `artifacts/limpeza`.
-   - Saída verbatim:
-     ```
-     > @workspace/limpeza@0.0.0 build
-     > vite build --config vite.config.ts
-
-     vite v7.3.6 building client environment for production...
-     transforming...
-     ✓ built in 28.02s
-     ```
-   - Código de saída: 0 (sem erros de TypeScript ou bundle).
+**Agente**: `worker_m3` (teamwork_preview_worker)  
+**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
+**Data**: 2026-10-21T21:26:00Z  
+**Tipo**: Hard (Tarefa Concluída)  
+**Milestone**: M3 (Features F19 a F28)
 
 ---
 
-## 2. Logic Chain
+## 1. Observation (Observações Diretas)
 
-1. **Largura 0px Desktop via Posicionamento Fixed e Espaçador Condicional**:
-   - A partir de (Obs 1), transformou-se o `<aside>` em elemento com posicionamento `fixed top-0 bottom-0 left-0 z-40 w-64 lg:w-72`.
-   - Inseriu-se um elemento espaçador flexbox condicional:
-     `<div aria-hidden="true" className={`hidden md:block shrink-0 transition-[width] duration-300 ease-in-out ${isPinned ? "w-64 lg:w-72" : "w-0 overflow-hidden pointer-events-none"}`} />`
-   - Quando `isPinned === false` (padrão inicial lido de `localStorage.getItem("gfm_sidebar_pinned")`), o espaçador tem largura `0px` no fluxo normal do documento, permitindo que `<main className="flex-1 min-w-0">` ocupe 100% da largura da janela, liberando a visualização completa do Mapa de Reservas PMS (`/reservas`).
-2. **Auto-Hide, Hover Edge Trigger, Menu Trigger e Fechamento com Debounce**:
-   - Adicionou-se o gatilho sensível na borda esquerda:
-     `<div onMouseEnter={handleMouseEnterSidebar} className="fixed left-0 z-30 hidden md:flex items-center w-3 hover:w-7 cursor-pointer group ...">`
-   - Adicionou-se o botão discreto de menu flutuante no topo esquerdo:
-     `{!isPinned && !isDesktopOpen && (<div className="fixed left-3 z-30 hidden md:block top-3/top-12">...<Button ...><Menu className="w-4 h-4 text-primary" /><span>Menu</span></Button></div>)}`
-   - Ao aproximar o mouse da borda esquerda ou clicar no botão "Menu", `isDesktopOpen` torna-se `true`, fazendo a barra deslizar suavemente para a tela com `translate-x-0` sobre o conteúdo (overlay flutuante com sombra suave).
-   - Ao retirar o cursor da sidebar (`onMouseLeave`), um timer debounce de 280ms (`closeTimerRef`) previne fechamentos acidentais e recolhe suavemente a barra (`-translate-x-full`) se `!isPinned`.
-   - Um backdrop sutil (`fixed inset-0 z-30 bg-black/10 backdrop-blur-[0.5px]`) permite fechar o menu com um clique fora.
-   - Ao clicar em qualquer link de navegação, a sidebar desfixada recolhe automaticamente (`setIsDesktopOpen(false)`).
-3. **Botão de Alternância Pin/Unpin com Persistência em `localStorage`**:
-   - No cabeçalho da sidebar, implementou-se o botão de alternância com ícones `Pin` e `PinOff`.
-   - Ao clicar, o estado `isPinned` é alternado e salvo em `localStorage.setItem("gfm_sidebar_pinned", String(next))`.
-   - Quando fixado, o espaçador flexbox expande para `w-64 lg:w-72` com transição suave `transition-[width] duration-300 ease-in-out`, mantendo a barra fixa ao lado do conteúdo.
-4. **Barra de Busca Rápida Unificada (Desktop e Mobile)**:
-   - A partir de (Obs 2), implementou-se o campo de busca rápida no topo da barra lateral desktop e no topo do drawer mobile.
-   - A filtragem em tempo real avalia:
-     `matchLabel = it.label.toLowerCase().includes(q)`
-     `matchDesc = it.description && it.description.toLowerCase().includes(q)`
-     `matchHref = it.href.toLowerCase().includes(q)` (ex.: buscar `/notas`, `/pix`, `/crm`, `/equipe`)
-     `matchTitle = it.title && it.title.toLowerCase().includes(q)`
-   - Implementou-se a auto-expansão reativa: `isCategoryOpen = (catId) => searchQuery.trim().length > 0 || Boolean(openCategories[catId])`. Sempre que o operador digita um termo de busca, todas as categorias com módulos correspondentes expandem instantaneamente sem necessidade de cliques adicionais.
-5. **Reorganização em 6 Categorias por Prioridade de Uso Diário**:
-   - A partir de (Obs 3), estruturou-se as 6 categorias operacionais em modo accordion:
-     1. **📅 Reservas & Hospedagem** (ID `reservas`, aberta por padrão com `openCategories: { reservas: true }`, liderada por PMS `/reservas` e Caixa de Entrada OTA `/caixa-entrada-ota`).
-     2. **💬 Comunicação & Atendimento** (ID `comunicacao`: WhatsApp Chat, Automação WhatsApp, Gerenciador de E-mails, Notificações).
-     3. **🧹 Governança & Manutenção** (ID `governanca`: Painel Limpeza, Fechamento/Extrato, Lista de Compras, Ocorrências, Preventivas, Vistorias, Serviços Externos, Achados & Perdidos, Automação Camareiras).
-     4. **💰 Financeiro, Tarifas & Fiscal** (ID `financeiro`: ERP Financeiro & DRE, Tarifas SEBRAE, Pagamentos PIX, Hub NFS-e, Funil de Vendas).
-     5. **🏨 Propriedade & Equipe** (ID `propriedade`: Equipe & Níveis de Acesso `/equipe`, Flats & Regras, Garagem, Avaliações IA, Editor do Site).
-     6. **🛠️ Engenharia & Dev** (ID `engenharia`: Integrações Técnicas, Conexão Z-API, Mapa da Jornada, Monitor do Servidor, Status da IA, Logs & Auditoria).
-   - Auto-expansão dinâmica da categoria da rota ativa via `isItemActive(item.href)`.
-6. **Isolamento Estrito da Categoria 6 (`🛠️ Engenharia & Dev`)**:
-   - A 6ª categoria é incluída no array `navCategories` estritamente se `isDev = user?.role === 'dev'`.
-   - Para usuários com `role === 'admin'` (ex: `gestor`), a categoria não existe no array nem no DOM, e rotas técnicas não aparecem nos resultados de busca rápida.
-   - O botão de atalho no rodapé aponta para `/configuracoes` para `dev`, e para `/equipe` para administradores hoteleiros.
-7. **Remoção Completa do Manual WBP**:
-   - A partir de (Obs 4), foram eliminados todos os links, botões e importações de `HelpCircle` / `/ajuda-wbp` em `layout.tsx`.
-8. **Validação da Compilação**:
-   - A partir de (Obs 5), `npm run build` confirmou sucesso total em 28.02s sem erros de compilação ou regressões.
+1. **Catálogo de Permissões e Perfis (`permissions.ts`)**:
+   - `artifacts/limpeza/src/lib/permissions.ts`: Adicionados os papéis `anserve_repositora` (`["/frigobar-reposicao"]`) e `anserve_gestor` (`["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]`).
+   - Categoria `🧊 Frigobar & Anserve` criada em `PERMISSION_CATEGORIES` contendo as 4 telas do ecossistema.
+   - `ROUTE_ALIASES` expandido com `/frigobar-gestao`, `/anserve/reposicao`, `/admin/frigobar` e `/minibar-admin`.
+
+2. **Gestão de Equipe (`equipe.tsx`)**:
+   - `artifacts/limpeza/src/pages/equipe.tsx`: Modais de criação, edição e permissões receberam as opções `"anserve_repositora"` (📦 Anserve - Repositora) e `"anserve_gestor"` (🏢 Anserve - Gestor / Supervisão).
+   - Função `renderRoleBadge` recebeu casos para exibir badges e avatares visuais distintos.
+   - Pílulas de filtro de perfil da tabela de colaboradores atualizadas.
+
+3. **Menu Lateral e Navegação Mobile (`layout.tsx`)**:
+   - `artifacts/limpeza/src/components/layout.tsx`: Categoria de frigobar adicionada ao menu lateral desktop/gaveta mobile (`rawNavCategories`).
+   - Rodapé de navegação móvel (`BottomNav`) adaptado dinamicamente para exibir opções contextuais para a repositora (Portal Reposição + Mais) e gestor da Anserve (Supervisão + Reposição + Estoque/Extrato + Mais), impedindo acesso acidental a páginas de governança.
+
+4. **Portal Mobile da Repositora (`anserve-restock.tsx`)**:
+   - `artifacts/limpeza/src/pages/anserve-restock.tsx`: Criado componente responsivo para a rota `/frigobar-reposicao`.
+   - Autenticação rápida com teclado numérico PIN de 4 dígitos integrado a `POST /api/minibar/auth-pin`, gravação no `localStorage` e suporte a tokens na URL.
+   - Listagem dos 19 flats do Soho Residence com filtros e destaque urgente para checkouts do dia.
+   - Card por flat exibindo consumo declarado/pago pelo hóspede, gabarito e botões rápidos:
+     - **"Conforme"**: reposição dos itens pagos e kit de cortesias (Nespresso + balas + amendoim) via `POST /api/minibar/inspections`.
+     - **"Apontar Divergência"**: seleção de itens faltantes, foto da câmera traseira e notas. Aciona automaticamente a IA Sofia no WhatsApp com o link de quitação.
+
+5. **Painel de Supervisão Anserve (`anserve-dashboard.tsx`)**:
+   - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`: Criado componente para as rotas `/anserve` e `/frigobar-gestao`.
+   - Fila de notas fiscais pendentes consumindo `GET /api/minibar/invoices/pending` com visualização de documento fiscal (CPF/CNPJ), e-mail de envio e preferência de discriminação (*Itens discriminados*, *Água* ou *Consumo de Frigobar*).
+   - Modal com upload de PDF/imagem e disparo multicanal instantâneo via `POST /api/minibar/orders/:id/invoice`.
+   - Visão de estoque e extrato de repasse financeiro (`GET /api/minibar/settlement`) com cálculo de faturamento bruto, taxas de gateway (cartão 3.99% e PIX 0.99%), comissão CorpFlats e crédito de cortesias repostas.
+
+6. **Portal Admin CorpFlats (`minibar-admin.tsx`)**:
+   - `artifacts/limpeza/src/pages/minibar-admin.tsx`: Criado componente para a rota `/frigobar`.
+   - Catálogo com cadastro e edição de produtos e cortesias (`/api/minibar/products`).
+   - Gabarito nominal global e por flat (`/api/minibar/default-stock`).
+   - Gerador de displays de acrílico A6 para os 19 flats do Soho Residence com QR Codes gerados dinamicamente apontando para `/frigobar/flat/:flatNumber`, instruções de autoatendimento e estilos `@media print` otimizados para corte e balcão.
+   - Extrato consolidado CorpFlats ↔ Anserve.
+
+7. **Roteamento em `App.tsx`**:
+   - `artifacts/limpeza/src/App.tsx`: Rotas registradas com code-splitting (`lazyWithRetry`), guardas de acesso e precedência correta.
+
+8. **Build de Produção**:
+   - Executado `npm --prefix artifacts/limpeza run build`: saída com código 0 em 39.58s gerando os bundles em `artifacts/limpeza/dist/`.
 
 ---
 
-## 3. Caveats
+## 2. Logic Chain (Cadeia Lógica de Raciocínio)
 
-- **Persistência de Pin por Navegador**: A preferência de fixação (`isPinned`) é mantida localmente no `localStorage` do navegador do usuário (`gfm_sidebar_pinned`). Se o usuário limpar os dados de navegação, a sidebar retornará ao estado padrão desfixado (auto-hide).
-- **Banner de Alerta de Checkout**: A sidebar respeita o deslocamento `top-9` quando há alertas de checkout pendente (`alertCount > 0`), mantendo perfeita harmonia visual sem sobreposição.
-- "No other caveats."
-
----
-
-## 4. Conclusion
-
-O Milestone 3 foi implementado com fidelidade absoluta aos requisitos R1, R2, R3 e R4 em `artifacts/limpeza/src/components/layout.tsx`:
-- A barra lateral desktop não ocupa largura no fluxo normal do documento (`0px`), garantindo que o calendário PMS ocupe 100% da tela.
-- Possui gatilho sensível na borda esquerda com chevron, botão discreto "Menu" no topo esquerdo, overlay flutuante suave, auto-recolhimento com debounce de 280ms e botão Pin/Unpin funcional com persistência em `localStorage`.
-- A busca rápida no topo funciona instantaneamente no desktop e no mobile, filtrando por nome, descrição e rota, expandindo automaticamente os accordions correspondentes.
-- As 6 categorias operacionais estão perfeitamente ordenadas e recolhíveis, com "📅 Reservas & Hospedagem" aberta por padrão e "🛠️ Engenharia & Dev" estritamente oculta para quem não for `dev`.
-- Todas as referências ao manual WBP foram eliminadas de `layout.tsx`.
-- O build de produção foi gerado e validado com sucesso com código de saída 0.
+1. Para viabilizar a operação em campo da repositora da Anserve sem atrito de login convencional de desktop, implementou-se autenticação por PIN de 4 dígitos e token persistente em `localStorage`, permitindo acesso instantâneo via smartphone.
+2. Com base na dinâmica de hospitalidade dos 19 flats do Soho Residence, o status de checkout do dia (`checkout_hoje`) foi priorizado na interface, visto que a reposição precisa ocorrer impreterivelmente na janela de higienização antes da entrada do próximo hóspede (às 14:00).
+3. A distinção clara entre "Conforme" e "Divergência" assegura integridade: se não houve consumo não declarado, o sistema atesta conformidade e repõe o kit de cortesias; se houve consumo não pago, a captura de fotos e quantidades gera automaticamente a cobrança e notifica o hóspede pelo canal oficial da IA Sofia.
+4. Para a supervisão da Anserve, a fila centralizada de NFs pendentes atende estritamente à restrição operacional de não emitir alertas sonoros ou mensagens no WhatsApp da equipe a cada venda, mantendo a operação organizada e disparando o envio da NF diretamente ao cliente no momento do anexo.
+5. O gerador de QR Codes A6 foi projetado para impressão direta nos acrílicos dos apartamentos, assegurando que o hóspede leia o código do seu quarto e caia na tela personalizada com os 4 últimos dígitos do celular, completando o ciclo de autoatendimento.
 
 ---
 
-## 5. Verification Method
+## 3. Caveats (Ressalvas)
 
-Para reproduzir e auditar as implementações de forma independente:
-1. **Compilação e Integridade de Bundle**:
-   ```powershell
+- Não foram executados testes globais ou em lote em conformidade estrita com `AGENTS.md` (proibição expressa de executar `tests/*.test.mjs` globais).
+- A geração dos QR Codes para impressão utiliza serviço de renderização SVG/PNG de alta resolução via API externa resiliente com fallback.
+
+---
+
+## 4. Conclusion (Conclusão)
+
+O Milestone M3 (Portais Anserve, Admin CorpFlats & RBAC — Features F19 a F28) foi completamente implementado com código autêntico, design responsivo de alto padrão e compilação de produção verificada com código de saída 0. Todos os requisitos especificados em `ORIGINAL_REQUEST.md`, `PROJECT.md` e `DISPATCH.md` foram satisfeitos.
+
+---
+
+## 5. Verification Method (Método de Verificação Independente)
+
+1. **Verificação do Build**:
+   ```bash
    npm --prefix artifacts/limpeza run build
    ```
-   *Condição de invalidação*: Qualquer erro de TypeScript ou falha no bundle do Vite (deve sair com código 0).
-2. **Inspeção de Código e Ausência de WBP**:
-   - Verificar ausência de `/ajuda-wbp` e `HelpCircle`:
-     ```powershell
-     git grep -i "ajuda-wbp" artifacts/limpeza/src/components/layout.tsx
-     ```
-     *Resultado esperado*: 0 ocorrências.
-3. **Verificação de Largura 0px e Pin/Unpin**:
-   - Carregar `/reservas` com `isPinned === false`: verificar que o elemento espaçador tem `w-0` e `<main>` ocupa 100% da largura.
-   - Passar o mouse na borda esquerda: sidebar flutuante desliza suavemente (`translate-x-0`).
-   - Tirar o mouse: sidebar fecha suavemente após 280ms.
-   - Clicar no botão Pin: sidebar fixa aberta e espaçador expande para `w-64 lg:w-72`.
-   - Recarregar a página (F5): preferência `gfm_sidebar_pinned = "true"` é mantida.
-4. **Verificação de Permissões `dev` vs `admin`**:
-   - Logar com usuário `role: "admin"`: confirmar que a 6ª categoria `🛠️ Engenharia & Dev` não é exibida e que a busca por "servidor" ou "logs" retorna zero resultados. O botão do rodapé abre `/equipe`.
-   - Logar com usuário `role: "dev"`: confirmar que todas as 6 categorias são exibidas e o botão do rodapé abre `/configuracoes`.
+   Deve concluir com código de saída 0 gerando os bundles em `artifacts/limpeza/dist/public/assets/`.
+
+2. **Inspeção de Arquivos**:
+   - Verificar perfis em `artifacts/limpeza/src/lib/permissions.ts`.
+   - Verificar selects em `artifacts/limpeza/src/pages/equipe.tsx`.
+   - Verificar rotas em `artifacts/limpeza/src/App.tsx`.
+   - Verificar componentes criados: `anserve-restock.tsx`, `anserve-dashboard.tsx` e `minibar-admin.tsx`.

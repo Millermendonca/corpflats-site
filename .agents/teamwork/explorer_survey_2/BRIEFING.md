@@ -1,56 +1,49 @@
-# BRIEFING — 2026-10-11T23:46:00Z
+# BRIEFING — 2026-10-21T18:32:00Z
 
 ## Mission
-Investigate backend routes, database structures, twin-server parity files, and state management for Smart Flat Hub (scheduling, ETA, presence confirmation, fail-safe safety timers, and welcome playlist).
+Mapear o frontend mobile do hóspede e rotas de autoatendimento para o módulo Frigobar no Guest-Flow-Manager.
 
 ## 🔒 My Identity
-- Archetype: Explorer
-- Roles: Frontend investigation, UI component analysis, API integration patterns, synthesis and handoff
+- Archetype: explorer
+- Roles: explorer_survey_2 (teamwork_preview_explorer)
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Survey Phase - Frontend UI, WhatsApp Automation Page & Build (R1)
-- Current Role: Explorer Survey 2 (Backend, APIs & State Persistence)
-- Current Parent: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-- Current Milestone: Smart Flat Hub - Backend Survey & Architecture
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: Mapeamento de Arquitetura e Frontend Mobile do Módulo Frigobar
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement or modify application source code
-- Strictly write only within .agents/teamwork/explorer_survey_2/
-- Follow Handoff Protocol (Observation, Logic Chain, Caveats, Conclusion, Verification Method)
-- Communicate with parent via send_message
-- AGENTS.md rules: no broad/batch test execution, strictly scoped
-- Twin-server parity mandate: SHA-256 parity between scripts/ and artifacts/api-server/
+- Read-only investigation — do NOT implement
+- Somente gravar arquivos dentro de .agents/teamwork/explorer_survey_2/
+- Nunca executar testes globais ou varreduras (AGENTS.md)
+- Sempre notificar o parent via send_message ao concluir
 
 ## Current Parent
-- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-- Updated: 2026-10-11T23:38:44Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T18:32:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `data/database.json`
-  - `scripts/demo-server.mjs`
-  - `artifacts/api-server/demo-server.mjs`
-  - `artifacts/limpeza/vite.config.ts`
-  - `artifacts/limpeza/src/App.tsx`
-  - `artifacts/limpeza/src/pages/guest-portal.tsx`
-  - `tests/server-monitor-rca.test.mjs`
+  - `artifacts/limpeza/src/App.tsx` (linhas 1-559): análise de rotas públicas sem autenticação, precedência do Wouter, importação de páginas.
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`: arquitetura do portal do hóspede, cards de serviços, parâmetros de URL, fluxos de pagamento PIX e Cartão de Crédito.
+  - `artifacts/limpeza/src/pages/guest-breakfast.tsx` e `guest-checkout.tsx`: padrões de UI mobile de autoatendimento, contexto por URL e fallbacks.
+  - `artifacts/limpeza/src/components/ui/`: inventário completo de 55 componentes shadcn/ui (incluindo `input-otp`, `card`, `dialog`, `sheet`, `drawer`, `tabs`, `badge`, `button`).
+  - `artifacts/limpeza/vite.config.ts` e `package.json`: pipeline de build Vite, plugins, aliases, dependências e Rollup output.
+  - Execução de `npm --prefix artifacts/limpeza run build` (sucesso com código 0 em 30.61s) e `run typecheck` (análise de comportamento do TypeScript).
 - **Key findings**:
-  - Mapeado banco de dados (`data/database.json`): 19 flats ativos, reservas com `estimatedArrivalTime`, `guestSelfCheckin`, `actualCheckinAt` e `status`.
-  - Persistência domótica desenhada em `db.smartFlats` (objeto indexado por `flatNumber`) e espelhada em `r.smartFlat`.
-  - Mapeadas 6 rotas dedicadas de API em `/api/smart-flat/*`: GET state, POST eta, POST devices, POST confirm-entrance, POST playlist, POST simulate.
-  - Especificado algoritmo de validação da janela de antecedência de até 30min antes do ETA (R2), com temperatura entre 18°C e 26°C.
-  - Especificado ciclo fail-safe em duas etapas (aviso preventivo no ETA e desligamento automático em ETA + 30min sem presença confirmada) com mensagem oficial de segurança (R3).
-  - Especificada rotina de música ambiente de boas-vindas com disparo automático no dia do check-in a partir das 14:00 (R4).
-  - Detectado mismatch prévio de 2 linhas entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` a ser unificado pelo implementador.
-  - Relatório completo de handoff de 5 seções concluído em `handoff.md`.
-- **Unexplored areas**: Nenhuma pendência investigativa no backend.
+  1. No Wouter, rotas mais específicas (`/minha-reserva/:code/frigobar`) devem vir antes de rotas gerais (`/minha-reserva/:code`).
+  2. Acesso via QR code (`/frigobar/flat/:flatNumber`) requer validação dos 4 últimos dígitos do telefone do hóspede (`InputOTP` + `/api/minibar/flat-context`), enquanto link direto (`/minha-reserva/:code/frigobar`) já autentica a reserva diretamente.
+  3. Padrão não-editável no flat (ex: "Padrão no flat: 4 un.") é essencial para que o hóspede saiba quanto consumiu com base no que restou no frigobar.
+  4. Três preferências de NF (discriminado, água, consumo frigobar) atendem à necessidade crítica de reembolso de empresas corporativas.
+  5. Pagamento PIX com Banco Inter (QR Code + Copia e Cola + polling 2.5s) e Cartão com Mercado Pago possuem padrões consolidados no sistema.
+  6. `npm run build` passa com código 0 em 30s. Typecheck geral aponta erros em módulos legados antigos, exigindo que o novo código seja escrito com tipagem limpa sem depender do typecheck global.
+- **Unexplored areas**: Nenhuma pendência no escopo do Explorer 2.
 
 ## Key Decisions Made
-- Conclusão da investigação de backend e elaboração do relatório técnico em `handoff.md`.
-- Notificação formal do orchestrator via `send_message`.
+- Estruturar a experiência do hóspede na nova página `artifacts/limpeza/src/pages/guest-minibar.tsx` com suporte a ambos os modos de entrada (QR Code do Flat e Link da Reserva).
+- Propor a integração do Card de Frigobar em `guest-portal.tsx` entre o Café da Manhã e Wi-Fi, além do atalho no dropdown de ações rápidas.
 
 ## Artifact Index
-- DISPATCH.md — Task assignment and instructions
-- BRIEFING.md — Working memory and context index
-- progress.md — Heartbeat and execution checklist
-- handoff.md — Final structured handoff report (5 sections)
+- DISPATCH.md — Registro da mensagem inicial
+- BRIEFING.md — Memória de trabalho do agente
+- analysis.md — [A ser gravado] Relatório de investigação detalhado
+- handoff.md — [A ser gravado] Handoff com os 5 componentes obrigatórios
+

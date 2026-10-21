@@ -441,7 +441,7 @@ Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos �
     messagePreview: `Assunto: Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
 
 🖥️ Painel da Recepção & Portaria 24h:
-Consulte detalhes no Terminal da Portaria: https://corpflats.onrender.com/portaria
+Consulte detalhes no Terminal da Portaria: https://corpflats.com.br/portaria
 
 {{aviso_pendencia_segundo_hospede}}
 
@@ -734,7 +734,7 @@ Agradecemos imensamente pela sua estadia e por todo o cuidado com o nosso espaç
 Esperamos recebê-lo(a) novamente em breve! 💙`,
     buttons: [
       { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" },
-      { label: "🌐 Reservar Novamente", type: "URL", url: "https://corpflats.onrender.com/reservar" }
+      { label: "🌐 Reservar Novamente", type: "URL", url: "https://corpflats.com.br" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkout_completed",
     category: "checkout"
@@ -883,7 +883,7 @@ Confirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}
 
 Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de braços abertos para recebê-lo em suas próximas viagens a Campos!`,
     buttons: [
-      { label: "🌐 Reservar Novas Datas", type: "URL", url: "https://corpflats.onrender.com/reservar" }
+      { label: "🌐 Reservar Novas Datas", type: "URL", url: "https://corpflats.com.br" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_reservation_cancelled",
     category: "excecao"

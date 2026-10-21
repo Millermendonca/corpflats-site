@@ -1359,7 +1359,7 @@ export default function WhatsappChat() {
         id: 'qb_checkin',
         icon: '📝',
         label: 'Check-in Digital',
-        text: `Olá, *${guestFirstName}*! Para agilizar sua entrada no Flat ${flatNum}, preencha sua ficha rápida de pré check-in:\n📝 https://corpflats.onrender.com/pre-checkin/${code}`
+        text: `Olá, *${guestFirstName}*! Para agilizar sua entrada no Flat ${flatNum}, preencha sua ficha rápida de pré check-in:\n📝 https://corpflats.com.br/pre-checkin/${code}`
       },
       {
         id: 'qb_wifi',
@@ -1371,7 +1371,7 @@ export default function WhatsappChat() {
         id: 'qb_cafe',
         icon: '🥐',
         label: 'Link do Café',
-        text: `Olá, *${guestFirstName}*! Você pode escolher os itens e o horário da sua bandeja de café no flat pelo link:\n🥐 https://corpflats.onrender.com/cafe/${code}`
+        text: `Olá, *${guestFirstName}*! Você pode escolher os itens e o horário da sua bandeja de café no flat pelo link:\n🥐 https://corpflats.com.br/cafe/${code}`
       },
       {
         id: 'qb_location',
@@ -1383,7 +1383,7 @@ export default function WhatsappChat() {
         id: 'qb_checkout',
         icon: '🚪',
         label: 'Check-out',
-        text: `Olá, *${guestFirstName}*! Lembramos que o check-out é até as 12:00. Ao sair, deixe o cartão na portaria e confirme aqui:\n🚪 https://corpflats.onrender.com/checkout/${code}`
+        text: `Olá, *${guestFirstName}*! Lembramos que o check-out é até as 12:00. Ao sair, deixe o cartão na portaria e confirme aqui:\n🚪 https://corpflats.com.br/checkout/${code}`
       },
       {
         id: 'qb_manual',
@@ -3085,7 +3085,7 @@ export default function WhatsappChat() {
             <div className="space-y-1">
               <label className="text-xs font-bold">URL Pública do Arquivo:</label>
               <Input
-                placeholder="https://corpflats.onrender.com/..."
+                placeholder="https://corpflats.com.br/..."
                 value={attachUrl}
                 onChange={e => setAttachUrl(e.target.value)}
                 className="text-xs h-8 rounded-xl"

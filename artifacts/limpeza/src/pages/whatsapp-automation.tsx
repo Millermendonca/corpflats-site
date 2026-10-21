@@ -1774,8 +1774,8 @@ export default function WhatsappAutomation() {
           payload.buttons = editingButtons
         } else {
           payload.buttons = [
-            { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.onrender.com/pre-checkin/RES-113-0034" },
-            { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.onrender.com/minha-reserva/RES-113-0034" },
+            { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.com.br/pre-checkin/RES-113-0034" },
+            { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.com.br/minha-reserva/RES-113-0034" },
             { id: "btn_test_call", type: "CALL", label: "📞 Falar na Administração", phone: "5522997124021" }
           ]
         }
@@ -1890,7 +1890,7 @@ export default function WhatsappAutomation() {
       "{{chave_pix}}": "47.964.813/0001-65",
       "{{titular_pix}}": "CorpFlats Hospedagem",
       "{{instrucao_saldo}}": pendingAmount > 0 ? `ℹ️ *Aviso de Pagamento:* Resta o saldo de ${fmtPending} a acertar no check-in.` : "",
-      "{{instrucao_pagamento}}": `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 https://corpflats.onrender.com/minha-reserva/${code}`,
+      "{{instrucao_pagamento}}": `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 https://corpflats.com.br/minha-reserva/${code}`,
       "{{canal_reserva}}": targetRes.channel || "Site CorpFlats",
       "{{nome_hotel}}": "CorpFlats - Soho Residence",
       "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
@@ -1898,10 +1898,10 @@ export default function WhatsappAutomation() {
       "{{wifi_rede}}": config.wifiNetwork || "CorpFlats-Hospedes",
       "{{wifi_senha}}": config.wifiPassword || "corpflats2026",
       "{{telefone_hotel}}": "5522997124021",
-      "{{link_checkin_digital}}": `https://corpflats.onrender.com/pre-checkin/${code}`,
-      "{{link_portal_hospede}}": `https://corpflats.onrender.com/portal-hospede/${code}`,
-      "{{link_cafe_manha}}": `https://corpflats.onrender.com/cafe/${code}`,
-      "{{link_checkout}}": `https://corpflats.onrender.com/checkout/${code}`,
+      "{{link_checkin_digital}}": `https://corpflats.com.br/pre-checkin/${code}`,
+      "{{link_portal_hospede}}": `https://corpflats.com.br/portal-hospede/${code}`,
+      "{{link_cafe_manha}}": `https://corpflats.com.br/cafe/${code}`,
+      "{{link_checkout}}": `https://corpflats.com.br/checkout/${code}`,
       "{{link_avaliacao_google}}": config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2",
       "{{status_cafe}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "Incluso" : "Não incluso",
       "{{resumo_alteracoes}}": "• *Acomodação / Quarto:* Flat 101 ➔ *Flat 113*\n• *Data de Entrada (Check-in):* 03/09/2026 ➔ *05/09/2026*\n• *Valor Total:* R$ 450,00 ➔ *R$ 600,00*"

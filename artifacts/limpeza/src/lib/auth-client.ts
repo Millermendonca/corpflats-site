@@ -549,8 +549,8 @@ export function clearGoogleCooldown(): void {
       "." + host,
       parts.slice(-2).join("."),
       "." + parts.slice(-2).join("."),
-      "onrender.com",
-      ".onrender.com"
+      "corpflats.com.br", "onrender.com",
+      ".corpflats.com.br", ".onrender.com"
     ]
     const paths = ["/", "/reservar", ""]
     domains.forEach(d => {

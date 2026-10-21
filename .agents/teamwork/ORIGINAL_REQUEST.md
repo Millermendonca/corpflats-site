@@ -612,3 +612,67 @@ Atualizar `artifacts/limpeza/src/pages/equipe.tsx`:
 - [ ] Na página `/equipe`, é possível clicar em **"Acessos"** (ou criar/editar usuário), escolher o perfil base para preencher o padrão e marcar/desmarcar checkboxes individuais por tela ou por categoria inteira.
 - [ ] `layout.tsx` e `App.tsx` respeitam `allowedModules` dinamicamente via `hasModuleAccess`.
 - [ ] `npm --prefix artifacts/limpeza run build` compila com código 0 e as alterações + `dist/` são enviadas via `git push origin main`.
+
+
+## 2026-10-21T18:26:13Z
+
+Implementar o ecossistema completo de Venda e Gestão de Frigobar nos Flats (CorpFlats + parceira Anserve) no projeto Guest-Flow-Manager, abrangendo autoatendimento mobile do hóspede (via QR Code do flat e Área da Reserva), checkout PIX/Cartão integrado, 4 interfaces dedicadas (Hóspede, Repositora Anserve, Supervisão Anserve e Admin CorpFlats), fluxo de Nota Fiscal com envio automático via WhatsApp e E-mail, controle de cortesias, auditoria de divergências com cobrança automática pela IA Sofia e inteligência analítica no CRM.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Catálogo de Produtos, Cortesias e Gabarito Padrão do Frigobar
+- Permitir cadastrar, editar e gerenciar os produtos do frigobar (com foto, nome, categoria, preço de venda, custo/repasse, status ativo) e a **quantidade padrão no frigobar de cada flat** (gabarito padrão).
+- Suportar **Itens de Cortesia** (ex: 2 cápsulas de Nespresso, balas, amendoim), configurados como cortesia gratuita 1 vez por reserva (no check-in), permitindo também ter unidades extras pagas no catálogo (ex: cápsulas avulsas adicionais para venda em estadias longas).
+- Gerar e exibir os QR Codes individuais de cada flat (ex: `/frigobar/flat/:flatNumber`) prontos para impressão.
+
+### R2. Interface Mobile do Hóspede (QR Code por Flat + Área da Reserva + Pagamento PIX/Cartão)
+- Criar uma experiência 100% otimizada para celular acessível por duas vias:
+  1. **QR Code exclusivo de cada flat** (`/frigobar/flat/:flatNumber` ou `/frigobar/:flatNumber`): solicita confirmação dos **4 últimos dígitos do celular** do hóspede, valida contra a reserva ativa/recente daquele flat e exibe uma **saudação personalizada pelo nome do hóspede**.
+  2. **Área do Hóspede / Link Direto da Reserva** (`/minha-reserva/:code/frigobar` e card/atalho dentro de `/minha-reserva/:code`): identifica a reserva automaticamente pelo código, saudando o hóspede pelo nome sem exigir redigitação.
+- Exibir os produtos com fotos, mostrar de forma visual e não-editável a **quantidade padrão que havia no frigobar** (ex: *"Padrão no flat: 4 un."*) para ajudar o hóspede a lembrar quanto consumiu, exibir eventuais itens já pagos anteriormente na mesma reserva e atualizar o subtotal em tempo real conforme seleciona as quantidades (`-` / `+`).
+- Exibir aviso claro de que **não é possível faturar o consumo de frigobar junto com o valor da hospedagem**.
+- No checkout, exigir/confirmar:
+  - **Preferência de descrição na Nota Fiscal**: (a) Discriminar todos os itens consumidos, (b) Lançar como *"Água"*, ou (c) Lançar como *"Consumo de Frigobar"*.
+  - **Documento para a Nota Fiscal**: permitir manter o **CPF já cadastrado** do hóspede ou informar um **CNPJ da empresa / outro CPF** para reembolso corporativo.
+  - **E-mail para recebimento da Nota Fiscal**: pré-preenchido com o e-mail do cadastro (ou solicitado obrigatoriamente caso não tenha e-mail cadastrado).
+- Processar o pagamento diretamente para a CorpFlats via **PIX (Banco Inter com QR Code / Copia e Cola e polling automático)** ou **Cartão de Crédito (Mercado Pago)** usando os serviços existentes no backend.
+
+### R3. Interfaces da Anserve (Repositora Mobile & Supervisão/Gestão) e Interface Admin CorpFlats
+- **Controle de Acesso Híbrido**: adicionar os perfis `anserve_repositora` e `anserve_gestor` no sistema de equipe/permissões (`/equipe` e `permissions.ts`) e também disponibilizar acesso via link rápido mobile com PIN/Token para a repositora operar facilmente pelo celular.
+- **Interface da Repositora Anserve** (`/frigobar-reposicao` / `/anserve/reposicao`):
+  - Lista intuitiva de todos os flats (destacando flats em check-out do dia, ocupados ou livres), mostrando o consumo já declarado/pago pelo hóspede na reserva atual.
+  - Botão rápido para **Confirmar Conformidade (Sem Divergência)** ou **Apontar Divergência / Corrigir Consumo** (informando o que faltou no frigobar além do declarado pelo hóspede, com opção de foto/observação) e registrar a **reposição realizada** (tanto de itens pagos quanto de itens de cortesia como cápsulas Nespresso, balas e amendoim).
+  - Ao registrar uma divergência de consumo não pago, o sistema cria automaticamente a cobrança pendente na reserva e aciona a **Sofia no WhatsApp** com uma mensagem amigável listando os itens apurados e o link direto (`/minha-reserva/:code/frigobar`) para pagamento via PIX ou Cartão.
+- **Interface dos Superiores da Anserve** (`/anserve` / `/frigobar-gestao`):
+  - **Fila de Notas Fiscais Pendentes**: lista todos os consumos pagos (sem envio de alerta prévio no WhatsApp da Anserve; acompanhamento direto pelo painel) exibindo Valor, Nome, CPF ou CNPJ escolhido, E-mail e a opção de discriminação escolhida pelo hóspede (*Itens discriminados*, *Água* ou *Consumo de Frigobar*).
+  - **Anexo de Nota Fiscal (Foto ou Arquivo)**: permite anexar a NF emitida via câmera/foto ou upload de PDF/imagem. Assim que anexada, o sistema dispara **automaticamente** a NF para o **WhatsApp do hóspede** (via Z-API), envia para o **E-mail do hóspede** e disponibiliza o documento na **Área do Hóspede** (`/minha-reserva/:code`).
+  - Visão gerencial de estoque/reposições por flat, saída de cortesias e **Extrato de Repasse Anserve**.
+- **Interface Admin CorpFlats** (`/frigobar` / `/admin/frigobar`):
+  - Visão completa de vendas, auditoria de divergências, gestão do catálogo/preços/gabarito padrão, controle de cortesias, fila de NFs e **Extrato de Fechamento & Repasse CorpFlats ↔ Anserve** (calculando total vendido pago, descontando taxas de cartão/comissão configuráveis e somando/abatendo o custo das cortesias repostas).
+
+### R4. CRM do Hóspede, Analytics de Consumo (Insights) e Integração com a IA Sofia
+- **Histórico no Cadastro do Hóspede (CRM)**: vincular cada consumo ao perfil do hóspede em `/crm` (`crm-guests.tsx`), exibindo na ficha do hóspede o histórico de itens consumidos, gasto total em frigobar e tags/preferências automáticas (ex: itens favoritos do hóspede).
+- **Relatórios e Insights Analíticos**: painel de relatórios com ranking de produtos mais vendidos, saída de cortesias, taxa de divergência por período/flat e **cruzamento demográfico de consumo por origem do hóspede** (cidade/UF do cadastro/FNRH vs. categorias/produtos consumidos, permitindo insights como *"Hóspedes de São Paulo consomem mais cerveja"*).
+- **Habilidade na IA Sofia (`whatsapp-ai-service.mjs`)**:
+  - Integrar o módulo `minibar` / `frigobar` ao contexto do hóspede (`buildGuestContext`) e às ferramentas de consulta da Sofia (`querySystemData`).
+  - Quando o hóspede enviar mensagem mencionando consumo de frigobar, a Sofia deve identificar se já existe consumo lançado/pago na reserva, explicar que o frigobar não pode ser faturado junto com a diária da hospedagem, e enviar o link direto (`/minha-reserva/:code/frigobar`) para ele selecionar os itens e pagar mesmo que já tenha saído do flat.
+
+### R5. Restrições Críticas de Ambiente e Testes (`AGENTS.md`)
+- **PROIBIDO rodar testes globais ou em lote**: Nunca execute `tests/*.test.mjs` ou varreduras de testes que disparem notificações em massa. Caso execute algum script de verificação, valide apenas de forma estritamente isolada os endpoints novos de frigobar sem acionar disparos reais para hóspedes de produção.
+- Executar `npm run build` na pasta `artifacts/limpeza` ao concluir as alterações do frontend para atualizar `artifacts/limpeza/dist/`.
+
+## Acceptance Criteria
+
+### Backend & APIs de Frigobar
+- [ ] Endpoints REST implementados em `artifacts/api-server/demo-server.mjs` para: catálogo e gabarito padrão (`/api/minibar/products`), validação de QR Code do flat pelos 4 últimos dígitos do celular (`/api/minibar/flat-context`), contexto da reserva (`/api/minibar/reservation-context/:code`), checkout PIX Inter e Cartão Mercado Pago (`/api/minibar/orders` e polling de status), conferência/divergência e reposição pela Anserve (`/api/minibar/inspections`), upload de Nota Fiscal com disparo automático via Z-API + E-mail (`/api/minibar/orders/:id/invoice`), e relatórios/repasse/insights demográficos (`/api/minibar/analytics` e `/api/minibar/settlement`).
+- [ ] Ao anexar uma Nota Fiscal a um pedido de frigobar pago, o backend registra o anexo no pedido, disponibiliza na API do portal do hóspede (`/api/pms/guest-portal/:code`) e aciona o envio de e-mail e mensagem WhatsApp para o hóspede.
+- [ ] Ao apontar divergência de consumo não declarado na inspeção da repositora, o backend gera o pedido pendente na reserva e aciona o disparo automático da Sofia no WhatsApp com os itens e o link de pagamento.
+
+### Interfaces Frontend & Build
+- [ ] Página mobile do hóspede acessível tanto via QR Code do flat (`/frigobar/flat/:flatNumber` com validação dos 4 últimos dígitos do celular e saudação pelo nome) quanto via Área da Reserva (`/minha-reserva/:code/frigobar` e card em `/minha-reserva/:code`), exibindo fotos, quantidade padrão informativa, aviso de não faturamento com a hospedagem, escolha de descrição na NF (*Itens discriminados*, *Água*, *Consumo de Frigobar*), escolha de CPF ou CNPJ e pagamento PIX/Cartão em tempo real.
+- [ ] Interfaces dedicadas para Repositora Anserve (visão por flat, consumo declarado, apontamento de divergência e reposição de pagos + cortesias), Supervisão Anserve (fila de NFs pendentes, anexo de foto/arquivo da NF, relatórios e extrato) e Admin CorpFlats (catálogo, QR codes por flat, extrato de repasse Anserve, CRM e insights demográficos por cidade/estado).
+- [ ] Integração no CRM (`crm-guests.tsx`) exibindo o perfil de consumo de frigobar de cada hóspede e na Sofia (`whatsapp-ai-service.mjs`) respondendo e enviando o link de pagamento quando o hóspede mencionar consumo de frigobar.
+- [ ] O comando `npm --prefix artifacts/limpeza run build` executa sem erros de compilação TypeScript/Vite.

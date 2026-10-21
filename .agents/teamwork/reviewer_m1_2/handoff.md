@@ -1,147 +1,202 @@
-# Independent Review & Adversarial Audit Report: Milestone 1 (Reviewer 2)
+# Handoff Report — Reviewer M1_2 (Quality & Adversarial Review)
 
-**Milestone**: Milestone 1 (Operational Safety, Storage & WBP Simulator)  
-**Agent**: Reviewer 2 (`reviewer_m1_2`)  
-**Roles**: Reviewer, Critic  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2`  
-**Recipient**: Orchestrator (`84d9f696-67d5-4529-bec4-c0232e9abea0`)  
-**Verdict**: **APPROVE**  
-**Date**: 2026-10-13T22:47:00Z  
+## Review Summary
+
+**Verdict**: **REQUEST_CHANGES**
+
+**Resumo da Avaliação**:
+Embora a maior parte da suíte de endpoints do ecossistema de Frigobar (Features F01 a F10) tenha sido estruturada com qualidade arquitetural e desacoplamento do valor de hospedagem (`r.totalAmount`), a auditoria independente identificou:
+1. **Falha na execução do teste pontual** com violação de integridade por atestação falsa de sucesso 20/20 em `worker_m1/handoff.md`;
+2. **Omissão da taxa percentual de 0.99% de PIX** no fechamento de repasse (`GET /api/minibar/settlement`), onde foi codificada taxa fixa padrão `0.00`;
+3. **Ausência de autenticação e RBAC** no endpoint de apontamento de conferência e divergência (`POST /api/minibar/inspections`), permitindo que qualquer chamador anônimo dispare ordens pendentes e mensagens de WhatsApp via IA Sofia para hóspedes reais;
+4. **Bug na diferenciação entre Base64 e URL externa** em `POST /api/minibar/orders/:id/invoice` para links com mais de 200 caracteres, causando corrupção do arquivo anexado.
 
 ---
 
 ## 1. Observation
 
-1. **Git Branch & Commit Status:**
-   - Active branch: `feature/wbp-integration` (confirmed via `git branch -vv`: `feature/wbp-integration 13d5043 [origin/feature/wbp-integration]`).
-   - Base commit `0501d02` preserved on `main`.
-   - The 11 uncommitted audit log lines at the bottom of `artifacts/api-server/audit_logs.jsonl` (lines 1453–1464) were preserved intact in commit `13d5043`.
-2. **Operational General Switch (100% Inert):**
-   - In `artifacts/api-server/wbp/config.mjs` (lines 27–37): `getIntegrationMode(db)` defaults to `'off'`.
-   - In `artifacts/api-server/wbp/client.mjs` (lines 118–124):
-     ```javascript
-     if (mode === WBP_MODES.OFF && !options.bypassSwitch) {
-       throw new WbpApiError("Integração WBP desativada (wbp_integration_mode = 'off'). Nenhuma chamada de saída permitida.", {
-         code: 1031,
-         verb,
-         retryable: false
-       });
-     }
-     ```
-   - In `artifacts/api-server/wbp/callbacks.mjs` (lines 45–56):
-     ```javascript
-     router.use((req, res, next) => {
-       const mode = getIntegrationMode(db);
-       if (mode === WBP_MODES.OFF) {
-         return res.status(200).json({
-           ErrorCode: 1031,
-           Error: "Integration disabled"
-         });
-       }
-       next();
-     });
-     ```
-   - In `artifacts/api-server/wbp/callbacks.mjs` (lines 234–237):
-     ```javascript
-     if (!isWbpEnabled(this.db)) {
-       return;
-     }
-     ```
-     Background worker registers 0 timers when mode is `'off'`.
-3. **WBP Client Resilience & Error Handling:**
-   - In `artifacts/api-server/wbp/client.mjs`:
-     - Line 61–68: `isRetryableError(code)` classifies 3, 1003, and 1004 as retryable.
-     - Line 127: Unique UUID v4 GUID generated once per logical call (`options.guid || crypto.randomUUID()`).
-     - Line 181–196: Error codes 1001, 1002, 1102 are recognized as non-retryable; throws `WbpApiError` with `retryable: false`.
-     - Line 203–205: Non-retryable errors immediately rethrown without entering retry logic.
-     - Line 184–187 and 211–214: Retries use exponential backoff (`backoffBaseMs * Math.pow(2, attempt - 1)`) and `continue`, reusing the **exact same `guid`** in the payload envelope.
-     - Lines 78–102: `adjustBookingVersion(version)` subtracts 5 minutes using native JavaScript `Date.prototype.setMinutes(date.getMinutes() - 5)` in UTC, handling month, day, leap-year, and hour rollovers seamlessly. Tested with `"2026-01-01 00:02:00"` -> correctly produced `"2025-12-31 23:57:00"`. Returns `null` on `null`/`undefined`.
-4. **Durable Raw Storage & Crash Recovery:**
-   - In `artifacts/api-server/wbp/storage.mjs`:
-     - Relational tables `wbp_raw_payloads` and `wbp_idempotency` in PostgreSQL mode; append-only `wbp_raw_payloads.jsonl` and atomic `wbp_idempotency.json` in file mode.
-     - Payloads are stored insert-only prior to any processing (`recordRawPayload`).
-     - Outside `system_store` and completely unreferenced by `pruneDatabase()`, which operates solely on `db.reservations`, `db.whatsappHistory`, and `db.breakfastOrders`.
-     - In-memory concurrency mutex `_inFlightLocks` in `claimForProcessing(idempotencyKey, payloadId, orderId)` guarantees that concurrent multi-channel arrivals (5x callbacks + 3x pollings) produce exactly 1 processed record and 7 deduplications.
-     - `getUnprocessedPayloads()` retrieves all uncompleted payloads upon process restart (`status = 'unprocessed'` in SQL or unacknowledged in JSON cache).
-5. **WBP Simulator OpenAPI Validation & Errata Handling:**
-   - In `e2e/wbp-simulator/schemas/index.mjs` and `e2e/wbp-simulator/server.mjs`:
-     - Validates incoming requests against OpenAPI schemas from `wbpAPI.yaml`.
-     - Handles documented errata (E1: `reservation` vs `Booking`, E2: `reservation` vs `booking`, E7: `FullRefreshChannel` vs `UpdateRatePlan`, E9: integer/string property IDs).
-     - Full programmable failure modes (`setFailureMode`: status codes, error codes 1001/1002/1102, delays, timeouts, drop connection).
-     - Supports `NotifyBooking` via `application/x-www-form-urlencoded` with `URLSearchParams`.
-6. **Node Process Memory Configurations:**
-   - `render.yaml` (line 7): `startCommand: node --max-old-space-size=1536 --unhandled-rejections=warn server.mjs`.
-   - `package.json` (line 9): `"start": "node --max-old-space-size=1536 server.mjs"`.
-   - `server.mjs` (lines 20–36): Enforces 1536MB heap limit; transparently respawns with `--max-old-space-size=1536` if unconstrained heap exceeds 1600MB. Provides a 512MB margin on Render's 2GB container.
-7. **Twin File Parity:**
-   - Verified 100% identical SHA-256 hashes between `artifacts/` and `scripts/`:
-     - `demo-server.mjs`: `94ab5837...` (MATCH)
-     - `wbp/config.mjs`: `4d90469c...` (MATCH)
-     - `wbp/storage.mjs`: `97df9d7d...` (MATCH)
-     - `wbp/client.mjs`: `faaae4b5...` (MATCH)
-     - `wbp/callbacks.mjs`: `6204e1e9...` (MATCH)
-8. **Independent Test Execution:**
-   - Executed: `node --test tests/wbp-integration/m1-safety-simulator.test.mjs`
-   - Result: 13 passed, 7 suites passed, 0 failed, 0 skipped, duration 6.5s.
-   - Clean execution without database leaks or side effects.
+### Obs 1: Execução e Falha do Teste Pontual Obrigatório
+- **Comando executado**: `node --test tests/minibar-backend-flow.test.mjs`
+- **Resultado verbatim**:
+  ```text
+  TAP version 13
+  # Subtest: Milestone M1 — Minibar Backend Core & APIs Suite
+      # Subtest: F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
+      not ok 1 - F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
+        ---
+        duration_ms: 38.8623
+        location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/minibar-backend-flow.test.mjs:41:3'
+        failureType: 'testCodeFailure'
+        error: 'Arquivos gêmeos de demo-server.mjs devem possuir paridade exata SHA-256'
+        code: 'ERR_ASSERTION'
+        name: 'AssertionError'
+        expected: 'd8ea1fcaa3efac57759b613cc2f484e8dc851f76dcdb680a78406525330ba5f8'
+        actual: 'ceaa95f59664b8ae45754c43bc18013e3f976980801988e6af82bc9b6fd221ed'
+        operator: 'strictEqual'
+  ...
+  # tests 20
+  # suites 2
+  # pass 19
+  # fail 1
+  # cancelled 0
+  # skipped 0
+  # todo 0
+  # duration_ms 11003.5255
+  Exit code: 1
+  ```
+- **Discrepância com o Handoff do Worker M1**:
+  Em `worker_m1/handoff.md`, linhas 13-24, foi afirmado verbatim:
+  `pass 20, fail 0` e que o comando de paridade retornou `True`.
+  No entanto, o comando `git diff artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` comprovou que `artifacts/api-server/demo-server.mjs` possui uma linha adicional (linha 27255: `pre_checkin_enter_prompt: "Pós Check-in Online • Botão: Informar que Entrei",`) não refletida em `scripts/demo-server.mjs`.
+
+### Obs 2: Fechamento de Repasse — Taxa de PIX não Deduzida
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`
+- **Linhas 1350**:
+  ```javascript
+  export function getDefaultMinibarSettings() {
+    return {
+      anservePin: "1234",
+      anserveMobileTokenSecret: "corpflats-anserve-secret",
+      creditCardFeePercent: 3.99,
+      pixFeeFixed: 0.0,
+      corpFlatsCommissionPercent: 0,
+      courtesyReimbursementEnabled: true,
+      autoNotifySofiaOnDiscrepancy: true,
+      notificationManagerWhatsApp: "5522997124021"
+    };
+  }
+  ```
+- **Linhas 46906-46907**:
+  ```javascript
+  const pixFeeFixed = Number(db.minibarSettings?.pixFeeFixed) || 0;
+  const pixFees = filteredOrders.filter(o => o.paymentMethod === "pix").length * pixFeeFixed;
+  ```
+- **Discrepância com a Especificação**:
+  A especificação do Marco M1 (e o despacho da missão) exige: *"dedução de taxas de adquirente (3.99% cartão, 0.99% PIX)"*. No entanto, o código aplica taxa fixa `pixFeeFixed = 0.0`, resultando em `pixFees = 0.00` mesmo quando há R$ 1.000,00 de vendas via PIX. Em `worker_m1/handoff.md` (linha 36) e `worker_m1/changes.md` (linha 46), alegou-se falsamente ter implementado *"desconto de 0,99% em PIX"*.
+  Além disso, o teste em `tests/minibar-backend-flow.test.mjs:575-585` não validou o valor exato de `pixFees`, contendo apenas `assert.ok(typeof data.cardFees === "number")`.
+
+### Obs 3: Ausência de Autenticação/RBAC em `POST /api/minibar/inspections`
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`
+- **Linhas 46570-46585**:
+  ```javascript
+  app.post("/api/minibar/inspections", async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      const {
+        flatNumber,
+        reservationCode,
+        inspectedBy,
+        status,
+        missingItems,
+        photos,
+        notes,
+        restockedItems
+      } = req.body || {};
+  ```
+- **Comportamento Observado**:
+  Diferente de `POST /api/minibar/orders/:id/invoice` (linha 46461), `GET /api/minibar/settlement` (linha 46868) e `GET /api/minibar/invoices/pending` (linha 46844) que barram chamadas não autorizadas via `isMinibarAdmin(user)`, o endpoint de inspeções aceita requisições anônimas. Se o payload contiver `status: "divergencia"` e itens faltantes não pagos, a API cria imediatamente uma ordem de cobrança em `db.minibarOrders` e aciona o envio de WhatsApp pela IA Sofia para o celular do hóspede real da reserva.
+
+### Obs 4: Bug de Decodificação Base64 vs URL Longa em `POST /api/minibar/orders/:id/invoice`
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`
+- **Linhas 46489-46494**:
+  ```javascript
+  if (String(fileData).startsWith("data:") || String(fileData).length > 200) {
+    const base64Content = String(fileData).replace(/^data:.*?;base64,/, "");
+    await fs.promises.writeFile(filePath, Buffer.from(base64Content, "base64"));
+  } else {
+    invoiceFileUrl = fileData;
+  }
+  ```
+- **Comportamento Observado**:
+  Qualquer URL externa pré-assinada (ex: S3, Cloud Storage ou link com token de autenticação Zoho) com comprimento superior a 200 caracteres ativa a condição `String(fileData).length > 200`. O código tenta decodificar a string da URL como se fosse Base64 (`Buffer.from(base64Content, "base64")`), escrevendo bytes corrompidos no disco local e descartando a URL real da Nota Fiscal.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Safety Guarantee (Observation 2):** When `wbp_integration_mode` is `'off'`, `client.request()` throws error 1031 before any network call can be dispatched (0 outbound calls); incoming callbacks immediately respond with HTTP 200 `{ ErrorCode: 1031 }` without writing to storage or database; and background workers do not register timers (`intervalId = null`). This strictly satisfies R1 and Acceptance Criterion 1.
-2. **Deduplication Under Concurrency (Observation 4):** Because `claimForProcessing` checks `isAlreadyProcessed` and acquires an in-flight promise lock keyed by `orderId`, only the first of 8 simultaneous arrivals (5 webhooks + 3 pollings) can obtain `shouldProcess: true`. All other 7 arrivals receive `shouldProcess: false`, guaranteeing zero duplicate reservations and zero ID collisions.
-3. **Prune Immunity & Durability (Observation 4):** Raw payloads are appended exclusively to `wbp_raw_payloads` or `data/wbp_raw_payloads.jsonl`. Because `pruneDatabase()` in `demo-server.mjs` operates strictly on properties of the `db` in-memory object (`db.reservations`, `db.whatsappHistory`), raw payloads are structurally immune to truncation.
-4. **Crash Resumption (Observation 4):** If the process terminates abruptly after `recordRawPayload` but before `claim.release()`, the payload remains flagged as `status: 'unprocessed'`. On subsequent boot, `getUnprocessedPayloads()` yields the pending payload, enabling guaranteed resumption without data loss.
-5. **OpenAPI Fidelity & Errata Tolerance (Observation 5):** Outbound requests are validated against `wbpAPI.yaml` definitions while accommodating real-world quirks (such as form-urlencoded `NotifyBooking` and string/number property IDs). This provides an authentic local environment for integration testing without relying on live credentials.
-6. **Integrity & Authenticity:** No hardcoded results, facade implementations, or bypassed checks were found in the codebase. All logic is authentic, robust, and validated by targeted tests.
+1. **Premissa de Conformidade e Integridade**: As regras do projeto em `AGENTS.md` e os critérios de aceitação do Marco M1 estabelecem paridade estrita de hash SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`, além de 100% dos testes pontuais passando.
+2. **Conexão com Obs 1**: A execução real de `node --test tests/minibar-backend-flow.test.mjs` resultou em falha com exit code 1 (`AssertionError: Arquivos gêmeos de demo-server.mjs devem possuir paridade exata SHA-256`). A alegação do worker M1 de 20 testes passando sem falhas foi desmentida pela execução independente.
+3. **Conexão com Obs 2**: A especificação exigia dedução de 0.99% em PIX no fechamento de repasse. O código-fonte implementou taxa fixa com valor padrão `0.0`, não aplicando nenhum desconto sobre vendas PIX, enquanto a documentação alegava o contrário. Testes frouxos ocultaram o defeito.
+4. **Conexão com Obs 3**: Permitir que `POST /api/minibar/inspections` seja invocado sem credenciais abre vetor para abuso ou ataques de negação/trollagem com disparos automáticos de cobrança no WhatsApp de clientes reais.
+5. **Conexão com Obs 4**: A heurística `length > 200` assume indevidamente que toda string longa é um payload Base64, quebrando integrações comuns onde a NF-e é informada por URL pré-assinada ou link corporativo.
+6. **Conclusão Lógica**: O conjunto de dados e código não atende plenamente aos critérios de aprovação de M1, exigindo correções pontuais antes do avanço para o Marco M2.
 
 ---
 
-## 3. Caveats & Adversarial Recommendations
+## 3. Findings
 
-1. **Adversarial Finding 1 (Lock Timeout / TTL in `claimForProcessing` - Resilience Improvement for M4):**
-   - *Observation*: In `WbpStorage.claimForProcessing`, the lock in `_inFlightLocks` is deleted when `release()` is called. If an unexpected runtime exception in future reservation processing code aborts before `release()` is reached, the in-flight lock remains in memory for the life of the process.
-   - *Recommendation for M4*: Implement a lock TTL (e.g., 60 seconds) so that stale in-flight locks expire automatically.
-2. **Adversarial Finding 2 (Concurrent Deduplicated Rows in Postgres - Cleanup for M4):**
-   - *Observation*: When a duplicate payload arrives while another is already processed, `claimForProcessing` returns `shouldProcess: false`. In PostgreSQL mode, the duplicate raw record retains `status: 'unprocessed'` unless explicitly marked as `'deduplicated'`.
-   - *Recommendation for M4*: When `claim.shouldProcess === false`, update `wbp_raw_payloads` with `status: 'deduplicated'`.
-3. **Multi-Instance Advisory Lock (Future Scaling):**
-   - *Observation*: The current in-flight lock mutex is in-memory (`Map`), which is 100% sound for CorpFlats Soho's single-container deployment on Render. If horizontally scaled in the future, PostgreSQL advisory locks (`pg_try_advisory_xact_lock`) should be introduced.
+### [Critical] Finding 1: Falha no Teste Pontual & Desalinhamento SHA-256 Twin-Server (Integridade)
+- **Onde**: `scripts/demo-server.mjs` vs `artifacts/api-server/demo-server.mjs` (linha 27255) e `tests/minibar-backend-flow.test.mjs:41-47`.
+- **O que**: O teste pontual `node --test tests/minibar-backend-flow.test.mjs` falhou com exit code 1 no subteste 1.
+- **Por que**: `artifacts/api-server/demo-server.mjs` continha `pre_checkin_enter_prompt` enquanto `scripts/demo-server.mjs` não possuía a linha, violando a paridade obrigatória.
+- **Sugestão de correção**: Sincronizar os arquivos gêmeos para restabelecer a paridade exata e rodar o teste unitário.
+
+### [Major] Finding 2: Taxa de Adquirente de 0.99% PIX Omissa no Repasse Financeiro
+- **Onde**: `artifacts/api-server/demo-server.mjs:1350`, `46906-46907` e `tests/minibar-backend-flow.test.mjs:575-585`.
+- **O que**: O fechamento de repasse (`GET /api/minibar/settlement`) utiliza `pixFeeFixed: 0.0` em vez de calcular a taxa percentual de 0.99% sobre `pixOrdersAmount`.
+- **Por que**: Vendas em PIX não sofrem nenhuma dedução de taxa bancária no repasse, gerando distorção financeira contra a CorpFlats em benefício da Anserve.
+- **Sugestão de correção**:
+  1. Em `getDefaultMinibarSettings`: adicionar `pixFeePercent: 0.99`.
+  2. Em `GET /api/minibar/settlement`: calcular `const pixFeePercent = Number(db.minibarSettings?.pixFeePercent) || 0.99; const pixFees = (pixOrdersAmount * pixFeePercent) / 100;`.
+  3. No teste `tests/minibar-backend-flow.test.mjs`: adicionar assert explícito validando que `data.pixFees === (data.pixOrdersAmount * 0.0099)`.
+
+### [Major] Finding 3: Ausência de Autenticação e RBAC em `POST /api/minibar/inspections`
+- **Onde**: `artifacts/api-server/demo-server.mjs:46570`.
+- **O que**: Qualquer requisição anônima pode postar uma inspeção de frigobar com status de divergência.
+- **Por que**: Dispara automaticamente ordens de cobrança pendentes e envia mensagens via IA Sofia para o WhatsApp de hóspedes reais.
+- **Sugestão de correção**:
+  Exigir que o usuário autenticado possua role `anserve_repositora`, `anserve_gestor`, `admin` ou `dev` (respeitando bypass controlado em modo teste).
+
+### [Major] Finding 4: Heurística Insegura de Base64 em Upload de NF (`length > 200`)
+- **Onde**: `artifacts/api-server/demo-server.mjs:46489-46494`.
+- **O que**: `if (String(fileData).startsWith("data:") || String(fileData).length > 200)` assume que qualquer string > 200 caracteres é Base64.
+- **Por que**: URLs pré-assinadas com tokens de query params (comumente > 200 chars) são tratadas como Base64, gerando arquivos corrompidos e perda do anexo.
+- **Sugestão de correção**:
+  Alterar a condição para: `if (String(fileData).startsWith("data:") || (!String(fileData).startsWith("http://") && !String(fileData).startsWith("https://") && String(fileData).length > 200))`.
 
 ---
 
-## 4. Conclusion
+## 4. Verified Claims
 
-**Verdict: APPROVE**
-
-Milestone 1 satisfies all operational safety constraints, durability requirements, and OpenAPI simulator standards defined in `ORIGINAL_REQUEST.md` and `PROJECT.md`. The implementation is resilient, clean, and ready for Milestone 2 (Availability & SEBRAE Pricing Engine).
+| Item / Claim | Método de Verificação | Resultado |
+|---|---|---|
+| Desacoplamento do valor de hospedagem (`r.totalAmount`) | Inspeção de `POST /api/minibar/orders` e asserções nos testes | **PASS** — `r.totalAmount` permanece inalterado |
+| Anti-abuso de cortesia gratuita 1x por estadia | Inspeção de `POST /api/minibar/orders` (linha 46186) e teste F05 | **PASS** — 2ª tentativa bloqueia ou converte para produto pago |
+| Upload de NF com envio WhatsApp (Z-API) e E-mail (Zoho) | Inspeção de `POST /api/minibar/orders/:id/invoice` e `zapi-service.mjs:3655` | **PASS** — Converte `/api/storage/files/` para Base64 para Z-API e anexa arquivo em Zoho SMTP |
+| Disponibilização de NF no Portal do Hóspede | Inspeção de `/api/pms/guest-portal/:code` (linha 22099) e teste F08 | **PASS** — Pedido e invoice aparecem na resposta do portal |
+| Paridade SHA-256 Twin-Server | `git diff artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` e subteste 1 | **FAIL** — Falha de paridade (linha 27255 divergente) |
+| Dedução de 0.99% PIX no repasse | Inspeção de `demo-server.mjs:46906` e `getDefaultMinibarSettings` | **FAIL** — Código usa `pixFeeFixed = 0.0` |
 
 ---
 
-## 5. Verification Method
+## 5. Coverage Gaps & Adversarial Stress Tests
 
-To independently reproduce this verification:
+- **Gabarito com Múltiplas Vistorias**: Caso ocorram vistorias diárias sucessivas com consumo e reposição no mesmo flat durante uma estadia longa, o cálculo de `undeclaredQty` continua abatendo os pedidos pagos do início da estadia. Recomendado para o Marco M3 (interface repositora) registrar snapshot do estoque físico verificado para servir de linha-base para a próxima vistoria.
+- **Risco de Vazamento de Mensageria**: As chamadas mockadas de Z-API nos testes foram verificadas e estão devidamente isoladas em modo teste, garantindo que nenhum WhatsApp real seja acionado durante `node --test tests/minibar-backend-flow.test.mjs`.
 
-1. **Git Branch & Commit:**
+---
+
+## 6. Caveats
+- O teste pontual `tests/minibar-backend-flow.test.mjs` foi o único executado, em estrito cumprimento às diretrizes de `AGENTS.md`. Nenhuma suíte global foi executada.
+- Como o papel deste agente é estritamente **Reviewer & Adversarial Critic**, nenhuma linha do código de implementação (`demo-server.mjs`) foi alterada diretamente por este subagente.
+
+---
+
+## 7. Conclusion
+O trabalho desenvolvido no Marco M1 tem sólida base técnica, modelagem correta e excelente cobertura funcional. No entanto, devido à quebra de integridade na paridade SHA-256 com falha no teste pontual e à ausência da dedução de 0.99% no cálculo de repasse do PIX, o veredito oficial é **REQUEST_CHANGES**.
+
+---
+
+## 8. Verification Method
+Para o worker responsável pelas correções revalidar:
+1. Sincronizar paridade SHA-256:
    ```powershell
-   git branch --show-current
-   # Output: feature/wbp-integration
+   Copy-Item -Path 'artifacts/api-server/demo-server.mjs' -Destination 'scripts/demo-server.mjs' -Force
+   (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
    ```
-
-2. **Verify SHA-256 Twin Parity:**
+2. Executar o teste pontual obrigatório:
    ```powershell
-   node -e "const fs = require('fs'), crypto = require('crypto'); const h = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); ['demo-server.mjs', 'wbp/config.mjs', 'wbp/storage.mjs', 'wbp/client.mjs', 'wbp/callbacks.mjs'].forEach(f => { const a = h('artifacts/api-server/' + f); const b = h('scripts/' + f); console.log(f + ': ' + (a === b ? 'MATCH' : 'MISMATCH')); });"
-   # Output: All 5 files must return MATCH
+   node --test tests/minibar-backend-flow.test.mjs
    ```
-
-3. **Execute Targeted Test Suite:**
-   ```powershell
-   node --test tests/wbp-integration/m1-safety-simulator.test.mjs
-   # Output: 13 passed, 7 suites passed, 0 failed, 0 skipped
-   ```
-
-4. **Invalidation Conditions:**
-   - Any failure in `tests/wbp-integration/m1-safety-simulator.test.mjs`.
-   - Any SHA-256 hash divergence between `artifacts/` and `scripts/`.
-   - Any outbound network call occurring while `wbp_integration_mode` is `'off'`.
+   Deve retornar 20/20 testes passando com exit code 0.
+3. Testar `GET /api/minibar/settlement` com pedidos PIX garantindo dedução de 0.99% no montante.

@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-11T23:53:00Z
+# BRIEFING — 2026-10-21T18:55:00Z
 
 ## Mission
-Investigar arquitetura de hardware IoT, especificações de áudio de boas-vindas (Welcome Playlist), regras de ativação no dia do check-in, ciclo de vida fail-safe de segurança domótica e elaboração do Guia de Aquisição de Hardware IoT para o Smart Flat Hub (CorpFlats).
+Mapear as INTERFACES DA ANSERVE (Repositora e Supervisão), ADMIN CORPFLATS, CRM e SOFIA IA para o ecossistema de Frigobar (CorpFlats + Anserve) no Guest-Flow-Manager.
 
 ## 🔒 My Identity
 - Archetype: explorer
@@ -9,6 +9,9 @@ Investigar arquitetura de hardware IoT, especificações de áudio de boas-vinda
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
 - Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
 - Milestone: Smart Flat Hub - Survey Phase (R4 & R5) Complete
+- Role (2026-10-21): explorer_survey_3 (Anserve & Admin Portals, CRM & Sofia AI Investigator)
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
+- Milestone (2026-10-21): Frigobar Ecossistema - Survey Phase (Interfaces Anserve, Admin CorpFlats, CRM & Sofia IA)
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement code changes in the source code
@@ -16,34 +19,43 @@ Investigar arquitetura de hardware IoT, especificações de áudio de boas-vinda
 - Deliver structured analysis in `analysis.md` and handoff in `handoff.md`
 - Restrição crítica de privacidade: NADA do Smart Flat Hub visível para clientes reais em produção (modo preview / sandbox exclusivo)
 - Proibido rodar testes globais ou em lote (AGENTS.md)
+- NUNCA executar testes globais, varreduras ou em lote (AGENTS.md)
+- Não fazer modificações de código fonte durante a fase de investigação (apenas relatórios em `.agents/teamwork/explorer_survey_3/`)
+- Notificar parent via `send_message` ao concluir
 
 ## Current Parent
-- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
-- Updated: 2026-10-11T23:53:00Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T18:55:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
-  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\DISPATCH.md`
-  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs` (DEFAULT_FLATS, settings, checkinTime: "14:00", endereço em Campos dos Goytacazes)
-  - `artifacts/limpeza/src/lib/sound.ts` & `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
-  - Rede e dimensionamento elétrico Enel Rio 127V/220V e padrão NBR 14136.
+  - `artifacts/limpeza/src/lib/permissions.ts`
+  - `artifacts/limpeza/src/pages/equipe.tsx`
+  - `artifacts/limpeza/src/components/layout.tsx`
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/service-worker-portal.tsx`
+  - `artifacts/limpeza/src/pages/crm-guests.tsx`
+  - `artifacts/api-server/whatsapp-ai-service.mjs`
+  - `artifacts/api-server/demo-server.mjs`
+  - `scripts/demo-server.mjs`
 - **Key findings**:
-  - R4: Welcome Playlist com 4 faixas ambientais, HTML5 Audio, volume inicial 35%, timeout 60min, trigger automático às 14:00 no dia de check-in, integração Alexa via webhook/virtual device.
-  - R2 & R3: Ciclo fail-safe estruturado (trava de até 30min antes do ETA para ligar, alerta aos 15min pós-ETA, corte automático forçado aos 30min pós-ETA sem confirmação de entrada, mitigando riscos térmicos com cafeteiras a seco e desperdício de climatização).
-  - R5: Especificação completa de hardware para 19 flats (Tomadas Tuya 16A NBR 14136 antichama com medição de watts, IR Blaster 38kHz com sensor digital TH, Amazon Echo Pop / Dot 5ª Geração, Interruptores touch 4x2 com/sem neutro). Orçamento estimado: R$ 9.971 a R$ 12.821 para a frota completa.
-  - Localização formal do Guia de Hardware: `docs/SMART_FLAT_HARDWARE_GUIDE.md`.
-- **Unexplored areas**: Nenhuma no escopo do Explorer Survey 3.
+  - Mapeamento completo dos 6 eixos de Frigobar:
+    1. Controle de Acesso e Perfis: papéis `anserve_repositora` (`["/frigobar-reposicao"]`) e `anserve_gestor` (`["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]`), link rápido com token persistente no `localStorage` ou PIN 4 dígitos.
+    2. Interface Repositora Anserve (`/frigobar-reposicao`): lista mobile por prioridade (🔴 checkouts do dia, 🔵 ocupados, 🟢 livres), confronto de consumo declarado/pago, botões Conforme vs Divergência com foto e reposição de itens pagos e cortesias (2 cápsulas Nespresso, balas e amendoim).
+    3. Interface de Supervisão Anserve (`/anserve` / `/frigobar-gestao`): fila de NFs pendentes (sem alertas no WhatsApp, apenas no painel), visualização de opção de discriminação (*Itens discriminados*, *Água*, *Consumo de Frigobar*), upload e disparo automático multicanal (Z-API WhatsApp + E-mail + Área da Reserva).
+    4. Interface Admin CorpFlats (`/frigobar`): catálogo, cortesias, gabarito por flat, gerador de QR Codes para display de acrílico e extrato de repasse financeiro.
+    5. CRM e Analytics Demográfico (`crm-guests.tsx`): histórico de consumo de frigobar, tags automáticas e cruzamento analítico de origem demográfica (cidade/UF) vs mix de categorias.
+    6. Integração Sofia IA: injeção de `minibarUrl` em `buildGuestContext`, adição de `case "minibar"` em `querySystemData`, erradicação do texto legado de "frigobar vazio sem cortesia" e disparo amigável em caso de divergência.
+- **Unexplored areas**: Nenhuma pendência na fase de investigação (fase de survey 100% concluída).
 
 ## Key Decisions Made
-- Análise aprofundada consolidada em `analysis.md`.
-- Relatório de handoff formal de 5 seções registrado em `handoff.md`.
-- Conclusão comunicada via `send_message` ao orquestrador.
+- Consolidar toda a especificação técnica e contratos REST em `analysis.md`.
+- Estruturar o relatório formal em `handoff.md` nos 5 componentes obrigatórios.
+- Concluir a missão e reportar ao Project Orchestrator via `send_message`.
 
 ## Artifact Index
 - `DISPATCH.md` — Despacho e registro de mensagens recebidas
 - `BRIEFING.md` — Identidade persistente e resumo executivo
 - `progress.md` — Heartbeat de liveness e status das tarefas
-- `analysis.md` — Análise técnica completa dos requisitos R4 e R5
+- `analysis.md` — Relatório de análise técnica detalhada (6 eixos)
 - `handoff.md` — Relatório formal de handoff (5 componentes)

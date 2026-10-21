@@ -1,20 +1,30 @@
-## 2026-10-13T23:28:19Z
-You are Reviewer 2 for Milestone 2 (Canonical Availability & SEBRAE Pricing Engine with Safety Locks).
-Your dedicated working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_2`
+## 2026-10-21T21:00:06Z
+Você é o subagente reviewer_m2_2 (teamwork_preview_reviewer).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_2
 
-Read these documents before reviewing:
-1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (mandatory, read first)
-2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md`
-3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
-4. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-Your Mission:
-1. Conduct an independent architecture, math, and non-regression review of Milestone 2:
-   - SEBRAE Math verification: check that variable costs exclude R$/day commission (R$ 23.25 + 15.51 + 9.00 = 47.76), fixed cost is R$ 101.62, total UH cost is R$ 149.38, divisor is 0.54, Tarifa Mínima is R$ 276.63, and analytical decomposition closes 100% with zero residue.
-   - Breakfast surcharge (OBP) mapping: standard double base rate, single discount, extra bed for 3rd guest, and R$ 25/guest/night added for "Com café".
-   - Safety locks: floor lock, 30% variation lock, staged publication workflow.
-   - Non-regression: verify that when integration is off/unpublished, legacy quotes and daily rate calculations remain 100% identical penny-for-penny.
-   - Test isolation: verify tests run on temporary DB copies and do not mutate real `data/database.json`.
-2. Run exclusively `node --test tests/wbp-integration/m2-availability-pricing.test.mjs`. (NEVER run global test suites!).
-3. State your explicit verdict in `handoff.md`: APPROVE or REQUEST_CHANGES. Send message to orchestrator.
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M2, Features F11 a F18)
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md
+5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\changes.md
+
+Missão do Reviewer M2_2 (UX Mobile, Portão OTP, Dados Fiscais e Checkout):
+1. Inspecione `artifacts/limpeza/src/pages/guest-minibar.tsx`:
+   - **Portão OTP**: solicitação dos 4 últimos dígitos via `InputOTP` no acesso por QR Code do flat, validação em `POST /api/minibar/flat-context`, saudação pelo primeiro nome do hóspede e persistência em `sessionStorage`.
+   - **Acesso Direto**: acesso sem exigir 4 dígitos via `/minha-reserva/:code/frigobar` consumindo `GET /api/minibar/reservation-context/:code`.
+   - **Gabarito Não-Editável**: exibição do selo informativo `"Padrão no flat: X un."` baseado em `defaultStock`.
+   - **Aviso Mandatório**: banner destacado informando que o frigobar não pode ser faturado na diária de hospedagem.
+   - **Opções de NF**: 3 opções de discriminação (todos os itens, água, consumo frigobar), campo de documento (CPF/CNPJ) e e-mail.
+   - **Checkout**: PIX com QR Code, Copia e Cola e polling a cada 2.5s; Cartão Mercado Pago; resgate de cortesia gratuita R$ 0,00.
+2. Verifique a compilação: `npm --prefix artifacts/limpeza run build` (saída 0).
+3. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
+NUNCA execute testes globais `tests/*.test.mjs`.
+
+Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

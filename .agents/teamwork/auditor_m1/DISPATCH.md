@@ -1,47 +1,30 @@
-# Forensic Auditor Task Assignment: Milestone 1 Integrity Audit
+## 2026-10-21T19:19:35Z
+Você é o subagente auditor_m1 (teamwork_preview_auditor).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1
 
-## Objective
-Forensic integrity audit of Milestone 1 changes in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-## Authoritative References
-- ORIGINAL_REQUEST.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read section `## 2026-10-19T02:58:52Z`)
-- PROJECT.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_13\PROJECT.md`
-- Worker M1 handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
 
-## Forensic Audit Protocol
-1. Static analysis: Check for fake/hardcoded test mocks, shortcut facades, or bypasses.
-2. Runtime verification: Run `node --test tests/auth-roles-permissions.test.mjs` directly.
-3. Database persistence check: Verify genuine data operations and hashing (`hashPassword`, `atomicWriteFileSync`).
-4. Twin server parity: Verify exact SHA-256 match between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-5. Binary veto: Deliver verdict (CLEAN or INTEGRITY VIOLATION) in `handoff.md` and message the orchestrator.
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md
 
+Missão do Auditor M1 (Auditoria Forense de Integridade):
+Realizar verificação estrita de integridade do código implementado no Marco M1:
+1. Verifique se há CHEATING, FACADES ou DUMMY IMPLEMENTATIONS:
+   - Os endpoints em `artifacts/api-server/demo-server.mjs` executam lógica genuína ou há hardcodes de respostas de teste?
+   - As coleções `db.minibarProducts`, `db.minibarOrders`, `db.minibarInspections`, etc. são realmente persistidas e consultadas ou apenas mockadas no teste?
+   - Os fluxos de PIX, Cartão, Z-API WhatsApp e Zoho SMTP integram-se aos helpers reais do sistema?
+2. Verifique a paridade estrita SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+3. Verifique se foram respeitadas as diretrizes do `AGENTS.md`:
+   - NENHUM teste global em lote foi executado.
+   - Nenhuma notificação real foi disparada para telefones reais de hóspedes.
+4. Conclua com veredito BINÁRIO inegociável: CLEAN ou INTEGRITY VIOLATION.
 
-## 2026-10-19T04:50:18Z
-Você é o subagente auditor_m1 (TypeName: teamwork_preview_auditor).
-Seu diretório de trabalho é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1`
-A raiz do projeto é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
-
-Leia com atenção o arquivo de tarefas:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1\DISPATCH.md`
-e as referências:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seção `## 2026-10-19T02:58:52Z`)
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
-
-Realize a auditoria forense de integridade do Milestone 1:
-- Verifique se a implementação em `artifacts/api-server/demo-server.mjs` é genuína e livre de hardcoded bypasses, mocks enganosos ou atalhos falsos.
-- Verifique a integridade criptográfica da persistência de senhas (`hashPassword`).
-- Verifique a paridade estrita SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-- Execute a suíte pontual `node --test tests/auth-roles-permissions.test.mjs` para validação em runtime.
-Seu veredito é um veto binário (CLEAN ou INTEGRITY VIOLATION). Registre em `handoff.md` e envie mensagem com `send_message` ao Project Orchestrator (c4864abd-776b-4ad1-aef9-25c7af7463df).
-
-
-## 2026-10-19T05:13:47Z
-**Context**: Re-auditoria Forense de Integridade pós-remediação.
-**Content**: O worker sincronizou `scripts/demo-server.mjs` para `artifacts/api-server/demo-server.mjs`, restabeleceu a paridade SHA-256 e executou o build e testes com sucesso.
-Execute a re-auditoria forense final:
-1. Verifique `Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"`.
-2. Execute `node --test tests/auth-roles-permissions.test.mjs`.
-3. Verifique a ausência de referências a `/ajuda-wbp` e a exclusão física dos arquivos `wbp-manual.tsx` e `WbpHelpManualPage.tsx`.
-4. Atualize seu veredito em `handoff.md` e responda via `send_message`.
+Escreva seu relatório forense em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

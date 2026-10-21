@@ -595,7 +595,7 @@ export function getSerproConfig(settings = null) {
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeSettings = dbInstance?.settings || dbInstance || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
@@ -630,7 +630,7 @@ export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", d
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeSettings = dbInstance?.settings || dbInstance || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;

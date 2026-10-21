@@ -404,7 +404,7 @@ export function renderQuickMessage(
   if (!templateText) return ""
   if (!resItem) return templateText
 
-  const origin = appOrigin || (typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com")
+  const origin = appOrigin || (typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br")
 
   const recipients = getReservationRecipients(resItem, companies)
   const guest = recipients.guest

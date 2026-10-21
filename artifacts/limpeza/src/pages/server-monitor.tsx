@@ -550,7 +550,7 @@ export default function ServerMonitorPage() {
                 <label className="text-[11px] font-bold uppercase text-muted-foreground">Endpoint (URL do Destino Custom)</label>
                 <div className="flex items-center gap-2 p-2 rounded-xl bg-muted/40 border border-border/80">
                   <span className="text-xs font-mono select-all truncate text-foreground flex-1">
-                    {config?.renderWebhookUrl || "https://seu-dominio.onrender.com/api/observability/render-metrics"}
+                    {config?.renderWebhookUrl || "https://corpflats.com.br/api/observability/render-metrics"}
                   </span>
                   <Button
                     size="sm"

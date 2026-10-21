@@ -36,7 +36,7 @@ class MainActivity : AppCompatActivity() {
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private var currentPhotoPath: String? = null
 
-    private val APP_URL = "https://corpflats.onrender.com"
+    private val APP_URL = "https://corpflats.com.br"
 
     private val cameraLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()

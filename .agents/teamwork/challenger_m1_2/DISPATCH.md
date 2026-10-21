@@ -1,20 +1,30 @@
-# Challenger M1-2 Task Assignment
+## 2026-10-21T19:19:35Z
 
-## Objective
-Adversarially probe edge cases for Milestone 1: privilege escalation attempts, password reset exploits, idempotency of user migration, and dev-account protections.
+Você é o subagente challenger_m1_2 (teamwork_preview_challenger).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2
 
-## Authoritative References
-- ORIGINAL_REQUEST.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read section `## 2026-10-19T02:58:52Z`)
-- PROJECT.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_13\PROJECT.md`
-- Worker M1 handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-## Challenge Tasks
-1. Probe privilege escalation:
-   - What happens if a user with `role: "admin"` (e.g. `gestor`) tries to create a user with `role: "dev"`? (Must be rejected with 403).
-   - What happens if `gestor` tries to edit `admin`'s name or password? (Must be rejected with 403).
-   - What happens if `gestor` tries to delete `admin`? (Must be rejected with 403).
-2. Probe idempotency of `ensureSystemUsers`:
-   - Calling `ensureSystemUsers(db)` multiple times must NOT duplicate users or reset changed passwords.
-3. Verify password reset supports both `PATCH` and `POST` methods on `/api/admin/users/:id/reset-password`.
-4. Run pinpoint test `node --test tests/auth-roles-permissions.test.mjs`. (Do NOT run batch sweeps per AGENTS.md).
-5. Report empirical findings and verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` and message the orchestrator.
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+
+Missão do Challenger M1_2:
+Verificação adversária de desacoplamento financeiro, webhooks e extrato de repasse:
+1. Teste o desacoplamento financeiro:
+   - Prove empiricamente que a criação, pagamento ou cancelamento de pedidos de frigobar NÃO altera o valor `r.totalAmount` da reserva em nenhuma hipótese.
+2. Teste a conciliação de webhooks:
+   - Webhook do Banco Inter com `txId` correto liquida o pedido (`status = "pago"`).
+   - Webhook do Mercado Pago com `payment.id` e `external_reference` liquida o pedido.
+3. Teste o cálculo matemático do extrato de repasse Anserve (`/api/minibar/settlement`):
+   - Vendas brutas - taxas de cartão - comissão + custo de cortesias = repasse líquido exato.
+4. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
+NUNCA execute testes globais `tests/*.test.mjs`. Apenas seus testes pontuais isolados.
+
+Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

@@ -500,7 +500,7 @@ function Router() {
         <ReceptionRoute path="/ota-inbox" component={OtaInboxPage} moduleName="a Caixa de Entrada OTA" />
         <ReceptionRoute path="/quarentena" component={OtaInboxPage} moduleName="a Quarentena de Reservas" />
 
-        <Route path="/"><Redirect to="/reservar" /></Route>
+        <Route path="/" component={BookingEngine} />
         <Route component={NotFound} />
       </Switch>
       </Suspense>

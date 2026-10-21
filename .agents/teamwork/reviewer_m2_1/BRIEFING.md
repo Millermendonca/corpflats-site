@@ -1,66 +1,65 @@
-# BRIEFING — 2026-10-13T23:33:00Z
+# BRIEFING — 2026-10-21T21:04:00Z
 
 ## Mission
-Review Milestone 2 (Canonical Availability & SEBRAE Pricing Engine with Safety Locks) objectively and adversarially.
+Review and adversarially challenge Milestone M2 Frontend Architecture, Routes, and Build integrity (Features F11-F18), specifically focusing on App.tsx route precedence in Wouter, guest-portal.tsx integration, and Vite production build.
 
 ## 🔒 My Identity
-- Archetype: reviewer
+- Archetype: reviewer_and_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_1
-- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Milestone: Milestone 2
-- Instance: 1 of 1
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M2
+- Instance: 1 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- NEVER run global test suites or tests outside tests/wbp-integration/m2-availability-pricing.test.mjs
-- Check for integrity violations: hardcoded results, dummy logic, shortcuts, fabricated verification
-- Strict parity: SHA-256 byte-for-byte identity between artifacts/api-server and scripts twins
+- NUNCA executar testes globais tests/*.test.mjs ou varreduras
+- Only run specific build and verification checks
+- All findings must be evidence-backed and verified
+- Active integrity checks for facades, hardcoded results, and shortcuts
 
 ## Current Parent
-- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Updated: 2026-10-13T23:28:19Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: not yet
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/api-server/wbp/availability.mjs` & `scripts/wbp/availability.mjs`
-  - `artifacts/api-server/wbp/pricing.mjs` & `scripts/wbp/pricing.mjs`
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`
-  - `tests/wbp-integration/m2-availability-pricing.test.mjs`
-  - `.agents/teamwork/worker_m2/handoff.md`
-- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
-- **Review criteria**: Correctness, SEBRAE formula compliance, safety locks, non-blocking conflict warnings, SHA-256 parity, test coverage, adversarial robustness
+  - `artifacts/limpeza/src/App.tsx` (verified)
+  - `artifacts/limpeza/src/pages/guest-portal.tsx` (verified)
+  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (verified)
+  - `artifacts/limpeza/dist/` (verified)
+- **Interface contracts**: `PROJECT.md` (Milestone M2), `ORIGINAL_REQUEST.md`, `AGENTS.md`
+- **Review criteria**: Route precedence in Wouter, component imports, UI integration in guest portal, Vite build pass, artifact generation, integrity checks
+
+## Key Decisions Made
+- Confirmed strict route precedence in `App.tsx`: public minibar routes (lines 300-310) are declared before generic `/minha-reserva/:code` (line 311).
+- Confirmed `guest-portal.tsx` includes both dropdown menu shortcut (lines 1870-1876) and premium dedicated minibar card (lines 3348-3392) with amber decoupled billing warning and direct navigation to `/minha-reserva/${reservation.code || code}/frigobar`.
+- Independently ran `npm --prefix artifacts/limpeza run build`: completed with exit code 0, 3392 modules transformed in 32.17s.
+- Integrity verification: No hardcoded results, no facades, no bypassed logic detected. Full 1396 lines of robust implementation in `guest-minibar.tsx`.
+- Verdict: APPROVE.
+
+## Artifact Index
+- `DISPATCH.md` — Dispatch message from orchestrator
+- `BRIEFING.md` — Situational awareness and working memory
+- `progress.md` — Liveness heartbeat and task tracker
+- `handoff.md` — 5-component handoff report with APPROVE verdict
 
 ## Review Checklist
 - **Items reviewed**:
-  - Git branch (`feature/wbp-integration` active)
-  - SHA-256 parity of all 3 twin file pairs (100% byte-for-byte verified)
-  - Canonical Availability Engine (19 flats, 5 blocking sources: reservations, holds, blocks, service orders, maintenance status)
-  - SEBRAE Pricing Engine math (Custo UH R$ 149.38 -> Tarifa Mínima R$ 276.63, 100% analytical closure)
-  - Pricing Safety Locks (floor lock, variation lock, staged publication workflow)
-  - Breakfast Surcharge & OBP mapping
-  - Non-blocking conflict warnings on PMS reservation creation/updates
-  - Isolated test runner execution: 25/25 passing with real-gold comparison against commit 0501d02
-  - Integrity violation audit: ZERO violations found
+  - `artifacts/limpeza/src/App.tsx` (lines 1-45, 285-345)
+  - `artifacts/limpeza/src/pages/guest-portal.tsx` (lines 1-45, 1850-1890, 3340-3410)
+  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (full component: 1396 lines)
+  - Vite build output (`npm --prefix artifacts/limpeza run build`)
+  - Git status and commit history (`git status`, `git log -2 --oneline`)
 - **Verdict**: APPROVE
-- **Unverified claims**: none
+- **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Zero/extreme cost parameters in SEBRAE engine (handled gracefully with error guards)
-  - Date boundaries across year boundary 2026->2027 in availability (UTC noon prevents DST/timezone slips)
-  - Boundary behavior on exact floor matching (approved when candidateRate === floor)
-  - Variation lock precision (30% vs 30.5%+ due to round2 rounding)
-  - Concurrent DB race conditions between legacy and active child processes (resolved by separate temp DB files)
-- **Vulnerabilities found**: none blocking
-- **Untested angles**: OTA webhook ingestion (Milestone 4 scope)
-
-## Key Decisions Made
-- Confirmed full compliance with Milestone 2 specification.
-- Verdict is APPROVE.
-
-## Artifact Index
-- DISPATCH.md — Recorded dispatch instructions
-- BRIEFING.md — Situational awareness and working memory
-- progress.md — Step-by-step progress tracking
-- handoff.md — Complete 5-component review and adversarial challenge report
+  - Wouter route shadowing by generic wildcard `/minha-reserva/:code` -> Proved impossible due to explicit prior declaration.
+  - Memory leak in status polling timer on unmount/cancellation -> Proved mitigated via `useEffect` cleanup and cancel handlers.
+  - Hardcoded test outputs or facade implementations -> Proved absent; authentic dynamic state and API integration.
+  - Viewport overlap on mobile fixed bottom bar -> Proved mitigated via container `pb-32` and `inset-x-0` positioning.
+  - Zero-cost courtesy redemption breaking payment flow -> Proved handled with direct transition to success state.
+- **Vulnerabilities found**: 0 critical/major/minor issues.
+- **Untested angles**: Hardware-level camera photo capture on physical devices (depends on browser permissions, but API contracts are sound).

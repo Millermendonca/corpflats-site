@@ -554,7 +554,7 @@ export default function CrmGuests() {
     let label = "Mensagem CRM"
     switch (type) {
       case "welcome":
-        msg = `Olá, ${firstName}! Tudo bem? Seja muito bem-vindo ao CorpFlats. Para agilizar sua entrada na portaria, preencha seu pré-check-in rápido aqui: https://corpflats.onrender.com/pre-checkin`
+        msg = `Olá, ${firstName}! Tudo bem? Seja muito bem-vindo ao CorpFlats. Para agilizar sua entrada na portaria, preencha seu pré-check-in rápido aqui: https://corpflats.com.br/pre-checkin`
         label = "Boas-vindas + Pré-Check-in"
         break
       case "room_ready":

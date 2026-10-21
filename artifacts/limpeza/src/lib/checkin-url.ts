@@ -37,7 +37,7 @@ export function getCheckinUrl(
   baseUrl: string = "",
   settings: CheckinUrlSettings | null = null
 ): string {
-  const hostBase = (baseUrl || (typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com")).replace(/\/+$/, "")
+  const hostBase = (baseUrl || (typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br")).replace(/\/+$/, "")
   const resCode = reservation?.code || reservation?.reservationCode || String(reservation?.id || "")
   const safeGuestIndex = Number(guestIndex) || 1
   const internalFallback = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`

@@ -1,14 +1,12 @@
-# Progress — Forensic Integrity Auditor Milestone 2
+# Progress — auditor_m2
 
-- Last visited: 2026-10-13T23:33:30Z
-- Status: Completed (CLEAN)
+Last visited: 2026-10-21T21:03:45Z
+Status: COMPLETED
+Verdict: CLEAN
 
-## Tasks
-- [x] Read ORIGINAL_REQUEST.md, PROJECT.md, AGENTS.md, worker_m2/handoff.md
-- [x] Create DISPATCH.md, BRIEFING.md, progress.md
-- [x] Forensic Check 1: Code analysis for cheating / facades / hardcoded values in M2 modules (PASS)
-- [x] Forensic Check 2: Twin parity SHA-256 byte-for-byte verification (PASS)
-- [x] Forensic Check 3: Git & branch integrity check (`feature/wbp-integration`, `main` untouched, `b213257` pushed) (PASS)
-- [x] Forensic Check 4: Test isolation & real `data/database.json` mtime / SHA-256 integrity check (PASS)
-- [x] Forensic Check 5: Independent empirical execution of targeted test `node --test tests/wbp-integration/m2-availability-pricing.test.mjs` (PASS: 25/25)
-- [ ] Produce `handoff.md` with binary verdict and send message to orchestrator
+Summary of Completed Checks:
+1. Source Code Forensics: Authentic implementation of `guest-minibar.tsx` (1,396 lines, no facades or dummies).
+2. Flow Integrity: OTP 4-digit gate, catalog, non-editable nominal guide badge, decoupling warning, 3 invoice preferences, PIX with dynamic QR & polling, Mercado Pago link, success screen.
+3. Build Verification: `npm --prefix artifacts/limpeza run build` succeeded with exit code 0 in 31.07s. Zero diff on `dist/`.
+4. Git & Deploy: Commit `b4d6d7f` pushed to `origin/main`.
+5. AGENTS.md Compliance: Zero global/batch tests run, zero notifications triggered.

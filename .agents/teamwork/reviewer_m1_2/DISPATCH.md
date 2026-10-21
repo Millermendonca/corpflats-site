@@ -1,17 +1,28 @@
-# Reviewer M1-2 Task Assignment
+## 2026-10-21T19:19:34Z
+Você é o subagente reviewer_m1_2 (teamwork_preview_reviewer).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2
 
-## Objective
-Independent Review of Milestone 1 (Backend Auth, Roles & Dev Endpoints) focusing on security, regressions, twin parity, and edge cases.
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-## Authoritative References
-- ORIGINAL_REQUEST.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read section `## 2026-10-19T02:58:52Z`)
-- PROJECT.md: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_13\PROJECT.md`
-- Worker M1 handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
 
-## Review Focus
-1. Verify twin server SHA-256 byte-by-byte parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-2. Verify that existing reception and maid flows were not broken by role changes (`recepcao` and `camareira` permissions preserved).
-3. Verify that `POST /api/audit-logs/client` is accessible for client log forwarding while `/api/audit-logs` read/export is strictly dev-only.
-4. Verify password reset security and hash updates.
-5. Run the pinpoint test `node --test tests/auth-roles-permissions.test.mjs`. (Do NOT run batch sweeps per AGENTS.md).
-6. State your verdict clearly (APPROVE or REQUEST_CHANGES) in `handoff.md` and message the orchestrator.
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Marco M1, Features F01 a F10)
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md
+
+Missão do Reviewer M1_2:
+Revisão de regras de negócio, APIs e integrações do Marco M1:
+1. Inspecione o endpoint de upload de NF (`POST /api/minibar/orders/:id/invoice`): armazenamento de arquivo, atualização de status e disparo multicanal (Z-API WhatsApp + Zoho SMTP E-mail + exposição no portal do hóspede).
+2. Inspecione a conferência da Anserve (`POST /api/minibar/inspections`): cálculo de faltas, registro de divergência, reposição de cortesias vs pagos e alerta automático para WhatsApp Sofia.
+3. Inspecione o fechamento de repasse (`GET /api/minibar/settlement`): dedução de taxas de adquirente (3.99% cartão, 0.99% PIX) e crédito das cortesias gratuitas da CorpFlats.
+4. Execute EXCLUSIVAMENTE o teste pontual:
+   `node --test tests/minibar-backend-flow.test.mjs`
+   NUNCA execute testes globais (`tests/*.test.mjs`).
+5. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
+
+Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

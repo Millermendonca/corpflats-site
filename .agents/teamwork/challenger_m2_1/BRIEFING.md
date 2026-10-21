@@ -1,58 +1,56 @@
-# BRIEFING — 2026-10-13T23:33:15Z
+# BRIEFING — 2026-10-21T21:05:00Z
 
 ## Mission
-Empirically stress-test canonical availability calculation under complex and adversarial calendar workloads for Milestone 2.
+Adversarial review and edge case stress testing of `guest-minibar.tsx` implementation for Milestone M2 (Guest Self-Service Minibar ordering flow).
 
 ## 🔒 My Identity
-- Archetype: EMPIRICAL CHALLENGER
+- Archetype: challenger (teamwork_preview_challenger)
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1
-- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Milestone: Milestone 2 (Canonical Availability Engine)
-- Instance: 1 of 2
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M2
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Write isolated targeted test script in tests/wbp-integration/challenger-m2-availability.test.mjs
-- Run exclusively: node --test tests/wbp-integration/challenger-m2-availability.test.mjs (NEVER run global sweeps)
-- Verify available units never exceed 19 and never drop below 0
-- State explicit verdict in handoff.md: APPROVE or REQUEST_CHANGES
+- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs`)
+- Only run Vite build: `npm --prefix artifacts/limpeza run build`
+- Provide explicit verdict: APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Updated: 2026-10-13T23:33:15Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T21:05:00Z
 
 ## Review Scope
-- **Files to review**:
-  - `artifacts/api-server/wbp/availability.mjs`
-  - `scripts/wbp/availability.mjs`
-  - `artifacts/api-server/demo-server.mjs` (endpoints /api/wbp/availability, /api/wbp/conflicts/check)
-  - `tests/wbp-integration/challenger-m2-availability.test.mjs`
-- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
-- **Review criteria**: Correctness under adversarial calendar workloads, turnover logic, ceiling limits, bounds [0, 19], maintenance and holds handling
+- **Files to review**: `artifacts/limpeza/src/pages/guest-minibar.tsx` (1396 lines)
+- **Interface contracts**: `PROJECT.md` (M2, Features F11 to F18), `ORIGINAL_REQUEST.md`, `AGENTS.md`
+- **Review criteria**: Empty cart submission, OTP length < 4 handling, OTP error handling, email/document validation, polling timer cleanup, bundle build stability
 
 ## Key Decisions Made
-- Designed and authored 21 targeted adversarial stress tests across 13 suites in `tests/wbp-integration/challenger-m2-availability.test.mjs`.
-- Stress-tested 100 randomized calendar permutations to verify invariant `0 <= units <= 19` across extreme ceilings and high contention.
-- Verified same-day turnover (back-to-back checkouts/checkins) causes zero false collisions, preserves inventory, and handles multi-flat turnover.
-- Verified overlapping overbooking bookings do not trigger multiple decrements on a single flat.
-- Verified all 5 conflict types return non-blocking warnings (`isWarningOnly: true`).
-- Verified 100% SHA-256 byte-for-byte twin parity between `artifacts/` and `scripts/` availability modules.
-- Verdict: APPROVE.
-
-## Artifact Index
-- `tests/wbp-integration/challenger-m2-availability.test.mjs` — isolated stress test harness (21 tests, 13 suites)
-- `.agents/teamwork/challenger_m2_1/handoff.md` — detailed 5-component handoff report
+- Adversarial evaluation concluded: 5 checklist items investigated.
+- Empty cart: Button disabled and submit guard verified.
+- OTP < 4 digits: Strict 4-char OTP input and submit guards verified.
+- Wrong OTP: Graceful error banner display, no component crash, loading state released.
+- Email & Document: Pre-fill and custom toggle functional, recommendation noted for strict regex validation in M3.
+- Timer cleanup: Polling interval thoroughly cleaned up on success, modal cancel, and unmount.
+- Vite build passed with exit code 0 in 31.39s.
+- Verdict: **APPROVE**.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Overlapping reservations on the same flat could double-decrement availability below 0 -> Refuted: flat is evaluated once per night, bounding available units.
-  2. Same-day turnover (checkout 12:00, checkin 14:00) could trigger false turnover collision -> Refuted: checkinDate <= night < checkoutDate correctly assigns turnover night to arriving guest.
-  3. Excessive ceiling (>19) or negative ceiling (<0) could breach bounds -> Refuted: Math.max(0, Math.min(ceiling, availableCount)) strictly enforces [0, 19].
-  4. Open-ended maintenance could fail to block subsequent nights -> Refuted: open-ended orders block all dates >= startedAt.
-  5. Paid pre-reservas past expiresAt might be prematurely freed -> Refuted: paymentStatus === 'pago_total' prevents premature expiration.
-- **Vulnerabilities found**: None. Engine is robust and correctly handles all adversarial cases.
-- **Untested angles**: None within Milestone 2 availability scope.
+  1. Empty cart submission attempt with 0 total → Blocked by button disabled & submit handler guard.
+  2. OTP input with < 4 digits → Blocked by maxLength, onChange condition, button disabled, function guard.
+  3. Wrong OTP input (401/404/network) → Friendly error banner, no crash, finally unsets loading.
+  4. Missing/invalid email & doc → Sent to backend with fallbacks; recommendation logged for future enhancement.
+  5. Polling interval leak → Protected by useEffect unmount hook, cancel button, and success branch.
+  6. Bundle breakage → Vite build passed with code 0.
+- **Vulnerabilities found**: None critical/blocking. Client-side email RFC regex could be tightened in subsequent milestone.
+- **Untested angles**: Live payment gateway webhooks (tested in M1/M5 test suites).
 
 ## Loaded Skills
-- None
+- None requested
+
+## Artifact Index
+- `handoff.md` — Final 5-component adversarial review report
+- `progress.md` — Liveness and execution progress tracker
+- `DISPATCH.md` — Incoming message history

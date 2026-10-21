@@ -228,7 +228,7 @@ export function ReservationHoverCard({
   const statusCfg = isCheckoutCompleted
     ? STATUS_MAP.completed
     : (STATUS_MAP[resItem.status] || STATUS_MAP.confirmada)
-  const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
+  const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br"
   const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
   const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
   const checkoutUrl = `${originUrl}/checkout/${resItem.code || resItem.id}`

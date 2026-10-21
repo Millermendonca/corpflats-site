@@ -1,69 +1,62 @@
-# BRIEFING — 2026-10-19T05:15:00Z
+# BRIEFING — 2026-10-21T19:28:30Z
 
 ## Mission
-Empirically challenge Milestone 1: RBAC separation (dev vs admin), route protection, privilege escalation barriers, and twin server SHA-256 parity.
+Adversarial verification and empirical stress testing of the Minibar Backend (Milestone M1).
 
 ## 🔒 My Identity
-- Archetype: empirical challenger
+- Archetype: challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
-- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Milestone: Milestone 1
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M1
 - Instance: 1 of 1
-- Current parent: c4864abd-776b-4ad1-aef9-25c7af7463df (Project Orchestrator)
-- Active Instance: 1 of 1 (M1 Auth, Roles & Dev Endpoints)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Run exclusively targeted test: node --test tests/wbp-integration/challenger-m1-concurrency.test.mjs (NEVER run global sweeps)
-- Strictly comply with AGENTS.md rules
-- Do NOT run global test sweeps (`tests/*.test.mjs`), only strictly targeted test for Milestone 1 (`tests/auth-roles-permissions.test.mjs` and isolated challenger probes)
-- Do NOT modify production code or twin server implementations
+- Strict testing scope: Never run global test suites `tests/*.test.mjs`, only single dedicated isolated test
+- Run verification empirically; do not trust worker assertions
 
 ## Current Parent
-- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Updated: 2026-10-19T05:13:56Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T19:28:30Z
 
 ## Review Scope
-- **Files to review**:
-  - `artifacts/api-server/demo-server.mjs`
-  - `scripts/demo-server.mjs`
-  - `tests/auth-roles-permissions.test.mjs`
-  - `worker_m1/handoff.md`
-- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md` (section `## 2026-10-19T02:58:52Z`)
-- **Review criteria**:
-  - SHA-256 exact parity between twin servers
-  - Strict RBAC enforcement: `dev` gets access to technical routes, `admin` (`gestor`) gets HTTP 403 on technical routes
-  - Operational routes accessible to both `dev` and `admin`
-  - Privilege escalation resistance (admin cannot elevate to dev, admin cannot reset dev password or delete dev account)
-  - Execution of `node --test tests/auth-roles-permissions.test.mjs` passes 100%
-
-## Key Decisions Made
-- Re-verified SHA-256 hashes independently after sync commit `bf6aded`:
-  - `artifacts/api-server/demo-server.mjs`: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`
-  - `scripts/demo-server.mjs`: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`
-  - Parity is 100% bit-for-bit identical.
-- Re-executed pinpoint test `node --test tests/auth-roles-permissions.test.mjs`:
-  - 6/6 tests passed with 0 failures in 2.9s.
-- Adversarial security checks across 22 technical routes and all privilege escalation vectors confirmed fully operational and impenetrable for `gestor` (`admin`).
-- Final Verdict updated to: **APPROVE**.
-
-## Artifact Index
-- `DISPATCH.md` — Current dispatch instructions
-- `BRIEFING.md` — Situational awareness and state
-- `progress.md` — Liveness heartbeat and execution log
-- `handoff.md` — Final empirical evaluation and verdict report (APPROVE)
+- **Files reviewed**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/minibar-backend-flow.test.mjs`, `tests/minibar-stress-challenger.test.mjs`
+- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md` (2026-10-21T18:26:13Z)
+- **Review criteria**: Concurrency, courtesy limits, status codes (401 vs 400), input sanitization, non-active flats, twin-server SHA-256 parity
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Twin server SHA-256 parity is genuine bit-for-bit identical -> PASSED (Identical SHA-256: `33C17537...`).
-  2. `tests/auth-roles-permissions.test.mjs` executes cleanly with zero failures -> PASSED (6/6 tests passed).
-  3. `gestor` cannot access `/api/audit-logs`, `/api/admin/server-monitor/*`, `/api/storage/config`, `/api/settings/gemini`, etc. (HTTP 403) -> PASSED (22/22 routes returned 403).
-  4. `gestor` cannot elevate users to `dev` or tamper with existing `dev` users -> PASSED (create dev, promote to dev, alter dev, reset password, delete dev all blocked with 403).
-  5. Operational routes remain accessible to `gestor` and `admin` -> PASSED (PMS calendar, finance overview, users list, nfse retry queue, cleaning history all returned 200).
-  6. Unauthenticated requests blocked -> PASSED (returned 403/401).
-- **Vulnerabilities found**: None remaining.
-- **Untested angles**: None within Milestone 1 scope.
+  1. Paridade SHA-256 dos servidores gêmeos: FALHA (divergência na linha 27258).
+  2. Subsequente e concorrência de cortesias:
+     - Cortesia padrão com `extraPaidProductId`: 2ª requisição convertida em R$ 5.00 pago (passa).
+     - Cortesia estrita sem `extraPaidProductId`: 2ª requisição rejeitada com 400 (passa).
+     - Exploit de quantidade na cortesia: `quantity: 5` é aceito a R$ 0.00 (FALHA / VULNERABILIDADE).
+  3. Validação dos 4 dígitos no `flat-context`:
+     - Retorna HTTP 400 em vez do HTTP 401 especificado pelo orquestrador (DISCREPÂNCIA).
+  4. Quantidades zero e negativas:
+     - `quantity: 0` e `quantity: -10` são convertidos para `quantity: 1` e cobrados indevidamente (FALHA / BUG CRÍTICO).
+  5. Flat sem reserva ativa:
+     - Pedido pago é resiliente (passa).
+     - Cortesia gratuita em flat sem reserva é concedida sem bloqueio (FALHA / VULNERABILIDADE).
+- **Vulnerabilidades confirmadas**:
+  1. Quebra de paridade SHA-256 no twin-server.
+  2. Coerção forçada de `quantity: 0` e negativas em compra de 1 unidade.
+  3. Exploit de quantidade em itens de cortesia (sem trava de `courtesyLimitPerStay`).
+  4. Concessão de cortesia gratuita para flats sem reserva ativa.
+  5. Retorno de HTTP 400 em vez de 401 para credenciais inválidas de 4 dígitos.
+- **Untested angles**:
+  - Simulações mTLS de banco real Inter fora do ambiente de teste sandbox.
 
 ## Loaded Skills
-- None
+- None explicitly assigned.
+
+## Key Decisions Made
+- Veredito emitido: REQUEST_CHANGES.
+- Teste empírico de estresse isolado salvo em `tests/minibar-stress-challenger.test.mjs` executando 13 subtestes com 100% de cobertura nos cenários adversários.
+
+## Artifact Index
+- `DISPATCH.md` — Inbound instructions from orchestrator
+- `progress.md` — Execution status and heartbeat
+- `handoff.md` — Formal 5-component challenger report with REQUEST_CHANGES verdict
+- `tests/minibar-stress-challenger.test.mjs` — Isolated empirical stress harness

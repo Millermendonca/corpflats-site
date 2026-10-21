@@ -1,65 +1,83 @@
-# BRIEFING — 2026-10-19T05:16:00Z
+# BRIEFING — 2026-10-21T19:34:00Z
 
 ## Mission
-Review and adversarially stress-test Milestone 1 (Backend Auth, Roles & Dev Endpoints) in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `tests/auth-roles-permissions.test.mjs`.
+Technical review of architecture, security, and code compliance for Marco M1 (Minibar Backend & Security), followed by adversarial challenge and issuing a verdict (APPROVE / REQUEST_CHANGES).
 
 ## 🔒 My Identity
-- Archetype: reviewer-critic
+- Archetype: teamwork_preview_reviewer
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1
-- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Milestone: Milestone 1 (Operational Safety, Storage & WBP Simulator)
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: Marco M1 (Minibar Backend Architecture & Security)
 - Instance: 1 of 1
-- Current parent: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Current Milestone: Milestone 1 (Backend Auth, Roles & Dev Endpoints — Admin vs Dev RBAC)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Integrity check: actively detect hardcoded tests, facades, shortcuts, fake verifications
-- STRICT TEST POLICY: Never run global tests or test sweeps. Run ONLY `node --test tests/auth-roles-permissions.test.mjs`
-- Twin file parity: SHA-256 byte-for-byte identity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
-- Adhere strictly to AGENTS.md test and git policies
+- Execute EXCLUSIVAMENTE o teste pontual: `node --test tests/minibar-backend-flow.test.mjs`
+- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs`)
+- Paridade SHA-256 byte-a-byte obrigatória entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`
+- Verificar integridade (não aceitar fake tests, hardcoded bypasses, façadas)
 
 ## Current Parent
-- Conversation ID: c4864abd-776b-4ad1-aef9-25c7af7463df
-- Updated: 2026-10-19T05:16:00Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T19:34:00Z
 
 ## Review Scope
-- **Files to review**:
+- **Files reviewed**:
   - `artifacts/api-server/demo-server.mjs`
   - `scripts/demo-server.mjs`
-  - `tests/auth-roles-permissions.test.mjs`
-- **Interface contracts**: `.agents/teamwork/orchestrator_13/PROJECT.md`, `ORIGINAL_REQUEST.md` (section `## 2026-10-19T02:58:52Z`)
-- **Review criteria**: correctness, logical completeness, code quality, security/RBAC, adversarial robustness, integrity violation checks
+  - `tests/minibar-backend-flow.test.mjs`
+  - `.agents/teamwork/worker_m1/handoff.md`
+  - `.agents/teamwork/worker_m1/changes.md`
+- **Interface contracts**:
+  - `.agents/teamwork/orchestrator_16/PROJECT.md` (Features F01 a F10)
+- **Review criteria**:
+  - Paridade SHA-256: FALHOU (artifacts: ceaa95f..., scripts: d8ea1fc...)
+  - Validação 4 dígitos: APROVADO funcionalmente (com caveat de seleção de reserva recente vs futura)
+  - Desacoplamento financeiro: APROVADO (`r.totalAmount` blindado)
+  - Anti-abuso cortesia: APROVADO para cortesia isolada (com caveat de pedidos mistos pendentes)
+  - Retenção pruneDatabase: APROVADO (730 dias para não pagos, infinito para pagos)
+  - Execução de testes: 1 falha em 20 (F01 Paridade SHA-256)
 
 ## Review Checklist
 - **Items reviewed**:
-  - Twin server parity: VERIFIED (Both `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` have matching SHA-256: `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
-  - `ensureSystemUsers(db)`: VERIFIED (migrates admin -> dev preserving passwordHash; creates gestor -> admin with admin123; immediate atomic persistence via manual_ prefix).
-  - `requireDevAuth`: VERIFIED (blocks non-dev with 403 on technical endpoints).
-  - Operational endpoints: VERIFIED (all business routes accept admin || dev).
-  - User management `/api/admin/users`: VERIFIED (supports CRUD, PATCH & POST password reset, blocks admin altering/deleting dev).
-  - Test suite `node --test tests/auth-roles-permissions.test.mjs`: VERIFIED (All 6 tests passed in ~3.4s, exit code 0).
-- **Verdict**: APPROVE
-- **Unverified claims**: None. All claims independently verified.
+  - Twin servers byte-by-byte SHA-256 parity
+  - Minibar collections persistence & pruneDatabase retention
+  - `/api/minibar/products` (CRUD & role protection)
+  - `/api/minibar/default-stock` (global template & flat overrides)
+  - `/api/minibar/flat-context` (phone & CPF last 4 digits validation)
+  - `/api/minibar/reservation-context/:code` (direct code lookup)
+  - `/api/minibar/orders` (PIX, Credit Card, courtesy, decoupling)
+  - `/api/pms/inter/webhook` & `/api/pms/mercadopago/webhook` (settlement)
+  - `/api/minibar/orders/:id/invoice` (PDF upload, WhatsApp Z-API, Zoho SMTP)
+  - `/api/minibar/inspections` (conformity vs discrepancy, Sofia WhatsApp)
+  - `/api/minibar/inspections/flats-status`, `/api/minibar/invoices/pending`
+  - `/api/minibar/settlement` (fees, reimbursement, net pay)
+  - `/api/minibar/analytics` & `/api/minibar/auth-pin`
+- **Verdict**: REQUEST_CHANGES
+- **Unverified claims**: Worker M1 claimed SHA-256 parity `True` and `pass 20, fail 0`, but SHA-256 differs and test 1 fails.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1 (Integrity Violation): No facades or hardcoded values found; real HTTP tests with isolated DB.
-  - H2 (Privilege Escalation): Admin cannot promote itself, cannot alter dev, cannot reset dev password -> PASSED (HTTP 403).
-  - H3 (Technical Leakage): Admin cannot access server-monitor, audit-logs, cloud config, Z-API config -> PASSED (HTTP 403).
-  - H4 (Twin Parity): Tested SHA-256 identity -> PASSED (Identical SHA-256 `33C17537...`).
-  - H5 (Crash / Persistence Race): Verified synchronous write upon migration using `saveDatabase("manual_migrate_system_users_dev_and_gestor")` -> PASSED.
-- **Vulnerabilities found**: None in Milestone 1 scope. (Minor advisory note: `/api/whatsapp/raw-webhook-logs` in `zapi-service.mjs` flagged for future defense-in-depth).
-- **Untested angles**: Frontend integration (covered in M2 and M3).
+  - SHA-256 twin server equivalence: FAILED (diff at line 27255 `pre_checkin_enter_prompt`).
+  - Courtesy exploitation via concurrent / mixed pending orders: VULNERABILITY CONFIRMED.
+  - Vacant flat QR code hijack by future reservation: VULNERABILITY CONFIRMED.
+  - Financial mutation of reservation `totalAmount`: PROVEN SECURE (unmodified).
+  - Pruning of minibar records: PROVEN SECURE (retains >= 730 days, paid retained indefinitely).
+  - TDZ runtime error during DB loading: IDENTIFIED (`DEFAULT_INTER_CONFIG`).
+- **Vulnerabilities found**:
+  - Finding 1 [Critical]: Broken twin-server SHA-256 parity and failing test suite.
+  - Finding 2 [Major]: Courtesy anti-abuse bypass via pending mixed orders.
+  - Finding 3 [Major]: Future reservation precedence in vacant flat QR lookup.
+  - Finding 4 [Minor]: TDZ ReferenceError on `DEFAULT_INTER_CONFIG` in `loadDatabase`.
+  - Finding 5 [Minor]: Lack of digit validation for CPF/CNPJ in order checkout.
+- **Untested angles**:
+  - Physical camera upload of invoice image vs PDF (handled at frontend level).
+  - High concurrency stress test (>100 simultaneous order checkouts).
 
 ## Key Decisions Made
-- Re-verified SHA-256 parity and executed `tests/auth-roles-permissions.test.mjs`.
-- Confirmed 100% compliance with requirements and criteria.
-- Issued APPROVE verdict.
+- Issue REQUEST_CHANGES verdict due to Critical SHA-256 parity failure and test suite failure.
 
 ## Artifact Index
-- DISPATCH.md — Task assignment and incoming messages
-- BRIEFING.md — Working memory and constraints
-- progress.md — Liveness heartbeat
-- handoff.md — 5-component review and adversarial report
+- `.agents/teamwork/reviewer_m1_1/handoff.md` — Final review and challenge report
+- `.agents/teamwork/reviewer_m1_1/progress.md` — Liveness heartbeat

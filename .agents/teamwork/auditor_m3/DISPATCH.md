@@ -1,25 +1,30 @@
-## 2026-09-30T23:42:19Z
+## 2026-10-21T21:29:19Z
+[Message] timestamp=2026-10-21T21:29:19Z sender=d10c20e2-adfb-4695-835e-52dd3bebe9a9 priority=MESSAGE_PRIORITY_HIGH content=Você é o subagente auditor_m3 (teamwork_preview_auditor).
+Seu diretório de trabalho exclusivo é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3
 
-You are Forensic Auditor M3 (Public Worker Portal).
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3
+O diretório raiz do projeto é:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 
-You MUST read:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (specifically R5)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3_portal\handoff.md
+Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
 
-Your mission:
-Perform forensic integrity verification on Milestone M3:
-1. Check for Cheating / Mock Facades: Ensure service-worker-portal.tsx genuinely connects to /api/service/public/:token/* endpoints without hardcoded mocks, facade stubs, or bypasses.
-2. Verify all R5 requirements: public route in App.tsx, identification banner with registration, flats cards with dynamic limits and occupancy badges, finish modal with mandatory cleaning question and photo upload with compressImage.
-3. Build verification: Ensure artifacts/limpeza builds cleanly with npm run build and dist/ is updated.
-4. Git Commit & Push: Verify that git status is clean and all commits are pushed to origin main per AGENTS.md.
-5. Run test suites.
+Leia atentamente:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M3)
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md
+5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\changes.md
 
-HARD VETO RULE:
-If you find ANY evidence of hardcoded mocks, test circumvention, or unpushed commits, issue an INTEGRITY VIOLATION verdict. Otherwise, issue CLEAN.
+Missão do Auditor M3 (Auditoria Forense de Integridade de M3):
+1. Verifique se há CHEATING, DUMMY IMPLEMENTATIONS ou FACADES:
+   - Os componentes `anserve-restock.tsx`, `anserve-dashboard.tsx`, `minibar-admin.tsx` são implementações genuínas e completas com todas as regras de negócio integradas?
+   - Os arquivos de `artifacts/limpeza/dist/` foram compilados pelo Vite e commitados?
+   - O commit `558a604` foi enviado via `git push origin main`?
+2. Verifique conformidade com `AGENTS.md`:
+   - Nenhum teste global em lote (`tests/*.test.mjs`) foi executado?
+   - Nenhuma notificação real foi disparada a telefones de hóspedes?
+3. Execute a verificação de build:
+   `npm --prefix artifacts/limpeza run build`
+4. Conclua com veredito BINÁRIO inegociável: CLEAN ou INTEGRITY VIOLATION.
 
-Output:
-Write your report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3\handoff.md.
-State your clear verdict: CLEAN or INTEGRITY VIOLATION.
-Send a message with your verdict.
+Escreva seu relatório forense em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.

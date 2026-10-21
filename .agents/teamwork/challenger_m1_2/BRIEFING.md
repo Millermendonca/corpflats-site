@@ -1,64 +1,62 @@
-# BRIEFING — 2026-10-13T22:47:00Z
+# BRIEFING — 2026-10-21T19:34:10Z
 
 ## Mission
-Adversarially challenge Milestone 1: Empirically verify fault injection, timeout handling, retry behavior (terminal vs transient errors, GUID idempotency), and OpenAPI schema validation for WebBookingPro integration.
+Verificação adversária empírica de desacoplamento financeiro (reserva vs frigobar), reconciliação de webhooks (Inter e Mercado Pago) e exatidão matemática do extrato de repasse Anserve no ecossistema de frigobar do Guest-Flow-Manager.
 
 ## 🔒 My Identity
-- Archetype: EMPIRICAL CHALLENGER
+- Archetype: empirical_challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2
-- Original parent: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Milestone: Milestone 1
-- Instance: 2 of 2 (Challenger 2)
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M1
+- Instance: 2 of 2
 
 ## 🔒 Key Constraints
-- Review & adversarial testing — do NOT modify core production implementation unless reporting findings or requested
-- Strictly isolated test runs only: `node --test tests/wbp-integration/challenger-m1-faults.test.mjs`. NEVER run global sweeps or batches.
-- No source or tests inside `.agents/teamwork/` — write test to `tests/wbp-integration/challenger-m1-faults.test.mjs`.
+- Review-only: do NOT modify implementation code; report any failures as findings
+- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs` proibido)
+- Executar EXCLUSIVAMENTE o teste pontual e isolado criado para esta verificação
+- Sem mascarar/silenciar notificações em código
+- `.agents/teamwork/` must contain only metadata — source, tests, or data there is a violation
+- Concluir com veredito explícito: APPROVE ou REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 84d9f696-67d5-4529-bec4-c0232e9abea0
-- Updated: 2026-10-13T22:47:00Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T19:34:10Z
 
 ## Review Scope
 - **Files to review**:
-  - `docs/integracoes/webbookingpro/PROJECT.md`
-  - `docs/wbp/wbpAPI.yaml` & `docs/wbp/README.md`
-  - `artifacts/api-server/wbp/client.mjs`
-  - `e2e/wbp-simulator/server.mjs`
-  - `e2e/wbp-simulator/schemas/index.mjs`
-  - `tests/wbp-integration/m1-safety-simulator.test.mjs`
-  - `.agents/teamwork/worker_m1/handoff.md`
-- **Interface contracts**: WebBookingPro OpenAPI spec and Milestone 1 requirements
+  - `artifacts/api-server/demo-server.mjs`
+  - `scripts/demo-server.mjs`
+  - `tests/minibar-backend-flow.test.mjs`
+- **Interface contracts**:
+  - `POST /api/minibar/orders`
+  - Webhooks: `POST /api/pms/inter/webhook` e `POST /api/pms/mercadopago/webhook`
+  - `GET /api/minibar/settlement`
 - **Review criteria**:
-  - Simulator schema validation & rejection of invalid payloads missing required fields
-  - Terminal errors 1001, 1002, 1102 non-retry behavior
-  - Transient errors and timeouts retry behavior reusing identical GUID
-  - Verification code empirical execution
+  - Desacoplamento financeiro: `r.totalAmount` inalterado sob criação, pagamento ou cancelamento de pedidos de frigobar
+  - Conciliação de webhooks: Inter (txId) e Mercado Pago (payment.id + external_reference) liquidam pedido (`status = "pago"`)
+  - Cálculo matemático exato do extrato de repasse Anserve: vendas brutas - taxas de cartão - comissão + custo de cortesias = repasse líquido exato
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Simulator correctly rejects malformed/incomplete payloads: CONFIRMED when `strictSchemas: true` is configured and via `validateRequest()`. Caveat: when simulator is initialized with default options (`strictSchemas: false`), line 91 in `server.mjs` (`if (!validation.valid && this.strictSchemas)`) skips rejection and returns HTTP 200.
-  - Client does NOT retry terminal errors (1001, 1002, 1102): CONFIRMED (exactly 1 call logged, 0 retries).
-  - Client retries transient errors (1003, 1004) reusing identical GUID: CONFIRMED (1 initial + 2 retries = 3 attempts, identical GUID on all).
-  - Client retries timeouts reusing identical GUID: CONFIRMED.
-  - Client recovers when transient error resolves on retry 3, reusing same GUID: CONFIRMED.
-  - Client retries on socket hangup / dropConnection reusing identical GUID: CONFIRMED.
-  - Custom caller-supplied GUID is preserved across all retries: CONFIRMED.
+  - Hipótese 1: Criar, pagar ou cancelar pedidos de frigobar afeta o totalAmount da reserva? -> FALSO. Total permanece perfeitamente desacoplado.
+  - Hipótese 2: O webhook do Banco Inter com txId correto liquida o pedido? -> VERDADEIRO. Liquida e preenche metadados.
+  - Hipótese 3: O webhook do Mercado Pago com payment.id e external_reference liquida o pedido? -> FALSO. Permanece pendente porque o backend exige chamada externa HTTPS síncrona a `api.mercadopago.com` e ignora `external_reference` do payload.
+  - Hipótese 4: O extrato de repasse Anserve segue rigorosamente a fórmula matemática? -> VERDADEIRO. Matemática 100% exata.
 - **Vulnerabilities found**:
-  - Minor simulator configuration trap: `e2e/wbp-simulator/server.mjs` only rejects invalid payloads with HTTP 400 when `strictSchemas: true` is explicitly enabled. Recommended default: set `strictSchemas: true` by default or remove the `&& this.strictSchemas` guard so that `!validation.valid` always rejects invalid requests.
+  - Webhook Mercado Pago não liquida pedidos via payload de webhook sem conexão real online autenticada a `api.mercadopago.com`, pois não lê `external_reference` do body. Teste do worker mascarava isso asserindo apenas status 200 HTTP sem verificar a liquidação da ordem.
 - **Untested angles**:
-  - None within Milestone 1 scope.
+  - N/A
 
 ## Loaded Skills
-- None specified for Challenger 2
+- None explicitly loaded
 
 ## Key Decisions Made
-- Authored isolated adversarial test suite in `tests/wbp-integration/challenger-m1-faults.test.mjs` covering 15 test assertions.
-- Executed strictly isolated test runner: `node --test tests/wbp-integration/challenger-m1-faults.test.mjs` (15/15 passed).
-- Issued explicit verdict: **APPROVE** with recommendation to enable `strictSchemas: true` by default in future milestones.
+- Veredito: REQUEST_CHANGES devido à falha de liquidação no webhook do Mercado Pago.
 
 ## Artifact Index
-- `tests/wbp-integration/challenger-m1-faults.test.mjs` — Adversarial test suite (15 tests, 0 failures)
-- `handoff.md` — Final Challenger 2 assessment
-- `progress.md` — Heartbeat log
+- `.agents/teamwork/challenger_m1_2/DISPATCH.md` — Registro de despacho do orchestrator
+- `.agents/teamwork/challenger_m1_2/BRIEFING.md` — Memória persistente de trabalho
+- `.agents/teamwork/challenger_m1_2/progress.md` — Heartbeat e liveness log
+- `.agents/teamwork/challenger_m1_2/handoff.md` — Relatório formal com veredito
+- `tests/challenger-m1-2-verification.test.mjs` — Suíte adversária empírica isolada

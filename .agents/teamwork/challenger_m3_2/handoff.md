@@ -1,164 +1,157 @@
-# Handoff Report: Milestone M3 Adversarial Evaluation (Tariff Calendar & Bulk Update)
+# Relatório de Verificação Adversária (Challenger M3_2)
 
-**Author**: Challenger 2 (`challenger_m3_2`)  
-**Target Recipient**: Orchestrator (`3364a657-c855-42a7-a46e-a5463bc245b7`)  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_2`  
-**Date**: 2026-10-11T03:16:00Z  
-**Verdict**: **REQUEST_CHANGES**
-
----
-
-## 1. Observation
-
-### 1.1 Verificação de Navegação entre Canais & Markups (+18% Booking, +15% Airbnb, 0% Direto)
-- **Arquivo inspecionado**: `artifacts/limpeza/src/pages/tarifas.tsx` (linhas 475–505) e `artifacts/api-server/demo-server.mjs` (linhas 20385–20394, 20433–20482).
-- **Execução do Teste Empírico**: `node --test tests/challenger-m3-tariff-adversarial.test.mjs` (Subtest 1).
-- **Resultados Observados**:
-  - `GET /api/tariffs/calendar?month=2026-11&channel=direct`: Dia 2026-11-04 (quarta-feira) diária base R$ 237,00.
-  - `GET /api/tariffs/calendar?month=2026-11&channel=booking`: Dia 2026-11-04 diária R$ 279,66 (Razão: $279,66 / 237 = 1,1800$, markup exato de +18%).
-  - `GET /api/tariffs/calendar?month=2026-11&channel=airbnb`: Dia 2026-11-04 diária R$ 272,55 (Razão: $272,55 / 237 = 1,1500$, markup exato de +15%).
-  - Finais de semana (2026-11-06 sexta-feira) com acréscimo de +15% do SEBRAE preservam proporcionalmente os markups dos canais.
-- **Status**: **PASS**.
-
-### 1.2 Verificação do Fluxo de Edição Individual de Célula e Exclusão (`DELETE /api/tariffs/overrides/:id`)
-- **Arquivo inspecionado**: `artifacts/limpeza/src/pages/tarifas.tsx` (linhas 170–223) e `artifacts/api-server/demo-server.mjs` (linhas 20485–20596).
-- **Execução do Teste Empírico**: `node --test tests/challenger-m3-tariff-adversarial.test.mjs` (Subtest 2).
-- **Resultados Observados**:
-  - Para override geral (`flatIds: ["all"]`), a chamada `POST /api/tariffs/bulk-update` com `rate: 299` cria o registro `hasOverride: true`.
-  - A exclusão via `DELETE /api/tariffs/overrides/:id` retorna HTTP 200 `{ success: true, deletedId: "..." }` e restaura a diária ao cálculo automático do SEBRAE.
-- **Status**: **PASS (apenas para overrides gerais)**.
-
-### 1.3 Verificação da Estrutura de Payload de Edição em Lote (`POST /api/tariffs/bulk-update`)
-- **Arquivo inspecionado**: `artifacts/limpeza/src/pages/tarifas.tsx` (linhas 224–271) e `artifacts/api-server/demo-server.mjs` (linhas 20485–20574).
-- **Execução do Teste Empírico**: `node --test tests/challenger-m3-tariff-adversarial.test.mjs` (Subtest 3).
-- **Resultados Observados**:
-  - Envio sem datas: Retorna HTTP 400 `{ error: "MISSING_PARAMETERS" }`.
-  - Diária negativa (`rate: -50`): Retorna HTTP 400 `{ error: "INVALID_RATE" }`.
-  - Intervalo invertido (`startDate > endDate`): Retorna HTTP 400 `{ error: "INVALID_DATE_RANGE" }`.
-  - Filtro por dias da semana (`daysOfWeek: [5, 6]` para 2026-11-01 a 2026-11-14): Aplica override em exatamente 4 dias (sextas e sábados), preservando os demais dias na tarifa base.
-- **Status**: **PASS**.
-
-### 1.4 Verificação do Build Frontend
-- **Comando Executado**: `npm --prefix artifacts/limpeza run build`.
-- **Resultado Verificado**: Código de saída `0` em 51.72s.
-  ```
-  dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
-  dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
-  dist/public/assets/index.css                      384.58 kB │ gzip:  47.48 kB
-  dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
-  dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
-  dist/public/assets/index.js                     3,211.47 kB │ gzip: 774.55 kB
-  ✓ built in 51.72s
-  ```
-- **Status**: **PASS**.
-
-### 1.5 FALHA CRÍTICA ENCONTRADA: Quebra de Contrato API ↔ UI na Resolução de Overrides por Flat Individual
-- **Arquivo Frontend**: `artifacts/limpeza/src/pages/tarifas.tsx`, linhas 623–628:
-  ```tsx
-  623: const flatOverride = (calendarData?.overrides || []).find((o: any) => 
-  624:   o.date === d.date && (String(o.flatId) === String(flat.id) || String(o.flatNumber) === String(flat.number)) && (o.channel === "all" || o.channel === selectedChannel)
-  625: )
-  626: const hasFlatOverride = Boolean(flatOverride)
-  627: const effectiveRate = hasFlatOverride ? flatOverride.rate : d.rate
-  ```
-- **Arquivo Backend**: `artifacts/api-server/demo-server.mjs` (e espelho `scripts/demo-server.mjs`), linhas 20447 e 20474–20482:
-  ```javascript
-  20447: const overrides = getTariffOverrides();
-  ...
-  20474: res.json({
-  20475:   success: true,
-  20476:   month: targetMonthStr,
-  20477:   channel,
-  20478:   flatId: flatId || null,
-  20479:   settings: getTariffSettings(),
-  20480:   days,
-  20481:   flats
-  20482: });
-  ```
-- **Execução do Teste Empírico de Prova**: `node tests/test-empirical-calendar-payload.mjs`.
-- **Saída Verbatim**:
-  ```
-  Step 1: Creating flat-specific override for Flat 113 on 2026-12-25...
-  Bulk update result: { success: true, updatedCount: 1, overridesCount: 1, overrides: [...] }
-  Step 2: Calling GET /api/tariffs/calendar?month=2026-12&channel=direct (as tarifas.tsx does)...
-  calData top-level keys: [ 'success', 'month', 'channel', 'flatId', 'settings', 'days', 'flats' ]
-  Does calData have 'overrides' key? false
-  calData.overrides value: undefined
-  UI hasFlatOverride: false
-  UI effectiveRate: 216.14 (Expected 650!)
-  BUG CONFIRMED: UI displays 216.14 instead of 650 because calendarData.overrides is MISSING from GET /api/tariffs/calendar!
-  ```
-- **Status**: **FAIL (Bug de Integração)**.
+**Agente**: `challenger_m3_2` (teamwork_preview_challenger)  
+**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
+**Data**: 2026-10-21T21:38:00Z  
+**Tipo**: Hard (Tarefa Concluída)  
+**Veredito**: **REQUEST_CHANGES**
 
 ---
 
-## 2. Logic Chain
+## 1. Observation (Observações Diretas)
 
-1. **Premissa de Arquitetura da UI**: A tela `tarifas.tsx` exibe uma matriz completa contendo na primeira linha a tarifa geral (`⭐ Geral (Todos)`) e nas linhas subsequentes todos os flats individuais cadastrados no PMS (`Flat 113`, `Flat 211`, etc.).
-2. **Ciclo de Busca de Dados**: Para preencher essa matriz, o frontend faz uma única chamada `GET /api/tariffs/calendar?month=${selectedMonth}&channel=${selectedChannel}` (sem enviar `flatId`, pois precisa dos dados de todos os flats simultaneamente).
-3. **Resolução Local no Frontend**: Para cada linha de flat, o componente avalia `(calendarData?.overrides || []).find(...)` para identificar se existe um override específico para aquele flat naquela data.
-4. **Omissão no Backend**: O backend (`demo-server.mjs`) lê `const overrides = getTariffOverrides();` na linha 20447, mas na resposta `res.json(...)` (linha 20474) omite a chave `overrides`.
-5. **Efeito Cascata no Comportamento da UI**:
-   - `calendarData.overrides` é sempre `undefined`.
-   - `flatOverride` é sempre `undefined`.
-   - `hasFlatOverride` é sempre `false`.
-   - O flat individual exibe na tela o valor `d.rate` (a diária geral calculada), ignorando completamente o override cadastrado para o flat.
-   - O badge visual `Override` nunca é renderizado nas linhas dos flats.
-   - Ao clicar na célula do flat para editar ou excluir, `editingCell.override` recebe `d.override` (que é o override geral ou `null`, e não o override do flat). Se não houver override geral, o modal **não renderiza o botão "Voltar ao SEBRAE"**, impossibilitando o operador humano de visualizar ou remover a tarifa personalizada do flat.
-6. **Conclusão Lógica**: Embora o build compile e os markups de canais gerais funcionem, o fluxo central da matriz de flats individuais do M3 está comprometido por essa discrepância de contrato na API.
+1. **Upload de Arquivo Inválido ou Vazio na Nota Fiscal (`anserve-dashboard.tsx` e backend)**:
+   - Em `artifacts/limpeza/src/pages/anserve-dashboard.tsx`:
+     - Linhas 216-224: `handleUploadInvoice` verifica `if (!selectedOrderForInvoice || !invoiceFileData)` e bloqueia o envio com toast de alerta destrutivo: `"Selecione o arquivo PDF ou foto da Nota Fiscal para prosseguir."`
+     - Linha 687: O input possui `accept="application/pdf,image/*"`.
+     - Linha 715: O botão de submissão possui a propriedade `disabled={uploadingInvoice || !invoiceFileData}`.
+     - Linhas 246-249 e 466-470: Ao abrir ou fechar o modal, as variáveis `invoiceFileData`, `invoiceFileName` e `invoiceNumberInput` são redefinidas para `null` / `""`.
+   - Em `artifacts/api-server/demo-server.mjs`:
+     - Linhas 46706-46709: `POST /api/minibar/orders/:id/invoice` valida `if (!fileData) return res.status(400).json({ success: false, error: "Arquivo da Nota Fiscal (Base64 ou URL) é obrigatório." })`.
+   - **Status**: **APROVADO (Resiliente e Protegido)**.
+
+2. **Preservação dos Dados Fiscais na Emissão da NF (`anserve-dashboard.tsx`)**:
+   - `guest-minibar.tsx` envia na criação do pedido: `document`, `documentType` ("cpf" | "cnpj"), `companyName`, `email`, e `invoicePreference` ("detailed" | "water" | "minibar_consumption").
+   - `demo-server.mjs` (linhas 46455-46461) persiste esses dados diretamente em `order.fiscalPreferences`.
+   - `GET /api/minibar/invoices/pending` entrega o pedido completo para `anserve-dashboard.tsx`.
+   - Em `anserve-dashboard.tsx`:
+     - Linhas 270-292 (`renderPreferenceBadge`): exibe pílulas visuais específicas:
+       - `"water"`: 💧 Lançar como "Água"
+       - `"minibar_consumption"`: 🧊 Consumo de Frigobar
+       - `"detailed"` / padrão: 📄 Discriminar Todos os Itens
+     - Linhas 418-452: No card de cada pedido pendente, renderiza explicitamente o documento fiscal informado (`fiscalPreferences.documentNumber || guestDocument`), e-mail de envio, razão social corporativa (se houver) e os itens consumidos.
+     - Linhas 611-652: No modal de anexo da NF, exibe o resumo completo de todos esses dados fiscais para o operador antes do upload.
+   - **Status**: **APROVADO (Fidedigno e Completo)**.
+
+3. **Consistência Matemática do Extrato de Repasse Financeiro (`demo-server.mjs`, `anserve-dashboard.tsx` e `minibar-admin.tsx`)**:
+   - No backend (`demo-server.mjs`, linhas 47146-47196):
+     - Cartão: `cardFees = cardOrdersAmount * 3.99%`
+     - PIX: `pixFees = pixOrdersAmount * 0.99%`
+     - Comissão: `commissionCorpFlats = totalOrdersAmount * commPercent`
+     - Crédito de Cortesias: `courtesyRestockCost = sum(insp.restockedCourtesyTotalCost)`
+     - Repasse Líquido: `netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + courtesyRestockCost`
+     - O JSON retornado por `GET /api/minibar/settlement` inclui `cardFees`, `pixFees`, `commissionCorpFlats`, `courtesyRestockCost` e `netPayableToAnserve`, mas **NÃO inclui** um campo com a chave `totalFees`.
+   - Em `anserve-dashboard.tsx` (linhas 542):
+     - Card de taxas usa fallback: `- R$ {Number(settlement.totalFees || (settlement.cardFees + settlement.pixFees) || 0).toFixed(2)}` (calcula corretamente a soma das taxas).
+   - **ANOMALIA / FALHA DETECTADA em `minibar-admin.tsx`**:
+     - Em `artifacts/limpeza/src/pages/minibar-admin.tsx` (linhas 822-829):
+       ```tsx
+       <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+         <span className="text-[11px] text-muted-foreground font-semibold">Taxas Financeiras Retidas</span>
+         <div className="text-xl font-black text-red-600 dark:text-red-400">
+           - R$ {Number(settlementData.totalFees || 0).toFixed(2)}
+         </div>
+         <span className="text-[10px] text-muted-foreground block">
+           Mercado Pago + PIX Inter
+         </span>
+       </Card>
+       ```
+     - Como `settlementData.totalFees` é `undefined`, `settlementData.totalFees || 0` resulta em `0`, renderizando sempre `- R$ 0.00` nas Taxas Financeiras Retidas no painel de administração da CorpFlats.
+     - Isso cria uma inconsistência visual e contábil na tela: o Repasse Líquido deduz as taxas de cartão e PIX corretamente, mas o card de taxas exibe `0.00`, gerando a falsa impressão de que a conta não fecha (`Total - 0 - Comissão != Líquido`).
+   - **Status**: **REPROVADO (Necessita ajuste pontual em `minibar-admin.tsx` ou no backend)**.
+
+4. **Estilização `@media print` no Gerador de Displays A6 (`minibar-admin.tsx`)**:
+   - Em `artifacts/limpeza/src/pages/minibar-admin.tsx` (linhas 398-428):
+     ```css
+     @media print {
+       body {
+         background: white !important;
+         color: black !important;
+       }
+       aside, nav, header, footer, .print\\:hidden {
+         display: none !important;
+       }
+       .print-qr-grid {
+         display: grid !important;
+         grid-template-columns: repeat(2, 1fr) !important;
+         gap: 16px !important;
+         padding: 0 !important;
+         margin: 0 !important;
+       }
+       .print-card-a6 {
+         page-break-inside: avoid !important;
+         break-inside: avoid !important;
+         border: 1.5px solid #000 !important;
+         border-radius: 12px !important;
+         padding: 16px !important;
+         height: 480px !important;
+         display: flex !important;
+         flex-direction: column !important;
+         justify-content: space-between !important;
+         align-items: center !important;
+         text-align: center !important;
+         box-sizing: border-box !important;
+       }
+     }
+     ```
+   - **ANOMALIA / FALHA DETECTADA**:
+     - A instrução da missão determina: *"verifique se oculta menus, barras e elementos desnecessários e formata 1 card A6 limpo por página"*.
+     - Ocultação de menus e barras: **Conforme** (`aside, nav, header, footer, .print:hidden` são ocultados).
+     - Formatação de 1 card por página: **Não atende**. A regra atual força uma grade de 2 colunas (`grid-template-columns: repeat(2, 1fr) !important;`) sem `break-after: page;` ou `page-break-after: always;` em `.print-card-a6`.
+     - Se o operador selecionar o formato de papel A6 na impressora para produzir os displays individuais, a grade de 2 colunas comprime cada card em 50% da largura (esmagando o QR Code e tornando-o ilegível).
+     - Se for impresso em A4, os cards ficam dispostos em grade contínua com altura fixa de `480px`, sem garantir quebras de página limpas e unitárias por card A6.
+   - **Status**: **REPROVADO (Necessita ajuste na folha de estilos `@media print`)**.
+
+5. **Build de Produção Vite**:
+   - Executado `npm --prefix artifacts/limpeza run build`:
+   - Concluído com código de saída 0 em 49.25s, gerando `dist/public/` sem erros de compilação ou de tipos.
+   - **Status**: **APROVADO**.
 
 ---
 
-## 3. Caveats
+## 2. Logic Chain (Cadeia Lógica de Raciocínio)
 
-- A rota `POST /api/tariffs/bulk-update` retorna a lista `overrides`, mas a UI sempre invoca `loadCalendarData()` logo após salvar, sobrescrevendo o estado `calendarData` com a resposta de `GET /api/tariffs/calendar`.
-- Se o operador aplicar um override com `flatIds: ["all"]`, a linha geral reflete o override corretamente, pois `calculateDailyRate(null, dayStr, channel)` computa o override global em `d.override`. A falha ocorre exclusivamente na granularidade por flat individual (`Flat 113`, etc.).
-
----
-
-## 4. Conclusion
-
-O Milestone M3 apresenta uma inconsistência de contrato entre o endpoint `GET /api/tariffs/calendar` e o componente `tarifas.tsx`.
-
-**Veredicto**: **REQUEST_CHANGES**
-
-### Ação Necessária para Aprovação:
-1. Em `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` (mantendo a paridade estrita de twin servers):
-   Na rota `app.get("/api/tariffs/calendar", ...)` (por volta da linha 20474), incluir `overrides` na resposta JSON:
-   ```javascript
-   res.json({
-     success: true,
-     month: targetMonthStr,
-     channel,
-     flatId: flatId || null,
-     settings: getTariffSettings(),
-     days,
-     flats,
-     overrides: getTariffOverrides() // Adicionar esta linha
-   });
-   ```
-2. Garantir a paridade byte-a-byte (`SHA-256`) entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-3. Executar o build `npm --prefix artifacts/limpeza run build` e confirmar que `tests/test-empirical-calendar-payload.mjs` reporta `effectiveRate: 650` e `hasFlatOverride: true`.
+1. A validação de arquivos para NF e a preservação de campos fiscais foram comprovadas diretamente no código-fonte do componente `anserve-dashboard.tsx` e no fluxo de ponta a ponta com o backend.
+2. No extrato financeiro, enquanto a API do backend calcula com exatidão todas as retenções e deduções (`netPayableToAnserve = total - cardFees - pixFees - commission + courtesy`), ela retorna as taxas divididas em `cardFees` e `pixFees`. O componente `anserve-dashboard.tsx` lida com isso adequadamente através de `settlement.totalFees || (settlement.cardFees + settlement.pixFees) || 0`. Entretanto, `minibar-admin.tsx` acessa diretamente `settlementData.totalFees || 0`, o que resulta na renderização estática de `- R$ 0.00`, rompendo a fidelidade matemática visual apresentada ao administrador da CorpFlats.
+3. No gerador de displays A6, a especificação requer formatação de "1 card A6 limpo por página". A presença de `grid-template-columns: repeat(2, 1fr)` combinada com a ausência de `break-after: page` / `page-break-after: always` impede a impressão direta unitária em folhas A6 ou o isolamento de 1 display por página.
 
 ---
 
-## 5. Verification Method
+## 3. Caveats (Ressalvas)
 
-Para reproduzir e verificar o achado de forma independente:
+- Em estrito cumprimento às diretrizes de `AGENTS.md`, não foram executadas suítes globais de testes (`tests/*.test.mjs`). A verificação foi realizada por análise estática de código, auditoria de invariantes matemáticos e execução do build Vite oficial.
 
-1. **Executar a probe empírica de payload**:
-   ```powershell
-   node tests/test-empirical-calendar-payload.mjs
-   ```
-   *Comportamento observado antes da correção*: `Does calData have 'overrides' key? false` e `effectiveRate: 216.14 (Expected 650!)`.
-   *Comportamento esperado após a correção*: `Does calData have 'overrides' key? true` e `UI effectiveRate: 650 (Expected 650!)`.
+---
 
-2. **Executar a suíte completa de testes adversariais do M3**:
-   ```powershell
-   node --test tests/challenger-m3-tariff-adversarial.test.mjs
-   ```
+## 4. Conclusion (Conclusão & Veredito)
 
-3. **Verificar integridade do build**:
-   ```powershell
+**Veredito**: **REQUEST_CHANGES**
+
+O código do Milestone M3 apresenta excelente nível de implementação e segurança, com build 100% íntegro. Contudo, para aprovação final, são necessárias as seguintes duas correções pontuais:
+
+1. **Correção no Extrato do Admin (`minibar-admin.tsx` / backend)**:
+   - Em `artifacts/limpeza/src/pages/minibar-admin.tsx` (linha 825), atualizar a exibição das taxas retidas para:
+     ```tsx
+     - R$ {Number(settlementData.totalFees || ((settlementData.cardFees || 0) + (settlementData.pixFees || 0)) || 0).toFixed(2)}
+     ```
+     *(Ou, alternativamente, incluir `totalFees: Number((cardFees + pixFees).toFixed(2))` na resposta de `GET /api/minibar/settlement` em `demo-server.mjs`).*
+
+2. **Ajuste na Impressão A6 (`minibar-admin.tsx`)**:
+   - Ajustar o bloco `@media print` em `artifacts/limpeza/src/pages/minibar-admin.tsx` para garantir 1 card A6 limpo por página:
+     - Remover o `grid-template-columns: repeat(2, 1fr)` ou alterá-lo para `display: block` / `grid-template-columns: 1fr` em impressão;
+     - Adicionar `break-after: page !important; page-break-after: always !important;` na classe `.print-card-a6`;
+     - (Opcional/Recomendado): Adicionar `@page { size: A6 portrait; margin: 8mm; }` ou dimensionamento proporcional para evitar cortes.
+
+---
+
+## 5. Verification Method (Método de Verificação Independente)
+
+1. **Inspeção de Linha de Taxas**:
+   - Verificar linha 825 de `artifacts/limpeza/src/pages/minibar-admin.tsx` e confirmar se utiliza a soma de `cardFees + pixFees` ou se o backend fornece `totalFees`.
+2. **Inspeção de CSS de Impressão A6**:
+   - Verificar linhas 406-428 de `artifacts/limpeza/src/pages/minibar-admin.tsx` e confirmar que cada `.print-card-a6` possui quebra de página garantida (`break-after: page;`) sem divisão forçada em duas colunas por página.
+3. **Build de Produção**:
+   ```bash
    npm --prefix artifacts/limpeza run build
    ```
+   Deve compilar com código de saída 0.

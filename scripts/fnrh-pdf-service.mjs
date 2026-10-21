@@ -85,13 +85,13 @@ export async function generateFnrhPdf({
   whatsapp2faVerified,
   whatsappPhone,
   whatsappOtpVerifiedAt,
-  baseUrl = "https://corpflats.onrender.com"
+  baseUrl = "https://corpflats.com.br"
 }) {
   const g = guestData || guest || {};
   const sig = signatureBase64 || signatureDataUrl || null;
   const ip = signerIp || ipAddress || "127.0.0.1";
   const ua = signerUserAgent || userAgent || "Navegador Web / Dispositivo Pessoal";
-  const origin = appOrigin || baseUrl || "https://corpflats.onrender.com";
+  const origin = appOrigin || baseUrl || "https://corpflats.com.br";
 
   const documentUuid = crypto.randomUUID();
   const signedAtIso = new Date().toISOString();
@@ -542,7 +542,7 @@ export async function rebuildFnrhPdfOnTheFly({
   guest = null,
   guestData = null,
   auditTrail = null,
-  appOrigin = "https://corpflats.onrender.com",
+  appOrigin = "https://corpflats.com.br",
   db = null
 }) {
   const targetGuest = guestData || guest || (Array.isArray(reservation.guests) ? reservation.guests[0] : null) || {};
@@ -572,7 +572,7 @@ export async function rebuildFnrhPdfOnTheFly({
     signatureBase64: sig,
     signerIp: auditTrail?.signerIp || "127.0.0.1",
     signerUserAgent: auditTrail?.signerUserAgent || "Navegador Web",
-    appOrigin: appOrigin || "https://corpflats.onrender.com",
+    appOrigin: appOrigin || "https://corpflats.com.br",
     geolocation: auditTrail?.geolocation || null,
     optInMarketing: Boolean(targetGuest.optInMarketing || auditTrail?.optInMarketing),
     whatsapp2faVerified: Boolean(targetGuest.whatsapp2faVerified || auditTrail?.whatsapp2faVerified),

@@ -1,60 +1,63 @@
-# BRIEFING — 2026-10-11T03:15:30Z
+# BRIEFING — 2026-10-21T21:40:00Z
 
 ## Mission
-Independent code review and adversarial critic evaluation for Milestone M3 (Frontend Admin UI) of CorpFlats / Guest-Flow-Manager.
+Objective review and adversarial audit of Milestone M3 work products for Portais Anserve, Admin CorpFlats, NFs e QR Codes A6 (Features F19 to F28), verifying implementation correctness, edge cases, integrity, and frontend build.
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M3 (Frontend Admin UI)
-- Instance: 2 of 2
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M3 (Minibar & Anserve Integration)
+- Instance: 2 of 2 (reviewer_m3_2)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Check for integrity violations (hardcoded test results, facade implementations, shortcuts, fabricated verifications) -> verdict MUST be REQUEST_CHANGES if found
-- Ensure siteConfig and additional fees in Aba 2 of tarifas.tsx are preserved and synchronized
-- Verify TypeScript types, frontend build, and backend regression tests
+- NUNCA executar testes globais `tests/*.test.mjs`, varreduras ou em lote (AGENTS.md)
+- Only write metadata to `.agents/teamwork/reviewer_m3_2/`
+- Report findings with clear verdict (APPROVE / REQUEST_CHANGES)
+- Check actively for integrity violations (hardcoding, facades, shortcuts, self-certifying)
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T03:10:11Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T21:40:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/limpeza/src/pages/whatsapp-automation.tsx`, `artifacts/limpeza/src/pages/tarifas.tsx`, worker handoff, tests, build
-- **Interface contracts**: `.agents/teamwork/orchestrator_4/PROJECT.md`, `ORIGINAL_REQUEST.md`
-- **Review criteria**: correctness, TypeScript type integrity, absence of regressions, preservation of siteConfig in Aba 2, test verification
+- **Files reviewed**:
+  - `artifacts/limpeza/src/pages/anserve-restock.tsx` (PIN auth, checkout prioritization, physical vs declared check, courtesy restock, divergence reporting with photos)
+  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx` (Pending NF queue, discrimination format, CPF/CNPJ & email, upload NF with multichannel delivery, financial statement & net calculation)
+  - `artifacts/limpeza/src/pages/minibar-admin.tsx` (Product catalog, nominal template matrix per flat, A6 card generator with QR codes for 19 Soho flats, print styles)
+  - `artifacts/limpeza/src/App.tsx` (Routes `/frigobar-reposicao`, `/anserve`, `/frigobar-gestao`, `/frigobar`, lazy loading & route guards)
+  - `artifacts/limpeza/src/lib/permissions.ts` (RBAC roles `anserve_repositora` and `anserve_gestor`, module sets and route aliases)
+  - `artifacts/limpeza/src/components/layout.tsx` (Sidebar category, BottomNav context-aware links)
+  - `artifacts/limpeza/src/pages/equipe.tsx` (User management modals, role dropdowns and badges)
+
+## Key Decisions Made
+- All 4 primary files and supporting RBAC files inspected line-by-line.
+- Integrity verification: No hardcoded mocks, facades, or test bypasses detected. Implementation contains authentic business logic, dynamic state, and error handling.
+- Independent compilation verified: `npm --prefix artifacts/limpeza run build` completed with return code 0 in 40.77s.
+- Verdict: APPROVE.
+
+## Artifact Index
+- `.agents/teamwork/reviewer_m3_2/BRIEFING.md` — Persistent situational awareness
+- `.agents/teamwork/reviewer_m3_2/progress.md` — Liveness heartbeat and step tracking
+- `.agents/teamwork/reviewer_m3_2/DISPATCH.md` — Inbound instructions log
+- `.agents/teamwork/reviewer_m3_2/handoff.md` — Final 5-component review report
 
 ## Review Checklist
 - **Items reviewed**:
-  - `whatsapp-automation.tsx` (BotActionsSettings, BOT_ACTIONS_METADATA, getBotOperationalMode, Master Switch, 5 Granular Switches, Hold Minutes, Handover Message, Optimistic Updates)
-  - `tarifas.tsx` (2 Tabs: Calendar Matrix & Parameters/siteConfig, Toolbar multi-canal, Bulk Update Modal, Cell Override Modal, SEBRAE Reversibility, Rate Plans, Additional Fees sync)
-  - Frontend Build: `npm --prefix artifacts/limpeza run build` (Exit code 0, 26.71s)
-  - Backend Regression Tests: 33/33 pass (100%)
-  - Challenger M3 Suites: 24/24 pass (100%)
-  - TypeScript Typecheck: 0 errors in M3 files
+  - `anserve-restock.tsx`: PIN keypad, token URL/localStorage, checkout urgency banner, flat cards, Conforme modal, Divergência modal with camera & photo upload.
+  - `anserve-dashboard.tsx`: Pending NF queue, fiscal discrimination preference tags, file upload with multicanal dispatch banner, financial statement cards & settlement formula.
+  - `minibar-admin.tsx`: Catalog CRUD, per-flat default stock matrix with steppers, 19 Soho flat QR code cards with high-res generation, print-only `@media print` layout.
+  - `App.tsx`: Lazy loading, AdminRoute & Route protection, strict precedence over `/frigobar/:flatNumber`.
 - **Verdict**: APPROVE
 - **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Tri-modal operational state transitions across all 3 modes (disabled, responder, autonomous) -> Passed
-  - Master switch OFF disabling all action access with 403 and UI visual feedback -> Passed
-  - Granular action toggle persistence and optimistic rollback on API error -> Passed
-  - SiteConfig immutability preservation on Aba 2 parameter modifications -> Passed
-  - Bulk update validation (missing dates, negative values) -> Handled cleanly
-- **Vulnerabilities found**:
-  - Minor backend contract omission: `GET /api/tariffs/calendar` calculates overrides but doesn't include the top-level `overrides` array in JSON output. Handled defensively in `tarifas.tsx` via `(calendarData?.overrides || [])`. Recommendation noted for M4 backend polish.
-- **Untested angles**: None within M3 scope.
-
-## Key Decisions Made
-- Confirmed zero integrity violations in worker M3 implementation.
-- Confirmed full build and test suite pass rate.
-- Issued verdict: APPROVE.
-
-## Artifact Index
-- DISPATCH.md — Initial dispatch message
-- BRIEFING.md — Persistent context & memory
-- progress.md — Liveness heartbeat
-- handoff.md — Final review report
+  - Offline/loss of connection in hotel hallways during inspection: Handled with non-destructive error states preserving modal form inputs.
+  - Mobile camera capture & multiple images: Verified input attribute `capture="environment"`, FileReader Base64 conversion, thumbnail previews, individual removal.
+  - Route collision in Wouter: Static minibar routes placed before `:flatNumber` parameter routes.
+  - Print stylesheet isolation: `@media print` properly hides navigation, headers, footers and sets A6 dimensions with `page-break-inside: avoid`.
+- **Vulnerabilities found**: None critical or blocking.
+- **Untested angles**: Hardware printer test (requires physical device; simulated via CSS review).

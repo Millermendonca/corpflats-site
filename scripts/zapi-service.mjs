@@ -124,7 +124,7 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
   const activeSettings = activeDb?.settings || activeDb || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const isResign = Boolean(reservation?.needsReSignature);
@@ -794,7 +794,7 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
     footer: "CorpFlats • Check-out Concluído",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" },
-      { id: "btn_site", type: "URL", label: "🌐 Reservar Novamente", url: "https://corpflats.onrender.com/reservar" }
+      { id: "btn_site", type: "URL", label: "🌐 Reservar Novamente", url: "https://corpflats.com.br/reservar" }
     ]
   },
   {
@@ -969,7 +969,7 @@ Confirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}
 Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de braços abertos para recebê-lo em suas próximas viagens a Campos!`,
     footer: "CorpFlats • Central de Reservas",
     buttons: [
-      { id: "btn_site", type: "URL", label: "🌐 Reservar Novas Datas", url: "https://corpflats.onrender.com/reservar" }
+      { id: "btn_site", type: "URL", label: "🌐 Reservar Novas Datas", url: "https://corpflats.com.br/reservar" }
     ]
   },
   {
@@ -2777,7 +2777,7 @@ export function sendMirrorEmail(db, saveDatabase, {
 }) {
   try {
     if (!db || !email || !message) return null;
-    const appOrigin = baseUrl || (typeof process !== "undefined" && process.env?.APP_BASE_URL) || "https://corpflats.onrender.com";
+    const appOrigin = baseUrl || (typeof process !== "undefined" && process.env?.APP_BASE_URL) || "https://corpflats.com.br";
     const rendered = renderWhatsAppMirrorEmail({
       message,
       buttons,
@@ -2894,7 +2894,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // URL Base pública do sistema (prioriza domínio de produção ou host)
-  const appOrigin = baseUrl || "https://corpflats.onrender.com";
+  const appOrigin = baseUrl || "https://corpflats.com.br";
 
   const resStatus = String(reservation.status || "").toLowerCase().trim();
   const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
@@ -3290,7 +3290,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     eventLower.includes("additional_daily_pending");
 
   const hasBreakfast = Boolean(reservation?.includeBreakfast || reservation?.ratePlan === "with_breakfast");
-  const appOrigin = baseUrl || "https://corpflats.onrender.com";
+  const appOrigin = baseUrl || "https://corpflats.com.br";
   const resCode = reservation?.code || reservation?.reservationCode || `RES-${reservation?.flatNumber || "000"}-${reservation?.id || "0000"}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
 
@@ -3463,7 +3463,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
   } else {
     // Para reservas ativas com café OU disparo explícito de café:
-    const safeCafeUrl = linkCafeManha || `${baseUrl || "https://corpflats.onrender.com"}/cafe/${resCode}`;
+    const safeCafeUrl = linkCafeManha || `${baseUrl || "https://corpflats.com.br"}/cafe/${resCode}`;
     const existingCafeIdx = list.findIndex(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")));
     const cafeBtn = {
       id: "btn_cafe",
@@ -3628,11 +3628,11 @@ export async function sendZapiDocument(config, {
           console.log(`[Z-API Document] Arquivo local '${relPath}' lido e convertido em Base64 (${fileBuf.length} bytes) para envio seguro.`);
         } catch (readErr) {
           console.warn("[Z-API Document] Erro ao ler arquivo local:", readErr.message);
-          const pubBase = config.publicOrigin || "https://corpflats.onrender.com";
+          const pubBase = config.publicOrigin || "https://corpflats.com.br";
           finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
         }
       } else {
-        const pubBase = config.publicOrigin || "https://corpflats.onrender.com";
+        const pubBase = config.publicOrigin || "https://corpflats.com.br";
         finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
       }
     } else if (!document.startsWith("http://") && !document.startsWith("https://") && !document.startsWith("data:")) {
@@ -3905,7 +3905,7 @@ export async function sendZapiMessage(config, {
         const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl.startsWith("000201") ? rawUrl : "");
         // Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia/código puro, redireciona para a página oficial do portal para copiar o PIX
         if (!rawUrl || rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")) {
-          const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/+$/, "");
+          const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/+$/, "");
           rawUrl = `${hostBase}/copiar-pix`;
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
@@ -4705,7 +4705,7 @@ export function renderReconnectionAlertEmailHtml({ hotelName, connectedAt, phone
 export async function sendDisconnectionAlertEmail({ db, recipient, reason, source, disconnectedAt }) {
   if (!recipient) return { success: false, error: "E-mail destinatário não fornecido" };
   const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
-  const targetUrl = "https://corpflats.onrender.com/zapi-connection";
+  const targetUrl = "https://corpflats.com.br/zapi-connection";
   const html = renderDisconnectionAlertEmailHtml({ hotelName, disconnectedAt, reason, source, targetUrl });
   const subject = `🚨 [URGENTE] WhatsApp CorpFlats Desconectado (Z-API) - Reconexão Necessária`;
 
@@ -4739,7 +4739,7 @@ export async function sendDisconnectionAlertEmail({ db, recipient, reason, sourc
 export async function sendReconnectedAlertEmail({ db, recipient, connectedAt, phone }) {
   if (!recipient) return { success: false, error: "E-mail destinatário não fornecido" };
   const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
-  const targetUrl = "https://corpflats.onrender.com/zapi-connection";
+  const targetUrl = "https://corpflats.com.br/zapi-connection";
   const html = renderReconnectionAlertEmailHtml({ hotelName, connectedAt, phone, targetUrl });
   const subject = `✅ [RESTABELECIDO] WhatsApp Reconectado com Sucesso - Z-API CorpFlats`;
 
@@ -4774,7 +4774,7 @@ export async function sendExternalAlertWebhook(webhookUrl, payload) {
     if (webhookUrl.includes("discord.com")) {
       bodyPayload = {
         content: payload.event === "disconnected"
-          ? `🚨 **[URGENTE - CorpFlats]** WhatsApp Desconectado na Z-API!\n${payload.message}\nReconecte agora: ${payload.targetUrl || "https://corpflats.onrender.com/zapi-connection"}`
+          ? `🚨 **[URGENTE - CorpFlats]** WhatsApp Desconectado na Z-API!\n${payload.message}\nReconecte agora: ${payload.targetUrl || "https://corpflats.com.br/zapi-connection"}`
           : `✅ **[CorpFlats]** WhatsApp Reconectado com sucesso na Z-API!`,
         embeds: [{
           title: payload.title || "Alerta Z-API CorpFlats",
@@ -4786,7 +4786,7 @@ export async function sendExternalAlertWebhook(webhookUrl, payload) {
     } else if (webhookUrl.includes("slack.com")) {
       bodyPayload = {
         text: payload.event === "disconnected"
-          ? `🚨 *[URGENTE - CorpFlats]* WhatsApp Desconectado na Z-API!\n${payload.message}\nReconecte: ${payload.targetUrl || "https://corpflats.onrender.com/zapi-connection"}`
+          ? `🚨 *[URGENTE - CorpFlats]* WhatsApp Desconectado na Z-API!\n${payload.message}\nReconecte: ${payload.targetUrl || "https://corpflats.com.br/zapi-connection"}`
           : `✅ *[CorpFlats]* WhatsApp Reconectado com sucesso!`
       };
     }
@@ -4813,7 +4813,7 @@ export async function syncZapiWebhooks(config, appBaseUrl) {
   }
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
-  const cleanAppUrl = (appBaseUrl || "https://corpflats.onrender.com").replace(/\/+$/, "");
+  const cleanAppUrl = (appBaseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
   const disconnectedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/disconnected`;
   const connectedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/connected`;
   const receivedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/received`;
@@ -4976,7 +4976,7 @@ export async function handleDisconnectionEvent({ db, saveDatabase, createNotific
       event: "disconnected",
       title: isTest ? "🔔 [TESTE] Z-API CorpFlats Desconectado" : "🚨 [URGENTE] Z-API CorpFlats Desconectado!",
       message: `WhatsApp perdeu conexão com a Z-API às ${now.toLocaleTimeString("pt-BR")}. Motivo: ${reason || 'Queda de sessão'}.`,
-      targetUrl: "https://corpflats.onrender.com/zapi-connection",
+      targetUrl: "https://corpflats.com.br/zapi-connection",
       timestamp: nowIso,
       details
     }).catch(() => {});
@@ -5039,7 +5039,7 @@ export async function handleConnectionEvent({ db, saveDatabase, createNotificati
         event: "connected",
         title: "✅ [RESTABELECIDO] Z-API WhatsApp Conectado",
         message: `A conexão do WhatsApp foi restabelecida com sucesso às ${now.toLocaleTimeString("pt-BR")}.`,
-        targetUrl: "https://corpflats.onrender.com/zapi-connection",
+        targetUrl: "https://corpflats.com.br/zapi-connection",
         timestamp: nowIso,
         details
       }).catch(() => {});
@@ -6002,9 +6002,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         connectedAt: null,
         lastDisconnectReason: null,
         lastAlertSentAt: null,
-        webhookDisconnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected",
-        webhookConnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/connected",
-        webhookReceivedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/received",
+        webhookDisconnectedUrl: "https://corpflats.com.br/api/whatsapp/webhook/disconnected",
+        webhookConnectedUrl: "https://corpflats.com.br/api/whatsapp/webhook/connected",
+        webhookReceivedUrl: "https://corpflats.com.br/api/whatsapp/webhook/received",
         conciergeMonitoringEnabled: true,
         conciergeGroupId: "",
         conciergeGroupName: "",
@@ -6046,13 +6046,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         db.zapiConfig.connectionState = "unknown";
       }
       if (!db.zapiConfig.webhookDisconnectedUrl) {
-        db.zapiConfig.webhookDisconnectedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected";
+        db.zapiConfig.webhookDisconnectedUrl = "https://corpflats.com.br/api/whatsapp/webhook/disconnected";
       }
       if (!db.zapiConfig.webhookConnectedUrl) {
-        db.zapiConfig.webhookConnectedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/connected";
+        db.zapiConfig.webhookConnectedUrl = "https://corpflats.com.br/api/whatsapp/webhook/connected";
       }
       if (!db.zapiConfig.webhookReceivedUrl) {
-        db.zapiConfig.webhookReceivedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/received";
+        db.zapiConfig.webhookReceivedUrl = "https://corpflats.com.br/api/whatsapp/webhook/received";
       }
       if (db.zapiConfig.conciergeMonitoringEnabled === undefined) {
         db.zapiConfig.conciergeMonitoringEnabled = true;
@@ -7686,9 +7686,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post("/api/whatsapp/sync-webhooks", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const host = req.get("host") || "corpflats.onrender.com";
+    const host = req.get("host") || "corpflats.com.br";
     const protocol = req.protocol || "https";
-    const appBaseUrl = req.body?.baseUrl || (host.includes("localhost") ? "https://corpflats.onrender.com" : `${protocol}://${host}`);
+    const appBaseUrl = req.body?.baseUrl || (host.includes("localhost") ? "https://corpflats.com.br" : `${protocol}://${host}`);
 
     const result = await syncZapiWebhooks(db.zapiConfig, appBaseUrl);
     if (result.success) {
@@ -9102,7 +9102,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       if (db?.zapiConfig?.instanceId && db?.zapiConfig?.token && db?.zapiConfig?.enabled !== false) {
         console.log("[Z-API Init] Sincronizando webhooks e notifySentByMe com a Z-API...");
-        const syncRes = await syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
+        const syncRes = await syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.com.br");
         if (syncRes?.success) {
           db.zapiConfig.webhooksSyncedAt = new Date().toISOString();
           if (typeof saveDatabase === "function") saveDatabase();
@@ -9128,7 +9128,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
       // A cada 6 minutos (6 ciclos de 60s): re-garante sincronização dos webhooks e notifySentByMe
       if (cronCounter % 6 === 0 && db.zapiConfig.instanceId && db.zapiConfig.token && db.zapiConfig.enabled !== false) {
-        syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.onrender.com")
+        syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.com.br")
           .then(res => {
             if (res?.success) {
               db.zapiConfig.webhooksSyncedAt = new Date().toISOString();
@@ -9375,7 +9375,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       scheduleUpcomingReservationTriggers(db, saveDatabase);
 
       // 3. Verifica flats de check-in hoje ainda não limpos após as 13:45 e dispara solicitação de previsão
-      await checkAndTriggerCleaningDelayAlerts(db, saveDatabase, createNotification, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
+      await checkAndTriggerCleaningDelayAlerts(db, saveDatabase, createNotification, process.env.APP_BASE_URL || "https://corpflats.com.br");
 
       // 4. Higieniza falsos positivos de NPS e garante disparo das notas < 5 de hoje + alerta de fallback 15m ao gestor (22998505276)
       await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
@@ -9497,7 +9497,7 @@ function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, pho
 /**
  * Monta um item da fila de agendamentos para um destinatário (hóspede, acompanhante ou solicitante).
  */
-export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, channel, baseUrl = "https://corpflats.onrender.com", idPrefix = "q", recipientTarget = null }) {
+export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, channel, baseUrl = "https://corpflats.com.br", idPrefix = "q", recipientTarget = null }) {
   const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, target.type, tpl);
   const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, target.type, tpl);
   const hasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
@@ -10709,7 +10709,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
             target,
             scheduledFor,
             channel: resvChannel,
-            baseUrl: baseUrl || "https://corpflats.onrender.com",
+            baseUrl: baseUrl || "https://corpflats.com.br",
             idPrefix,
             recipientTarget: "guest"
           });
@@ -11443,7 +11443,7 @@ export async function sendNpsManagerAlertWhatsApp(db, npsItem, { reason = "comme
       msg += `${idx + 1}. *${item.category}:* ${item.title}${fStr} (${item.mentionsCount}x)${latest}\n`;
     });
   }
-  msg += `\n🔗 _Gerencie e conclua itens em: corpflats.onrender.com/avaliacoes-ia_`;
+  msg += `\n🔗 _Gerencie e conclua itens em: corpflats.com.br/avaliacoes-ia_`;
 
   const sendRes = await sendZapiFn(db.zapiConfig, {
     phone: managerPhone,

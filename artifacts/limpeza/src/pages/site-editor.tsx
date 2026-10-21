@@ -521,7 +521,7 @@ export default function SiteEditor() {
                     className="text-xs font-mono h-9 rounded-xl"
                   />
                   <p className="text-[10px] text-slate-500">
-                    Insira seu Client ID do Google Cloud Console com o domínio autorizado https://corpflats.onrender.com para habilitar o popup de login rápido do Google para todos os visitantes.
+                    Insira seu Client ID do Google Cloud Console com o domínio autorizado https://corpflats.com.br para habilitar o popup de login rápido do Google para todos os visitantes.
                   </p>
                 </div>
               </CardContent>

@@ -1,17 +1,15 @@
-# Progress — Reviewer 2 (Milestone 2)
+# Progress Log
 
-- [x] Read ORIGINAL_REQUEST.md, PROJECT.md, AGENTS.md, worker_m2/handoff.md
-- [x] Initialize BRIEFING.md and DISPATCH.md
-- [x] Independent architectural, math, and safety code inspection
-- [x] Verify SEBRAE math (Custo R$ 149.38, Divisor 0.54, Tarifa Mínima R$ 276.63, zero residue decomposition)
-- [x] Verify Breakfast Surcharge (OBP) mapping
-- [x] Verify Safety locks (floor lock, 30% variation lock, staged publication workflow)
-- [x] Verify Canonical Availability (19 flats, 5 collision sources, non-blocking conflict warnings)
-- [x] Verify Twin files SHA-256 byte parity
-- [x] Verify Real-Gold Legacy non-regression vs commit 0501d02
-- [x] Verify database isolation (data/database.json untouched)
-- [x] Run targeted test: `node --test tests/wbp-integration/m2-availability-pricing.test.mjs` (25/25 passed)
-- [x] Write handoff report with explicit verdict: APPROVE
-- [x] Send completion message to orchestrator
+Last visited: 2026-10-21T21:03:15Z
+Current Status: Revisão e teste adversarial concluídos com sucesso. Veredito APPROVE.
 
-Last visited: 2026-10-13T23:36:00Z
+- [x] Despacho recebido e registrado em DISPATCH.md
+- [x] BRIEFING.md inicializado
+- [x] Leitura dos documentos de contexto (ORIGINAL_REQUEST, PROJECT, worker_m2 handoff/changes)
+- [x] Inspeção minuciosa de `artifacts/limpeza/src/pages/guest-minibar.tsx`
+- [x] Inspeção de rotas em `App.tsx` e atalhos em `guest-portal.tsx`
+- [x] Teste de compilação `npm --prefix artifacts/limpeza run build` (saída 0 em 23.79s)
+- [x] Revisão de integridade, UX mobile, portão OTP, checkout e resgate de cortesia
+- [x] Análise adversarial e stress test
+- [x] Atualização de BRIEFING.md
+- [x] Geração do `handoff.md` e envio de mensagem ao Orchestrator

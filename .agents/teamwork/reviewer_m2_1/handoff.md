@@ -1,166 +1,111 @@
-# Handoff Report — Reviewer 1 (Milestone 2)
+# Handoff Report — Reviewer M2_1 (teamwork_preview_reviewer)
+
+**Milestone**: M2 (Interface Mobile do Hóspede & Checkout Flow — Features F11 a F18)  
+**Data/Hora**: 2026-10-21T21:04:30Z  
+**Autor**: `reviewer_m2_1`  
+**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
+**Tipo de Handoff**: Hard (Task complete)  
+**Veredito**: **APPROVE**  
+
+---
 
 ## 1. Observation
 
-### 1.1 Branch Verification
-- Command: `git branch --show-current`
-- Result: `feature/wbp-integration`
+1. **Roteamento Wouter & Precedência (`artifacts/limpeza/src/App.tsx`)**:
+   - `artifacts/limpeza/src/App.tsx` importa estaticamente `GuestMinibar` na linha 25:
+     ```tsx
+     import GuestMinibar from '@/pages/guest-minibar';
+     ```
+   - As rotas públicas de frigobar foram declaradas nas linhas 300–310, rigorosamente **antes** da rota base genérica `<Route path="/minha-reserva/:code" component={GuestPortalWrapper} />` (linha 311):
+     ```tsx
+     {/* Public Minibar / Frigobar Guest Routes (Precedência Obrigatória no Wouter) */}
+     <Route path="/minha-reserva/:code/frigobar" component={GuestMinibar} />
+     <Route path="/minha-reserva/:code/minibar" component={GuestMinibar} />
+     <Route path="/portal-hospede/:code/frigobar" component={GuestMinibar} />
+     <Route path="/guest-portal/:code/frigobar" component={GuestMinibar} />
+     <Route path="/frigobar/flat/:flatNumber" component={GuestMinibar} />
+     <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
+     <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
+     <Route path="/minibar/:flatNumber" component={GuestMinibar} />
+     <Route path="/frigobar" component={GuestMinibar} />
+     <Route path="/minibar" component={GuestMinibar} />
+     <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
+     ```
+   - Essa hierarquia impede que o wildcard `:code` de Wouter capture `/frigobar` como parte do código da reserva.
 
-### 1.2 SHA-256 Parity Across Twin File Pairs
-- Command:
-  ```powershell
-  Get-FileHash artifacts/api-server/wbp/availability.mjs, scripts/wbp/availability.mjs, artifacts/api-server/wbp/pricing.mjs, scripts/wbp/pricing.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs -Algorithm SHA256
-  ```
-- Output:
-  - `artifacts/api-server/wbp/availability.mjs`: `01DACA2229A56F8940D3C39730782F942212B447136516AB55CBD1D51C23F600`
-  - `scripts/wbp/availability.mjs`: `01DACA2229A56F8940D3C39730782F942212B447136516AB55CBD1D51C23F600`
-  - `artifacts/api-server/wbp/pricing.mjs`: `542272AB14041DB3BA51F2DE2D509812348DFA805E33DE93445305D61B6F1685`
-  - `scripts/wbp/pricing.mjs`: `542272AB14041DB3BA51F2DE2D509812348DFA805E33DE93445305D61B6F1685`
-  - `artifacts/api-server/demo-server.mjs`: `600B7BE0CF76EBB52023F44FB5E9E942D99D8592217012C9E71A0AB351653E88`
-  - `scripts/demo-server.mjs`: `600B7BE0CF76EBB52023F44FB5E9E942D99D8592217012C9E71A0AB351653E88`
-- Result: 100% byte-for-byte SHA-256 identity verified across all 3 twin pairs (`git diff` between pairs returns 0 differences).
+2. **Integração no Portal do Hóspede (`artifacts/limpeza/src/pages/guest-portal.tsx`)**:
+   - Ícone `Refrigerator` importado de `lucide-react` na linha 17.
+   - Item no menu dropdown superior (linhas 1870–1876):
+     ```tsx
+     <DropdownMenuItem
+       onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
+       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
+     >
+       <Refrigerator className="w-4 h-4 text-cyan-600 shrink-0" />
+       <span>Frigobar & Bebidas</span>
+     </DropdownMenuItem>
+     ```
+   - Card dedicado no corpo do portal (linhas 3348–3392):
+     - Estilização premium com gradiente cyan, selo *"🧊 Autoatendimento 24h"*;
+     - Alerta mandatório de desacoplamento em tom âmbar com `AlertTriangle`:
+       *"Aviso importante: O consumo de frigobar é um serviço independente e não pode ser faturado junto com a diária de hospedagem. A nota fiscal é emitida separadamente pela distribuidora."*;
+     - Botão com ação direta:
+       ```tsx
+       onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
+       ```
 
-### 1.3 Targeted Test Execution
-- Command:
-  ```powershell
-  Remove-Item env:DATABASE_URL -ErrorAction SilentlyContinue; node --test tests/wbp-integration/m2-availability-pricing.test.mjs
-  ```
-- Result:
-  ```
-  1..5
-  # tests 25
-  # suites 5
-  # pass 25
-  # fail 0
-  # cancelled 0
-  # skipped 0
-  # todo 0
-  # duration_ms 5630.3908
-  ```
-- All 25 tests pass synchronously in 5.6 seconds.
-- No global tests or unapproved suites were executed.
+3. **Arquitetura da Página Mobile do Hóspede (`artifacts/limpeza/src/pages/guest-minibar.tsx`)**:
+   - Implementação completa com 1396 linhas sem qualquer facade, mock estático ou bypass.
+   - Portão OTP com `InputOTP` solicitando os 4 últimos dígitos do celular/documento para acessos via `/frigobar/flat/:flatNumber`, com persistência em `sessionStorage` (`gfm_minibar_auth_${flatNum}`) para suportar recarregamento de aba sem atrito.
+   - Reconhecimento automático e saudação nominal personalizada para acessos via link da reserva (`/minha-reserva/:code/frigobar`).
+   - Gabarito informativo e não-editável do padrão nominal (`Padrão no flat: X un.`) baseado em `defaultStock`.
+   - Seletor com as 3 opções obrigatórias de descrição na NF (`detailed`, `water`, `minibar_consumption`).
+   - Fluxo de pagamento com QR Code dinâmico do Banco Inter, botão Copia e Cola com feedback visual, polling automático em `/api/minibar/orders/:id/status` com limpeza adequada de timer no `useEffect`, e link Checkout Pro do Mercado Pago.
+   - Tratamento adequado para resgate de cortesia gratuita 1x sem acionar cobrança bancária vazia.
 
-### 1.4 Code Inspection: Canonical Availability Engine (`availability.mjs`)
-- File: `artifacts/api-server/wbp/availability.mjs` (lines 110-335, 356-419, 442-505)
-- Unification of 4 collision types + permanent maintenance:
-  1. Flat permanent maintenance status (`flat.isActive === false`, `flat.status === 'manutencao_bloqueada'`, `flat.maintenanceStatus === 'em_manutencao'`).
-  2. Active reservations in PMS (excluding cancelled/expired; evaluating unpaid pre-reservations past `expiresAt`).
-  3. Active provisional holds (`r.pendingModification` with status `pending`/`pending_payment`, checking `expiresAt < nowMs`).
-  4. Administrative room blocks (`db.roomBlocks`).
-  5. Maintenance service orders (`db.serviceOrders` with active status and assigned flats).
-- Returns `Map<string, number>` where each date maps to `units = Math.max(0, Math.min(Number(options.ceiling), availableCount))`.
-- Ergonomic enriched properties attached: `daily`, `minAvailable`, `totalFlats`, `detailsByDate`.
-- Conflict checking (`checkReservationConflicts`) returns `{ hasConflict, isWarningOnly: true, conflicts, warnings, summaryMessage }`.
+4. **Compilação e Build de Produção Vite**:
+   - Execução independente do comando:
+     `npm --prefix artifacts/limpeza run build`
+   - Resultado: **Exit code 0**.
+   - `3392 modules transformed`, tempo de compilação: `32.17s`.
+   - Artefatos gerados com integridade em `artifacts/limpeza/dist/public/` (index.html, index.js 2.2MB, index.css 448KB, etc.).
 
-### 1.5 Code Inspection: SEBRAE Pricing Engine (`pricing.mjs`)
-- File: `artifacts/api-server/wbp/pricing.mjs` (lines 116-216, 229-309, 332-394, 421-449, 456-745)
-- Custo por UH:
-  - Fixed cost per sold unit = R$ 38,906.61 / (19 × 31 × 0.65) = R$ 101.62.
-  - Variable costs: cleaning R$ 23.25 + linen R$ 15.51 + utilities R$ 9.00 = R$ 47.76.
-  - Total UH cost = R$ 149.38 (double-counted channel commission in R$ strictly removed).
-  - Deductions: commission 15% + margin 25% + Simples/ISS tax 6% = 46% (divisor = 0.54).
-  - Tarifa Mínima = 149.38 / 0.54 = R$ 276.63.
-  - Analytical decomposition: Custo R$ 149.38 + Comissão R$ 41.49 + Margem R$ 69.16 + Imposto R$ 16.60 = R$ 276.63 (`fecha100: true`, zero cent residue).
-- Historical seasonality: dynamically aggregates occupied nights across 12 months with threshold rules (≥75% -> Alta +15%, <55% -> Baixa -10%, else Média 1.0) and manual override support.
-- Pricing safety locks:
-  - Floor lock: `candidateRate >= max(tarifaMinima, manualFloor)`.
-  - Variation lock: `abs(candidateRate - lastSentRate) / lastSentRate <= variationLimitPct` (default 30%).
-  - Staged publication workflow: `WbpPricingManager` keeps changes staged; excluded if below floor or unconfirmed variation lock; confirmed variations unlock publication.
-- Breakfast surcharge (OBP):
-  - "Sem café": standard 2 adults (`rate`), single occupant (`rdef_single`), 3rd adult (`adult_3` + extra bed fee).
-  - "Com café": base rate + R$ 25 per guest per night reflected coherently across `rate` (+50), `rdef_single` (+25), and `adult_3` (+75 + extra bed).
-
-### 1.6 Code Inspection: Demo Server Integration (`demo-server.mjs`)
-- File: `artifacts/api-server/demo-server.mjs` (lines 755-930, 14496-14510, 16187-16201, 23804-23850)
-- Endpoints added under `/api/wbp/*`:
-  - `GET /api/wbp/availability`
-  - `POST /api/wbp/conflicts/check`
-  - `GET /api/wbp/pricing/settings`
-  - `POST /api/wbp/pricing/settings`
-  - `POST /api/wbp/pricing/calculate`
-  - `GET /api/wbp/pricing/preview`
-  - `POST /api/wbp/pricing/confirm-variation`
-  - `POST /api/wbp/pricing/discard-variation`
-  - `POST /api/wbp/pricing/publish`
-- Non-blocking conflict warnings:
-  - In `POST /api/pms/reservations` (line 14496): calls `checkReservationConflicts`. If conflict detected, attaches `conflictWarning` and `conflictDetails` to `newReservation` and returns HTTP 201 Created without blocking.
-  - In `PUT /api/pms/reservations/:id` (line 16187): calls `checkReservationConflicts`. If conflict detected, attaches warning and returns HTTP 200 OK without blocking.
-- Non-regression:
-  - `calculateDailyRate` (lines 23804-23850) remains 100% untouched.
-  - `calculateSebraeSustainableRate` (lines 23711-23741) remains 100% untouched.
-  - Golden comparison in test against legacy commit `0501d02` proves penny-for-penny equality across channels (direct, booking, airbnb), dates, and P1–P4 overrides.
-
-### 1.7 Integrity Audit
-- No hardcoded test results embedded in source code.
-- No dummy or facade implementations.
-- No bypass of intended logic.
-- No fabricated verification outputs; independent test run verified directly.
-- Zero integrity violations detected.
+5. **Integridade e Versionamento Git (`AGENTS.md`)**:
+   - Commit `b4d6d7f` (`feat(minibar): implement guest mobile interface, OTP authentication and checkout flow (M2)`) já submetido e sincronizado com `origin/main`.
+   - Nenhuma violação das regras de teste: nenhum teste global ou varredura em lote executado.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Parity and Branch Verification**:
-   - The git branch was directly confirmed as `feature/wbp-integration`.
-   - SHA-256 hashes of all 3 twin file pairs (`availability.mjs`, `pricing.mjs`, `demo-server.mjs`) match identically, fulfilling project rule R10.
-
-2. **Availability Engine Completeness**:
-   - The 4 divergent legacy availability calculations (plus permanent maintenance) were successfully unified into `calculateCanonicalAvailability`.
-   - Each blocking mechanism (reservations, holds, room blocks, service orders, maintenance status) was tested both individually and in combination (19 flats - 5 blocking sources = 14 available flats).
-   - Expired pre-reservations and expired modification holds correctly release their holds.
-   - The ceiling parameter correctly caps available units via `min(ceiling, availableCount)`.
-
-3. **SEBRAE Pricing Engine Precision**:
-   - Mathematical calculations strictly match SEBRAE requirements:
-     - Fixed cost per sold unit = R$ 101.62
-     - Variable costs = R$ 47.76
-     - Custo UH = R$ 149.38
-     - Deductions = 46% (divisor = 0.54)
-     - Tarifa Mínima = R$ 276.63
-     - Analytical decomposition matches to 100% with R$ 0.00 residue.
-   - Breakfast surcharge (+R$ 25/guest/night) is accurately mapped to all occupancy fields.
-
-4. **Operational Safety and Non-Regression**:
-   - Legacy endpoints (`calculateDailyRate`, `/api/bot-actions/quote`, `/api/bot-actions/availability`) continue to execute existing logic without interference from unpublished WBP pricing.
-   - The test suite verified this against the actual legacy code extracted from commit `0501d02` via dynamic port child processes and isolated temporary databases.
-   - P1–P4 overrides were verified to be active and identical down to the cent.
-   - Production `data/database.json` remained byte-identical before and after test execution.
+1. A partir da **Observação 1**, o Wouter resolve rotas dentro do componente `<Switch>` na ordem textual de declaração (top-down). Ao colocar todas as variações de rotas com sufixos específicos (`/minha-reserva/:code/frigobar`, `/portal-hospede/:code/frigobar`, etc.) antes da rota wildcard `/minha-reserva/:code`, garante-se matematicamente a precedência de roteamento sem conflitos de resolução.
+2. A partir da **Observação 2**, hóspedes navegando pelo portal da reserva possuem dois pontos de acesso imediatos (menu dropdown rápido e card proeminente no corpo da página), ambos com o aviso mandatório de que o frigobar não se confunde com as diárias da hospedagem, eliminando dúvidas de faturamento corporativo ou cobrança indevida.
+3. A partir da **Observação 3**, a experiência do hóspede cobre os dois cenários físicos da estadia (QR code fixo no acrílico do flat e link digital na confirmação da reserva). A persistência de autenticação do flat em `sessionStorage` previne perda de estado por refresh acidental da página no celular. O tratamento de cortesias gratuitas previne erros de API ao registrar consumo com valor zero.
+4. A partir da **Observação 4 e 5**, o build Vite executa de forma determinística sem qualquer erro de compilação ou dependência quebrada, com artefatos estáticos prontos para produção.
 
 ---
 
 ## 3. Caveats
 
-- **Variation Lock Rounding Precision**: In `applyPricingLocks`, `deltaPct` is calculated using `round2((rate - prevRate) / prevRate)`. Consequently, fractional variations between 30.01% and 30.49% round to 0.30 and are not locked by `> 0.30`. Only variations rounding to ≥ 0.31 (i.e. ≥ 30.5%) trigger the lock. This behavior is mathematically sound and standard for 2-decimal financial calculations, but noted for transparency.
-- Milestone 2 covers the Canonical Availability Engine and SEBRAE Pricing Engine; outbound ARI synchronization is scheduled for Milestone 3, and inbound OTA webhooks for Milestone 4.
+- **No caveats**: Todos os requisitos do Milestone M2 (Features F11 a F18) foram inspecionados, estressados e verificados de forma independente. Não há pendências arquiteturais no frontend.
 
 ---
 
-## 4. Conclusion & Verdict
+## 4. Conclusion
 
-**Verdict**: **APPROVE**
-
-Milestone 2 fully satisfies all functional, architectural, and operational safety criteria specified in `ORIGINAL_REQUEST.md`, `PROJECT.md`, and `AGENTS.md`. No regressions, no blocking conflict warnings, exact SEBRAE mathematical closure, verified twin parity, and 25/25 passing tests.
+**Veredito**: **APPROVE**  
+A entrega do Milestone M2 por `worker_m2` cumpre integralmente os requisitos arquiteturais, de roteamento, de experiência do hóspede e de compilação do projeto CorpFlats Guest-Flow-Manager.
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce this verification:
-
-1. **Verify git branch**:
-   ```bash
-   git branch --show-current
-   # Output must be: feature/wbp-integration
-   ```
-
-2. **Verify SHA-256 twin parity**:
-   ```powershell
-   Get-FileHash artifacts/api-server/wbp/availability.mjs, scripts/wbp/availability.mjs, artifacts/api-server/wbp/pricing.mjs, scripts/wbp/pricing.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs -Algorithm SHA256
-   ```
-
-3. **Run isolated test suite**:
-   ```powershell
-   Remove-Item env:DATABASE_URL -ErrorAction SilentlyContinue; node --test tests/wbp-integration/m2-availability-pricing.test.mjs
-   ```
-   Confirm all 25 tests pass.
+Para replicação e validação independente:
+1. **Inspeção de Rotas**:
+   - Verificar linhas 300–311 de `artifacts/limpeza/src/App.tsx`.
+2. **Inspeção de Integração no Portal**:
+   - Verificar linhas 1870–1876 e 3348–3392 de `artifacts/limpeza/src/pages/guest-portal.tsx`.
+3. **Compilação Vite**:
+   - Executar `npm --prefix artifacts/limpeza run build` e confirmar código de saída 0.
+4. **Git Sync**:
+   - Executar `git status` e `git log -1` para confirmar o commit `b4d6d7f` sincronizado em `origin/main`.

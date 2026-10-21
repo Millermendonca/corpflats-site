@@ -92,7 +92,8 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
       anservePin: "1234",
       anserveMobileTokenSecret: "corpflats-anserve-secret",
       creditCardFeePercent: 3.99,
-      pixFeeFixed: 1.00,
+      pixFeePercent: 0.99,
+      pixFeeFixed: 0.0,
       corpFlatsCommissionPercent: 10.0,
       courtesyReimbursementEnabled: true,
       autoNotifySofiaOnDiscrepancy: false, // Don't trigger Sofia during tests
@@ -539,7 +540,7 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
       assert.strictEqual(dataStatus.status, "pendente", "Pedido não pode ser liquidado com txId incorreto");
     });
 
-    it("2.3 Webhook Mercado Pago com payment.id e external_reference: verificação empírica de liquidação", async () => {
+    it("2.3 Webhook Mercado Pago com payment.id e external_reference aprovado liquida o pedido para 'pago'", async () => {
       const resBefore = await fetch(`${BASE_URL}/api/minibar/orders/${orderToLiquidateMp}/status`);
       const dataBefore = await resBefore.json();
       assert.strictEqual(dataBefore.status, "pendente");
@@ -547,15 +548,21 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
       const externalRef = "MB-" + orderToLiquidateMp;
       const paymentId = "MP_PAY_" + Date.now();
 
-      // Dispara webhook Mercado Pago
+      // Dispara webhook Mercado Pago simulando aprovação com external_reference
       const resWebhook = await fetch(`${BASE_URL}/api/pms/mercadopago/webhook`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "payment",
-          action: "payment.created",
-          data: { id: paymentId },
-          external_reference: externalRef
+          action: "payment.updated",
+          data: {
+            id: paymentId,
+            external_reference: externalRef,
+            status: "approved",
+            transaction_amount: 28.00
+          },
+          external_reference: externalRef,
+          status: "approved"
         })
       });
       assert.strictEqual(resWebhook.status, 200);
@@ -565,16 +572,55 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
       const dataAfter = await resAfter.json();
 
       console.log(`[CHALLENGER OBSERVATION] Mercado Pago webhook status pós-disparo: order=${orderToLiquidateMp}, status=${dataAfter.status}`);
-      
-      // Prova empírica: O endpoint /api/pms/mercadopago/webhook depende exclusivamente de uma chamada
-      // HTTPS síncrona a api.mercadopago.com/v1/payments/{queryId} e ignora qualquer external_reference no body.
-      // Sem token ativo ou resposta online aprovada da API do Mercado Pago, o pedido permanece 'pendente'.
-      // Registramos essa observação empírica de auditoria.
       assert.strictEqual(
         dataAfter.status,
-        "pendente",
-        "Comportamento empírico observado: pedido permanece 'pendente' porque o webhook do Mercado Pago não possui fallback para ler external_reference diretamente do body em ambiente de sandbox/offline"
+        "pago",
+        "Pedido de frigobar deve ser liquidado com status 'pago' após webhook do Mercado Pago com external_reference aprovado"
       );
+      assert.ok(dataAfter.paidAt);
+      assert.ok(dataAfter.order.mpPaymentId);
+    });
+
+    it("2.4 [Adversarial] Webhook Mercado Pago com status não aprovado (in_process) NÃO liquida o pedido", async () => {
+      // Cria pedido Cartão adicional
+      const resCard = await fetch(`${BASE_URL}/api/minibar/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationCode: testReservationCode,
+          flatNumber: testFlatNumber,
+          items: [{ productId: "prod_coca_cola", quantity: 1 }],
+          paymentMethod: "credit_card",
+          invoicePreference: "detailed",
+          document: "98765432100",
+          email: "roberto.challenger@hotelsoho.com"
+        })
+      });
+      const dataCard = await resCard.json();
+      const pendingCardOrderId = dataCard.orderId;
+      const externalRef = "MB-" + pendingCardOrderId;
+
+      // Dispara webhook Mercado Pago com status em processamento
+      const resWebhook = await fetch(`${BASE_URL}/api/pms/mercadopago/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "payment",
+          action: "payment.updated",
+          data: {
+            id: "MP_PAY_PENDING_" + Date.now(),
+            external_reference: externalRef,
+            status: "in_process"
+          },
+          external_reference: externalRef,
+          status: "in_process"
+        })
+      });
+      assert.strictEqual(resWebhook.status, 200);
+
+      const resAfter = await fetch(`${BASE_URL}/api/minibar/orders/${pendingCardOrderId}/status`);
+      const dataAfter = await resAfter.json();
+      assert.strictEqual(dataAfter.status, "pendente", "Pedido não pode ser liquidado se webhook MP não estiver aprovado");
     });
   });
 
@@ -582,8 +628,8 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
   // 3. CÁLCULO MATEMÁTICO DO EXTRATO DE REPASSE ANSERVE (/api/minibar/settlement)
   // ═══════════════════════════════════════════════════════════════════════════
   describe("3. Teste Matemático Rigoroso do Extrato de Repasse Anserve", () => {
-    it("3.1 Validação exata da fórmula matemática de repasse líquido", async () => {
-      // Período testDate: 2026-10-21
+    it("3.1 Validação exata da dedução de 0.99% sobre PIX e repasse líquido Anserve", async () => {
+      // Período testDate: 2026-10-18
       // Contém os pedidos pré-carregados:
       // - ORD-SETTLE-CARD-100: R$ 100.00 (cartão)
       // - ORD-SETTLE-PIX-200: R$ 200.00 (pix)
@@ -603,8 +649,8 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
       // 2. Taxas de Adquirência
       // Cartão: 100.00 * 3.99% = 3.99
       assert.strictEqual(data.cardFees, 3.99, "Taxa de cartão deve ser R$ 3.99");
-      // PIX: 1 pedido PIX pago * R$ 1.00 = 1.00
-      assert.strictEqual(data.pixFees, 1.00, "Taxa de pix deve ser R$ 1.00");
+      // PIX: 200.00 * 0.99% = 1.98 (dedução exata de 0.99% sobre vendas PIX)
+      assert.strictEqual(data.pixFees, 1.98, "Taxa de PIX deve ser R$ 1.98 (exatos 0.99% sobre R$ 200.00)");
 
       // 3. Comissão CorpFlats
       // 300.00 * 10% = 30.00
@@ -617,9 +663,9 @@ describe("Challenger M1_2 — Empirical Adversarial Verification Suite", () => {
 
       // 5. Repasse Líquido Exato para a Anserve
       // netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + courtesyRestockCost
-      // = 300.00 - 3.99 - 1.00 - 30.00 + 20.00 = 285.01
-      const expectedNet = 300.00 - 3.99 - 1.00 - 30.00 + 20.00; // 285.01
-      assert.strictEqual(data.netPayableToAnserve, Number(expectedNet.toFixed(2)), "Repasse líquido deve ser exatamente R$ 285.01");
+      // = 300.00 - 3.99 - 1.98 - 30.00 + 20.00 = 284.03
+      const expectedNet = 300.00 - 3.99 - 1.98 - 30.00 + 20.00; // 284.03
+      assert.strictEqual(data.netPayableToAnserve, Number(expectedNet.toFixed(2)), "Repasse líquido deve ser exatamente R$ 284.03");
     });
 
     it("3.2 Filtragem por data isola períodos sem vazamento", async () => {

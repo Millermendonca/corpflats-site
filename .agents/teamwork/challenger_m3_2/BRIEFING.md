@@ -1,53 +1,48 @@
-# BRIEFING — 2026-10-11T03:10:30Z
+# BRIEFING — 2026-10-21T21:37:00Z
 
 ## Mission
-Adversarial empirical review and validation of Milestone M3 (Frontend Admin UI - Tariff Calendar & Bulk Update) in CorpFlats.
+Adversarial challenge and empirical verification of Milestone M3 (Fiscal invoice upload/preservation, A6 Print generation, Financial settlement/repasse math) across anserve-dashboard.tsx and minibar-admin.tsx.
 
 ## 🔒 My Identity
-- Archetype: challenger
+- Archetype: empirical challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_2
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: M3
-- Instance: 2 of 2
+- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Milestone: M3 (Financeiro, NFs e Impressão A6)
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Empirical challenger: write and run tests/probes directly; verify all claims
-- Layout compliance: only metadata in .agents/teamwork/
+- NUNCA execute testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs)
+- Run Vite build: npm --prefix artifacts/limpeza run build (COMPLETED: exit code 0)
+- Must provide explicit verdict: REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: 2026-10-11T03:10:30Z
+- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Updated: 2026-10-21T21:37:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/limpeza/src/pages/tarifas.tsx`, `artifacts/limpeza/src/pages/dashboard.tsx` (routing/navigation), and backend integration with tariff endpoints (`server/routes/tariffs.ts` / related)
-- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md`, `DISPATCH.md`
-- **Review criteria**: correctness, channel navigation & markup handling, individual cell override & delete flow, bulk update payload structure & backend alignment, build cleanliness, error handling, UI/UX robustness
+- **Files reviewed**: `artifacts/limpeza/src/pages/anserve-dashboard.tsx`, `artifacts/limpeza/src/pages/minibar-admin.tsx`, `artifacts/api-server/demo-server.mjs`
+- **Interface contracts**: `ORIGINAL_REQUEST.md`, `orchestrator_16/PROJECT.md` (Milestone M3), `worker_m3/handoff.md`
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Channel markups on GET /api/tariffs/calendar (+18% Booking, +15% Airbnb, 0% Direct) -> Verified PASS
-  2. Individual override creation via POST /api/tariffs/bulk-update and deletion via DELETE /api/tariffs/overrides/:id -> Global overrides PASS
-  3. Bulk update payload structure and server validation -> Verified PASS
-  4. Frontend build compilation (`npm --prefix artifacts/limpeza run build`) -> Verified PASS (51.72s)
-  5. UI multi-flat matrix override resolution against GET /api/tariffs/calendar payload -> FAILED (bug discovered)
+  1. Upload de arquivo inválido/vazio: verificado código de guarda em `anserve-dashboard.tsx` e `demo-server.mjs`. (PASS)
+  2. Preservação de dados fiscais (CPF/CNPJ, tipo de discriminação, e-mail): verificado pipeline de ponta a ponta (`guest-minibar.tsx` -> `demo-server.mjs` -> `anserve-dashboard.tsx`). (PASS)
+  3. Consistência matemática do extrato: analisado cálculo no backend e exibição no frontend. (FAIL no `minibar-admin.tsx` devido a `settlementData.totalFees` indefinido renderizando `- R$ 0.00`).
+  4. Impressão A6: inspecionado `@media print`. (FAIL no `minibar-admin.tsx` devido a `repeat(2, 1fr)` e falta de quebra de página por card A6).
 - **Vulnerabilities found**:
-  - GET /api/tariffs/calendar does not return `overrides` array (`calendarData.overrides` is undefined in frontend). As a result, individual flat rows in `tarifas.tsx:623` cannot resolve flat-specific overrides, displaying the general rate instead, omitting the 'Override' badge, and disabling the 'Voltar ao SEBRAE' deletion button for flat overrides.
-- **Untested angles**: Full visual browser interaction with live backend server
+  - `minibar-admin.tsx:825`: Renderiza `- R$ 0.00` em taxas retidas porque `settlementData.totalFees` é `undefined` no backend (que retorna `cardFees` e `pixFees`). Falta fallback `(settlementData.cardFees || 0) + (settlementData.pixFees || 0)`.
+  - `minibar-admin.tsx:406-428`: Grade de impressão `@media print` usa `grid-template-columns: repeat(2, 1fr)` e não possui `page-break-after: always;` / `break-after: page;` nem `@page { size: A6 portrait; }`, quebrando a exigência de "1 card A6 limpo por página".
+- **Untested angles**: Testes globais (proibidos por diretriz estrita `AGENTS.md`).
 
 ## Loaded Skills
 - None
 
 ## Key Decisions Made
-- Executed empirical probes via `tests/test-empirical-calendar-payload.mjs` and `tests/challenger-m3-tariff-adversarial.test.mjs`.
-- Verified twin-server SHA-256 parity is intact.
-- Recommended REQUEST_CHANGES to expose `overrides: getTariffOverrides()` in GET `/api/tariffs/calendar` response in twin servers (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`).
+- Conclusão com veredito explícito: REQUEST_CHANGES detalhando as duas correções pontuais necessárias.
 
 ## Artifact Index
-- DISPATCH.md — dispatch message
-- progress.md — execution progress & heartbeat
-- handoff.md — final adversarial assessment
-- tests/test-empirical-calendar-payload.mjs — isolated verification probe
-- tests/challenger-m3-tariff-adversarial.test.mjs — automated test suite
-
+- handoff.md — Verification report and verdict
+- progress.md — Liveness tracker
+- DISPATCH.md — Initial dispatch

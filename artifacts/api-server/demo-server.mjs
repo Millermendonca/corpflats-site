@@ -6908,9 +6908,9 @@ async function loadDatabase() {
           triggerEvent: "reservation_created",
           message: "Olá, *Miller*! 🌟✨\nSua reserva no *CorpFlats* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *RES-712-0290*\n• Acomodação: *Flat 712*\n• Entrada (Check-in): *28/09/2026 a partir das 14:00*\n• Saída (Check-out): *29/09/2026 até às 12:00*\n• Total de Hóspedes: *1*\n• Café da Manhã: *Incluso*\n\n💰 *Situação Financeira:*\n• Valor Total: *R$ 250,00*\n• Quanto foi Pago: *R$ 250,00*\n• Saldo a Quitar: *R$ 0,00*\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza).\n\n📍 *Endereço:*\nEdifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
           buttons: [
-            { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "https://corpflats.onrender.com/checkin?code=RES-712-0290" },
-            { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "https://corpflats.onrender.com/portal?code=RES-712-0290" },
-            { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "https://corpflats.onrender.com/cafe?res=RES-712-0290" }
+            { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "https://corpflats.com.br/checkin?code=RES-712-0290" },
+            { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "https://corpflats.com.br/portal?code=RES-712-0290" },
+            { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "https://corpflats.com.br/cafe?res=RES-712-0290" }
           ],
           documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
           documentName: "Manual_do_Hospede_CorpFlats.pdf",
@@ -9404,7 +9404,7 @@ function createNotification(arg1, arg2, arg3) {
  */
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const isResign = Boolean(reservation?.needsReSignature);
@@ -9526,7 +9526,7 @@ export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", d
  */
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
   const isResign = Boolean(reservation?.needsReSignature);
@@ -11551,7 +11551,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       const cleanWp = workerPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(workerPhone) : String(workerPhone).replace(/\D/g, "")) : null;
       if (cleanWp && typeof sendZapiMessage === "function") {
         const estFinishStr = flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--";
-        const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.onrender.com";
+        const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.com.br";
         const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
         const workerPromptMsg = [
           `⚠️ *Aviso de Previsão de Serviço* — Flat *${flat.flatNumber}*`,
@@ -11748,7 +11748,7 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
       if (!cleanWp || cleanWp.length < 10) continue;
 
       const workerName = (worker?.mainWorker?.name || order.workerName || "Prestador").trim();
-      const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.onrender.com";
+      const serverBaseUrl = process.env.SERVER_BASE_URL || process.env.APP_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || db.zapiConfig?.publicOrigin || "https://corpflats.com.br";
       const portalUrl = `${serverBaseUrl.replace(/\/+$/, "")}/servico/${order.token}`;
 
       const flats = Array.isArray(order.flats) ? order.flats : [];
@@ -13427,7 +13427,7 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
       : `Hospedagem CorpFlats - Flat ${resItem.flatNumber || '113'} - Reserva #${resItem.code || resItem.id}`;
 
     const location = `Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140`;
-    const manageUrl = `https://corpflats.onrender.com/minha-reserva/${resItem.code || resItem.id}`;
+    const manageUrl = `https://corpflats.com.br/minha-reserva/${resItem.code || resItem.id}`;
     const guestEmail = resItem.guestEmail || `hospede-${resItem.code || resItem.id}@corpflats.com.br`;
 
     const descLines = [];
@@ -20495,7 +20495,7 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
  */
 export function dispatchReservationReSignatureNotifications(reservation, changes = [], options = {}) {
   if (!reservation) return;
-  const appOrigin = (options.origin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const appOrigin = (options.origin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const reSignatureUrl = `${appOrigin}/pre-checkin/${reservation.code}?resign=1`;
 
   // 1. Registro Imediato de Auditoria
@@ -21568,7 +21568,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
 
         if (isDatesOrFlatChanged) {
-          const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.onrender.com");
+          const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
             origin: originHeader,
             source: "pms_admin_edit",
@@ -23215,7 +23215,7 @@ export async function commitPendingModification(r, pending, {
   ];
 
   dispatchReservationReSignatureNotifications(r, modChanges, {
-    origin: (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com",
+    origin: (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br",
     source: "portal_modify_settled",
     actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
   });
@@ -24377,7 +24377,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   ];
 
   dispatchReservationReSignatureNotifications(r, directModChanges, {
-    origin: req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.onrender.com"),
+    origin: req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br"),
     source: "portal_modify_direct",
     actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
   });
@@ -29033,7 +29033,7 @@ app.post("/api/pms/pre-checkin/:code/signature-token", (req, res) => {
   db.fnrhSignatureTokens.push(tokenRecord);
   saveDatabase();
 
-  const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+  const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.com.br");
   const signatureUrl = `${originHeader}/pre-checkin/${r.code || code}?token=${token}&guest=${guestIndex}`;
 
   res.json({
@@ -29835,7 +29835,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // ── Geração do PDF da Ficha com Trilha Forense, Hash SHA-256 e QR Code ──────
   let fnrhDocument = null;
   const effectiveSignature = signatureBase64 || signatureUrl || r.signatureUrl || guest?.signatureUrl || targetGuest.signatureUrl || null;
-  const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.onrender.com");
+  const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
   try {
     const signerIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || req.connection?.remoteAddress || "127.0.0.1";
     const signerUserAgent = req.headers["user-agent"] || "Dispositivo Pessoal do Hóspede";
@@ -30259,7 +30259,7 @@ function handleFnrhServe(isDownload) {
     if (!targetFilePath || !fs.existsSync(targetFilePath)) {
       if (targetReservation) {
         try {
-          const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+          const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.com.br");
           const hydrated = await hydrateReservationMediaBlobsForPdf(targetReservation, targetGuest);
           const rebuilt = await rebuildFnrhPdfOnTheFly({
             reservation: hydrated.reservation,
@@ -33057,7 +33057,7 @@ app.post("/api/marketing/abandoned-carts/:id/recover", (req, res) => {
   const cleanPhone = (cart.guestPhone || "").replace(/\D/g, "");
   const firstName = (cart.guestName || "amigo(a)").split(" ")[0];
   const msg = encodeURIComponent(
-    `Olá, ${firstName}! Tudo bem? 😊\n\nNotamos que você estava reservando o seu Flat para os dias ${cart.checkinDate || ""} a ${cart.checkoutDate || ""}, mas a reserva ainda não foi finalizada.\n\nFicou alguma dúvida sobre o apartamento ou gostaria de uma condição especial no PIX com 5% de desconto para fechar agora?\n\nSe quiser concluir, basta acessar aqui: https://corpflats.onrender.com/reservar`
+    `Olá, ${firstName}! Tudo bem? 😊\n\nNotamos que você estava reservando o seu Flat para os dias ${cart.checkinDate || ""} a ${cart.checkoutDate || ""}, mas a reserva ainda não foi finalizada.\n\nFicou alguma dúvida sobre o apartamento ou gostaria de uma condição especial no PIX com 5% de desconto para fechar agora?\n\nSe quiser concluir, basta acessar aqui: https://corpflats.com.br`
   );
   const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${msg}`;
 
@@ -35587,8 +35587,8 @@ app.post("/api/nfse/whatsapp/:id", async (req, res) => {
   const cleanPhoneNum = onlyDigits(rawPhone);
   const firstName = (inv.tomadorNome || "Hóspede").split(" ")[0];
   const numNota = String(inv.numeroNfse || inv.numeroNota || inv.id);
-  const danfseUrl = `https://corpflats.onrender.com/api/nfse/danfse/${numNota}`;
-  const pdfUrl = `https://corpflats.onrender.com/api/nfse/pdf/${numNota}`;
+  const danfseUrl = `https://corpflats.com.br/api/nfse/danfse/${numNota}`;
+  const pdfUrl = `https://corpflats.com.br/api/nfse/pdf/${numNota}`;
   const fileName = `NFSe_${numNota}_CorpFlats.pdf`;
 
   const captionText =
@@ -42528,14 +42528,14 @@ async function createMercadoPagoPreference({ reservationCode, amount, guestName,
       email: (guestEmail || "reservas@corpflats.com.br").trim()
     },
     back_urls: {
-      success: `https://corpflats.onrender.com/minha-reserva/${reservationCode}?payment=success`,
-      failure: `https://corpflats.onrender.com/reservar?payment=failure`,
-      pending: `https://corpflats.onrender.com/minha-reserva/${reservationCode}?payment=pending`
+      success: `https://corpflats.com.br/minha-reserva/${reservationCode}?payment=success`,
+      failure: `https://corpflats.com.br?payment=failure`,
+      pending: `https://corpflats.com.br/minha-reserva/${reservationCode}?payment=pending`
     },
     auto_return: "approved",
     external_reference: reservationCode,
     statement_descriptor: "CORPFLATS",
-    notification_url: "https://corpflats.onrender.com/api/pms/mercadopago/webhook",
+    notification_url: "https://corpflats.com.br/api/pms/mercadopago/webhook",
     payment_methods: {
       excluded_payment_types: [
         { id: "ticket" },
@@ -43570,7 +43570,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
 
     let title = "CorpFlats • Hospedagem Executiva & Serviços Exclusivos";
     let desc = "Flats mobiliados completos com estacionamento rotativo gratuito, portaria 24h e café da manhã servido no flat.";
-    let image = "https://corpflats.onrender.com/flat-preview.jpg";
+    let image = "https://corpflats.com.br/flat-preview.jpg";
     let imageAlt = "CorpFlats • Hospedagem Executiva";
     let imageWidth = "1200";
     let imageHeight = "630";
@@ -43582,7 +43582,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Confirme sua saída do Flat ${flatNumber} com 1 clique e lembre-se de devolver o cartão na recepção.`
         : "Confirme sua saída de forma rápida e prática pelo Check-out Expresso CorpFlats.";
-      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      image = "https://corpflats.com.br/flat-preview.jpg";
       imageAlt = "CorpFlats • Check-out Expresso";
     } else if (isBreakfast) {
       title = flatNumber
@@ -43591,7 +43591,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Personalize o seu café da manhã e escolha o horário de entrega no seu flat.`
         : "Personalize o seu cardápio de café da manhã servido com todo o carinho diretamente no seu flat.";
-      image = "https://corpflats.onrender.com/breakfast-preview.jpg";
+      image = "https://corpflats.com.br/breakfast-preview.jpg";
       imageAlt = "Café da Manhã CorpFlats";
       imageWidth = "800";
       imageHeight = "533";
@@ -43602,7 +43602,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Agilize sua chegada preenchendo os dados do pré-check-in para liberação na portaria 24h.`
         : "Agilize sua chegada confirmando os dados de identificação para liberação rápida na portaria 24h.";
-      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      image = "https://corpflats.com.br/flat-preview.jpg";
       imageAlt = "CorpFlats • Pré-Check-in Digital";
       imageWidth = "1200";
       imageHeight = "630";
@@ -43613,7 +43613,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, senha da fechadura, Wi-Fi e horários do flat.`
         : "Acesse os detalhes da sua acomodação, senha da fechadura, conexão Wi-Fi, regras do flat e serviços.";
-      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      image = "https://corpflats.com.br/flat-preview.jpg";
       imageAlt = "CorpFlats • Área do Hóspede";
       imageWidth = "1200";
       imageHeight = "630";
@@ -43622,14 +43622,14 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.`
         : "Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.";
-      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      image = "https://corpflats.com.br/flat-preview.jpg";
       imageAlt = "CorpFlats • Pagamento PIX";
       imageWidth = "1200";
       imageHeight = "630";
     }
 
     if (rawPath.startsWith("/whatsapp-chat") || rawPath.startsWith("/chat-whatsapp") || rawPath.startsWith("/whatsapp-web") || rawPath === "/chat") { title = "CF WhatsApp • Chat & Sofia IA"; desc = "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real."; }
-    const pageUrl = `https://corpflats.onrender.com${req.originalUrl || req.url || req.path}`;
+    const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path}`;
 
     html = html
       .replace(/<title>.*?<\/title>/i, `<title>${title}</title>`)
@@ -46963,7 +46963,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
           const itemsListStr = discrepancyItems
             .map(it => `• ${it.quantity}x ${it.productName} — R$ ${Number(it.totalPrice).toFixed(2)}`)
             .join("\n");
-          const sofiaMsg = `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\nDurante a conferência e reposição do frigobar pela nossa equipe de governança, identificamos o consumo dos seguintes itens:\n${itemsListStr}\n\nTotal do consumo: R$ ${discrepancyTotalAmount.toFixed(2)}\n\nComo o frigobar não pode ser lançado junto à fatura da hospedagem, você pode efetuar o pagamento diretamente via PIX ou Cartão pelo link exclusivo abaixo:\n🔗 https://corpflats.onrender.com/minha-reserva/${finalResCode}/frigobar?ord=${chargeOrderId}\n\nCaso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
+          const sofiaMsg = `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\nDurante a conferência e reposição do frigobar pela nossa equipe de governança, identificamos o consumo dos seguintes itens:\n${itemsListStr}\n\nTotal do consumo: R$ ${discrepancyTotalAmount.toFixed(2)}\n\nComo o frigobar não pode ser lançado junto à fatura da hospedagem, você pode efetuar o pagamento diretamente via PIX ou Cartão pelo link exclusivo abaixo:\n🔗 https://corpflats.com.br/minha-reserva/${finalResCode}/frigobar?ord=${chargeOrderId}\n\nCaso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
 
           try {
             if (typeof sendZapiMessage === "function") {

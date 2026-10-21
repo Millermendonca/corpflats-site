@@ -37,7 +37,7 @@ async function pushToCloud(filePath) {
     const base64 = buf.toString("base64");
     console.log(`[Excel Sync Watcher] Enviando atualizacao do Excel (${buf.length} bytes) para o Render em ${new Date().toLocaleTimeString()}...`);
     
-    const res = await fetch("https://corpflats.onrender.com/api/sync/upload-sheet-json", {
+    const res = await fetch("https://corpflats.com.br/api/sync/upload-sheet-json", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base64 })

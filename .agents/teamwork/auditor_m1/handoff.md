@@ -1,179 +1,160 @@
-# Forensic Integrity Audit Report: Milestone 1 — Backend Auth, Roles & Dev Endpoints (Post-Remediation Re-Audit)
+# Forensic Audit Report — Milestone M1: Core Backend & APIs de Frigobar
 
-**Agent**: `auditor_m1` (TypeName: teamwork_preview_auditor)  
-**Date**: 2026-10-19T05:17:30Z  
-**Workspace**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1`  
-**Recipient**: Project Orchestrator (`c4864abd-776b-4ad1-aef9-25c7af7463df`)  
-**Verdict**: **CLEAN** (Aprovado com Êxito)
+**Work Product**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/minibar-backend-flow.test.mjs`  
+**Profile**: General Project (Integrity Forensics)  
+**Auditor**: `auditor_m1` (`teamwork_preview_auditor`)  
+**Verdict**: **INTEGRITY VIOLATION** (Rejeição mandatória devido a quebra de paridade SHA-256 e falha no subteste de paridade do test runner)
 
 ---
 
 ## 1. Observation
 
-### 1.1. Paridade Estrita SHA-256 dos Servidores Gêmeos (Twin Servers)
+### Obs 1.1 — Verificação de Paridade SHA-256 entre os Servidores Gêmeos
 - **Comando executado**:
   ```powershell
-  Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs" | Format-List
+  powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash; (Get-FileHash 'scripts/demo-server.mjs').Hash; (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"
   ```
-- **Saída bruta**:
+- **Saída verbatim**:
   ```
-  Algorithm : SHA256
-  Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
-  Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
+  CEAA95F59664B8AE45754C43BC18013E3F976980801988E6AF82BC9B6FD221ED
+  D8EA1FCAA3EFAC57759B613CC2F484E8DC851F76DCDB680A78406525330BA5F8
+  False
+  ```
+- **Discrepância observada**:
+  Diferença de 1 linha entre `artifacts/api-server/demo-server.mjs` (modificado em 21/10/2026 16:19:32) e `scripts/demo-server.mjs` (modificado em 21/10/2026 16:13:28).
+  ```diff
+  --- a/artifacts/api-server/demo-server.mjs
+  +++ b/artifacts/api-server/demo-server.mjs
+  @@ -27255,6 +27255,7 @@ function formatTriggerTitle(trigger) {
+       payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
+       sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
+       pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
+  +    pre_checkin_enter_prompt: "Pós Check-in Online • Botão: Informar que Entrei",
+       room_ready: "Apartamento Pronto • Acesso Liberado",
+       checkin_completed: "Check-in Realizado • Boas-Vindas",
+       checkout_completed: "Check-out Realizado • Agradecimento",
+  ```
 
-  Algorithm : SHA256
-  Hash      : 33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA
-  Path      : C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
-  ```
-- **Resultado**: **PASS**. Hashes SHA-256 100% idênticos byte a byte após sincronização no commit `bf6aded`.
-
-### 1.2. Execução da Suíte de Testes Pontuais `tests/auth-roles-permissions.test.mjs`
+### Obs 1.2 — Execução Empírica da Suíte de Testes Pontual
 - **Comando executado**:
-  ```bash
-  node --test tests/auth-roles-permissions.test.mjs
+  ```powershell
+  node --test tests/minibar-backend-flow.test.mjs
   ```
-- **Código de saída**: `0` (Sucesso absoluto)
-- **Saída bruta do test runner**:
+- **Saída verbatim**:
   ```
   TAP version 13
-  # Subtest: Milestone 1 — Auth, Roles & RBAC Separation Suite
-      # Subtest: File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
-      ok 1 - File Parity: artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+  # Subtest: Milestone M1 — Minibar Backend Core & APIs Suite
+      # Subtest: F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
+      not ok 1 - F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
         ---
-        duration_ms: 11.1949
+        duration_ms: 26.0103
+        location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/minibar-backend-flow.test.mjs:41:3'
+        failureType: 'testCodeFailure'
+        error: 'Arquivos gêmeos de demo-server.mjs devem possuir paridade exata SHA-256'
+        code: 'ERR_ASSERTION'
+        name: 'AssertionError'
+        expected: 'd8ea1fcaa3efac57759b613cc2f484e8dc851f76dcdb680a78406525330ba5f8'
+        actual: 'ceaa95f59664b8ae45754c43bc18013e3f976980801988e6af82bc9b6fd221ed'
+        operator: 'strictEqual'
         ...
-      # Subtest: HTTP Integration & RBAC Tests
-          # Subtest: ensureSystemUsers migrated database: admin is dev, gestor is created as admin
-          ok 1 - ensureSystemUsers migrated database: admin is dev, gestor is created as admin
-            ---
-            duration_ms: 19.9599
-            ...
-          # Subtest: /api/auth/me returns 'dev' for admin and 'admin' for gestor
-          ok 2 - /api/auth/me returns 'dev' for admin and 'admin' for gestor
-            ---
-            duration_ms: 16.1642
-            ...
-          # Subtest: Operational Endpoints: both dev and admin can access business routes
-          ok 3 - Operational Endpoints: both dev and admin can access business routes
-            ---
-            duration_ms: 104.248
-            ...
-          # Subtest: Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
-          ok 4 - Technical Endpoints: dev gets 200, gestor (admin) gets 403 Forbidden
-            ---
-            duration_ms: 118.9975
-            ...
-          # Subtest: User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
-          ok 5 - User Management: password reset supports PATCH and POST; admin cannot alter dev accounts
-            ---
-            duration_ms: 190.0744
-            ...
-          1..5
-      ok 2 - HTTP Integration & RBAC Tests
-        ---
-        duration_ms: 2769.6447
-        type: 'suite'
-        ...
-      1..2
-  ok 1 - Milestone 1 — Auth, Roles & RBAC Separation Suite
-    ---
-    duration_ms: 2783.2938
-    type: 'suite'
-    ...
-  1..1
-  # tests 6
+      # Subtest: APIs de Frigobar — Ciclo Pontual de Execução
+          ok 1 - F01/F02: GET /api/minibar/products deve retornar catálogo inicial com produtos padrão essenciais
+          ok 2 - F02: POST, PATCH e DELETE /api/minibar/products gerenciam ciclo de vida de itens
+          ok 3 - F02: GET & PUT /api/minibar/default-stock gerenciam gabarito padrão por flat
+          ok 4 - F03: POST /api/minibar/flat-context valida 4 dígitos e retorna primeiro nome e catálogo
+          ok 5 - F04: GET /api/minibar/reservation-context/:code identifica reserva sem exigir 4 dígitos
+          ok 6 - F05: Pedido de cortesia de boas-vindas gratuita 1x por estadia (valor R$ 0.00)
+          ok 7 - F05: Anti-Abuso de cortesia — segunda tentativa de cortesia gratuita é convertida ou bloqueada
+          ok 8 - F05/F06: POST /api/minibar/orders com PIX gera Copia e Cola e não altera total da reserva
+          ok 9 - F05/F07: POST /api/minibar/orders com Cartão Mercado Pago gera Checkout Pro initPoint
+          ok 10 - F06: Simulação de Webhook Banco Inter liquida pedido PIX de frigobar
+          ok 11 - F07: Simulação de Webhook Mercado Pago liquida pedido com Cartão de Crédito
+          ok 12 - F08: POST /api/minibar/orders/:id/invoice anexa NF e disponibiliza no Portal do Hóspede
+          ok 13 - F09: POST /api/minibar/inspections registra conformidade sem divergência
+          ok 14 - F09: POST /api/minibar/inspections com divergência gera cobrança pendente e aciona Sofia
+          ok 15 - F09: GET /api/minibar/inspections/flats-status retorna visão dos 19 flats para a repositora
+          ok 16 - F09: GET /api/minibar/invoices/pending lista pedidos pagos aguardando emissão fiscal
+          ok 17 - F10: GET /api/minibar/settlement consolida vendas, desconta taxas e credita cortesias
+          ok 18 - F10: GET /api/minibar/analytics retorna ranking de consumo e cruzamento demográfico
+          ok 19 - PIN Mobile: POST /api/minibar/auth-pin autentica repositora com PIN
+      ok 2 - APIs de Frigobar — Ciclo Pontual de Execução
+  not ok 1 - Milestone M1 — Minibar Backend Core & APIs Suite
+  # tests 20
   # suites 2
-  # pass 6
-  # fail 0
-  # cancelled 0
-  # skipped 0
-  # todo 0
-  # duration_ms 2924.3611
+  # pass 19
+  # fail 1
+  # duration_ms 6953.892
   ```
-- **Resultado**: **PASS**. 6/6 testes aprovados, duração de ~2.9 segundos, 0 falhas.
 
-### 1.3. Exclusão Física do Manual WBP e Ausência de Referências a `/ajuda-wbp`
-- **Verificação de existência física dos arquivos**:
-  ```powershell
-  Test-Path "artifacts/limpeza/src/pages/wbp-manual.tsx", "artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx"
-  # Retorno:
-  # False
-  # False
-  ```
-- **Busca por referências em código**:
-  ```powershell
-  Get-ChildItem -Path "artifacts/limpeza/src" -Recurse -File | Select-String -Pattern "ajuda-wbp|manual-wbp|manual-integracao|WbpHelpManualPage|wbp-manual"
-  # Retorno: 0 ocorrências (saída vazia, código de saída 0).
-  ```
-- **Verificação de export em `components/wbp/index.ts`**:
-  O arquivo não contém qualquer exportação de `WbpHelpManualPage` (apenas `types`, `OtaInboxHeader`, `OtaInboxTable`, `QuarantineDrawer`, `SecureCardModal`, `OtaInboxContainer`).
-- **Resultado**: **PASS**. Remoção completa e limpa.
-
-### 1.4. Compilação do Frontend (`artifacts/limpeza`)
-- **Comando executado**:
-  ```bash
-  npm --prefix artifacts/limpeza run build
-  ```
-- **Saída bruta**:
-  `✓ built in 20.47s`, gerando bundles atualizados em `dist/public/assets/` com código de saída 0.
-- **Resultado**: **PASS**.
-
-### 1.5. Isolamento e Integridade do Banco de Dados
-- `data/database.json` permaneceu intocado durante a execução dos testes pontuais (`git status` limpo para o arquivo). Os testes utilizaram arquivos de banco isolados temporários e porta efêmera.
-- **Resultado**: **PASS**.
+### Obs 1.3 — Análise de Código e Ausência de Facades / Cheating na Lógica de Frigobar
+- **Lógica de Negócio Genuína**:
+  - `artifacts/api-server/demo-server.mjs:45954-46051`: `POST /api/minibar/flat-context` busca reserva real (`findActiveOrRecentReservationForFlat`), valida sufixo de 4 dígitos contra telefone ou CPF do hóspede, extrai primeiro nome, calcula itens pagos da reserva e monta catálogo/gabarito padrão dinâmico.
+  - `artifacts/api-server/demo-server.mjs:46135-46403`: `POST /api/minibar/orders` desacopla estritamente o valor do frigobar de `r.totalAmount` da reserva, implementa barreira anti-abuso de cortesias gratuitas (1 cortesia gratuita por reserva, convertendo reincidências em cobrança paga), integra com `createMercadoPagoPreference` para checkout com cartão e `createInterPixCob` / `generateStaticPixPayload` para PIX.
+  - `artifacts/api-server/demo-server.mjs:46459-46566`: `POST /api/minibar/orders/:id/invoice` grava o PDF em disco em `uploads/invoices/`, atualiza o pedido, disponibiliza no portal do hóspede, envia via WhatsApp por `sendZapiDocument` e por e-mail via `sendEmailAsync` (Zoho SMTP).
+  - `artifacts/api-server/demo-server.mjs:46570-46781`: `POST /api/minibar/inspections` compara itens faltantes com itens pagos previamente pelo hóspede, calcula divergências, gera pedido com status `"pendente"` e aciona mensagem itemizada da Sofia no WhatsApp com link direto de pagamento.
+  - `artifacts/api-server/demo-server.mjs:46866-46945`: `GET /api/minibar/settlement` realiza fechamento contábil aplicando desconto de taxas de cartão (3,99%) e PIX, e compensa créditos de reposição de cortesias devidas à Anserve.
+  - `artifacts/api-server/demo-server.mjs:46948-47020`: `GET /api/minibar/analytics` calcula ranking de vendas, taxa de divergências e cruzamento demográfico de consumo por estado/UF de origem do hóspede.
+- **Persistência & Pruning**:
+  - Inicialização em `demo-server.mjs:1373-1377`: `minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections`, `minibarSettings`.
+  - Reconciliação em `demo-server.mjs:4472-4486` e `6305-6309`.
+  - Retenção fiscal blindada em `demo-server.mjs:8736-8753`: `minibarOrders` e `minibarInspections` mantidos com retenção mínima de 730 dias (2 anos) contra poda indevida.
+- **Isolamento de Testes & Diretrizes AGENTS.md**:
+  - `tests/minibar-backend-flow.test.mjs` roda em porta isolada (4199), sem `DATABASE_URL`, usando arquivo temporário em `os.tmpdir()`.
+  - Nenhum teste global em lote foi executado.
+  - Nenhuma notificação real foi disparada para telefones reais de hóspedes.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Paridade Restabelecida**: O commit `bf6aded` sincronizou as atualizações recentes de pagamento de `scripts/demo-server.mjs` para `artifacts/api-server/demo-server.mjs`. A conferência empírica via SHA-256 comprovou igualdade exata entre ambos os arquivos (`33C175...`), sanando o motivo da rejeição anterior.
-2. **Validação em Runtime**: Com os gêmeos sincronizados, a suíte de testes `tests/auth-roles-permissions.test.mjs` passou com 100% de sucesso (6 testes em 2 suites, 0 falhas), comprovando:
-   - Paridade de código íntegra.
-   - Migração automática `ensureSystemUsers` (`admin` -> `dev`, criação de `gestor` como `admin`).
-   - Respostas do endpoint `/api/auth/me`.
-   - Acesso conjunto de `dev` e `admin` às rotas operacionais do hotel.
-   - Bloqueio estrito com HTTP 403 para `admin` em rotas técnicas de desenvolvimento protegidas por `requireDevAuth`.
-   - Proteção de contas `dev` contra manipulação ou exclusão por usuários `admin`, além de suporte a `PATCH` e `POST` no reset de senhas.
-3. **Higienização de Rotas e Páginas**: A exclusão física de `wbp-manual.tsx` e `WbpHelpManualPage.tsx` e a eliminação de referências a `/ajuda-wbp` foram comprovadas por buscas recursivas no código-fonte, sem impactos no build do Vite (`npm run build` concluído com sucesso).
+1. *Premissa*: O comando de auditoria exige expressamente:
+   *(1) Verificação estrita de ausência de cheating/facades; (2) Paridade estrita SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`; (3) Conformidade com `AGENTS.md`; (4) Veredito binário inegociável CLEAN ou INTEGRITY VIOLATION.*
+2. *Evidência de Lógica Funcional*: As 10 features (F01 a F10) foram implementadas com lógica de negócios genuína, banco persistido, rotinas de cálculo completas, webhooks integrados e blindagem de retenção contra poda de dados. Não há cheating, mockagem de fachada ou hardcode nos endpoints de frigobar.
+3. *Evidência de Falha de Integridade Física*: No momento da auditoria, os arquivos gêmeos `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` divergem em hash SHA-256 (`CEAA95F5...` vs `D8EA1FCA...`) devido a uma inserção não sincronizada na linha 27255 de `artifacts/api-server/demo-server.mjs` (`pre_checkin_enter_prompt`).
+4. *Evidência de Falha de Teste*: A execução independente de `node --test tests/minibar-backend-flow.test.mjs` falhou no Subtest 1 (`AssertionError: Arquivos gêmeos de demo-server.mjs devem possuir paridade exata SHA-256`), retornando código de saída `1`.
+5. *Regra Mandatória de Auditoria*: *"Trust NOTHING — verify EVERYTHING. If ANY check fails, your verdict is INTEGRITY VIOLATION and you MUST reject the work product. Do not silently correct errors — they may indicate deeper problems."*
+6. *Conclusão Lógica*: Como a verificação de paridade falhou e a suíte de testes pontual não passou 100%, o produto de trabalho deve ser categorizado como **INTEGRITY VIOLATION** e devolvido para sincronização imediata.
 
 ---
 
 ## 3. Caveats
 
-- Nenhuma ressalva impeditiva. O escopo do Milestone 1 (Backend Auth, Roles, RBAC e exclusão do manual WBP) atende a todos os critérios estabelecidos em `ORIGINAL_REQUEST.md` e `DISPATCH.md`.
+- A falha de integridade restringe-se exclusivamente à paridade de hash dos arquivos gêmeos e à consequente falha do subteste 1.
+- Todas as 19 rotas funcionais de frigobar (F01 a F10) passaram com 100% de sucesso nos subtestes 2 a 20.
+- A linha que causou a divergência (`pre_checkin_enter_prompt`) provém de uma modificação não sincronizada no working tree e não afeta o fluxo de negócios do frigobar, mas viola o contrato estrito de paridade do repositório.
 
 ---
 
 ## 4. Conclusion
 
-**Veredito**: **CLEAN**  
-O trabalho do Milestone 1 está **APROVADO** em todas as frentes forenses:
-- Paridade de arquivos gêmeos comprovada (SHA-256 idêntico).
-- Lógica de autenticação e RBAC genuína e sem atalhos.
-- Execução empírica de testes 100% aprovada.
-- Manual WBP fisicamente removido e sem referências pendentes.
-- Build do frontend concluído sem erros.
+O trabalho implementado no Marco M1 possui excelente qualidade e completude em suas regras de negócio, mas **NÃO PODE SER APROVADO** neste estado devido à quebra de paridade SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+
+**Veredito**: **INTEGRITY VIOLATION**
+
+**Ação Corretiva Requerida do Worker / Orchestrator**:
+1. Sincronizar `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` de forma que ambos possuam hash SHA-256 idêntico byte-a-byte.
+2. Reexecutar `node --test tests/minibar-backend-flow.test.mjs` para validar que todos os 20 subtestes passam (pass 20, fail 0).
+3. Solicitar re-auditoria após a sincronização.
 
 ---
 
 ## 5. Verification Method
 
-Para reproduzir os resultados da re-auditoria:
+Para reproduzir empiricamente a violação:
 
-1. **Conferência de SHA-256**:
+1. **Checagem de Hash SHA-256**:
    ```powershell
-   Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"
+   powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"
    ```
-   *Critério esperado*: Ambos retornam `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`.
+   *Resultado atual*: `False`
 
-2. **Execução da Suíte Pontual**:
-   ```bash
-   node --test tests/auth-roles-permissions.test.mjs
-   ```
-   *Critério esperado*: 6 testes aprovados, código de saída 0.
-
-3. **Verificação de Exclusão do Manual**:
+2. **Diferença de conteúdo**:
    ```powershell
-   Test-Path "artifacts/limpeza/src/pages/wbp-manual.tsx", "artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx"
+   git diff artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
    ```
-   *Critério esperado*: Retorna `False` e `False`.
+
+3. **Execução da suíte de teste pontual**:
+   ```powershell
+   node --test tests/minibar-backend-flow.test.mjs
+   ```
+   *Resultado atual*: 19 pass, 1 fail (Subtest 1 falha com `AssertionError`).

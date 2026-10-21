@@ -104,8 +104,8 @@ export default function ZapiConnection() {
     externalWebhookUrl: "",
     externalWebhookEnabled: false,
     connectionState: "unknown",
-    webhookDisconnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected",
-    webhookConnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/connected"
+    webhookDisconnectedUrl: "https://corpflats.com.br/api/whatsapp/webhook/disconnected",
+    webhookConnectedUrl: "https://corpflats.com.br/api/whatsapp/webhook/connected"
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
@@ -142,8 +142,8 @@ export default function ZapiConnection() {
   )
   const [testSendMode, setTestSendMode] = useState<"text" | "buttons">("buttons")
   const [testButtons, setTestButtons] = useState<any[]>([
-    { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.onrender.com/pre-checkin/RES-113-0034" },
-    { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.onrender.com/minha-reserva/RES-113-0034" },
+    { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.com.br/pre-checkin/RES-113-0034" },
+    { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.com.br/minha-reserva/RES-113-0034" },
     { id: "btn_test_call", type: "CALL", label: "📞 Ligar Administração", phone: "5522997124021" }
   ])
   const [sendingTest, setSendingTest] = useState<boolean>(false)
@@ -808,7 +808,7 @@ export default function ZapiConnection() {
                     </Label>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(config.webhookDisconnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected", "URL de Desconexão")}
+                      onClick={() => copyToClipboard(config.webhookDisconnectedUrl || "https://corpflats.com.br/api/whatsapp/webhook/disconnected", "URL de Desconexão")}
                       className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold cursor-pointer"
                     >
                       <Copy className="w-3 h-3" />
@@ -817,7 +817,7 @@ export default function ZapiConnection() {
                   </div>
                   <Input
                     readOnly
-                    value={config.webhookDisconnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected"}
+                    value={config.webhookDisconnectedUrl || "https://corpflats.com.br/api/whatsapp/webhook/disconnected"}
                     className="text-[11px] font-mono h-8.5 rounded-xl bg-muted/40 text-muted-foreground"
                   />
                 </div>
@@ -831,7 +831,7 @@ export default function ZapiConnection() {
                     </Label>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(config.webhookConnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/connected", "URL de Reconexão")}
+                      onClick={() => copyToClipboard(config.webhookConnectedUrl || "https://corpflats.com.br/api/whatsapp/webhook/connected", "URL de Reconexão")}
                       className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold cursor-pointer"
                     >
                       <Copy className="w-3 h-3" />
@@ -840,7 +840,7 @@ export default function ZapiConnection() {
                   </div>
                   <Input
                     readOnly
-                    value={config.webhookConnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/connected"}
+                    value={config.webhookConnectedUrl || "https://corpflats.com.br/api/whatsapp/webhook/connected"}
                     className="text-[11px] font-mono h-8.5 rounded-xl bg-muted/40 text-muted-foreground"
                   />
                 </div>

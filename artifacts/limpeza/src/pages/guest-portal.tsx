@@ -2187,7 +2187,7 @@ export default function GuestPortal() {
                   <span>Falar no WhatsApp</span>
                 </a>
                 <a
-                  href="https://corpflats.onrender.com/reservar"
+                  href="https://corpflats.com.br"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-rose-300 hover:bg-rose-50 text-rose-900 text-xs font-bold shadow-2xs transition-colors w-full sm:w-auto"
@@ -3590,7 +3590,7 @@ export default function GuestPortal() {
             checkoutDate: reservation.checkoutDate,
             numGuests: reservation.guestCount || 2,
             accessCode: accessCode,
-            manageUrl: `https://corpflats.onrender.com/minha-reserva/${reservation.code}`
+            manageUrl: `https://corpflats.com.br/minha-reserva/${reservation.code}`
           }}
         />
 
@@ -3608,7 +3608,7 @@ export default function GuestPortal() {
               checkinDate: reservation.checkinDate,
               checkoutDate: reservation.checkoutDate,
               numGuests: reservation.guestCount || 2,
-              manageUrl: `https://corpflats.onrender.com/minha-reserva/${reservation.code}`
+              manageUrl: `https://corpflats.com.br/minha-reserva/${reservation.code}`
             }))
           }}
         />
