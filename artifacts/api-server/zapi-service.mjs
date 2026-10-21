@@ -657,25 +657,6 @@ Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos �
     ]
   },
   {
-    id: "tpl_pre_checkin_enter_prompt",
-    triggerEvent: "pre_checkin_enter_prompt",
-    title: "Pós Check-in Online • Botão Rápido: Informar que Entrei",
-    description: "Enviado na sequência imediata da confirmação do Check-in Online com o mínimo de texto possível e o botão único para o hóspede clicar assim que entrar no flat.",
-    enabled: true,
-    sendEmail: false,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    recipientTarget: "guest",
-    triggerTiming: "immediate",
-    offsetValue: 0,
-    offsetUnit: "minutes",
-    fixedTime: "",
-    message: `🚪 *Quando entrar no Flat {{quarto}}, toque abaixo:*`,
-    footer: "",
-    buttons: [
-      { id: "btn_informar_entrei", type: "URL", label: "🚪 Informar que Entrei", url: "{{link_autocheckin}}" }
-    ]
-  },
-  {
     id: "tpl_checkin_day_instructions",
     triggerEvent: "checkin_day_instructions",
     title: "Dia do Check-in (07:00) • Instruções de Chegada & Acesso",
@@ -2736,7 +2717,6 @@ const EMAIL_SUBJECT_BY_EVENT = {
   reservation_cancelled: "Reserva cancelada",
   pre_checkin_reminder: "Lembrete: faça seu pré-check-in digital",
   pre_checkin_completed: "Check-in online concluído • Instruções para sua chegada",
-  pre_checkin_enter_prompt: "Confirme sua entrada no flat",
   checkin_day_instructions: "Instruções para o seu check-in",
   checkin_completed: "Boas-vindas ao seu flat",
   breakfast_reminder: "Escolha seu café da manhã",
@@ -3363,14 +3343,11 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     )
   );
 
-  const isPreCheckinEnterPromptTpl = templateId === "tpl_pre_checkin_enter_prompt" || triggerEvent === "pre_checkin_enter_prompt";
-
   if (isUnpaidPreReserva) {
     // Pré-reserva NÃO permite check-in digital nem autodeclaração de chegada antes do pagamento!
     list = list.filter(b =>
       !isCheckinBtn(b) &&
       b.id !== "btn_cheguei" &&
-      b.id !== "btn_informar_entrei" &&
       b.id !== "btn_cafe" &&
       (!b.url || (!String(b.url).includes("/self-checkin") && !String(b.url).includes("/cafe")))
     );
@@ -3380,7 +3357,6 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     list = list.filter(b => 
       !isCheckinBtn(b) && 
       b.id !== "btn_cheguei" && 
-      b.id !== "btn_informar_entrei" && 
       (!b.url || !String(b.url).includes("/self-checkin"))
     );
     // Garante que o Portal do Hóspede está presente
@@ -3392,17 +3368,6 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
         url: linkPortalHospede
       });
     }
-  } else if (isPreCheckinEnterPromptTpl) {
-    // Bolha sequencial pós-check-in online: mantém exclusivamente o botão único "🚪 Informar que Entrei"
-    const existingEnterBtn = list.find(b => b.id === "btn_informar_entrei" || b.id === "btn_cheguei" || (b.url && String(b.url).includes("/self-checkin")));
-    list = [
-      {
-        id: existingEnterBtn?.id || "btn_informar_entrei",
-        type: "URL",
-        label: existingEnterBtn?.label || "🚪 Informar que Entrei",
-        url: linkAutocheckin
-      }
-    ];
   } else if (isPreCheckinDone) {
     // Pré-check-in já preenchido, mas ainda NÃO entrou no flat:
     // Remove botão de pré-checkin e assegura "Já Cheguei no Flat" (btn_cheguei), exceto na confirmação pós-check-in online
@@ -9128,10 +9093,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
   });
 
-  // Auto-sincronização de webhooks e notifySentByMe na inicialização
+  // Auto-sincronização de webhooks e notifySentByMe na inicialização + higienização NPS / disparo de hoje < 5
   const syncTimeout = setTimeout(async () => {
     try {
       const db = getDb();
+      if (db) {
+        await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
+      }
       if (db?.zapiConfig?.instanceId && db?.zapiConfig?.token && db?.zapiConfig?.enabled !== false) {
         console.log("[Z-API Init] Sincronizando webhooks e notifySentByMe com a Z-API...");
         const syncRes = await syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
@@ -9409,7 +9377,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       // 3. Verifica flats de check-in hoje ainda não limpos após as 13:45 e dispara solicitação de previsão
       await checkAndTriggerCleaningDelayAlerts(db, saveDatabase, createNotification, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
 
-      // 4. Verifica respostas NPS < 5 sem comentário após 15 minutos para enviar alerta de fallback ao gestor (22998505276)
+      // 4. Higieniza falsos positivos de NPS e garante disparo das notas < 5 de hoje + alerta de fallback 15m ao gestor (22998505276)
+      await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
       await checkPendingNpsManagerAlerts(db, saveDatabase, createNotification);
 
     } catch (err) {
@@ -9448,7 +9417,6 @@ const SINGLE_DISPATCH_EVENTS = new Set([
   "sameday_reservation",
   "pre_reservation_created",
   "pre_checkin_completed",
-  "pre_checkin_enter_prompt",
   "checkin_completed",
   "checkout_completed",
   "on_checkout",
@@ -9936,6 +9904,21 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       timestamp: sentAtWa,
       messageId: waResult.messageId || `msg_${historyPrefix}_${Date.now()}`
     });
+
+    if (
+      waResult.success &&
+      (item.triggerEvent === "post_checkout_review" || item.templateId === "tpl_nps_satisfaction_check")
+    ) {
+      registerNpsSurveySent(db, {
+        phone: item.guestPhone,
+        guestName: resv?.guestName || item.guestName || item.recipientName,
+        reservationId: item.reservationId || resv?.id || null,
+        reservationCode: item.reservationCode || resv?.code || null,
+        flatNumber: item.flatNumber || resv?.flatNumber || null,
+        channel: item.channel || resv?.channel || "whatsapp",
+        sentAt: sentAtWa
+      });
+    }
   }
 
   const currentTpl = item.templateId ? (db.whatsappTemplates || []).find(t => t.id === item.templateId) : null;
@@ -9995,9 +9978,8 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
   const resKey = getReservationDedupKey(reservation) || String(resCode || "");
   const eventGroup = getEventGroupKey(eventName);
   const normPhone = normalizePhoneForDedup(target.phone);
-  const isPerGuestPreCheckinEvt = eventName === "pre_checkin_completed" || eventName === "pre_checkin_enter_prompt";
   const lockKey = (resKey && normPhone)
-    ? (isPerGuestPreCheckinEvt ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normPhone}` : `${resKey}:${eventGroup}:${normPhone}`)
+    ? (eventName === "pre_checkin_completed" ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normPhone}` : `${resKey}:${eventGroup}:${normPhone}`)
     : "";
   const pdfLockKey = (resKey && normPhone) ? `${resKey}:${normPhone}` : "";
 
@@ -10081,6 +10063,21 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
           timestamp: new Date().toISOString(),
           messageId: waResult.messageId || `msg_auto_${Date.now()}`
         });
+
+        if (
+          waResult.success &&
+          (eventName === "post_checkout_review" || tpl?.id === "tpl_nps_satisfaction_check")
+        ) {
+          registerNpsSurveySent(db, {
+            phone: target.phone,
+            guestName: reservation?.guestName || target.name,
+            reservationId: resId,
+            reservationCode: resCode,
+            flatNumber: reservation?.flatNumber || null,
+            channel: reservation?.channel || "whatsapp",
+            sentAt: new Date().toISOString()
+          });
+        }
       } finally {
         if (lockKey) inFlightDispatches.delete(lockKey);
         if (pdfLockKey) inFlightPdfAttachments.delete(pdfLockKey);
@@ -10416,15 +10413,6 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "pre_checkin_completed") {
       const defPreChkDone = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_completed" || t.triggerEvent === "pre_checkin_completed");
       if (defPreChkDone) templates = [defPreChkDone];
-    } else if (templates.length === 0 && eventName === "pre_checkin_enter_prompt") {
-      const hasExplicitlyDisabledPrompt = (db.whatsappTemplates || []).some(
-        t => (t.id === "tpl_pre_checkin_enter_prompt" || t.triggerEvent === "pre_checkin_enter_prompt") &&
-             (t.enabled === false || !isTemplateAllowedForChannel(t, resvChannel))
-      );
-      if (!hasExplicitlyDisabledPrompt) {
-        const defEnterPrompt = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_enter_prompt" || t.triggerEvent === "pre_checkin_enter_prompt");
-        if (defEnterPrompt) templates = [defEnterPrompt];
-      }
     } else if (templates.length === 0 && eventName === "checkin_cleaning_delay") {
       const hasExplicitlyDisabled = (db.whatsappTemplates || []).some(
         t => (t.id === "tpl_checkin_cleaning_delay" || t.triggerEvent === "checkin_cleaning_delay") &&
@@ -10502,12 +10490,11 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const eventGroup = getEventGroupKey(eventName);
     const isSingleFireEvent = SINGLE_DISPATCH_EVENTS.has(eventName);
     const isUpdatedEvent = eventName === "reservation_updated";
-    const isPerGuestPreCheckinEvt = eventName === "pre_checkin_completed" || eventName === "pre_checkin_enter_prompt";
-    const isReSignPreCheckin = isPerGuestPreCheckinEvt && Boolean(reservation._wasReSignature);
+    const isReSignPreCheckin = eventName === "pre_checkin_completed" && Boolean(reservation._wasReSignature);
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
-      const onlyGuestIndex = isPerGuestPreCheckinEvt ? (Number(reservation._checkinGuestIndex) || 0) : 0;
+      const onlyGuestIndex = eventName === "pre_checkin_completed" ? (Number(reservation._checkinGuestIndex) || 0) : 0;
       const dispatches = buildTemplateTargets(tpl, recipients, { targetMode, onlyGuestIndex });
 
       for (const d of dispatches) {
@@ -10528,7 +10515,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           if (target.phone) {
             const normTargetPhone = normalizePhoneForDedup(target.phone);
             const lockKey = (resKey && normTargetPhone)
-              ? (isPerGuestPreCheckinEvt ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normTargetPhone}` : `${resKey}:${eventGroup}:${normTargetPhone}`)
+              ? (eventName === "pre_checkin_completed" ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normTargetPhone}` : `${resKey}:${eventGroup}:${normTargetPhone}`)
               : "";
             const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
 
@@ -10539,7 +10526,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
               if (!isSameRes) return false;
               if (!isSameEventGroup(h.triggerEvent, eventName)) return false;
-              if (isPerGuestPreCheckinEvt && (h.recipientType || "guest") !== (target.type || "guest")) return false;
+              if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
               if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
               if ((isUpdatedEvent || isReSignPreCheckin) && h.sentAt) {
                 const ageMs = Date.now() - new Date(h.sentAt).getTime();
@@ -10563,7 +10550,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               if (!isSameRes) return false;
               if (c.metadata?.channel !== "whatsapp_mirror") return false;
               if (!isSameEventGroup(c.metadata?.trigger, eventName)) return false;
-              if (isPerGuestPreCheckinEvt && (c.metadata?.recipientType || "guest") !== (target.type || "guest")) return false;
+              if (eventName === "pre_checkin_completed" && (c.metadata?.recipientType || "guest") !== (target.type || "guest")) return false;
               if (String(c.recipient || "").trim().toLowerCase() !== normTargetEmail) return false;
               if ((isUpdatedEvent || isReSignPreCheckin) && c.sent_at) {
                 const ageMs = Date.now() - new Date(c.sent_at).getTime();
@@ -10588,21 +10575,6 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
       if (typeof saveDatabase === "function") {
         saveDatabase();
-      }
-    }
-
-    // Encadeamento automático: logo após a confirmação do check-in online, envia a bolha enxuta com o botão "🚪 Informar que Entrei"
-    if (eventName === "pre_checkin_completed") {
-      const hasAlreadyEnteredFlat = Boolean(
-        reservation.guestSelfCheckin ||
-        reservation.actualCheckinAt ||
-        reservation.status === "in_house" ||
-        (reservation.status === "checkin" && reservation.guestSelfCheckin)
-      );
-      if (!hasAlreadyEnteredFlat) {
-        const delayMs = (db?.zapiConfig?.instanceId && db?.zapiConfig?.token) ? 1200 : 20;
-        await new Promise(r => setTimeout(r, delayMs));
-        await triggerImmediateWhatsApp(db, saveDatabase, "pre_checkin_enter_prompt", reservation, baseUrl);
       }
     }
   } catch (err) {
@@ -11494,9 +11466,212 @@ export async function sendNpsManagerAlertWhatsApp(db, npsItem, { reason = "comme
   return { sent: Boolean(sendRes?.success), managerPhone, message: msg, sendRes };
 }
 
+function hasValidGuestLetters(name) {
+  if (!name || typeof name !== "string") return false;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.toLowerCase() === "hóspede" || trimmed.toLowerCase() === "hospede") return false;
+  return /[a-zA-ZÀ-ÿ]{2,}/.test(trimmed);
+}
+
+export function resolveBestNpsGuestName(senderName, existingName, reservationName) {
+  if (hasValidGuestLetters(reservationName)) return reservationName.trim();
+  if (hasValidGuestLetters(existingName)) return existingName.trim();
+  if (hasValidGuestLetters(senderName)) return senderName.trim();
+  return reservationName || existingName || senderName || "Hóspede";
+}
+
+/**
+ * Registra em db.npsResponses que a pesquisa de satisfação NPS pós-checkout foi enviada ao hóspede.
+ */
+export function registerNpsSurveySent(db, {
+  phone,
+  guestName,
+  reservationId = null,
+  reservationCode = null,
+  flatNumber = null,
+  channel = "whatsapp",
+  sentAt = null
+} = {}) {
+  if (!db || !phone) return null;
+  if (!Array.isArray(db.npsResponses)) db.npsResponses = [];
+
+  const targetPhone = cleanWhatsAppPhone(phone) || String(phone).replace(/\D/g, "");
+  if (!targetPhone || targetPhone.length < 8) return null;
+
+  const matchPhone = (p) => {
+    const cP = cleanWhatsAppPhone(p || "") || String(p || "").replace(/\D/g, "");
+    return Boolean(cP && cP.length >= 8 && (cP.endsWith(targetPhone.slice(-8)) || targetPhone.endsWith(cP.slice(-8))));
+  };
+
+  let existing = db.npsResponses.find(n =>
+    (reservationCode && n.reservationCode && String(n.reservationCode) === String(reservationCode)) ||
+    (reservationId && n.reservationId && String(n.reservationId) === String(reservationId)) ||
+    matchPhone(n.guestPhone)
+  );
+
+  const sentIso = sentAt || new Date().toISOString();
+  if (existing) {
+    existing.surveyVerifiedSent = true;
+    existing.sentAt = sentIso;
+    if (existing.score == null) {
+      existing.pendingResponse = true;
+    }
+    if (guestName && hasValidGuestLetters(guestName)) {
+      existing.guestName = guestName.trim();
+    }
+    if (flatNumber && !existing.flatNumber) existing.flatNumber = flatNumber;
+    if (reservationId && !existing.reservationId) existing.reservationId = reservationId;
+    if (reservationCode && !existing.reservationCode) existing.reservationCode = reservationCode;
+    return existing;
+  }
+
+  const entry = {
+    id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    reservationId: reservationId || null,
+    reservationCode: reservationCode || null,
+    guestPhone: targetPhone,
+    guestName: hasValidGuestLetters(guestName) ? guestName.trim() : "Hóspede",
+    flatNumber: flatNumber || null,
+    channel: channel || "whatsapp",
+    score: null,
+    comment: null,
+    sentAt: sentIso,
+    respondedAt: null,
+    googleLinkSent: false,
+    autoAction: null,
+    pendingResponse: true,
+    surveyVerifiedSent: true
+  };
+  db.npsResponses.unshift(entry);
+  return entry;
+}
+
+/**
+ * Verifica estritamente se a pesquisa de satisfação NPS pós-checkout
+ * (triggerEvent: "post_checkout_review" / templateId: "tpl_nps_satisfaction_check")
+ * foi de fato enviada para o telefone informado.
+ * Impede que qualquer número de 1 a 5 enviado em conversas normais seja tratado como nota NPS.
+ */
+export function getLatestNpsSurveySentInfo(db, phone, { ignoreNpsResponsesTable = false } = {}) {
+  if (!db || !phone) return { sent: false, sentAt: null, sentAtMs: 0, reservationCode: null, reservationId: null };
+  const targetPhone = cleanWhatsAppPhone(phone) || String(phone).replace(/\D/g, "");
+  if (!targetPhone || targetPhone.length < 8) {
+    return { sent: false, sentAt: null, sentAtMs: 0, reservationCode: null, reservationId: null };
+  }
+
+  const matchPhone = (p) => {
+    const cP = cleanWhatsAppPhone(p || "") || String(p || "").replace(/\D/g, "");
+    return Boolean(cP && cP.length >= 8 && (cP.endsWith(targetPhone.slice(-8)) || targetPhone.endsWith(cP.slice(-8))));
+  };
+
+  const isNpsSurveyText = (txt) => {
+    if (!txt || typeof txt !== "string") return false;
+    return /de\s*1\s*a\s*5,\s*que\s*nota\s*voc[eê]\s*daria/i.test(txt) ||
+           /responda\s*apenas\s*com\s*o\s*n[uú]mero\s*de\s*1\s*a\s*5/i.test(txt);
+  };
+
+  let latestSentAtMs = 0;
+  let latestSentAtIso = null;
+  let reservationCode = null;
+  let reservationId = null;
+  let found = false;
+
+  const recordHit = (dateStr, resCode, resId) => {
+    found = true;
+    const ms = dateStr ? new Date(dateStr).getTime() : 0;
+    if (!isNaN(ms) && ms >= latestSentAtMs) {
+      latestSentAtMs = ms;
+      latestSentAtIso = dateStr || latestSentAtIso;
+      if (resCode) reservationCode = resCode;
+      if (resId) reservationId = resId;
+    } else if (!latestSentAtIso && dateStr) {
+      latestSentAtIso = dateStr;
+    }
+  };
+
+  // 1. Verifica no histórico de envios WhatsApp (db.whatsappHistory)
+  for (const h of (db.whatsappHistory || [])) {
+    if (!h || h.status === "failed") continue;
+    if (!matchPhone(h.guestPhone || h.phone || h.recipientPhone)) continue;
+    if (
+      h.triggerEvent === "post_checkout_review" ||
+      h.templateId === "tpl_nps_satisfaction_check" ||
+      isNpsSurveyText(h.message)
+    ) {
+      recordHit(h.sentAt || h.createdAt, h.reservationCode, h.reservationId);
+    }
+  }
+
+  // 2. Verifica no histórico de disparos (db.whatsappDispatchHistory)
+  for (const d of (db.whatsappDispatchHistory || [])) {
+    if (!d || d.status === "failed") continue;
+    if (!matchPhone(d.guestPhone || d.recipientPhone || d.phone)) continue;
+    if (
+      d.triggerEvent === "post_checkout_review" ||
+      d.templateId === "tpl_nps_satisfaction_check" ||
+      isNpsSurveyText(d.messageText || d.message)
+    ) {
+      recordHit(d.sentAt || d.scheduledAt, d.reservationCode, d.reservationId);
+    }
+  }
+
+  // 3. Verifica na fila de WhatsApp itens efetivamente enviados (db.whatsappQueue)
+  for (const q of (db.whatsappQueue || [])) {
+    if (!q || q.status !== "sent") continue;
+    if (!matchPhone(q.guestPhone || q.phone)) continue;
+    if (
+      q.triggerEvent === "post_checkout_review" ||
+      q.templateId === "tpl_nps_satisfaction_check" ||
+      isNpsSurveyText(q.renderedMessage || q.message)
+    ) {
+      recordHit(q.sentAt || q.scheduledFor, q.reservationCode, q.reservationId);
+    }
+  }
+
+  // 4. Verifica nas conversas do WhatsApp mensagens enviadas pelo hotel (fromMe: true)
+  for (const conv of (db.whatsappConversations || [])) {
+    if (!conv || conv.isGroup) continue;
+    if (!matchPhone(conv.phone || conv.id)) continue;
+    for (const m of (conv.messages || [])) {
+      if (!m || !m.fromMe || m.status === "failed") continue;
+      if (
+        m.triggerEvent === "post_checkout_review" ||
+        m.templateId === "tpl_nps_satisfaction_check" ||
+        isNpsSurveyText(m.text || m.caption)
+      ) {
+        recordHit(m.timestamp, conv.reservationCode || m.reservationCode, conv.reservationId);
+      }
+    }
+  }
+
+  // 5. Verifica registros explícitos de pesquisa enviada em db.npsResponses
+  if (!ignoreNpsResponsesTable) {
+    for (const n of (db.npsResponses || [])) {
+      if (!n || !matchPhone(n.guestPhone)) continue;
+      if (n.pendingResponse === true || n.surveyVerifiedSent === true) {
+        recordHit(n.sentAt, n.reservationCode, n.reservationId);
+      }
+    }
+  }
+
+  return {
+    sent: found,
+    sentAt: latestSentAtIso,
+    sentAtMs: latestSentAtMs,
+    reservationCode,
+    reservationId
+  };
+}
+
+export function wasNpsSurveySentToPhone(db, phone, options = {}) {
+  return getLatestNpsSurveySentInfo(db, phone, options).sent;
+}
+
 /**
  * Intercepta e processa respostas de NPS (nota 1 a 5) e também a resposta escrita subsequente
  * de hóspedes que deram nota de 1 a 4.
+ * ESTRITO: Só aceita números de 1 a 5 como nota se a pergunta de avaliação (post_checkout_review)
+ * tiver sido efetivamente enviada para aquele telefone e ainda não tiver sido respondida.
  */
 export async function handleInboundNpsScoreOrComment({
   db,
@@ -11519,7 +11694,25 @@ export async function handleInboundNpsScoreOrComment({
     return Boolean(cP && targetPhone && (cP.endsWith(targetPhone.slice(-8)) || targetPhone.endsWith(cP.slice(-8))));
   };
 
+  // Verifica estritamente se a pesquisa NPS foi enviada para este telefone
+  const surveyInfo = getLatestNpsSurveySentInfo(db, targetPhone);
   let existingNps = db.npsResponses.find(n => matchPhone(n.guestPhone));
+
+  // Se não enviamos a pergunta de avaliação para essa pessoa, NUNCA interpreta números de 1 a 5 como nota NPS
+  if (!surveyInfo.sent) {
+    return { npsHandled: false };
+  }
+
+  // Resolve a reserva associada à pesquisa para garantir nome e flat corretos
+  let matchedReservation = reservation || null;
+  if (!matchedReservation && Array.isArray(db.reservations)) {
+    matchedReservation = db.reservations.find(r =>
+      (surveyInfo.reservationCode && String(r.code) === String(surveyInfo.reservationCode)) ||
+      (surveyInfo.reservationId && String(r.id) === String(surveyInfo.reservationId)) ||
+      (existingNps?.reservationCode && String(r.code) === String(existingNps.reservationCode)) ||
+      (existingNps?.reservationId && String(r.id) === String(existingNps.reservationId))
+    ) || db.reservations.find(r => matchPhone(r.guestPhone || r.phone));
+  }
 
   // 1. Verifica se a mensagem é uma nota de 1 a 5 (isolada ou com comentário na mesma linha, ex: "4" ou "4 - faltou tapete")
   const pureScoreMatch = cleanText.match(/^([1-5])$/) || cleanText.match(/^nota\s*([1-5])$/i) || cleanText.match(/^([1-5])\s*estrelas?$/i);
@@ -11527,26 +11720,31 @@ export async function handleInboundNpsScoreOrComment({
     ? cleanText.match(/^(?:nota\s*)?([1-5])(?:\s*estrelas?)?\s*[-–:,.]\s*(.{3,})$/i)
     : null;
 
-  // Só interpreta "4 - texto..." como nota com comentário se não for horário (ex: "14:00") e se houver contexto de NPS ou pós-checkout
   const isTimeExpression = /^\d{1,2}:\d{2}\b/.test(cleanText);
-  const hasNpsContext = Boolean(
-    existingNps ||
-    isReservationOrFlatCheckedOut(db, reservation) ||
-    (db.whatsappHistory || []).some(h => matchPhone(h.guestPhone) && (h.triggerEvent === "post_checkout_review" || h.templateId === "tpl_nps_satisfaction_check"))
+
+  // Evita sobrescrever uma avaliação que já foi respondida anteriormente caso o hóspede mande outro número depois
+  const alreadyAnsweredCurrentSurvey = Boolean(
+    existingNps &&
+    existingNps.score != null &&
+    existingNps.pendingResponse !== true &&
+    (!surveyInfo.sentAtMs || !existingNps.respondedAt || new Date(existingNps.respondedAt).getTime() >= surveyInfo.sentAtMs)
   );
 
-  if (pureScoreMatch || (inlineScoreMatch && !isTimeExpression && hasNpsContext)) {
+  if (!alreadyAnsweredCurrentSurvey && (pureScoreMatch || (inlineScoreMatch && !isTimeExpression))) {
     const score = Number((pureScoreMatch || inlineScoreMatch)[1]);
     const inlineComment = inlineScoreMatch ? String(inlineScoreMatch[2] || "").trim() : "";
+    const resolvedGuestName = resolveBestNpsGuestName(senderName, existingNps?.guestName, matchedReservation?.guestName);
+    const resolvedFlat = flatNumber || existingNps?.flatNumber || matchedReservation?.flatNumber || null;
 
     if (!existingNps) {
       existingNps = {
         id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        reservationId: reservation?.id || reservation?.code || null,
-        reservationCode: reservation?.code || null,
+        reservationId: matchedReservation?.id || surveyInfo.reservationId || matchedReservation?.code || null,
+        reservationCode: matchedReservation?.code || surveyInfo.reservationCode || null,
         guestPhone: rawPhone || targetPhone,
-        guestName: senderName || reservation?.guestName || "Hóspede",
-        sentAt: new Date().toISOString()
+        guestName: resolvedGuestName,
+        sentAt: surveyInfo.sentAt || new Date().toISOString(),
+        surveyVerifiedSent: true
       };
       db.npsResponses.unshift(existingNps);
     }
@@ -11554,11 +11752,12 @@ export async function handleInboundNpsScoreOrComment({
     existingNps.score = score;
     existingNps.respondedAt = new Date().toISOString();
     existingNps.pendingResponse = false;
-    existingNps.flatNumber = flatNumber || existingNps.flatNumber || reservation?.flatNumber || null;
-    existingNps.guestName = senderName || existingNps.guestName || reservation?.guestName || "Hóspede";
-    existingNps.channel = reservation?.channel || existingNps.channel || "whatsapp";
+    existingNps.surveyVerifiedSent = true;
+    existingNps.flatNumber = resolvedFlat;
+    existingNps.guestName = resolvedGuestName;
+    existingNps.channel = matchedReservation?.channel || existingNps.channel || "whatsapp";
 
-    const reservationForTags = reservation || {
+    const reservationForTags = matchedReservation || {
       guestName: existingNps.guestName,
       guestPhone: rawPhone || targetPhone,
       flatNumber: existingNps.flatNumber || "",
@@ -11638,11 +11837,14 @@ export async function handleInboundNpsScoreOrComment({
       });
 
       const sentAtIso = new Date().toISOString();
+      existingNps.scoreFollowupSent = Boolean(sendRes?.success);
+      existingNps.scoreFollowupSentAt = sentAtIso;
+
       if (!db.whatsappHistory) db.whatsappHistory = [];
       db.whatsappHistory.push({
         id: `nps_reply_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         reservationCode: reservationForTags.code || null,
-        reservationId: reservation?.id || null,
+        reservationId: matchedReservation?.id || null,
         title: tpl?.title || `Retorno NPS Nota ${score}`,
         guestName: existingNps.guestName,
         guestPhone: rawPhone || targetPhone,
@@ -11698,7 +11900,8 @@ export async function handleInboundNpsScoreOrComment({
     existingNps &&
     Number(existingNps.score) >= 1 &&
     Number(existingNps.score) <= 4 &&
-    existingNps.awaitingFeedbackComment === true
+    existingNps.awaitingFeedbackComment === true &&
+    !pureScoreMatch
   ) {
     const sinceMs = existingNps.awaitingFeedbackSince ? new Date(existingNps.awaitingFeedbackSince).getTime() : Date.now();
     const ageHours = (Date.now() - sinceMs) / (3600 * 1000);
@@ -11710,7 +11913,9 @@ export async function handleInboundNpsScoreOrComment({
         : cleanText;
       existingNps.commentReceivedAt = new Date().toISOString();
       existingNps.awaitingFeedbackComment = false;
+      existingNps.guestName = resolveBestNpsGuestName(senderName, existingNps.guestName, matchedReservation?.guestName);
       if (flatNumber && !existingNps.flatNumber) existingNps.flatNumber = flatNumber;
+      if (matchedReservation?.flatNumber && !existingNps.flatNumber) existingNps.flatNumber = matchedReservation.flatNumber;
 
       // Atualiza observação/ticket se já havia sido criado para nota 1-2
       if (Array.isArray(db.observations)) {
@@ -11728,7 +11933,7 @@ export async function handleInboundNpsScoreOrComment({
       // Envia template de agradecimento pós-comentário (tpl_nps_feedback_thanks)
       const thanksTpl = getNpsThanksTemplate(db);
       if (thanksTpl) {
-        const reservationForTags = reservation || {
+        const reservationForTags = matchedReservation || {
           guestName: existingNps.guestName,
           guestPhone: rawPhone || targetPhone,
           flatNumber: existingNps.flatNumber || "",
@@ -11757,7 +11962,7 @@ export async function handleInboundNpsScoreOrComment({
         db.whatsappHistory.push({
           id: `nps_thanks_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           reservationCode: reservationForTags.code || null,
-          reservationId: reservation?.id || null,
+          reservationId: matchedReservation?.id || null,
           title: thanksTpl.title,
           guestName: existingNps.guestName,
           guestPhone: rawPhone || targetPhone,
@@ -11823,6 +12028,240 @@ export async function handleInboundNpsScoreOrComment({
 }
 
 /**
+ * Higieniza falsos positivos de NPS (números de 1 a 5 de conversas onde a pesquisa nunca foi enviada)
+ * e dispara retroativamente a mensagem de acompanhamento APENAS para os hóspedes que avaliaram HOJE
+ * com nota abaixo de 5 (1 a 4) e ainda não receberam o retorno automático.
+ */
+export async function sanitizeAndDispatchTodaySub5Nps(dbOrGetter, saveDatabase, {
+  sendZapiFn = sendZapiMessage,
+  onlyDateStr = null,
+  dispatchTodayFollowups = true
+} = {}) {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db) return { removedBogusCount: 0, dispatchedCount: 0, dispatched: [] };
+    if (!Array.isArray(db.npsResponses)) db.npsResponses = [];
+
+    const { todayStr } = getBrasiliaDateParts(new Date());
+    const targetDateStr = onlyDateStr || todayStr;
+
+    const removedPhones = new Set();
+    const removedIds = new Set();
+    const removedNames = new Set();
+    const validNps = [];
+    let modified = false;
+
+    for (const n of db.npsResponses) {
+      if (!n) continue;
+      const surveyInfo = getLatestNpsSurveySentInfo(db, n.guestPhone, { ignoreNpsResponsesTable: true });
+      const isLegit = Boolean(surveyInfo.sent || n.manualEntry === true || n.surveyVerifiedSent === true || n.pendingResponse === true);
+
+      if (!isLegit) {
+        if (n.guestPhone) removedPhones.add(cleanWhatsAppPhone(n.guestPhone) || String(n.guestPhone).replace(/\D/g, ""));
+        if (n.id) removedIds.add(n.id);
+        if (n.guestName && hasValidGuestLetters(n.guestName)) removedNames.add(n.guestName.trim());
+        modified = true;
+        continue;
+      }
+
+      if (surveyInfo.sent && !n.surveyVerifiedSent) {
+        n.surveyVerifiedSent = true;
+        modified = true;
+      }
+
+      // Enriquece nome e flat a partir da reserva oficial caso esteja como "??" ou vazio
+      const cPhone = cleanWhatsAppPhone(n.guestPhone || "") || String(n.guestPhone || "").replace(/\D/g, "");
+      const resv = (db.reservations || []).find(r =>
+        (n.reservationCode && String(r.code) === String(n.reservationCode)) ||
+        (n.reservationId && String(r.id) === String(n.reservationId)) ||
+        (surveyInfo.reservationCode && String(r.code) === String(surveyInfo.reservationCode)) ||
+        (surveyInfo.reservationId && String(r.id) === String(surveyInfo.reservationId))
+      ) || (db.reservations || []).find(r => {
+        const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "") || String(r.guestPhone || r.phone || "").replace(/\D/g, "");
+        return Boolean(rP && cPhone && rP.length >= 8 && (rP.endsWith(cPhone.slice(-8)) || cPhone.endsWith(rP.slice(-8))));
+      });
+
+      if (resv) {
+        const bestName = resolveBestNpsGuestName(n.guestName, null, resv.guestName);
+        if (bestName && bestName !== n.guestName) {
+          n.guestName = bestName;
+          modified = true;
+        }
+        if (!n.flatNumber && resv.flatNumber) {
+          n.flatNumber = resv.flatNumber;
+          modified = true;
+        }
+        if (!n.reservationCode && resv.code) {
+          n.reservationCode = resv.code;
+          modified = true;
+        }
+        if (!n.reservationId && resv.id) {
+          n.reservationId = resv.id;
+          modified = true;
+        }
+      }
+
+      validNps.push(n);
+    }
+
+    const removedBogusCount = db.npsResponses.length - validNps.length;
+    if (removedBogusCount > 0) {
+      db.npsResponses = validNps;
+      // Remove também auto-tickets em db.observations e db.reviews criados por falsos positivos de NPS
+      if (Array.isArray(db.observations)) {
+        db.observations = db.observations.filter(o => {
+          if (!o) return false;
+          const isNpsTicket = o.generatedFromNps || String(o.description || "").startsWith("[NPS Auto-Ticket]");
+          if (!isNpsTicket) return true;
+          const oPhone = cleanWhatsAppPhone(o.guestPhone || "") || String(o.guestPhone || "").replace(/\D/g, "");
+          const phoneRemoved = oPhone && Array.from(removedPhones).some(rp => rp.length >= 8 && (oPhone.endsWith(rp.slice(-8)) || rp.endsWith(oPhone.slice(-8))));
+          const nameRemoved = Array.from(removedNames).some(rn => String(o.description || "").includes(rn));
+          return !(phoneRemoved || nameRemoved);
+        });
+      }
+      if (Array.isArray(db.reviews)) {
+        db.reviews = db.reviews.filter(r => !(r && r.fromNpsId && removedIds.has(r.fromNpsId)));
+      }
+    }
+
+    const dispatched = [];
+    if (dispatchTodayFollowups) {
+      for (const npsItem of db.npsResponses) {
+        if (!npsItem) continue;
+        const score = Number(npsItem.score);
+        if (isNaN(score) || score < 1 || score > 4) continue;
+
+        const refIso = npsItem.respondedAt || npsItem.sentAt;
+        if (!refIso) continue;
+        const itemDateStr = getBrasiliaDateParts(new Date(refIso)).todayStr;
+        if (itemDateStr !== targetDateStr) continue;
+
+        const targetPhone = cleanWhatsAppPhone(npsItem.guestPhone || "") || npsItem.guestPhone;
+        if (!targetPhone) continue;
+
+        const triggerEv = `nps_score_${score}`;
+        const alreadySentInHistory = (db.whatsappHistory || []).some(h => {
+          if (!h || h.status === "failed") return false;
+          const hP = cleanWhatsAppPhone(h.guestPhone || h.phone || "");
+          const samePhone = Boolean(hP && targetPhone && (hP.endsWith(targetPhone.slice(-8)) || targetPhone.endsWith(hP.slice(-8))));
+          if (!samePhone) return false;
+          if (h.triggerEvent !== triggerEv) return false;
+          const hDateStr = h.sentAt ? getBrasiliaDateParts(new Date(h.sentAt)).todayStr : "";
+          return hDateStr === targetDateStr;
+        });
+
+        if (npsItem.scoreFollowupSent || alreadySentInHistory) {
+          if (!npsItem.scoreFollowupSent) {
+            npsItem.scoreFollowupSent = true;
+            modified = true;
+          }
+          continue;
+        }
+
+        const tpl = getNpsScoreTemplate(db, score);
+        if (!tpl) continue;
+
+        const reservationForTags = {
+          guestName: npsItem.guestName || "Hóspede",
+          guestPhone: targetPhone,
+          flatNumber: npsItem.flatNumber || "",
+          code: npsItem.reservationCode || npsItem.reservationId || ""
+        };
+
+        const renderedReply = resolveWhatsAppTags(tpl.message, reservationForTags, db, "", "guest", tpl);
+        const renderedButtons = renderTemplateButtons(tpl.buttons, reservationForTags, db, "", "guest", tpl);
+        if (!renderedReply) continue;
+
+        const sendRes = await sendZapiFn(db.zapiConfig, {
+          phone: targetPhone,
+          message: renderedReply,
+          title: tpl.title,
+          footer: tpl.footer,
+          buttons: renderedButtons,
+          channelId: "guest_schedule",
+          recipientRole: "guest",
+          triggerEvent: triggerEv,
+          db
+        }).catch(err => {
+          console.warn(`[NPS Today Retro-Dispatch Score ${score}] Falha no envio para ${targetPhone}:`, err.message);
+          return { success: false, error: err.message };
+        });
+
+        const sentAtIso = new Date().toISOString();
+        npsItem.scoreFollowupSent = Boolean(sendRes?.success);
+        npsItem.scoreFollowupSentAt = sentAtIso;
+        if (!npsItem.comment) {
+          npsItem.awaitingFeedbackComment = true;
+          npsItem.awaitingFeedbackSince = sentAtIso;
+          npsItem.managerAlertSent = false;
+          npsItem.managerCommentAlertSent = false;
+        }
+        modified = true;
+
+        if (!db.whatsappHistory) db.whatsappHistory = [];
+        db.whatsappHistory.push({
+          id: `nps_reply_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          reservationCode: reservationForTags.code || null,
+          reservationId: npsItem.reservationId || null,
+          title: tpl.title || `Retorno NPS Nota ${score}`,
+          guestName: npsItem.guestName,
+          guestPhone: targetPhone,
+          recipientType: "guest",
+          recipientName: npsItem.guestName,
+          triggerEvent: triggerEv,
+          message: renderedReply,
+          buttons: renderedButtons,
+          status: sendRes?.success ? "sent" : "failed",
+          method: sendRes?.method || "automated_today_retro",
+          error: sendRes?.error || null,
+          sentAt: sentAtIso
+        });
+
+        appendMessageToConversation(db, {
+          phone: targetPhone,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: renderedReply,
+          type: "text",
+          buttons: renderedButtons,
+          triggerEvent: triggerEv,
+          reservationCode: reservationForTags.code || null,
+          status: sendRes?.success ? "read" : "failed",
+          timestamp: sentAtIso,
+          messageId: sendRes?.messageId || `msg_nps_retro_${Date.now()}`
+        });
+
+        dispatched.push({
+          id: npsItem.id,
+          guestName: npsItem.guestName,
+          guestPhone: targetPhone,
+          flatNumber: npsItem.flatNumber,
+          score,
+          sent: Boolean(sendRes?.success),
+          message: renderedReply
+        });
+      }
+    }
+
+    if (modified) {
+      await rebuildNpsImprovementsSummary(db);
+      if (typeof saveDatabase === "function") saveDatabase();
+    }
+
+    return {
+      removedBogusCount,
+      removedPhones: Array.from(removedPhones),
+      dispatchedCount: dispatched.length,
+      dispatched
+    };
+  } catch (err) {
+    console.warn("[NPS Sanitize & Today Sub-5 Dispatch Error]:", err.message);
+    return { removedBogusCount: 0, dispatchedCount: 0, dispatched: [], error: err.message };
+  }
+}
+
+/**
  * Verifica respostas NPS de notas 1 a 4 que aguardam explicação há mais de 15 minutos
  * e ainda não enviaram o alerta para o WhatsApp do gestor (22998505276).
  */
@@ -11841,11 +12280,14 @@ export async function checkPendingNpsManagerAlerts(dbOrGetter, saveDatabase, cre
       const score = Number(npsItem.score);
       if (isNaN(score) || score < 1 || score > 4) continue;
       if (npsItem.managerAlertSent) continue;
+      if (npsItem.awaitingFeedbackComment !== true) continue;
+      if (!wasNpsSurveySentToPhone(db, npsItem.guestPhone)) continue;
 
-      const refTime = npsItem.awaitingFeedbackSince || npsItem.respondedAt;
+      const refTime = npsItem.awaitingFeedbackSince || npsItem.scoreFollowupSentAt;
       if (!refTime) continue;
       const elapsedMs = nowMs - new Date(refTime).getTime();
-      if (elapsedMs >= 15 * 60 * 1000) {
+      // Só dispara o fallback de 15 minutos se a pergunta de acompanhamento tiver sido enviada entre 15 min e 12h atrás
+      if (elapsedMs >= 15 * 60 * 1000 && elapsedMs <= 12 * 60 * 60 * 1000) {
         await sendNpsManagerAlertWhatsApp(db, npsItem, {
           reason: "timeout_15m_without_comment",
           sendZapiFn,

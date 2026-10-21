@@ -6,7 +6,9 @@ import {
   getNpsThanksTemplate,
   rebuildNpsImprovementsSummary,
   processInboundNpsAndSentiment,
-  checkPendingNpsManagerAlerts
+  checkPendingNpsManagerAlerts,
+  wasNpsSurveySentToPhone,
+  sanitizeAndDispatchTodaySub5Nps
 } from "../scripts/zapi-service.mjs";
 
 test("NPS 1-5 templates, two-step comment collection, and continuous improvements summary", async () => {
@@ -236,6 +238,8 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
     comment: "",
     googleLinkSent: false,
     pendingResponse: false,
+    surveyVerifiedSent: true,
+    scoreFollowupSent: true,
     awaitingFeedbackComment: true,
     awaitingFeedbackSince: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
     managerAlertSent: false,
@@ -252,4 +256,80 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
   assert.equal(fallbackRes.triggeredCount, 1);
   assert.equal(db.npsResponses[3].managerAlertSent, true, "Fallback alert must be sent after 15 minutes");
   assert.equal(db.npsResponses[3].managerAlertReason, "timeout_15m_without_comment");
+
+  // 8. Strict guard: Guest who NEVER received the NPS survey sends "2" in chat (e.g., Marcos Paulo) -> must NOT be treated as NPS
+  assert.equal(wasNpsSurveySentToPhone(db, "5522998401818"), false);
+  const prevNpsCount = db.npsResponses.length;
+  const resNoSurvey = await processInboundNpsAndSentiment({
+    db,
+    phone: "5522998401818",
+    senderName: "Marcos Paulo",
+    text: "2",
+    saveDatabase: () => {},
+    sendZapiFn: mockSendZapi
+  });
+  assert.equal(resNoSurvey.npsHandled, false, "Must ignore number 1-5 when NPS survey was never sent to that phone");
+  assert.equal(db.npsResponses.length, prevNpsCount, "Must not add bogus entry to db.npsResponses");
+
+  // 9. Sanitize bogus entries & dispatch only today's < 5 evaluations
+  db.reservations.push({
+    id: 467,
+    code: "RES-211-0467",
+    guestName: "Anderson Prates",
+    guestPhone: "557192753737",
+    flatNumber: "907",
+    status: "completed"
+  });
+  db.whatsappQueue.push({
+    id: "q_anderson",
+    reservationCode: "RES-211-0467",
+    guestPhone: "557192753737",
+    triggerEvent: "post_checkout_review",
+    status: "sent",
+    sentAt: "2026-10-21T15:00:50.863Z"
+  });
+  // Add bogus Marcos Paulo entry, old historical < 5 entry (from 2026-10-18), and today's Anderson Prates entry (2026-10-21)
+  db.npsResponses.push(
+    {
+      id: "nps_bogus_marcos",
+      guestName: "Marcos Paulo",
+      guestPhone: "5522998401818",
+      score: 2,
+      pendingResponse: false,
+      sentAt: "2026-10-17T01:39:40.622Z",
+      respondedAt: "2026-10-17T01:39:40.622Z"
+    },
+    {
+      id: "nps_old_day",
+      guestName: "Hóspede Antigo",
+      guestPhone: "5521991112222",
+      score: 3,
+      pendingResponse: false,
+      surveyVerifiedSent: true,
+      sentAt: "2026-10-18T15:00:00.000Z",
+      respondedAt: "2026-10-18T16:00:00.000Z"
+    },
+    {
+      id: "nps_today_anderson",
+      guestName: "??",
+      guestPhone: "557192753737",
+      flatNumber: "907",
+      score: 4,
+      pendingResponse: false,
+      sentAt: "2026-10-21T16:08:19.586Z",
+      respondedAt: "2026-10-21T16:08:19.586Z"
+    }
+  );
+
+  const retroRes = await sanitizeAndDispatchTodaySub5Nps(db, () => {}, {
+    sendZapiFn: mockSendZapi,
+    onlyDateStr: "2026-10-21",
+    dispatchTodayFollowups: true
+  });
+  assert.equal(retroRes.removedBogusCount, 1, "Must remove bogus Marcos Paulo entry");
+  assert.ok(!db.npsResponses.some((n) => n.id === "nps_bogus_marcos"));
+  assert.equal(retroRes.dispatchedCount, 1, "Must dispatch follow-up ONLY for today's < 5 evaluation (Anderson Prates)");
+  assert.equal(retroRes.dispatched[0].guestName, "Anderson Prates", "Must resolve '??' to official guest name 'Anderson Prates'");
+  assert.equal(retroRes.dispatched[0].score, 4);
+  assert.match(retroRes.dispatched[0].message, /Anderson/i);
 });

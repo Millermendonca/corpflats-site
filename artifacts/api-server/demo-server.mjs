@@ -90,7 +90,11 @@ import {
   DEFAULT_WHATSAPP_TEMPLATES,
   rebuildNpsImprovementsSummary,
   sendNpsManagerAlertWhatsApp,
-  syncNpsCommentToReviews
+  syncNpsCommentToReviews,
+  wasNpsSurveySentToPhone,
+  getLatestNpsSurveySentInfo,
+  sanitizeAndDispatchTodaySub5Nps,
+  resolveBestNpsGuestName
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -27255,7 +27259,6 @@ function formatTriggerTitle(trigger) {
     payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
     sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
     pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
-    pre_checkin_enter_prompt: "Pós Check-in Online • Botão: Informar que Entrei",
     room_ready: "Apartamento Pronto • Acesso Liberado",
     checkin_completed: "Check-in Realizado • Boas-Vindas",
     checkout_completed: "Check-out Realizado • Agradecimento",
@@ -39768,6 +39771,72 @@ function ensureSentimentDB() {
       }
     }
   }
+  // Remove falsos positivos de NPS onde a pesquisa de satisfação nunca foi enviada ao telefone
+  if (Array.isArray(db.npsResponses)) {
+    const validNps = [];
+    const removedPhones = new Set();
+    const removedNames = new Set();
+    for (const n of db.npsResponses) {
+      if (!n) continue;
+      const surveyInfo = getLatestNpsSurveySentInfo(db, n.guestPhone, { ignoreNpsResponsesTable: true });
+      const isLegit = Boolean(surveyInfo.sent || n.manualEntry === true || n.surveyVerifiedSent === true || n.pendingResponse === true);
+      if (!isLegit) {
+        if (n.guestPhone) removedPhones.add(cleanWhatsAppPhone(n.guestPhone) || String(n.guestPhone).replace(/\D/g, ""));
+        if (n.guestName && n.guestName !== "Hóspede") removedNames.add(String(n.guestName).trim());
+        modified = true;
+        continue;
+      }
+      if (surveyInfo.sent && !n.surveyVerifiedSent) {
+        n.surveyVerifiedSent = true;
+        modified = true;
+      }
+      // Enriquece nome do hóspede pela reserva caso esteja como "??" ou emoji
+      const cPhone = cleanWhatsAppPhone(n.guestPhone || "") || String(n.guestPhone || "").replace(/\D/g, "");
+      const resv = (db.reservations || []).find(r =>
+        (n.reservationCode && String(r.code) === String(n.reservationCode)) ||
+        (n.reservationId && String(r.id) === String(n.reservationId)) ||
+        (surveyInfo.reservationCode && String(r.code) === String(surveyInfo.reservationCode)) ||
+        (surveyInfo.reservationId && String(r.id) === String(surveyInfo.reservationId))
+      ) || (db.reservations || []).find(r => {
+        const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "") || String(r.guestPhone || r.phone || "").replace(/\D/g, "");
+        return Boolean(rP && cPhone && rP.length >= 8 && (rP.endsWith(cPhone.slice(-8)) || cPhone.endsWith(rP.slice(-8))));
+      });
+      if (resv) {
+        const bestName = resolveBestNpsGuestName(n.guestName, null, resv.guestName);
+        if (bestName && bestName !== n.guestName) {
+          n.guestName = bestName;
+          modified = true;
+        }
+        if (!n.flatNumber && resv.flatNumber) {
+          n.flatNumber = resv.flatNumber;
+          modified = true;
+        }
+        if (!n.reservationCode && resv.code) {
+          n.reservationCode = resv.code;
+          modified = true;
+        }
+        if (!n.reservationId && resv.id) {
+          n.reservationId = resv.id;
+          modified = true;
+        }
+      }
+      validNps.push(n);
+    }
+    if (validNps.length !== db.npsResponses.length) {
+      db.npsResponses = validNps;
+      if (Array.isArray(db.observations)) {
+        db.observations = db.observations.filter(o => {
+          if (!o) return false;
+          const isNpsTicket = o.generatedFromNps || String(o.description || "").startsWith("[NPS Auto-Ticket]");
+          if (!isNpsTicket) return true;
+          const oPhone = cleanWhatsAppPhone(o.guestPhone || "") || String(o.guestPhone || "").replace(/\D/g, "");
+          const phoneRemoved = oPhone && Array.from(removedPhones).some(rp => rp.length >= 8 && (oPhone.endsWith(rp.slice(-8)) || rp.endsWith(oPhone.slice(-8))));
+          const nameRemoved = Array.from(removedNames).some(rn => rn.length >= 3 && String(o.description || "").includes(rn));
+          return !(phoneRemoved || nameRemoved);
+        });
+      }
+    }
+  }
   if (modified) saveDatabase();
 }
 
@@ -40021,33 +40090,39 @@ app.post("/api/ai/sentiment/analyze-whatsapp", async (req, res) => {
         }
       }
 
-      // Detecção de Resposta NPS (1 a 5)
+      // Detecção de Resposta NPS (1 a 5) — ESTRITO: somente se a pesquisa NPS foi efetivamente enviada a este telefone
       const lastInboundText = inbounds.slice(-1)[0]?.text?.trim() || "";
       const npsMatch = lastInboundText.match(/^([1-5])$/) || lastInboundText.match(/^nota\s*([1-5])$/i);
-      if (npsMatch) {
+      const surveyInfo = npsMatch ? getLatestNpsSurveySentInfo(db, phone) : { sent: false };
+      if (npsMatch && surveyInfo.sent) {
         const npsScore = Number(npsMatch[1]);
         if (!db.npsResponses) db.npsResponses = [];
         let npsItem = db.npsResponses.find(n => n.guestPhone === phone);
-        if (!npsItem) {
-          npsItem = {
-            id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            guestPhone: phone,
-            guestName: sentimentEntry.guestName || "Hóspede",
-            sentAt: new Date().toISOString()
-          };
-          db.npsResponses.unshift(npsItem);
-        }
-        npsItem.score = npsScore;
-        npsItem.respondedAt = new Date().toISOString();
-        npsItem.pendingResponse = false;
-        npsItem.flatNumber = flatNumber || npsItem.flatNumber;
-        if (npsScore === 5) {
-          npsItem.autoAction = "google_link_sent";
-          npsItem.googleLinkSent = true;
-        } else if (npsScore <= 2) {
-          npsItem.autoAction = "recovery_ticket_created";
-        } else {
-          npsItem.autoAction = "feedback_collected";
+        // Só registra se ainda não havia resposta gravada para esta pesquisa
+        if (!npsItem || npsItem.score == null || npsItem.pendingResponse === true) {
+          if (!npsItem) {
+            npsItem = {
+              id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              guestPhone: phone,
+              guestName: resolveBestNpsGuestName(sentimentEntry.guestName, null, reservation?.guestName),
+              sentAt: surveyInfo.sentAt || new Date().toISOString(),
+              surveyVerifiedSent: true
+            };
+            db.npsResponses.unshift(npsItem);
+          }
+          npsItem.score = npsScore;
+          npsItem.respondedAt = new Date().toISOString();
+          npsItem.pendingResponse = false;
+          npsItem.surveyVerifiedSent = true;
+          npsItem.flatNumber = flatNumber || npsItem.flatNumber;
+          if (npsScore === 5) {
+            npsItem.autoAction = "google_link_sent";
+            npsItem.googleLinkSent = true;
+          } else if (npsScore <= 2) {
+            npsItem.autoAction = "recovery_ticket_created";
+          } else {
+            npsItem.autoAction = "feedback_collected";
+          }
         }
       }
 
@@ -40088,6 +40163,7 @@ app.post("/api/ai/nps-response", async (req, res) => {
       flatNumber: flatNumber || null, channel: channel || null, score: numScore, comment: comment || null,
       sentAt: new Date().toISOString(), respondedAt: new Date().toISOString(),
       googleLinkSent, autoAction, pendingResponse: false,
+      manualEntry: true, surveyVerifiedSent: true,
       sentimentScore: sentimentAnalysis?.score || null, sentimentTone: sentimentAnalysis?.tone || null,
       sentimentSummary: sentimentAnalysis?.summary || null
     };
@@ -40213,11 +40289,30 @@ app.post("/api/ai/nps-sent", (req, res) => {
   try {
     const { reservationId, guestPhone, guestName, flatNumber, channel } = req.body;
     const existing = (db.npsResponses || []).find(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
-    if (existing) return res.json({ success: true, npsEntry: existing, alreadyExists: true });
-    const npsEntry = { id: "nps_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5), reservationId: reservationId || null, guestPhone: guestPhone || null, guestName: guestName || "Hóspede", flatNumber: flatNumber || null, channel: channel || null, score: null, comment: null, sentAt: new Date().toISOString(), respondedAt: null, googleLinkSent: false, autoAction: null, pendingResponse: true };
+    if (existing) {
+      existing.surveyVerifiedSent = true;
+      if (existing.score == null) existing.pendingResponse = true;
+      saveDatabase();
+      return res.json({ success: true, npsEntry: existing, alreadyExists: true });
+    }
+    const npsEntry = { id: "nps_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5), reservationId: reservationId || null, guestPhone: guestPhone || null, guestName: guestName || "Hóspede", flatNumber: flatNumber || null, channel: channel || null, score: null, comment: null, sentAt: new Date().toISOString(), respondedAt: null, googleLinkSent: false, autoAction: null, pendingResponse: true, surveyVerifiedSent: true };
     db.npsResponses.unshift(npsEntry);
     saveDatabase();
     res.json({ success: true, npsEntry });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.5B — Higienizar falsos positivos e disparar retorno para avaliações < 5 de hoje
+app.post("/api/ai/nps-dispatch-today-sub5", async (req, res) => {
+  try {
+    const onlyDateStr = req.body?.date || null;
+    const result = await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase, {
+      onlyDateStr,
+      dispatchTodayFollowups: true
+    });
+    res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
