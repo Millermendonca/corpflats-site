@@ -98,6 +98,9 @@ const PricingSebraePage = lazyWithRetry(() => import('@/pages/precificacao-sebra
 const OtaInboxPage = lazyWithRetry(() => import('@/pages/ota-inbox'));
 const EquipePage = lazyWithRetry(() => import('@/pages/equipe'));
 const FlatXrayHub = lazyWithRetry(() => import('@/pages/flat-xray-hub'));
+const AnserveRestock = lazyWithRetry(() => import('@/pages/anserve-restock'));
+const AnserveDashboard = lazyWithRetry(() => import('@/pages/anserve-dashboard'));
+const MinibarAdmin = lazyWithRetry(() => import('@/pages/minibar-admin'));
 
 
 const queryClient = new QueryClient({
@@ -297,17 +300,24 @@ function Router() {
         <Route path="/portal-hospede/:code/cafe" component={GuestBreakfast} />
         <Route path="/guest-portal/:code/cafe" component={GuestBreakfast} />
 
+        {/* Minibar / Frigobar: Portais Anserve e Admin CorpFlats */}
+        <Route path="/frigobar-reposicao" component={AnserveRestock} />
+        <Route path="/anserve/reposicao" component={AnserveRestock} />
+        <AdminRoute path="/anserve" component={AnserveDashboard} moduleName="o Painel de Supervisão Anserve" />
+        <AdminRoute path="/frigobar-gestao" component={AnserveDashboard} moduleName="o Painel de Gestão Anserve" />
+        <AdminRoute path="/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
+        <AdminRoute path="/minibar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
+        <AdminRoute path="/admin/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
+
         {/* Public Minibar / Frigobar Guest Routes (Precedência Obrigatória no Wouter) */}
         <Route path="/minha-reserva/:code/frigobar" component={GuestMinibar} />
         <Route path="/minha-reserva/:code/minibar" component={GuestMinibar} />
         <Route path="/portal-hospede/:code/frigobar" component={GuestMinibar} />
         <Route path="/guest-portal/:code/frigobar" component={GuestMinibar} />
         <Route path="/frigobar/flat/:flatNumber" component={GuestMinibar} />
-        <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
         <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
+        <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
         <Route path="/minibar/:flatNumber" component={GuestMinibar} />
-        <Route path="/frigobar" component={GuestMinibar} />
-        <Route path="/minibar" component={GuestMinibar} />
         <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
         <Route path="/minha-reserva" component={GuestPortalWrapper} />
         <Route path="/copiar-pix/:code" component={GuestPortalWrapper} />

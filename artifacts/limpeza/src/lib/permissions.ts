@@ -89,7 +89,19 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     ]
   },
 
-  // 6. 🛠️ Engenharia & Dev (engenharia, devOnly: true)
+  // 6. 🧊 Frigobar & Anserve (frigobar)
+  {
+    id: "frigobar",
+    title: "🧊 Frigobar & Anserve",
+    items: [
+      { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
+      { href: "/anserve", label: "Painel de Supervisão Anserve", description: "Fila de NFs, emissão, anexo e conferência geral" },
+      { href: "/frigobar-reposicao", label: "Portal da Repositora", description: "Conferência rápida, apontamento de divergências e reposição" },
+      { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", description: "Métricas de saída, consumo de cortesias e auditoria" }
+    ]
+  },
+
+  // 7. 🛠️ Engenharia & Dev (engenharia, devOnly: true)
   {
     id: "engenharia",
     title: "🛠️ Engenharia & Dev",
@@ -137,6 +149,16 @@ export const RECEPCAO_MODULES: string[] = Array.from(
   new Set([...RESERVAS_MODULES, ...CAMAREIRA_MODULES])
 );
 
+export const ANSERVE_REPOSITORA_MODULES: string[] = [
+  "/frigobar-reposicao"
+];
+
+export const ANSERVE_GESTOR_MODULES: string[] = [
+  "/anserve",
+  "/frigobar-reposicao",
+  "/frigobar-gestao"
+];
+
 export const ADMIN_MODULES: string[] = [...OPERATIONAL_MODULES];
 
 export const DEV_MODULES: string[] = [...ALL_CANONICAL_MODULES];
@@ -151,6 +173,10 @@ export function getDefaultModulesForRole(role?: string | null): string[] {
       return [...DEV_MODULES];
     case "admin":
       return [...ADMIN_MODULES];
+    case "anserve_gestor":
+      return [...ANSERVE_GESTOR_MODULES];
+    case "anserve_repositora":
+      return [...ANSERVE_REPOSITORA_MODULES];
     case "recepcao":
     case "reception":
       return [...RECEPCAO_MODULES];
@@ -325,7 +351,14 @@ export const ROUTE_ALIASES: Record<string, string> = {
   "/quarentena": "/caixa-entrada-ota",
 
   // Reservar
-  "/booking": "/reservar"
+  "/booking": "/reservar",
+
+  // Frigobar & Anserve
+  "/frigobar-gestao": "/anserve",
+  "/anserve/reposicao": "/frigobar-reposicao",
+  "/admin/frigobar": "/frigobar",
+  "/minibar-admin": "/frigobar",
+  "/frigobar-admin": "/frigobar"
 };
 
 /**

@@ -26,7 +26,8 @@ import {
   MessageSquare,
   Building2,
   Laptop,
-  AlertCircle
+  AlertCircle,
+  Package
 } from "lucide-react";
 import {
   Card,
@@ -694,6 +695,20 @@ export function TeamPage() {
             <span>Recepção / Portaria</span>
           </Badge>
         );
+      case "anserve_repositora":
+        return (
+          <Badge className="bg-sky-600/15 text-sky-700 dark:text-sky-300 border-sky-500/30 gap-1.5 font-bold hover:bg-sky-600/20">
+            <Package className="w-3 h-3 text-sky-600 dark:text-sky-400" />
+            <span>Anserve - Repositora</span>
+          </Badge>
+        );
+      case "anserve_gestor":
+        return (
+          <Badge className="bg-teal-600/15 text-teal-700 dark:text-teal-300 border-teal-500/30 gap-1.5 font-bold hover:bg-teal-600/20">
+            <Building2 className="w-3 h-3 text-teal-600 dark:text-teal-400" />
+            <span>Anserve - Gestor / Supervisão</span>
+          </Badge>
+        );
       case "camareira":
       default:
         return (
@@ -825,7 +840,9 @@ export function TeamPage() {
                 { key: "dev", label: "Dev" },
                 { key: "admin", label: "Admin" },
                 { key: "recepcao", label: "Recepção" },
-                { key: "camareira", label: "Camareiras" }
+                { key: "camareira", label: "Camareiras" },
+                { key: "anserve_repositora", label: "Repositora" },
+                { key: "anserve_gestor", label: "Gestor Anserve" }
               ].map((pill) => (
                 <Button
                   key={pill.key}
@@ -920,6 +937,8 @@ export function TeamPage() {
                               <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-black shrink-0 ${
                                 u.role === "dev" ? "bg-purple-600/10 text-purple-700 dark:text-purple-300" :
                                 u.role === "admin" ? "bg-blue-600/10 text-blue-700 dark:text-blue-300" :
+                                u.role === "anserve_gestor" ? "bg-teal-600/10 text-teal-700 dark:text-teal-300" :
+                                u.role === "anserve_repositora" ? "bg-sky-600/10 text-sky-700 dark:text-sky-300" :
                                 u.role === "recepcao" ? "bg-amber-600/10 text-amber-700 dark:text-amber-300" :
                                 "bg-emerald-600/10 text-emerald-700 dark:text-emerald-300"
                               }`}>
@@ -1159,6 +1178,8 @@ export function TeamPage() {
                 >
                   <option value="camareira">🧹 Governança / Camareira (Limpeza & Diárias)</option>
                   <option value="recepcao">🛎️ Recepção / Portaria (Check-in & Café)</option>
+                  <option value="anserve_repositora">📦 Anserve - Repositora (Conferência & Reposição)</option>
+                  <option value="anserve_gestor">🏢 Anserve - Gestor / Supervisão (Fila NFs & Repasse)</option>
                   <option value="admin">👔 Administrador (Gestão Hoteleira Completa)</option>
                   {isDev && (
                     <option value="dev">🛠️ Desenvolvedor (Acesso Total + Engenharia)</option>
@@ -1284,6 +1305,8 @@ export function TeamPage() {
                 >
                   <option value="camareira">🧹 Governança / Camareira (Limpeza & Diárias)</option>
                   <option value="recepcao">🛎️ Recepção / Portaria (Check-in & Café)</option>
+                  <option value="anserve_repositora">📦 Anserve - Repositora (Conferência & Reposição)</option>
+                  <option value="anserve_gestor">🏢 Anserve - Gestor / Supervisão (Fila NFs & Repasse)</option>
                   <option value="admin">👔 Administrador (Gestão Hoteleira Completa)</option>
                   {isDev && (
                     <option value="dev">🛠️ Desenvolvedor (Acesso Total + Engenharia)</option>
@@ -1397,6 +1420,8 @@ export function TeamPage() {
                 >
                   <option value="camareira">🧹 Governança / Camareira</option>
                   <option value="recepcao">🛎️ Recepção / Portaria</option>
+                  <option value="anserve_repositora">📦 Anserve - Repositora</option>
+                  <option value="anserve_gestor">🏢 Anserve - Gestor / Supervisão</option>
                   <option value="admin">👔 Administrador</option>
                   {isDev && <option value="dev">🛠️ Desenvolvedor</option>}
                 </select>

@@ -311,10 +311,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const isAdminOrDev = isDev || isAdmin
   const isCamareira = role === "camareira"
   const isRecepcao = role === "recepcao"
+  const isAnserveRepositora = role === "anserve_repositora"
+  const isAnserveGestor = role === "anserve_gestor"
 
   // Helper de checagem de rota ativa
   const isItemActive = (href: string) => {
     if (location === href) return true
+    if (href === "/anserve" && (location === "/frigobar-gestao")) return true
+    if (href === "/frigobar-reposicao" && (location === "/anserve/reposicao")) return true
+    if (href === "/frigobar" && (location === "/minibar" || location === "/minibar-admin" || location === "/admin/frigobar")) return true
     if (href === "/reservas" && (location === "/relatorio-reservas" || location === "/relatorios-reservas" || location === "/pms-reports")) return false
     if (href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) return true
     if (href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) return true
@@ -404,7 +409,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
       ]
     },
 
-    // 6. 🛠️ Engenharia & Dev (devOnly: true)
+    // 6. 🧊 Frigobar & Anserve
+    {
+      id: "frigobar",
+      title: "🧊 Frigobar & Anserve",
+      items: [
+        { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", icon: Package, description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
+        { href: "/anserve", label: "Painel de Supervisão Anserve", icon: FileText, description: "Fila de NFs, emissão, anexo e conferência geral" },
+        { href: "/frigobar-reposicao", label: "Portal da Repositora", icon: Package, description: "Conferência rápida, apontamento de divergências e reposição" },
+        { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", icon: BarChart3, description: "Métricas de saída, consumo de cortesias e auditoria" },
+      ]
+    },
+
+    // 7. 🛠️ Engenharia & Dev (devOnly: true)
     {
       id: "engenharia",
       title: "🛠️ Engenharia & Dev",
@@ -884,7 +901,75 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       {/* Barra de Navegação Inferior Móvel (Menus Permanentes no Rodapé) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border px-1 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
-        {isAdminOrDev ? (
+        {isAnserveRepositora ? (
+          <>
+            {/* 1. Portal Reposição */}
+            <Link href="/frigobar-reposicao" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/frigobar-reposicao" || location === "/anserve/reposicao" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <Package className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Reposição</span>
+              </div>
+            </Link>
+
+            {/* 2. Mais */}
+            <button 
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Menu className="w-5 h-5" />
+              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Mais</span>
+            </button>
+          </>
+        ) : isAnserveGestor ? (
+          <>
+            {/* 1. Painel Supervisão */}
+            <Link href="/anserve" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/anserve" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <FileText className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Supervisão</span>
+              </div>
+            </Link>
+
+            {/* 2. Reposição */}
+            <Link href="/frigobar-reposicao" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/frigobar-reposicao" || location === "/anserve/reposicao" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <Package className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Reposição</span>
+              </div>
+            </Link>
+
+            {/* 3. Gestão / Extrato */}
+            <Link href="/frigobar-gestao" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/frigobar-gestao" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <BarChart3 className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Estoque & NF</span>
+              </div>
+            </Link>
+
+            {/* 4. Mais */}
+            <button 
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Menu className="w-5 h-5" />
+              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Mais</span>
+            </button>
+          </>
+        ) : isAdminOrDev ? (
           <>
             {/* 1. Mapa de Reservas */}
             <Link href="/reservas" className="flex-1">
