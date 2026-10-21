@@ -1103,52 +1103,105 @@ export function renderDanfseHtml(invoice = {}) {
 </html>`;
 }
 
-// ─── 7B. Gerador Nativo de PDF Oficial (DANFSE Padrão Nacional Gov.br / ADN) ─
+// ─── 7B. Gerador Nativo de PDF Oficial (DANFSE v1.0 Padrão Nacional Gov.br) ──
+
+function tryFetchOfficialAdnDanfsePdf(chaveAcesso) {
+  const cleanChave = onlyDigits(chaveAcesso);
+  if (cleanChave.length !== 50 || process.env.NODE_ENV === "test") {
+    return Promise.resolve(null);
+  }
+  const pfx = getCertPfxBuffer();
+  if (!pfx) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: ADN_HOST_PROD,
+      port: 443,
+      path: `/danfse/${cleanChave}`,
+      method: "GET",
+      pfx,
+      passphrase: CERT_PASS,
+      rejectUnauthorized: false,
+      timeout: 3000,
+      headers: { Accept: "application/pdf" }
+    }, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => {
+        const buf = Buffer.concat(chunks);
+        if (res.statusCode === 200 && buf.length > 500 && buf.slice(0, 4).toString("utf8") === "%PDF") {
+          resolve(buf);
+        } else {
+          resolve(null);
+        }
+      });
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
 
 export async function generateNfsePdfBuffer(invoice = {}) {
   const numNota = String(invoice.numeroNfse || invoice.numeroNota || invoice.id || "1");
   const codVerif = String(invoice.codigoVerificacao || "ADN-GOV");
-  const numDps = String(invoice.numeroDps || invoice.numeroRps || invoice.id || "1");
+  const numDps = String(invoice.numeroDps || invoice.numeroRps || invoice.numeroNfse || invoice.id || "1");
+  const serieDps = String(invoice.serieDps || invoice.serie || "10000");
   const chaveAcesso = String(invoice.chaveAcesso || generateChaveAcessoNacional({
     codUf: "33",
     cnpj: "47964813000165",
     serie: "1",
     numeroDps: numDps
   }));
-  const chaveFormatada = chaveAcesso.replace(/(\d{4})/g, "$1 ").trim();
-  const protocolo = String(invoice.protocoloAutorizacao || chaveAcesso);
+
+  const adnPdf = await tryFetchOfficialAdnDanfsePdf(chaveAcesso);
+  if (adnPdf) return adnPdf;
+
   const valorNum = Number(invoice.valorServico || 0);
-  const valorStr = valorNum.toFixed(2).replace(".", ",");
+  const valorStr = valorNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const aliqNum = Number(invoice.aliquota || 2.0);
-  const aliqStr = aliqNum.toFixed(2).replace(".", ",");
-  const dataFormatada = invoice.dataEmissao
-    ? new Date(invoice.dataEmissao).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
-    : new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-  const competenciaStr = invoice.dataEmissao ? String(invoice.dataEmissao).slice(0, 7) : new Date().toISOString().slice(0, 7);
+  const aliqStr = aliqNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const emiDate = invoice.dataEmissao ? new Date(invoice.dataEmissao) : new Date();
+  const dataHoraBr = emiDate.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }).replace(",", "");
+  const competenciaBr = dataHoraBr.slice(0, 10);
 
   const docDigits = onlyDigits(invoice.tomadorCpfCnpj || "");
   const docFormatado = docDigits.length === 11
     ? docDigits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
     : docDigits.length === 14
       ? docDigits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5")
-      : docDigits || "Não informado";
+      : docDigits || "-";
+
+  const foneDigits = cleanPhone(invoice.tomadorTelefone || "");
+  const foneFormatado = foneDigits.length === 11
+    ? foneDigits.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3")
+    : foneDigits.length === 10
+      ? foneDigits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
+      : foneDigits || "-";
+
+  const cepDigits = cleanCep(invoice.tomadorCep || "28035000");
+  const cepFormatado = cepDigits.replace(/(\d{5})(\d{3})/, "$1-$2");
 
   const linkPortal = `https://www.nfse.gov.br/consultapublica/danfse?chave=${chaveAcesso}`;
 
   let qrPngBuf = null;
   try {
-    qrPngBuf = await QRCode.toBuffer(linkPortal, { width: 82, margin: 1 });
+    qrPngBuf = await QRCode.toBuffer(linkPortal, { width: 72, margin: 1 });
   } catch (_) {}
 
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
         size: "A4",
-        margin: 30,
+        margin: 20,
         info: {
-          Title: `DANFSE NFS-e Nacional Nº ${numNota} - CorpFlats`,
-          Author: "Rental Miller's LTDA - CorpFlats (Padrão Nacional Gov.br)",
-          Subject: `Documento Auxiliar da NFS-e Nacional Nº ${numNota}`
+          Title: `DANFSE v1.0 - NFS-e Nº ${numNota}`,
+          Author: "Sistema Nacional NFS-e - Sefin Nacional / ADN",
+          Subject: `Documento Auxiliar da Nota Fiscal de Serviço Eletrônica Nº ${numNota}`
         }
       });
 
@@ -1157,168 +1210,239 @@ export async function generateNfsePdfBuffer(invoice = {}) {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      // Moldura Principal
-      doc.lineWidth(1.2).strokeColor("#0f172a").rect(30, 30, 535, 760).stroke();
+      const X0 = 24;
+      const W = 547;
+      const X_END = X0 + W;
+      const BORDER = "#333333";
+      const MUTED = "#444444";
+      const BLACK = "#000000";
 
-      // Cabeçalho Padrão Nacional Gov.br
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(12)
-        .text("REPÚBLICA FEDERATIVA DO BRASIL • GOV.BR / RECEITA FEDERAL", 42, 42, { width: 350 });
-      doc.fillColor("#334155").font("Helvetica-Bold").fontSize(9.5)
-        .text("Ambiente de Dados Nacional (ADN / SEFIN) • Município: Campos dos Goytacazes/RJ", 42, 58, { width: 355 });
-      doc.fillColor("#059669").font("Helvetica-Bold").fontSize(9)
-        .text("DANFSE - DOCUMENTO AUXILIAR DA NFS-e DE PADRÃO NACIONAL", 42, 73, { width: 355 });
+      const drawCell = (x, y, w, h, label, value, opts = {}) => {
+        if (opts.box !== false) {
+          doc.lineWidth(0.5).strokeColor(BORDER).rect(x, y, w, h).stroke();
+        }
+        if (label) {
+          doc.fillColor(MUTED).font("Helvetica").fontSize(6.2)
+            .text(label, x + 4, y + 3, { width: w - 8, align: opts.align || "left", lineBreak: false });
+        }
+        if (value !== undefined && value !== null) {
+          doc.fillColor(BLACK).font(opts.bold ? "Helvetica-Bold" : "Helvetica").fontSize(opts.fontSize || 7.6)
+            .text(String(value), x + 4, y + (label ? 11.5 : 4), {
+              width: w - 8,
+              align: opts.align || "left",
+              lineBreak: opts.multiline || false
+            });
+        }
+      };
 
-      // Box Número da Nota
-      doc.save();
-      doc.roundedRect(405, 38, 150, 54, 4).fill("#0f172a");
-      doc.fillColor("#cbd5e1").font("Helvetica-Bold").fontSize(7.5).text("NÚMERO DA NFS-e", 410, 44, { width: 140, align: "center" });
-      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(15).text(numNota, 410, 54, { width: 140, align: "center" });
-      doc.fillColor("#34d399").font("Helvetica-Bold").fontSize(8).text(`Cód. Verif: ${codVerif}`, 410, 75, { width: 140, align: "center" });
-      doc.restore();
+      const drawSectionTitle = (y, title) => {
+        doc.save();
+        doc.rect(X0, y, W, 13).fill("#efefef");
+        doc.lineWidth(0.6).strokeColor(BORDER).rect(X0, y, W, 13).stroke();
+        doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.2)
+          .text(title, X0 + 5, y + 3.2, { width: W - 10, align: "left", lineBreak: false });
+        doc.restore();
+        return y + 13;
+      };
 
-      doc.moveTo(30, 98).lineTo(565, 98).lineWidth(1).strokeColor("#0f172a").stroke();
+      let y = 22;
 
-      // Faixa Chave de Acesso 50 Dígitos
-      doc.save();
-      doc.rect(36, 103, 523, 28).fill("#f8fafc");
-      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 103, 523, 28).stroke();
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(6.8).text("CHAVE DE ACESSO DA NFS-e NACIONAL (50 DÍGITOS)", 42, 107, { width: 511, align: "center" });
-      doc.fillColor("#0f172a").font("Courier-Bold").fontSize(8.8).text(chaveFormatada, 42, 117, { width: 511, align: "center" });
-      doc.restore();
+      // ── 1. CABEÇALHO OFICIAL DANFSE v1.0 (3 Colunas) ──────────────────────
+      const H_TOP = 42;
+      doc.lineWidth(0.7).strokeColor(BORDER).rect(X0, y, W, H_TOP).stroke();
+      doc.moveTo(X0 + 125, y).lineTo(X0 + 125, y + H_TOP).lineWidth(0.5).strokeColor(BORDER).stroke();
+      doc.moveTo(X0 + 375, y).lineTo(X0 + 375, y + H_TOP).lineWidth(0.5).strokeColor(BORDER).stroke();
 
-      // Seção 1: Prestador de Serviços
-      doc.save();
-      doc.rect(36, 137, 523, 15).fill("#e2e8f0");
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("1. PRESTADOR DE SERVIÇOS", 42, 141);
-      doc.restore();
+      // Coluna 1: Logo NFS-e Padrão Nacional
+      doc.fillColor("#15803d").font("Helvetica-Bold").fontSize(17)
+        .text("NFS-", X0 + 12, y + 7, { continued: true })
+        .fillColor("#ca8a04").text("e");
+      doc.fillColor("#1e3a8a").font("Helvetica-Bold").fontSize(6.8)
+        .text("Nota Fiscal de", X0 + 66, y + 9, { lineBreak: false });
+      doc.fillColor("#15803d").font("Helvetica-Bold").fontSize(6.8)
+        .text("Serviço eletrônica", X0 + 66, y + 17, { lineBreak: false });
+      doc.fillColor(MUTED).font("Helvetica").fontSize(5.8)
+        .text("Padrão Nacional • Gov.br", X0 + 12, y + 29, { width: 105, align: "center", lineBreak: false });
 
-      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 153, 523, 60).stroke();
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("RAZÃO SOCIAL / NOME EMPRESARIAL", 42, 158);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(`${invoice.prestadorRazaoSocial || "RENTAL MILLER'S LTDA"} (CorpFlats)`, 42, 168);
+      // Coluna 2: Título DANFSE v1.0
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(10.5)
+        .text("DANFSE v1.0", X0 + 130, y + 8, { width: 240, align: "center", lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.4)
+        .text("DOCUMENTO AUXILIAR DA NOTA FISCAL", X0 + 130, y + 21, { width: 240, align: "center", lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.4)
+        .text("DE SERVIÇO ELETRÔNICA", X0 + 130, y + 30, { width: 240, align: "center", lineBreak: false });
 
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("CNPJ", 320, 158);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(invoice.prestadorCnpj || "47.964.813/0001-65", 320, 168);
+      // Coluna 3: Prefeitura Municipal de Campos dos Goytacazes
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.2)
+        .text("Prefeitura Municipal de Campos", X0 + 380, y + 7, { width: 162, align: "center", lineBreak: false });
+      doc.fillColor(BLACK).font("Helvetica-Bold").fontSize(7.2)
+        .text("dos Goytacazes - RJ", X0 + 380, y + 16, { width: 162, align: "center", lineBreak: false });
+      doc.fillColor(MUTED).font("Helvetica").fontSize(6.3)
+        .text("Secretaria Municipal de Fazenda", X0 + 380, y + 27, { width: 162, align: "center", lineBreak: false });
+      y += H_TOP;
 
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("INSCRIÇÃO MUNICIPAL", 455, 158);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(invoice.prestadorIm || "142591", 455, 168);
+      // ── 2. IDENTIFICAÇÃO DA NFS-e, CHAVE DE ACESSO E QR CODE ─────────────
+      const W_LEFT_ID = 390;
+      const W_RIGHT_QR = W - W_LEFT_ID;
+      const H_ID_ROW = 23;
+      const H_ID_TOTAL = H_ID_ROW * 3;
 
-      doc.moveTo(36, 182).lineTo(559, 182).strokeColor("#cbd5e1").stroke();
+      // Linha 1: Chave de Acesso da NFS-e (50 dígitos)
+      drawCell(X0, y, W_LEFT_ID, H_ID_ROW, "Chave de Acesso da NFS-e", chaveAcesso, { bold: true, fontSize: 8.2 });
 
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("ENDEREÇO E MUNICÍPIO EMISSOR", 42, 187);
-      doc.fillColor("#0f172a").font("Helvetica").fontSize(8.5).text("Av. Pelinca, 100 - Pelinca, Campos dos Goytacazes/RJ • CEP 28035-000 (IBGE 3301009)", 42, 197);
+      // Linha 2: Número da NFS-e | Competência | Data e Hora da emissão da NFS-e
+      drawCell(X0, y + H_ID_ROW, 120, H_ID_ROW, "Número da NFS-e", numNota, { bold: true, fontSize: 9 });
+      drawCell(X0 + 120, y + H_ID_ROW, 115, H_ID_ROW, "Competência da NFS-e", competenciaBr, { bold: true });
+      drawCell(X0 + 235, y + H_ID_ROW, 155, H_ID_ROW, "Data e Hora da emissão da NFS-e", dataHoraBr, { bold: true });
 
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("EMISSÃO / DPS", 395, 187);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8).text(`${dataFormatada} • DPS ${numDps}`, 395, 197);
+      // Linha 3: Número da DPS | Série da DPS | Data e Hora da emissão da DPS
+      drawCell(X0, y + H_ID_ROW * 2, 120, H_ID_ROW, "Número da DPS", numDps);
+      drawCell(X0 + 120, y + H_ID_ROW * 2, 115, H_ID_ROW, "Série da DPS", serieDps);
+      drawCell(X0 + 235, y + H_ID_ROW * 2, 155, H_ID_ROW, "Data e Hora da emissão da DPS", dataHoraBr);
 
-      // Seção 2: Tomador de Serviços
-      doc.save();
-      doc.rect(36, 220, 523, 15).fill("#e2e8f0");
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("2. TOMADOR DE SERVIÇOS (HÓSPEDE / EMPRESA)", 42, 224);
-      doc.restore();
-
-      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 236, 523, 64).stroke();
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("NOME / RAZÃO SOCIAL", 42, 241);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(invoice.tomadorNome || "Hóspede CorpFlats", 42, 251, { width: 270 });
-
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("CPF / CNPJ", 320, 241);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9.5).text(docFormatado, 320, 251);
-
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("UNIDADE / ACOMODAÇÃO", 455, 241);
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(9).text(`Flat ${invoice.flatNumber || "113"}`, 455, 251);
-
-      doc.moveTo(36, 266).lineTo(559, 266).strokeColor("#cbd5e1").stroke();
-
-      const endTomador = `${invoice.tomadorEndereco || invoice.tomadorLogradouro || "Av. Pelinca"}, ${invoice.tomadorNumero || "100"} - ${invoice.tomadorBairro || "Pelinca"}, ${invoice.tomadorCidade || "Campos dos Goytacazes"}/${invoice.tomadorUf || "RJ"} - CEP ${invoice.tomadorCep || "28035-000"}`;
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("ENDEREÇO DO TOMADOR", 42, 271);
-      doc.fillColor("#0f172a").font("Helvetica").fontSize(8.5).text(endTomador, 42, 281, { width: 340 });
-
-      doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(7).text("CONTATO / E-MAIL", 395, 271);
-      doc.fillColor("#0f172a").font("Helvetica").fontSize(8).text(invoice.tomadorEmail || invoice.tomadorTelefone || "Não informado", 395, 281, { width: 158 });
-
-      // Seção 3: Discriminação dos Serviços
-      doc.save();
-      doc.rect(36, 308, 523, 15).fill("#e2e8f0");
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("3. DISCRIMINAÇÃO DOS SERVIÇOS PRESTADOS", 42, 312);
-      doc.restore();
-
-      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 324, 523, 198).stroke();
-      const discText = invoice.discriminacao ||
-        `PRESTAÇÃO DE SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO - APARTAMENTO ${invoice.flatNumber || "113"}.\nDIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.\nHÓSPEDE / TOMADOR: ${invoice.tomadorNome || "Hóspede"} (${docFormatado}).`;
-      doc.fillColor("#0f172a").font("Courier").fontSize(9).text(discText, 44, 334, { width: 505, lineGap: 3 });
-
-      doc.moveTo(36, 494).lineTo(559, 494).strokeColor("#cbd5e1").stroke();
-      doc.fillColor("#475569").font("Helvetica-Bold").fontSize(7.5).text(
-        `CNAE: ${invoice.cnae || "5510-8/01"} (Hotéis e Similares)  •  Cód. Tributação Nacional: 09.02.02 (Hospedagem)  •  Competência: ${competenciaStr}`,
-        44,
-        503,
-        { width: 505 }
-      );
-
-      // Seção 4: Detalhamento de Valores e Impostos
-      doc.save();
-      doc.rect(36, 530, 523, 15).fill("#e2e8f0");
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("4. DETALHAMENTO DE VALORES E TRIBUTOS (R$)", 42, 534);
-      doc.restore();
-
-      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 546, 523, 52).stroke();
-
-      const cols = [
-        { label: "VALOR DOS SERVIÇOS", val: `R$ ${valorStr}`, x: 42, w: 95, color: "#0284c7" },
-        { label: "DEDUÇÕES", val: "R$ 0,00", x: 142, w: 70, color: "#0f172a" },
-        { label: "BASE DE CÁLCULO", val: `R$ ${valorStr}`, x: 218, w: 85, color: "#0f172a" },
-        { label: "ALÍQUOTA ISS", val: `${aliqStr}%`, x: 308, w: 65, color: "#0f172a" },
-        { label: "VALOR ISS (SIMPLES)", val: "R$ 0,00 (DAS)", x: 378, w: 80, color: "#0f172a" },
-        { label: "VALOR LÍQUIDO", val: `R$ ${valorStr}`, x: 462, w: 92, color: "#059669" }
-      ];
-
-      for (const c of cols) {
-        doc.fillColor("#64748b").font("Helvetica-Bold").fontSize(6.8).text(c.label, c.x, 554, { width: c.w, align: "center" });
-        doc.fillColor(c.color).font("Helvetica-Bold").fontSize(10).text(c.val, c.x, 570, { width: c.w, align: "center" });
-      }
-
-      // Seção 5: Autenticidade e QR Code
-      doc.save();
-      doc.rect(36, 610, 523, 15).fill("#e2e8f0");
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.2).text("5. AUTENTICAÇÃO OFICIAL GOV.BR / ADN E INFORMAÇÕES COMPLEMENTARES", 42, 614);
-      doc.restore();
-
-      doc.lineWidth(0.6).strokeColor("#cbd5e1").rect(36, 626, 523, 146).stroke();
-
-      doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.5).text(
-        `• STATUS FISCAL: NOTA FISCAL ELETRÔNICA PADRÃO NACIONAL (${invoice.status === "cancelada" ? "CANCELADA" : "ATIVA / AUTORIZADA"})`,
-        44,
-        638
-      );
-      doc.fillColor("#334155").font("Helvetica").fontSize(8).text(
-        `• Número da NFS-e: ${numNota}   |   Código de Verificação: ${codVerif}   |   Protocolo ADN: ${protocolo}`,
-        44,
-        654
-      );
-      doc.text(
-        "• Documento emitido por ME ou EPP optante pelo Simples Nacional (LC 123/2006 e Resolução CGSN nº 191/2026).",
-        44,
-        670,
-        { width: 400 }
-      );
-      doc.text(
-        `• Tributos aproximados (Lei Federal 12.741/2012): Simples Nacional 6,00% (Federais 4,00% / Municipal ISS 2,00%).`,
-        44,
-        694,
-        { width: 400 }
-      );
-      doc.fillColor("#0284c7").font("Helvetica-Bold").fontSize(8).text(
-        `• Consulta Pública Nacional (Gov.br): ${linkPortal}`,
-        44,
-        714,
-        { width: 400 }
-      );
-
+      // Bloco Direito: QR Code + Texto de Autenticidade Oficial
+      doc.lineWidth(0.5).strokeColor(BORDER).rect(X0 + W_LEFT_ID, y, W_RIGHT_QR, H_ID_TOTAL).stroke();
       if (qrPngBuf) {
         try {
-          doc.image(qrPngBuf, 462, 638, { width: 82, height: 82 });
-          doc.fillColor("#475569").font("Helvetica-Bold").fontSize(6.5).text("QR CODE GOV.BR", 458, 724, { width: 90, align: "center" });
+          doc.image(qrPngBuf, X0 + W_LEFT_ID + 4, y + 3, { width: 63, height: 63 });
         } catch (_) {}
       }
+      doc.fillColor(MUTED).font("Helvetica").fontSize(5.5)
+        .text(
+          "A autenticidade desta NFS-e pode ser verificada pela leitura deste código QR ou pela consulta da chave de acesso no portal nacional da NFS-e.",
+          X0 + W_LEFT_ID + 70,
+          y + 10,
+          { width: W_RIGHT_QR - 74, align: "left", lineGap: 1.2 }
+        );
+      y += H_ID_TOTAL;
+
+      // ── 3. EMITENTE DA NFS-e (Prestador do Serviço) ──────────────────────
+      y = drawSectionTitle(y, "EMITENTE DA NFS-e (Prestador do Serviço)");
+      const H_ROW = 21;
+      drawCell(X0, y, 180, H_ROW, "CNPJ / CPF / NIF", invoice.prestadorCnpj || "47.964.813/0001-65", { bold: true });
+      drawCell(X0 + 180, y, 160, H_ROW, "Inscrição Municipal", invoice.prestadorIm || "142591", { bold: true });
+      drawCell(X0 + 340, y, W - 340, H_ROW, "Telefone", "(22) 2724-2302");
+      y += H_ROW;
+
+      drawCell(X0, y, 340, H_ROW, "Nome / Empresarial", "RENTAL MILLERS LTDA", { bold: true });
+      drawCell(X0 + 340, y, W - 340, H_ROW, "E-mail", "contato@corpflats.com.br");
+      y += H_ROW;
+
+      drawCell(X0, y, 300, H_ROW, "Endereço", "Doutor Júlio Barcelos, 3, BLOCO:06;APT:204 - Parque Jóquei Club");
+      drawCell(X0 + 300, y, 160, H_ROW, "Município", "Campos dos Goytacazes - RJ");
+      drawCell(X0 + 460, y, W - 460, H_ROW, "CEP", "28020-140");
+      y += H_ROW;
+
+      drawCell(X0, y, 275, H_ROW, "Simples Nacional na Data de Competência", "Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)");
+      drawCell(X0 + 275, y, W - 275, H_ROW, "Regime de Apuração Tributária pelo SN", "Apuração dos tributos federais e municipal pelo Simples Nacional");
+      y += H_ROW;
+
+      // ── 4. TOMADOR DO SERVIÇO ────────────────────────────────────────────
+      y = drawSectionTitle(y, "TOMADOR DO SERVIÇO");
+      drawCell(X0, y, 180, H_ROW, "CNPJ / CPF / NIF", docFormatado, { bold: true });
+      drawCell(X0 + 180, y, 160, H_ROW, "Inscrição Municipal", "-");
+      drawCell(X0 + 340, y, W - 340, H_ROW, "Telefone", foneFormatado);
+      y += H_ROW;
+
+      drawCell(X0, y, 340, H_ROW, "Nome / Empresarial", invoice.tomadorNome || "Hóspede", { bold: true });
+      drawCell(X0 + 340, y, W - 340, H_ROW, "E-mail", invoice.tomadorEmail || "-");
+      y += H_ROW;
+
+      const endTomador = `${invoice.tomadorEndereco || invoice.tomadorLogradouro || "Av. Pelinca"}, ${invoice.tomadorNumero || "100"}${invoice.tomadorComplemento ? ` (${invoice.tomadorComplemento})` : ""} - ${invoice.tomadorBairro || "Pelinca"}`;
+      const munTomador = `${invoice.tomadorCidade || "Campos dos Goytacazes"} - ${invoice.tomadorUf || "RJ"}`;
+      drawCell(X0, y, 300, H_ROW, "Endereço", endTomador);
+      drawCell(X0 + 300, y, 160, H_ROW, "Município", munTomador);
+      drawCell(X0 + 460, y, W - 460, H_ROW, "CEP", cepFormatado);
+      y += H_ROW;
+
+      // ── 5. INTERMEDIÁRIO DO SERVIÇO ──────────────────────────────────────
+      doc.lineWidth(0.5).strokeColor(BORDER).rect(X0, y, W, 14).stroke();
+      doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(6.5)
+        .text("INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e", X0, y + 4, { width: W, align: "center", lineBreak: false });
+      y += 14;
+
+      // ── 6. SERVIÇO PRESTADO ──────────────────────────────────────────────
+      y = drawSectionTitle(y, "SERVIÇO PRESTADO");
+      drawCell(X0, y, 185, H_ROW, "Código de Tributação Nacional", "09.02.02 - Hospedagens e Congêneres");
+      drawCell(X0 + 185, y, 135, H_ROW, "Código de Tributação Municipal", "006 - Hospedagem");
+      drawCell(X0 + 320, y, 145, H_ROW, "Local da Prestação", "Campos dos Goytacazes - RJ");
+      drawCell(X0 + 465, y, W - 465, H_ROW, "País da Prestação", "Brasil");
+      y += H_ROW;
+
+      const H_DESC = 68;
+      const discText = invoice.discriminacao ||
+        `Nota relativa à hospedagem de ${invoice.tomadorNome || "Hóspede"}, no Flat ${invoice.flatNumber || "113"}. Local: CorpFlats. Av. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ, CEP 28035-000. Quantidade de diárias: 1.`;
+      drawCell(X0, y, W, H_DESC, "Descrição do Serviço", discText, { multiline: true, fontSize: 7.8 });
+      y += H_DESC;
+
+      // ── 7. TRIBUTAÇÃO MUNICIPAL ──────────────────────────────────────────
+      y = drawSectionTitle(y, "TRIBUTAÇÃO MUNICIPAL");
+      const C4 = W / 4;
+      drawCell(X0, y, C4, H_ROW, "Tributação do ISSQN", "Operação Tributável");
+      drawCell(X0 + C4, y, C4, H_ROW, "País Resultado da Prestação do Serviço", "-");
+      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Município de Incidência do ISSQN", "Campos dos Goytacazes - RJ");
+      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Regime Especial de Tributação", "Nenhum");
+      y += H_ROW;
+
+      drawCell(X0, y, C4, H_ROW, "Tipo de Imunidade", "-");
+      drawCell(X0 + C4, y, C4, H_ROW, "Suspensão da Exigibilidade do ISSQN", "Não");
+      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Número Processo Suspensão", "-");
+      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Benefício Municipal", "-");
+      y += H_ROW;
+
+      drawCell(X0, y, C4, H_ROW, "Valor do Serviço", `R$ ${valorStr}`, { bold: true });
+      drawCell(X0 + C4, y, C4, H_ROW, "Desconto Incondicionado", "R$ 0,00");
+      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Total Deduções/Reduções", "-");
+      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Cálculo do BM", "-");
+      y += H_ROW;
+
+      drawCell(X0, y, C4, H_ROW, "BC ISSQN", `R$ ${valorStr}`);
+      drawCell(X0 + C4, y, C4, H_ROW, "Alíquota Aplicada", `${aliqStr}%`);
+      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Retenção do ISSQN", "Não Retido");
+      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "ISSQN Apurado", "-");
+      y += H_ROW;
+
+      // ── 8. TRIBUTAÇÃO FEDERAL ────────────────────────────────────────────
+      y = drawSectionTitle(y, "TRIBUTAÇÃO FEDERAL");
+      drawCell(X0, y, C4, H_ROW, "IRRF", "-");
+      drawCell(X0 + C4, y, C4, H_ROW, "CP", "-");
+      drawCell(X0 + C4 * 2, y, C4, H_ROW, "CSLL", "-");
+      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "Retenção do PIS/COFINS", "-");
+      y += H_ROW;
+
+      drawCell(X0, y, C4, H_ROW, "PIS - Débito Apuração Própria", "-");
+      drawCell(X0 + C4, y, C4, H_ROW, "COFINS - Débito Apuração Própria", "-");
+      drawCell(X0 + C4 * 2, y, W - C4 * 2, H_ROW, "Descrição Tributação Federal", "-");
+      y += H_ROW;
+
+      // ── 9. VALOR TOTAL DA NFS-E ──────────────────────────────────────────
+      y = drawSectionTitle(y, "VALOR TOTAL DA NFS-E");
+      drawCell(X0, y, C4, H_ROW, "Valor do Serviço", `R$ ${valorStr}`, { bold: true });
+      drawCell(X0 + C4, y, C4, H_ROW, "Desconto Condicionado", "R$ 0,00");
+      drawCell(X0 + C4 * 2, y, C4, H_ROW, "Desconto Incondicionado", "R$ 0,00");
+      drawCell(X0 + C4 * 3, y, W - C4 * 3, H_ROW, "ISSQN Retido", "-");
+      y += H_ROW;
+
+      const C3 = W / 3;
+      drawCell(X0, y, C3, H_ROW, "Total das Retenções Federais", "R$ 0,00");
+      drawCell(X0 + C3, y, C3, H_ROW, "PIS/COFINS - Débito Apuração Própria", "-");
+      drawCell(X0 + C3 * 2, y, W - C3 * 2, H_ROW, "Valor Líquido da NFS-e", `R$ ${valorStr}`, { bold: true, fontSize: 8.6 });
+      y += H_ROW;
+
+      // ── 10. TOTAIS APROXIMADOS DOS TRIBUTOS ──────────────────────────────
+      y = drawSectionTitle(y, "TOTAIS APROXIMADOS DOS TRIBUTOS");
+      drawCell(X0, y, C3, H_ROW, "Federais", "0,00%", { align: "center" });
+      drawCell(X0 + C3, y, C3, H_ROW, "Estaduais", "0,00%", { align: "center" });
+      drawCell(X0 + C3 * 2, y, W - C3 * 2, H_ROW, "Municipais", "0,00%", { align: "center" });
+      y += H_ROW;
+
+      // ── 11. INFORMAÇÕES COMPLEMENTARES ───────────────────────────────────
+      y = drawSectionTitle(y, "INFORMAÇÕES COMPLEMENTARES");
+      const H_INF = Math.max(36, 815 - y);
+      const infoComp =
+        `Documento emitido por ME ou EPP optante pelo Simples Nacional. Não gera direito a crédito fiscal de IPI.\n` +
+        `Número DF-e Nacional (ADN): ${invoice.nDFSe || "129197744"}   |   Código de Verificação: ${codVerif}   |   Consulta Pública: ${linkPortal}`;
+      drawCell(X0, y, W, H_INF, "", infoComp, { multiline: true, fontSize: 7 });
 
       doc.end();
     } catch (err) {
