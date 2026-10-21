@@ -4,6 +4,8 @@ import crypto from "crypto";
 import zlib from "zlib";
 import https from "https";
 import { fileURLToPath } from "url";
+import forge from "node-forge";
+import { SignedXml } from "xml-crypto";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 
@@ -415,6 +417,11 @@ export const TAX_CATALOG = {
     codigoTributacaoMunicipal: "006",
     codigoItemListaServico: "09.02",
     codigoNbs: "1.0101.10.00",
+    cNBS: "101011000", // Nota Técnica 008: Nomenclatura Brasileira de Serviços (Hospedagem em hotéis e similares)
+    cIndOp: "100301", // Nota Técnica 008: Código Indicador da Operação (Prestação de serviço no estabelecimento)
+    cstIbsCbs: "200", // Nota Técnica 008: Código de Situação Tributária (CST-IBS/CBS)
+    cClassTrib: "200051", // Nota Técnica 008: Classificação Tributária (ClassTrib)
+    indTotTrib: 0, // Decreto 8.264/2014 (Lei 12.741/2012): Indicador de opção pelo não destaque (Simples Nacional)
     opSimpNac: 3, // 3 = Optante Simples Nacional ME/EPP (Anexo I SNNFSe)
     regApTribSN: 1, // 1 = Apuração dos tributos federais e municipal pelo SN
     regEspTrib: 0, // 0 = Nenhum
@@ -555,6 +562,7 @@ export function buildNationalDpsPayload({
           cTribNac: rule.codigoTributacaoNacional.replace(/\D/g, "") || "090202",
           cTribMun: rule.codigoTributacaoMunicipal || "006",
           CNAE: rule.cnae.replace(/\D/g, ""),
+          cNBS: rule.cNBS || "101011000",
           xDescServ: discriminacao || `${rule.padraoDescricao} - APARTAMENTO ${flatNumber || ""}${reservationCode ? ` (RESERVA ${reservationCode})` : ""}.`
         }
       },
@@ -568,6 +576,7 @@ export function buildNationalDpsPayload({
             tpRetISSQN: 1 // Não retido
           },
           totTrib: {
+            indTotTrib: 0,
             pTotTrib: {
               pTotTribFed: "0.00",
               pTotTribEst: "0.00",
@@ -578,6 +587,22 @@ export function buildNationalDpsPayload({
               vTotTribEst: "0.00",
               vTotTribMun: (valor * (rule.aliquotaIss / 100)).toFixed(2)
             }
+          }
+        },
+        IBSCBS: {
+          finNFSe: 0,
+          indFinal: 0,
+          cIndOp: rule.cIndOp || "100301",
+          indDest: 0,
+          valores: {
+            trib: {
+              gIBSCBS: {
+                CST: rule.cstIbsCbs || "200",
+                cClassTrib: rule.cClassTrib || "200051"
+              }
+            },
+            cLocalidadeIncid: rule.municipioIncidencia,
+            pRedutor: 0
           }
         }
       }
@@ -616,9 +641,209 @@ export function signDpsXmlContent({
   return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${versao}">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"', '')}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64Pure}</X509Certificate></X509Data></KeyInfo></Signature></DPS>`;
 }
 
-function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, im = "142591", tomaXml, xDescServ, valorNum, includeFinNFSe = false }) {
+function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, im = "142591", tomaXml, xDescServ, valorNum, includeFinNFSe = false, includeNt008 = false }) {
   const finTag = includeFinNFSe ? `<finNFSe>0</finNFSe>` : "";
-  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>1.00</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><IM>${im}</IM><regTrib><opSimpNac>3</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090202</cTribNac><cTribMun>006</cTribMun><xDescServ>${escXml(xDescServ)}</xDescServ></cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun><totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib></trib></valores></infDPS>`;
+  const nbsTag = includeNt008 ? `<cNBS>101011000</cNBS>` : "";
+  const ibscbsTag = includeNt008
+    ? `<IBSCBS><finNFSe>0</finNFSe><indFinal>0</indFinal><cIndOp>100301</cIndOp><indDest>0</indDest><valores><trib><gIBSCBS><CST>200</CST><cClassTrib>200051</cClassTrib></gIBSCBS></trib><cLocalidadeIncid>${cLocEmi}</cLocalidadeIncid><pRedutor>0</pRedutor></valores></IBSCBS>`
+    : "";
+  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>1.00</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><IM>${im}</IM><regTrib><opSimpNac>3</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090202</cTribNac><cTribMun>006</cTribMun><xDescServ>${escXml(xDescServ)}</xDescServ>${nbsTag}</cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun><totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib></trib>${ibscbsTag}</valores></infDPS>`;
+}
+
+function signXmlElementExcC14n(xml, elementId, privKeyPem, certPem) {
+  const certClean = certPem
+    .replace(/-----BEGIN CERTIFICATE-----/g, "")
+    .replace(/-----END CERTIFICATE-----/g, "")
+    .replace(/\r?\n/g, "");
+  const sig = new SignedXml({
+    privateKey: privKeyPem,
+    publicCert: certPem,
+    signatureAlgorithm: "http://www.w3.org/2000/09/xmldsig#rsa-sha1",
+    canonicalizationAlgorithm: "http://www.w3.org/2001/10/xml-exc-c14n#"
+  });
+  sig.addReference({
+    xpath: elementId ? `//*[@Id='${elementId}']` : "/*",
+    transforms: [
+      "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+      "http://www.w3.org/2001/10/xml-exc-c14n#"
+    ],
+    digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha1",
+    isEmptyUri: !elementId
+  });
+  sig.keyInfoProvider = {
+    getKey: () => privKeyPem,
+    getKeyInfo: () => `<X509Data><X509Certificate>${certClean}</X509Certificate></X509Data>`
+  };
+  sig.computeSignature(xml, {
+    location: { reference: elementId ? `//*[@Id='${elementId}']/parent::*` : "/*", action: "append" }
+  });
+  return sig.getSignedXml();
+}
+
+async function transmitViaMunicipalAdnIntegrator({
+  numeroRps,
+  cnpj,
+  im = "142591",
+  tomaDoc,
+  isCnpj,
+  tomaNome,
+  xLgrToma,
+  nroToma,
+  xCplToma,
+  xBairroToma,
+  cMunToma,
+  cepToma,
+  foneToma,
+  emailToma,
+  valorNum,
+  pAliq,
+  xDescServ,
+  dComp,
+  includeNbsTag = false
+}) {
+  ensureNfseCertFilesOnDisk();
+  const pfxBuf = getCertPfxBuffer();
+  const password = (process.env.CERT_PFX_PASSWORD || process.env.CERT_PASS || CERT_PASS || "").trim();
+  if (!pfxBuf) throw new Error("Certificado A1 PFX não encontrado.");
+
+  const p12Asn1 = forge.asn1.fromDer(pfxBuf.toString("binary"));
+  const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, password);
+  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ?? [];
+  const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] ?? [];
+  const privKeyPem = forge.pki.privateKeyToPem(keyBags[0].key);
+  const entityCertBag = certBags.find(b => !(b.cert.getExtension("basicConstraints")?.cA === true)) ?? certBags[0];
+  const certPem = forge.pki.certificateToPem(entityCertBag.cert);
+
+  const rpsNum = Number(numeroRps || (Date.now() % 900000 + 100000));
+  const loteId = `Lote_${rpsNum}`;
+  const rpsId = `Rps_${rpsNum}`;
+  const aliqFormatted = (Number(pAliq || 2) / 100).toFixed(4);
+
+  const identDoc = isCnpj ? `<CpfCnpj><Cnpj>${tomaDoc}</Cnpj></CpfCnpj>` : `<CpfCnpj><Cpf>${tomaDoc}</Cpf></CpfCnpj>`;
+  const endComp = xCplToma ? `<Complemento>${escXml(xCplToma)}</Complemento>` : "";
+  const endBlk = `<Endereco><Endereco>${escXml(xLgrToma)}</Endereco><Numero>${escXml(nroToma)}</Numero>${endComp}<Bairro>${escXml(xBairroToma)}</Bairro><CodigoMunicipio>${cMunToma}</CodigoMunicipio><Uf>RJ</Uf><Cep>${cepToma}</Cep></Endereco>`;
+  const contatoBlk = (emailToma || foneToma)
+    ? `<Contato>${foneToma ? `<Telefone>${foneToma}</Telefone>` : ""}${emailToma ? `<Email>${escXml(emailToma)}</Email>` : ""}</Contato>`
+    : "";
+  const tomadorXml = `<TomadorServico><IdentificacaoTomador>${identDoc}</IdentificacaoTomador><RazaoSocial>${escXml(tomaNome)}</RazaoSocial>${endBlk}${contatoBlk}</TomadorServico>`;
+
+  // Adequação Decreto 8.264/2014 (totTrib / indTotTrib = 0) + Nota Técnica 008 (IBSCBS: cIndOp, CST, cClassTrib, NBS)
+  const tribBlock = `<trib><tribFed><piscofins><CST>00</CST><vBCPisCofins>0.00</vBCPisCofins><pAliqPis>0.00</pAliqPis><pAliqCofins>0.00</pAliqCofins><vPis>0.00</vPis><vCofins>0.00</vCofins></piscofins></tribFed><totTrib><indTotTrib>0</indTotTrib></totTrib></trib>`;
+  const ibscbsBlock = `<IBSCBS><finNFSe>0</finNFSe><indFinal>0</indFinal><cIndOp>100301</cIndOp><indDest>0</indDest><valores><trib><gIBSCBS><CST>200</CST><cClassTrib>200051</cClassTrib></gIBSCBS></trib><cLocalidadeIncid>3301009</cLocalidadeIncid><pRedutor>0</pRedutor></valores></IBSCBS>`;
+  const nbsXml = includeNbsTag ? `<CodigoNbs>101011000</CodigoNbs>` : "";
+
+  const rpsUnsigned = `<Rps xmlns="http://www.giss.com.br/tipos-v2_04.xsd"><InfDeclaracaoPrestacaoServico Id="${rpsId}"><Rps><IdentificacaoRps><Numero>${rpsNum}</Numero><Serie>1</Serie><Tipo>1</Tipo></IdentificacaoRps><DataEmissao>${dComp}</DataEmissao><Status>1</Status></Rps><Competencia>${dComp}</Competencia><Servico><Valores><ValorServicos>${valorNum}</ValorServicos><ValorIss>0.00</ValorIss><Aliquota>${aliqFormatted}</Aliquota>${tribBlock}${ibscbsBlock}</Valores><IssRetido>2</IssRetido><ItemListaServico>09.02</ItemListaServico><CodigoCnae>5510801</CodigoCnae><CodigoTributacaoMunicipio>799020000</CodigoTributacaoMunicipio>${nbsXml}<Discriminacao>${escXml(xDescServ)}</Discriminacao><CodigoMunicipio>3301009</CodigoMunicipio><CodigoPais>0076</CodigoPais><ExigibilidadeISS>1</ExigibilidadeISS><MunicipioIncidencia>3301009</MunicipioIncidencia></Servico><Prestador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${im}</InscricaoMunicipal></Prestador>${tomadorXml}<OptanteSimplesNacional>1</OptanteSimplesNacional><IncentivoFiscal>2</IncentivoFiscal></InfDeclaracaoPrestacaoServico></Rps>`;
+  const loteUnsigned = `<EnviarLoteRpsEnvio xmlns="http://www.giss.com.br/enviar-lote-rps-envio-v2_04.xsd" xmlns:t="http://www.giss.com.br/tipos-v2_04.xsd"><LoteRps Id="${loteId}" versao="2.04"><t:NumeroLote>${rpsNum}</t:NumeroLote><t:Prestador><t:CpfCnpj><t:Cnpj>${cnpj}</t:Cnpj></t:CpfCnpj><t:InscricaoMunicipal>${im}</t:InscricaoMunicipal></t:Prestador><t:QuantidadeRps>1</t:QuantidadeRps><t:ListaRps>${rpsUnsigned}</t:ListaRps></LoteRps></EnviarLoteRpsEnvio>`;
+
+  const loteWithRpsSigned = signXmlElementExcC14n(loteUnsigned, rpsId, privKeyPem, certPem);
+  const dadosSigned = signXmlElementExcC14n(loteWithRpsSigned, loteId, privKeyPem, certPem);
+  const cabec = `<cabecalho xmlns="http://www.giss.com.br/cabecalho-v2_04.xsd" versao="2.04"><versaoDados>2.04</versaoDados></cabecalho>`;
+
+  const callIntegratorWs = (action, dadosXml) => new Promise((resolve, reject) => {
+    const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://nfse.abrasf.org.br"><soapenv:Header/><soapenv:Body><ns:${action}Request><nfseCabecMsg><![CDATA[${cabec}]]></nfseCabecMsg><nfseDadosMsg><![CDATA[${dadosXml}]]></nfseDadosMsg></ns:${action}Request></soapenv:Body></soapenv:Envelope>`;
+    const bodyBuf = Buffer.from(soapEnvelope, "utf-8");
+    const req = https.request({
+      hostname: "ws-goytacazes.giss.com.br",
+      port: 443,
+      path: "/service-ws/nf/nfse-ws",
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml;charset=UTF-8",
+        "SOAPAction": `http://nfse.abrasf.org.br/${action}`,
+        "Content-Length": bodyBuf.length
+      },
+      pfx: pfxBuf,
+      passphrase: password,
+      rejectUnauthorized: true
+    }, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    });
+    req.setTimeout(45000, () => req.destroy(new Error("Timeout no integrador municipal ADN")));
+    req.on("error", reject);
+    req.write(bodyBuf);
+    req.end();
+  });
+
+  const rawEnvio = await callIntegratorWs("RecepcionarLoteRps", dadosSigned);
+  const protMatch = rawEnvio.match(/Protocolo(?:&gt;|>)(.*?)(?:&lt;|<)/i);
+  if (!protMatch) {
+    const outXml = (rawEnvio.match(/<outputXML>([\s\S]*?)<\/outputXML>/)?.[1] || rawEnvio)
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    if (!includeNbsTag && /nbs|CodigoNbs/i.test(outXml)) {
+      return transmitViaMunicipalAdnIntegrator({
+        numeroRps, cnpj, im, tomaDoc, isCnpj, tomaNome, xLgrToma, nroToma, xCplToma, xBairroToma,
+        cMunToma, cepToma, foneToma, emailToma, valorNum, pAliq, xDescServ, dComp, includeNbsTag: true
+      });
+    }
+    throw new Error(`Rejeição na recepção do lote: ${outXml.slice(0, 350)}`);
+  }
+
+  const protocolo = protMatch[1].trim();
+  const consultaUnsigned = `<ConsultarLoteRpsEnvio xmlns="http://www.giss.com.br/consultar-lote-rps-envio-v2_04.xsd" xmlns:t="http://www.giss.com.br/tipos-v2_04.xsd"><Prestador><t:CpfCnpj><t:Cnpj>${cnpj}</t:Cnpj></t:CpfCnpj><t:InscricaoMunicipal>${im}</t:InscricaoMunicipal></Prestador><Protocolo>${protocolo}</Protocolo></ConsultarLoteRpsEnvio>`;
+
+  for (const delay of [3000, 5000, 7000, 10000]) {
+    await new Promise(r => setTimeout(r, delay));
+    const consultaSigned = signXmlElementExcC14n(consultaUnsigned, null, privKeyPem, certPem);
+    const rawConsulta = await callIntegratorWs("ConsultarLoteRps", consultaSigned);
+    const sitMatch = rawConsulta.match(/Situacao(?:&gt;|>)([0-9]+)/i);
+    const situacao = sitMatch ? sitMatch[1] : null;
+    if (situacao === "2") continue;
+
+    const unescapedXml = (rawConsulta.match(/<outputXML>([\s\S]*?)<\/outputXML>/)?.[1] || rawConsulta)
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    if (situacao === "4" || unescapedXml.includes("CompNfse") || unescapedXml.includes("InfNfse")) {
+      const numNota = (unescapedXml.match(/<[\w:]*Numero>([\s\S]*?)<\/[\w:]*Numero>/)?.[1] || "").trim();
+      const codVerif = (unescapedXml.match(/<[\w:]*CodigoVerificacao>([\s\S]*?)<\/[\w:]*CodigoVerificacao>/)?.[1] || "").trim();
+
+      // Sincroniza imediatamente com o ADN Nacional (adn.nfse.gov.br) para obter a Chave de Acesso oficial de 50 dígitos e o XML v1.01
+      let chaveAdn = null;
+      let xmlAdn = null;
+      try {
+        await new Promise(r => setTimeout(r, 1500));
+        const dfeRes = await fetchNationalDfeFromAdn(270, "producao");
+        const loteDfe = Array.isArray(dfeRes.response?.LoteDFe) ? dfeRes.response.LoteDFe : [];
+        const matchedDfe = loteDfe.find(item => item.xmlDecoded && item.xmlDecoded.includes(`<nNFSe>${numNota}</nNFSe>`));
+        if (matchedDfe) {
+          chaveAdn = matchedDfe.ChaveAcesso;
+          xmlAdn = matchedDfe.xmlDecoded;
+        }
+      } catch (_) {}
+
+      return {
+        statusCode: 200,
+        response: {
+          numeroNfse: numNota,
+          chaveAcesso: chaveAdn,
+          codigoVerificacao: codVerif,
+          protocolo,
+          nfseXmlGZipB64: xmlAdn ? zlib.gzipSync(Buffer.from(xmlAdn, "utf-8")).toString("base64") : undefined
+        }
+      };
+    }
+
+    if (!includeNbsTag && /nbs|CodigoNbs/i.test(unescapedXml)) {
+      return transmitViaMunicipalAdnIntegrator({
+        numeroRps: rpsNum + 1, cnpj, im, tomaDoc, isCnpj, tomaNome, xLgrToma, nroToma, xCplToma, xBairroToma,
+        cMunToma, cepToma, foneToma, emailToma, valorNum, pAliq, xDescServ, dComp, includeNbsTag: true
+      });
+    }
+    const msgs = Array.from(unescapedXml.matchAll(/<[\w:]*Mensagem>([\s\S]*?)<\/[\w:]*Mensagem>/g)).map(m => m[1].trim());
+    return {
+      statusCode: 400,
+      response: {
+        erros: [{ Codigo: "ERR_ADN_MUN", Descricao: msgs.join(" | ") || "Rejeição no processamento do lote" }]
+      }
+    };
+  }
+
+  return {
+    statusCode: 202,
+    response: {
+      erros: [{ Codigo: "PROCESSING", Descricao: `Lote ${protocolo} recebido e em processamento no ADN.` }]
+    }
+  };
 }
 
 export async function processNationalInvoiceEmission({
@@ -744,6 +969,30 @@ export async function processNationalInvoiceEmission({
         });
         dpsXml = signOrWrapDps(infDPS101, "1.01");
         sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+      }
+      // Fallback automático para o Integrador Municipal ADN (Campos dos Goytacazes aderenteAmbienteNacional=1) quando SEFIN retorna E0160/E0012
+      const postErrors = sefinResult?.response?.erros || [];
+      if (Array.isArray(postErrors) && postErrors.some(e => ["E0160", "E0012", "E0014"].includes(String(e.Codigo || "").trim()))) {
+        sefinResult = await transmitViaMunicipalAdnIntegrator({
+          numeroRps: nDPS,
+          cnpj,
+          im: "142591",
+          tomaDoc,
+          isCnpj,
+          tomaNome: dps.toma?.xNome || "Hóspede",
+          xLgrToma,
+          nroToma,
+          xCplToma,
+          xBairroToma,
+          cMunToma,
+          cepToma,
+          foneToma,
+          emailToma,
+          valorNum,
+          pAliq,
+          xDescServ,
+          dComp
+        });
       }
     }
   } catch (err) {
