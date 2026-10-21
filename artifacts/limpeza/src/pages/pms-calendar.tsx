@@ -4807,7 +4807,7 @@ export default function PmsCalendar() {
               <TabsList className={`w-full p-1 bg-muted/60 rounded-xl grid ${selectedRes ? "grid-cols-5" : "grid-cols-2"} gap-1 h-auto`}>
                 <TabsTrigger
                   value="reservation"
-                  className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                  className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
                 >
                   <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
                   <span className="truncate">Reserva</span>
@@ -4815,7 +4815,7 @@ export default function PmsCalendar() {
                 
                 <TabsTrigger
                   value="payments"
-                  className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                  className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
                 >
                   <CreditCard className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   <span className="truncate">Pagamento</span>
@@ -4825,12 +4825,19 @@ export default function PmsCalendar() {
                   <>
                     <TabsTrigger
                       value="communications"
-                      className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                      className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
                     >
-                      <MessageCircle className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                      <div className="flex items-center gap-0.5">
+                        <MessageCircle className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                        {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
+                          <span className="text-[9px] px-1 py-0 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 sm:hidden">
+                            {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
+                          </span>
+                        )}
+                      </div>
                       <span className="truncate">Mensagens</span>
                       {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
-                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 ml-0.5">
+                        <span className="hidden sm:inline-flex text-[10px] px-1.5 py-0.2 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 ml-0.5">
                           {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
                         </span>
                       )}
@@ -4838,7 +4845,7 @@ export default function PmsCalendar() {
 
                     <TabsTrigger
                       value="audit"
-                      className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                      className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
                     >
                       <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
                       <span className="truncate">Histórico</span>
@@ -4846,7 +4853,7 @@ export default function PmsCalendar() {
 
                     <TabsTrigger
                       value="links"
-                      className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                      className="text-[10.5px] sm:text-xs font-semibold py-1.5 sm:py-2 px-1 gap-0.5 sm:gap-1 rounded-lg flex flex-col sm:flex-row items-center justify-center truncate data-[state=active]:shadow-xs"
                     >
                       <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
                       <span className="truncate">Links</span>
@@ -6054,14 +6061,14 @@ export default function PmsCalendar() {
                 <div className="space-y-3">
                   {/* Hóspede 1 (Principal) */}
                   <div className="p-3 bg-muted/30 border rounded-xl space-y-2.5">
-                    <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between">
+                    <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between gap-2 flex-wrap">
                       <span className="flex items-center gap-1.5">
                         <User className="w-3.5 h-3.5 text-primary" />
                         <span>Hóspede 1 (Titular)</span>
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {formRequesterType !== "guest" && (
-                          <div className="w-56">
+                          <div className="w-44 sm:w-56">
                             <Select value={formGuestId} onValueChange={handleSelectGuest}>
                               <SelectTrigger className="text-[10px] h-6 px-2">
                                 <SelectValue placeholder="Puxar do CRM..." />
@@ -6080,7 +6087,7 @@ export default function PmsCalendar() {
                             </Select>
                           </div>
                         )}
-                        <Badge variant="outline" className="text-[9px]">Check-in Principal</Badge>
+                        <Badge variant="outline" className="text-[9px] shrink-0">Check-in Principal</Badge>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -6329,7 +6336,7 @@ export default function PmsCalendar() {
                     )}
 
                     {/* Toggles manuais para Menor de Idade e Residente de Campos/RJ */}
-                    <div className="flex items-center justify-between pt-1 border-t border-border/50 text-[11px]">
+                    <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-border/50 text-[11px]">
                       <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
                         <input
                           type="checkbox"
@@ -7365,13 +7372,13 @@ export default function PmsCalendar() {
 
                     {/* Subseção A: Diárias da Hospedagem */}
                     <div className="space-y-2 pt-1">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5">
-                          <CalendarDays className="w-4 h-4 text-primary" />
+                          <CalendarDays className="w-4 h-4 text-primary shrink-0" />
                           <span className="text-xs font-bold text-foreground">Diárias da Hospedagem ({formDailyRates.length})</span>
                         </div>
 
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <Button
                             type="button"
                             variant="outline"
@@ -7413,83 +7420,102 @@ export default function PmsCalendar() {
                             formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
                           } catch {}
 
+                          const handleDeleteNight = () => {
+                            const updatedRates = formDailyRates.filter((_, i) => i !== idx);
+                            if (updatedRates.length > 0) {
+                              const firstDate = updatedRates[0].date;
+                              const lastDate = updatedRates[updatedRates.length - 1].date;
+                              const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
+                              setFormDailyRates(updatedRates);
+                              setFormCheckin(firstDate);
+                              setFormCheckout(newCheckout);
+                              syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel);
+                            }
+                          };
+
                           return (
                             <div 
                               key={d.date || idx}
-                              className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                              className="p-2.5 bg-background border border-border rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
                             >
-                              <div className="flex items-center gap-1.5 min-w-[130px]">
-                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                                  #{idx + 1}
-                                </span>
-                                <span className="font-medium text-foreground text-xs truncate">
-                                  {formattedDate}
-                                </span>
+                              <div className="flex items-center justify-between sm:justify-start gap-1.5 shrink-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                                    #{idx + 1}
+                                  </span>
+                                  <span className="font-semibold text-foreground text-xs whitespace-nowrap">
+                                    {formattedDate}
+                                  </span>
+                                </div>
+
+                                {formDailyRates.length > 1 && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={handleDeleteNight}
+                                    className="h-6 w-6 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer sm:hidden"
+                                    title="Excluir diária"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
                               </div>
 
-                              <div className="w-36">
-                                <Select
-                                  value={d.channel || formChannel || "whatsapp"}
-                                  onValueChange={(val) => {
-                                    setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
-                                  }}
-                                >
-                                  <SelectTrigger className="h-7 text-xs font-medium">
-                                    <SelectValue placeholder="Canal" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
-                                    <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                                    <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                                    <SelectItem value="site">🌐 Site Próprio</SelectItem>
-                                    <SelectItem value="balcao">🏨 Balcão</SelectItem>
-                                    <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
+                              <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-1 sm:justify-end">
+                                <div className="flex-1 sm:flex-initial sm:w-44 min-w-0">
+                                  <Select
+                                    value={d.channel || formChannel || "whatsapp"}
+                                    onValueChange={(val) => {
+                                      setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
+                                      <SelectValue placeholder="Canal" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
+                                      <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                                      <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                      <SelectItem value="site">🌐 Site Próprio</SelectItem>
+                                      <SelectItem value="balcao">🏨 Balcão</SelectItem>
+                                      <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
 
-                              <div className="w-28 relative">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">
-                                  R$
-                                </span>
-                                <Input
-                                  type="number"
-                                  value={d.rate}
-                                  onChange={(e) => {
-                                    const val = Number(e.target.value) || 0;
-                                    setFormDailyRates(prev => {
-                                      const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
-                                      syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
-                                      return nextRates;
-                                    });
-                                  }}
-                                  className="h-7 pl-7 pr-2 text-xs font-bold text-right"
-                                />
-                              </div>
+                                <div className="w-28 relative shrink-0">
+                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
+                                    R$
+                                  </span>
+                                  <Input
+                                    type="number"
+                                    value={d.rate}
+                                    onChange={(e) => {
+                                      const val = Number(e.target.value) || 0;
+                                      setFormDailyRates(prev => {
+                                        const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
+                                        syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
+                                        return nextRates;
+                                      });
+                                    }}
+                                    className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full"
+                                  />
+                                </div>
 
-                              {formDailyRates.length > 1 && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    const updatedRates = formDailyRates.filter((_, i) => i !== idx);
-                                    if (updatedRates.length > 0) {
-                                      const firstDate = updatedRates[0].date;
-                                      const lastDate = updatedRates[updatedRates.length - 1].date;
-                                      const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
-                                      setFormDailyRates(updatedRates);
-                                      setFormCheckin(firstDate);
-                                      setFormCheckout(newCheckout);
-                                      syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel);
-                                    }
-                                  }}
-                                  className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                  title="Excluir diária"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              )}
+                                {formDailyRates.length > 1 && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={handleDeleteNight}
+                                    className="hidden sm:inline-flex h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                    title="Excluir diária"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -7500,7 +7526,7 @@ export default function PmsCalendar() {
                     <div className="space-y-2 pt-2 border-t border-border/70">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-amber-500" />
+                          <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
                           <span className="text-xs font-bold text-foreground">Taxas, Serviços Adicionais & Descontos ({formCharges.length})</span>
                         </div>
 
@@ -7581,14 +7607,14 @@ export default function PmsCalendar() {
                           {formCharges.map((charge, cIdx) => (
                             <div
                               key={charge.id || cIdx}
-                              className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                              className="p-2.5 bg-background border border-border rounded-xl grid grid-cols-12 gap-2 items-center text-xs"
                             >
-                              <div className="w-32 shrink-0">
+                              <div className="col-span-6 sm:col-span-4 sm:order-1 min-w-0">
                                 <Select
                                   value={charge.type}
                                   onValueChange={(val: any) => handleUpdateCharge(charge.id, "type", val)}
                                 >
-                                  <SelectTrigger className="h-7 text-xs font-medium">
+                                  <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -7604,38 +7630,40 @@ export default function PmsCalendar() {
                                 </Select>
                               </div>
 
-                              <div className="flex-1 min-w-[120px]">
+                              <div className="col-span-6 sm:col-span-4 sm:order-3 flex items-center gap-1.5 min-w-0">
+                                <div className="relative flex-1 min-w-0">
+                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
+                                    R$
+                                  </span>
+                                  <Input
+                                    type="number"
+                                    value={charge.amount}
+                                    onChange={e => handleUpdateCharge(charge.id, "amount", Number(e.target.value) || 0)}
+                                    className={`h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
+                                  />
+                                </div>
+
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRemoveCharge(charge.id)}
+                                  className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                  title="Remover item"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+
+                              <div className="col-span-12 sm:col-span-4 sm:order-2 min-w-0">
                                 <Input
                                   type="text"
                                   placeholder="Descrição do item..."
                                   value={charge.title}
                                   onChange={e => handleUpdateCharge(charge.id, "title", e.target.value)}
-                                  className="h-7 text-xs font-medium"
+                                  className="h-8 sm:h-7 text-xs font-medium w-full"
                                 />
                               </div>
-
-                              <div className="w-28 relative shrink-0">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">
-                                  R$
-                                </span>
-                                <Input
-                                  type="number"
-                                  value={charge.amount}
-                                  onChange={e => handleUpdateCharge(charge.id, "amount", Number(e.target.value) || 0)}
-                                  className={`h-7 pl-7 pr-2 text-xs font-bold text-right ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
-                                />
-                              </div>
-
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleRemoveCharge(charge.id)}
-                                className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                title="Remover item"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
                             </div>
                           ))}
                         </div>
@@ -7648,7 +7676,7 @@ export default function PmsCalendar() {
                       const subtotalCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
                       const totalCalculated = Math.max(0, subtotalNights + subtotalCharges);
                       return (
-                        <div className="pt-2 flex items-center justify-between text-[11px] text-muted-foreground px-1 border-t border-border/60">
+                        <div className="pt-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px] text-muted-foreground px-1 border-t border-border/60">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span>Diárias ({formDailyRates.length}): <strong className="text-foreground">R$ {subtotalNights.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
                             {subtotalCharges !== 0 && (
@@ -7658,7 +7686,7 @@ export default function PmsCalendar() {
                               </>
                             )}
                           </div>
-                          <span className="font-bold text-foreground text-xs">
+                          <span className="font-bold text-foreground text-xs shrink-0">
                             Total Composto: <strong className="text-primary font-black">R$ {totalCalculated.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
                           </span>
                         </div>
@@ -7668,9 +7696,9 @@ export default function PmsCalendar() {
 
                   {/* 4. Registros de Pagamento (Quem pagou, Como pagou, Quanto pagou e Para quê) */}
                   <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5 shadow-2xs">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-1.5">
-                        <CreditCard className="w-4 h-4 text-emerald-600" />
+                        <CreditCard className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span className="text-xs font-bold text-foreground">Pagamentos Recebidos ({formPayments.length})</span>
                       </div>
 
@@ -7679,7 +7707,7 @@ export default function PmsCalendar() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleAddPayment()}
-                        className="h-7 px-2 text-xs font-bold text-emerald-700 dark:text-emerald-300 border-emerald-400/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                        className="h-7 px-2 text-xs font-bold text-emerald-700 dark:text-emerald-300 border-emerald-400/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer shrink-0"
                       >
                         <Plus className="w-3.5 h-3.5 mr-1" /> Novo Pagamento
                       </Button>
@@ -7690,46 +7718,60 @@ export default function PmsCalendar() {
                         Nenhum pagamento registrado nesta reserva. Clique em "+ Novo Pagamento" ou utilize o botão "Quitar Saldo" no topo.
                       </div>
                     ) : (
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         {formPayments.map((pay, pIdx) => (
                           <div
                             key={pay.id || pIdx}
-                            className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs flex-wrap sm:flex-nowrap"
+                            className="p-2.5 bg-background border border-border rounded-xl grid grid-cols-12 gap-2 items-center text-xs"
                           >
-                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shrink-0">
-                              #{pIdx + 1}
-                            </span>
+                            {/* # + Forma de Pagamento */}
+                            <div className="col-span-7 sm:col-span-5 sm:order-1 flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shrink-0">
+                                #{pIdx + 1}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <Select
+                                  value={pay.method || "pix"}
+                                  onValueChange={(val) => handleUpdatePayment(pay.id, "method", val)}
+                                >
+                                  <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
+                                    <SelectValue placeholder="Forma" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="pix">⚡ PIX</SelectItem>
+                                    <SelectItem value="credit_card">💳 Cartão Crédito</SelectItem>
+                                    <SelectItem value="debit_card">💳 Cartão Débito</SelectItem>
+                                    <SelectItem value="dinheiro">💵 Dinheiro</SelectItem>
+                                    <SelectItem value="booking">🌐 Booking.com</SelectItem>
+                                    <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                    <SelectItem value="ted">🏦 Transferência</SelectItem>
+                                    <SelectItem value="faturado_pj">🏢 Faturado (PJ)</SelectItem>
+                                    <SelectItem value="outro">💰 Outro</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
 
-                            {/* Forma de Pagamento */}
-                            <div className="w-36 shrink-0">
-                              <Select
-                                value={pay.method || "pix"}
-                                onValueChange={(val) => handleUpdatePayment(pay.id, "method", val)}
-                              >
-                                <SelectTrigger className="h-7 text-xs font-medium">
-                                  <SelectValue placeholder="Forma" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="pix">⚡ PIX</SelectItem>
-                                  <SelectItem value="credit_card">💳 Cartão Crédito</SelectItem>
-                                  <SelectItem value="debit_card">💳 Cartão Débito</SelectItem>
-                                  <SelectItem value="dinheiro">💵 Dinheiro</SelectItem>
-                                  <SelectItem value="booking">🌐 Booking.com</SelectItem>
-                                  <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                                  <SelectItem value="ted">🏦 Transferência</SelectItem>
-                                  <SelectItem value="faturado_pj">🏢 Faturado (PJ)</SelectItem>
-                                  <SelectItem value="outro">💰 Outro</SelectItem>
-                                </SelectContent>
-                              </Select>
+                            {/* Valor Pago */}
+                            <div className="col-span-5 sm:col-span-3 sm:order-3 relative min-w-0">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 pointer-events-none">
+                                R$
+                              </span>
+                              <Input
+                                type="number"
+                                value={pay.amount}
+                                onChange={(e) => handleUpdatePayment(pay.id, "amount", Number(e.target.value) || 0)}
+                                className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right text-emerald-700 dark:text-emerald-400 w-full"
+                              />
                             </div>
 
                             {/* Categoria / Destinação do Pagamento */}
-                            <div className="w-36 shrink-0">
+                            <div className="col-span-6 sm:col-span-4 sm:order-2 min-w-0">
                               <Select
                                 value={pay.category || "quitacao"}
                                 onValueChange={(val) => handleUpdatePayment(pay.id, "category", val)}
                               >
-                                <SelectTrigger className="h-7 text-xs font-medium">
+                                <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">
                                   <SelectValue placeholder="Destinação" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -7743,50 +7785,37 @@ export default function PmsCalendar() {
                               </Select>
                             </div>
 
-                            {/* Valor Pago */}
-                            <div className="w-28 relative shrink-0">
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600">
-                                R$
-                              </span>
-                              <Input
-                                type="number"
-                                value={pay.amount}
-                                onChange={(e) => handleUpdatePayment(pay.id, "amount", Number(e.target.value) || 0)}
-                                className="h-7 pl-7 pr-2 text-xs font-bold text-right text-emerald-700 dark:text-emerald-400"
-                              />
-                            </div>
-
                             {/* Data e Hora */}
-                            <div className="w-36 shrink-0">
+                            <div className="col-span-6 sm:col-span-4 sm:order-4 min-w-0">
                               <Input
                                 type="datetime-local"
                                 value={pay.date ? (pay.date.includes("T") ? pay.date.substring(0, 16) : pay.date) : ""}
                                 onChange={(e) => handleUpdatePayment(pay.id, "date", e.target.value)}
-                                className="h-7 text-[11px]"
+                                className="h-8 sm:h-7 text-[11px] px-2 w-full"
                               />
                             </div>
 
-                            {/* Observação rápida */}
-                            <div className="flex-1 min-w-[100px]">
+                            {/* Observação rápida + Excluir */}
+                            <div className="col-span-12 sm:col-span-8 sm:order-5 flex items-center gap-1.5 min-w-0">
                               <Input
                                 type="text"
                                 placeholder="Obs opcional..."
                                 value={pay.notes || ""}
                                 onChange={(e) => handleUpdatePayment(pay.id, "notes", e.target.value)}
-                                className="h-7 text-[11px]"
+                                className="h-8 sm:h-7 text-xs flex-1 min-w-0"
                               />
-                            </div>
 
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemovePayment(pay.id)}
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                              title="Excluir pagamento"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemovePayment(pay.id)}
+                                className="h-8 w-8 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                title="Excluir pagamento"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -8795,25 +8824,25 @@ export default function PmsCalendar() {
                           key={item.id}
                           className="p-3 bg-card border border-border/80 hover:border-border rounded-2xl transition-all space-y-2.5 shadow-2xs"
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2.5">
+                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
+                            <div className="flex items-center gap-2.5 min-w-0">
                               <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${item.iconColor}`}>
                                 <Icon className="w-4 h-4" />
                               </div>
-                              <div>
+                              <div className="min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-bold text-xs text-foreground">{item.title}</span>
                                   <Badge variant="outline" className={`text-[10px] h-4 px-1.5 py-0 font-bold ${item.badgeColor}`}>
                                     {item.badge}
                                   </Badge>
                                 </div>
-                                <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                                <p className="text-[11px] text-muted-foreground line-clamp-2 sm:line-clamp-1 mt-0.5">
                                   {item.desc}
                                 </p>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="flex items-center justify-end gap-1.5 shrink-0">
                               <a
                                 href={item.url}
                                 target="_blank"
