@@ -18,7 +18,8 @@ import {
   Calendar, BedDouble, DollarSign, History, Star, Edit2, ShieldCheck, Tag, 
   FileText, Building2, Building, ExternalLink, Download, Send, MapPin, 
   CheckCircle2, UserCheck, Eye, Sparkles, RefreshCw, Trash2, Heart, Award, 
-  Car, Coffee, Filter, ZoomIn, Camera, PenTool, Maximize2, AlertTriangle
+  Car, Coffee, Filter, ZoomIn, Camera, PenTool, Maximize2, AlertTriangle,
+  BarChart3, TrendingUp
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -31,9 +32,11 @@ export default function CrmGuests() {
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { toast } = useToast()
 
-  const [activeTab, setActiveTab] = useState<"guests" | "companies">("guests")
+  const [activeTab, setActiveTab] = useState<"guests" | "companies" | "analytics">("guests")
   const [guests, setGuests] = useState<any[]>([])
   const [companies, setCompanies] = useState<any[]>([])
+  const [analyticsData, setAnalyticsData] = useState<any | null>(null)
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>("all")
@@ -218,9 +221,25 @@ export default function CrmGuests() {
     } catch {}
   }
 
+  const fetchAnalytics = async () => {
+    setLoadingAnalytics(true)
+    try {
+      const res = await fetch("/api/minibar/analytics/demographics", { credentials: "include" })
+      const data = await res.json()
+      if (data && (data.success || data.summary)) {
+        setAnalyticsData(data)
+      }
+    } catch (err) {
+      console.error("Erro ao carregar analytics demográfico:", err)
+    } finally {
+      setLoadingAnalytics(false)
+    }
+  }
+
   useEffect(() => {
     fetchGuests()
     fetchCompanies()
+    fetchAnalytics()
   }, [])
 
   const calculateGuestAge = (birthDate?: string) => {
@@ -622,6 +641,10 @@ export default function CrmGuests() {
     if (selectedTagFilter === "recurrent") return (g.tags || []).includes("Recorrente")
     if (selectedTagFilter === "corporate") return Boolean(g.companyId || (g.tags || []).includes("Corporativo"))
     if (selectedTagFilter === "pet") return Boolean(g.hasPet || (g.tags || []).includes("Pet"))
+    if (selectedTagFilter === "nespresso") return (g.tags || []).includes("Consumidor Nespresso")
+    if (selectedTagFilter === "cerveja") return (g.tags || []).includes("Apreciador Cerveja")
+    if (selectedTagFilter === "snacks") return (g.tags || []).includes("Prefere Snacks")
+    if (selectedTagFilter === "alto_consumo") return (g.tags || []).includes("Consumo Alto")
 
     return true
   })
@@ -689,7 +712,7 @@ export default function CrmGuests() {
                 <Plus className="w-4 h-4" />
                 <span>Novo Hóspede (PF)</span>
               </Button>
-            ) : (
+            ) : activeTab === "companies" ? (
               <Button 
                 onClick={handleOpenNewCompany} 
                 size="sm" 
@@ -697,6 +720,16 @@ export default function CrmGuests() {
               >
                 <Building2 className="w-4 h-4" />
                 <span>Nova Empresa (PJ)</span>
+              </Button>
+            ) : (
+              <Button 
+                onClick={fetchAnalytics} 
+                variant="outline"
+                size="sm" 
+                className="h-10 px-4 rounded-2xl font-black text-xs gap-1.5 border-border shadow-sm"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? "animate-spin" : ""}`} />
+                <span>Atualizar Analytics</span>
               </Button>
             )}
           </div>
@@ -753,8 +786,8 @@ export default function CrmGuests() {
           </Card>
         </div>
 
-        {/* ── NAVEGAÇÃO PF vs PJ ── */}
-        <div className="grid grid-cols-2 gap-2 p-1.5 bg-muted/60 rounded-2xl border border-border">
+        {/* ── NAVEGAÇÃO PF vs PJ vs ANALYTICS ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-1.5 bg-muted/60 rounded-2xl border border-border">
           <button
             type="button"
             onClick={() => { setActiveTab("guests"); setSearch(""); }}
@@ -765,7 +798,7 @@ export default function CrmGuests() {
             }`}
           >
             <Users className="w-4 h-4 text-primary" />
-            <span>Hóspedes Pessoas Físicas ({totalGuests})</span>
+            <span>Hóspedes PF ({totalGuests})</span>
           </button>
           <button
             type="button"
@@ -777,44 +810,62 @@ export default function CrmGuests() {
             }`}
           >
             <Building2 className="w-4 h-4 text-indigo-600" />
-            <span>Empresas & Faturamento Corporativo ({totalCompanies})</span>
+            <span>Empresas PJ ({totalCompanies})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setActiveTab("analytics"); setSearch(""); fetchAnalytics(); }}
+            className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
+              activeTab === "analytics"
+                ? "bg-card text-foreground shadow-xs ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-amber-500" />
+            <span>Analytics Demográfico & Frigobar</span>
           </button>
         </div>
 
         {/* ── BARRA DE BUSCA E FILTRO DE TAGS ── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-3 rounded-2xl">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <Input 
-              value={search} 
-              onChange={e => setSearch(e.target.value)} 
-              placeholder={activeTab === "guests" ? "Buscar por nome, CPF, celular, e-mail, cidade ou empresa..." : "Buscar por Razão Social, Nome Fantasia, CNPJ ou Gestor..."} 
-              className="pl-9.5 text-xs h-10 rounded-xl bg-background"
-            />
-          </div>
-
-          {activeTab === "guests" && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              {[
-                { id: "all", label: "Todos" },
-                { id: "vip", label: "⭐ VIPs" },
-                { id: "recurrent", label: "🔁 Recorrentes" },
-                { id: "corporate", label: "🏢 Corporativo" },
-                { id: "pet", label: "🐾 Pet" }
-              ].map(f => (
-                <Button
-                  key={f.id}
-                  variant={selectedTagFilter === f.id ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedTagFilter(f.id)}
-                  className="h-8.5 px-3 text-[11px] font-bold rounded-xl shrink-0"
-                >
-                  {f.label}
-                </Button>
-              ))}
+        {activeTab !== "analytics" && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-3 rounded-2xl">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Input 
+                value={search} 
+                onChange={e => setSearch(e.target.value)} 
+                placeholder={activeTab === "guests" ? "Buscar por nome, CPF, celular, e-mail, cidade ou empresa..." : "Buscar por Razão Social, Nome Fantasia, CNPJ ou Gestor..."} 
+                className="pl-9.5 text-xs h-10 rounded-xl bg-background"
+              />
             </div>
-          )}
-        </div>
+
+            {activeTab === "guests" && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                {[
+                  { id: "all", label: "Todos" },
+                  { id: "vip", label: "⭐ VIPs" },
+                  { id: "recurrent", label: "🔁 Recorrentes" },
+                  { id: "corporate", label: "🏢 Corporativo" },
+                  { id: "pet", label: "🐾 Pet" },
+                  { id: "nespresso", label: "☕ Nespresso" },
+                  { id: "cerveja", label: "🍺 Cerveja" },
+                  { id: "snacks", label: "🥨 Snacks" },
+                  { id: "alto_consumo", label: "🔥 Alto Consumo" }
+                ].map(f => (
+                  <Button
+                    key={f.id}
+                    variant={selectedTagFilter === f.id ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSelectedTagFilter(f.id)}
+                    className="h-8.5 px-3 text-[11px] font-bold rounded-xl shrink-0"
+                  >
+                    {f.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── LISTAGEM DE HÓSPEDES (PF) ── */}
         {activeTab === "guests" && (
@@ -913,6 +964,11 @@ export default function CrmGuests() {
                             {g.averageTicket > 0 && (
                               <div className="text-[10px] text-muted-foreground">Méd: R$ {g.averageTicket.toFixed(2)}</div>
                             )}
+                            {Number(g.minibarSpent || 0) > 0 && (
+                              <div className="text-[10px] text-amber-600 font-semibold flex items-center gap-1 mt-0.5">
+                                <span>Frigobar: R$ {Number(g.minibarSpent).toFixed(2)}</span>
+                              </div>
+                            )}
                           </td>
 
                           <td className="p-3.5">
@@ -932,7 +988,11 @@ export default function CrmGuests() {
                                   className={`text-[9px] px-1.5 py-0 ${
                                     t === 'VIP' ? 'bg-amber-500 text-white' :
                                     t === 'Recorrente' ? 'bg-emerald-600 text-white' :
-                                    t === 'Corporativo' ? 'bg-indigo-600 text-white' : 'bg-muted text-muted-foreground'
+                                    t === 'Corporativo' ? 'bg-indigo-600 text-white' :
+                                    t === 'Consumidor Nespresso' ? 'bg-amber-800 text-white' :
+                                    t === 'Apreciador Cerveja' ? 'bg-amber-600 text-white' :
+                                    t === 'Prefere Snacks' ? 'bg-orange-500 text-white' :
+                                    t === 'Consumo Alto' ? 'bg-rose-600 text-white' : 'bg-muted text-muted-foreground'
                                   }`}
                                 >
                                   {t}
@@ -1071,7 +1131,257 @@ export default function CrmGuests() {
           </Card>
         )}
 
-        {/* ── MODAL FICHA 360º DO HÓSPEDE ── */}
+        {/* ── PAINEL DE ANALYTICS DEMOGRÁFICO & CONSUMO FRIGOBAR (F30) ── */}
+        {activeTab === "analytics" && (
+          <div className="space-y-6">
+            {/* Header / Subtitle */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-4 rounded-3xl">
+              <div>
+                <h2 className="text-base font-black text-foreground flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-amber-500" />
+                  <span>Inteligência de Consumo & Demografia de Hóspedes</span>
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Cruzamento em tempo real de pedidos liquidados de frigobar com origem geográfica (FNHR / cadastro)
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={fetchAnalytics}
+                disabled={loadingAnalytics}
+                className="h-9 px-3.5 rounded-xl font-bold text-xs gap-1.5 border-border shrink-0 self-start sm:self-auto"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? "animate-spin" : ""}`} />
+                <span>Recarregar Dados</span>
+              </Button>
+            </div>
+
+            {loadingAnalytics && !analyticsData ? (
+              <div className="p-16 text-center text-xs text-muted-foreground bg-card border border-border rounded-3xl">
+                Carregando dados demográficos e histórico de consumo...
+              </div>
+            ) : !analyticsData?.summary || analyticsData.summary.totalOrders === 0 ? (
+              <div className="p-16 text-center text-xs text-muted-foreground bg-card border border-border rounded-3xl">
+                Nenhum pedido de frigobar computado para geração de analytics.
+              </div>
+            ) : (
+              <>
+                {/* ── CARDS DE KPIS DEMOGRÁFICOS ── */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+                  <Card className="rounded-2xl border border-border p-4 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+                        <DollarSign className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Faturamento Frigobar</div>
+                        <div className="text-xl font-black text-emerald-600">
+                          R$ {(analyticsData.summary.totalRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          {analyticsData.summary.totalOrders} pedidos • {analyticsData.summary.totalItems} itens
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-2xl border border-border p-4 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+                        <TrendingUp className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Ticket Médio</div>
+                        <div className="text-xl font-black text-amber-600">
+                          R$ {(analyticsData.summary.averageTicket || 0).toFixed(2)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">por pedido pago</div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-2xl border border-border p-4 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                        <MapPin className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Estado Líder</div>
+                        <div className="text-xl font-black text-foreground">
+                          {analyticsData.summary.leadingState || "—"}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">maior volume de consumo</div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-2xl border border-border p-4 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center shrink-0">
+                        <Coffee className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Categoria Top</div>
+                        <div className="text-xl font-black text-indigo-600 truncate max-w-[140px]">
+                          {analyticsData.summary.leadingCategory || "—"}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">mais consumida</div>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+
+                {/* ── SEÇÃO 1: DESEMPENHO POR CATEGORIA DE PRODUTO ── */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-foreground flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-primary" />
+                    <span>Desempenho por Categoria de Produto</span>
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                    {(analyticsData.byCategory || []).map((cat: any) => (
+                      <Card key={cat.category} className="p-3.5 rounded-2xl border border-border space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-foreground truncate">{cat.category}</span>
+                          <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0">
+                            {cat.percentage}%
+                          </Badge>
+                        </div>
+                        <div>
+                          <div className="text-base font-black text-emerald-600">
+                            R$ {(cat.revenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {cat.units} {cat.units === 1 ? "unidade" : "unidades"}
+                          </div>
+                        </div>
+                        <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className="bg-primary h-full rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, Math.max(5, cat.percentage || 0))}%` }}
+                          />
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── SEÇÃO 2: RANKING E MATRIZ DEMOGRÁFICA POR ESTADO ── */}
+                <Card className="rounded-3xl border border-border shadow-sm overflow-hidden">
+                  <CardHeader className="p-4 sm:p-5 border-b border-border bg-muted/20">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <CardTitle className="text-sm font-black flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-primary" />
+                          <span>Matriz Demográfica de Consumo: Origem do Hóspede vs Categorias</span>
+                        </CardTitle>
+                        <CardDescription className="text-xs mt-0.5">
+                          Faturamento discriminado por Unidade Federativa (UF) do hóspede e preferências por produto
+                        </CardDescription>
+                      </div>
+                      <Badge className="bg-primary/20 text-primary border-0 text-[10px] self-start sm:self-auto font-bold">
+                        {(analyticsData.byState || []).length} Estados Identificados
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold">
+                          <tr>
+                            <th className="p-3.5">Estado (UF)</th>
+                            <th className="p-3.5">Top Cidade</th>
+                            <th className="p-3.5 text-center">Pedidos</th>
+                            <th className="p-3.5 text-center">Itens</th>
+                            <th className="p-3.5">Cervejas</th>
+                            <th className="p-3.5">Refrigerantes</th>
+                            <th className="p-3.5">Águas</th>
+                            <th className="p-3.5">Snacks</th>
+                            <th className="p-3.5">Cafés</th>
+                            <th className="p-3.5 text-right">Total Faturado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {(analyticsData.byState || []).map((s: any) => {
+                            const cats = s.categories || {};
+                            return (
+                              <tr key={s.state} className="hover:bg-muted/20 transition-colors">
+                                <td className="p-3.5">
+                                  <div className="flex items-center gap-2">
+                                    <Badge className="font-mono text-xs font-black bg-primary/15 text-primary border-primary/30">
+                                      {s.state}
+                                    </Badge>
+                                    <span className="font-bold text-foreground">
+                                      {s.state === "RJ" ? "Rio de Janeiro" :
+                                       s.state === "SP" ? "São Paulo" :
+                                       s.state === "MG" ? "Minas Gerais" :
+                                       s.state === "ES" ? "Espírito Santo" :
+                                       s.state === "PR" ? "Paraná" :
+                                       s.state === "SC" ? "Santa Catarina" :
+                                       s.state === "RS" ? "Rio Grande do Sul" :
+                                       s.state === "BA" ? "Bahia" :
+                                       s.state === "Outros" ? "Outras Regiões" : s.state}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="p-3.5 text-muted-foreground">
+                                  {s.topCity || "—"}
+                                </td>
+                                <td className="p-3.5 text-center font-semibold">
+                                  {s.ordersCount}
+                                </td>
+                                <td className="p-3.5 text-center font-semibold">
+                                  {s.totalUnits}
+                                </td>
+                                <td className="p-3.5 font-mono text-[11px]">
+                                  R$ {(cats["Cervejas"]?.revenue || 0).toFixed(2)}
+                                </td>
+                                <td className="p-3.5 font-mono text-[11px]">
+                                  R$ {(cats["Refrigerantes"]?.revenue || 0).toFixed(2)}
+                                </td>
+                                <td className="p-3.5 font-mono text-[11px]">
+                                  R$ {(cats["Águas"]?.revenue || 0).toFixed(2)}
+                                </td>
+                                <td className="p-3.5 font-mono text-[11px]">
+                                  R$ {(cats["Snacks"]?.revenue || 0).toFixed(2)}
+                                </td>
+                                <td className="p-3.5 font-mono text-[11px]">
+                                  R$ {(cats["Cafés / Especiais"]?.revenue || 0).toFixed(2)}
+                                </td>
+                                <td className="p-3.5 text-right font-black text-emerald-600 text-sm">
+                                  R$ {(s.totalAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="bg-muted/30 border-t-2 border-border font-bold">
+                          <tr>
+                            <td colSpan={2} className="p-3.5 font-black text-foreground">
+                              Totais Consolidados ({analyticsData.byState?.length || 0} Estados)
+                            </td>
+                            <td className="p-3.5 text-center font-black">
+                              {analyticsData.summary.totalOrders}
+                            </td>
+                            <td className="p-3.5 text-center font-black">
+                              {analyticsData.summary.totalItems}
+                            </td>
+                            <td colSpan={5} className="p-3.5 text-muted-foreground text-[11px]">
+                              Ticket Médio: R$ {analyticsData.summary.averageTicket?.toFixed(2)}
+                            </td>
+                            <td className="p-3.5 text-right font-black text-emerald-600 text-sm">
+                              R$ {analyticsData.summary.totalRevenue?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </div>
+        )}
         {/* ── MODAL FICHA 360º DO HÓSPEDE COM MÍDIAS E FNHR UNIFICADA ── */}
         <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
           <DialogContent className="sm:max-w-4xl bg-card border border-border rounded-3xl max-h-[88vh] overflow-y-auto p-6">
@@ -1590,6 +1900,65 @@ export default function CrmGuests() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Histórico de Consumo de Frigobar */}
+                <div className="space-y-2">
+                  <div className="font-bold text-foreground flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Coffee className="w-4 h-4 text-amber-600" />
+                      <span className="text-xs sm:text-sm font-black">Histórico de Consumo de Frigobar ({activeGuest.minibarOrders?.length || 0})</span>
+                    </div>
+                    {Number(activeGuest.minibarSpent || 0) > 0 && (
+                      <span className="text-xs font-black text-amber-600">
+                        Total Pago: R$ {Number(activeGuest.minibarSpent).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  {(!activeGuest.minibarOrders || activeGuest.minibarOrders.length === 0) ? (
+                    <div className="p-4 text-center text-muted-foreground bg-muted/20 rounded-2xl text-xs">
+                      Nenhum consumo de frigobar registrado para este hóspede.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {activeGuest.minibarOrders.map((o: any) => {
+                        const isPaid = o.paymentStatus === "pago";
+                        const isCourtesy = o.paymentMethod === "cortesia" || o.totalAmount === 0;
+                        return (
+                          <div key={o.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-foreground">Flat {o.flatNumber || "—"}</span>
+                                <span className="text-muted-foreground text-[10px] font-mono">#{o.id}</span>
+                                <Badge className={`text-[9px] px-1.5 py-0 ${
+                                  isPaid ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" :
+                                  isCourtesy ? "bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30" :
+                                  "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                }`}>
+                                  {isPaid ? "Pago" : isCourtesy ? "Cortesia" : "Pendente"}
+                                </Badge>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-black text-emerald-600">
+                                  R$ {Number(o.totalAmount || 0).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                              <div className="truncate max-w-[320px]">
+                                {Array.isArray(o.items) && o.items.length > 0 ? (
+                                  o.items.map((it: any) => `${it.quantity || 1}x ${it.name || it.itemName || it.productName || "Item"}`).join(", ")
+                                ) : "Sem itens detalhados"}
+                              </div>
+                              <span className="text-[10px] shrink-0">
+                                {o.createdAt ? new Date(o.createdAt).toLocaleDateString("pt-BR") : "—"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

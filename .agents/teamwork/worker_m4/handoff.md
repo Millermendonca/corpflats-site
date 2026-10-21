@@ -1,95 +1,90 @@
-# Handoff Report — Worker M4: Integrations Implementer (R6 & R7)
+# Handoff Report — Worker M4: Features F29 a F33 (Milestone M4)
 
-**Type:** Hard Handoff  
-**Agent:** Worker M4 (Integrations Implementer — Maid Flat Card R6 & PMS Calendar R7)  
-**Date:** 2026-10-01T00:02:00Z  
-**Target Audience:** Parent Orchestrator & Reviewer/Auditor  
+**Agent**: `worker_m4`
+**Recipient**: `d10c20e2-adfb-4695-835e-52dd3bebe9a9` (Project Orchestrator)
+**Timestamp**: `2026-10-21T23:00:00Z`
+**Status**: Concluído com Sucesso (Build OK, Paridade SHA-256 OK, 46/46 Testes Pontuais PASS)
 
 ---
 
 ## 1. Observation
+1. **F29 (CRM Consumo 360º & LTV Agregado)**:
+   - `artifacts/api-server/demo-server.mjs` (`GET /api/pms/guests`): busca pedidos pagos em `db.minibarOrders` vinculados ao documento, telefone ou códigos de reserva do hóspede. Soma `minibarSpent` ao `totalSpent` (LTV agregado). Computa tags automáticas: `"Consumidor Nespresso"` (>=3 cápsulas), `"Apreciador Cerveja"` (>=2 cervejas), `"Prefere Snacks"` (>=3 snacks), `"Consumo Alto"` (`minibarSpent >= 100` ou >=8 itens). Retorna `minibarSpent` e `minibarOrdersCount`.
+   - `artifacts/api-server/demo-server.mjs` (`GET /api/pms/guests/:id`): retorna `minibarOrders` completo e `minibarSpent`, integrando o histórico na ficha 360º.
+   - `artifacts/limpeza/src/pages/crm-guests.tsx`:
+     - Modal 360º (`handleOpenDetail`): adicionada a seção "Histórico de Consumo de Frigobar" imediatamente após "Histórico de Estadias & Reservas" e antes de "Notas Fiscais Emitidas", com listagem de pedidos, badges de status (`pago`, `pendente`, `cortesia`), flat, data, total em R$ e itens.
+     - Tabela principal: coluna de LTV exibe subtotal `Frigobar: R$ X.XX` quando `g.minibarSpent > 0`.
+     - Tags: estilização visual com badges coloridas para as 4 tags de hábitos de frigobar.
+     - Filtros: chips de filtro adicionados para `"nespresso"`, `"cerveja"`, `"snacks"` e `"alto_consumo"`.
 
-1. **R6 Maid Dashboard Flat Card (`artifacts/limpeza/src/components/flat-card.tsx`):**
-   - Imported Radix tooltip components `Tooltip, TooltipTrigger, TooltipContent` from `@/components/ui/tooltip` and `Wrench` icon from `lucide-react`.
-   - Card border highlight: On line ~1056, added `Boolean(flat.serviceInProgress) && "border-amber-500/90 dark:border-amber-600 shadow-amber-100/50"`.
-   - Batch cleaning checkbox: On line ~1063, added `!flat.serviceInProgress` to condition `selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && !flat.serviceInProgress` to prevent selecting flats blocked by an active external service order.
-   - Badge row: On line ~1183, added amber badge with `Wrench` icon and `animate-pulse`:
-     `🔧 Serviço em andamento` with title containing `workerName` and `serviceTitle`.
-   - Card body: On line ~1311, rendered informative card body box:
-     `Serviço Externo em Andamento: [serviceTitle] • Prestador: [workerName]`, stating that cleaning is pending service completion.
-   - Action buttons: In both `currentStatus === "dirty"` (line ~1480) and `currentStatus === "will_clean"` (line ~1527), when `flat.serviceInProgress` is present, disabled cleaning buttons and rendered:
-     `<Button disabled>🔧 Iniciar Limpeza (Serviço em Andamento)</Button>` wrapped in `<Tooltip>` with `<TooltipContent>` containing `⚠️ Limpeza Bloqueada: Aguardando finalização do serviço: [Título] (Prestador: [Nome])`.
+2. **F30 (Analytics Demográfico de Consumo)**:
+   - `artifacts/api-server/demo-server.mjs` (`GET /api/minibar/analytics/demographics`): cruza pedidos pagos com dados de cidade/UF usando cascata resiliente Hóspede -> Reserva (`guestState`) -> FNHR (`guests[0].state`) -> DDD do telefone (`inferStateFromPhone`) -> `"Outros"`. Retorna `summary`, `byState` (ranking de estados, topCity e faturamento por categoria) e `byCategory` (faturamento, unidades e percentual).
+   - `artifacts/limpeza/src/pages/crm-guests.tsx`: 3ª aba de navegação `"guests" | "companies" | "analytics"`. Na aba "Analytics Demográfico & Frigobar", renderiza cards de KPIs (Faturamento Frigobar, Ticket Médio, Estado Líder, Categoria Top), cards de desempenho das 5 categorias com barra de progresso, e tabela com Matriz Demográfica Cruzada (Estado x Categorias) com rodapé de totais consolidados.
 
-2. **R7 PMS Calendar Integration (`artifacts/limpeza/src/pages/pms-calendar.tsx`):**
-   - Imported `Wrench` from `lucide-react` and `cn` from `@/lib/utils`.
-   - Timeline flatBlocks rendering: On line ~3902, added detection for `isService = Boolean(blockItem.isServiceBlock || blockItem.reason === "service_order")`.
-   - Visual Block: Renders amber block with `Wrench` icon (`animate-pulse`), badge `🔧 [Título do Serviço]`, and worker name `(workerName)`.
-   - Deletion protection: Wrapped manual delete trash icon in `{!isService && (<button ...><Trash2 .../></button>)}` so synthetic service blocks cannot be deleted via calendar trash icon.
-   - Block Details Modal: Differentiates service blocks by displaying `Wrench` icon, service title, worker name, and redirects to `/servicos` (`Ver em Serviços`) instead of destructive deletion.
-   - Reservation Modal Conflict Warning: Calculated `activeServiceBlockConflict` memo based on flat ID and date intersection (`b.startDate <= formCheckout && b.endDate >= formCheckin`). Displayed prominent warning banner:
-     `⚠️ Atenção: Este apartamento possui serviço externo agendado/em andamento neste período: [Título] (Prestador: [Nome]). A reserva pode ser criada, mas o flat pode estar indisponível.`
-   - Admin Confirmation Override: In `handleSaveRes` (line ~2730), prompted `confirm(...)` on `activeServiceBlockConflict` so admin is alerted and can consciously proceed. Also added `confirm(...)` in drag-and-drop move handler.
+3. **F31 (Remoção de Textos Legados & Atualização de FAQ)**:
+   - `artifacts/api-server/whatsapp-ai-service.mjs`: atualizado `DEFAULT_AI_CONFIG.knowledgeBase.amenities`, `minibarInfo`, `distillGuidelineFromOperatorResponse`, e `generateIntelligentFaqDraft` removendo menções legadas de "frigobar vazio / comprar no supermercado" e registrando o modelo Anserve (1 kit cortesia por estadia + bebidas/snacks por autoatendimento PIX/Cartão).
+   - `artifacts/api-server/demo-server.mjs`: seed `faq-agua-frigobar` atualizado preservando o ID para compatibilidade com a suíte de testes existente.
 
-3. **Backend Injection Verification:**
-   - `GET /api/flats`: Injects `serviceInProgress` via `getFlatServiceInProgress(flat.id, flat.number)` with `{ serviceTitle, workerName, serviceOrderId }`.
-   - `GET /api/reservations/checkouts`: Injects `serviceInProgress` on each item for the maid dashboard.
-   - `GET /api/pms/calendar`: Injects synthetic `serviceOrderBlocks` with `isServiceBlock: true`, `reason: "service_order"`, `startDate`, `endDate`, `serviceTitle`, and `workerName`.
-   - Strict byte-for-byte mirror parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+4. **F32 (Sofia IA: Contexto e Módulo de Minibar)**:
+   - `artifacts/api-server/whatsapp-ai-service.mjs`:
+     - `buildGuestContext`: injeta `minibarUrl` e catálogo/regras de cortesia.
+     - `contextString`: injeta Base de Conhecimento Oficial de Frigobar Anserve e link direto do flat.
+     - `querySystemData`: implementado `case "minibar": case "frigobar":` retornando catálogo, link e status.
+     - `buildGeminiTools`: adicionado módulo `"minibar"` nas ferramentas disponíveis da IA.
+     - `generateHeuristicResponse`: adicionada regra 7.8b de atendimento heurístico de frigobar.
 
-4. **Automated Test Results:**
-   - `node --test tests/service-orders-integrations.test.mjs`: 20/20 tests PASSING.
-   - `node --test tests/service-orders.test.mjs tests/service-orders-admin-frontend.test.mjs tests/service-worker-portal.test.mjs`: 45/45 tests PASSING.
-   - `npm run build` in `artifacts/limpeza`: Exit code 0, 3,346 modules transformed, dist artifacts generated.
+5. **F33 (Cobrança Proativa de Divergências & Quitação Direta)**:
+   - `artifacts/api-server/demo-server.mjs` (`POST /api/minibar/orders`): aceita `orderId` no payload (ex: `ORD-MB-DIV-...`) liquidando in-place o registro em `db.minibarOrders` com o método de pagamento selecionado (PIX Inter ou Cartão Mercado Pago) sem duplicar ordens.
+   - `artifacts/api-server/demo-server.mjs` (`POST /api/minibar/inspections`): gera URL de Sofia dinâmica com `SERVER_BASE_URL`.
+   - `artifacts/limpeza/src/pages/guest-minibar.tsx`: lê o parâmetro `?ord=` de `window.location.search`, consulta o status e, quando pendente, exibe card destacado com alerta da vistoria de checkout, detalhamento dos itens e botões para quitação direta ("Quitar via PIX" e "Quitar com Cartão"). Se já quitada, exibe banner verde de quitação confirmada.
+
+6. **Paridade SHA-256 e Build de Produção**:
+   - `artifacts/api-server/demo-server.mjs` == `scripts/demo-server.mjs` (True).
+   - `artifacts/api-server/whatsapp-ai-service.mjs` == `scripts/whatsapp-ai-service.mjs` (True).
+   - `npm --prefix artifacts/limpeza run build`: código 0, gerando bundle em `artifacts/limpeza/dist/`.
+
+7. **Testes Pontuais Executados**:
+   - `node --test tests/minibar-backend-flow.test.mjs`: 20/20 PASS.
+   - `node --test tests/challenger-m1-2-verification.test.mjs`: 13/13 PASS.
+   - `node --test tests/minibar-stress-challenger.test.mjs`: 13/13 PASS.
+   - Total: 46/46 PASS (100% de sucesso).
 
 ---
 
 ## 2. Logic Chain
-
-1. **R6 Maid Dashboard Integration:**
-   - The maid dashboard receives checkout/room items that now include `flat.serviceInProgress` when a service order is active and in progress.
-   - In `flat-card.tsx`, checking `flat.serviceInProgress` triggers visual indicators across three levels: the card border (amber outline), the status badge bar (`🔧 Serviço em andamento`), and an informative detail callout in the body.
-   - To enforce the operational rule that cleaning cannot start while an external contractor is working in the room, both the batch checkbox (`!flat.serviceInProgress`) and the action buttons for `dirty` and `will_clean` states are disabled and wrapped in Radix `<Tooltip>` explaining that cleaning is locked until service completion.
-
-2. **R7 PMS Calendar Integration:**
-   - The PMS calendar receives synthetic blocks in `data.blocks` with `isServiceBlock: true` and `reason: "service_order"`.
-   - Because `getBlockPosition` handles timeline coordinates, styling service blocks with amber background, pulse animation, and wrench icon provides clear visual distinction without breaking standard block positioning.
-   - Preventing manual deletion via the trash icon protects the synthetic block while still allowing administrators to inspect the service via the details modal.
-   - For new bookings or date shifts, `activeServiceBlockConflict` computes date overlaps against active service blocks. The modal displays a prominent warning banner, and `handleSaveRes` executes a `confirm()` dialog ensuring administrators can proceed consciously to override the block if desired.
+1. A agregação de `minibarSpent` ao LTV (`totalSpent`) em `demo-server.mjs` permite que o CRM reflita a receita total por hóspede, cumprindo F29 sem alterar o `totalAmount` das diárias das reservas.
+2. A geração de tags por itens consumidos (`Consumidor Nespresso`, `Apreciador Cerveja`, `Prefere Snacks`, `Consumo Alto`) alimenta os chips de filtro e a visualização rápida de hábitos do cliente em `crm-guests.tsx`.
+3. O endpoint `GET /api/minibar/analytics/demographics` agrupa as vendas por UF e por categoria de produto. Ao consumir esse endpoint na 3ª aba de `crm-guests.tsx`, a equipe tem visibilidade imediata das regiões de maior consumo e preferências dos hóspedes.
+4. Ao atualizar os textos em `whatsapp-ai-service.mjs` e `demo-server.mjs`, a IA Sofia responde com precisão sobre o ecossistema Anserve, evitando orientações incorretas e direcionando o hóspede para o autoatendimento.
+5. Ao suportar `orderId` em `POST /api/minibar/orders` e tratar `?ord=` em `guest-minibar.tsx`, ordens de divergência apuradas na vistoria são liquidadas diretamente pelo hóspede via link recebido por WhatsApp, com conciliação automática.
 
 ---
 
 ## 3. Caveats
-
-- In the PMS calendar, service blocks are daily-column visual blocks based on `startDate` and `endDate` (`estimatedFinishAt.slice(0, 10)`). Hourly granularity is displayed inside the block title and modal details.
-- No caveats regarding regressions or test coverage.
+- No teste `minibar-backend-flow.test.mjs`, o processo de servidor roda na porta 4199. Certificou-se de que a porta foi liberada e finalizada adequadamente ao término do teste.
+- O build de produção Vite gerou novos hashes para os assets compilados em `artifacts/limpeza/dist/public/assets/`, substituindo os bundles anteriores; todos foram devidamente incluídos para commit e push.
 
 ---
 
 ## 4. Conclusion
-
-Milestone M4 (R6 & R7 Integrations) has been fully implemented, verified with comprehensive automated test suites (20/20 integration tests + 45/45 existing tests), and built successfully (`npm run build` exit code 0).
+Todas as 5 Features do Milestone M4 (F29, F30, F31, F32 e F33) estão plenamente implementadas, integradas e verificadas. A paridade SHA-256 entre `artifacts/api-server/` e `scripts/` está estritamente em 100%, o build de produção Vite foi concluído com sucesso (código 0) e toda a suíte de 46 testes pontuais do módulo foi aprovada sem falhas.
 
 ---
 
 ## 5. Verification Method
-
-To independently verify this implementation:
-
-1. **Run Integrations Test Suite:**
+Para verificação independente pelo auditor:
+1. **Verificação de Paridade SHA-256**:
    ```powershell
-   node --test tests/service-orders-integrations.test.mjs
+   (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+   (Get-FileHash 'artifacts/api-server/whatsapp-ai-service.mjs').Hash -eq (Get-FileHash 'scripts/whatsapp-ai-service.mjs').Hash
    ```
-   Expected: 20 tests pass, 0 fail.
-
-2. **Run All Related Service Order Test Suites:**
-   ```powershell
-   node --test tests/service-orders.test.mjs tests/service-orders-admin-frontend.test.mjs tests/service-worker-portal.test.mjs
+2. **Build de Produção**:
+   ```bash
+   npm --prefix artifacts/limpeza run build
    ```
-   Expected: 45 tests pass, 0 fail.
-
-3. **Verify Build Output:**
-   ```powershell
-   cd artifacts/limpeza
-   npm run build
+3. **Execução de Testes Pontuais Autorizados**:
+   ```bash
+   node --test tests/minibar-backend-flow.test.mjs
+   node --test tests/challenger-m1-2-verification.test.mjs
+   node --test tests/minibar-stress-challenger.test.mjs
    ```
-   Expected: Exit code 0, dist/public/assets generated with no errors.

@@ -173,6 +173,11 @@ export default function GuestMinibar() {
   const [copiedPix, setCopiedPix] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<"pendente" | "pago" | "falha">("pendente");
 
+  // Cobrança Proativa de Divergências de Checkout (F33)
+  const [divergenceOrder, setDivergenceOrder] = useState<any | null>(null);
+  const [divergenceLoading, setDivergenceLoading] = useState(false);
+  const [settlingDivergence, setSettlingDivergence] = useState(false);
+
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Carrega contexto direto por código de reserva
@@ -310,6 +315,39 @@ export default function GuestMinibar() {
       setStep("manual_lookup");
     }
   }, [codeFromUrl, flatFromUrl]);
+
+  // Leitura e carregamento de ordem de divergência apurada em vistoria (?ord=) (F33)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const searchParams = new URLSearchParams(window.location.search);
+    const ord = searchParams.get("ord");
+    if (ord) {
+      setDivergenceLoading(true);
+      fetch(`/api/minibar/orders/${encodeURIComponent(ord)}/status`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.success && data.order) {
+            setDivergenceOrder(data.order);
+            // Se ainda não temos reserva ativa ou se a URL não tem código, sincroniza
+            if (!codeFromUrl && data.order.reservationCode) {
+              loadContextByReservationCode(data.order.reservationCode);
+            } else if (!codeFromUrl && !flatFromUrl) {
+              setStep("catalog");
+              if (data.order.flatNumber) {
+                setReservation((prev: any) => prev || {
+                  guestName: data.order.guestName || "Hóspede",
+                  firstName: (data.order.guestName || "Hóspede").split(" ")[0],
+                  reservationCode: data.order.reservationCode || "",
+                  flatNumber: String(data.order.flatNumber)
+                });
+              }
+            }
+          }
+        })
+        .catch((err) => console.error("Erro ao verificar ordem de divergência:", err))
+        .finally(() => setDivergenceLoading(false));
+    }
+  }, []);
 
   // Limpeza de timers ao desmontar componente
   useEffect(() => {
@@ -489,6 +527,64 @@ export default function GuestMinibar() {
       setCopiedPix(true);
       setTimeout(() => setCopiedPix(false), 3000);
     });
+  };
+
+  // Quitação Direta de Divergência Apurada em Vistoria (F33)
+  const handleSettleDivergence = async (method: "pix" | "credit_card") => {
+    if (!divergenceOrder) return;
+    setSettlingDivergence(true);
+    setOrderError(null);
+
+    const docToSend = docChoice === "cadastrado"
+      ? (reservation?.document || divergenceOrder.guestDocument || "").replace(/\D/g, "")
+      : customDocument.replace(/\D/g, "");
+
+    const orderPayload = {
+      orderId: divergenceOrder.id,
+      reservationCode: divergenceOrder.reservationCode || reservation?.reservationCode || codeFromUrl,
+      flatNumber: divergenceOrder.flatNumber || reservation?.flatNumber || flatFromUrl,
+      items: divergenceOrder.items,
+      paymentMethod: method,
+      invoicePreference,
+      document: docToSend,
+      documentType: docToSend.length === 14 ? "cnpj" : "cpf",
+      email: (invoiceEmail || divergenceOrder.guestEmail || "").trim(),
+      companyName: customCompanyName.trim()
+    };
+
+    try {
+      const res = await fetch("/api/minibar/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(orderPayload)
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setOrderError(data.error || "Falha ao liquidar ordem de divergência.");
+        setSettlingDivergence(false);
+        return;
+      }
+
+      setActiveOrder(data);
+      setPaymentMethod(method);
+
+      if (data.alreadyPaid || data.paymentStatus === "pago") {
+        setPaymentStatus("pago");
+        setStep("success");
+      } else {
+        setPaymentStatus("pendente");
+        setStep("payment");
+        startPaymentPolling(data.orderId);
+        if (method === "credit_card" && data.initPoint) {
+          window.open(data.initPoint, "_blank");
+        }
+      }
+    } catch {
+      setOrderError("Erro de comunicação ao liquidar divergência. Tente novamente.");
+    } finally {
+      setSettlingDivergence(false);
+    }
   };
 
   // Retorno visual de categoria amigável
@@ -724,6 +820,90 @@ export default function GuestMinibar() {
         </header>
 
         <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-5">
+          {/* ── Banner de Quitação Direta de Divergência Apurada em Vistoria (F33) ── */}
+          {divergenceOrder && (
+            divergenceOrder.paymentStatus === "pago" ? (
+              <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center justify-between shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-emerald-300">Vistoria de Checkout: Quitado</p>
+                    <p className="text-[11px] text-emerald-400/80">
+                      A pendência de checkout <strong>#{divergenceOrder.id}</strong> (Flat {divergenceOrder.flatNumber}) foi quitada com sucesso!
+                    </p>
+                  </div>
+                </div>
+                <Badge className="bg-emerald-600 text-white text-[10px]">Pago</Badge>
+              </div>
+            ) : (
+              <Card className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border-2 border-amber-500/50 rounded-3xl p-5 shadow-xl space-y-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-sm sm:text-base font-black text-amber-200">
+                          Vistoria de Checkout: Consumo Pendente
+                        </h2>
+                        <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
+                          Apurado
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-slate-300">
+                        Ordem <strong>#{divergenceOrder.id}</strong> • Flat {divergenceOrder.flatNumber}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-base sm:text-lg font-black text-amber-300">
+                      {formatBRL(divergenceOrder.totalAmount || 0)}
+                    </div>
+                    <Badge variant="outline" className="text-amber-400 border-amber-500/40 text-[9px]">
+                      Aguardando Pagamento
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950/70 rounded-2xl p-3 border border-slate-800 space-y-1.5">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Itens Não Declarados Identificados na Vistoria:
+                  </p>
+                  <div className="space-y-1">
+                    {Array.isArray(divergenceOrder.items) && divergenceOrder.items.map((it: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between text-xs text-slate-200">
+                        <span>{it.quantity}x {it.name || it.productName || it.itemName || it.productId}</span>
+                        <span className="font-semibold font-mono">
+                          {formatBRL(it.totalPrice || ((it.unitPrice || 0) * it.quantity) || 0)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <Button
+                    onClick={() => handleSettleDivergence("pix")}
+                    disabled={settlingDivergence}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs h-10 rounded-xl gap-1.5 shadow-sm"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>{settlingDivergence ? "Gerando..." : "Quitar via PIX"}</span>
+                  </Button>
+                  <Button
+                    onClick={() => handleSettleDivergence("credit_card")}
+                    disabled={settlingDivergence}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs h-10 rounded-xl gap-1.5 shadow-sm"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    <span>{settlingDivergence ? "Processando..." : "Quitar com Cartão"}</span>
+                  </Button>
+                </div>
+              </Card>
+            )
+          )}
+
           {/* ── Aviso Mandatório de Desacoplamento Financeiro ── */}
           <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3 shadow-sm">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />

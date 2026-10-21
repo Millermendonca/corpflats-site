@@ -3764,7 +3764,7 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-agua-frigobar",
     "question": "A água no frigobar é cortesia ou é cobrada à parte?",
-    "answer": "🧊 *Frigobar no Flat:*\n\nO frigobar do seu flat é entregue devidamente higienizado, vazio e ligado para seu uso particular durante a estadia. ❄️\n\n• *Atenção:* Não disponibilizamos água mineral ou bebidas como cortesia gratuita de boas-vindas.\n• Você pode utilizar o frigobar com total liberdade para guardar suas próprias compras e bebidas com conforto!",
+    "answer": "🧊 *Frigobar no Flat:*\n\nTodos os nossos flats contam com frigobar abastecido em parceria com a Anserve! ❄️\n\n• *Cortesia de Boas-Vindas:* Cada estadia tem direito a 1 kit de cortesia gratuito (cápsulas Nespresso e doces).\n• *Águas, Bebidas e Snacks:* O frigobar dispõe de água mineral, refrigerantes, cervejas e snacks. O consumo é por autoatendimento prático com pagamento direto via PIX ou Cartão pelo link exclusivo da sua reserva.\n• Você também tem total liberdade para utilizar o espaço do frigobar para seus próprios itens!",
     "category": "estrutura_flat",
     "keywords": [
       "agua",
@@ -3775,7 +3775,10 @@ export function getOfficialFaqSeed() {
       "garrafa de agua",
       "bebida",
       "geladeira",
-      "paga"
+      "paga",
+      "anserve",
+      "nespresso",
+      "snacks"
     ],
     "variations": [
       "Tem água no frigobar?",
@@ -3783,7 +3786,8 @@ export function getOfficialFaqSeed() {
       "Preciso pagar pela água do frigobar?",
       "Tem água mineral no quarto?",
       "O que tem dentro do frigobar?",
-      "Posso beber a água que está na geladeira?"
+      "Posso beber a água que está na geladeira?",
+      "Como funciona o frigobar do flat?"
     ],
     "status": "ativo",
     "scope": "all",
@@ -4113,9 +4117,15 @@ export function seedInitialFaqItems(dbInstance) {
   }
   let modified = false;
   for (const s of seeds) {
-    const exists = dbInstance.faqItems.some(item => item.id === s.id);
-    if (!exists) {
+    const existing = dbInstance.faqItems.find(item => item.id === s.id);
+    if (!existing) {
       dbInstance.faqItems.push({ ...s });
+      modified = true;
+    } else if (s.id === "faq-agua-frigobar" && (existing.answer?.includes("vazio") || existing.answer?.includes("Não disponibilizamos água"))) {
+      existing.question = s.question;
+      existing.answer = s.answer;
+      existing.keywords = s.keywords;
+      existing.variations = s.variations;
       modified = true;
     }
   }
@@ -25423,6 +25433,53 @@ app.get("/api/pms/guests", (req, res) => {
       });
     }
 
+    // Localiza pedidos de frigobar deste hóspede (por Documento, Telefone, Código de Reserva ou Nome)
+    const guestResCodes = new Set(guestReservations.map(r => r.code).filter(Boolean));
+    const guestResIds = new Set(guestReservations.map(r => String(r.id)).filter(Boolean));
+    const allMinibarOrders = Array.isArray(db.minibarOrders) ? db.minibarOrders : [];
+    const guestMinibarOrders = allMinibarOrders.filter(o => {
+      if (!o) return false;
+      const oDoc = (o.guestDocument || "").replace(/\D/g, "");
+      const oPhone = normalizePhone(o.guestPhone || "");
+      const oName = normalizeName(o.guestName || "");
+      return (cleanDoc && oDoc === cleanDoc) ||
+             (cleanPhone && cleanPhone.length >= 8 && oPhone === cleanPhone) ||
+             (o.reservationCode && guestResCodes.has(o.reservationCode)) ||
+             (o.reservationId && guestResIds.has(String(o.reservationId))) ||
+             (guestNameLower && guestNameLower.length >= 5 && oName === guestNameLower);
+    });
+
+    // Filtra pedidos de frigobar pagos para somar ao LTV e gerar tags de preferência
+    const paidMinibarOrders = guestMinibarOrders.filter(o => o.paymentStatus === "pago");
+    let minibarSpent = 0;
+    let nespressoQty = 0;
+    let beerQty = 0;
+    let snacksQty = 0;
+    let totalMinibarPaidUnits = 0;
+
+    paidMinibarOrders.forEach(o => {
+      minibarSpent += parseFloat(o.totalAmount || 0) || 0;
+      (o.items || []).forEach(it => {
+        const qty = Number(it.quantity) || 0;
+        totalMinibarPaidUnits += qty;
+        const pId = (it.productId || "").toLowerCase();
+        const pName = (it.productName || "").toLowerCase();
+
+        if (pId.includes("nespresso") || pName.includes("nespresso") || pName.includes("cápsula") || pName.includes("capsula")) {
+          nespressoQty += qty;
+        }
+        if (pId.includes("cerveja") || pName.includes("cerveja") || pName.includes("heineken") || pName.includes("stella") || pName.includes("corona") || pId.includes("beer")) {
+          beerQty += qty;
+        }
+        if (pId.includes("snack") || pId.includes("amendoim") || pId.includes("castanha") || pId.includes("chocolate") || pName.includes("snack") || pName.includes("amendoim") || pName.includes("castanha") || pName.includes("chocolate") || pName.includes("batata") || pName.includes("pringles")) {
+          snacksQty += qty;
+        }
+      });
+    });
+
+    // LTV Agregado: Diárias de Hospedagem + Consumo de Frigobar Pago
+    totalSpent += minibarSpent;
+
     // Identifica o flat mais frequente
     let favoriteFlat = "";
     let maxFlatCount = 0;
@@ -25449,6 +25506,19 @@ app.get("/api/pms/guests", (req, res) => {
     }
     if (g.hasPet && !tags.includes("Pet")) {
       tags.push("Pet");
+    }
+    // Tags dinâmicas de hábitos de consumo de frigobar (F29)
+    if (nespressoQty >= 3 && !tags.includes("Consumidor Nespresso")) {
+      tags.push("Consumidor Nespresso");
+    }
+    if (beerQty >= 2 && !tags.includes("Apreciador Cerveja")) {
+      tags.push("Apreciador Cerveja");
+    }
+    if (snacksQty >= 3 && !tags.includes("Prefere Snacks")) {
+      tags.push("Prefere Snacks");
+    }
+    if ((minibarSpent >= 100 || totalMinibarPaidUnits >= 8) && !tags.includes("Consumo Alto")) {
+      tags.push("Consumo Alto");
     }
 
     // Verifica se possui empresa parceira associada
@@ -25528,7 +25598,9 @@ app.get("/api/pms/guests", (req, res) => {
       tags: Array.from(new Set(tags)),
       companyName,
       invoicesCount: guestInvoices.length,
-      reservationsCount: guestReservations.length
+      reservationsCount: guestReservations.length,
+      minibarSpent: Number(minibarSpent.toFixed(2)),
+      minibarOrdersCount: guestMinibarOrders.length
     };
   });
 
@@ -25655,9 +25727,30 @@ app.get("/api/pms/guests/:id", (req, res) => {
     return (cleanDoc && bo.guestDocument === cleanDoc) || (guestNameLower && normalizeName(bo.guestName || "") === guestNameLower);
   });
 
+  // Histórico de Pedidos de Frigobar
+  const guestResCodes = new Set(guestReservations.map(r => r.code).filter(Boolean));
+  const guestResIds = new Set(guestReservations.map(r => String(r.id)).filter(Boolean));
+  const allMinibarOrders = Array.isArray(db.minibarOrders) ? db.minibarOrders : [];
+  const guestMinibarOrders = allMinibarOrders.filter(o => {
+    if (!o) return false;
+    const oDoc = (o.guestDocument || "").replace(/\D/g, "");
+    const oPhone = normalizePhone(o.guestPhone || "");
+    const oName = normalizeName(o.guestName || "");
+    return (cleanDoc && oDoc === cleanDoc) ||
+           (cleanPhone && cleanPhone.length >= 8 && oPhone === cleanPhone) ||
+           (o.reservationCode && guestResCodes.has(o.reservationCode)) ||
+           (o.reservationId && guestResIds.has(String(o.reservationId))) ||
+           (guestNameLower && guestNameLower.length >= 5 && oName === guestNameLower);
+  }).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  const minibarSpent = guestMinibarOrders
+    .filter(o => o.paymentStatus === "pago")
+    .reduce((acc, o) => acc + (parseFloat(o.totalAmount || 0) || 0), 0);
+
   // Métricas
-  const totalSpent = guestReservations.reduce((acc, r) => acc + (parseFloat(r.totalAmount || r.totalPrice || r.price || 0) || 0), 0) ||
-                     guestInvoices.reduce((acc, i) => acc + (parseFloat(i.valorServico || 0) || 0), 0);
+  const baseSpent = guestReservations.reduce((acc, r) => acc + (parseFloat(r.totalAmount || r.totalPrice || r.price || 0) || 0), 0) ||
+                    guestInvoices.reduce((acc, i) => acc + (parseFloat(i.valorServico || 0) || 0), 0);
+  const totalSpent = baseSpent + minibarSpent;
 
   res.json({
     ...guest,
@@ -25682,11 +25775,13 @@ app.get("/api/pms/guests/:id", (req, res) => {
     fnhrCompleted: Boolean(guest.fnhrCompleted || fnhrCompleted),
     fnhrCompletedAt: guest.fnhrCompletedAt || fnhrCompletedAt,
     totalSpent: Number(totalSpent.toFixed(2)),
+    minibarSpent: Number(minibarSpent.toFixed(2)),
     totalStays: Math.max(guestReservations.length, guest.totalStays || 0),
     reservations: guestReservations,
     stays: guestReservations,
     invoices: guestInvoices,
     breakfastOrders: guestBreakfastOrders,
+    minibarOrders: guestMinibarOrders,
     documents: guest.documents || []
   });
 });
@@ -46270,8 +46365,9 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
 app.post("/api/minibar/orders", async (req, res) => {
   try {
     const {
-      reservationCode,
-      flatNumber,
+      orderId: incomingOrderId,
+      reservationCode: rawResCode,
+      flatNumber: rawFlatNumber,
       items,
       paymentMethod,
       invoicePreference,
@@ -46282,9 +46378,26 @@ app.post("/api/minibar/orders", async (req, res) => {
       notes
     } = req.body || {};
 
-    if (!Array.isArray(items) || items.length === 0) {
+    // Suporte a quitação direta de ordem pré-existente (ex: ORD-MB-DIV-... gerada por divergência na vistoria)
+    const existingOrder = incomingOrderId ? (db.minibarOrders || []).find(o => o.id === incomingOrderId) : null;
+    if (existingOrder && existingOrder.paymentStatus === "pago") {
+      return res.json({
+        success: true,
+        orderId: existingOrder.id,
+        totalAmount: existingOrder.totalAmount,
+        paymentStatus: "pago",
+        alreadyPaid: true,
+        order: existingOrder
+      });
+    }
+
+    const effectiveItems = (Array.isArray(items) && items.length > 0) ? items : (existingOrder?.items || []);
+    if (!Array.isArray(effectiveItems) || effectiveItems.length === 0) {
       return res.status(400).json({ success: false, error: "Nenhum item selecionado para o pedido." });
     }
+
+    const reservationCode = rawResCode || existingOrder?.reservationCode;
+    const flatNumber = rawFlatNumber || existingOrder?.flatNumber;
 
     // Localiza a reserva
     let reservation = null;
@@ -46309,10 +46422,15 @@ app.post("/api/minibar/orders", async (req, res) => {
     });
     let alreadyConsumedCourtesy = existingOrders.some(o => (o.items || []).some(i => i.isCourtesy));
 
-    const orderItems = [];
+    let orderItems = [];
     let totalAmount = 0;
 
-    for (const it of items) {
+    // Se já for uma ordem de divergência com itens e valor apurados, preserva os itens existentes
+    if (existingOrder && (!Array.isArray(items) || items.length === 0) && Array.isArray(existingOrder.items) && existingOrder.items.length > 0) {
+      orderItems = [...existingOrder.items];
+      totalAmount = Number(existingOrder.totalAmount) || 0;
+    } else {
+      for (const it of effectiveItems) {
       const prod = (db.minibarProducts || []).find(p => p.id === it.productId);
       if (!prod) continue;
       const rawQty = parseInt(it.quantity, 10);
@@ -46443,14 +46561,15 @@ app.post("/api/minibar/orders", async (req, res) => {
         });
       }
     }
+  }
 
     if (orderItems.length === 0) {
       return res.status(400).json({ success: false, error: "Nenhum produto válido encontrado nos itens." });
     }
 
-    const orderId = `ORD-MB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const cleanDoc = String(document || reservation?.guestDocument || "").replace(/\D/g, "");
-    const cleanEmail = String(email || reservation?.guestEmail || "").trim();
+    const orderId = existingOrder ? existingOrder.id : `ORD-MB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const cleanDoc = String(document || existingOrder?.guestDocument || reservation?.guestDocument || "").replace(/\D/g, "");
+    const cleanEmail = String(email || existingOrder?.guestEmail || reservation?.guestEmail || "").trim();
 
     const fiscalPreferences = {
       invoiceDescriptionType: invoicePreference || "detailed",
@@ -46511,7 +46630,7 @@ app.post("/api/minibar/orders", async (req, res) => {
         pref = await createMercadoPagoPreference({
           reservationCode: "MB-" + orderId,
           amount: totalAmount,
-          guestName: reservation?.guestName || "Hospede CorpFlats",
+          guestName: reservation?.guestName || existingOrder?.guestName || "Hospede CorpFlats",
           guestEmail: cleanEmail || "hospede@corpflats.com.br",
           nights: 1,
           flatNumber: flatStr
@@ -46521,6 +46640,29 @@ app.post("/api/minibar/orders", async (req, res) => {
       }
 
       const initPoint = pref?.initPoint || `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=mock_${orderId}`;
+
+      if (existingOrder) {
+        existingOrder.paymentMethod = "credit_card";
+        existingOrder.paymentStatus = "pendente";
+        existingOrder.mpPreferenceId = pref?.id || `pref_${orderId}`;
+        existingOrder.mpInitPoint = initPoint;
+        existingOrder.fiscalPreferences = fiscalPreferences;
+        existingOrder.updatedAt = new Date().toISOString();
+        if (orderItems.length > 0) existingOrder.items = orderItems;
+        if (totalAmount > 0) existingOrder.totalAmount = totalAmount;
+        saveDatabase("minibar_order_updated_card");
+
+        return res.json({
+          success: true,
+          orderId,
+          totalAmount: existingOrder.totalAmount,
+          paymentMethod: "credit_card",
+          paymentStatus: "pendente",
+          initPoint,
+          order: existingOrder
+        });
+      }
+
       const newOrder = {
         id: orderId,
         flatNumber: flatStr,
@@ -46565,7 +46707,7 @@ app.post("/api/minibar/orders", async (req, res) => {
       cob = await createInterPixCob({
         amount: totalAmount,
         description: `Frigobar Flat ${flatStr}`,
-        debtorName: reservation?.guestName || "Hospede CorpFlats",
+        debtorName: reservation?.guestName || existingOrder?.guestName || "Hospede CorpFlats",
         debtorDocument: cleanDoc,
         reservationCode: orderId
       });
@@ -46591,6 +46733,32 @@ app.post("/api/minibar/orders", async (req, res) => {
     }
 
     const expiresAt = new Date(Date.now() + 86400000).toISOString();
+
+    if (existingOrder) {
+      existingOrder.paymentMethod = "pix";
+      existingOrder.paymentStatus = "pendente";
+      existingOrder.pixTxId = txid;
+      existingOrder.pixCopiaECola = copiaECola;
+      existingOrder.pixExpiresAt = expiresAt;
+      existingOrder.fiscalPreferences = fiscalPreferences;
+      existingOrder.updatedAt = new Date().toISOString();
+      if (orderItems.length > 0) existingOrder.items = orderItems;
+      if (totalAmount > 0) existingOrder.totalAmount = totalAmount;
+      saveDatabase("minibar_order_updated_pix");
+
+      return res.json({
+        success: true,
+        orderId,
+        totalAmount: existingOrder.totalAmount,
+        paymentMethod: "pix",
+        paymentStatus: "pendente",
+        pixQrCode: copiaECola,
+        pixCopiaECola: copiaECola,
+        expiresAt,
+        order: existingOrder
+      });
+    }
+
     const newOrder = {
       id: orderId,
       flatNumber: flatStr,
@@ -46963,11 +47131,13 @@ app.post("/api/minibar/inspections", async (req, res) => {
           const itemsListStr = discrepancyItems
             .map(it => `• ${it.quantity}x ${it.productName} — R$ ${Number(it.totalPrice).toFixed(2)}`)
             .join("\n");
-          const sofiaMsg = `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\nDurante a conferência e reposição do frigobar pela nossa equipe de governança, identificamos o consumo dos seguintes itens:\n${itemsListStr}\n\nTotal do consumo: R$ ${discrepancyTotalAmount.toFixed(2)}\n\nComo o frigobar não pode ser lançado junto à fatura da hospedagem, você pode efetuar o pagamento diretamente via PIX ou Cartão pelo link exclusivo abaixo:\n🔗 https://corpflats.com.br/minha-reserva/${finalResCode}/frigobar?ord=${chargeOrderId}\n\nCaso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
+          const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+          const sofiaMsg = `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\nDurante a conferência e reposição do frigobar pela nossa equipe de governança, identificamos o consumo dos seguintes itens:\n${itemsListStr}\n\nTotal do consumo: R$ ${discrepancyTotalAmount.toFixed(2)}\n\nComo o frigobar não pode ser lançado junto à fatura da hospedagem, você pode efetuar o pagamento diretamente via PIX ou Cartão pelo link exclusivo abaixo:\n🔗 ${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar?ord=${chargeOrderId}\n\nCaso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
 
           try {
             if (typeof sendZapiMessage === "function") {
-              sendZapiMessage(db.settings?.zapiConfig || {}, {
+              const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+              sendZapiMessage(zapiConfig, {
                 phone: reservation.guestPhone,
                 message: sofiaMsg,
                 channelId: "guest",
@@ -47269,6 +47439,207 @@ app.get("/api/minibar/analytics", (req, res) => {
         discrepancyRate: Number(discrepancyRate.toFixed(1))
       },
       demographicInsights: Object.values(demographicMap)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Analytics Demográfico & Consumo Cruzado com FNHR / Origem do Hóspede (F30)
+app.get("/api/minibar/analytics/demographics", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user) && user?.role !== "recepcao" && user?.role !== "reception") {
+      return res.status(403).json({ success: false, error: "Acesso restrito à administração e recepção." });
+    }
+
+    const orders = (db.minibarOrders || []).filter(o => o && o.paymentStatus === "pago");
+    const productsCatalog = db.minibarProducts || [];
+    const reservations = db.reservations || [];
+    const guests = db.guests || [];
+
+    // Mapeamento auxiliar de categoria padrão
+    const getProductCategory = (productId, productName) => {
+      const prod = productsCatalog.find(p => p.id === productId);
+      if (prod?.category) {
+        const cat = prod.category.toLowerCase();
+        if (cat.includes("cerveja")) return "Cervejas";
+        if (cat.includes("refrigerante")) return "Refrigerantes";
+        if (cat.includes("água") || cat.includes("agua")) return "Águas";
+        if (cat.includes("snack") || cat.includes("doce")) return "Snacks";
+        if (cat.includes("café") || cat.includes("cafe") || cat.includes("quente")) return "Cafés / Especiais";
+      }
+      const pName = (productName || productId || "").toLowerCase();
+      if (pName.includes("cerveja") || pName.includes("heineken") || pName.includes("stella") || pName.includes("corona") || pName.includes("beer")) {
+        return "Cervejas";
+      }
+      if (pName.includes("coca") || pName.includes("refrigerante") || pName.includes("guaraná") || pName.includes("guarana") || pName.includes("soda") || pName.includes("tonica") || pName.includes("tônica") || pName.includes("fanta")) {
+        return "Refrigerantes";
+      }
+      if (pName.includes("água") || pName.includes("agua") || pName.includes("suco") || pName.includes("gatorade")) {
+        return "Águas";
+      }
+      if (pName.includes("amendoim") || pName.includes("snack") || pName.includes("chocolate") || pName.includes("castanha") || pName.includes("pringles") || pName.includes("batata") || pName.includes("bala") || pName.includes("doce")) {
+        return "Snacks";
+      }
+      if (pName.includes("nespresso") || pName.includes("café") || pName.includes("cafe") || pName.includes("cápsula") || pName.includes("capsula") || pName.includes("chá") || pName.includes("cha")) {
+        return "Cafés / Especiais";
+      }
+      return "Outros";
+    };
+
+    // Mapeamento de DDD para UF (fallback inteligente para cadastros sem UF)
+    const inferStateFromPhone = (phoneStr) => {
+      if (!phoneStr) return null;
+      const clean = phoneStr.replace(/\D/g, "");
+      const ddd = clean.startsWith("55") ? clean.slice(2, 4) : clean.slice(0, 2);
+      const dddNum = parseInt(ddd, 10);
+      if (isNaN(dddNum)) return null;
+      if ([21, 22, 24].includes(dddNum)) return "RJ";
+      if (dddNum >= 11 && dddNum <= 19) return "SP";
+      if ([31, 32, 33, 34, 35, 37, 38].includes(dddNum)) return "MG";
+      if ([27, 28].includes(dddNum)) return "ES";
+      if (dddNum >= 41 && dddNum <= 46) return "PR";
+      if (dddNum >= 47 && dddNum <= 49) return "SC";
+      if (dddNum >= 51 && dddNum <= 55) return "RS";
+      if (dddNum === 61) return "DF";
+      if ([62, 64].includes(dddNum)) return "GO";
+      if ([71, 73, 74, 75, 77].includes(dddNum)) return "BA";
+      if ([81, 87].includes(dddNum)) return "PE";
+      if ([85, 88].includes(dddNum)) return "CE";
+      return null;
+    };
+
+    const stateMap = {};
+    const categoryTotals = {
+      "Cervejas": { category: "Cervejas", revenue: 0, units: 0 },
+      "Refrigerantes": { category: "Refrigerantes", revenue: 0, units: 0 },
+      "Águas": { category: "Águas", revenue: 0, units: 0 },
+      "Snacks": { category: "Snacks", revenue: 0, units: 0 },
+      "Cafés / Especiais": { category: "Cafés / Especiais", revenue: 0, units: 0 }
+    };
+
+    let totalRevenue = 0;
+    let totalItems = 0;
+
+    for (const ord of orders) {
+      const ordAmount = Number(ord.totalAmount) || 0;
+      totalRevenue += ordAmount;
+
+      // Localiza reserva correspondente
+      const resMatch = reservations.find(r =>
+        (ord.reservationCode && r.code === ord.reservationCode) ||
+        (ord.reservationId && String(r.id) === String(ord.reservationId))
+      );
+
+      // Localiza hóspede cadastrado
+      const cleanDoc = (ord.guestDocument || resMatch?.guestDocument || "").replace(/\D/g, "");
+      const cleanPhone = normalizePhone(ord.guestPhone || resMatch?.guestPhone || "");
+      const guestMatch = guests.find(g =>
+        (resMatch?.guestId && g.id === resMatch.guestId) ||
+        (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone)
+      );
+
+      // Determina Estado e Cidade com cascata: Hóspede -> Reserva -> FNHR -> DDD -> Outros
+      let state = (guestMatch?.state || guestMatch?.uf || resMatch?.guestState || "").trim().toUpperCase();
+      let city = (guestMatch?.city || guestMatch?.cidade || resMatch?.guestCity || "").trim();
+
+      if (!state && resMatch?.guests?.[0]) {
+        state = (resMatch.guests[0].state || resMatch.guests[0].uf || "").trim().toUpperCase();
+        if (!city) city = (resMatch.guests[0].city || resMatch.guests[0].cidade || "").trim();
+      }
+
+      if (!state) {
+        state = inferStateFromPhone(ord.guestPhone || resMatch?.guestPhone) || "Outros";
+      }
+
+      if (!stateMap[state]) {
+        stateMap[state] = {
+          state,
+          ordersCount: 0,
+          totalAmount: 0,
+          totalUnits: 0,
+          cities: {},
+          categories: {
+            "Cervejas": { revenue: 0, units: 0 },
+            "Refrigerantes": { revenue: 0, units: 0 },
+            "Águas": { revenue: 0, units: 0 },
+            "Snacks": { revenue: 0, units: 0 },
+            "Cafés / Especiais": { revenue: 0, units: 0 },
+            "Outros": { revenue: 0, units: 0 }
+          }
+        };
+      }
+
+      stateMap[state].ordersCount += 1;
+      stateMap[state].totalAmount += ordAmount;
+
+      if (city) {
+        stateMap[state].cities[city] = (stateMap[state].cities[city] || 0) + ordAmount;
+      }
+
+      // Processa itens do pedido
+      for (const it of ord.items || []) {
+        const qty = Number(it.quantity) || 0;
+        const itPrice = Number(it.totalPrice) || 0;
+        totalItems += qty;
+        stateMap[state].totalUnits += qty;
+
+        const cat = getProductCategory(it.productId, it.productName);
+        if (stateMap[state].categories[cat]) {
+          stateMap[state].categories[cat].revenue += itPrice;
+          stateMap[state].categories[cat].units += qty;
+        } else {
+          stateMap[state].categories["Outros"].revenue += itPrice;
+          stateMap[state].categories["Outros"].units += qty;
+        }
+
+        if (categoryTotals[cat]) {
+          categoryTotals[cat].revenue += itPrice;
+          categoryTotals[cat].units += qty;
+        }
+      }
+    }
+
+    // Ranking de estados ordenado por faturamento
+    const byState = Object.values(stateMap)
+      .map(s => {
+        const topCity = Object.entries(s.cities).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+        return {
+          state: s.state,
+          ordersCount: s.ordersCount,
+          totalAmount: Number(s.totalAmount.toFixed(2)),
+          totalUnits: s.totalUnits,
+          topCity,
+          categories: s.categories
+        };
+      })
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+
+    // Categorias consolidadas
+    const byCategory = Object.values(categoryTotals).map(c => ({
+      category: c.category,
+      revenue: Number(c.revenue.toFixed(2)),
+      units: c.units,
+      percentage: totalRevenue > 0 ? Number(((c.revenue / totalRevenue) * 100).toFixed(1)) : 0
+    })).sort((a, b) => b.revenue - a.revenue);
+
+    const leadingState = byState[0]?.state || "N/A";
+    const leadingCategory = byCategory[0]?.category || "N/A";
+
+    res.json({
+      success: true,
+      summary: {
+        totalRevenue: Number(totalRevenue.toFixed(2)),
+        totalOrders: orders.length,
+        totalItems,
+        averageTicket: orders.length > 0 ? Number((totalRevenue / orders.length).toFixed(2)) : 0,
+        leadingState,
+        leadingCategory
+      },
+      byState,
+      byCategory
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

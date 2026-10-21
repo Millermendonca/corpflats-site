@@ -170,7 +170,8 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
     garageInfo: "Garagem rotativa gratuita no condomínio Soho (qualquer vaga livre). É obrigatório cadastrar a placa no Pré-Check-in Digital com antecedência para autorização de entrada na portaria 24h. Comporta veículos normais, SUVs e caminhonetes (altura do portão ~2,10m a 2,20m).",
     petPolicy: "Aceitamos exclusivamente cães (apenas cachorros), máximo de 1 pet até 10kg por apartamento. Custo adicional de R$ 40,00 por dia (diária).",
     smokingPolicy: "Ambiente 100% livre de fumo! É estritamente proibido fumar dentro dos apartamentos e nas áreas fechadas do edifício.",
-    amenities: "Flats climatizados (Split), Smart TV, Wi-Fi veloz individual em cada flat, tomadas 127V, ferro de passar disponível (sem tábua), frigobar vazio e ligado para uso particular (sem cortesia de água), cozinha com micro-ondas e utensílios, enxoval completo de hotelaria e ducha aquecida.",
+    amenities: "Flats climatizados (Split), Smart TV, Wi-Fi veloz individual em cada flat, tomadas 127V, ferro de passar disponível (sem tábua), frigobar abastecido com bebidas e snacks em parceria com a Anserve (autoatendimento via PIX/Cartão e 1 kit cortesia com Nespresso e doces por estadia), cozinha com micro-ondas e utensílios, enxoval completo de hotelaria e ducha aquecida.",
+    minibarInfo: "Os flats do Soho Residence contam com frigobar abastecido em parceria com a Anserve. O hóspede tem 1 kit de cortesia por estadia (cápsulas Nespresso e doces) e pode consumir bebidas geladas (cervejas, refrigerantes, águas) e snacks com autoatendimento e pagamento via PIX ou Cartão pelo link exclusivo da reserva.",
     leisureInfo: "Piscina/jacuzzi aquecida e academia na cobertura funcionando diariamente das 06:00 às 22:00, exclusivo para hóspedes cadastrados (não é permitida a entrada de visitantes na cobertura e proibido vidro na área molhada).",
     directBookingBenefits: "Melhor tarifa garantida sem taxas de intermediários, prioridade de early check-in a partir das 10h (quando disponível) e suporte direto com a nossa administração.",
     receptionPhone: "5522998505276",
@@ -747,6 +748,9 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   const checkoutUrl = (matchedReservation && !isCheckoutCompleted && stayStatus !== "estadia_passada")
     ? `${appOrigin}/checkout/${canonicalResCode}`
     : null;
+  const minibarUrl = (matchedReservation && canonicalResCode)
+    ? `${appOrigin}/minha-reserva/${canonicalResCode}/frigobar`
+    : null;
   const checkinUrl = isCheckinRelevant ? rawCheckinUrl : null;
   const recentTriggers = getRecentAutomatedTriggers(db, cleanPhone, convMessages, matchedReservation);
   const hideFinancialForGuest = matchedReservation ? isNonRequesterGuestForReservation(matchedReservation, cleanPhone, db) : false;
@@ -765,6 +769,8 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     checkinUrl,
     rawCheckinUrl,
     checkoutUrl,
+    minibarUrl,
+    minibarInfo: "Frigobar abastecido com autoatendimento Anserve e 1 kit cortesia por estadia (cápsulas Nespresso e doces).",
     isCheckinRelevant,
     isCheckoutDay,
     isCheckoutCompleted,
@@ -785,6 +791,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
       checkinUrl,
       rawCheckinUrl,
       checkoutUrl,
+      minibarUrl,
       isCheckinRelevant,
       isCheckoutDay,
       isCheckoutCompleted,
@@ -1433,11 +1440,57 @@ export async function querySystemData(db, {
       };
     }
 
+    case "minibar":
+    case "frigobar": {
+      const products = Array.isArray(db?.minibarProducts) ? db.minibarProducts : [];
+      const orders = Array.isArray(db?.minibarOrders) ? db.minibarOrders : [];
+      const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+      const cleanPhone = normalizePhone(requesterPhone || "");
+
+      let matchedRes = null;
+      if (cleanPhone) {
+        matchedRes = reservations.find(r => r.status !== "cancelada" && doesReservationMatchPhone(r, cleanPhone));
+      }
+
+      const guestOrders = orders.filter(o => {
+        if (!o) return false;
+        if (cleanPhone && normalizePhone(o.guestPhone || "") === cleanPhone) return true;
+        if (matchedRes && (o.reservationCode === matchedRes.code || String(o.reservationId) === String(matchedRes.id))) return true;
+        return false;
+      });
+
+      const catalog = products.filter(p => p.isActive !== false).map(p => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        price: Number(p.price || 0),
+        isCourtesy: Boolean(p.isCourtesy)
+      }));
+
+      const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
+      const minibarUrl = matchedRes?.code ? `${appOrigin}/minha-reserva/${matchedRes.code}/frigobar` : null;
+
+      return {
+        catalog,
+        courtesyRules: "Cada reserva tem direito a 1 kit cortesia por estadia (cápsulas Nespresso e doces). Bebidas geladas e snacks adicionais podem ser adquiridos via autoatendimento com pagamento por PIX ou Cartão.",
+        minibarUrl,
+        guestOrders: guestOrders.map(o => ({
+          orderId: o.id,
+          totalAmount: o.totalAmount,
+          paymentStatus: o.paymentStatus,
+          paymentMethod: o.paymentMethod,
+          itemsCount: (o.items || []).length,
+          paidAt: o.paidAt || null,
+          createdAt: o.createdAt
+        }))
+      };
+    }
+
     default:
       return {
         error: "UNKNOWN_MODULE",
         module,
-        message: `Módulo '${module}' não suportado pelo motor universal. Módulos válidos: flats, reservations, cleaning, maintenance, breakfast, garage, lost_and_found, faq, finance, sentiment.`
+        message: `Módulo '${module}' não suportado pelo motor universal. Módulos válidos: flats, reservations, cleaning, maintenance, breakfast, garage, lost_and_found, faq, finance, sentiment, minibar.`
       };
   }
 }
@@ -1785,13 +1838,13 @@ export function buildGeminiTools(actionsSettings = {}) {
   if (allowed.querySystemData !== false) {
     declarations.push({
       name: "querySystemData",
-      description: "Consulta universal e inteligente aos dados em tempo real do sistema CorpFlats (flats, reservas, limpeza/governança, manutenção/OS, café da manhã, garagem, achados e perdidos, regras/FAQs, financeiro e avaliações/sentimento).",
+      description: "Consulta universal e inteligente aos dados em tempo real do sistema CorpFlats (flats, reservas, limpeza/governança, manutenção/OS, café da manhã, garagem, achados e perdidos, regras/FAQs, financeiro, frigobar/minibar e avaliações/sentimento).",
       parameters: {
         type: "OBJECT",
         properties: {
           module: {
             type: "STRING",
-            description: "Módulo do sistema a consultar: 'flats', 'reservations', 'cleaning', 'maintenance', 'breakfast', 'garage', 'lost_and_found', 'faq', 'finance' ou 'sentiment'."
+            description: "Módulo do sistema a consultar: 'flats', 'reservations', 'cleaning', 'maintenance', 'breakfast', 'garage', 'lost_and_found', 'faq', 'finance', 'sentiment' ou 'minibar'."
           },
           query: {
             type: "STRING",
@@ -4376,8 +4429,8 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
   else if (/frigobar|geladeira|congelador/i.test(qLower)) {
     finalCategory = "estrutura_flat";
     if (!isNegative) {
-      synthesizedGuideline = "Todos os flats contam com frigobar privativo ligado para uso dos hóspedes.";
-      sampleResponse = "Olá! Sim, todos os flats contam com frigobar privativo limpo e ligado para sua comodidade! 🧊";
+      synthesizedGuideline = "Todos os flats contam com frigobar abastecido com bebidas e snacks em parceria com a Anserve, autoatendimento via PIX/Cartão e 1 kit cortesia por estadia.";
+      sampleResponse = "Olá! Sim, todos os flats contam com frigobar privativo abastecido com bebidas e snacks (autoatendimento Anserve via PIX ou Cartão) e cortesia de boas-vindas com Nespresso e doces! 🧊☕";
     }
   }
   // 6. Ferro de passar / tábua
@@ -7812,6 +7865,12 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return ret(`${greetingSalutation} Sim! Nossos flats com duas camas de solteiro (twin) são: ${numbers || "114, 212, 215, 313, 512, 605, 712, 715, 1004, 1304"} 🛏️🛏️.`);
   }
 
+  // 7.8b Frigobar e Consumo no Flat
+  if (queryAnalysis.type !== "OPERATIONAL_DEMAND" && /frigobar|minibar|água\s+no\s+quarto|agua\s+no\s+quarto|bebida.*quarto|snack|nespresso/i.test(text)) {
+    const minibarLinkPart = guestContext?.minibarUrl ? `\n\n👉 Acesse o cardápio e autoatendimento pelo link:\n${guestContext.minibarUrl}` : "";
+    return ret(`${greetingSalutation} 🧊 *Frigobar no Flat:*\n\nTodos os nossos flats contam com frigobar abastecido em parceria com a Anserve! Oferecemos cortesia de 1 kit de boas-vindas por estadia (cápsulas Nespresso e doces) e você pode consumir águas, refrigerantes, cervejas e snacks com total comodidade e pagamento direto via PIX ou Cartão.${minibarLinkPart}`);
+  }
+
   // 7.9 Comodidades e Estrutura Geral dos Flats
   if (queryAnalysis.type !== "OPERATIONAL_DEMAND" && /micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
     return ret(`${greetingSalutation} ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
@@ -8264,7 +8323,7 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Período da reserva: ${guestContext.reservation?.checkinDate} até ${guestContext.reservation?.checkoutDate}
 - Status da reserva: ${guestContext.isCheckoutCompleted ? "checkout_concluido (Estadia encerrada)" : guestContext.reservation?.status}${guestContext.hideFinancialForGuest ? `\n- PRIVACIDADE FINANCEIRA (SOLICITANTE DISTINTO): Esta reserva foi solicitada por ${guestContext.requesterName || "outro responsável"}. NUNCA informe valores, saldo, status de pagamento nem gere/envie PIX ou cobrança para este hóspede. Caso ele pergunte sobre pagamento da reserva, informe cordialmente que o acerto financeiro é tratado diretamente com o solicitante.` : ""}
 - Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / check-out concluído / sem relevância)"}
-${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
+${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}${guestContext.minibarUrl ? `- Link do Frigobar / Autoatendimento Anserve: ${guestContext.minibarUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 ${preAnalysis.promptBlock}
 ${conversationStateSection}
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]
@@ -8275,6 +8334,7 @@ ${conversationStateSection}
 - Política de Late Check-out: ${aiConfig.knowledgeBase.lateCheckoutPolicy}
 - Wi-Fi Oficial: Cada apartamento tem sua própria rede individualizada no formato "apto {quarto}" (ex: se o quarto for 113, a rede é "apto 113"). A senha é única para todos os apartamentos: "${aiConfig.knowledgeBase.wifiPassword || "1234567890123"}". Se o quarto do hóspede constar no contexto acima, informe a rede específica dele ("apto {quarto}"); caso contrário, explique a regra geral.
 - Café da Manhã: ${aiConfig.knowledgeBase.breakfastInfo}
+- Frigobar & Consumo no Quarto: ${aiConfig.knowledgeBase.minibarInfo || "Os flats contam com frigobar abastecido pela Anserve. O hóspede tem cortesia de 1 kit boas-vindas por estadia (cápsulas Nespresso e doces) e pode consumir bebidas geladas e snacks com autoatendimento e pagamento via PIX/Cartão pelo link do frigobar."}
 - Garagem e Estacionamento: ${aiConfig.knowledgeBase.garageInfo}
 - Animais / Pets: ${aiConfig.knowledgeBase.petPolicy}
 - Lazer e Cobertura: ${aiConfig.knowledgeBase.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 exclusivo hóspedes."}
@@ -8532,7 +8592,7 @@ export function generateIntelligentFaqDraft(questionText, db = null, category = 
     return "Sim! Todos os nossos flats dispõem de cozinha compacta equipada com micro-ondas, frigobar e utensílios completos para sua total comodidade. 🍽️⚡";
   }
   if (/frigobar|geladeira|congelador/i.test(lower)) {
-    return "Sim! Todos os flats contam com frigobar privativo limpo e ligado para uso particular dos hóspedes. 🧊";
+    return "Sim! Os flats contam com frigobar abastecido em parceria com a Anserve. Você conta com 1 kit cortesia por estadia (cápsulas Nespresso e doces) e pode consumir bebidas e snacks via autoatendimento com pagamento por PIX ou Cartão. 🧊🍫";
   }
   if (/cafeteira|cafezinh/i.test(lower)) {
     return "Sim! Nossos flats dispõem de cozinha compacta equipada com cafeteira para seu conforto. ☕";
