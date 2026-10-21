@@ -657,6 +657,25 @@ Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos �
     ]
   },
   {
+    id: "tpl_pre_checkin_enter_prompt",
+    triggerEvent: "pre_checkin_enter_prompt",
+    title: "Pós Check-in Online • Botão Rápido: Informar que Entrei",
+    description: "Enviado na sequência imediata da confirmação do Check-in Online com o mínimo de texto possível e o botão único para o hóspede clicar assim que entrar no flat.",
+    enabled: true,
+    sendEmail: false,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `🚪 *Quando entrar no Flat {{quarto}}, toque abaixo:*`,
+    footer: "",
+    buttons: [
+      { id: "btn_informar_entrei", type: "URL", label: "🚪 Informar que Entrei", url: "{{link_autocheckin}}" }
+    ]
+  },
+  {
     id: "tpl_checkin_day_instructions",
     triggerEvent: "checkin_day_instructions",
     title: "Dia do Check-in (07:00) • Instruções de Chegada & Acesso",
@@ -2717,6 +2736,7 @@ const EMAIL_SUBJECT_BY_EVENT = {
   reservation_cancelled: "Reserva cancelada",
   pre_checkin_reminder: "Lembrete: faça seu pré-check-in digital",
   pre_checkin_completed: "Check-in online concluído • Instruções para sua chegada",
+  pre_checkin_enter_prompt: "Confirme sua entrada no flat",
   checkin_day_instructions: "Instruções para o seu check-in",
   checkin_completed: "Boas-vindas ao seu flat",
   breakfast_reminder: "Escolha seu café da manhã",
@@ -3343,11 +3363,14 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     )
   );
 
+  const isPreCheckinEnterPromptTpl = templateId === "tpl_pre_checkin_enter_prompt" || triggerEvent === "pre_checkin_enter_prompt";
+
   if (isUnpaidPreReserva) {
     // Pré-reserva NÃO permite check-in digital nem autodeclaração de chegada antes do pagamento!
     list = list.filter(b =>
       !isCheckinBtn(b) &&
       b.id !== "btn_cheguei" &&
+      b.id !== "btn_informar_entrei" &&
       b.id !== "btn_cafe" &&
       (!b.url || (!String(b.url).includes("/self-checkin") && !String(b.url).includes("/cafe")))
     );
@@ -3357,6 +3380,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     list = list.filter(b => 
       !isCheckinBtn(b) && 
       b.id !== "btn_cheguei" && 
+      b.id !== "btn_informar_entrei" && 
       (!b.url || !String(b.url).includes("/self-checkin"))
     );
     // Garante que o Portal do Hóspede está presente
@@ -3368,6 +3392,17 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
         url: linkPortalHospede
       });
     }
+  } else if (isPreCheckinEnterPromptTpl) {
+    // Bolha sequencial pós-check-in online: mantém exclusivamente o botão único "🚪 Informar que Entrei"
+    const existingEnterBtn = list.find(b => b.id === "btn_informar_entrei" || b.id === "btn_cheguei" || (b.url && String(b.url).includes("/self-checkin")));
+    list = [
+      {
+        id: existingEnterBtn?.id || "btn_informar_entrei",
+        type: "URL",
+        label: existingEnterBtn?.label || "🚪 Informar que Entrei",
+        url: linkAutocheckin
+      }
+    ];
   } else if (isPreCheckinDone) {
     // Pré-check-in já preenchido, mas ainda NÃO entrou no flat:
     // Remove botão de pré-checkin e assegura "Já Cheguei no Flat" (btn_cheguei), exceto na confirmação pós-check-in online
@@ -9413,6 +9448,7 @@ const SINGLE_DISPATCH_EVENTS = new Set([
   "sameday_reservation",
   "pre_reservation_created",
   "pre_checkin_completed",
+  "pre_checkin_enter_prompt",
   "checkin_completed",
   "checkout_completed",
   "on_checkout",
@@ -9959,8 +9995,9 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
   const resKey = getReservationDedupKey(reservation) || String(resCode || "");
   const eventGroup = getEventGroupKey(eventName);
   const normPhone = normalizePhoneForDedup(target.phone);
+  const isPerGuestPreCheckinEvt = eventName === "pre_checkin_completed" || eventName === "pre_checkin_enter_prompt";
   const lockKey = (resKey && normPhone)
-    ? (eventName === "pre_checkin_completed" ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normPhone}` : `${resKey}:${eventGroup}:${normPhone}`)
+    ? (isPerGuestPreCheckinEvt ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normPhone}` : `${resKey}:${eventGroup}:${normPhone}`)
     : "";
   const pdfLockKey = (resKey && normPhone) ? `${resKey}:${normPhone}` : "";
 
@@ -10379,6 +10416,15 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "pre_checkin_completed") {
       const defPreChkDone = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_completed" || t.triggerEvent === "pre_checkin_completed");
       if (defPreChkDone) templates = [defPreChkDone];
+    } else if (templates.length === 0 && eventName === "pre_checkin_enter_prompt") {
+      const hasExplicitlyDisabledPrompt = (db.whatsappTemplates || []).some(
+        t => (t.id === "tpl_pre_checkin_enter_prompt" || t.triggerEvent === "pre_checkin_enter_prompt") &&
+             (t.enabled === false || !isTemplateAllowedForChannel(t, resvChannel))
+      );
+      if (!hasExplicitlyDisabledPrompt) {
+        const defEnterPrompt = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_enter_prompt" || t.triggerEvent === "pre_checkin_enter_prompt");
+        if (defEnterPrompt) templates = [defEnterPrompt];
+      }
     } else if (templates.length === 0 && eventName === "checkin_cleaning_delay") {
       const hasExplicitlyDisabled = (db.whatsappTemplates || []).some(
         t => (t.id === "tpl_checkin_cleaning_delay" || t.triggerEvent === "checkin_cleaning_delay") &&
@@ -10456,11 +10502,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const eventGroup = getEventGroupKey(eventName);
     const isSingleFireEvent = SINGLE_DISPATCH_EVENTS.has(eventName);
     const isUpdatedEvent = eventName === "reservation_updated";
-    const isReSignPreCheckin = eventName === "pre_checkin_completed" && Boolean(reservation._wasReSignature);
+    const isPerGuestPreCheckinEvt = eventName === "pre_checkin_completed" || eventName === "pre_checkin_enter_prompt";
+    const isReSignPreCheckin = isPerGuestPreCheckinEvt && Boolean(reservation._wasReSignature);
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
-      const onlyGuestIndex = eventName === "pre_checkin_completed" ? (Number(reservation._checkinGuestIndex) || 0) : 0;
+      const onlyGuestIndex = isPerGuestPreCheckinEvt ? (Number(reservation._checkinGuestIndex) || 0) : 0;
       const dispatches = buildTemplateTargets(tpl, recipients, { targetMode, onlyGuestIndex });
 
       for (const d of dispatches) {
@@ -10481,7 +10528,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           if (target.phone) {
             const normTargetPhone = normalizePhoneForDedup(target.phone);
             const lockKey = (resKey && normTargetPhone)
-              ? (eventName === "pre_checkin_completed" ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normTargetPhone}` : `${resKey}:${eventGroup}:${normTargetPhone}`)
+              ? (isPerGuestPreCheckinEvt ? `${resKey}:${eventGroup}:${target.type || "guest"}:${normTargetPhone}` : `${resKey}:${eventGroup}:${normTargetPhone}`)
               : "";
             const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
 
@@ -10492,7 +10539,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
               if (!isSameRes) return false;
               if (!isSameEventGroup(h.triggerEvent, eventName)) return false;
-              if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
+              if (isPerGuestPreCheckinEvt && (h.recipientType || "guest") !== (target.type || "guest")) return false;
               if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
               if ((isUpdatedEvent || isReSignPreCheckin) && h.sentAt) {
                 const ageMs = Date.now() - new Date(h.sentAt).getTime();
@@ -10516,7 +10563,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               if (!isSameRes) return false;
               if (c.metadata?.channel !== "whatsapp_mirror") return false;
               if (!isSameEventGroup(c.metadata?.trigger, eventName)) return false;
-              if (eventName === "pre_checkin_completed" && (c.metadata?.recipientType || "guest") !== (target.type || "guest")) return false;
+              if (isPerGuestPreCheckinEvt && (c.metadata?.recipientType || "guest") !== (target.type || "guest")) return false;
               if (String(c.recipient || "").trim().toLowerCase() !== normTargetEmail) return false;
               if ((isUpdatedEvent || isReSignPreCheckin) && c.sent_at) {
                 const ageMs = Date.now() - new Date(c.sent_at).getTime();
@@ -10541,6 +10588,21 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
       if (typeof saveDatabase === "function") {
         saveDatabase();
+      }
+    }
+
+    // Encadeamento automático: logo após a confirmação do check-in online, envia a bolha enxuta com o botão "🚪 Informar que Entrei"
+    if (eventName === "pre_checkin_completed") {
+      const hasAlreadyEnteredFlat = Boolean(
+        reservation.guestSelfCheckin ||
+        reservation.actualCheckinAt ||
+        reservation.status === "in_house" ||
+        (reservation.status === "checkin" && reservation.guestSelfCheckin)
+      );
+      if (!hasAlreadyEnteredFlat) {
+        const delayMs = (db?.zapiConfig?.instanceId && db?.zapiConfig?.token) ? 1200 : 20;
+        await new Promise(r => setTimeout(r, delayMs));
+        await triggerImmediateWhatsApp(db, saveDatabase, "pre_checkin_enter_prompt", reservation, baseUrl);
       }
     }
   } catch (err) {

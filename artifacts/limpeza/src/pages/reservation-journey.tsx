@@ -401,6 +401,26 @@ Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos �
     editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_checkin_completed",
     category: "pre_estadia"
   },
+  {
+    id: "node_pre_checkin_enter_prompt",
+    stageNumber: 3,
+    stageName: "3. Pré-Estadia (Véspera)",
+    title: "Pós Check-in Online • Botão Rápido: Informar que Entrei",
+    subtitle: "Enviado logo na sequência da confirmação com 1 linha curta e botão único",
+    triggerEvent: "pre_checkin_enter_prompt",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Na sequência imediata (+1,5s) do Check-in Online",
+    condition: "Hóspede concluiu o Check-in Online e ainda não registrou entrada no flat",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Bolha ultra-enxuta enviada logo após as instruções de recepção do Check-in Online, contendo apenas 1 frase curta e o botão único '🚪 Informar que Entrei' para o hóspede clicar assim que entrar no flat.",
+    messagePreview: `🚪 *Quando entrar no Flat {{quarto}}, toque abaixo:*`,
+    buttons: [
+      { label: "🚪 Informar que Entrei", type: "URL", url: "{{link_autocheckin}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_checkin_enter_prompt",
+    category: "pre_estadia"
+  },
 
   // ── ETAPA 4: DIA DO CHECK-IN & ENTRADA ─────────────────────────────────────
   {

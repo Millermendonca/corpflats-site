@@ -27255,6 +27255,7 @@ function formatTriggerTitle(trigger) {
     payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
     sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
     pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
+    pre_checkin_enter_prompt: "Pós Check-in Online • Botão: Informar que Entrei",
     room_ready: "Apartamento Pronto • Acesso Liberado",
     checkin_completed: "Check-in Realizado • Boas-Vindas",
     checkout_completed: "Check-out Realizado • Agradecimento",

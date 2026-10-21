@@ -138,11 +138,22 @@ test("Disparo de pre_checkin_completed em reserva com 2 hóspedes: Titular receb
     "https://corpflats.onrender.com"
   );
 
-  assert.equal(db.whatsappHistory.length, 1, "Apenas o Hóspede 1 deve receber no momento em que preenche sua ficha");
+  assert.equal(db.whatsappHistory.length, 2, "O Hóspede 1 deve receber a confirmação e, na sequência, o botão de informar que entrou");
+  assert.equal(db.whatsappHistory[0].triggerEvent, "pre_checkin_completed");
   assert.equal(db.whatsappHistory[0].recipientType, "guest");
   assert.equal(db.whatsappHistory[0].guestPhone, "21999112233");
   assert.match(db.whatsappHistory[0].message, /Acompanhante Pendente \(2º Hóspede\)/);
   assert.match(db.whatsappHistory[0].message, /\/pre-checkin\/RES-305-0502\?guest=2/);
+
+  // Valida a segunda mensagem enviada na sequência com mínimo de texto e botão único "Informar que Entrei"
+  assert.equal(db.whatsappHistory[1].triggerEvent, "pre_checkin_enter_prompt");
+  assert.equal(db.whatsappHistory[1].recipientType, "guest");
+  assert.equal(db.whatsappHistory[1].guestPhone, "21999112233");
+  assert.equal(db.whatsappHistory[1].message, "🚪 *Quando entrar no Flat 305, toque abaixo:*");
+  assert.equal(db.whatsappHistory[1].buttons.length, 1);
+  assert.equal(db.whatsappHistory[1].buttons[0].label, "🚪 Informar que Entrei");
+  assert.equal(db.whatsappHistory[1].buttons[0].url, "https://corpflats.onrender.com/api/pms/guest-portal/RES-305-0502/self-checkin");
+
   assert.equal(db.whatsappQueue[0].status, "cancelled", "Lembrete do titular deve ser cancelado");
   assert.equal(db.whatsappQueue[1].status, "scheduled", "Lembrete do 2º hóspede continua agendado até ele preencher");
 
@@ -158,12 +169,20 @@ test("Disparo de pre_checkin_completed em reserva com 2 hóspedes: Titular receb
     "https://corpflats.onrender.com"
   );
 
-  assert.equal(db.whatsappHistory.length, 2, "O 2º Hóspede deve receber sua confirmação individualmente");
-  assert.equal(db.whatsappHistory[1].recipientType, "guest_2");
-  assert.equal(db.whatsappHistory[1].guestPhone, "21988776655");
-  assert.match(db.whatsappHistory[1].message, /Olá, \*Pedro\*!/);
-  assert.match(db.whatsappHistory[1].message, /Pedro Costa/);
-  assert.match(db.whatsappHistory[1].message, /Flat 305/);
-  assert.doesNotMatch(db.whatsappHistory[1].message, /Acompanhante Pendente/);
+  assert.equal(db.whatsappHistory.length, 4, "O 2º Hóspede deve receber sua confirmação e, na sequência, o botão de informar que entrou");
+  assert.equal(db.whatsappHistory[2].triggerEvent, "pre_checkin_completed");
+  assert.equal(db.whatsappHistory[2].recipientType, "guest_2");
+  assert.equal(db.whatsappHistory[2].guestPhone, "21988776655");
+  assert.match(db.whatsappHistory[2].message, /Olá, \*Pedro\*!/);
+  assert.match(db.whatsappHistory[2].message, /Pedro Costa/);
+  assert.match(db.whatsappHistory[2].message, /Flat 305/);
+  assert.doesNotMatch(db.whatsappHistory[2].message, /Acompanhante Pendente/);
+
+  assert.equal(db.whatsappHistory[3].triggerEvent, "pre_checkin_enter_prompt");
+  assert.equal(db.whatsappHistory[3].recipientType, "guest_2");
+  assert.equal(db.whatsappHistory[3].guestPhone, "21988776655");
+  assert.equal(db.whatsappHistory[3].buttons.length, 1);
+  assert.equal(db.whatsappHistory[3].buttons[0].label, "🚪 Informar que Entrei");
+
   assert.equal(db.whatsappQueue[1].status, "cancelled", "Lembrete do 2º hóspede deve ser cancelado após conclusão");
 });
