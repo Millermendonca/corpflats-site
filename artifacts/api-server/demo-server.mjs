@@ -47185,6 +47185,7 @@ app.get("/api/minibar/settlement", (req, res) => {
       pixOrdersAmount: Number(pixOrdersAmount.toFixed(2)),
       cardFees: Number(cardFees.toFixed(2)),
       pixFees: Number(pixFees.toFixed(2)),
+      totalFees: Number((cardFees + pixFees).toFixed(2)),
       commissionCorpFlats: Number(commissionCorpFlats.toFixed(2)),
       courtesyRestockCost: Number(courtesyRestockCost.toFixed(2)),
       netPayableToAnserve: Number(netPayableToAnserve.toFixed(2)),

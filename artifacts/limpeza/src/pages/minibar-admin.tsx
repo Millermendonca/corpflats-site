@@ -396,33 +396,49 @@ export default function MinibarAdminPage() {
       {/* Estilos dedicados para impressão de cartões em Acrílico A6 */}
       <style>{`
         @media print {
-          body {
+          @page {
+            size: A6 portrait;
+            margin: 6mm;
+          }
+          html, body {
             background: white !important;
             color: black !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
           }
           aside, nav, header, footer, .print\\:hidden {
             display: none !important;
           }
           .print-qr-grid {
-            display: grid !important;
-            grid-template-columns: repeat(2, 1fr) !important;
-            gap: 16px !important;
+            display: block !important;
+            width: 100% !important;
             padding: 0 !important;
             margin: 0 !important;
           }
           .print-card-a6 {
+            page-break-after: always !important;
+            break-after: page !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
             border: 1.5px solid #000 !important;
             border-radius: 12px !important;
-            padding: 16px !important;
-            height: 480px !important;
+            padding: 14px 12px !important;
+            width: 100% !important;
+            max-width: 93mm !important;
+            height: 136mm !important;
+            max-height: 136mm !important;
+            margin: 0 auto !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: space-between !important;
             align-items: center !important;
             text-align: center !important;
             box-sizing: border-box !important;
+          }
+          .print-card-a6:last-child {
+            page-break-after: auto !important;
+            break-after: auto !important;
           }
         }
       `}</style>
@@ -822,7 +838,7 @@ export default function MinibarAdminPage() {
                 <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
                   <span className="text-[11px] text-muted-foreground font-semibold">Taxas Financeiras Retidas</span>
                   <div className="text-xl font-black text-red-600 dark:text-red-400">
-                    - R$ {Number(settlementData.totalFees || 0).toFixed(2)}
+                    - R$ {Number(settlementData.totalFees || ((settlementData.cardFees || 0) + (settlementData.pixFees || 0)) || 0).toFixed(2)}
                   </div>
                   <span className="text-[10px] text-muted-foreground block">
                     Mercado Pago + PIX Inter

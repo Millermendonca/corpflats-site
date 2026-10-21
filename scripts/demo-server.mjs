@@ -33057,7 +33057,7 @@ app.post("/api/marketing/abandoned-carts/:id/recover", (req, res) => {
   const cleanPhone = (cart.guestPhone || "").replace(/\D/g, "");
   const firstName = (cart.guestName || "amigo(a)").split(" ")[0];
   const msg = encodeURIComponent(
-    `Olá, ${firstName}! Tudo bem? 😊\n\nNotamos que você estava reservando o seu Flat para os dias ${cart.checkinDate || ""} a ${cart.checkoutDate || ""}, mas a reserva ainda não foi finalizada.\n\nFicou alguma dúvida sobre o apartamento ou gostaria de uma condição especial no PIX com 5% de desconto para fechar agora?\n\nSe quiser concluir, basta acessar aqui: https://corpflats.com.br/reservar`
+    `Olá, ${firstName}! Tudo bem? 😊\n\nNotamos que você estava reservando o seu Flat para os dias ${cart.checkinDate || ""} a ${cart.checkoutDate || ""}, mas a reserva ainda não foi finalizada.\n\nFicou alguma dúvida sobre o apartamento ou gostaria de uma condição especial no PIX com 5% de desconto para fechar agora?\n\nSe quiser concluir, basta acessar aqui: https://corpflats.com.br`
   );
   const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${msg}`;
 
@@ -42529,7 +42529,7 @@ async function createMercadoPagoPreference({ reservationCode, amount, guestName,
     },
     back_urls: {
       success: `https://corpflats.com.br/minha-reserva/${reservationCode}?payment=success`,
-      failure: `https://corpflats.com.br/reservar?payment=failure`,
+      failure: `https://corpflats.com.br?payment=failure`,
       pending: `https://corpflats.com.br/minha-reserva/${reservationCode}?payment=pending`
     },
     auto_return: "approved",
@@ -47185,6 +47185,7 @@ app.get("/api/minibar/settlement", (req, res) => {
       pixOrdersAmount: Number(pixOrdersAmount.toFixed(2)),
       cardFees: Number(cardFees.toFixed(2)),
       pixFees: Number(pixFees.toFixed(2)),
+      totalFees: Number((cardFees + pixFees).toFixed(2)),
       commissionCorpFlats: Number(commissionCorpFlats.toFixed(2)),
       courtesyRestockCost: Number(courtesyRestockCost.toFixed(2)),
       netPayableToAnserve: Number(netPayableToAnserve.toFixed(2)),
