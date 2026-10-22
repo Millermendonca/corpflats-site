@@ -764,6 +764,34 @@ function inferZohoSmartLabels(item, existingLabels = []) {
 }
 
 /**
+ * Extrai o timestamp UTC real de uma mensagem da Zoho Mail API.
+ * O campo sentDateInGMT da Zoho (.com / California PDT) retorna deslocado +7h no futuro,
+ * enquanto receivedTime e os 13 primeiros dígitos do messageId representam o epoch UTC real em ms.
+ */
+export function resolveZohoTrueIsoDate(zm = {}) {
+  const receivedMs = Number(zm.receivedTime || zm.receivedTimeMs || 0);
+  if (receivedMs > 1500000000000 && receivedMs < 2500000000000) {
+    return new Date(receivedMs).toISOString();
+  }
+
+  const rawMsgId = String(zm.zohoMessageId || zm.messageId || zm.id || "").replace(/^zoho_/, "").trim();
+  if (/^\d{13,}/.test(rawMsgId)) {
+    const idEpochMs = Number(rawMsgId.slice(0, 13));
+    if (idEpochMs > 1500000000000 && idEpochMs < 2500000000000) {
+      return new Date(idEpochMs).toISOString();
+    }
+  }
+
+  const sentGmtMs = Number(zm.sentDateInGMT || 0);
+  if (sentGmtMs > 1500000000000) {
+    const correctedMs = sentGmtMs > Date.now() + 15 * 60 * 1000 ? sentGmtMs - 7 * 3600 * 1000 : sentGmtMs;
+    return new Date(correctedMs).toISOString();
+  }
+
+  return zm.created_at || new Date().toISOString();
+}
+
+/**
  * Sincroniza mensagens da Zoho Mail API para o cache local quando OAuth2 está ativo
  */
 export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 50 } = {}) {
@@ -818,8 +846,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       if (!zm || !zm.messageId) continue;
       const zId = `zoho_${zm.messageId}`;
       const existingIdx = db.zohoMessagesCache.findIndex(m => m.id === zId);
-      const sentTimeMs = Number(zm.sentDateInGMT || zm.receivedTime || Date.now());
-      const isoDate = new Date(sentTimeMs).toISOString();
+      const isoDate = resolveZohoTrueIsoDate(zm);
 
       const resolvedFolder = classifyZohoMessageFolder(zm, zohoFolderMap, folder);
       const resolvedDirection = resolvedFolder === "sent" ? "outbound" : (resolvedFolder === "drafts" ? "draft" : "inbound");
@@ -848,6 +875,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         isRead: String(zm.status) === "1" || Boolean(zm.isRead),
         isStarred: Boolean(zm.flagid && zm.flagid !== "flag_not_set"),
         hasAttachments: Boolean(zm.hasAttachment === "1" || zm.hasAttachment === true),
+        receivedTimeMs: Number(zm.receivedTime || 0) || undefined,
         created_at: isoDate,
         source: "zoho_api"
       };
@@ -886,17 +914,28 @@ export function buildUnifiedMessagesList(db) {
   const unified = [];
   const seenIds = new Set();
 
-  // 1. Mensagens da Zoho REST API cacheadas (com normalização de pasta e entidades HTML)
+  // Pré-indexa os envios locais do motor CorpFlats para evitar duplicar o mesmo e-mail enviado via SMTP na pasta Enviados
+  const engineSentSignatures = (db.reservationCommunications || [])
+    .filter(c => c && c.type === "email" && c.direction !== "inbound")
+    .map(c => ({
+      subj: normalizeThreadSubject(c.subject || ""),
+      recip: String(c.recipient || "").toLowerCase(),
+      timeMs: new Date(c.created_at || 0).getTime()
+    }));
+
+  // 1. Mensagens da Zoho REST API cacheadas (com normalização de timestamp UTC real, pasta e entidades HTML)
   for (const zm of db.zohoMessagesCache || []) {
     if (seenIds.has(zm.id)) continue;
-    seenIds.add(zm.id);
     const meta = stateMeta[zm.id] || {};
     if (meta.deletedForever) continue;
 
     const naturalFolder = classifyZohoMessageFolder(zm, folderMap, zm.folder || "inbox");
     const naturalDirection = naturalFolder === "sent" ? "outbound" : (naturalFolder === "drafts" ? "draft" : "inbound");
+    const correctedIsoDate = resolveZohoTrueIsoDate(zm);
+
     zm.folder = naturalFolder;
     zm.direction = naturalDirection;
+    zm.created_at = correctedIsoDate;
     zm.fromName = decodeZohoEntities(zm.fromName || zm.fromEmail || "Remetente");
     zm.fromEmail = cleanAddressField(zm.fromEmail || "");
     zm.recipient = cleanAddressField(zm.recipient || "");
@@ -904,10 +943,26 @@ export function buildUnifiedMessagesList(db) {
     zm.subject = decodeZohoEntities(zm.subject || "(Sem assunto)");
     zm.snippet = decodeZohoEntities(zm.snippet || "");
 
+    // Se for uma cópia na pasta Sent do Zoho de um disparo já registrado no motor local CorpFlats nos últimos 5 min, evita duplicar na lista
+    if (naturalFolder === "sent") {
+      const zSubj = normalizeThreadSubject(zm.subject);
+      const zRecip = String(zm.recipient || "").toLowerCase();
+      const zTimeMs = new Date(correctedIsoDate).getTime();
+      const isDuplicateOfEngine = engineSentSignatures.some(sig =>
+        sig.subj === zSubj &&
+        (sig.recip.includes(zRecip) || zRecip.includes(sig.recip)) &&
+        Math.abs(sig.timeMs - zTimeMs) < 5 * 60 * 1000
+      );
+      if (isDuplicateOfEngine) continue;
+    }
+
+    seenIds.add(zm.id);
+
     const item = {
       ...zm,
       folder: meta.folder || naturalFolder,
       direction: naturalDirection,
+      created_at: correctedIsoDate,
       isRead: meta.isRead !== undefined ? meta.isRead : zm.isRead !== false,
       isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(zm.isStarred),
       labels: inferZohoSmartLabels(

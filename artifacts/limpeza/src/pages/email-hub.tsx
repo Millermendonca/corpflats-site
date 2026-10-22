@@ -125,26 +125,30 @@ function formatSmartDate(dateStr?: string) {
   try {
     const d = new Date(dateStr)
     if (isNaN(d.getTime())) return ""
+    const tz = "America/Sao_Paulo"
     const now = new Date()
-    const isToday =
-      d.getDate() === now.getDate() &&
-      d.getMonth() === now.getMonth() &&
-      d.getFullYear() === now.getFullYear()
+    const dDayStr = d.toLocaleDateString("pt-BR", { timeZone: tz })
+    const nowDayStr = now.toLocaleDateString("pt-BR", { timeZone: tz })
+    const timePart = d.toLocaleTimeString("pt-BR", {
+      timeZone: tz,
+      hour: "2-digit",
+      minute: "2-digit"
+    })
 
-    if (isToday) {
-      return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    if (dDayStr === nowDayStr) {
+      return timePart
     }
 
-    const yesterday = new Date(now)
-    yesterday.setDate(now.getDate() - 1)
-    const isYesterday =
-      d.getDate() === yesterday.getDate() &&
-      d.getMonth() === yesterday.getMonth() &&
-      d.getFullYear() === yesterday.getFullYear()
+    const yesterday = new Date(now.getTime() - 24 * 3600 * 1000)
+    const yestDayStr = yesterday.toLocaleDateString("pt-BR", { timeZone: tz })
+    if (dDayStr === yestDayStr) {
+      return `Ontem, ${timePart}`
+    }
 
-    if (isYesterday) return "Ontem"
-
-    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).replace(".", "")
+    const datePart = d
+      .toLocaleDateString("pt-BR", { timeZone: tz, day: "2-digit", month: "short" })
+      .replace(".", "")
+    return `${datePart}, ${timePart}`
   } catch {
     return ""
   }
@@ -3095,6 +3099,7 @@ export default function EmailHub() {
                             <div className="flex items-center gap-1.5 shrink-0 text-[10px] sm:text-[11px] text-muted-foreground">
                               <span>
                                 {new Date(tm.scheduledFor || tm.created_at).toLocaleString("pt-BR", {
+                                  timeZone: "America/Sao_Paulo",
                                   day: "2-digit",
                                   month: "short",
                                   hour: "2-digit",
