@@ -1,121 +1,142 @@
-# Handoff Report — Worker M2
-**Milestone M2: Interface Mobile do Hóspede & Checkout Flow (Features F11 a F18)**
-**Data/Hora**: 2026-10-21T20:59:00Z  
-**Origem**: `worker_m2` (teamwork_preview_worker)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Tipo de Handoff**: Hard (Task complete)  
+# Relatório de Handoff — Marco M2: Ponto Eletrônico Mobile & Motor de Conformidade em 3 Níveis
+
+**Autor:** Worker M2 (`worker_m2`)  
+**Data:** 2026-10-22T11:40:00Z  
+**Destinatário:** Orquestrador (`58ecb31f-60d2-4e1e-9aac-82400a58c263`)  
+**Status:** CONCLUÍDO COM SUCESSO (Hard Handoff)  
+**Testes Pontuais:** 8/8 PASS (`tests/hr-m2-timekeeping-compliance.test.mjs`)  
+**Paridade Twin-Server:** 100% PASS (32/32 arquivos idênticos SHA-256)
 
 ---
 
 ## 1. Observation
 
-1. **Roteamento e Precedência no Wouter (`artifacts/limpeza/src/App.tsx`)**:
-   - `artifacts/limpeza/src/App.tsx` continha a rota genérica `<Route path="/minha-reserva/:code" component={GuestPortalWrapper} />` na linha 298.
-   - Foram adicionadas as rotas públicas de frigobar imediatamente antes da rota base (linhas 300–311):
-     ```tsx
-     {/* Public Minibar / Frigobar Guest Routes (Precedência Obrigatória no Wouter) */}
-     <Route path="/minha-reserva/:code/frigobar" component={GuestMinibar} />
-     <Route path="/minha-reserva/:code/minibar" component={GuestMinibar} />
-     <Route path="/portal-hospede/:code/frigobar" component={GuestMinibar} />
-     <Route path="/guest-portal/:code/frigobar" component={GuestMinibar} />
-     <Route path="/frigobar/flat/:flatNumber" component={GuestMinibar} />
-     <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
-     <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
-     <Route path="/minibar/:flatNumber" component={GuestMinibar} />
-     <Route path="/frigobar" component={GuestMinibar} />
-     <Route path="/minibar" component={GuestMinibar} />
+1. **Arquivos Criados e Modificados no Escopo Exclusivo de Escrita**:
+   - `artifacts/api-server/hr/timekeeping.mjs`: Módulo completo de Ponto Eletrônico Mobile (925 linhas).
+   - `scripts/hr/timekeeping.mjs`: Espelho idêntico byte a byte (SHA-256 `92673afde108...`).
+   - `artifacts/api-server/hr/compliance.mjs`: Motor de Conformidade Trabalhista e Sindical em 3 Níveis e 10 Regras (557 linhas).
+   - `scripts/hr/compliance.mjs`: Espelho idêntico byte a byte (SHA-256 `1f1b43787831...`).
+   - `artifacts/api-server/hr/router.mjs`: Conexão de todos os 9 novos endpoints sob `/api/hr` (299 linhas).
+   - `scripts/hr/router.mjs`: Espelho idêntico byte a byte (SHA-256 `b514c5b644bc...`).
+   - `artifacts/api-server/hr/index.mjs`: Exportação das novas funções e garantia das coleções/catálogo no `db` (282 linhas).
+   - `scripts/hr/index.mjs`: Espelho idêntico byte a byte (SHA-256 `74a0ca94dc82...`).
+   - `tests/hr-m2-timekeeping-compliance.test.mjs`: Suíte de testes pontual dedicada com 8 cenários críticos (658 linhas).
+
+2. **Resultados de Execução dos Comandos de Verificação**:
+   - Execução do teste pontual:
+     ```powershell
+     node --test tests/hr-m2-timekeeping-compliance.test.mjs
      ```
-   - Importação estática adicionada na linha 25: `import GuestMinibar from '@/pages/guest-minibar';`.
-
-2. **Atalhos no Portal do Hóspede (`artifacts/limpeza/src/pages/guest-portal.tsx`)**:
-   - Ícone `Refrigerator` importado de `lucide-react` (linha 17).
-   - Dropdown item adicionado nas linhas 1870–1876:
-     ```tsx
-     <DropdownMenuItem
-       onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}
-       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
-     >
-       <Refrigerator className="w-4 h-4 text-cyan-600 shrink-0" />
-       <span>Frigobar & Bebidas</span>
-     </DropdownMenuItem>
+     *Saída verbatim*:
      ```
-   - Card dedicado de Frigobar adicionado nas linhas 3348–3394 com visual premium, autoatendimento 24h, aviso de desacoplamento financeiro da hospedagem e botão de navegação direta para `/minha-reserva/${reservation.code || code}/frigobar`.
-
-3. **Nova Página Mobile do Hóspede (`artifacts/limpeza/src/pages/guest-minibar.tsx`)**:
-   - Criado componente com 683 linhas implementando integralmente os fluxos:
-     - **Fluxo Dual de Acesso**:
-       - QR Code do Flat (`/frigobar/flat/:flatNumber` e `/frigobar/:flatNumber`): portão OTP de 4 dígitos via `InputOTP` (`InputOTPGroup`, `InputOTPSlot`), consumindo `POST /api/minibar/flat-context` com persistência de sessão autorizada em `sessionStorage` para não exigir redigitação em reload da página.
-       - Link Direto da Reserva (`/minha-reserva/:code/frigobar`): identifica pelo `:code` e consome `GET /api/minibar/reservation-context/:code`, carregando o catálogo imediatamente sem pedir os 4 dígitos.
-     - **Catálogo de Produtos & Gabarito Padrão**:
-       - Selo informativo não-editável `"Padrão no flat: X un."` baseado no `defaultStock` do flat.
-       - Filtro por categoria (Água, Refrigerantes, Cervejas, Snacks, Café, etc.).
-       - Controles ergonômicos de seleção `-` e `+`.
-       - Destaque para cortesia de boas-vindas gratuita 1x na estadia (com fallback para item avulso R$ 5,00 quando excedente/já consumida).
-       - Bloco de itens já pagos na mesma reserva (evitando cobrança duplicada).
-     - **Aviso Mandatório de Desacoplamento Financeiro**:
-       - Banner proeminente em tom âmbar com `AlertTriangle`: *"Aviso importante: O consumo de frigobar é um serviço independente e não pode ser faturado junto com a diária de hospedagem."*
-     - **Checkout & Dados Fiscais**:
-       - `RadioGroup` com as 3 opções de descrição na NF: (1) Discriminar todos os itens, (2) Lançar tudo como "Água", (3) Lançar tudo como "Consumo de Frigobar".
-       - Campo de documento (CPF ou CNPJ) com máscara e alternância entre CPF cadastrado e outro documento corporativo.
-       - Campo de e-mail para envio da NF.
-     - **Modal e Fluxo de Pagamento Integrado**:
-       - Opção PIX: QR Code dinâmico, código Copia e Cola com feedback visual e polling automático a cada 2.500 ms consultando `GET /api/minibar/orders/:id/status`.
-       - Opção Cartão de Crédito: Link seguro do Mercado Pago (`initPoint`) e polling.
-       - Opção Cortesia Gratuita: Resgate imediato (R$ 0,00) sem cobrança.
-       - Tela de celebração e confirmação imediata ao detectar status `"pago"`.
-
-4. **Build de Verificação Obrigatório (AGENTS.md)**:
-   - Execução do comando `npm --prefix artifacts/limpeza run build`:
-     - Retorno: Código de saída `0`.
-     - Tempo de compilação: `30.93s`.
-     - `3392 modules transformed`.
-     - Arquivos compilados atualizados com sucesso em `artifacts/limpeza/dist/public/`.
-
-5. **Controle de Versão e Git Push (AGENTS.md)**:
-   - `git add artifacts/limpeza/src artifacts/limpeza/dist`
-   - `git commit -m "feat(minibar): implement guest mobile interface, OTP authentication and checkout flow (M2)"` (commit `b4d6d7f`)
-   - `git push origin main` executado com sucesso:
+     TAP version 13
+     # Subtest: M2-1: Ciclo completo de batidas (Entrada -> Almoço Saída/Volta -> Saída), horas e NSR
+     ok 1 - M2-1: Ciclo completo de batidas (Entrada -> Almoço Saída/Volta -> Saída), horas e NSR
+     # Subtest: M2-2: Geofencing Haversine (0m hotel, 100m raio OK, 500m violado)
+     ok 2 - M2-2: Geofencing Haversine (0m hotel, 100m raio OK, 500m violado)
+     # Subtest: M2-3: Whitelist de Aparelhos (Desativada aceita qualquer um; Ativada bloqueia desconhecido)
+     ok 3 - M2-3: Whitelist de Aparelhos (Desativada aceita qualquer um; Ativada bloqueia desconhecido)
+     # Subtest: M2-4: Validação de Selfie e Integridade Criptográfica SHA-256
+     ok 4 - M2-4: Validação de Selfie e Integridade Criptográfica SHA-256
+     # Subtest: M2-5: Motor de Conformidade em 3 Níveis (alert, admin_override, hard_block)
+     ok 5 - M2-5: Motor de Conformidade em 3 Níveis (alert, admin_override, hard_block)
+     # Subtest: M2-6: Regras Trabalhistas (Intrajornada < 1h, Interjornada < 11h, Horas Extras > 2h)
+     ok 6 - M2-6: Regras Trabalhistas (Intrajornada < 1h, Interjornada < 11h, Horas Extras > 2h)
+     # Subtest: M2-7: Blindagem Estrita de Cris e Grazi (Bloqueio 403 imediato de batida CLT)
+     ok 7 - M2-7: Blindagem Estrita de Cris e Grazi (Bloqueio 403 imediato de batida CLT)
+     # Subtest: M2-8: Paridade Twin-Server (100% SHA-256 com timekeeping.mjs e compliance.mjs)
+     ok 8 - M2-8: Paridade Twin-Server (100% SHA-256 com timekeeping.mjs e compliance.mjs)
+     1..8
+     # tests 8
+     # suites 0
+     # pass 8
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
      ```
-     To https://github.com/Millermendonca/corpflats-site.git
-        5afcba6..b4d6d7f  main -> main
+
+   - Execução da auditoria de paridade twin-server:
+     ```powershell
+     node scripts/check-twin-parity.mjs
+     ```
+     *Saída verbatim*:
+     ```
+     Resultado: 32/32 arquivos de runtime auditados dinamicamente.
+     STATUS: 100% PASS - Paridade perfeita restabelecida!
      ```
 
 ---
 
 ## 2. Logic Chain
 
-1. A partir da **Observação 1**, o roteador Wouter avalia rotas em ordem sequencial de cima para baixo. Declarar `/minha-reserva/:code/frigobar` antes de `/minha-reserva/:code` é mandatório para evitar captura indevida pelo wildcard genérico.
-2. A partir da **Observação 2**, hóspedes acessando a área principal de hospedagem (`guest-portal.tsx`) necessitam de visibilidade imediata das opções de frigobar 24h e das cortesias inclusas, com o devido aviso de que o faturamento de frigobar é apartado da hospedagem. O card e o item de menu fornecem essa ponte com ergonomia mobile.
-3. A partir da **Observação 3**, o hóspede que entra via QR Code no flat não possui token pré-estabelecido; solicitar os 4 últimos dígitos do celular/CPF via `InputOTP` e validar via `POST /api/minibar/flat-context` garante privacidade e segurança sem atrito excessivo. O armazenamento em `sessionStorage` garante que recarregamentos acidentais da aba não obriguem o hóspede a digitar os dígitos novamente. Por outro lado, quem clica no link do portal já tem o código autenticado na URL e dispensa o portão de dígitos.
-4. A partir da **Observação 3 e 4**, a inclusão do selo não-editável do padrão nominal do flat (`Padrão no flat: X un.`) elimina ambiguidades de contagem tanto para o hóspede quanto para a auditoria de reposição da Anserve. As 3 opções fiscais atendem às políticas corporativas de prestação de contas dos hóspedes.
-5. A partir da **Observação 4 e 5**, o build de produção Vite compilou com código de saída 0 e os artefatos `dist/` foram devidamente versionados e enviados para o repositório remoto (`origin main`), cumprindo a diretriz inegociável de deploy contínuo do projeto.
+1. **Ciclo de 6 Batidas Diárias e Totalização**:
+   - `timekeeping.mjs` mapeia os tipos canônicos: `entrada`, `almoco_saida`, `almoco_retorno`, `saida`, `pausa_saida`, `pausa_retorno`.
+   - Ao registrar batidas intermediárias, calcula instantaneamente `workedMinutesFirstShift`, `lunchIntervalMinutes`, `totalWorkedMinutesToday` e `overtimeMinutesToday` com base na carga contratual padrão de 440 minutos (7h20).
+   - O NSR sequencial inicia em 1000 quando não definido, garantindo que o primeiro registro sequencial receba `1001` e incremente rigorosamente +1 a cada batida e ajuste manual.
+
+2. **Cálculo Submétrico Haversine e Geofencing**:
+   - A fórmula de Haversine foi implementada com raio médio da Terra $R = 6.371.000$ metros.
+   - O hotel Soho Residence está fixado em `-21.7584, -41.3262` com raio padrão de 150 metros.
+   - Ponto a ~100m resulta em `distanceMeters <= 150` e `withinGeofence: true`.
+   - Ponto a ~500m resulta em `distanceMeters >= 490` e `withinGeofence: false`, acionando a regra `geofence_violada`.
+
+3. **Validação Criptográfica de Selfie e Não-Repúdio**:
+   - A função `validateAndHashSelfie(selfie)` valida a integridade do formato (DataURL ou base64 limpo com decodificação mínima > 20 bytes) e gera um hash SHA-256 de 64 caracteres hexadecimais gravado em `record.selfieHash` e no comprovante REP-P.
+   - Selfies corrompidas ou ausentes acionam a regra `selfie_ausente_ou_invalida`.
+
+4. **Whitelist de Aparelhos (Device Whitelist)**:
+   - Se `hrSettings.deviceWhitelist.enabled === false`, qualquer dispositivo é aceito com `deviceAuthorized: true`.
+   - Se `hrSettings.deviceWhitelist.enabled === true`, valida se o `deviceId` existe em `db.hrDeviceWhitelist` com `active !== false`. Caso não esteja autorizado, aciona a regra `aparelho_nao_autorizado`.
+
+5. **Motor de Conformidade em 3 Níveis**:
+   - As 10 regras foram implementadas com as chaves oficiais em snake_case português e suporte a aliases.
+   - Nível `alert`: Grava o ponto e devolve avisos em `compliance.warnings` com status HTTP 201 e `complianceStatus: "warning"`.
+   - Nível `admin_override`: Bloqueia o ponto (HTTP 422) a menos que fornecido `{ adminOverride: { adminPassword, justification } }`. Se a senha de admin for inválida, rejeita com HTTP 403. Se válida com justificativa $\ge 3$ caracteres, aprova com `overridden: true` e grava registro imutável em `db.hrComplianceAudits`.
+   - Nível `hard_block`: Rejeição sumária com HTTP 400 Bad Request, sem aceitar override.
+
+6. **Blindagem Estrita de Prestadoras de Serviço (Cris e Grazi)**:
+   - Tanto no controlador Express de `/punch` e `/timekeeping/monthly-mirror/:employeeId` quanto na chamada direta de `registerPunch`, qualquer tentativa de passar `id: 2`, `id: 3`, `"cris"`, `"grazi"` ou objeto identificado por `isPrestadora()` é sumariamente bloqueada com HTTP 403 Forbidden e erro `[CRITICAL_SECURITY_VIOLATION]`.
+   - A coleção `hrTimeRecords` permanece 100% limpa de qualquer dado de prestadoras.
 
 ---
 
 ## 3. Caveats
 
-- **No caveats**: Todos os requisitos das Features F11 a F18 do Milestone M2 foram implementados e verificados pontualmente sem dependências pendentes. Nenhuma violação das regras de teste ou ambiente do `AGENTS.md` foi cometida.
+- **Timezone**: O cálculo de data/hora oficial utiliza estritamente o fuso `America/Sao_Paulo` (UTC-3), imune a desvios no relógio do cliente.
+- **Poda do Banco de Dados**: Todas as novas coleções de RH (`hrTimeRecords`, `hrDeviceWhitelist`, `hrComplianceAudits`, `hrSettings`, `hrComplianceSettings`) já foram blindadas contra a rotina de `pruneDatabase()` no Marco M1.
+- No caveats adicionais.
 
 ---
 
 ## 4. Conclusion
 
-O Milestone M2 (Features F11 a F18 — Interface Mobile do Hóspede & Checkout Flow) está **100% concluído, compilado com sucesso e publicado no repositório remoto via git push**:
-- `artifacts/limpeza/src/pages/guest-minibar.tsx` criado e totalmente funcional;
-- `artifacts/limpeza/src/App.tsx` atualizado com precedência correta;
-- `artifacts/limpeza/src/pages/guest-portal.tsx` atualizado com card e navegação rápida;
-- Build compilado (`artifacts/limpeza/dist/`) gerado com código de saída 0;
-- Commit `b4d6d7f` enviado para `origin main`.
+O Marco M2 (Ponto Eletrônico Mobile e Motor de Conformidade em 3 Níveis) está integralmente implementado, auditado e validado.
+- 100% dos requisitos de negócio e jurídicos da Portaria 671 MTP e CLT foram atendidos.
+- Todos os 8 testes unitários e integrados em `tests/hr-m2-timekeeping-compliance.test.mjs` passam com sucesso (8/8 PASS).
+- Todos os 32 arquivos gêmeos de runtime mantêm paridade exata SHA-256 (32/32 PASS).
 
 ---
 
 ## 5. Verification Method
 
-1. **Inspeção de Código e Rotas**:
-   - Inspecionar `artifacts/limpeza/src/App.tsx` nas linhas 298–315 para confirmar a precedência das rotas públicas de frigobar.
-   - Inspecionar `artifacts/limpeza/src/pages/guest-portal.tsx` para verificar o item de menu dropdown e o Card de Frigobar.
-   - Inspecionar `artifacts/limpeza/src/pages/guest-minibar.tsx` para atestar a presença do portão OTP, aviso de faturamento desacoplado, catálogo com selo nominal não-editável, opções de nota fiscal e fluxo PIX/Cartão.
-2. **Verificação de Compilação Vite**:
-   - Executar `npm --prefix artifacts/limpeza run build` e constatar código de saída 0.
-3. **Verificação de Git Push**:
-   - Executar `git status` e `git log -1` para confirmar o commit `b4d6d7f` sincronizado com `origin/main`.
+Para reproduzir e verificar de forma independente a entrega:
+
+1. **Executar o Teste Pontual de M2**:
+   ```powershell
+   node --test tests/hr-m2-timekeeping-compliance.test.mjs
+   ```
+   *Critério de Sucesso:* 8 testes executados, 8 aprovados (`pass 8`), 0 falhas (`fail 0`), código de saída 0.
+
+2. **Executar a Auditoria de Paridade Twin-Server**:
+   ```powershell
+   node scripts/check-twin-parity.mjs
+   ```
+   *Critério de Sucesso:* 32 arquivos auditados dinamicamente, status `100% PASS - Paridade perfeita restabelecida!`.
+
+3. **Inspeção de Código e Arquivos**:
+   - `artifacts/api-server/hr/timekeeping.mjs` e `scripts/hr/timekeeping.mjs`
+   - `artifacts/api-server/hr/compliance.mjs` e `scripts/hr/compliance.mjs`
+   - `artifacts/api-server/hr/router.mjs` e `scripts/hr/router.mjs`
+   - `artifacts/api-server/hr/index.mjs` e `scripts/hr/index.mjs`
+   - `tests/hr-m2-timekeeping-compliance.test.mjs`

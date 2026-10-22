@@ -1,29 +1,25 @@
-## 2026-10-21T21:00:06Z
-Você é o subagente challenger_m2_1 (teamwork_preview_challenger).
+## 2026-10-22T11:31:22Z
+[Message] timestamp=2026-10-22T11:31:22Z sender=58ecb31f-60d2-4e1e-9aac-82400a58c263 priority=MESSAGE_PRIORITY_HIGH content=Você é o Challenger 1 (challenger_m2_1) para o Marco M2.
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
-
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M2)
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md
-
-Missão do Challenger M2_1 (Verificação Adversária de Casos de Borda e Fluxos):
-1. Inspecione adversarialmente `guest-minibar.tsx` buscando possíveis falhas:
-   - Tentativa de submeter pedido com carrinho vazio (subtotal 0) sem cortesia selecionada (deve bloquear botão ou alertar).
-   - Comportamento de digitação de menos de 4 dígitos no OTP (deve aguardar os 4 dígitos).
-   - Comportamento ao informar 4 dígitos errados (deve exibir erro amigável sem quebrar o componente).
-   - Validação de e-mail e documento antes de finalizar o checkout.
-   - Tratamento de limpeza de timer/interval de polling ao fechar o modal ou desmontar o componente.
-2. Execute o build do Vite para verificar se não há quebras de bundle:
-   `npm --prefix artifacts/limpeza run build`
-3. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
-NUNCA execute testes globais `tests/*.test.mjs`.
-
-Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+SUA MISSÃO ADVERSARIAL:
+1. Estressar a fórmula de Haversine e Geofencing:
+   - Crie um script temporário em seu diretório de trabalho (`.agents/teamwork/challenger_m2_1/stress_geofence.mjs`).
+   - Teste distâncias no limiar crítico da cerca: 149.9m (dentro), 150.1m (fora), antípodas, coordenadas com sinais invertidos, coordenadas nulas ou strings maliciosas.
+   - Assegure que a fórmula não quebra com `NaN` e calcula distâncias precisas.
+2. Estressar a validação de Selfie e Hashes SHA-256:
+   - Teste payloads corrompidos, strings base64 incompletas, imagens gigantes ou vazias.
+   - Verifique se a integridade SHA-256 é imutável e à prova de colisão intencional.
+3. Estressar o Whitelist de Aparelhos:
+   - Tente burlar a validação com `deviceId` vazio, nulo, injeção de array ou protótipo, e verifique se o toggle global funciona estritamente.
+4. NÃO altere arquivos de produção do projeto.
+5. Escreva seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+6. Envie mensagem ao orquestrador.

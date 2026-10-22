@@ -1,30 +1,25 @@
-## 2026-10-21T21:00:06Z
-Você é o subagente reviewer_m2_1 (teamwork_preview_reviewer).
+## 2026-10-22T11:31:21Z
+Você é o Reviewer 1 (reviewer_m2_1) para o Marco M2 (Ponto Eletrônico Mobile & Submódulo Timekeeping).
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_1
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_1`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seção R2).
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md`.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
-
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M2, Features F11 a F18)
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md
-5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\changes.md
-
-Missão do Reviewer M2_1 (Arquitetura Frontend, Rotas & Build):
-1. Inspecione as rotas em `artifacts/limpeza/src/App.tsx`:
-   - Verifique se as rotas públicas de frigobar (`/minha-reserva/:code/frigobar`, `/frigobar/flat/:flatNumber`, `/frigobar/:flatNumber`, etc.) estão declaradas ANTES da rota genérica `/minha-reserva/:code`, assegurando precedência no Wouter.
-   - Verifique se `GuestMinibar` é importado corretamente.
-2. Inspecione a integração em `artifacts/limpeza/src/pages/guest-portal.tsx`:
-   - Verifique a presença do card premium de Frigobar e do atalho no dropdown de navegação do hóspede, ambos direcionando para `/minha-reserva/${code}/frigobar`.
-3. Verifique a compilação do Vite:
-   - Execute: `npm --prefix artifacts/limpeza run build`
-   - Confirme código de saída 0 e geração de artefatos em `artifacts/limpeza/dist/public/`.
-4. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
-NUNCA execute testes globais `tests/*.test.mjs`.
-
-Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+SUA MISSÃO:
+1. Examinar o código implementado em `artifacts/api-server/hr/timekeeping.mjs` e seus espelho em `scripts/hr/timekeeping.mjs`:
+   - Ciclo de 6 batidas (`entrada`, `almoco_saida`, `almoco_retorno`, `saida`, `pausa_saida`, `pausa_retorno`).
+   - Apuração de minutos trabalhados diários e horas extras.
+   - Incremento estrito do NSR (+1 por batida per Portaria 671 MTP).
+   - Validação da fórmula de Haversine (`calculateDistanceHaversine`) e cálculo de cerca virtual do Soho (-21.7584, -41.3262, raio 150m).
+   - Validação de selfie com geração de hash SHA-256 e não-repúdio.
+   - Gestão de Whitelist de aparelhos com toggle liga/desliga.
+   - Endpoints `/punch`, `/timekeeping/records`, `/timekeeping/daily-sheet`, `/timekeeping/monthly-mirror/:employeeId`, `/timekeeping/records/:id/adjust` e rotas de dispositivos.
+2. Executar a verificação pontual:
+   `node --test tests/hr-m2-timekeeping-compliance.test.mjs` (LEMBRE-SE: NUNCA rodar testes globais `tests/*.test.mjs`).
+3. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES` (com fundamentação técnica).
+4. Enviar mensagem ao orquestrador.

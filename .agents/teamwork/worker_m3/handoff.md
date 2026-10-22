@@ -1,91 +1,146 @@
-# Handoff Report: Implementação dos Portais Anserve, Admin CorpFlats & RBAC (Milestone M3)
+# Handoff Report: Implementação Integral do Marco M3 - RH CorpFlats Soho Residence
 
-**Agente**: `worker_m3` (teamwork_preview_worker)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Data**: 2026-10-21T21:26:00Z  
-**Tipo**: Hard (Tarefa Concluída)  
-**Milestone**: M3 (Features F19 a F28)
+**Agente**: `worker_m3` (Implementer / QA)  
+**Destinatário**: Project Orchestrator (`58ecb31f-60d2-4e1e-9aac-82400a58c263`)  
+**Data**: 2026-10-22T09:55:00-03:00  
+**Tipo**: Hard (Tarefa 100% Concluída)  
+**Milestone**: M3 — Automação WhatsApp, Comprovantes REP-P, Saldo de Horas, Lembretes Preventivos, Escalas 6x1 44h, Art. 58 CLT / Súmula 366 TST, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT
 
 ---
 
 ## 1. Observation (Observações Diretas)
 
-1. **Catálogo de Permissões e Perfis (`permissions.ts`)**:
-   - `artifacts/limpeza/src/lib/permissions.ts`: Adicionados os papéis `anserve_repositora` (`["/frigobar-reposicao"]`) e `anserve_gestor` (`["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]`).
-   - Categoria `🧊 Frigobar & Anserve` criada em `PERMISSION_CATEGORIES` contendo as 4 telas do ecossistema.
-   - `ROUTE_ALIASES` expandido com `/frigobar-gestao`, `/anserve/reposicao`, `/admin/frigobar` e `/minibar-admin`.
+1. **Módulos Criados e Integrados**:
+   - `artifacts/api-server/hr/whatsapp-automation.mjs` e `scripts/hr/whatsapp-automation.mjs`:
+     - `generateRepPReceiptText`: Formatação de comprovante de ponto REP-P nos moldes da Portaria MTP nº 671/2021 (empregador Soho Residence, CNPJ, dados mascarados do colaborador, data/hora no fuso de Campos dos Goytacazes, tipo de batida, NSR e hash SHA-256 do comprovante).
+     - `calculateMonthlyHourBalance`: Balanço acumulado entre jornada prevista na escala e total efetivamente trabalhado com formatação com sinal (+HH:MM ou -HH:MM).
+     - `sendPunchReceipt`: Despacho de comprovante via WhatsApp com registro auditável em `db.hrWhatsAppLogs` e proteção estrita contra envio para prestadoras.
+     - `isDaySilencedForEmployee`: Verificação de silenciamento de lembretes em dias de DSR, férias ou afastamento médico.
+     - `checkEmployeeReminders` e `processRemindersScan`: Detecção de batidas faltantes (entrada, saída, almoço) e alerta crítico para jornada contínua >6h sem pausa.
+   - `artifacts/api-server/hr/schedules.mjs` e `scripts/hr/schedules.mjs`:
+     - `getOfficialHolidays`: Feriados nacionais, estaduais do RJ e municipais de Campos dos Goytacazes/RJ (Santo Amaro 15/01 e Santíssimo Salvador 06/08), com cálculo determinístico de Carnaval, Sexta-feira Santa, Páscoa e Corpus Christi.
+     - `generateMonthlySchedule`: Geração de escalas 6x1 (44h semanais) nas modalidades 7h20 diárias ou 8h de seg-sex + 4h no sábado, com indicação de DSR, feriados e férias.
+     - `calculatePunchTolerance`: Aplicação da tolerância de até 5 minutos por batida e máximo 10 minutos diários (Art. 58 §1º CLT e Súmula 366 TST). Se extrapolado, cômputo integral da variação.
+     - `calculateDayOvertimeAndNight`: Apuração de horas extras a 50% em dias normais de trabalho e 100% em DSR trabalhado e feriados.
+     - `calculateNightShiftAndExtension`: Horário noturno urbano (22h00 às 05h00) com redução ficta de 52m30s (fator 60/52.5 = 1.142857), adicional de 20% e prorrogação em jornada mista/noturna após 05h00 (Súmula 60, II, TST).
+     - `validateSundayRotation`: Garantia de revezamento de DSR aos domingos (Art. 386 CLT para mulheres: DSR dominical quinzenal; máx. 7 semanas consecutivas para homens).
+     - `validateVacationSchedule`, `scheduleVacation` e `getVacations`: Validação das regras de férias da CLT (Art. 134 e 137: até 3 períodos, um >= 14 dias, nenhum < 5 dias, proibição de início 2 dias antes de DSR/feriado, e alerta de dobra ao atingir 11 meses do período concessivo).
+   - `artifacts/api-server/hr/timekeeping.mjs` e `scripts/hr/timekeeping.mjs`:
+     - Disparo assíncrono seguro de `sendPunchReceipt` anexado ao retorno do registro de ponto `registerPunch`.
+   - `artifacts/api-server/hr/router.mjs` e `scripts/hr/router.mjs`:
+     - Rotas REST registradas:
+       - `POST /whatsapp/send-receipt`
+       - `POST /whatsapp/check-reminders`
+       - `GET /whatsapp/logs`
+       - `GET /whatsapp/balance/:employeeId`
+       - `GET /schedules`
+       - `POST /schedules/generate-month`
+       - `PUT /schedules/:id`
+       - `POST /schedules/calculate-overtime-night`
+       - `GET /vacations/:employeeId`
+       - `POST /vacations/schedule`
+       - `PATCH /vacations/:id/approve`
+       - `GET /compliance/audits` (restabelecido para conformidade de auditoria)
+   - `artifacts/api-server/hr/index.mjs` e `scripts/hr/index.mjs`:
+     - Inicialização de `db.hrWhatsAppLogs = []` em `ensureHrCollections`.
+     - Alias `rules.continuous_work_6h_limit = rules.intrajornada_minima;`.
+     - Exportações centrais completas.
 
-2. **Gestão de Equipe (`equipe.tsx`)**:
-   - `artifacts/limpeza/src/pages/equipe.tsx`: Modais de criação, edição e permissões receberam as opções `"anserve_repositora"` (📦 Anserve - Repositora) e `"anserve_gestor"` (🏢 Anserve - Gestor / Supervisão).
-   - Função `renderRoleBadge` recebeu casos para exibir badges e avatares visuais distintos.
-   - Pílulas de filtro de perfil da tabela de colaboradores atualizadas.
+2. **Resultados dos Testes**:
+   - `tests/hr-m3-whatsapp-schedules.test.mjs`:
+     ```
+     1..12
+     # tests 12
+     # suites 0
+     # pass 12
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 832.5901
+     ```
+   - `node scripts/check-twin-parity.mjs`:
+     ```
+     Resultado: 34/34 arquivos de runtime auditados dinamicamente.
+     STATUS: 100% PASS - Paridade perfeita restabelecida!
+     ```
+   - Regressão M1 (`tests/hr-m1-backend-core.test.mjs`):
+     ```
+     1..7
+     # tests 7
+     # suites 0
+     # pass 7
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 2344.61
+     ```
+   - Regressão M2 (`tests/hr-m2-timekeeping-compliance.test.mjs`):
+     ```
+     1..10
+     # tests 10
+     # suites 0
+     # pass 10
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 955.4797
+     ```
 
-3. **Menu Lateral e Navegação Mobile (`layout.tsx`)**:
-   - `artifacts/limpeza/src/components/layout.tsx`: Categoria de frigobar adicionada ao menu lateral desktop/gaveta mobile (`rawNavCategories`).
-   - Rodapé de navegação móvel (`BottomNav`) adaptado dinamicamente para exibir opções contextuais para a repositora (Portal Reposição + Mais) e gestor da Anserve (Supervisão + Reposição + Estoque/Extrato + Mais), impedindo acesso acidental a páginas de governança.
-
-4. **Portal Mobile da Repositora (`anserve-restock.tsx`)**:
-   - `artifacts/limpeza/src/pages/anserve-restock.tsx`: Criado componente responsivo para a rota `/frigobar-reposicao`.
-   - Autenticação rápida com teclado numérico PIN de 4 dígitos integrado a `POST /api/minibar/auth-pin`, gravação no `localStorage` e suporte a tokens na URL.
-   - Listagem dos 19 flats do Soho Residence com filtros e destaque urgente para checkouts do dia.
-   - Card por flat exibindo consumo declarado/pago pelo hóspede, gabarito e botões rápidos:
-     - **"Conforme"**: reposição dos itens pagos e kit de cortesias (Nespresso + balas + amendoim) via `POST /api/minibar/inspections`.
-     - **"Apontar Divergência"**: seleção de itens faltantes, foto da câmera traseira e notas. Aciona automaticamente a IA Sofia no WhatsApp com o link de quitação.
-
-5. **Painel de Supervisão Anserve (`anserve-dashboard.tsx`)**:
-   - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`: Criado componente para as rotas `/anserve` e `/frigobar-gestao`.
-   - Fila de notas fiscais pendentes consumindo `GET /api/minibar/invoices/pending` com visualização de documento fiscal (CPF/CNPJ), e-mail de envio e preferência de discriminação (*Itens discriminados*, *Água* ou *Consumo de Frigobar*).
-   - Modal com upload de PDF/imagem e disparo multicanal instantâneo via `POST /api/minibar/orders/:id/invoice`.
-   - Visão de estoque e extrato de repasse financeiro (`GET /api/minibar/settlement`) com cálculo de faturamento bruto, taxas de gateway (cartão 3.99% e PIX 0.99%), comissão CorpFlats e crédito de cortesias repostas.
-
-6. **Portal Admin CorpFlats (`minibar-admin.tsx`)**:
-   - `artifacts/limpeza/src/pages/minibar-admin.tsx`: Criado componente para a rota `/frigobar`.
-   - Catálogo com cadastro e edição de produtos e cortesias (`/api/minibar/products`).
-   - Gabarito nominal global e por flat (`/api/minibar/default-stock`).
-   - Gerador de displays de acrílico A6 para os 19 flats do Soho Residence com QR Codes gerados dinamicamente apontando para `/frigobar/flat/:flatNumber`, instruções de autoatendimento e estilos `@media print` otimizados para corte e balcão.
-   - Extrato consolidado CorpFlats ↔ Anserve.
-
-7. **Roteamento em `App.tsx`**:
-   - `artifacts/limpeza/src/App.tsx`: Rotas registradas com code-splitting (`lazyWithRetry`), guardas de acesso e precedência correta.
-
-8. **Build de Produção**:
-   - Executado `npm --prefix artifacts/limpeza run build`: saída com código 0 em 39.58s gerando os bundles em `artifacts/limpeza/dist/`.
+3. **Blindagem de Prestadoras**:
+   - O teste M3-5 confirmou empírica e rigorosamente que Cris (`id: 2`) e Grazi (`id: 3`) são rejeitadas com `HTTP 403 Forbidden` e código `PRESTADORA_RECEIPT_BLOCKED` ou `PRESTADORA_PUNCH_BLOCKED` ao tentar registrar batida, emitir comprovantes, validar conformidade ou gerar escalas CLT.
 
 ---
 
 ## 2. Logic Chain (Cadeia Lógica de Raciocínio)
 
-1. Para viabilizar a operação em campo da repositora da Anserve sem atrito de login convencional de desktop, implementou-se autenticação por PIN de 4 dígitos e token persistente em `localStorage`, permitindo acesso instantâneo via smartphone.
-2. Com base na dinâmica de hospitalidade dos 19 flats do Soho Residence, o status de checkout do dia (`checkout_hoje`) foi priorizado na interface, visto que a reposição precisa ocorrer impreterivelmente na janela de higienização antes da entrada do próximo hóspede (às 14:00).
-3. A distinção clara entre "Conforme" e "Divergência" assegura integridade: se não houve consumo não declarado, o sistema atesta conformidade e repõe o kit de cortesias; se houve consumo não pago, a captura de fotos e quantidades gera automaticamente a cobrança e notifica o hóspede pelo canal oficial da IA Sofia.
-4. Para a supervisão da Anserve, a fila centralizada de NFs pendentes atende estritamente à restrição operacional de não emitir alertas sonoros ou mensagens no WhatsApp da equipe a cada venda, mantendo a operação organizada e disparando o envio da NF diretamente ao cliente no momento do anexo.
-5. O gerador de QR Codes A6 foi projetado para impressão direta nos acrílicos dos apartamentos, assegurando que o hóspede leia o código do seu quarto e caia na tela personalizada com os 4 últimos dígitos do celular, completando o ciclo de autoatendimento.
+1. **Conformidade Legal Estrita (Portaria 671 MTP e CLT)**: O envio de comprovantes de ponto pelo WhatsApp substitui o comprovante impresso físico do relógio de ponto tradicional (REP-A / REP-C), exigindo que a mensagem contenha todos os elementos probatórios legais (NSR único, identificação do empregador, dados mascarados do trabalhador e hash SHA-256). A função `generateRepPReceiptText` foi desenhada para garantir idempotência e rastreabilidade total.
+2. **Prevenção de Passivos Trabalhistas**: O motor de lembretes foi calibrado para alertar sobre esquecimento de batidas e, especialmente, jornadas contínuas superiores a 6 horas sem intervalo intrajornada (infração ao Art. 71 da CLT). Em contrapartida, para resguardar o direito ao descanso e evitar assédio fora da jornada, os lembretes são automaticamente silenciados em dias de DSR, férias e afastamento médico.
+3. **Escala 6x1 e Cômputo de Horas**: O módulo `schedules.mjs` implementa matematicamente o Art. 58 §1º da CLT e a Súmula 366 do TST: pequenas variações até 5 minutos por marcação (com teto diário de 10 minutos) são desconsideradas. Ultrapassado esse limite, toda a variação é computada. As horas extras são segregadas em 50% (dias úteis) e 100% (DSR e feriados), enquanto a jornada noturna incorpora a hora ficta reduzida (52m30s) e a extensão pós-05h00 per Súmula 60 do TST.
+4. **Isolamento de Contratos**: Prestadoras de serviços autônomas não possuem vínculo de emprego nem controle de ponto subordinado. Bloqueá-las no nível dos endpoints e dos serviços é mandatório para elidir qualquer presunção de vínculo empregatício.
+5. **Arquitetura Twin-Server**: Como o repositório opera com servidores em espelho (`artifacts/api-server` e `scripts`), a validação contínua de paridade SHA-256 garante que nenhuma divergência de código ou comportamento ocorra entre o ambiente de testes e o runtime em produção.
 
 ---
 
 ## 3. Caveats (Ressalvas)
 
-- Não foram executados testes globais ou em lote em conformidade estrita com `AGENTS.md` (proibição expressa de executar `tests/*.test.mjs` globais).
-- A geração dos QR Codes para impressão utiliza serviço de renderização SVG/PNG de alta resolução via API externa resiliente com fallback.
+- Em estrito cumprimento às diretrizes de `AGENTS.md`, NUNCA foram executados testes globais ou em lote (`tests/*.test.mjs`). Foram executadas exclusivamente a suíte pontual do Marco M3 (`tests/hr-m3-whatsapp-schedules.test.mjs`) e as checagens pontuais de regressão M1 e M2.
+- O envio real de mensagens via WhatsApp depende da configuração de credenciais ativas do serviço de mensageria (Z-API / WhatsApp AI Service); em ambientes de teste sem conexão externa, a geração do comprovante e os logs em `db.hrWhatsAppLogs` operam de forma isolada e síncrona/mockada.
 
 ---
 
 ## 4. Conclusion (Conclusão)
 
-O Milestone M3 (Portais Anserve, Admin CorpFlats & RBAC — Features F19 a F28) foi completamente implementado com código autêntico, design responsivo de alto padrão e compilação de produção verificada com código de saída 0. Todos os requisitos especificados em `ORIGINAL_REQUEST.md`, `PROJECT.md` e `DISPATCH.md` foram satisfeitos.
+O Marco M3 do sistema de RH do CorpFlats Soho Residence está integralmente implementado, verificado e pronto para homologação.
+- 12/12 testes do Marco M3 aprovados.
+- 7/7 testes de regressão do Marco M1 aprovados.
+- 10/10 testes de regressão do Marco M2 aprovados.
+- 34/34 arquivos de runtime com 100% de paridade SHA-256.
+- Blindagem total de Cris e Grazi mantida com sucesso.
 
 ---
 
 ## 5. Verification Method (Método de Verificação Independente)
 
-1. **Verificação do Build**:
-   ```bash
-   npm --prefix artifacts/limpeza run build
-   ```
-   Deve concluir com código de saída 0 gerando os bundles em `artifacts/limpeza/dist/public/assets/`.
+Para auditar e verificar independentemente a implementação:
 
-2. **Inspeção de Arquivos**:
-   - Verificar perfis em `artifacts/limpeza/src/lib/permissions.ts`.
-   - Verificar selects em `artifacts/limpeza/src/pages/equipe.tsx`.
-   - Verificar rotas em `artifacts/limpeza/src/App.tsx`.
-   - Verificar componentes criados: `anserve-restock.tsx`, `anserve-dashboard.tsx` e `minibar-admin.tsx`.
+1. **Executar a Suíte Dedicada do Marco M3**:
+   ```powershell
+   node --test tests/hr-m3-whatsapp-schedules.test.mjs
+   ```
+   *Resultado esperado*: 12 subtestes com status `ok` (12/12 PASS), saída com código 0.
+
+2. **Verificar a Paridade dos Arquivos Gêmeos (Twin Parity)**:
+   ```powershell
+   node scripts/check-twin-parity.mjs
+   ```
+   *Resultado esperado*: 34/34 arquivos de runtime com status `[PASS]`, resultado final `100% PASS`.
+
+3. **Executar Testes de Regressão Pontuais**:
+   ```powershell
+   node --test tests/hr-m1-backend-core.test.mjs
+   node --test tests/hr-m2-timekeeping-compliance.test.mjs
+   ```
+   *Resultado esperado*: M1 (7/7 PASS) e M2 (10/10 PASS).

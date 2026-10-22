@@ -11,7 +11,7 @@ import {
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
   Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity,
-  Inbox, Pin, PinOff, ChevronDown
+  Inbox, Pin, PinOff, ChevronDown, UserCheck
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -160,6 +160,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const logout = useLogout({
     mutation: {
       onSuccess: () => {
+        try {
+          localStorage.removeItem("corpflats_anserve_token")
+          localStorage.removeItem("corpflats_anserve_user_name")
+          localStorage.removeItem("corpflats_anserve_user_id")
+          localStorage.removeItem("corpflats_anserve_username")
+        } catch {}
         queryClient.setQueryData(getGetMeQueryKey(), null)
         setLocation("/login")
       }
@@ -234,80 +240,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => clearInterval(intv)
   }, [isAuthenticated])
 
-  useEffect(() => {
-    if (!isLoading && error) {
-      if (location !== "/login") {
-        setLocation("/login")
-      }
-    }
-  }, [isLoading, error, location, setLocation])
-
-  // Fecha o drawer ao navegar
-  useEffect(() => {
-    setMobileMenuOpen(false)
-  }, [location])
-
-  const handlePasswordChange = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setPwError("")
-    setPwSuccess("")
-
-    if (!currentPassword || !newPassword) {
-      setPwError("Preencha todos os campos.")
-      return
-    }
-    if (newPassword !== confirmPassword) {
-      setPwError("A nova senha e a confirmação não conferem.")
-      return
-    }
-    if (newPassword.length < 4) {
-      setPwError("A nova senha deve ter no mínimo 4 caracteres.")
-      return
-    }
-
-    setIsSubmittingPw(true)
+  const isAnservePinRoute = location === "/frigobar-reposicao" || location === "/anserve/reposicao"
+  const hasLocalAnservePinToken = (() => {
     try {
-      const res = await fetch("/api/auth/change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword })
-      })
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setPwSuccess("Senha alterada com sucesso!")
-        setTimeout(() => {
-          setPwModalOpen(false)
-          setCurrentPassword("")
-          setNewPassword("")
-          setConfirmPassword("")
-        }, 1500)
-      } else {
-        setPwError(data.error || "Erro ao alterar a senha.")
-      }
-    } catch (err) {
-      setPwError("Falha na comunicação com o servidor.")
-    } finally {
-      setIsSubmittingPw(false)
+      return typeof window !== "undefined" && Boolean(localStorage.getItem("corpflats_anserve_token"))
+    } catch {
+      return false
     }
-  }
+  })()
 
-  if (isLoading) {
-    return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-gray-50 dark:bg-slate-900">
-        <Skeleton className="w-16 h-16 rounded-full" />
-      </div>
-    )
-  }
+  const effectiveUser = user || (isAnservePinRoute && hasLocalAnservePinToken
+    ? {
+        id: Number(typeof window !== "undefined" ? localStorage.getItem("corpflats_anserve_user_id") : 10) || 10,
+        username: (typeof window !== "undefined" ? localStorage.getItem("corpflats_anserve_username") : null) || "repositora",
+        name: (typeof window !== "undefined" ? localStorage.getItem("corpflats_anserve_user_name") : null) || "Repositora Anserve",
+        role: "anserve_repositora",
+        allowedModules: ["/frigobar-reposicao", "/anserve/reposicao"]
+      }
+    : null)
 
-  if (!user && location !== "/login") {
-    return null
-  }
-
-  if (location === "/login") {
-    return <>{children}</>
-  }
-
-  const role = user?.role
+  const role = effectiveUser?.role
   const isDev = role === "dev"
   const isAdmin = role === "admin"
   const isAdminOrDev = isDev || isAdmin
@@ -328,6 +280,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (href === "/funil-vendas" && (location === "/trafego" || location === "/marketing" || location === "/ads")) return true
     if (href === "/financeiro" && (location === "/financial" || location === "/finance" || location === "/precificacao" || location === "/dre" || location === "/contas" || location === "/fluxo-caixa")) return true
     if (href === "/equipe" && (location === "/usuarios" || location === "/usuarios-equipe" || location === "/users")) return true
+    if (href === "/rh" && (location === "/rh" || location === "/colaboradores" || location === "/funcionarios" || location === "/recursos-humanos" || location === "/admin/rh" || location === "/gestao-rh")) return true
     if (href === "/configuracoes" && (location === "/settings" || location === "/configuracao" || location === "/ajustes")) return true
     if (href === "/zapi-conexao" && (location === "/conexao-zapi" || location === "/sistema/zapi" || location === "/zapi")) return true
     if (href === "/emails" && (location === "/email-hub" || location === "/gerenciador-emails")) return true
@@ -380,8 +333,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, badge: pendingShoppingCount > 0 ? pendingShoppingCount : null, description: "Itens para reposição, compras e governança" },
         ...(isCamareira ? [{ href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" }] : [{ href: "/raio-x-flats", label: "Raio-X & Hub dos Flats", icon: Wrench, description: "Diário do flat, campanhas (AC/dedetização/cortinas), ficha técnica, 76 tags, preventivas e vistorias" }]),
         ...(isCamareira ? [{ href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" }] : []),
-
-
         { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
         { href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" },
       ]
@@ -406,6 +357,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "🏨 Propriedade & Equipe",
       items: [
         { href: "/equipe", label: "Equipe & Níveis de Acesso", icon: Users, description: "Usuários do sistema, permissões, WhatsApp e senhas" },
+        { href: "/rh", label: "Gestão de RH & Ponto CLT", icon: UserCheck, description: "Funcionários CLT, escalas 6x1, ponto eletrônico, travas, folha e ASO" },
         { href: "/propriedade", label: "Flats, Políticas & Regras", icon: Building2, description: "Quartos, horários, regras da casa e contratos" },
         { href: "/garagem", label: "Controle de Garagem & Vagas", icon: Car, description: "Vagas rotativas e placas de veículos" },
         { href: "/avaliacoes-ia", label: "Avaliações & Satisfação IA", icon: ThumbsUp, description: "Análise de sentimentos e reviews do Google" },
@@ -442,14 +394,29 @@ export function Shell({ children }: { children: React.ReactNode }) {
   ]
 
   // R4: Filtragem dinâmica de itens pelo catálogo granular allowedModules (ocultando categorias vazias)
-  const navCategories: NavCategory[] = rawNavCategories
-    .map(cat => ({
-      ...cat,
-      items: cat.items.filter(item => hasModuleAccess(user as any, item.href))
-    }))
-    .filter(cat => cat.items.length > 0)
+  const navCategories: NavCategory[] = effectiveUser
+    ? rawNavCategories
+        .map(cat => ({
+          ...cat,
+          items: cat.items.filter(item => hasModuleAccess(effectiveUser as any, item.href))
+        }))
+        .filter(cat => cat.items.length > 0)
+    : []
 
-  // Auto-expande categoria ativa na navegação
+  useEffect(() => {
+    if (!isLoading && error && !effectiveUser) {
+      if (location !== "/login" && !isAnservePinRoute) {
+        setLocation("/login")
+      }
+    }
+  }, [isLoading, error, effectiveUser, location, isAnservePinRoute, setLocation])
+
+  // Fecha o drawer ao navegar
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [location])
+
+  // Auto-expande categoria ativa na navegação (SEMPRE antes de early returns para respeitar Rules of Hooks)
   useEffect(() => {
     navCategories.forEach(cat => {
       if (cat.items.some(item => isItemActive(item.href))) {
@@ -457,6 +424,66 @@ export function Shell({ children }: { children: React.ReactNode }) {
       }
     })
   }, [location])
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setPwError("")
+    setPwSuccess("")
+
+    if (!currentPassword || !newPassword) {
+      setPwError("Preencha todos os campos.")
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError("A nova senha e a confirmação não conferem.")
+      return
+    }
+    if (newPassword.length < 4) {
+      setPwError("A nova senha deve ter no mínimo 4 caracteres.")
+      return
+    }
+
+    setIsSubmittingPw(true)
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPwSuccess("Senha alterada com sucesso!")
+        setTimeout(() => {
+          setPwModalOpen(false)
+          setCurrentPassword("")
+          setNewPassword("")
+          setConfirmPassword("")
+        }, 1500)
+      } else {
+        setPwError(data.error || "Erro ao alterar a senha.")
+      }
+    } catch (err) {
+      setPwError("Falha na comunicação com o servidor.")
+    } finally {
+      setIsSubmittingPw(false)
+    }
+  }
+
+  if (isLoading && !effectiveUser) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+        <Skeleton className="w-16 h-16 rounded-full" />
+      </div>
+    )
+  }
+
+  if (!effectiveUser && location !== "/login") {
+    return null
+  }
+
+  if (location === "/login") {
+    return <>{children}</>
+  }
 
   // Checagem de categoria aberta (auto-expande durante busca)
   const isCategoryOpen = (catId: string) => {
@@ -506,7 +533,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div>
             <span className="font-black text-sm block leading-tight text-foreground">CorpFlats</span>
             <span className="text-[10px] text-muted-foreground font-semibold uppercase">
-              {isDev ? "Dev / Engenharia" : isAdmin ? "Administração" : isRecepcao ? "Recepção" : "Camareira"}
+              {isDev ? "Dev / Engenharia" : isAdmin ? "Administração" : isAnserveGestor ? "Gestor Anserve" : isAnserveRepositora ? "Repositora Anserve" : isRecepcao ? "Recepção" : "Camareira"}
             </span>
           </div>
         </div>
@@ -840,9 +867,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2 overflow-hidden">
             <UserCircle className="w-8 h-8 text-muted-foreground shrink-0" />
             <div className="flex flex-col truncate">
-              <span className="text-xs font-bold truncate text-foreground capitalize">{user?.username}</span>
+              <span className="text-xs font-bold truncate text-foreground capitalize">{effectiveUser?.name || effectiveUser?.username}</span>
               <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                {isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isRecepcao ? "Recepção" : "Camareira"}
+                {isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isAnserveGestor ? "Gestor Anserve" : isAnserveRepositora ? "Repositora Anserve" : isRecepcao ? "Recepção" : "Camareira"}
               </span>
             </div>
           </div>
@@ -1242,9 +1269,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-2 overflow-hidden">
                 <UserCircle className="w-7 h-7 text-muted-foreground shrink-0" />
                 <div className="truncate">
-                  <span className="text-xs font-bold text-foreground block truncate capitalize">{user?.username}</span>
+                  <span className="text-xs font-bold text-foreground block truncate capitalize">{effectiveUser?.name || effectiveUser?.username}</span>
                   <span className="text-[9px] text-muted-foreground font-semibold uppercase">
-                    {isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isRecepcao ? "Recepção" : "Camareira"}
+                    {isDev ? "Dev / Engenharia" : isAdmin ? "Administrador" : isAnserveGestor ? "Gestor Anserve" : isAnserveRepositora ? "Repositora Anserve" : isRecepcao ? "Recepção" : "Camareira"}
                   </span>
                 </div>
               </div>

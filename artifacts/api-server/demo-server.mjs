@@ -225,6 +225,7 @@ import {
   setProvisionalMessagesEnabled,
   setProvisionalReviewsEnabled
 } from "./wbp/provisional.mjs";
+import { createHrRouter, ensureHrCollections, initHrWhatsAppAutomation } from "./hr/index.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -1082,8 +1083,8 @@ export function isDefaultPermissionsForRole(role, allowedModules) {
 
 const defaultUsers = [
   { id: 1, username: "admin", role: "dev", allowedModules: getDefaultModulesForRole("dev"), passwordHash: hashPassword("admin123") },
-  { id: 2, username: "Cris", name: "Cris", role: "camareira", allowedModules: getDefaultModulesForRole("camareira"), phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
-  { id: 3, username: "Grazi", name: "Grazi", role: "camareira", allowedModules: getDefaultModulesForRole("camareira"), phone: "22999106204", whatsapp: "5522999106204", pixKey: "12977795766", active: true, passwordHash: hashPassword("1234") },
+  { id: 2, username: "Cris", name: "Cris", role: "camareira", contractType: "prestador", allowedModules: getDefaultModulesForRole("camareira"), phone: "22988486446", whatsapp: "5522988486446", pixKey: "22988486446", active: true, passwordHash: hashPassword("1234") },
+  { id: 3, username: "Grazi", name: "Grazi", role: "camareira", contractType: "prestador", allowedModules: getDefaultModulesForRole("camareira"), phone: "22999106204", whatsapp: "5522999106204", pixKey: "12977795766", active: true, passwordHash: hashPassword("1234") },
   { id: 5, username: "gestor", name: "Administração CorpFlats", role: "admin", allowedModules: getDefaultModulesForRole("admin"), phone: "5522997124021", whatsapp: "5522997124021", active: true, passwordHash: hashPassword("admin123"), password_updated_at: new Date().toISOString() },
 ];
 
@@ -1467,6 +1468,9 @@ let db = {
   siteConfig: null
 };
 
+// Inicialização segura de coleções do módulo de RH
+ensureHrCollections(db);
+
 // ── WebBookingPro (WBP) Channel Manager Callbacks, Mode, Availability & Pricing ───────────
 if (pgPool) {
   wbpStorage.pgPool = pgPool;
@@ -1488,6 +1492,9 @@ wbpAriSync.onAlert = (payload) => {
 };
 
 app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage, client: wbpClient, worker: wbpWorker, alertsManager: wbpAlertsManager, saveDatabase }));
+
+// ── Módulo de Gestão de Funcionários CLT & RH Corporativo ─────────────────
+app.use("/api/hr", createHrRouter({ db, saveDatabase }));
 
 app.get("/api/wbp/mode", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -5118,6 +5125,7 @@ export function sanitizeMaidUsers() {
       id: 2,
       username: "Cris",
       role: "camareira",
+      contractType: "prestador",
       passwordHash: hashPassword("1234")
     };
     db.users.push(cris);
@@ -5128,6 +5136,7 @@ export function sanitizeMaidUsers() {
   if (cris.whatsapp !== "5522988486446") { cris.whatsapp = "5522988486446"; changed = true; }
   if (cris.pixKey !== "22988486446") { cris.pixKey = "22988486446"; changed = true; }
   if (cris.role !== "camareira") { cris.role = "camareira"; changed = true; }
+  if (cris.contractType !== "prestador") { cris.contractType = "prestador"; changed = true; }
   if (cris.active !== true) { cris.active = true; changed = true; }
 
   // 2. Grazi (id: 3) - Telefone/WhatsApp: 22999106204 | Chave PIX (CPF): 12977795766
@@ -5137,6 +5146,7 @@ export function sanitizeMaidUsers() {
       id: 3,
       username: "Grazi",
       role: "camareira",
+      contractType: "prestador",
       passwordHash: hashPassword("1234")
     };
     db.users.push(grazi);
@@ -5147,6 +5157,7 @@ export function sanitizeMaidUsers() {
   if (grazi.whatsapp !== "5522999106204") { grazi.whatsapp = "5522999106204"; changed = true; }
   if (grazi.pixKey !== "12977795766") { grazi.pixKey = "12977795766"; changed = true; }
   if (grazi.role !== "camareira") { grazi.role = "camareira"; changed = true; }
+  if (grazi.contractType !== "prestador") { grazi.contractType = "prestador"; changed = true; }
   if (grazi.active !== true) { grazi.active = true; changed = true; }
 
   // 3. Garante que os números das camareiras estejam no testAllowedPhones da zapiConfig e allowMaidsInTestMode seja true
@@ -5172,7 +5183,7 @@ export function sanitizeMaidUsers() {
   if (changed) {
     try {
       saveDatabase();
-      console.log("[Sanitize Maids] Dados e telefones de Cris e Grazi blindados e sincronizados com sucesso.");
+      console.log("[Sanitize Maids] Dados, telefones e contractType: 'prestador' de Cris e Grazi blindados e sincronizados com sucesso.");
     } catch (_) {}
   }
   return changed;
@@ -6487,6 +6498,7 @@ async function loadDatabase() {
       }
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
+      ensureHrCollections(db);
       if (ensureSystemUsers(db)) {
         saveDatabase("manual_migrate_system_users_dev_and_gestor");
       }
@@ -6729,6 +6741,7 @@ async function loadDatabase() {
     if (ensureSystemUsers(db)) {
       saveDatabase("manual_migrate_system_users_dev_and_gestor");
     }
+    ensureHrCollections(db);
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
     if (db.nfseConfig?.certificadoA1?.pfxBase64) {
@@ -8873,6 +8886,24 @@ function pruneDatabase() {
     zapiRawWebhookLogs: 15
   };
 
+  // 1. Blindagem Preventiva: Garante que nenhuma coleção de RH seja incluída em LIMITS
+  const HR_PROTECTED_COLLECTIONS = [
+    "hrEmployees",
+    "hrTimeRecords",
+    "hrSchedules",
+    "hrVacations",
+    "hrPayroll",
+    "hrContracts",
+    "hrAsoRecords",
+    "hrSettings",
+    "hrComplianceSettings",
+    "hrComplianceAudits",
+    "hrDeviceWhitelist"
+  ];
+  for (const hrKey of HR_PROTECTED_COLLECTIONS) {
+    delete LIMITS[hrKey];
+  }
+
   for (const [key, max] of Object.entries(LIMITS)) {
     if (Array.isArray(db[key]) && db[key].length > max) {
       // Ordena por data mais recente primeiro e mantém os N mais recentes (null-safe e sem overhead de ICU/localeCompare)
@@ -8932,6 +8963,33 @@ function pruneDatabase() {
         conv.messages = conv.messages.slice(-50);
       }
     }
+  }
+
+  // ── BLINDAGEM LEGAL TRABALHISTA (Art. 11 CLT & Portaria 671 MTP - Guarda de 5 anos / 1825 dias) ──
+  // Caso hrTimeRecords ou hrComplianceAudits ultrapassem limites de volume extraordinários (> 50.000 itens),
+  // NUNCA descartar registros com menos de 5 anos (1825 dias corridos).
+  if (Array.isArray(db.hrTimeRecords) && db.hrTimeRecords.length > 50000) {
+    const cutoffDate5Years = getOffsetDateStr(-1825);
+    db.hrTimeRecords = db.hrTimeRecords.filter(p => {
+      const pDate = String(p.date || p.timestamp || p.createdAt || "").split("T")[0];
+      return pDate >= cutoffDate5Years;
+    });
+  }
+
+  if (Array.isArray(db.hrComplianceAudits) && db.hrComplianceAudits.length > 20000) {
+    const cutoffDate5Years = getOffsetDateStr(-1825);
+    db.hrComplianceAudits = db.hrComplianceAudits.filter(a => {
+      const aDate = String(a.timestamp || a.date || a.createdAt || "").split("T")[0];
+      return aDate >= cutoffDate5Years;
+    });
+  }
+
+  if (Array.isArray(db.hrPayroll) && db.hrPayroll.length > 10000) {
+    const cutoffDate5Years = getOffsetDateStr(-1825);
+    db.hrPayroll = db.hrPayroll.filter(f => {
+      const fDate = String(f.referenceMonth || f.date || f.createdAt || "").split("T")[0];
+      return fDate >= cutoffDate5Years;
+    });
   }
 }
 
@@ -49069,10 +49127,40 @@ app.get("/api/minibar/analytics/demographics", (req, res) => {
   }
 });
 
-// Autenticação Rápida Mobile por PIN da Repositora (Suporta PIN Individual por Funcionária + PIN Padrão)
+// Lista pública de repositoras ativas para seleção rápida na tela de PIN (/frigobar-reposicao)
+app.get("/api/minibar/restockers-list", (req, res) => {
+  try {
+    const activeRestockers = (db.users || [])
+      .filter(u => u.active !== false && u.role === "anserve_repositora")
+      .map(u => ({
+        id: u.id,
+        username: u.username,
+        name: u.name || u.username,
+        hasIndividualPin: Boolean(u.pin && String(u.pin).trim())
+      }));
+
+    if (activeRestockers.length === 0) {
+      activeRestockers.push({
+        id: 10,
+        username: "repositora",
+        name: "Repositora Anserve",
+        hasIndividualPin: false
+      });
+    }
+
+    res.json({
+      success: true,
+      restockers: activeRestockers
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Autenticação Rápida Mobile por PIN da Repositora (Suporta Seleção da Funcionária + PIN Individual + PIN Padrão)
 app.post("/api/minibar/auth-pin", (req, res) => {
   try {
-    const { pin } = req.body || {};
+    const { pin, userId } = req.body || {};
     const pinStr = String(pin || "").trim();
     const configuredPin = String(db.minibarSettings?.anservePin || "1234").trim();
 
@@ -49080,23 +49168,56 @@ app.post("/api/minibar/auth-pin", (req, res) => {
       return res.status(401).json({ success: false, error: "PIN de acesso incorreto." });
     }
 
-    // 1. Tenta localizar funcionária ativa com este PIN individual
-    let matchedUser = (db.users || []).find(
-      u =>
-        u.active !== false &&
-        (u.role === "anserve_repositora" || u.role === "anserve_gestor") &&
-        u.pin &&
-        String(u.pin).trim() === pinStr
-    );
+    let matchedUser = null;
 
-    // 2. Fallback para o PIN global da operação Anserve
+    // 1. Se a funcionária selecionou seu nome na tela (userId informado)
+    if (userId !== undefined && userId !== null && userId !== "") {
+      const selectedUser = (db.users || []).find(
+        u =>
+          Number(u.id) === Number(userId) &&
+          (u.role === "anserve_repositora" || u.role === "anserve_gestor")
+      );
+      if (selectedUser) {
+        if (selectedUser.active === false) {
+          return res.status(403).json({ success: false, error: "Este cadastro de repositora está inativo." });
+        }
+        const userPin = selectedUser.pin ? String(selectedUser.pin).trim() : "";
+        // Se a funcionária tem um PIN individual diferente do padrão, aceita o PIN dela (ou o PIN mestre configurado)
+        if ((userPin && userPin === pinStr) || pinStr === configuredPin) {
+          matchedUser = selectedUser;
+        } else {
+          return res.status(401).json({
+            success: false,
+            error: `PIN incorreto para ${selectedUser.name || selectedUser.username}.`
+          });
+        }
+      }
+    }
+
+    // 2. Se não selecionou ou não encontrou pelo userId, tenta localizar funcionária ativa com este PIN individual único
+    if (!matchedUser) {
+      matchedUser = (db.users || []).find(
+        u =>
+          u.active !== false &&
+          (u.role === "anserve_repositora" || u.role === "anserve_gestor") &&
+          u.pin &&
+          String(u.pin).trim() === pinStr
+      );
+    }
+
+    // 3. Fallback para o PIN global da operação Anserve
     if (!matchedUser && pinStr === configuredPin) {
-      matchedUser = (db.users || []).find(u => u.username === "repositora") || {
-        id: 10,
-        username: "repositora",
-        name: "Repositora Anserve",
-        role: "anserve_repositora"
-      };
+      const activeRestockers = (db.users || []).filter(
+        u => u.active !== false && u.role === "anserve_repositora"
+      );
+      matchedUser =
+        activeRestockers[0] ||
+        (db.users || []).find(u => u.username === "repositora") || {
+          id: 10,
+          username: "repositora",
+          name: "Repositora Anserve",
+          role: "anserve_repositora"
+        };
     }
 
     if (!matchedUser) {
@@ -50528,6 +50649,7 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   setAuditLogger(logAuditEvent);
   if (process.env.NODE_ENV !== "test") {
     startMonitoringEngine();
+    initHrWhatsAppAutomation({ db, saveDatabase });
     if (isWbpEnabled(db)) {
       wbpWorker.start();
       wbpAlertsManager.startDailySummaryScheduler(db);

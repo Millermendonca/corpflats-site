@@ -1,53 +1,59 @@
-# BRIEFING — 2026-10-11T03:53:00Z
+# BRIEFING — 2026-10-22T14:51:00Z
 
 ## Mission
-Adversarial empirical testing of CorpFlats Milestone M4: concurrency of pre-reservations (TOCTOU safety), automatic hold expiration and availability release, tariff bulk-update consistency across matrix and quotes, and SHA-256 byte-by-byte mirror server parity.
+Estresse adversarial de segurança para o Marco M4: blindagem irrestrita de prestadoras (Cris e Grazi - IDs 2, 3, "2", "3", "cris", "grazi"), detecção de tampering/adulteração de minuta contratual via SHA-256 e integridade de assinatura canvas, e horizontes de alerta de ASO (vencidos, 30d, 60d, >60d).
 
 ## 🔒 My Identity
-- Archetype: EMPIRICAL CHALLENGER
+- Archetype: empirical-challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m4_2
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M4
-- Instance: Challenger 2 of M4
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code
-- Run verification code empirically — do not trust claims or logs without reproducing
-- Evidence-based findings only (must have reproducible proof)
+- Review-only — do NOT modify implementation code.
+- Seguir estritamente as regras de AGENTS.md (apenas teste pontual, sem testes em lote/globais).
+- Executar testes empíricos próprios e não confiar em afirmações não verificadas.
+- Manter BRIEFING.md e DISPATCH.md atualizados.
+- Emitir veredicto APPROVE ou REQUEST_CHANGES fundamentado em evidências executadas.
 
 ## Current Parent
-- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Updated: not yet
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T14:51:00Z
 
 ## Review Scope
-- **Files to review**: `demo-server.mjs`, `whatsapp-ai-service.mjs`, `zapi-service.mjs`, `artifacts/api-server/` vs `scripts/` mirror pairs
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, `orchestrator_4/PROJECT.md`
-- **Review criteria**: Concurrency safety (TOCTOU), automatic hold expiration, tariff bulk update consistency, mirror parity, test suite passes
+- **Files reviewed**:
+  - `artifacts/api-server/hr/contracts-aso.mjs`
+  - `artifacts/api-server/hr/payroll.mjs`
+  - `artifacts/api-server/hr/router.mjs`
+  - `artifacts/api-server/hr/employees.mjs`
+  - `tests/hr-m4-payroll-contracts.test.mjs`
+- **Interface contracts**: `ORIGINAL_REQUEST.md`, `orchestrator_17/PROJECT.md`, `worker_m4/handoff.md`
+- **Review criteria**: Segurança adversarial, blindagem HTTP 403 para prestadoras, integridade criptográfica SHA-256 e detecção de tampering, assertividade dos horizontes temporais de ASO per NR-7.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Concurrency burst (10 simultaneous pre-reservations on identical flat and dates) → Pass: exactly 1 wins (200), 9 fail (409 Conflict), exactly 1 entry created on disk.
-  2. Partial overlap race (4 staggered mutually overlapping pre-reservations) → Pass: exactly 1 wins, 3 fail with 409, no double bookings.
-  3. Commit reservation race (5 simultaneous commits of the same pre-reservation) → Pass: no double commit corruption, PMS locks flat safely.
-  4. Real-time hold expiration & release → Pass: hold expires naturally, availability automatically unlocks flat, commits on expired reservation reject with 400 PRE_RESERVATION_EXPIRED, and new pre-reservation succeeds.
-  5. Bulk-update of tariffs across 60 days → Pass: 60 date overrides saved, GET /api/tariffs/calendar returns exact rates, POST /api/bot-actions/quote computes exact sums across 7 and 30-day stays.
-  6. Twin-server byte-by-byte parity → Pass: SHA-256 matches 100% across all mirror files.
-- **Vulnerabilities found**: None. System is resilient and impervious to TOCTOU races under single-threaded synchronous atomic state mutation before event loop yield.
-- **Untested angles**: None within M4 scope.
+  - T1: Blindagem de Cris e Grazi (IDs 2, 3, "2", "3", "cris", "grazi") em `payroll/calculate`, `payroll/close-month`, `contracts/generate`, `contracts/:id/sign`, e `aso`.
+    * Resultado: VULNERABILIDADE DETECTADA em `payroll/close-month` (retorna HTTP 201) e `contracts/:id/sign` (retorna HTTP 200/404 em vez de 403).
+  - T2: Adulteração na minuta do contrato, forja de assinatura canvas e adulteração de metadados quebram o selo probatório SHA-256.
+    * Resultado: ROBUSTO (6/6 PASS). Hashes divergem e invalidam o selo final probatório.
+  - T3: Alertas de ASO apresentam falhas nos limiares críticos (-1d, 30d, 31d, 60d, 61d, >60d).
+    * Resultado: ROBUSTO (5/5 PASS). Todos os limiares operam conforme especificado pela NR-7.
+- **Vulnerabilities found**:
+  - VULN-1: `POST /api/hr/payroll/close-month` não valida `employeeId`, permitindo payload com prestadora sem retornar HTTP 403 Forbidden.
+  - VULN-2: `POST /api/hr/contracts/:id/sign` e `signContractWithCanvas` não verificam se o contrato ou payload pertence a uma prestadora, permitindo assinar contratos para Cris/Grazi com HTTP 200 ou retornando 404 em vez de 403.
+- **Untested angles**: Todos os ângulos do despacho foram testados de forma exaustiva.
 
 ## Loaded Skills
-- None specified by parent
+- Nenhuma skill externa especializada carregada além das convenções base.
 
 ## Key Decisions Made
-- Created and executed comprehensive test suite `tests/challenger-m4-concurrency-resilience.test.mjs` verifying concurrency, hold lifecycle, tariff sync, and mirror parity.
-- Re-verified all existing test suites: `challenger-m3-tariff-adversarial.test.mjs`, `challenger-m3-ui-actions.test.mjs`, `challenger-tariff-stress.test.mjs`, `bot-actions-api.test.mjs`, `tariff-engine.test.mjs`, `whatsapp-ai-agent.test.mjs`, and `challenger-m4-journey.test.mjs`. Total 110 tests passed across all suites.
-- Verified `npm run build` in `artifacts/limpeza` completes with code 0.
-- Veredicto: APPROVE.
+- Emitir veredicto `REQUEST_CHANGES` devido a falha nas duas rotas de blindagem estrita de prestadoras.
 
 ## Artifact Index
-- DISPATCH.md — Parent dispatch log
-- BRIEFING.md — Persistent context & state
-- progress.md — Step-by-step progress & liveness
-- handoff.md — Final 5-component report
-- tests/challenger-m4-concurrency-resilience.test.mjs — Comprehensive empirical stress test suite
+- `DISPATCH.md` — Log de comandos e despachos recebidos
+- `BRIEFING.md` — Memória persistente de trabalho
+- `progress.md` — Liveness e progresso das fases
+- `stress_contracts_aso_security.mjs` — Script adversarial empírico
+- `handoff.md` — Relatório final com veredicto

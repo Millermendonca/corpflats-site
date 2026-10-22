@@ -1,55 +1,60 @@
-# BRIEFING — 2026-10-21T19:15:00Z
+# BRIEFING — 2026-10-22T10:35:00Z
 
 ## Mission
-Implementar o Marco M1 (Backend Core, Dados & APIs de Frigobar — Features F01 a F10) com paridade SHA-256 e testes pontuais isolados.
+Implementação do Marco M1: Backend Core, sincronização twin-server, módulo modular `hr/`, schema CLT, isolamento rigoroso de prestadoras (Cris e Grazi) e guarda contra poda no banco de dados.
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_worker
-- Roles: implementer, qa
+- Archetype: worker
+- Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: M1 (Backend Core, Dados & APIs de Frigobar)
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Milestone: M1 - Backend Core & Isolamento de Prestadoras
 
 ## 🔒 Key Constraints
-- Não trapacear (Integrity Mandate): implementação genuína de estado e regras, sem hardcode ou fachadas.
-- Regra estrita de testes do AGENTS.md: NUNCA rodar testes globais (`tests/*.test.mjs`), suítes completas ou varreduras. Executar EXCLUSIVAMENTE `node --test tests/minibar-backend-flow.test.mjs`.
-- Sempre manter paridade SHA-256 exata entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-- Desacoplamento financeiro: consumo de frigobar NUNCA altera o valor da hospedagem (`r.totalAmount` inalterado).
-- Retenção mínima de 730 dias para `minibarOrders` fiscais no `pruneDatabase`.
+- Sincronização estrita SHA-256 entre `artifacts/api-server/` e `scripts/`
+- Isolamento absoluto de Cris e Grazi: contractType = 'prestador', bloqueadas em todas as APIs CLT (/api/hr/employees)
+- Guarda contra poda de 11 coleções de RH no pruneDatabase (5 anos / 1825 dias para transações)
+- NUNCA executar testes globais (`tests/*.test.mjs`), apenas validação pontual estrita
+- Integridade total: sem hardcoding em testes, sem facades falsas
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T19:15:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T10:35:00Z
 
 ## Task Summary
-- **What to build**: Features F01 a F10 do Frigobar no backend: Coleções (`minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections`, `minibarSettings`), APIs de catálogo/gabarito, contexto flat/reserva com validação por 4 dígitos de telefone, checkout PIX (Inter) e Cartão (MP), consulta de status de pedido, upload de NF com envio WhatsApp/Email e portal do hóspede, registro de inspeção da repositora com detecção de divergência e disparo Sofia, extrato de repasse.
-- **Success criteria**: APIs funcionais, validações sólidas, paridade SHA-256 de `demo-server.mjs`, teste pontual `minibar-backend-flow.test.mjs` passando 100%.
-- **Interface contracts**: `PROJECT.md` e `ORIGINAL_REQUEST.md`.
-- **Code layout**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/minibar-backend-flow.test.mjs`.
-
-## Key Decisions Made
-- `minibarOrders` possui ciclo de vida desacoplado de reservas, mantendo `r.totalAmount` imutável.
-- Cortesia de boas-vindas limitada a 1x gratuita por estadia, convertendo tentativas posteriores em pedidos tarifados.
-- Divergências físicas identificadas na inspeção da repositora geram pedido `pendente_cobranca` e disparam alerta Sofia para o WhatsApp da recepção.
-- Repasse Anserve desconta taxas reais de pagamento (3,99% Cartão MP / 0,99% PIX Inter) e adiciona crédito pelas cortesias CorpFlats.
-- Paridade SHA-256 mantida estritamente via cópia atômica entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-
-## Artifact Index
-- `.agents/teamwork/worker_m1/DISPATCH.md` — Assignment
-- `.agents/teamwork/worker_m1/BRIEFING.md` — Persistent memory
-- `.agents/teamwork/worker_m1/progress.md` — Liveness & status tracking
-- `.agents/teamwork/worker_m1/changes.md` — Detailed implementation changes
-- `.agents/teamwork/worker_m1/handoff.md` — 5-component handoff report
+- **What to build**:
+  - Restabelecimento de 100% de paridade SHA-256 entre `artifacts/api-server/` e `scripts/`
+  - Estrutura modular `hr/` (`employees.mjs`, `router.mjs`, `index.mjs`) em `artifacts/api-server/hr/` e `scripts/hr/`
+  - Integração em `demo-server.mjs`: `ensureHrCollections`, montagem de `/api/hr`, proteção em `pruneDatabase` contra `LIMITS` e guarda legal de 1825 dias (5 anos)
+  - Blindagem estrita de Cris e Grazi com `contractType = "prestador"` em `defaultUsers` e `sanitizeMaidUsers()`
+  - Criação do verificador `scripts/check-twin-parity.mjs`
+  - Criação e aprovação do teste pontual dedicado `tests/hr-m1-backend-core.test.mjs`
+- **Success criteria**:
+  - `check-twin-parity.mjs` retorna 29/29 PASS (100%)
+  - Testes pontuais `tests/hr-m1-backend-core.test.mjs` 6/6 subtestes aprovados
+  - Cris e Grazi 100% isoladas de rotinas CLT
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/demo-server.mjs`: Core backend, schemas, webhooks e APIs completas F01-F10
-  - `scripts/demo-server.mjs`: Servidor gêmeo espelhado com hash idêntico
-  - `tests/minibar-backend-flow.test.mjs`: Suíte pontual de testes com 20 subtestes
-- **Build status**: Pass (20/20 tests passing)
-- **Pending issues**: None
+  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: import de hr, chamada ensureHrCollections, montagem de /api/hr, proteção de poda de 5 anos, contractType prestador
+  - `scripts/mail-service.mjs` & `scripts/zapi-service.mjs`: sincronizados da base de artifacts
+  - `artifacts/api-server/hr/employees.mjs` & `scripts/hr/employees.mjs`: schemas CLT, guardas isPrestadora e isCltEmployee, CRUD
+  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`: rotas Express para /api/hr
+  - `artifacts/api-server/hr/index.mjs` & `scripts/hr/index.mjs`: exportações unificadas e ensureHrCollections
+  - `scripts/check-twin-parity.mjs`: ferramenta canônica de auditoria de paridade
+  - `tests/hr-m1-backend-core.test.mjs`: suíte de teste pontual dedicada do Marco M1
+- **Build status**: PASS (node --test tests/hr-m1-backend-core.test.mjs)
+- **Pending issues**: Nenhuma pendência em M1
 
 ## Quality Status
-- **Build/test result**: Pass (20 passed, 0 failed, 0 skipped)
-- **Lint status**: Clean
-- **Tests added/modified**: `tests/minibar-backend-flow.test.mjs` (20 subtestes)
+- **Build/test result**: 6/6 subtests PASS (6.4s)
+- **Parity status**: 29/29 files SHA-256 identical (100% PASS)
+- **Tests added/modified**: `tests/hr-m1-backend-core.test.mjs`
+
+## Loaded Skills
+- N/A
+
+## Key Decisions Made
+- Sincronização inicial efetuada a partir de `artifacts/api-server/` para `scripts/` para absorver os commits `a7d4f78` e `4c5b997`.
+- Isolamento de Cris e Grazi garantido em 5 camadas: em `defaultUsers`, em `sanitizeMaidUsers`, nas guardas `isPrestadora`/`isCltEmployee`, na rejeição de cadastro por nome/CPF/ID e nas rotas HTTP com retorno 404/403.
+- Proteção legal de 5 anos (1825 dias) implementada formalmente em `pruneDatabase()` para cumprir Art. 11 da CLT e Portaria MTP 671/2021.

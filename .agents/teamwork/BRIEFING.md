@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-21T18:30:00Z
+# BRIEFING — 2026-10-22T12:45:00Z
 
 ## Mission
-Implementar o ecossistema completo de Venda e Gestão de Frigobar nos Flats (CorpFlats + Anserve) no projeto Guest-Flow-Manager: autoatendimento mobile do hóspede, checkout PIX/Cartão, 4 interfaces dedicadas, fluxo de NF automático via WhatsApp/E-mail, controle de cortesias, auditoria de divergências com Sofia e inteligência analítica no CRM.
+Construir um Sistema Completo de Gestão de Funcionários CLT (RH, Ponto Eletrônico com Selfie/GPS e Whitelist de Aparelho, Automação WhatsApp, Escalas 6x1, Motor de Conformidade CLT/Sindicato com Travas em 3 Níveis, Folha de Pagamento, Contratos e Controle de ASO) integrado ao Guest-Flow-Manager (CorpFlats Soho Residence).
 
 ## 🔒 My Identity
 - Archetype: sentinel
@@ -24,6 +24,7 @@ Implementar o ecossistema completo de Venda e Gestão de Frigobar nos Flats (Cor
 - Orchestrator (swe_light_2): 17091fdb-497c-4bb6-83bb-cb42adbcc6db (completed, retired)
 - Parent Caller (Minibar): 78fb27ce-9ba1-4b4f-9df0-1e49eae533a9
 - Active Orchestrator (orchestrator_16): d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Active Orchestrator (HR/CLT): 58ecb31f-60d2-4e1e-9aac-82400a58c263 (orchestrator_17)
 - Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
@@ -53,23 +54,34 @@ Implementar o ecossistema completo de Venda e Gestão de Frigobar nos Flats (Cor
 - Route: SWE Light (teamwork_preview_swe)
 - Minibar Ecosystem: autoatendimento mobile do hóspede, checkout PIX/Cartão, 4 interfaces dedicadas, fluxo de NF automático via WhatsApp/E-mail, controle de cortesias, auditoria de divergências com Sofia e inteligência analítica no CRM.
 - Route: General (teamwork_preview_orchestrator)
+- Gestão de Funcionários CLT (1 Cozinha, 1 Camareira CLT)
+- Isolamento estrito de Cris e Grazi (diaristas/prestadoras, 100% fora de ponto/CLT/travas)
+- Ponto com selfie SHA-256, GPS Haversine (150m Soho) e Whitelist de Aparelho
+- Motor de conformidade em 3 níveis (alert, admin_override, hard_block)
+- Automação WhatsApp (confirmação imediata + saldo mensal + lembretes preventivos)
+- Folha mensal com reflexo DSR (Súmula 172/60 TST), INSS progressivo, VT e holerite
+- Contratos com assinatura eletrônica canvas e gestão de ASO
+- Paridade twin-server SHA-256 (34/34 arquivos de runtime)
+- Build frontend: npm --prefix artifacts/limpeza run build com exit 0 e git push com dist/
+- Teste pontual estrito: tests/hr-employee-management.test.mjs (PROIBIDO testes globais)
 
 ## User Context
-- **Last user request**: Implementar ecossistema completo de Venda e Gestão de Frigobar nos Flats (CorpFlats + Anserve).
+- **Last user request**: Construir Sistema Completo de Gestão de Funcionários CLT integrado ao Guest-Flow-Manager.
 - **Pending clarifications**: none
 - **Delivered results**:
-  - Task routed to General path (teamwork_preview_orchestrator).
-  - Orchestrator 16 spawned (d10c20e2-adfb-4695-835e-52dd3bebe9a9) with directory `.agents/teamwork/orchestrator_16`.
-  - Cron 1 (Reporting */8) and Cron 2 (Liveness */10) scheduled.
+  - M1 (Backend Core & Isolamento de Prestadoras): Gate 2 PASS (7/7 unit tests, 10/10 challenger tests, 30/30 paridade twin).
+  - M2 (Ponto Eletrônico & Conformidade 3 Níveis): Gate 2 PASS (10/10 testes, 33/33 geofence, 46/46 compliance, 32/32 paridade twin, auditor forense CLEAN).
+  - M3 (WhatsApp & Escalas 6x1 / Horas Extras / Férias): Gate 2 PASS (16/16 testes, 34/34 paridade twin, 16/16 stress math, 75/75 stress security, 26/26 stress vacations, auditor CLEAN).
+  - M4 (Folha de Pagamento, Contratos & ASO): Gate 2 PASS (16/16 testes pontuais, 36/36 paridade twin, 848/848 stress math, 41/41 stress security, auditor CLEAN).
 
 ## Project Status
-- **Phase**: in progress (Phase 0: Survey com 3 Explorers em paralelo)
+- **Phase**: in progress (Transição para Marco M5 - Frontend & Build)
 - **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_16
-- **Active Orchestrator ID**: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_17
+- **Active Orchestrator ID**: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - **Victory Auditor ID**: [TBD]
-- **Cron 1 (Reporting)**: 67a1db4f-0395-4e5c-be0d-887219d1c1e8/task-22
-- **Cron 2 (Liveness)**: 67a1db4f-0395-4e5c-be0d-887219d1c1e8/task-24
+- **Cron 1 (Reporting)**: 44c9d5d3-ce43-4735-9676-136dc0811c34/task-784
+- **Cron 2 (Liveness)**: 44c9d5d3-ce43-4735-9676-136dc0811c34/task-786
 
 ## Victory Audit Status
 - **Triggered**: no
@@ -78,5 +90,8 @@ Implementar o ecossistema completo de Venda e Gestão de Frigobar nos Flats (Cor
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative user request
-- .agents/teamwork/orchestrator_16/context.md — Initial orchestrator context
-- .agents/teamwork/orchestrator_16/progress.md — Active orchestrator progress log
+- .agents/teamwork/orchestrator_17/PROJECT.md — Architecture master document
+- .agents/teamwork/orchestrator_17/GATE_STATUS.md — Milestone gates audit log
+- .agents/teamwork/orchestrator_17/progress.md — Active orchestrator progress log
+- .agents/teamwork/orchestrator_17/BRIEFING.md — Orchestrator memory
+- scripts/check-twin-parity.mjs — Dynamic twin-server parity validator

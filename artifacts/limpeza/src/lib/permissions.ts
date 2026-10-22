@@ -82,6 +82,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     title: "🏨 Propriedade & Equipe",
     items: [
       { href: "/equipe", label: "Equipe & Níveis de Acesso", description: "Usuários do sistema, permissões, WhatsApp e senhas" },
+      { href: "/rh", label: "Gestão de RH & Colaboradores CLT", description: "Funcionários, escalas 6x1, ponto com selfie/GPS, travas CLT, folha e ASO" },
       { href: "/propriedade", label: "Flats, Políticas & Regras", description: "Quartos, horários, regras da casa e contratos" },
       { href: "/garagem", label: "Controle de Garagem & Vagas", description: "Vagas rotativas e placas de veículos" },
       { href: "/avaliacoes-ia", label: "Avaliações & Satisfação IA", description: "Análise de sentimentos e reviews do Google" },
@@ -358,7 +359,20 @@ export const ROUTE_ALIASES: Record<string, string> = {
   "/anserve/reposicao": "/frigobar-reposicao",
   "/admin/frigobar": "/frigobar",
   "/minibar-admin": "/frigobar",
-  "/frigobar-admin": "/frigobar"
+  "/frigobar-admin": "/frigobar",
+
+  // Gestão de RH & Ponto CLT
+  "/colaboradores": "/rh",
+  "/funcionarios": "/rh",
+  "/recursos-humanos": "/rh",
+  "/admin/rh": "/rh",
+  "/gestao-rh": "/rh",
+  "/rh-dashboard": "/rh",
+  "/rh/ponto": "/ponto",
+  "/bater-ponto": "/ponto",
+  "/terminal-ponto": "/ponto",
+  "/ponto-mobile": "/ponto",
+  "/registro-ponto": "/ponto"
 };
 
 /**
@@ -402,6 +416,19 @@ export function hasModuleAccess(
   }
   if (user.role === "anserve_repositora" && canonical === "/frigobar-reposicao") {
     return true;
+  }
+
+  // Garante que perfis Admin/Dev sempre enxerguem o módulo de RH mesmo se allowedModules foi salvo antes da criação do módulo
+  const rhModules = ["/rh"];
+  if ((user.role === "dev" || user.role === "admin") && rhModules.includes(canonical)) {
+    return true;
+  }
+
+  // Blindagem absoluta de Cris e Grazi (Prestadoras Autônomas de Governança): NUNCA têm acesso a /rh
+  const userName = (user.username || "").toLowerCase();
+  const isCrisOrGrazi = user.id === 2 || user.id === 3 || user.id === "2" || user.id === "3" || userName === "cris" || userName === "grazi";
+  if (isCrisOrGrazi && canonical === "/rh") {
+    return false;
   }
 
   // Lista efetiva de módulos permitidos

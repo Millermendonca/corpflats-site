@@ -1,52 +1,55 @@
-# BRIEFING — 2026-10-21T21:26:00Z
+# BRIEFING — 2026-10-22T09:55:00-03:00
 
 ## Mission
-Implementar o Milestone M3 (Features F19 a F28): Portais Anserve (Repositora e Supervisão), Admin CorpFlats & RBAC para o ecossistema de Frigobar no Guest-Flow-Manager.
+Implementação integral do Marco M3 do RH CorpFlats: Automação WhatsApp, Comprovantes REP-P, Saldo de Horas, Lembretes Preventivos, Grade de Escalas 6x1 44h, Art. 58 CLT, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT com paridade de arquivos gêmeos (twin parity) e 100% de aprovação nos testes pontuais.
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_worker
+- Archetype: worker
 - Roles: implementer, qa
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: M3 (Portais Anserve, Admin CorpFlats & RBAC — F19 a F28)
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Milestone: Marco M3
 
 ## 🔒 Key Constraints
-- Paridade de integridade mandatória: não usar mocks/falsos resultados.
-- AGENTS.md: sempre fazer `git push origin main` após commit.
-- Build de verificação obrigatório: `npm --prefix artifacts/limpeza run build` (código de saída 0, atualizando `artifacts/limpeza/dist/`).
-- Escopo estrito de testes: PROIBIDO rodar `tests/*.test.mjs` globais. Apenas teste pontual se estritamente solicitado.
-- Preservar arquivos de trabalho de outros módulos.
+- Twin parity mandatório: Qualquer alteração em `artifacts/api-server/hr/*.mjs` DEVE ser replicada identicamente em `scripts/hr/*.mjs`.
+- Blindagem de Prestadoras: Jamais enviar mensagens WhatsApp ou comprovantes CLT para Cris (id: 2) ou Grazi (id: 3).
+- Integridade total: Nenhum teste mockado com valores hardcoded para burlar asserções.
+- Escopo estrito de testes: Nunca rodar testes globais (`tests/*.test.mjs`). Rodar apenas `tests/hr-m3-whatsapp-schedules.test.mjs` e checagens pontuais de regressão M1 e M2.
+- Local de Campos dos Goytacazes/RJ para feriados municipais (São Salvador 06/08, Santíssimo Salvador etc.) e fuso America/Sao_Paulo.
+- Conformidade CLT estrita: Art. 58 §1º (tolerância 5/10 min), Art. 71 (intervalo intrajornada), Art. 73 (adicional noturno 20% e hora ficta 52m30s), Art. 134 e 137 (férias CLT), Art. 386 e OJ 410 TST (revezamento dominical e DSR em até 6 dias), Súmula 60/OJ 388 (prorrogação noturna).
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:26:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T09:55:00-03:00
 
 ## Task Summary
-- **What to build**:
-  1. `permissions.ts`: Adicionar perfis `anserve_repositora` e `anserve_gestor`, categoria `frigobar` em `PERMISSION_CATEGORIES`, e aliases. (Concluído)
-  2. `equipe.tsx`: Adicionar os perfis nas opções `<select>`, filtros e badges visuais. (Concluído)
-  3. `layout.tsx`: Adicionar itens de navegação e atalhos de BottomNav contextuais para `anserve_repositora` e `anserve_gestor`. (Concluído)
-  4. `anserve-restock.tsx`: Portal Mobile da Repositora (`/frigobar-reposicao`) com autenticação rápida PIN/Token, lista de flats priorizando checkouts do dia, conferência de consumo declarado, botões "Conforme" vs "Apontar Divergência" (com fotos e itens) e reposição física (pagos + cortesias). (Concluído)
-  5. `anserve-dashboard.tsx`: Painel de Supervisão Anserve (`/anserve` e `/frigobar-gestao`) com Fila de NFs pendentes (discriminado, água, consumo frigobar), modal de anexo de NF (com disparo multicanal backend), visão de estoque e extrato de repasse. (Concluído)
-  6. `minibar-admin.tsx`: Portal Admin CorpFlats (`/frigobar`) com abas de Catálogo & Cortesias, Gabarito por Flat (nominal standard), Gerador de QR Codes A6 para display de acrílico dos 19 flats (com print CSS), e Extrato CorpFlats ↔ Anserve. (Concluído)
-  7. `App.tsx`: Registrar rotas com guards e precedência correta. (Concluído)
-  8. Build e Git Push. (Concluído)
+- **What to build**: Módulos `whatsapp-automation.mjs`, `schedules.mjs`, rotas em `router.mjs`, exportações em `index.mjs`, gancho em `timekeeping.mjs`, teste pontual `tests/hr-m3-whatsapp-schedules.test.mjs`.
+- **Success criteria**: 12/12 PASS em M3, 7/7 PASS em M1, 10/10 PASS em M2, 100% PASS em `check-twin-parity.mjs` (34/34 arquivos).
+- **Interface contracts**: PROJECT.md e relatórios dos 3 Explorers.
+- **Code layout**: `artifacts/api-server/hr/` e `scripts/hr/`.
+
+## Key Decisions Made
+- Implementadas todas as funções com assinaturas flexíveis compatíveis com as suítes de teste e o servidor de produção.
+- Registrada a rota `GET /compliance/audits` e o alias `continuous_work_6h_limit` garantindo compatibilidade total com os testes de regressão M1 e M2.
+
+## Artifact Index
+- `.agents/teamwork/worker_m3/DISPATCH.md` — Assignment dispatch
+- `.agents/teamwork/worker_m3/BRIEFING.md` — Persistent situational memory
+- `.agents/teamwork/worker_m3/progress.md` — Liveness heartbeat and step tracker
+- `.agents/teamwork/worker_m3/handoff.md` — 5-component handoff report
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/limpeza/src/lib/permissions.ts`
-  - `artifacts/limpeza/src/pages/equipe.tsx`
-  - `artifacts/limpeza/src/components/layout.tsx`
-  - `artifacts/limpeza/src/App.tsx`
-  - `artifacts/limpeza/dist/`
-- **Files created**:
-  - `artifacts/limpeza/src/pages/anserve-restock.tsx`
-  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`
-  - `artifacts/limpeza/src/pages/minibar-admin.tsx`
-- **Build status**: PASS (Vite build exited with code 0)
-- **Pending issues**: None
+  - `artifacts/api-server/hr/whatsapp-automation.mjs` & `scripts/hr/whatsapp-automation.mjs`: Automação WhatsApp, recibos REP-P e saldo de horas
+  - `artifacts/api-server/hr/schedules.mjs` & `scripts/hr/schedules.mjs`: Escalas 6x1, feriados de Campos, Art. 58 CLT, adicional noturno e férias
+  - `artifacts/api-server/hr/timekeeping.mjs` & `scripts/hr/timekeeping.mjs`: Gancho de notificação WhatsApp no ponto
+  - `artifacts/api-server/hr/index.mjs` & `scripts/hr/index.mjs`: Inicialização de coleção hrWhatsAppLogs, aliases e exportações
+  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`: 11 novas rotas REST de WhatsApp, Escalas e Férias, mais GET /compliance/audits
+  - `tests/hr-m3-whatsapp-schedules.test.mjs`: Suíte de testes pontual dedicada com 12 testes
+- **Build status**: PASS
+- **Pending issues**: Nenhum
 
 ## Quality Status
-- **Build/test result**: PASS (Vite build code 0)
-- **Lint status**: clean
-- **Tests added/modified**: Strict compliance with AGENTS.md (no global test sweeps)
+- **Build/test result**: M3: 12/12 PASS; M1: 7/7 PASS; M2: 10/10 PASS; Twin Parity: 34/34 PASS (100%)
+- **Lint status**: Clean
+- **Tests added/modified**: `tests/hr-m3-whatsapp-schedules.test.mjs` (12 testes pontuais)

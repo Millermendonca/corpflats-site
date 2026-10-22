@@ -1,56 +1,61 @@
-# BRIEFING — 2026-10-21T21:05:00Z
+# BRIEFING — 2026-10-22T11:38:00Z
 
 ## Mission
-Adversarial review and edge case stress testing of `guest-minibar.tsx` implementation for Milestone M2 (Guest Self-Service Minibar ordering flow).
+Adversarially challenge and stress-test Milestone M2 implementations (Haversine/Geofencing, Selfie Validation & SHA-256 Hashing, Device Whitelist) in Guest-Flow-Manager.
 
 ## 🔒 My Identity
-- Archetype: challenger (teamwork_preview_challenger)
+- Archetype: EMPIRICAL CHALLENGER
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m2_1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M2
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs`)
-- Only run Vite build: `npm --prefix artifacts/limpeza run build`
-- Provide explicit verdict: APPROVE or REQUEST_CHANGES
+- Run verification tests personally (empirical challenger)
+- Do not run global test suites (tests/*.test.mjs) per AGENTS.md
+- Output handoff.md with explicit verdict APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:05:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T11:38:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/limpeza/src/pages/guest-minibar.tsx` (1396 lines)
-- **Interface contracts**: `PROJECT.md` (M2, Features F11 to F18), `ORIGINAL_REQUEST.md`, `AGENTS.md`
-- **Review criteria**: Empty cart submission, OTP length < 4 handling, OTP error handling, email/document validation, polling timer cleanup, bundle build stability
-
-## Key Decisions Made
-- Adversarial evaluation concluded: 5 checklist items investigated.
-- Empty cart: Button disabled and submit guard verified.
-- OTP < 4 digits: Strict 4-char OTP input and submit guards verified.
-- Wrong OTP: Graceful error banner display, no component crash, loading state released.
-- Email & Document: Pre-fill and custom toggle functional, recommendation noted for strict regex validation in M3.
-- Timer cleanup: Polling interval thoroughly cleaned up on success, modal cancel, and unmount.
-- Vite build passed with exit code 0 in 31.39s.
-- Verdict: **APPROVE**.
+- **Files reviewed**:
+  - `artifacts/api-server/hr/timekeeping.mjs` & `scripts/hr/timekeeping.mjs`
+  - `artifacts/api-server/hr/compliance.mjs` & `scripts/hr/compliance.mjs`
+  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`
+  - `tests/hr-m2-timekeeping-compliance.test.mjs`
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md, worker_m2/handoff.md
+- **Review criteria**:
+  1. Geofencing & Haversine formula robustness, boundary precision (149.9m, 150.0m, 150.1m, antipodes, inverted coords, invalid/null/malicious inputs, NaN resilience).
+  2. Selfie validation & SHA-256 hash integrity, corrupted payloads, missing/empty base64, hash calculation, bloat protection.
+  3. Device whitelist validation, bypass attempts (null/empty, prototype pollution, array injection, toggle behavior, usurpation).
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Empty cart submission attempt with 0 total → Blocked by button disabled & submit handler guard.
-  2. OTP input with < 4 digits → Blocked by maxLength, onChange condition, button disabled, function guard.
-  3. Wrong OTP input (401/404/network) → Friendly error banner, no crash, finally unsets loading.
-  4. Missing/invalid email & doc → Sent to backend with fallbacks; recommendation logged for future enhancement.
-  5. Polling interval leak → Protected by useEffect unmount hook, cancel button, and success branch.
-  6. Bundle breakage → Vite build passed with code 0.
-- **Vulnerabilities found**: None critical/blocking. Client-side email RFC regex could be tightened in subsequent milestone.
-- **Untested angles**: Live payment gateway webhooks (tested in M1/M5 test suites).
+  - Haversine precision at 149.9m (inside) and 150.1m (outside): CONFIRMED PASS.
+  - Haversine resilience to NaN on antipodal coordinates: CONFIRMED FAIL (unclamped `a > 1.0` produces `NaN`).
+  - Haversine resilience to NaN on `Infinity`: CONFIRMED FAIL (`isNaN(Infinity)` is false, producing `NaN`).
+  - Selfie validation and SHA-256 integrity: CONFIRMED PASS (10/10 edge cases blocked).
+  - Device whitelist bypass & usurpation: CONFIRMED PASS (9/9 edge cases blocked).
+- **Vulnerabilities found**:
+  - `calculateDistanceHaversine` returns `NaN` on antipodal coordinates where IEEE 754 precision causes `a = 1.0000000000000002`.
+  - `calculateDistanceHaversine` returns `NaN` when `Infinity` is passed instead of returning `Infinity`.
+- **Untested angles**: None within M2 scope.
 
 ## Loaded Skills
-- None requested
+- None
+
+## Key Decisions Made
+- Executed dedicated 33-test adversarial harness `.agents/teamwork/challenger_m2_1/stress_geofence.mjs`.
+- Identified mathematical edge-case defect in `calculateDistanceHaversine`.
+- Formulated explicit verdict: `REQUEST_CHANGES` with exact 2-line remediation for worker.
 
 ## Artifact Index
-- `handoff.md` — Final 5-component adversarial review report
-- `progress.md` — Liveness and execution progress tracker
-- `DISPATCH.md` — Incoming message history
+- `.agents/teamwork/challenger_m2_1/DISPATCH.md` — Inbound instructions log
+- `.agents/teamwork/challenger_m2_1/BRIEFING.md` — Situational awareness
+- `.agents/teamwork/challenger_m2_1/progress.md` — Liveness heartbeat
+- `.agents/teamwork/challenger_m2_1/stress_geofence.mjs` — Adversarial stress harness (33 tests)
+- `.agents/teamwork/challenger_m2_1/handoff.md` — Final challenge report

@@ -26,3 +26,23 @@ Verificação adversária e testes empíricos de estresse para o backend de Frig
 4. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
 
 Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+
+
+## 2026-10-22T10:37:08Z
+Você é o Challenger 1 (challenger_m1_1) para o Marco M1.
+Seu diretório de trabalho exclusivo é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`.
+
+SUA MISSÃO ADVERSARIAL:
+1. Estressar a paridade twin-server: executar verificação independente de hash SHA-256 de todos os arquivos em `artifacts/api-server/` vs `scripts/`.
+2. Estressar a regra de poda em `pruneDatabase()`: crie um script temporário em seu diretório de trabalho injetando registros em `db.hrTimeRecords` e `db.hrPayroll` com datas de 4 anos atrás (< 1825 dias) e 6 anos atrás (> 1825 dias). Execute `pruneDatabase()` e assertar que registros de 4 anos NÃO são apagados.
+3. Não altere arquivos de código fonte de produção.
+4. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+5. Enviar mensagem ao orquestrador.

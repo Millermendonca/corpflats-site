@@ -1,60 +1,63 @@
-# BRIEFING — 2026-10-01T00:31:45Z
+# BRIEFING — 2026-10-22T16:02:00Z
 
 ## Mission
-Final Victory Forensic Clearance Audit on the External Service Provider Management Module (R1 to R8).
+Forensic integrity audit for Milestone M5 (HR Dashboard & Ponto Mobile UI, Twin Parity, Blindagem Jurídica CLT/Prestadoras, Production Build)
 
 ## 🔒 My Identity
-- Archetype: victory_auditor
+- Archetype: forensic_auditor
 - Roles: critic, specialist, auditor
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m5
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Target: full project (M5 Victory Audit)
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Target: Milestone M5
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
 - Trust NOTHING — verify everything independently
-- Hard veto on: hardcoded mocks, test circumvention, mirror desynchronization, unbuilt assets, unpushed commits
-- Integrity mode derived from ORIGINAL_REQUEST.md: development
+- Zero tolerance for hardcoded test results, facades, or fabricated outputs
+- Strictly adhere to AGENTS.md test policy (no global/suite test execution)
+- Precedence to ORIGINAL_REQUEST.md
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: not yet
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T16:02:00Z
 
 ## Audit Scope
-- **Work product**: External Service Provider Management Module (R1 to R8) - backend demo-server.mjs, frontend components (service-orders.tsx, service-worker-portal.tsx, flat-card.tsx, pms-calendar.tsx), tests, builds, git status
-- **Profile loaded**: General Project
-- **Audit type**: victory audit / forensic integrity check
+- **Work product**: Milestone M5 deliverables (artifacts/limpeza/src/pages/ponto-mobile.tsx, hr-dashboard.tsx, build artifacts, twin parity, and CLT/Prestadoras boundary enforcement)
+- **Profile loaded**: General Project / Forensic Auditor
+- **Audit type**: forensic integrity check
 
 ## Audit Progress
 - **Phase**: reporting
 - **Checks completed**:
-  1. Authoritative documents review (ORIGINAL_REQUEST.md, PROJECT.md, worker_m5_e2e handoff.md) [PASS]
-  2. Cheating / Mock Facade Detection across backend & frontends [PASS]
-  3. Backend Mirror Parity (SHA-256 + git diff --no-index: 100% byte identical) [PASS]
-  4. Git Status & Remote Push Verification (HEAD == origin/main, 0 unpushed commits) [PASS]
-  5. Build Verification (npm run build in artifacts/limpeza exit code 0, dist/ fresh and 0 diff) [PASS]
-  6. Automated Test Battery (7 test suites, 114/114 passed, 0 failures) [PASS]
-- **Checks remaining**: none
-- **Findings so far**: CLEAN
+  1. Read ORIGINAL_REQUEST.md, PROJECT.md, worker handoff.md
+  2. Inspect ponto-mobile.tsx and hr-dashboard.tsx for facades/stubs (CLEAN)
+  3. Verify Twin-Server SHA-256 parity via node scripts/check-twin-parity.mjs (36/36 PASS)
+  4. Verify production build via npm --prefix artifacts/limpeza run build (Exit code 0)
+  5. Verify legal isolation (Cris & Grazi / CLT vs Prestadoras) in frontend & backend (CLEAN & IMPENETRABLE)
+  6. Verify test execution compliance per AGENTS.md (No global test runs; dedicated test 12/12 PASS)
+  7. Final report generated
+- **Checks remaining**: [None]
+- **Findings so far**: CLEAN — No integrity violations detected.
+
+## Key Decisions Made
+- Confirmed full compliance with empirical evidence.
+- Binary verdict: CLEAN.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Hardcoded mock bypasses in endpoints or frontend: Verified genuine implementation with real DB persistence and TanStack queries.
-  - Server mirror desynchronization: Verified SHA-256 exact match (`6B5013EF1EA47C6D5F098B558919EC86E755F90519FE4EB81550073EA9F6DA80`) and 0 diff bytes.
-  - Outdated or missing build artifacts: Ran `npm run build` in `artifacts/limpeza` (exit code 0), assets verified fresh and matching git repo with 0 diff.
-  - Git branch unsynced or unpushed commits: Verified `git log origin/main..HEAD` is empty and branch is up to date with origin/main.
-  - Test suite tampering or failures: Ran all 7 suites individually; 114 out of 114 tests passed with 0 failures.
-- **Vulnerabilities found**: None.
-- **Untested angles**: All target requirements R1 through R8 thoroughly verified empirically.
+  * Hypothesis 1: UI pages ponto-mobile.tsx or hr-dashboard.tsx contain stubs/facades -> REJECTED (Genuine production-grade React code).
+  * Hypothesis 2: Twin parity might be desynchronized -> REJECTED (36/36 runtime files 100% SHA-256 identical).
+  * Hypothesis 3: Frontend build might fail under Vite -> REJECTED (Compiled in 47.75s with exit code 0).
+  * Hypothesis 4: Prestadoras (Cris/Grazi) might be assignable CLT access via allowedModules or API -> REJECTED (Hard-blocked by permissions.ts and router.mjs/employees.mjs).
+  * Hypothesis 5: Tests might pollute production data/database.json -> REJECTED (0 changes in git status).
+- **Vulnerabilities found**: None
+- **Untested angles**: None within M5 scope.
 
 ## Loaded Skills
-- None requested
-
-## Key Decisions Made
-- All empirical verification completed; issuing verdict CLEAN.
+- None
 
 ## Artifact Index
-- DISPATCH.md — Audit assignment dispatch
-- BRIEFING.md — Auditor persistent state index
-- progress.md — Liveness progress heartbeat
-- handoff.md — Final Victory Forensic Clearance Audit Report
+- DISPATCH.md — Audit dispatch instructions
+- BRIEFING.md — Persistent context & memory
+- progress.md — Liveness heartbeat
+- handoff.md — Final forensic audit report

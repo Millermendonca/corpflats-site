@@ -1,26 +1,17 @@
 # Progress Heartbeat - explorer_survey_backend
 
-- **Status**: Investigation completed, generating final handoff report
-- **Last visited**: 2026-10-11T00:50:00Z
-- **Current Step**: Final handoff report generation and orchestrator messaging
-- **Completed Steps**:
-  - Received dispatch for E2E Synthetic Tests & Sandbox Isolation Points (R1)
-  - Updated DISPATCH.md and reviewed ORIGINAL_REQUEST.md
-  - Analyzed `artifacts/api-server/demo-server.mjs` and mirror `scripts/demo-server.mjs`
-  - Verified exact file hash match between main and mirror (`True`)
-  - Audited database storage mechanisms (`DB_FILE`, `DATABASE_FILE`, `DATA_FILE`, `loadDatabase()`, `saveDatabase()`)
-  - Audited PostgreSQL pool initialization and bypass (`DATABASE_URL=""` guarantees `pgPool === null`)
-  - Verified port binding (`PORT` env var, default 5000) and lifecycle management on Windows
-  - Mapped external calls:
-    - Z-API / WhatsApp: outbound endpoints, inbound webhooks, local emulator design with queue and inbound simulator
-    - SMTP / Nodemailer: `mail-service.mjs`, `sendEmailAsync`, `db.reservationCommunications` internal audit store, mock SMTP port routing
-    - Payment Gateways: Banco Inter mTLS, static PIX generator (`generateStaticPixPayload`), webhooks (`/api/pms/inter/webhook`, `/api/pms/mercadopago/webhook`)
-    - SERPRO / FNRH gov.br: `fnrh-serpro-service.mjs`, `FnrhSerproClient` built-in mock mode (`SERPRO_MOCK=true`), mock UUID and link generation, fallback to `/pre-checkin/:code`
-    - NFS-e: GissOnline SOAP (`giss-soap.mjs`), certificate loading, National ADN (`national-nfse.mjs`)
-    - Microsoft Graph: `microsoft-graph-service.mjs`, OneDrive Excel sheet syncing
-  - Traced time/clock mechanisms:
-    - 18:00 turno (governance daily summary & quinzena closing)
-    - 22:00 / 05:00 breakfast ordering cutoffs
-    - 14:00 check-in lock & door code unmasking
-    - Designed deterministic `POST /api/test/time-travel` endpoint with simulated offset and immediate ticker invocation
-  - Documented complete architecture survey in `analysis.md`
+- **Last visited**: 2026-10-22T10:10:00Z
+- **Current status**: Análise aprofundada concluída. Mapeamento de persistência, isolamento de Cris e Grazi, arquitetura modular twin-server, e catálogo de endpoints concluídos. Elaborando `handoff.md`.
+- **Completed steps**:
+  - [x] Criação de DISPATCH.md, BRIEFING.md, progress.md
+  - [x] Leitura detalhada de ORIGINAL_REQUEST.md (seção 2026-10-22T09:58:01Z e diretrizes de governança)
+  - [x] Análise de `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` (arquitetura twin-server, persistência em `data/database.json`, Postgres `system_store` blob, snapshots em `system_store_backups`, pruning engine)
+  - [x] Descoberta da divergência de hash atual entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` decorrente do commit anterior a7d4f78
+  - [x] Análise dos módulos existentes (`wbp/` modular, `minibar/` inline, notificações com `createNotification`, e WhatsApp com `sendZapiMessage` de `zapi-service.mjs`)
+  - [x] Análise do cadastro e governança de Cris (id: 2) e Grazi (id: 3), mapeamento do mecanismo estrito de isolamento (não-CLT, diaristas no extrato de faxinas)
+  - [x] Mapeamento da arquitetura recomendada para RH/CLT (`artifacts/api-server/hr/` e espelho em `scripts/hr/` montado via router Express)
+  - [x] Mapeamento dos endpoints REST para Funcionários, Ponto, Escalas, Folha, Contratos, ASO e Travas
+- **Next steps**:
+  - [ ] Atualizar `BRIEFING.md`
+  - [ ] Escrever relatório final estruturado em `handoff.md` (5 componentes do protocolo)
+  - [ ] Notificar o orquestrador via `send_message`

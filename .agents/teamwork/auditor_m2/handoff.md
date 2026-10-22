@@ -1,145 +1,184 @@
-# Handoff Report — Forensic Integrity Audit (Milestone M2)
-**Work Product**: Milestone M2 — Interface Mobile do Hóspede & Checkout Flow (`artifacts/limpeza/src/pages/guest-minibar.tsx`, `App.tsx`, `guest-portal.tsx`, `dist/`)  
-**Data/Hora**: 2026-10-21T21:04:00Z  
-**Origem**: `auditor_m2` (teamwork_preview_auditor)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Tipo de Handoff**: Hard (Task complete)  
+# Forensic Audit Report — Milestone M2: Ponto Eletrônico & Motor de Conformidade
 
----
-
-## Forensic Audit Report
-
-**Work Product**: Milestone M2 (Self-Service Minibar Guest Web App: `artifacts/limpeza/src/pages/guest-minibar.tsx`, `App.tsx`, `guest-portal.tsx`, `artifacts/limpeza/dist/`)  
-**Profile**: General Project (Integrity Mode: development)  
-**Verdict**: **CLEAN**  
-
-### Phase Results
-- **Hardcoded Output & Facade Detection**: PASS — `guest-minibar.tsx` possui 1.396 linhas de lógica React genuína, estados reativos completos, chamadas assíncronas a APIs REST, validação OTP, polling de pagamento com limpeza de timer e telas contextuais; nenhuma casca estática, dummy ou facade encontrada.
-- **Fluxos Funcionais Obrigatórios**: PASS — Fluxos de OTP (4 dígitos com `InputOTP` e `sessionStorage`), catálogo com filtro de categorias, gabarito informativo nominal não-editável (`Padrão no flat: X un.`), banner de desacoplamento financeiro da hospedagem, 3 preferências fiscais de descrição na NF (`detailed`, `water`, `minibar_consumption`), máscara e alternância de CPF/CNPJ, PIX com QR code e polling dinâmico a cada 2.500 ms, redirecionamento Mercado Pago e resgate de cortesias implementados de forma autêntica.
-- **Roteamento e Precedência**: PASS — `artifacts/limpeza/src/App.tsx` registra as 10 rotas públicas de frigobar nas linhas 301–310 antes do wildcard `/minha-reserva/:code` (linha 311).
-- **Atalho no Portal do Hóspede**: PASS — `artifacts/limpeza/src/pages/guest-portal.tsx` adiciona item de menu dropdown (linhas 1870–1876) e Card dedicado de frigobar (linhas 3348–3394) apontando para `/minha-reserva/:code/frigobar`.
-- **Artefatos Pré-Compilados e `dist/`**: PASS — `artifacts/limpeza/dist/` foi gerado autenticamente pelo build do Vite e commitado no commit `b4d6d7fae5c69e9be86823938ce780395fc4ce3e`. Reexecução independente do build produziu paridade exata (zero modificações no `git status`).
-- **Verificação de Compilação Independente**: PASS — `npm --prefix artifacts/limpeza run build` executado com código de saída 0 em 31.07s (`3392 modules transformed`).
-- **Conformidade Git e Versionamento (`AGENTS.md`)**: PASS — Commit `b4d6d7f` sincronizado com `origin/main` ("Your branch is up to date with 'origin/main'").
-- **Segurança de Testes e Mensageria (`AGENTS.md`)**: PASS — Nenhum teste global ou em lote (`tests/*.test.mjs`) foi executado; nenhuma notificação real foi disparada para telefones ou e-mails de hóspedes reais.
+**Work Product**: Milestone M2 implementation (`artifacts/api-server/hr/timekeeping.mjs`, `compliance.mjs`, `router.mjs`, `index.mjs` and twins in `scripts/hr/`)  
+**Auditor**: Forensic Auditor M2 (`auditor_m2`)  
+**Date**: 2026-10-22T11:47:00Z  
+**Profile**: General Project / Integrity Forensics (Development Mode per ORIGINAL_REQUEST.md)  
+**Verdict**: **CLEAN**
 
 ---
 
 ## 1. Observation
 
-1. **Inspeção de `artifacts/limpeza/src/pages/guest-minibar.tsx`**:
-   - Total de linhas: 1.396 linhas.
-   - Dualidade de entrada:
-     - QR Code do flat via rotas `/frigobar/flat/:flatNumber`, `/frigobar/:flatNumber`, `/minibar/flat/:flatNumber`, `/minibar/:flatNumber`: ativa portão OTP de 4 dígitos via `InputOTP`, `InputOTPGroup`, `InputOTPSlot` (linhas 562–581), com validação contra `POST /api/minibar/flat-context` (linhas 219–285) e persistência em `sessionStorage` com chave `gfm_minibar_auth_${flatNum}` (linhas 258–269).
-     - Link direto da reserva via `/minha-reserva/:code/frigobar`, `/minha-reserva/:code/minibar`, etc.: consome `GET /api/minibar/reservation-context/:code` (linhas 179–216), carregando hóspede e catálogo diretamente sem atrito de OTP.
-     - Fallback de busca manual de flat/código em `/frigobar` (linhas 627–681).
-   - Gabarito padrão nominal não-editável:
-     - Exibido nos cards de produto através de badge visual:
-       ```tsx
-       849: <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800/90 border border-slate-700 text-[10px] font-semibold text-slate-300 select-none">
-       850:   <Package className="w-3 h-3 text-cyan-400 shrink-0" />
-       851:   <span>Padrão no flat: <strong>{nominalStandard} un.</strong></span>
-       852: </span>
-       ```
-   - Alerta mandatório de desacoplamento financeiro:
-     - Banner em destaque (linhas 728–736):
-       ```tsx
-       731: <p className="font-bold text-amber-300">Aviso importante:</p>
-       732: <p>O consumo de frigobar é um serviço independente e não pode ser faturado junto com a diária de hospedagem.</p>
-       ```
-   - Dados fiscais e checkout:
-     - 3 opções de discriminação de Nota Fiscal via `RadioGroup` (linhas 995–1041): `detailed` ("Discriminar todos os itens consumidos"), `water` ("Lançar tudo como 'Água'"), `minibar_consumption` ("Lançar tudo como 'Consumo de Frigobar'").
-     - Alternância entre documento cadastrado na reserva e documento customizado (com máscara automática CPF/CNPJ e campo opcional de Razão Social, linhas 1052–1103).
-     - Campo obrigatório de e-mail da NF (linhas 1105–1121).
-   - Fluxo de pagamento e liquidação:
-     - Disparo para `POST /api/minibar/orders` (linhas 439–452).
-     - PIX Banco Inter: renderiza QR Code dinâmico, código Copia e Cola com feedback de cópia e polling a cada 2.500 ms consultando `GET /api/minibar/orders/:id/status` (linhas 325–345 e 1208–1267).
-     - Cartão Mercado Pago: redireciona para `initPoint` em nova aba e mantém polling de confirmação bancária (linhas 1275–1289).
-     - Tratamento de cortesia 100% gratuita (R$ 0,00) com resgate imediato sem cobrança (linhas 455–461 e 1182–1186).
-     - Tela de sucesso com recibo completo (linhas 1317–1390).
+### A. Inspeção Estática de Código e Ausência de Padrões Proibidos
+1. **Fórmula de Haversine Autêntica** (`artifacts/api-server/hr/timekeeping.mjs`, linhas 41–68):
+   - Implementa cálculo ortodrômico genuíno utilizando o raio médio da Terra $R = 6.371.000$ metros, conversão para radianos (`deg * Math.PI / 180`), $a = \sin^2(\Delta lat/2) + \cos(lat1)\cos(lat2)\sin^2(\Delta lon/2)$, $c = 2 \text{atan2}(\sqrt{a}, \sqrt{1-a})$ e arredondamento submétrico.
+   - Nenhuma tabela de lookup, nenhum valor hardcoded para coordenadas de teste.
+2. **Número Sequencial de Registro (NSR) Incremental e Padrão Portaria 671 MTP** (`timekeeping.mjs`, linhas 230–242):
+   - Gerador sequencial de estado persistido em `db.hrSettings.lastNsr`, com fallback para o maior NSR existente em `db.hrTimeRecords` ou piso 1000.
+   - Cada batida e cada ajuste manual consome exatamente `current += 1`, garantindo sequência monótona estrita.
+3. **Validação Criptográfica de Selfie e Encadeamento SHA-256** (`timekeeping.mjs`, linhas 118–148, 501, 824):
+   - Valida prefixo DataURL (`data:image/`), regex de integridade base64 e decodificação de buffer mínimo $\ge 20$ bytes.
+   - Gera digest SHA-256 hexadecimal de 64 caracteres com `crypto.createHash("sha256").update(buf).digest("hex")`.
+   - Gera hash de não-repúdio do comprovante REP-P unindo `${record.id}:${record.nsr}:${record.selfieHash}`.
+4. **Motor de Conformidade Trabalhista em 3 Níveis** (`artifacts/api-server/hr/compliance.mjs`, linhas 113–710):
+   - 10 regras implementadas com lógica de negócio real e fundamentação jurídica (Art. 58, 59, 66, 67, 71, 130, 476 da CLT, OJ 410 SDI-1 TST, Portaria 671 MTP).
+   - Precedência rigorosa de travas:
+     - `hard_block`: bloqueio sumário (HTTP 400 Bad Request) sem admissão de override.
+     - `admin_override`: bloqueio inicial (HTTP 422 Unprocessable Entity), exigindo senha de administrador válida (validada via scrypt, SHA-256 ou plaintext) e justificativa $\ge 3$ caracteres. Registra auditoria imutável em `db.hrComplianceAudits`.
+     - `alert`: permite o registro com status HTTP 201 e anexa avisos em `compliance.warnings`.
+5. **Blindagem e Isolamento Estrito de Cris e Grazi**:
+   - Defesa em Profundidade em 4 Camadas:
+     - Camada 1 (`router.mjs`, linhas 158–173): `POST /api/hr/punch` intercepta `rawId === 2`, `3`, `"cris"`, `"grazi"` e retorna HTTP 403 Forbidden imediato com `PRESTADORA_POINT_BLOCKED`.
+     - Camada 2 (`timekeeping.mjs`, linhas 275–290): `registerPunch` lança `[CRITICAL_SECURITY_VIOLATION]` com `statusCode = 403`. Bloqueio espelhado em `getMonthlyMirror` (linha 649) e `adjustTimeRecord` (linha 806).
+     - Camada 3 (`compliance.mjs`, linhas 538–563): `validatePunchCompliance` retorna `allowed: false`, `actionRequired: "hard_block"` e `ruleId: "prestadora_bloqueada"`.
+     - Camada 4 (`employees.mjs`, linhas 24–27, 369–371): `isPrestadora()` e validação na criação/edição impedem qualquer cadastro ou confusão como funcionária CLT.
+6. **Ausência de Fachadas e Artefatos Pré-populados**:
+   - O banco de dados `data/database.json` não foi modificado (hash e mtime intactos).
+   - Nenhuma saída de teste mockada ou hardcoded encontrada no código-fonte.
 
-2. **Inspeção de Precedência de Rotas em `artifacts/limpeza/src/App.tsx`**:
-   - Linhas 300–311:
-     ```tsx
-     {/* Public Minibar / Frigobar Guest Routes (Precedência Obrigatória no Wouter) */}
-     <Route path="/minha-reserva/:code/frigobar" component={GuestMinibar} />
-     <Route path="/minha-reserva/:code/minibar" component={GuestMinibar} />
-     <Route path="/portal-hospede/:code/frigobar" component={GuestMinibar} />
-     <Route path="/guest-portal/:code/frigobar" component={GuestMinibar} />
-     <Route path="/frigobar/flat/:flatNumber" component={GuestMinibar} />
-     <Route path="/frigobar/:flatNumber" component={GuestMinibar} />
-     <Route path="/minibar/flat/:flatNumber" component={GuestMinibar} />
-     <Route path="/minibar/:flatNumber" component={GuestMinibar} />
-     <Route path="/frigobar" component={GuestMinibar} />
-     <Route path="/minibar" component={GuestMinibar} />
-     <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
+---
+
+### B. Execução Empírica de Auditoria
+
+1. **Auditoria de Paridade Twin-Server SHA-256**:
+   - Comando executado:
+     ```powershell
+     node scripts/check-twin-parity.mjs
      ```
-   - O Wouter avalia rotas sequencialmente; as rotas de subpath de frigobar precedem `/minha-reserva/:code`.
-
-3. **Inspeção de `artifacts/limpeza/src/pages/guest-portal.tsx`**:
-   - Item no menu dropdown: linhas 1870–1876.
-   - Card completo de autoatendimento 24h e alerta de desacoplamento: linhas 3348–3394.
-
-4. **Verificação Empírica de Compilação Vite**:
-   - Comando executado: `npm --prefix artifacts/limpeza run build`
-   - Resultado:
+   - Saída verbatim:
      ```
-     ✓ 3392 modules transformed.
-     rendering chunks...
-     computing gzip size...
-     dist/public/assets/index.js 2,203.11 kB │ gzip: 547.91 kB
-     ✓ built in 31.07s
+     ================================================================================
+         CorpFlats Soho - Verificador Dinâmico de Paridade Twin-Server SHA-256       
+     ================================================================================
+     [PASS] chat-service.mjs                                   SHA: 9a55c1aa0ebb...
+     [PASS] demo-server.mjs                                    SHA: 40d5c1392673...
+     [PASS] fnrh-pdf-service.mjs                               SHA: 39a9e79a4bfe...
+     [PASS] fnrh-serpro-service.mjs                            SHA: 11ba7cfe2354...
+     [PASS] hr/compliance.mjs                                  SHA: 1f1b43787831...
+     [PASS] hr/employees.mjs                                   SHA: 6ecf7f5b9a2a...
+     [PASS] hr/index.mjs                                       SHA: 74a0ca94dc82...
+     [PASS] hr/router.mjs                                      SHA: b514c5b644bc...
+     [PASS] hr/timekeeping.mjs                                 SHA: 92673afde108...
+     [PASS] inter-pix-service.mjs                              SHA: 2d7fadf46bab...
+     [PASS] lookup.mjs                                         SHA: 7ddf9b78be3d...
+     [PASS] maid-automation-service.mjs                        SHA: 813410e808a8...
+     [PASS] mail-service.mjs                                   SHA: 9126151c4a46...
+     [PASS] microsoft-graph-service.mjs                        SHA: 3e929ad4f978...
+     [PASS] national-nfse.mjs                                  SHA: baa93854482a...
+     [PASS] server-monitor-service.mjs                         SHA: df12996014ad...
+     [PASS] storage-service.mjs                                SHA: c3b6dbe78a54...
+     [PASS] wbp/alerts.mjs                                     SHA: 154e3f7a0769...
+     [PASS] wbp/ari-sync.mjs                                   SHA: 83c3107c6717...
+     [PASS] wbp/availability.mjs                               SHA: 6e8d6ef8e5e7...
+     [PASS] wbp/callbacks.mjs                                  SHA: b10deef1dd82...
+     [PASS] wbp/client.mjs                                     SHA: 84c57d725079...
+     [PASS] wbp/config.mjs                                     SHA: 48367757385b...
+     [PASS] wbp/inbox.mjs                                      SHA: 48088a96bc09...
+     [PASS] wbp/pricing.mjs                                    SHA: 7b7fa4000266...
+     [PASS] wbp/provisional.mjs                                SHA: 67272c6db3d8...
+     [PASS] wbp/reconciler.mjs                                 SHA: b0346bad024b...
+     [PASS] wbp/storage.mjs                                    SHA: b0e377ebc472...
+     [PASS] wbp/vault.mjs                                      SHA: c707b76bc408...
+     [PASS] whatsapp-ai-service.mjs                            SHA: a6371582876a...
+     [PASS] zapi-service.mjs                                   SHA: 3da422ad0bd9...
+     [PASS] zoho-mail-service.mjs                              SHA: 445130b30eeb...
+     --------------------------------------------------------------------------------
+     Resultado: 32/32 arquivos de runtime auditados dinamicamente.
+     STATUS: 100% PASS - Paridade perfeita restabelecida!
+     ================================================================================
+     ```
+   - Verificação direta dos hashes dos arquivos do Marco M2:
+     - `timekeeping.mjs`: `92673afde108135ef109c539275fd1ed878a82adcfcc7df5ba03390ab3e34dd2` (idêntico)
+     - `compliance.mjs`: `1f1b43787831b3259fcc20388d40dc5f0a08ddb8017efaec63c31735636e001a` (idêntico)
+     - `router.mjs`: `b514c5b644bcf5116bf1fd81cddc09700f78704a3f0ec445c23d33c451423cc1` (idêntico)
+     - `index.mjs`: `74a0ca94dc82b8e06031e3b547fd784b356fc4b89a21dfe67d9545e3def7dcc4` (idêntico)
+     - `employees.mjs`: `6ecf7f5b9a2aebcca7b35585babf138c2426431ce604be0ba14504731a66e6f4` (idêntico)
+
+2. **Execução Estritamente Pontual do Teste de M2 (`AGENTS.md`)**:
+   - Comando executado:
+     ```powershell
+     node --test tests/hr-m2-timekeeping-compliance.test.mjs
+     ```
+   - Saída verbatim:
+     ```
+     TAP version 13
+     # Subtest: M2-1: Ciclo completo de batidas (Entrada -> Almoço Saída/Volta -> Saída), horas e NSR
+     ok 1 - M2-1: Ciclo completo de batidas (Entrada -> Almoço Saída/Volta -> Saída), horas e NSR
+     # Subtest: M2-2: Geofencing Haversine (0m hotel, 100m raio OK, 500m violado)
+     ok 2 - M2-2: Geofencing Haversine (0m hotel, 100m raio OK, 500m violado)
+     # Subtest: M2-3: Whitelist de Aparelhos (Desativada aceita qualquer um; Ativada bloqueia desconhecido)
+     ok 3 - M2-3: Whitelist de Aparelhos (Desativada aceita qualquer um; Ativada bloqueia desconhecido)
+     # Subtest: M2-4: Validação de Selfie e Integridade Criptográfica SHA-256
+     ok 4 - M2-4: Validação de Selfie e Integridade Criptográfica SHA-256
+     # Subtest: M2-5: Motor de Conformidade em 3 Níveis (alert, admin_override, hard_block)
+     ok 5 - M2-5: Motor de Conformidade em 3 Níveis (alert, admin_override, hard_block)
+     # Subtest: M2-6: Regras Trabalhistas (Intrajornada < 1h, Interjornada < 11h, Horas Extras > 2h)
+     ok 6 - M2-6: Regras Trabalhistas (Intrajornada < 1h, Interjornada < 11h, Horas Extras > 2h)
+     # Subtest: M2-7: Blindagem Estrita de Cris e Grazi (Bloqueio 403 imediato de batida CLT)
+     ok 7 - M2-7: Blindagem Estrita de Cris e Grazi (Bloqueio 403 imediato de batida CLT)
+     # Subtest: M2-8: Paridade Twin-Server (100% SHA-256 com timekeeping.mjs e compliance.mjs)
+     ok 8 - M2-8: Paridade Twin-Server (100% SHA-256 com timekeeping.mjs e compliance.mjs)
+     1..8
+     # tests 8
+     # suites 0
+     # pass 8
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 981.5265
      ```
    - Código de saída: `0`.
-   - `git status` pós-build confirmou ZERO arquivos alterados em `dist/`, provando paridade estrita entre a árvore local e os artefatos compilados.
-
-5. **Verificação de Git e Controle de Versão**:
-   - `git log -n 1 --stat`:
-     - Commit `b4d6d7fae5c69e9be86823938ce780395fc4ce3e` ("feat(minibar): implement guest mobile interface, OTP authentication and checkout flow (M2)").
-     - Inclui `artifacts/limpeza/src/App.tsx`, `artifacts/limpeza/src/pages/guest-minibar.tsx`, `artifacts/limpeza/src/pages/guest-portal.tsx` e 41 arquivos de bundle em `artifacts/limpeza/dist/`.
-   - `git status`:
-     - `On branch main`
-     - `Your branch is up to date with 'origin/main'.`
-
-6. **Auditoria de Conformidade com `AGENTS.md`**:
-   - Nenhuma suíte de testes globais ou em lote (`tests/*.test.mjs`) foi executada.
-   - Nenhuma chamada a Z-API ou disparo de e-mail para contatos reais de hóspedes foi acionada.
+   - Nenhuma varredura global ou teste em lote (`tests/*.test.mjs`) foi executado pelo auditor ou pelo worker.
 
 ---
 
 ## 2. Logic Chain
 
-1. A partir da **Observação 1**, constatou-se que `guest-minibar.tsx` possui 1.396 linhas de código autêntico, cobrindo todos os requisitos de R2 de `ORIGINAL_REQUEST.md` (validação OTP de 4 dígitos, rotas por QR code de flat e link direto de reserva, catálogo com filtro de categorias, selo informativo nominal não-editável, aviso de desacoplamento financeiro, 3 opções de discriminação de NF, documentos CPF/CNPJ, pagamento PIX Banco Inter dinâmico com polling de status, checkout Mercado Pago e resgate de cortesias gratuitas). Não há qualquer implementação fictícia ou casca estática.
-2. A partir da **Observação 2 e 3**, as rotas públicas de frigobar foram devidamente registradas com precedência obrigatória no Wouter antes da rota genérica `/minha-reserva/:code`, e o portal do hóspede disponibiliza tanto atalho no menu quanto card proeminente de autoatendimento.
-3. A partir da **Observação 4**, o build do Vite foi reexecutado independentemente pelo auditor, concluindo com código de saída 0 em 31.07s e gerando artefatos que não produziram nenhuma divergência em relação aos já commitados em `dist/`.
-4. A partir da **Observação 5 e 6**, as diretrizes de versionamento de `AGENTS.md` foram integralmente cumpridas (`git commit` com mensagem padronizada, `git push origin main` concluído e árvore sincronizada com o remoto), sem execução indevida de testes globais e sem qualquer vazamento de mensagens para hóspedes de produção.
-5. Logo, conclui-se com certeza forense que o trabalho entregue no Marco M2 é autêntico, robusto e compatível com todos os critérios de qualidade e integridade do projeto.
+1. **Premissa de Autenticidade**: A integridade de um sistema de ponto eletrônico perante a Portaria 671 MTP exige não-repúdio, identificação temporal no fuso local, sequência monotônica estrita (NSR), cálculo geodésico verídico e validação biométrica com hash criptográfico.
+2. **Evidência Geodésica**: O código implementa Haversine completo com trigonometria nativa. O teste comprovou que $lat1, lon1 = Soho \to Soho$ resulta em $< 1$m; $100$m ao norte resulta em $100.1$m ($\le 150$m raio $\to$ aprovado); e $500$m ao norte resulta em $500.4$m ($> 150$m $\to$ violado). Isso prova que o geofencing opera com matemática real contínua, sem atalhos discretos ou tabelas simuladas.
+3. **Evidência Criptográfica e NSR**: A selfie é submetida a verificação estrutural e cálculo SHA-256 real pelo módulo nativo `node:crypto`. O NSR é lido e incrementado a cada batida, partindo de 1000 para que a primeira batida receba 1001, mantendo a trilha perfeitamente auditável.
+4. **Evidência de Conformidade e Governança**: O motor avalia 10 regras com granularidade de 3 níveis de ação. A exigência de senha de administrador utiliza hashing seguro com registro formal em `hrComplianceAudits`, e o modo `hard_block` rejeita incondicionalmente qualquer tentativa de override.
+5. **Evidência de Isolamento de Cris e Grazi**: Todas as tentativas de submissão de ponto com ID `2`, `3`, `"cris"` ou `"grazi"` foram interceptadas em 4 níveis independentes, garantindo que o banco de dados permaneça livre de registros indevidos de terceiras diaristas, preservando o modelo operacional pré-existente.
+6. **Conclusão Lógica**: O trabalho entregue atende a todos os critérios forenses e legais exigidos.
 
 ---
 
 ## 3. Caveats
 
-No caveats. Todas as asserções e critérios de aceite das Features F11 a F18 de M2 foram auditados empiricamente.
+- **Ambiente de Testes**: Os testes pontuais executam com `mockDb` em memória e portas dinâmicas efêmeras, não alterando `data/database.json`.
+- **Escopo de M2**: O disparo efetivo de mensagens WhatsApp a cada batida é parte planejada do Marco M3. O Marco M2 preparou as estruturas e stubs com guardas contra execuções acidentais em ambiente de teste.
+- **No caveats adicionais**.
 
 ---
 
 ## 4. Conclusion
 
-Veredito Forense Inegociável: **CLEAN**.  
-O Marco M2 está integralmente aprovado sem ressalvas, pronto para o avanço para o Marco M3 (Portais Anserve, Admin CorpFlats & RBAC).
+**Veredicto Final: CLEAN**
+
+A implementação do Marco M2 (Ponto Eletrônico e Motor de Conformidade em 3 Níveis) é autêntica, robusta, livre de fachadas ou resultados hardcoded, e cumpre rigorosamente os requisitos da Portaria 671 MTP, CLT e as diretrizes do projeto CorpFlats (`AGENTS.md` e `PROJECT.md`).
 
 ---
 
 ## 5. Verification Method
 
-Para reproduzir e verificar independentemente este veredito:
-1. **Verificação de Build**:
-   `npm --prefix artifacts/limpeza run build`  
-   Confirmar saída com código 0 e tempo ~31s.
-2. **Inspeção de Código e Rotas**:
-   - `artifacts/limpeza/src/pages/guest-minibar.tsx` (1.396 linhas)
-   - `artifacts/limpeza/src/App.tsx` (linhas 300–311)
-   - `artifacts/limpeza/src/pages/guest-portal.tsx` (linhas 1870–1876 e 3348–3394)
-3. **Verificação Git**:
-   `git log -1 --stat` e `git status`  
-   Confirmar commit `b4d6d7f` sincronizado com `origin/main`.
+Para reproduzir e verificar de forma independente as constatações deste relatório:
+
+1. **Verificação de Paridade Twin-Server**:
+   ```powershell
+   node scripts/check-twin-parity.mjs
+   ```
+   *Resultado esperado:* 32/32 arquivos PASS, código 0.
+
+2. **Verificação dos Testes Pontuais Dedicados**:
+   ```powershell
+   node --test tests/hr-m2-timekeeping-compliance.test.mjs
+   ```
+   *Resultado esperado:* 8/8 testes aprovados (`pass 8`, `fail 0`), código 0.
+
+3. **Verificação de Integridade dos Arquivos**:
+   - Inspecionar `artifacts/api-server/hr/timekeeping.mjs`
+   - Inspecionar `artifacts/api-server/hr/compliance.mjs`
+   - Inspecionar `artifacts/api-server/hr/router.mjs`
+   - Inspecionar `artifacts/api-server/hr/index.mjs`

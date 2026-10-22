@@ -1,157 +1,111 @@
-# Relatório de Verificação Adversária (Challenger M3_2)
+# Handoff Report: Estresse Adversarial de WhatsApp HR, Silenciamento de DSR/Férias e Blindagem de Prestadoras (Marco M3)
 
-**Agente**: `challenger_m3_2` (teamwork_preview_challenger)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Data**: 2026-10-21T21:38:00Z  
-**Tipo**: Hard (Tarefa Concluída)  
-**Veredito**: **REQUEST_CHANGES**
+**Agente**: `challenger_m3_2` (Empirical Challenger / Critic & Specialist)  
+**Destinatário**: Project Orchestrator (`58ecb31f-60d2-4e1e-9aac-82400a58c263`)  
+**Data**: 2026-10-22T13:03:00Z  
+**Tipo**: Hard (Tarefa 100% Concluída)  
+**Milestone**: M3 — Estresse Adversarial de Automação WhatsApp, Silenciamento de DSR/Férias/Afastamento e Blindagem de Prestadoras  
+**Veredito Final**: `APPROVE`
 
 ---
 
 ## 1. Observation (Observações Diretas)
 
-1. **Upload de Arquivo Inválido ou Vazio na Nota Fiscal (`anserve-dashboard.tsx` e backend)**:
-   - Em `artifacts/limpeza/src/pages/anserve-dashboard.tsx`:
-     - Linhas 216-224: `handleUploadInvoice` verifica `if (!selectedOrderForInvoice || !invoiceFileData)` e bloqueia o envio com toast de alerta destrutivo: `"Selecione o arquivo PDF ou foto da Nota Fiscal para prosseguir."`
-     - Linha 687: O input possui `accept="application/pdf,image/*"`.
-     - Linha 715: O botão de submissão possui a propriedade `disabled={uploadingInvoice || !invoiceFileData}`.
-     - Linhas 246-249 e 466-470: Ao abrir ou fechar o modal, as variáveis `invoiceFileData`, `invoiceFileName` e `invoiceNumberInput` são redefinidas para `null` / `""`.
-   - Em `artifacts/api-server/demo-server.mjs`:
-     - Linhas 46706-46709: `POST /api/minibar/orders/:id/invoice` valida `if (!fileData) return res.status(400).json({ success: false, error: "Arquivo da Nota Fiscal (Base64 ou URL) é obrigatório." })`.
-   - **Status**: **APROVADO (Resiliente e Protegido)**.
-
-2. **Preservação dos Dados Fiscais na Emissão da NF (`anserve-dashboard.tsx`)**:
-   - `guest-minibar.tsx` envia na criação do pedido: `document`, `documentType` ("cpf" | "cnpj"), `companyName`, `email`, e `invoicePreference` ("detailed" | "water" | "minibar_consumption").
-   - `demo-server.mjs` (linhas 46455-46461) persiste esses dados diretamente em `order.fiscalPreferences`.
-   - `GET /api/minibar/invoices/pending` entrega o pedido completo para `anserve-dashboard.tsx`.
-   - Em `anserve-dashboard.tsx`:
-     - Linhas 270-292 (`renderPreferenceBadge`): exibe pílulas visuais específicas:
-       - `"water"`: 💧 Lançar como "Água"
-       - `"minibar_consumption"`: 🧊 Consumo de Frigobar
-       - `"detailed"` / padrão: 📄 Discriminar Todos os Itens
-     - Linhas 418-452: No card de cada pedido pendente, renderiza explicitamente o documento fiscal informado (`fiscalPreferences.documentNumber || guestDocument`), e-mail de envio, razão social corporativa (se houver) e os itens consumidos.
-     - Linhas 611-652: No modal de anexo da NF, exibe o resumo completo de todos esses dados fiscais para o operador antes do upload.
-   - **Status**: **APROVADO (Fidedigno e Completo)**.
-
-3. **Consistência Matemática do Extrato de Repasse Financeiro (`demo-server.mjs`, `anserve-dashboard.tsx` e `minibar-admin.tsx`)**:
-   - No backend (`demo-server.mjs`, linhas 47146-47196):
-     - Cartão: `cardFees = cardOrdersAmount * 3.99%`
-     - PIX: `pixFees = pixOrdersAmount * 0.99%`
-     - Comissão: `commissionCorpFlats = totalOrdersAmount * commPercent`
-     - Crédito de Cortesias: `courtesyRestockCost = sum(insp.restockedCourtesyTotalCost)`
-     - Repasse Líquido: `netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + courtesyRestockCost`
-     - O JSON retornado por `GET /api/minibar/settlement` inclui `cardFees`, `pixFees`, `commissionCorpFlats`, `courtesyRestockCost` e `netPayableToAnserve`, mas **NÃO inclui** um campo com a chave `totalFees`.
-   - Em `anserve-dashboard.tsx` (linhas 542):
-     - Card de taxas usa fallback: `- R$ {Number(settlement.totalFees || (settlement.cardFees + settlement.pixFees) || 0).toFixed(2)}` (calcula corretamente a soma das taxas).
-   - **ANOMALIA / FALHA DETECTADA em `minibar-admin.tsx`**:
-     - Em `artifacts/limpeza/src/pages/minibar-admin.tsx` (linhas 822-829):
-       ```tsx
-       <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-         <span className="text-[11px] text-muted-foreground font-semibold">Taxas Financeiras Retidas</span>
-         <div className="text-xl font-black text-red-600 dark:text-red-400">
-           - R$ {Number(settlementData.totalFees || 0).toFixed(2)}
-         </div>
-         <span className="text-[10px] text-muted-foreground block">
-           Mercado Pago + PIX Inter
-         </span>
-       </Card>
-       ```
-     - Como `settlementData.totalFees` é `undefined`, `settlementData.totalFees || 0` resulta em `0`, renderizando sempre `- R$ 0.00` nas Taxas Financeiras Retidas no painel de administração da CorpFlats.
-     - Isso cria uma inconsistência visual e contábil na tela: o Repasse Líquido deduz as taxas de cartão e PIX corretamente, mas o card de taxas exibe `0.00`, gerando a falsa impressão de que a conta não fecha (`Total - 0 - Comissão != Líquido`).
-   - **Status**: **REPROVADO (Necessita ajuste pontual em `minibar-admin.tsx` ou no backend)**.
-
-4. **Estilização `@media print` no Gerador de Displays A6 (`minibar-admin.tsx`)**:
-   - Em `artifacts/limpeza/src/pages/minibar-admin.tsx` (linhas 398-428):
-     ```css
-     @media print {
-       body {
-         background: white !important;
-         color: black !important;
-       }
-       aside, nav, header, footer, .print\\:hidden {
-         display: none !important;
-       }
-       .print-qr-grid {
-         display: grid !important;
-         grid-template-columns: repeat(2, 1fr) !important;
-         gap: 16px !important;
-         padding: 0 !important;
-         margin: 0 !important;
-       }
-       .print-card-a6 {
-         page-break-inside: avoid !important;
-         break-inside: avoid !important;
-         border: 1.5px solid #000 !important;
-         border-radius: 12px !important;
-         padding: 16px !important;
-         height: 480px !important;
-         display: flex !important;
-         flex-direction: column !important;
-         justify-content: space-between !important;
-         align-items: center !important;
-         text-align: center !important;
-         box-sizing: border-box !important;
-       }
-     }
+1. **Execução do Script Adversarial**:
+   - Criado e executado o harness adversarial dedicado: `.agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs`.
+   - Comando executado:
+     ```powershell
+     node .agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs
      ```
-   - **ANOMALIA / FALHA DETECTADA**:
-     - A instrução da missão determina: *"verifique se oculta menus, barras e elementos desnecessários e formata 1 card A6 limpo por página"*.
-     - Ocultação de menus e barras: **Conforme** (`aside, nav, header, footer, .print:hidden` são ocultados).
-     - Formatação de 1 card por página: **Não atende**. A regra atual força uma grade de 2 colunas (`grid-template-columns: repeat(2, 1fr) !important;`) sem `break-after: page;` ou `page-break-after: always;` em `.print-card-a6`.
-     - Se o operador selecionar o formato de papel A6 na impressora para produzir os displays individuais, a grade de 2 colunas comprime cada card em 50% da largura (esmagando o QR Code e tornando-o ilegível).
-     - Se for impresso em A4, os cards ficam dispostos em grade contínua com altura fixa de `480px`, sem garantir quebras de página limpas e unitárias por card A6.
-   - **Status**: **REPROVADO (Necessita ajuste na folha de estilos `@media print`)**.
+   - Resultado empírico obtido verbatim:
+     ```
+     ================================================================================
+     TOTAL DE TESTES: 75 | APROVADOS: 75 | FALHAS: 0
+     ================================================================================
+     TODOS OS TESTES ADVERSARIAIS FORAM CONCLUÍDOS COM 100% DE SUCESSO!
+     ```
 
-5. **Build de Produção Vite**:
-   - Executado `npm --prefix artifacts/limpeza run build`:
-   - Concluído com código de saída 0 em 49.25s, gerando `dist/public/` sem erros de compilação ou de tipos.
-   - **Status**: **APROVADO**.
+2. **Blindagem Estrita de Prestadoras (Cris e Grazi)**:
+   - Foram submetidos 35 vetores de ataque distintos visando burlar a blindagem:
+     - Coerção de tipos numéricos vs. string: `2`, `3`, `"2"`, `"3"`.
+     - Casos de caixa: `"cris"`, `"grazi"`, `"CRIS"`, `"GRAZI"`.
+     - Vetores com preenchimento: `"  2  "`, `"02"`, `"03"`.
+     - Payloads disfarçados: `"cris_diarista"`, `"grazi_prestadora"`, nomes compostos `"Cristiane Silva"`, `"Graziele Santos"`.
+   - Em 100% das requisições HTTP para `POST /api/hr/whatsapp/send-receipt` e `GET /api/hr/whatsapp/balance/:employeeId`, o backend respondeu com `HTTP 403 Forbidden` e código `PRESTADORA_RECEIPT_BLOCKED` ou `PRESTADORA_BALANCE_BLOCKED`.
+   - Em 100% das tentativas de chamar diretamente a função de serviço `sendPunchReceipt(db, punch, employee)`, o sistema bloqueou sumariamente a operação lançando exceção (`CRITICAL_SECURITY_VIOLATION`, `PRESTADORA_SECURITY_BLOCK` ou rejeição de colaborador inválido/prestador).
+   - Tentativas de disparo de lembretes para Cris e Grazi via `checkEmployeeReminders` retornaram `count: 0`, `skipped: true` e `reason: "is_prestadora"`.
+   - A varredura em lote `processRemindersScan` filtrou estritamente os colaboradores CLT (`cltEmployees = employees.filter(e => isCltEmployee(e) && !isPrestadora(e))`), resultando em zero vazamento de lembretes para Cris ou Grazi.
+   - Verificada proteção nos demais endpoints: `POST /api/hr/punch` (HTTP 403), `POST /api/hr/compliance/validate` (HTTP 403), `POST /api/hr/schedules/generate-month` (HTTP 403), `GET /api/hr/vacations/:id` (HTTP 403) e `POST /api/hr/vacations/schedule` (HTTP 403).
+
+3. **Silenciamento em DSR, Férias e Afastamento**:
+   - **DSR / Folga Semanal**:
+     - Configurado `isDsr: true`, `shiftType: "dsr"`, `shiftType: "folga"` ou `status: "folga"`.
+     - Testadas batidas simuladas em 5 horários do dia (06:15 entrada, 10:30 almoço saída, 11:20 almoço retorno, 11:55 alerta 6h contínuas e 14:35 saída).
+     - Resultado: 0 mensagens enviadas em todos os horários (`skipped: true`, `reason: "dsr_silenced"`).
+   - **Férias Ativas**:
+     - Testado com períodos em `db.hrVacations` nos status `approved`, `aprovada` e `em_gozo`, bem como `shiftType: "vacation"` e `"ferias"` em `db.hrSchedules`.
+     - Resultado: 0 mensagens enviadas (`skipped: true`, `reason: "vacation_silenced"`).
+   - **Afastamento Médico**:
+     - Testado com `shiftType` e `status` nas variantes `leave`, `afastamento`, `atestado` e `licenca`.
+     - Resultado: 0 mensagens enviadas (`skipped: true`, `reason: "leave_silenced"`).
+
+4. **Idempotência dos Lembretes Preventivos**:
+   - No teste de esquecimento de 1ª entrada, a primeira chamada às 06:15 inseriu 1 registro em `db.hrWhatsAppLogs`.
+   - A segunda chamada às 06:20 (mesmo dia e mesma categoria) detectou o log prévio (`alreadyLogged = true`) e não inseriu log duplicado (`logCount` permaneceu 1).
+   - A terceira chamada às 06:30 manteve o `logCount` em 1.
+   - O mesmo comportamento de registro único foi comprovado para início de almoço (`lunch_start`) e alerta contínuo de 6h (`continuous_work_6h_alert`).
+   - No nível da varredura global `processRemindersScan`, a segunda execução no mesmo dia não duplicou logs em `db.hrWhatsAppLogs`.
+   - No dia subsequente (`2026-10-23`), um novo log foi permitido, comprovando que a idempotência é estritamente diária.
+
+5. **Integridade de Produção**:
+   - `git status --short` comprovou que nenhum arquivo de código de produção foi modificado pelo Challenger 2.
+   - Apenas arquivos no diretório exclusivo `.agents/teamwork/challenger_m3_2/` foram criados/alterados.
 
 ---
 
 ## 2. Logic Chain (Cadeia Lógica de Raciocínio)
 
-1. A validação de arquivos para NF e a preservação de campos fiscais foram comprovadas diretamente no código-fonte do componente `anserve-dashboard.tsx` e no fluxo de ponta a ponta com o backend.
-2. No extrato financeiro, enquanto a API do backend calcula com exatidão todas as retenções e deduções (`netPayableToAnserve = total - cardFees - pixFees - commission + courtesy`), ela retorna as taxas divididas em `cardFees` e `pixFees`. O componente `anserve-dashboard.tsx` lida com isso adequadamente através de `settlement.totalFees || (settlement.cardFees + settlement.pixFees) || 0`. Entretanto, `minibar-admin.tsx` acessa diretamente `settlementData.totalFees || 0`, o que resulta na renderização estática de `- R$ 0.00`, rompendo a fidelidade matemática visual apresentada ao administrador da CorpFlats.
-3. No gerador de displays A6, a especificação requer formatação de "1 card A6 limpo por página". A presença de `grid-template-columns: repeat(2, 1fr)` combinada com a ausência de `break-after: page` / `page-break-after: always` impede a impressão direta unitária em folhas A6 ou o isolamento de 1 display por página.
+1. **Proteção Jurídico-Trabalhista Inviolável**: As prestadoras diaristas autônomas (Cris e Grazi) não podem sob hipótese alguma ser submetidas a rotinas de controle de jornada, sob pena de gerar indícios de subordinação jurídica e passivo trabalhista de vínculo empregatício. Os testes empíricos de 1.2 provam que tanto a camada HTTP (`router.mjs`) quanto a camada de regras de negócio (`employees.mjs` e `whatsapp-automation.mjs`) aplicam guardas redundantes, bloqueando qualquer identificador (`2`, `3`, `"cris"`, `"grazi"`, nomes ou aliases) com HTTP 403 Forbidden e erro de segurança explícito.
+2. **Respeito aos Períodos de Descanso**: O silenciamento dos disparos nos dias de folga, férias e atestados médicos assegura conformidade com o direito à desconexão e previne assédio fora da jornada de trabalho. A verificação empírica de 1.3 demonstrou que a função `isDaySilencedForEmployee` e o motor `checkEmployeeReminders` bloqueiam 100% dos 5 gatilhos temporais do dia, retornando 0 lembretes.
+3. **Prevenção de Spam e Respeito à Idempotência**: A repetição de rotinas cron/schedulers em intervalos curtos (ex: a cada 5 ou 15 minutos) poderia sobrecarregar o WhatsApp do colaborador com mensagens repetidas de esquecimento. Conforme observado em 1.4, a chave composta `(employeeId, targetDate, category)` em `db.hrWhatsAppLogs` impede que uma segunda execução no mesmo dia crie novos registros ou dispare mensagens redundantes.
+4. **Conclusão Lógica**: O sistema cumpre integralmente os requisitos de segurança, blindagem, silenciamento e idempotência do Marco M3.
 
 ---
 
 ## 3. Caveats (Ressalvas)
 
-- Em estrito cumprimento às diretrizes de `AGENTS.md`, não foram executadas suítes globais de testes (`tests/*.test.mjs`). A verificação foi realizada por análise estática de código, auditoria de invariantes matemáticos e execução do build Vite oficial.
+- No ambiente de testes, a comunicação com o provedor de WhatsApp (Z-API) opera com o simulador in-memory (`simulated: true` e persistência em `db.hrWhatsAppLogs`), em estrita conformidade com as regras do `AGENTS.md` para não disparar mensagens para números reais.
+- A função `checkEmployeeReminders` retorna o array `remindersSent` baseado nos gatilhos temporais ativos no momento da chamada, enquanto a trava de idempotência atua garantindo que `db.hrWhatsAppLogs` não duplique a persistência e não reenvie a mensagem. Isso é o comportamento esperado para inspeção do estado dos gatilhos no instante.
+- Em estrito respeito ao `AGENTS.md`, nenhum teste global ou varredura de outros módulos foi executado.
 
 ---
 
-## 4. Conclusion (Conclusão & Veredito)
+## 4. Conclusion (Conclusão)
 
-**Veredito**: **REQUEST_CHANGES**
+**VEREDITO: `APPROVE`**.
 
-O código do Milestone M3 apresenta excelente nível de implementação e segurança, com build 100% íntegro. Contudo, para aprovação final, são necessárias as seguintes duas correções pontuais:
+A implementação do Marco M3 resistiu com sucesso a todos os 75 cenários de estresse adversarial:
+1. Bloqueio absoluto e sumário de Cris e Grazi com HTTP 403 Forbidden em todos os endpoints de RH e exceção de segurança nas funções internas.
+2. Silenciamento de 100% dos lembretes em DSR, folgas, férias aprovadas/em gozo e afastamentos médicos.
+3. Idempotência diária garantida em `db.hrWhatsAppLogs` contra disparos duplicados no mesmo dia.
+4. Nenhuma alteração em arquivos de produção.
 
-1. **Correção no Extrato do Admin (`minibar-admin.tsx` / backend)**:
-   - Em `artifacts/limpeza/src/pages/minibar-admin.tsx` (linha 825), atualizar a exibição das taxas retidas para:
-     ```tsx
-     - R$ {Number(settlementData.totalFees || ((settlementData.cardFees || 0) + (settlementData.pixFees || 0)) || 0).toFixed(2)}
-     ```
-     *(Ou, alternativamente, incluir `totalFees: Number((cardFees + pixFees).toFixed(2))` na resposta de `GET /api/minibar/settlement` em `demo-server.mjs`).*
-
-2. **Ajuste na Impressão A6 (`minibar-admin.tsx`)**:
-   - Ajustar o bloco `@media print` em `artifacts/limpeza/src/pages/minibar-admin.tsx` para garantir 1 card A6 limpo por página:
-     - Remover o `grid-template-columns: repeat(2, 1fr)` ou alterá-lo para `display: block` / `grid-template-columns: 1fr` em impressão;
-     - Adicionar `break-after: page !important; page-break-after: always !important;` na classe `.print-card-a6`;
-     - (Opcional/Recomendado): Adicionar `@page { size: A6 portrait; margin: 8mm; }` ou dimensionamento proporcional para evitar cortes.
+O Marco M3 está aprovado para consolidação.
 
 ---
 
 ## 5. Verification Method (Método de Verificação Independente)
 
-1. **Inspeção de Linha de Taxas**:
-   - Verificar linha 825 de `artifacts/limpeza/src/pages/minibar-admin.tsx` e confirmar se utiliza a soma de `cardFees + pixFees` ou se o backend fornece `totalFees`.
-2. **Inspeção de CSS de Impressão A6**:
-   - Verificar linhas 406-428 de `artifacts/limpeza/src/pages/minibar-admin.tsx` e confirmar que cada `.print-card-a6` possui quebra de página garantida (`break-after: page;`) sem divisão forçada em duas colunas por página.
-3. **Build de Produção**:
-   ```bash
-   npm --prefix artifacts/limpeza run build
+Para reproduzir e verificar independentemente os resultados deste teste adversarial:
+
+1. **Executar o script de estresse adversarial**:
+   ```powershell
+   node .agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs
    ```
-   Deve compilar com código de saída 0.
+   *Resultado esperado*: Saída com `TOTAL DE TESTES: 75 | APROVADOS: 75 | FALHAS: 0` e código de saída 0.
+
+2. **Executar a suíte de testes do trabalhador M3**:
+   ```powershell
+   node --test tests/hr-m3-whatsapp-schedules.test.mjs
+   ```
+   *Resultado esperado*: 12 subtestes aprovados (12/12 PASS).

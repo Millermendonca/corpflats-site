@@ -1,55 +1,62 @@
-# BRIEFING — 2026-10-21T21:35:00Z
+# BRIEFING — 2026-10-22T12:59:00Z
 
 ## Mission
-Adversarial challenge and empirical verification of the Restock Interface (anserve-restock.tsx) and edge cases for Milestone M3.
+Estresse adversarial de matemática trabalhista (tolerâncias Art. 58 CLT / Súmula 366 TST, hora ficta noturna / Súmula 60 TST e regras de fracionamento/início de férias Art. 134 CLT) implementados no Marco M3.
 
 ## 🔒 My Identity
-- Archetype: Empirical Challenger
+- Archetype: challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M3
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code (report findings to orchestrator/worker)
-- NUNCA execute testes globais `tests/*.test.mjs` ou varreduras em lote
-- Build de verificação: `npm --prefix artifacts/limpeza run build`
-- Explicit verdict: APPROVE ou REQUEST_CHANGES
+- Review-only — do NOT modify implementation code
+- Run empirical verification tests directly (empirical challenger)
+- Do NOT run global test suites or tests of other modules
+- Output handoff report with explicit verdict: APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:35:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T12:55:00Z
 
 ## Review Scope
-- **Files reviewed**: `artifacts/limpeza/src/pages/anserve-restock.tsx`, `scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`
-- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md` (2026-10-21T18:26:13Z)
-- **Review criteria**:
-  1. Digitação de PIN incorreto no modal (erro amigável sem crash): VERIFICADO
-  2. Tentativa de submeter divergência sem selecionar item faltante (validação/bloqueio): VERIFICADO
-  3. Flats sem nenhuma reserva (livres/vagos): exibição clara sem crash: VERIFICADO
-  4. Resiliência na captura de fotos da câmera (fallback de input de arquivo): VERIFICADO
-  5. Limpeza de filtros de busca e ordenação por prioridade de checkout: VERIFICADO
-  6. Vite build compliance: SUCESSO (código 0, 41.98s)
+- **Files to review**:
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\hr\schedules.mjs`
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\hr\router.mjs`
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\tests\hr-m3-whatsapp-schedules.test.mjs`
+  - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md`
+- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md`
+- **Review criteria**: Tolerância Art. 58 CLT e Súmula 366 TST, Hora Noturna Ficta e Prorrogação Súmula 60 TST, Validações de Férias CLT Art. 134 e Alerta de Dobra.
+
+## Key Decisions Made
+- Criado script de estresse adversarial `.agents/teamwork/challenger_m3_1/stress_schedules_math.mjs`.
+- Confirmado empírico: Tolerâncias do Art. 58 CLT e Súmula 366 TST (limiares 4m, 5m, 6m e somas 10m e 11m) funcionam perfeitamente.
+- Confirmado empírico: Férias CLT (regras de 14 dias, 5 dias, sexta/sábado pré-DSR e alerta de dobra) funcionam.
+- DESCOBERTA CRÍTICA: `calculateNightShiftAndExtension` em `schedules.mjs` assume que qualquer turno começa às 22h, atribuindo indevidamente 420 min noturnos + 120 min de prorrogação a um turno puramente diurno (08:00 às 17:00)!
+- DESCOBERTA ADICIONAL: `validateVacationSchedule` não valida feriados oficiais na proibição de 2 dias antecedentes (Art. 134 §3º CLT).
+- Veredicto final: REQUEST_CHANGES.
+
+## Artifact Index
+- `DISPATCH.md` — Registro do dispatch
+- `BRIEFING.md` — Memória persistente
+- `progress.md` — Batimento cardíaco / rastreamento de progresso
+- `stress_schedules_math.mjs` — Script de estresse adversarial executado
+- `handoff.md` — Relatório formal com veredicto REQUEST_CHANGES
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: PIN inválido no modal pode causar crash de estado ou loop de autenticação -> FALSO. Tratado com mensagem de erro amigável, teclas LIMPAR e Backspace operacionais.
-  - H2: Submissão de divergência com 0 itens faltantes pode disparar cobrança fantasma ou acionar IA Sofia indevidamente -> FALSO. Bloqueado com validação e toast destrutivo imediato no frontend e verificado no backend.
-  - H3: Flats sem reserva (status="livre", currentReservation=null) podem causar TypeError ao acessar propriedades -> FALSO. Protegido com optional chaining, fallbacks seguros e badge "Livre / Vago".
-  - H4: Falha de câmera em navegadores mobile/desktop impede registro -> FALSO. Uso de capture="environment" com fallback nativo de file picker e Base64.
-  - H5: Filtros presos ou busca sem correspondência quebram a interface -> FALSO. Empty-state gracioso e filtros reativos restauráveis.
-- **Vulnerabilities found**: Nenhuma vulnerabilidade bloqueante detectada.
-- **Untested angles**: Testes E2E com dispositivo físico real com câmera em produção (coberto por simulador e compilação estrita).
+  - H1: Limiares do Art. 58 CLT e Súmula 366 TST desconsideram <=5min/10min e computam integralmente se extrapolados (CONFIRMADO, PASS).
+  - H2: Horário noturno 22h-05h gera 8h fictas e 22h-07h aplica prorrogação Súmula 60 TST (CONFIRMADO, PASS).
+  - H3: Turno diurno (08h-17h) deve gerar 0h noturnas (FALHOU, VULNERABILIDADE CRÍTICA).
+  - H4: Turno misto (18h-23h) deve computar apenas a fatia 22h-23h (FALHOU, VULNERABILIDADE).
+  - H5: Regras de fracionamento de férias e início pré-DSR (CONFIRMADO, PASS).
+  - H6: Proibição de início de férias 2 dias antes de feriados oficiais (FALHOU, VULNERABILIDADE).
+- **Vulnerabilities found**:
+  - V1: `calculateNightShiftAndExtension` atribui 420 min de adicional noturno e 120 min de prorrogação a qualquer turno diurno.
+  - V2: `validateVacationSchedule` omite feriados na regra dos 2 dias antecedentes do Art. 134 §3º da CLT.
+- **Untested angles**: Folha de pagamento (M4) e contratos (M4).
 
 ## Loaded Skills
 - None
-
-## Key Decisions Made
-- Emitir veredito explícito: APPROVE.
-
-## Artifact Index
-- `DISPATCH.md` — Inbound instructions from orchestrator
-- `BRIEFING.md` — Situational awareness
-- `progress.md` — Liveness & task execution log
-- `handoff.md` — Final adversarial assessment

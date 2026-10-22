@@ -1,30 +1,21 @@
-## 2026-10-21T19:19:35Z
-Você é o subagente auditor_m1 (teamwork_preview_auditor).
+## 2026-10-22T10:37:09Z
+Você é o Forensic Auditor (auditor_m1) para o Marco M1.
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
-
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
-5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md
-
-Missão do Auditor M1 (Auditoria Forense de Integridade):
-Realizar verificação estrita de integridade do código implementado no Marco M1:
-1. Verifique se há CHEATING, FACADES ou DUMMY IMPLEMENTATIONS:
-   - Os endpoints em `artifacts/api-server/demo-server.mjs` executam lógica genuína ou há hardcodes de respostas de teste?
-   - As coleções `db.minibarProducts`, `db.minibarOrders`, `db.minibarInspections`, etc. são realmente persistidas e consultadas ou apenas mockadas no teste?
-   - Os fluxos de PIX, Cartão, Z-API WhatsApp e Zoho SMTP integram-se aos helpers reais do sistema?
-2. Verifique a paridade estrita SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-3. Verifique se foram respeitadas as diretrizes do `AGENTS.md`:
-   - NENHUM teste global em lote foi executado.
-   - Nenhuma notificação real foi disparada para telefones reais de hóspedes.
-4. Conclua com veredito BINÁRIO inegociável: CLEAN ou INTEGRITY VIOLATION.
-
-Escreva seu relatório forense em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+SUA MISSÃO DE AUDITORIA FORENSE DE INTEGRIDADE:
+1. Verificar integridade e autenticidade da implementação do Marco M1:
+   - Checar se não existem dados hardcoded em respostas de testes.
+   - Verificar se `artifacts/api-server/hr/employees.mjs`, `router.mjs` e `demo-server.mjs` possuem lógica de negócio real e persistência genuína.
+   - Auditar a paridade SHA-256 byte a byte entre `artifacts/api-server/` e `scripts/`.
+   - Auditar o isolamento de Cris e Grazi: verificar se as prestadoras estão preservadas em `database.json`, se `sanitizeMaidUsers` protege `contractType = "prestador"`, e se nenhuma rotina de CLT as inclui.
+   - Verificar que nenhum teste global foi executado indevidamente.
+2. Emitir veredicto binário inegociável: `CLEAN` ou `INTEGRITY VIOLATION` (com evidências forenses completas).
+3. Escrever seu relatório em `handoff.md` e enviar mensagem ao orquestrador.

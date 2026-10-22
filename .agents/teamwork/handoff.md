@@ -1,108 +1,83 @@
-# Sentinel Final Handoff Report
+# Sentinel Interim Handoff Report — Gestão de Funcionários CLT
 
-**Mission**: Reorganização da interface administrativa (backend) do Guest-Flow-Manager (CorpFlats), implementando menu lateral esquerdo retrátil (auto-hide flutuante ao tirar o mouse) para visualização do calendário em tela inteira, nova hierarquia de categorias recolhíveis com busca rápida, separação de perfis `dev` (acesso total + ferramentas técnicas) e `admin` (gestão hoteleira completa sem configurações técnicas de desenvolvimento), página dedicada de gestão de equipe e remoção completa do manual técnico WBP.
-
-**Recipient**: Parent Agent (`c918ec21-d268-4082-bdd6-d0c3dc1d3481`) / Human Operator  
-**Sentinel Conversation ID**: `0f672136-dbea-49ec-9239-b3653a86d047`  
-**Date**: 2026-10-19T05:28:00Z  
-**Verdict**: **VICTORY CONFIRMED**
+**Mission**: Construir um Sistema Completo de Gestão de Funcionários CLT (RH, Ponto Eletrônico com Selfie/GPS e Whitelist de Aparelho, Automação WhatsApp, Escalas 6x1, Motor de Conformidade CLT/Sindicato com Travas em 3 Níveis, Folha de Pagamento, Contratos e Controle de ASO) integrado ao Guest-Flow-Manager (CorpFlats Soho Residence).
+**Recipient**: Parent Agent (`2b0428a9-8d7c-4d9d-bc04-5306661d369e`) / Human Operator  
+**Sentinel Conversation ID**: `44c9d5d3-ce43-4735-9676-136dc0811c34`  
+**Active Orchestrator ID**: `58ecb31f-60d2-4e1e-9aac-82400a58c263` (`orchestrator_17`)  
+**Status**: **IN PROGRESS** (Marcos M1, M2 e M3 100% Concluídos com Gate 2 PASS; Marco M4 com Laudos Unânimes de Aprovação no Gate 2)
 
 ---
 
 ## 1. Observation
 
-1. **R1 — Coluna Lateral Esquerda Auto-Hide (Tela Inteira para o Calendário PMS)**:
-   - `artifacts/limpeza/src/components/layout.tsx` foi reformulado no desktop (`>= 768px`). A barra lateral ocupa `0px` de largura no fluxo normal do layout (`w-0`), permitindo que a visualização do Mapa de Reservas (`/reservas`) e calendário ocupe 100% da viewport.
-   - Implementada borda esquerda sensível (`hover edge trigger`) e botão de menu flutuante no topo esquerdo. Ao aproximar o mouse ou acionar o botão, a coluna expande como camada flutuante (`overlay z-40`). Ao retirar o mouse, a coluna recolhe suavemente (com debounce de 280ms).
-   - Botão de fixar/desafixar (Pin/Unpin) com persistência de preferência em `localStorage` (`gfm_sidebar_pinned`).
+1. **Marco M1 (Backend Core & Isolamento de Prestadoras) — CONCLUÍDO (Gate 2 PASS)**:
+   - Módulos `employees.mjs`, `router.mjs`, `index.mjs` (espelhados em `scripts/hr/`).
+   - Seed de funcionários CLT (`emp_cozinha_01` e `emp_camareira_01`).
+   - Isolamento em 4 camadas de Cris (`id: 2`) e Grazi (`id: 3`) garantindo regime autônomo.
+   - Proteção de poda de 5 anos em `pruneDatabase()` (Portaria 671 MTP / Art. 11 CLT).
+   - Testes: 7/7 unit tests e 10/10 challenger tests; 30/30 paridade twin-server.
 
-2. **R2 — Novo Perfil `dev` vs `admin` & Reestruturação de Permissões**:
-   - Backend (`artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`):
-     - Executada a rotina `ensureSystemUsers(db)` que migra atomicamente o usuário `"admin"` existente para `role: "dev"` (preservando o hash de senha) e provisiona o novo usuário gestor hoteleiro `"gestor"` (`name: "Administração CorpFlats"`, `role: "admin"`, senha inicial `"admin123"`).
-     - O perfil `dev` possui acesso total irrestrito a todas as rotas e funcionalidades do sistema.
-     - Todas as checagens operacionais de permissão aceitam `role === "admin" || role === "dev"`.
-     - O perfil `admin` possui acesso total aos módulos operacionais, reservas, governança, financeiro e equipe, mas é rigorosamente barrado em rotas técnicas de desenvolvimento via `requireDevAuth` no backend (HTTP 403) e `DevRoute` / `DevGuard` no frontend (`<AccessDenied />`):
-       - `/monitor-servidor`, `/ia-status`, `/logs`, `/configuracoes`, `/zapi-conexao`, `/jornada-reservas`.
-   - Frontend: Mais de 18 páginas com guards internos atualizadas para admitir `dev`.
+2. **Marco M2 (Ponto Eletrônico & Motor de Conformidade em 3 Níveis) — CONCLUÍDO (Gate 2 PASS)**:
+   - Módulos `timekeeping.mjs` e `compliance.mjs` (espelhados em `scripts/hr/`).
+   - Cerca virtual Haversine nos limiares 149.9m vs 150.1m Soho com clamp numérico contra NaN em antípodas geográficas.
+   - Selfie com hash SHA-256 e NSR monótono sequencial (Portaria 671 MTP); Whitelist de Aparelhos.
+   - 10 regras trabalhistas nos 3 níveis (`alert`, `admin_override` com senha/trilha, `hard_block`).
+   - Testes: 10/10 testes pontuais, 33/33 geofence stress, 46/46 compliance stress, auditoria forense CLEAN.
 
-3. **R3 — Página Dedicada de Equipe (`/equipe`) e Exclusão Total do Manual WBP**:
-   - Criada a página `artifacts/limpeza/src/pages/equipe.tsx` (e `team.tsx`), acessível em `/equipe`, `/usuarios` e `/team` como `AdminRoute` para `admin` e `dev`.
-   - Permite listar colaboradores, filtrar por perfil/status, buscar, criar novo usuário, editar (nome, WhatsApp, PIX, perfil) e resetar senha, com botões para link direto do WhatsApp e copiar PIX com toast, sem expor chaves de API, certificados ou credenciais de nuvem.
-   - Exclusão física completa dos arquivos do Manual Técnico WBP (`artifacts/limpeza/src/pages/wbp-manual.tsx` e `artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx`).
-   - Remoção de todos os exports em `components/wbp/index.ts`, rotas em `App.tsx` e links em `layout.tsx`.
+3. **Marco M3 (Automação WhatsApp & Escalas 6x1, Horas Extras, Férias) — CONCLUÍDO (Gate 2 PASS)**:
+   - Módulos `schedules.mjs` e `whatsapp-automation.mjs` (espelhados em `scripts/hr/`).
+   - Interseção noturna minuto a minuto na janela 22:00–05:00 com hora ficta reduzida (52m30s), prorrogação pós-05h apenas com jornada noturna integral (Súmula 60 TST) e 0 horas noturnas em turnos diurnos.
+   - Tolerâncias legais Art. 58 CLT (5 min/10 min diários) tratadas simetricamente para atrasos e horas extras.
+   - Bloqueio estrito de férias nos 2 dias que antecedem feriados oficiais municipais e federais (Art. 134 §3º CLT).
+   - Testes: 16/16 testes em `tests/hr-m3-whatsapp-schedules.test.mjs`, 16/16 stress math, 75/75 stress security, 26/26 stress vacations, 34/34 paridade twin-server, auditoria CLEAN.
 
-4. **R4 — Reorganização da Navegação Lateral em 6 Categorias por Prioridade**:
-   - Menus reorganizados com campo de busca rápida no topo (desktop e mobile) com auto-expansão de acordeões ao digitar.
-   - 6 categorias ordenadas por prioridade operacional:
-     1. 📅 Reservas & Hospedagem (aberta por padrão)
-     2. 💬 Comunicação & Atendimento
-     3. 🧹 Governança & Manutenção
-     4. 💰 Financeiro, Tarifas & Fiscal
-     5. 🏨 Propriedade & Equipe
-     6. 🛠️ Engenharia & Dev (visível exclusivamente para `user?.role === "dev"`).
-
-5. **R5 — Integridade, Paridade Twin-Server, Build e Git**:
-   - Paridade 100% SHA-256 byte a byte restabelecida entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` (`33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`).
-   - Suíte de teste pontual `tests/auth-roles-permissions.test.mjs` executada e 100% aprovada (6/6 testes).
-   - Compilação `npm --prefix artifacts/limpeza run build` concluída com sucesso (código de saída 0).
-   - Commits enviados para o repositório remoto via `git push origin main`.
-   - Auditoria independente pós-vitória (`victory_auditor_11`) emitiu formalmente `VERDICT: VICTORY CONFIRMED`.
+4. **Marco M4 (Folha de Pagamento, Contratos e ASO) — APROVAÇÃO UNÂNIME NO GATE 2**:
+   - Módulos `payroll.mjs` (770 linhas) e `contracts-aso.mjs` (484 linhas) espelhados em `scripts/hr/`.
+   - Fórmulas CLT implementadas: folha 220h, tabela progressiva INSS 2026 com parcelas a deduzir (teto R$ 951,64), reflexos DSR sobre horas extras (Súmula 172 TST) e adicional noturno (Súmula 60 TST), Vale-Transporte (6%), holerite estruturado e quitação PIX.
+   - Contratos digitais com assinatura eletrônica canvas em Base64, metadados probatórios (IP, timestamp, User-Agent) e selo digital SHA-256 (Lei 14.063/2020); gestão de 5 exames ASO per NR-7 com alertas em 3 horizontes (`expired`, `<=30d`, `<=60d`) e trava trabalhista `aso_vencido`.
+   - Remediação de segurança na Iteração 2: blindagem em 2 camadas (Router + Service) em `POST /payroll/close-month` e `POST /contracts/:id/sign` com retorno `HTTP 403 Forbidden` (`PRESTADORA_PAYROLL_BLOCKED` e `PRESTADORA_CONTRACT_BLOCKED`) para Cris e Grazi.
+   - Paridade Twin-Server expandida para **36/36 arquivos com 100% SHA-256 match**.
+   - Suíte pontual dedicada `tests/hr-m4-payroll-contracts.test.mjs`: **16/16 PASS (100%)**.
+   - Comitê Pericial do Gate 2:
+     - `reviewer_m4_it2_1`: **APPROVE** (código, rotas e paridade 36/36 validadas)
+     - `reviewer_m4_it2_2`: **APPROVE** (assinatura canvas, metadados e ASO validados)
+     - `challenger_m4_it2_1`: **APPROVE** (848/848 testes adversariais matemáticos PASS)
+     - `challenger_m4_it2_2`: **APPROVE** (41/41 testes adversariais de segurança e blindagem PASS)
+     - `auditor_m4_it2`: **CLEAN** (auditoria forense com 100% de integridade e não-regressão)
 
 ---
 
 ## 2. Logic Chain
 
-1. A demanda foi registrada verbatim sob timestamp no `ORIGINAL_REQUEST.md`.
-2. O Sentinel avaliou a demanda, selecionou a rota General e despachou o `teamwork_preview_orchestrator` (`orchestrator_13`), ativando crons de progresso (`*/8 * * * *`) e liveness (`*/10 * * * *`).
-3. O orquestrador conduziu uma fase preliminar de Survey com 3 Explorers, sintetizou o plano em `PROJECT.md` e dividiu em 3 marcos operacionais:
-   - M1: Backend Auth, Roles & Dev Endpoints
-   - M2: Frontend Route Guards, Team Page & WBP Purge
-   - M3: Layout Auto-Hide Sidebar, 6 Categories, Search & Build
-4. O portão de qualidade pericial identificou e remediou um descompasso de paridade decorrente de commit concorrente de pagamentos, restabelecendo a equivalência binária SHA-256.
-5. Ao término de todos os marcos e aprovação no build de produção, o orquestrador submeteu declaração de vitória.
-6. Em conformidade estrita com o protocolo do Sentinel, a alegação foi bloqueada até a conclusão da auditoria independente pelo `victory_auditor_11`.
-7. O auditor independente concluiu as 3 fases com resultado limpo e emitiu o veredito `VICTORY CONFIRMED`.
-8. Os crons e todos os subagentes foram devidamente cancelados e encerrados.
+1. A demanda autoritativa do usuário está preservada verbatim em `ORIGINAL_REQUEST.md`.
+2. O Sentinel mantém governança ativa via Crons de Reporting (`task-784`) e Liveness Check (`task-786`).
+3. O orquestrador (`orchestrator_17`, Geração 4) conduziu a remediação da Iteração 2 do Marco M4 com especialistas dedicados e submeteu ao comitê pericial independente de 5 agentes.
+4. Com vereditos unânimes de APPROVE e CLEAN, o Marco M4 atinge conformidade plena, abrindo caminho para a sucessão para Geração 5 (se atingido limite de 16 spawns) e início do Marco M5 (Frontend React, Build e Teste Pontual Final).
 
 ---
 
-## 3. Caveats
+## 3. Caveats & Restrições
 
-- **Diretriz AGENTS.md Estritamente Respeitada**: Nenhum teste global em lote (`tests/*.test.mjs`) foi disparado; executou-se unicamente a suíte pontual dedicada `tests/auth-roles-permissions.test.mjs`.
-- **Persistência de Usuários**: A migração de runtime executa síncronamente na inicialização do servidor, garantindo que mesmo se o banco estiver hidratado em disco ou nuvem, o usuário `"admin"` assumirá `role: "dev"` e o usuário `"gestor"` existirá com `role: "admin"`.
+- **Proibição Estrita de Testes Globais (AGENTS.md)**: NUNCA rodar `tests/*.test.mjs` ou varreduras em lote para prevenir disparos externos ou poluição de estado.
+- **Isolamento de Prestadoras**: Cris e Grazi permanecem 100% autônomas no extrato de governança, blindadas contra qualquer rotina CLT.
+- **Paridade Twin-Server SHA-256**: Todos os 36 arquivos de runtime sincronizados entre `artifacts/api-server/` e `scripts/`.
+- **Git Push Obrigatório**: Sempre fazer `git push` após cada `git commit`.
+- **Build Frontend**: `npm --prefix artifacts/limpeza run build` com saída 0 e inclusão de `dist/` no commit.
+- **Victory Audit Mandatória**: Nenhuma conclusão de projeto será reportada sem auditoria independente em 3 fases (`teamwork_preview_victory_auditor`).
 
 ---
 
 ## 4. Conclusion
 
-A reorganização da interface administrativa, segregação de perfis de acesso, criação da tela de equipe, auto-hide da barra lateral e expurgo do manual WBP foram integralmente concluídos com 100% de conformidade aos critérios de aceitação e aprovação independente.
+Os Marcos M1, M2, M3 e M4 do módulo de Recursos Humanos CLT estão integralmente concluídos e aprovados com auditorias adversariais e forenses impecáveis. O projeto avança para a fase final: Marco M5 (Frontend React, Telas `/rh` e `/ponto`, Build do Frontend e Teste Pontual Final `tests/hr-employee-management.test.mjs`).
 
 ---
 
 ## 5. Verification Method
 
-Para replicação e validação por operadores humanos:
-
-1. **Paridade SHA-256 dos Servidores Twin**:
-   ```powershell
-   Get-FileHash -Algorithm SHA256 "artifacts/api-server/demo-server.mjs", "scripts/demo-server.mjs"
-   ```
-   Ambos os arquivos devem retornar o hash `33C17537913A1F3B5509489C387106B8A0FFDBB959FDDD3A9B0DF578E310D9DA`.
-
-2. **Teste Pontual do Backend**:
-   ```bash
-   node --test tests/auth-roles-permissions.test.mjs
-   ```
-   Deve retornar 6/6 testes aprovados com código de saída 0.
-
-3. **Compilação do Frontend**:
-   ```bash
-   npm --prefix artifacts/limpeza run build
-   ```
-   Deve retornar código de saída 0 sem erros.
-
-4. **Verificação de Ausência dos Arquivos WBP**:
-   ```powershell
-   Test-Path "artifacts/limpeza/src/pages/wbp-manual.tsx", "artifacts/limpeza/src/components/wbp/WbpHelpManualPage.tsx"
-   ```
-   Deve retornar `False` para ambos.
+- Paridade twin-server: `node scripts/check-twin-parity.mjs` (36/36 PASS).
+- Testes pontuais M1: `node --test tests/hr-m1-backend-core.test.mjs` (7/7 PASS).
+- Testes pontuais M2: `node --test tests/hr-m2-timekeeping-compliance.test.mjs` (10/10 PASS).
+- Testes pontuais M3: `node --test tests/hr-m3-whatsapp-schedules.test.mjs` (16/16 PASS).
+- Testes pontuais M4: `node --test tests/hr-m4-payroll-contracts.test.mjs` (16/16 PASS).
+- Estresse adversarial M4: `node .agents/teamwork/challenger_m4_1/stress_payroll_math.mjs` (848/848 PASS) e `node .agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs` (41/41 PASS).

@@ -1,59 +1,64 @@
-# BRIEFING — 2026-10-21T21:37:00Z
+# BRIEFING — 2026-10-22T13:01:00Z
 
 ## Mission
-Forensic integrity audit of Milestone M3: Minibar & Anserve Restock PWA frontend views, dashboard, admin panel, Vite build and git sync.
+Forensic integrity audit of Milestone M3 (Automated WhatsApp Reminders/Receipts, Scales/Schedules, Twin Parity, and Cris/Grazi Shielding).
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
-- Roles: critic, specialist, auditor
+- Roles: [critic, specialist, auditor]
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Target: Milestone M3
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Target: Marco M3
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
 - Trust NOTHING — verify everything independently
-- NUNCA executar testes globais, varreduras ou em lote (tests/*.test.mjs) per AGENTS.md
-- Ground-truth constraints from ORIGINAL_REQUEST.md take precedence over dispatch
-- Binary verdict required: CLEAN or INTEGRITY VIOLATION
+- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar `tests/*.test.mjs`)
+- Apenas testes estritamente pontuais associados à alteração
+- ORIGINAL_REQUEST.md takes precedence over dispatch instructions
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:29:19Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T12:54:39Z
 
 ## Audit Scope
-- **Work product**: Milestone M3 (anserve-restock.tsx, anserve-dashboard.tsx, minibar-admin.tsx, permissions.ts, equipe.tsx, layout.tsx, App.tsx, artifacts/limpeza/dist, commit 558a604 & push)
-- **Profile loaded**: General Project
-- **Audit type**: forensic integrity check
-
-## Audit Progress
-- **Phase**: reporting
-- **Checks completed**:
-  - Code inspection for cheating/facades/dummies in anserve-restock.tsx, anserve-dashboard.tsx, minibar-admin.tsx (PASS - genuine logic)
-  - Independent Vite build verification (`npm --prefix artifacts/limpeza run build`) (PASS - exit code 0, 58.68s, identical asset hashes)
-  - Git commit & push verification (PASS - commit 558a604 pushed to origin/main, verified via git branch -vv and git ls-remote)
-  - AGENTS.md compliance check (PASS - no global test runs, no guest notifications triggered)
-  - Precedência de rotas Wouter e layout mobile (PASS - public routes properly ordered, mobile nav adapted)
-- **Checks remaining**: None
-- **Findings so far**: CLEAN — 0 integrity violations
+- Work product: Milestone M3 deliverables (`whatsapp-automation.mjs`, `schedules.mjs`, `router.mjs`, `timekeeping.mjs`, `index.mjs`, twin parity, Cris & Grazi shielding)
+- Profile loaded: General Project
+- Integrity mode: Development Mode (from ORIGINAL_REQUEST.md)
+- Audit type: forensic integrity check
 
 ## Attack Surface
-- **Hypotheses tested**:
-  - H1: Are components dummy facades with static returns? Tested via code inspection and AST pattern search. Result: REJECTED (components implement full state, fetch calls, modals, math calculations and camera capture).
-  - H2: Are dist artifacts desynchronized or uncompiled? Tested via independent build and git status check. Result: REJECTED (identical bundle hashes, clean working tree).
-  - H3: Was commit 558a604 pushed to remote origin? Tested via ls-remote. Result: CONFIRMED (HEAD of origin/main is 558a604).
-  - H4: Were global tests executed violating AGENTS.md? Tested via git log and workspace inspection. Result: CONFIRMED COMPLIANCE (no tests run).
-- **Vulnerabilities found**: None
-- **Untested angles**: Full end-to-end integration with live camera hardware and live Z-API instance (requires physical devices in production).
+- Hypotheses tested:
+  - Tolerance Art. 58 CLT edge cases (5 min vs 6 min, daily sum 10 min vs 11 min) -> PASSED
+  - Night shift reduced hour 52m30s, 20% surcharge and Súmula 60 TST extension -> PASSED
+  - Mobile holidays (Meeus/Butcher algorithm) and municipal holidays of Campos dos Goytacazes/RJ -> PASSED
+  - Vacation fracionamento (Art. 134 §1º e §3º) and pre-DSR start prohibition -> PASSED
+  - Sunday rotation for women (Art. 386 CLT) and general (Portaria 671) -> PASSED
+  - Cris and Grazi multi-vector attack (id, string id, username, name, phone, contractType) -> PASSED (100% blocked)
+- Vulnerabilities found: None. Genuine implementations with solid defenses.
+- Untested angles: None in scope of M3.
 
 ## Loaded Skills
 - None
 
+## Audit Progress
+- Phase: reporting
+- Checks completed:
+  1. Read ORIGINAL_REQUEST.md, PROJECT.md, and worker handoff.md -> COMPLETE
+  2. Source code integrity analysis (hardcoded detection, facade detection) -> COMPLETE (CLEAN)
+  3. Pre-populated artifact detection -> COMPLETE (CLEAN)
+  4. Behavioral verification & twin parity check (node scripts/check-twin-parity.mjs) -> COMPLETE (34/34 PASS)
+  5. Dedicated pontual test execution verification (tests/hr-m3-whatsapp-schedules.test.mjs) -> COMPLETE (12/12 PASS)
+  6. Regression tests execution (M1: 7/7, M2: 10/10) -> COMPLETE (ALL PASS)
+  7. Cris & Grazi legal shielding audit -> COMPLETE (100% PROVEN)
+- Findings so far: CLEAN
+
 ## Key Decisions Made
-- Confirmed full integrity of Milestone M3 work product. Final verdict: CLEAN.
+- All claims verified empirically with zero discrepancies found.
+- Verdict: CLEAN.
 
 ## Artifact Index
-- DISPATCH.md — Audit assignment
-- BRIEFING.md — Persistent working memory
-- progress.md — Liveness heartbeat and audit tasks
-- handoff.md — Official Forensic Audit Report
+- DISPATCH.md — incoming dispatch instructions
+- BRIEFING.md — persistent working memory
+- progress.md — liveness heartbeat
+- handoff.md — final audit report

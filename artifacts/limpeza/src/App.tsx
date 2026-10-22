@@ -101,6 +101,8 @@ const FlatXrayHub = lazyWithRetry(() => import('@/pages/flat-xray-hub'));
 const AnserveRestock = lazyWithRetry(() => import('@/pages/anserve-restock'));
 const AnserveDashboard = lazyWithRetry(() => import('@/pages/anserve-dashboard'));
 const MinibarAdmin = lazyWithRetry(() => import('@/pages/minibar-admin'));
+const HrDashboard = lazyWithRetry(() => import('@/pages/hr-dashboard'));
+const PontoMobile = lazyWithRetry(() => import('@/pages/ponto-mobile'));
 
 
 const queryClient = new QueryClient({
@@ -363,6 +365,13 @@ function Router() {
         <Route path="/servico/:token" component={ServiceWorkerPortal} />
         <Route path="/service/:token" component={ServiceWorkerPortal} />
 
+        {/* Terminal Mobile de Registro de Ponto CLT (Selfie, GPS & Whitelist) */}
+        <Route path="/ponto" component={PontoMobile} />
+        <Route path="/bater-ponto" component={PontoMobile} />
+        <Route path="/terminal-ponto" component={PontoMobile} />
+        <Route path="/ponto-mobile" component={PontoMobile} />
+        <Route path="/registro-ponto" component={PontoMobile} />
+
         {/* Live Operations & AI (Admin Only) */}
         <AdminRoute path="/painel-aovivo" component={LiveOperationsPanel} moduleName="o Painel Operacional Ao Vivo" />
         <AdminRoute path="/live-ops" component={LiveOperationsPanel} moduleName="o Painel Operacional Ao Vivo" />
@@ -399,6 +408,13 @@ function Router() {
         <AdminRoute path="/equipe" component={EquipePage} moduleName="a Gestão de Equipe & Níveis de Acesso" />
         <AdminRoute path="/usuarios" component={EquipePage} moduleName="a Gestão de Equipe & Níveis de Acesso" />
         <AdminRoute path="/team" component={EquipePage} moduleName="a Gestão de Equipe & Níveis de Acesso" />
+
+        {/* Gestão de RH & Colaboradores CLT (Admin e Dev) */}
+        <AdminRoute path="/rh" component={HrDashboard} moduleName="a Gestão de RH & Colaboradores CLT" />
+        <AdminRoute path="/colaboradores" component={HrDashboard} moduleName="a Gestão de RH & Colaboradores CLT" />
+        <AdminRoute path="/funcionarios" component={HrDashboard} moduleName="a Gestão de RH & Colaboradores CLT" />
+        <AdminRoute path="/recursos-humanos" component={HrDashboard} moduleName="a Gestão de RH & Colaboradores CLT" />
+        <AdminRoute path="/gestao-rh" component={HrDashboard} moduleName="a Gestão de RH & Colaboradores CLT" />
 
         {/* Administrative & Technical Dev Routes */}
         <DevRoute path="/jornada-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { Shell } from "@/components/layout";
-import { useGetMe } from "@workspace/api-client-react";
+import { useGetMe, getGetMeQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
   Package,
@@ -21,6 +22,7 @@ import {
   X,
   History,
   Lock,
+  LogOut,
   ArrowRight,
   ShieldAlert,
   Info,
@@ -100,6 +102,7 @@ export interface MinibarProduct {
 
 export default function AnserveRestockPage() {
   const { data: user, isLoading: authLoading } = useGetMe();
+  const queryClient = useQueryClient();
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -114,6 +117,19 @@ export default function AnserveRestockPage() {
   const [pinInput, setPinInput] = useState<string>("");
   const [pinSubmitting, setPinSubmitting] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
+
+  // Restockers list for selection on PIN screen & header switcher
+  const [restockersList, setRestockersList] = useState<
+    Array<{ id: number; username: string; name: string; hasIndividualPin?: boolean }>
+  >([]);
+  const [selectedRestockerId, setSelectedRestockerId] = useState<number | null>(() => {
+    try {
+      const savedId = localStorage.getItem("corpflats_anserve_user_id");
+      return savedId ? Number(savedId) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Data state
   const [flats, setFlats] = useState<FlatStatusItem[]>([]);
@@ -150,8 +166,26 @@ export default function AnserveRestockPage() {
 
   const isAuthenticated = isAuthorizedRole || Boolean(localToken);
 
+  // Fetch active restockers list so the PIN screen can show the selector
+  const fetchRestockersList = async () => {
+    try {
+      const res = await fetch("/api/minibar/restockers-list");
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.restockers)) {
+          setRestockersList(json.restockers);
+          // Se só houver 1 repositora cadastrada, já deixa pré-selecionada
+          if (json.restockers.length === 1 && !selectedRestockerId) {
+            setSelectedRestockerId(Number(json.restockers[0].id));
+          }
+        }
+      }
+    } catch {}
+  };
+
   // Handle URL query parameters (?token=... or ?pin=...)
   useEffect(() => {
+    fetchRestockersList();
     if (typeof window === "undefined") return;
     const sp = new URLSearchParams(window.location.search);
     const tokenParam = sp.get("token");
@@ -167,15 +201,13 @@ export default function AnserveRestockPage() {
 
   // Update default inspector name when user loads
   useEffect(() => {
-    if (user?.name) {
+    const savedName = typeof window !== "undefined" ? localStorage.getItem("corpflats_anserve_user_name") : null;
+    if (savedName) {
+      setInspectorName(savedName);
+    } else if (user?.name) {
       setInspectorName(user.name);
-    } else {
-      const savedName = typeof window !== "undefined" ? localStorage.getItem("corpflats_anserve_user_name") : null;
-      if (savedName) {
-        setInspectorName(savedName);
-      } else if (!inspectorName) {
-        setInspectorName("Repositora Anserve");
-      }
+    } else if (!inspectorName) {
+      setInspectorName("Repositora Anserve");
     }
   }, [user]);
 
@@ -231,6 +263,14 @@ export default function AnserveRestockPage() {
   const handlePinSubmit = async (pinValue?: string) => {
     const pin = pinValue || pinInput;
     if (!pin || pin.length < 4) return;
+
+    // Se houver 2 ou mais repositoras cadastradas e nenhuma estiver selecionada nem tiver PIN individual único correspondente, pede para tocar no nome se usar o PIN padrão
+    if (restockersList.length > 1 && !selectedRestockerId && pin === "1234") {
+      setPinError("Por favor, selecione qual repositora está conferindo na lista acima antes de digitar o PIN.");
+      setPinInput("");
+      return;
+    }
+
     setPinSubmitting(true);
     setPinError(null);
 
@@ -239,7 +279,10 @@ export default function AnserveRestockPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ pin })
+        body: JSON.stringify({
+          pin,
+          userId: selectedRestockerId || (restockersList.length === 1 ? restockersList[0].id : undefined)
+        })
       });
       const data = await res.json();
 
@@ -248,9 +291,19 @@ export default function AnserveRestockPage() {
           localStorage.setItem("corpflats_anserve_token", data.token);
           setLocalToken(data.token);
         }
-        if (data.user?.name) {
-          localStorage.setItem("corpflats_anserve_user_name", data.user.name);
-          setInspectorName(data.user.name);
+        if (data.user) {
+          if (data.user.name) {
+            localStorage.setItem("corpflats_anserve_user_name", data.user.name);
+            setInspectorName(data.user.name);
+          }
+          if (data.user.id) {
+            localStorage.setItem("corpflats_anserve_user_id", String(data.user.id));
+            setSelectedRestockerId(Number(data.user.id));
+          }
+          if (data.user.username) {
+            localStorage.setItem("corpflats_anserve_username", data.user.username);
+          }
+          queryClient.setQueryData(getGetMeQueryKey(), data.user);
         }
         toast({
           title: "Acesso liberado!",
@@ -260,12 +313,32 @@ export default function AnserveRestockPage() {
         fetchData();
       } else {
         setPinError(data.error || "PIN de acesso inválido.");
+        setPinInput("");
       }
     } catch (err: any) {
       setPinError(err.message || "Erro de rede ao validar PIN.");
+      setPinInput("");
     } finally {
       setPinSubmitting(false);
     }
+  };
+
+  // Trocar de repositora / bloquear tela por PIN
+  const handleSwitchRestocker = async () => {
+    try {
+      localStorage.removeItem("corpflats_anserve_token");
+      localStorage.removeItem("corpflats_anserve_user_name");
+      localStorage.removeItem("corpflats_anserve_user_id");
+      localStorage.removeItem("corpflats_anserve_username");
+      if (user?.role === "anserve_repositora") {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+        queryClient.setQueryData(getGetMeQueryKey(), null);
+      }
+    } catch {}
+    setLocalToken(null);
+    setPinInput("");
+    setPinError(null);
+    fetchRestockersList();
   };
 
   // Numeric keypad button press
@@ -455,6 +528,7 @@ export default function AnserveRestockPage() {
           flatNumber: conformeModalFlat.flatNumber,
           reservationCode: conformeModalFlat.currentReservation?.code || "",
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
+          inspectorId: selectedRestockerId || user?.id || undefined,
           status: "conforme",
           notes: conformeNotes,
           restockedItems
@@ -543,6 +617,7 @@ export default function AnserveRestockPage() {
           flatNumber: divergenciaModalFlat.flatNumber,
           reservationCode: divergenciaModalFlat.currentReservation?.code || "",
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
+          inspectorId: selectedRestockerId || user?.id || undefined,
           status: "divergencia",
           countedItems: countedItemsList,
           missingItems: missingItemsList,
@@ -583,16 +658,76 @@ export default function AnserveRestockPage() {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col items-center">
-          <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center mb-4">
+          <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center mb-3">
             <Package className="w-7 h-7" />
           </div>
 
           <h1 className="text-xl font-black text-center text-white">Portal da Repositora</h1>
-          <p className="text-xs text-slate-400 text-center mt-1 mb-6">
-            CorpFlats Soho Residence & Anserve. Digite seu PIN de 4 dígitos para acessar.
+          <p className="text-xs text-slate-400 text-center mt-1 mb-4">
+            CorpFlats Soho Residence & Anserve. Selecione seu nome ou digite seu PIN de 4 dígitos.
           </p>
 
-          <div className="flex items-center gap-3 mb-6">
+          {/* Seletor de Funcionária (exibe as repositoras cadastradas na Equipe Anserve) */}
+          {restockersList.length > 0 && (
+            <div className="w-full mb-5 bg-slate-950/70 border border-slate-800 rounded-2xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-sky-400" />
+                  Qual repositora está conferindo?
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/25">
+                  {restockersList.length} {restockersList.length === 1 ? "cadastrada" : "cadastradas"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-1.5 max-h-36 overflow-y-auto pr-0.5">
+                {restockersList.map((staff) => {
+                  const isSelected = Number(selectedRestockerId) === Number(staff.id);
+                  return (
+                    <button
+                      key={staff.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRestockerId(Number(staff.id));
+                        setPinError(null);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs font-bold transition-all border ${
+                        isSelected
+                          ? "bg-sky-500/20 border-sky-400 text-white shadow-sm"
+                          : "bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${
+                            isSelected ? "bg-sky-500 text-white" : "bg-slate-800 text-slate-400"
+                          }`}
+                        >
+                          {(staff.name || staff.username || "R").charAt(0).toUpperCase()}
+                        </div>
+                        <span className="truncate">{staff.name || staff.username}</span>
+                      </div>
+                      {isSelected ? (
+                        <span className="text-[10px] font-black text-sky-300 flex items-center gap-1 shrink-0">
+                          <Check className="w-3.5 h-3.5" /> Selecionada
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 shrink-0">Toque para selecionar</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {restockersList.length === 1 && (
+                <p className="text-[10px] text-slate-500 mt-2 leading-snug">
+                  💡 Quando o Gestor Anserve cadastrar mais funcionárias na aba Equipe, todas aparecerão aqui para seleção (ou serão identificadas automaticamente pelo PIN individual de cada uma).
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 mb-5">
             {[0, 1, 2, 3].map((index) => {
               const isFilled = pinInput.length > index;
               return (
@@ -679,6 +814,9 @@ export default function AnserveRestockPage() {
                 <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px] font-bold">
                   19 Flats Soho
                 </Badge>
+                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
+                  👩‍💼 {inspectorName || user?.name || "Repositora Anserve"}
+                </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Conferência comparativa em 3 colunas (Informado × Contagem × Divergência) e baixa automática no pagamento.
@@ -686,7 +824,17 @@ export default function AnserveRestockPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSwitchRestocker}
+              className="rounded-xl text-xs font-bold h-9 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+              title="Trocar de funcionária ou voltar para a tela de PIN"
+            >
+              <Users className="w-3.5 h-3.5 mr-1.5" />
+              Trocar Repositora / PIN
+            </Button>
             <Button
               variant="outline"
               size="sm"

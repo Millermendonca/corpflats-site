@@ -1,48 +1,57 @@
-# BRIEFING — 2026-09-30T21:54:00Z
+# BRIEFING — 2026-10-22T10:09:40Z
 
 ## Mission
-Survey frontend architecture in `artifacts/limpeza/src/`, analyzing routing, UI components, API/query patterns, and specifications for Service Orders admin page (R4) and Service Worker public portal (R5).
+Survey de frontend em `artifacts/limpeza/` para planejar o Sistema de Gestão de Funcionários CLT (Painel Admin RH e Ponto Eletrônico Mobile com Selfie/GPS/Whitelist).
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: frontend architecture survey, UI/UX inspection, query pattern analysis
+- Roles: explorer_survey_frontend
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_frontend
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: Milestone 1 - Architectural Survey & Blueprint
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Milestone: Survey do Sistema de Gestão de Funcionários CLT
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement or modify any application source files
-- Write all findings to `analysis.md` and `handoff.md` in my assigned directory
-- Maintain heartbeat in `progress.md`
+- Read-only investigation — do NOT implement
+- Do NOT modify any source code files (only metadata/reports in explorer_survey_frontend)
+- Never run global or bulk tests (AGENTS.md strict rule)
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T21:54:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T10:09:40Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/limpeza/src/App.tsx` (routing, guards, query client provider)
-  - `artifacts/limpeza/src/components/layout.tsx` (Shell, navCategories, sidebar menu)
-  - `artifacts/limpeza/src/components/ui/` (tabs, table, progress, dialog, radio-group, switch, badge, etc.)
-  - `artifacts/limpeza/src/components/flat-card.tsx` (maid dashboard cards & actions)
-  - `artifacts/limpeza/src/pages/pms-calendar.tsx` (calendar timeline, blocks, reservations)
-  - `artifacts/limpeza/src/lib/image-compression.ts` (client-side WebP compression)
-  - `lib/api-client-react/src/custom-fetch.ts` (fetch wrapper & credentials)
+  - `artifacts/limpeza/package.json`
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/components/layout.tsx`
+  - `artifacts/limpeza/src/lib/permissions.ts`
+  - `artifacts/limpeza/src/pages/equipe.tsx`
+  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`
+  - `artifacts/limpeza/src/pages/anserve-restock.tsx`
+  - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`
+  - `artifacts/limpeza/src/lib/image-compression.ts`
+  - `artifacts/api-server/zapi-service.mjs` (coordenadas do hotel)
+  - `data/database.json` (usuários Cris id:2 e Grazi id:3)
 - **Key findings**:
-  - `AdminRoute` requires `moduleName` parameter.
-  - Public route `/servico/:token` should not use `Shell` and requires no auth.
-  - All 55 UI components required for tabs, tables, progress, modals, and forms exist in `components/ui/`.
-  - Client-side image compression utility (`compressImage`) reduces mobile camera photos by ~97% before upload.
-  - R6 (maid dashboard lock) and R7 (calendar maintenance block) have clearly defined extension points.
-- **Unexplored areas**: None. All frontend survey objectives completed.
+  - Build pipeline (`npm --prefix artifacts/limpeza run build`) executado com sucesso (código 0, 53s).
+  - Wouter é o roteador SPA padrão (`Route, Switch, useLocation`).
+  - Rotas protegidas usam `AdminRoute` / `AdminGuard` com `hasModuleAccess()`.
+  - Assinatura digital já possui padrão comprovado em HTML5 Canvas (`guest-pre-checkin.tsx`). Nenhuma lib externa necessária.
+  - Selfie ao vivo usa Web API nativa (`navigator.mediaDevices.getUserMedia` + `<video>` + `<canvas>` snapshot + fallback input capture).
+  - GPS usa `navigator.geolocation.getCurrentPosition` com cálculo Haversine contra coordenadas do Soho Residence (-21.7584, -41.3262).
+  - Whitelist de dispositivos usa fingerprint persistente em `localStorage` (`gfm_device_token`).
+  - Cris e Grazi permanecem identificadas como prestadoras autônomas com badge diferenciado no RH.
+- **Unexplored areas**: Nenhuma pendência para a fase de Survey de frontend.
 
 ## Key Decisions Made
-- Recommending `AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço"` and `Route path="/servico/:token" component={ServiceWorkerPortal}`.
-- Recommending sidebar item placement under category `🧹 Governança & Camareiras`.
-- Detailed blueprints written to `analysis.md` and `handoff.md`.
+- Recomendar criação de duas páginas principais:
+  1. `artifacts/limpeza/src/pages/hr-dashboard.tsx` (Painel Admin RH com 6 abas + whitelist).
+  2. `artifacts/limpeza/src/pages/ponto-mobile.tsx` (Terminal Mobile de Batida de Ponto com Câmera/GPS/Whitelist).
+- Adicionar `/rh` em `permissions.ts` e aliases `/colaboradores`, `/funcionarios`.
+- Adicionar `/ponto` e `/rh/ponto` como rotas operacionais mobile.
 
 ## Artifact Index
-- `analysis.md` — comprehensive frontend survey report
-- `handoff.md` — 5-component handoff report for the team
-- `progress.md` — liveness heartbeat
-- `DISPATCH.md` — log of incoming requests
+- DISPATCH.md — Incoming dispatch instructions
+- BRIEFING.md — Working memory and identity
+- progress.md — Liveness heartbeat and step tracking
+- handoff.md — Final comprehensive survey handoff report

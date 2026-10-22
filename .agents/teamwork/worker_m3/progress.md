@@ -1,19 +1,24 @@
-# Progress — Worker M3 (Portais Anserve, Admin CorpFlats & RBAC)
+# Progress Log - Worker M3
 
-**Last visited**: 2026-10-21T21:26:00Z  
-**Status**: COMPLETED  
+Last visited: 2026-10-22T09:55:00-03:00
 
-## Completed Tasks
-- [x] Leitura de DISPATCH.md, ORIGINAL_REQUEST.md, AGENTS.md, PROJECT.md e relatórios de survey.
-- [x] Análise aprofundada dos contratos de API no backend (`demo-server.mjs`) e componentes frontend existentes.
-- [x] Criação de BRIEFING.md e planejamento detalhado.
-- [x] 1. Atualizar `permissions.ts` com os novos papéis (`anserve_repositora`, `anserve_gestor`), categoria `frigobar` e aliases.
-- [x] 2. Atualizar `equipe.tsx` com as opções de papéis, filtros e badges.
-- [x] 3. Atualizar `layout.tsx` com categorias de navegação e atalhos de BottomNav para os perfis Anserve.
-- [x] 4. Criar `anserve-restock.tsx` (Portal Mobile da Repositora com PIN/Token, 19 flats, checkouts do dia, conferência, divergência com fotos, reposição de pagos + cortesias).
-- [x] 5. Criar `anserve-dashboard.tsx` (Portal de Supervisão Anserve com Fila de NFs, upload e disparo de NF, visão de reposições e extrato de repasse).
-- [x] 6. Criar `minibar-admin.tsx` (Portal Admin CorpFlats com Catálogo, Gabarito nominal por flat, Gerador de QR Codes A6 imprimíveis e Extrato CorpFlats ↔ Anserve).
-- [x] 7. Registrar rotas em `App.tsx`.
-- [x] 8. Executar build `npm --prefix artifacts/limpeza run build` (código 0).
-- [x] 9. Escrever `changes.md` e `handoff.md`.
-- [ ] 10. `git commit`, `git push origin main`, e notificar o Project Orchestrator via `send_message`.
+## Status
+Milestone M3 integralmente implementado, verificado e validado com 100% de aprovação em todos os testes pontuais e auditoria de paridade twin-server.
+
+## Completed Steps
+- [x] Inicialização de DISPATCH.md e BRIEFING.md
+- [x] Leitura de ORIGINAL_REQUEST.md e orchestrator_17/PROJECT.md
+- [x] Leitura dos relatórios dos 3 Explorers (whatsapp, schedules, test_design)
+- [x] Implementação de `artifacts/api-server/hr/whatsapp-automation.mjs` e `scripts/hr/whatsapp-automation.mjs`
+- [x] Implementação de `artifacts/api-server/hr/schedules.mjs` e `scripts/hr/schedules.mjs`
+- [x] Integração de gancho em `timekeeping.mjs` e novas rotas em `router.mjs`
+- [x] Atualização de `index.mjs` com coleções e exportações
+- [x] Criação de `tests/hr-m3-whatsapp-schedules.test.mjs`
+- [x] Execução da suíte pontual M3: 12/12 PASS
+- [x] Verificação de paridade de arquivos gêmeos (check-twin-parity.mjs): 34/34 PASS (100%)
+- [x] Verificação de regressão M1: 7/7 PASS
+- [x] Verificação de regressão M2: 10/10 PASS
+- [x] Emissão de handoff.md completo e atualização de BRIEFING.md
+
+## Upcoming Steps
+- [x] Envio de notificação ao orquestrador (parent: `58ecb31f-60d2-4e1e-9aac-82400a58c263`) via `send_message`.

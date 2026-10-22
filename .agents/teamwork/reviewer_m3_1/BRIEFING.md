@@ -1,61 +1,66 @@
-# BRIEFING — 2026-10-21T21:37:00Z
+# BRIEFING — 2026-10-22T13:00:00Z
 
 ## Mission
-Revisão e crítica adversarial do Milestone M3 referente a RBAC, Permissões, Gestão de Equipe e Navegação (Desktop Sidebar e Mobile BottomNav) para os perfis Anserve (`anserve_repositora` e `anserve_gestor`).
+Technical Quality & Adversarial Review of Milestone M3 (WhatsApp Automation, REP-P Receipts, Hour Balance, Preventive Reminders).
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_reviewer
+- Archetype: reviewer_and_adversarial_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: M3 (F19-F28) - Reviewer 1 (RBAC, Equipe, Navegação)
-- Instance: 1 of 2
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Milestone: M3 (Automação WhatsApp, Comprovantes REP-P, Saldo de Horas e Lembretes Preventivos)
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- NUNCA executar testes globais `tests/*.test.mjs` ou varreduras completas
-- Executar build frontend `npm --prefix artifacts/limpeza run build` para validar compilação
-- Detecção estrita de violações de integridade (mockings falsos, hardcodes enganosos, fachadas)
-- Emitir veredito final explícito: APPROVE ou REQUEST_CHANGES
+- Respect strict test scope: NEVER run global tests (`tests/*.test.mjs`), ONLY `tests/hr-m3-whatsapp-schedules.test.mjs` and regression tests
+- Actively check for integrity violations: hardcoded results, dummy logic, facade implementations, bypassed tasks
+- Maintain twin parity verification (34/34 files matching SHA-256)
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:37:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T13:00:00Z
 
 ## Review Scope
-- **Files to review**:
-  - `artifacts/limpeza/src/lib/permissions.ts`
-  - `artifacts/limpeza/src/pages/equipe.tsx`
-  - `artifacts/limpeza/src/components/layout.tsx`
-  - `artifacts/limpeza/src/App.tsx`
-  - `artifacts/limpeza/src/pages/anserve-restock.tsx`
-  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`
-  - `artifacts/limpeza/src/pages/minibar-admin.tsx`
-- **Interface contracts**: `.agents/teamwork/orchestrator_16/PROJECT.md` (M3: F19-F28), `AGENTS.md`
-- **Review criteria**: RBAC correctness, UI completeness, mobile navigation ergonomics, TypeScript typing, build success, absence of regressions.
+- **Files reviewed**:
+  - `artifacts/api-server/hr/whatsapp-automation.mjs` & `scripts/hr/whatsapp-automation.mjs`
+  - `artifacts/api-server/hr/schedules.mjs` & `scripts/hr/schedules.mjs`
+  - `artifacts/api-server/hr/timekeeping.mjs` & `scripts/hr/timekeeping.mjs`
+  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`
+  - `artifacts/api-server/hr/employees.mjs` & `scripts/hr/employees.mjs`
+  - `artifacts/api-server/hr/index.mjs` & `scripts/hr/index.mjs`
+  - `tests/hr-m3-whatsapp-schedules.test.mjs`
+- **Interface contracts**:
+  - `.agents/teamwork/ORIGINAL_REQUEST.md` (R3)
+  - `.agents/teamwork/orchestrator_17/PROJECT.md` (F12, F13, F14)
+  - `.agents/teamwork/worker_m3/handoff.md`
+- **Review criteria**: Correctness, CLT/Portaria 671 compliance, integrity, edge cases, twin parity.
+
+## Key Decisions Made
+- All tests passed without failures or regressions.
+- No integrity violations or facade implementations detected.
+- Verified 34/34 twin parity.
+- Issued APPROVE verdict.
+
+## Artifact Index
+- `BRIEFING.md` — persistent working memory
+- `progress.md` — liveness heartbeat
+- `handoff.md` — final review report with verdict
 
 ## Review Checklist
-- **Items reviewed**:
-  - `permissions.ts`: `getDefaultModulesForRole`, `PERMISSION_CATEGORIES`, `ROUTE_ALIASES`, `hasModuleAccess`
-  - `equipe.tsx`: Modais de criação, edição e permissões; `renderRoleBadge`; pílulas de filtro de perfil
-  - `layout.tsx`: `rawNavCategories`, `navCategories` filtering, `isItemActive`, `BottomNav` role branches
-  - Build: `npm --prefix artifacts/limpeza run build` executado com saída código 0
+- **Items reviewed**: whatsapp-automation.mjs, schedules.mjs, timekeeping.mjs, router.mjs, index.mjs, demo-server.mjs, test suites M1, M2, M3.
 - **Verdict**: APPROVE
-- **Unverified claims**: Nenhuma pendente. Todas as alegações de compilação e rotas foram verificadas diretamente.
+- **Unverified claims**: None (all claims from worker_m3 independently verified).
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Vazamento de módulos restritos para equipe Anserve: Refutado. `hasModuleAccess` e filtragem por categoria bloqueiam completamente.
-  - Bloqueio indevido de supervisores no painel de supervisão: Refutado. `AdminGuard` usa `hasModuleAccess(user, location)` que aceita `anserve_gestor`.
-  - Quebra do build frontend com TypeScript/Vite: Refutado. Compilação gerou todos os assets com código 0.
-- **Vulnerabilities found**: Nenhuma falha de segurança ou integridade. Observação cosmética menor: subtítulo de função no footer do drawer móvel de `layout.tsx` exibe "Camareira" por fallback para usuários Anserve (não afeta permissões nem o BottomNav).
-- **Untested angles**: Testes globais e2e não foram rodados em conformidade estrita com a regra mandatória de AGENTS.md.
-
-## Key Decisions Made
-- Aprovação do Milestone M3 na dimensão RBAC, Equipe e Navegação, registrando veredito APPROVE com relatório circunstanciado de 5 componentes em handoff.md.
-
-## Artifact Index
-- `DISPATCH.md` — Despacho e diretrizes recebidas
-- `BRIEFING.md` — Memória e estado operacional
-- `progress.md` — Liveness heartbeat
-- `handoff.md` — Relatório final 5-componentes com veredito
+  - Attempting to dispatch receipts to prestadoras (Cris/Grazi): Blocked with HTTP 403 / PRESTADORA_SECURITY_BLOCK.
+  - Attempting to compute balance for prestadoras: Blocked.
+  - Attempting to receive reminders for prestadoras: Skipped with reason "is_prestadora".
+  - Attempting to trigger reminders on DSR, vacation, or leave: Silenced correctly.
+  - Exceeding Art. 58 CLT tolerance by 1 minute: Entire delta computed per Súmula 366 TST.
+  - Overtime segregation: 50% on weekdays, 100% on DSR/holidays.
+  - Night shift reduction & extension: 60/52.5 multiplier (1.142857) + Súmula 60 TST.
+  - Vacation rules: Max 3 periods, min 14d, min 5d, pre-DSR start forbidden, double pay alert.
+- **Vulnerabilities found**: None.
+- **Untested angles**: Real WhatsApp live transmission (tested in simulation/mock mode as required by environment).

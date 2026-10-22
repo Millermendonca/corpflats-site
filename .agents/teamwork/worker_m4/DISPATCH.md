@@ -1,121 +1,113 @@
-# DISPATCH — Worker M4 (CRM 360º, Analytics Demográfico & Sofia IA)
+## 2026-10-22T14:21:22Z
+Você é o Worker M4 (worker_m4) responsável pela implementação integral do Marco M4: Folha de Pagamento com DSR e INSS progressivo, Contratos com Assinatura Canvas & Controle de ASO.
 
-## Metadata
-- **Agent Name**: `worker_m4`
-- **Archetype**: `teamwork_preview_worker`
-- **Role**: CRM, Analytics & Sofia IA Worker
-- **Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4`
-- **Parent Conversation ID**: `d10c20e2-adfb-4695-835e-52dd3bebe9a9`
-- **Assigned Milestone**: Milestone M4 (Features F29 a F33)
-
----
-
-## Mandatory Integrity Warning
-> **DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.**
-
----
-
-## Scoped Files for Worker M4
-- `artifacts/limpeza/src/pages/crm-guests.tsx` (F29, F30)
-- `artifacts/limpeza/src/pages/guest-minibar.tsx` (F33 - suporte a `?ord=`)
-- `artifacts/api-server/demo-server.mjs` (F29, F30, F31, F33)
-- `scripts/demo-server.mjs` (twin parity)
-- `artifacts/api-server/whatsapp-ai-service.mjs` (F31, F32)
-- `scripts/whatsapp-ai-service.mjs` (twin parity)
-- `artifacts/limpeza/dist/` (build de produção)
-
----
-
-## Objectives & Detailed Tasks
-
-### 1. CRM 360º & LTV Agregado (`crm-guests.tsx` & `demo-server.mjs` — F29)
-1. **Backend (`demo-server.mjs` e `scripts/demo-server.mjs`)**:
-   - Em `GET /api/pms/guests`:
-     - Para cada hóspede, calcular `minibarOrders` pagos (`db.minibarOrders` com `guestDocument` ou `guestPhone` ou `reservationCode` correspondente e `paymentStatus === "pago"`).
-     - Calcular `minibarSpent` e somar ao `totalSpent` (LTV agregado: diárias + frigobar pago).
-     - Gerar tags automáticas baseadas em itens pagos:
-       * >= 3 cápsulas Nespresso -> tag `"Consumidor Nespresso"`
-       * >= 2 cervejas -> tag `"Apreciador Cerveja"`
-       * >= 3 snacks/amendoins -> tag `"Prefere Snacks"`
-       * `minibarSpent >= 100` ou >= 8 itens -> tag `"Consumo Alto"`
-     - Retornar `minibarSpent` e `minibarOrdersCount` no objeto do hóspede.
-   - Em `GET /api/pms/guests/:id`:
-     - Incluir `minibarOrders` e `minibarSpent` no payload de resposta do hóspede.
-2. **Frontend (`crm-guests.tsx`)**:
-   - No modal 360º de detalhes do hóspede (`handleOpenDetail`):
-     - Inserir seção "Histórico de Consumo de Frigobar" (imediatamente após "Histórico de Estadias & Reservas" e antes de "Notas Fiscais Emitidas").
-     - Exibir cada pedido com data formatada, flat, número do pedido, badge de status (`pago` em verde, `pendente` em âmbar, `cortesia` em azul), lista de itens e total em R$.
-   - Adicionar chips de filtro para as novas tags de consumo frigobar (`"nespresso"`, `"cerveja"`, `"snacks"`, `"alto_consumo"`).
-   - Garantir que o LTV exibido no card superior e na tabela reflita o `totalSpent` consolidado.
-
-### 2. Analytics Demográfico de Consumo (`crm-guests.tsx` & `demo-server.mjs` — F30)
-1. **Backend**:
-   - Criar endpoint `GET /api/minibar/analytics/demographics`:
-     - Cruza pedidos pagos de frigobar com o cadastro/FNHR do hóspede (`city`, `state` de `db.guests` ou `r.guests[0]`).
-     - Agrupa métricas:
-       * `byState`: ranking de Estados por faturamento de frigobar e itens consumidos.
-       * `byCategory`: faturamento e unidades vendidas por categoria ("Cervejas", "Refrigerantes", "Águas", "Snacks", "Cafés / Especiais").
-       * `summary`: total faturado, total itens, ticket médio e estado líder.
-2. **Frontend (`crm-guests.tsx`)**:
-   - Adicionar uma 3ª aba no topo de `crm-guests.tsx`: `"guests" | "companies" | "analytics"`.
-   - Na aba "Analytics Demográfico":
-     - Exibir cards de KPIs (Total Frigobar, Ticket Médio, Estado Líder, Categoria Líder).
-     - Exibir distribuição visual por Estados e tabela/matriz cruzando Estado vs Categorias de consumo.
-
-### 3. Remoção de Textos Legados & Atualização de FAQ (`whatsapp-ai-service.mjs` & `demo-server.mjs` — F31)
-1. Em `artifacts/api-server/whatsapp-ai-service.mjs`:
-   - Remover qualquer menção de "frigobar vazio" ou "hóspede deve comprar no supermercado".
-   - Atualizar para: "Os flats do Soho Residence contam com frigobar abastecido em parceria com a Anserve. O hóspede tem 1 kit de cortesia por estadia (cápsulas Nespresso e doces) e pode consumir bebidas e snacks com autoatendimento e pagamento via PIX ou Cartão."
-2. Em `artifacts/api-server/demo-server.mjs`:
-   - Atualizar o seed `faq-agua-frigobar` (preservando o ID `faq-agua-frigobar` para compatibilidade com testes existentes) informando o catálogo Anserve e autoatendimento.
-
-### 4. Sofia IA: Contexto e Módulo de Minibar (`whatsapp-ai-service.mjs` — F32)
-1. Em `buildGuestContext`:
-   - Injetar `minibarUrl: `${appOrigin}/minha-reserva/${canonicalResCode}/frigobar`` e resumo do catálogo/cortesias.
-2. Em `querySystemData`:
-   - Adicionar `case "minibar": case "frigobar":`:
-     - Retornar catálogo disponível, regras de cortesia, link direto e status de pedidos do hóspede.
-3. Em `buildGeminiTools`:
-   - Permitir `minibar` nos módulos aceitos pelo tool system.
-
-### 5. Cobrança Proativa de Divergências & Quitação Direta (F33)
-1. Em `artifacts/limpeza/src/pages/guest-minibar.tsx`:
-   - Ler o parâmetro `?ord=` de `window.location.search`.
-   - Se presente, consultar o status da ordem `GET /api/minibar/orders/:id/status`. Se pendente, exibir banner/alerta em destaque no topo com os itens não declarados e botão direto para pagar via PIX ou Cartão.
-2. Em `artifacts/api-server/demo-server.mjs`:
-   - No endpoint `POST /api/minibar/orders`: se `orderId` vier no body (ex: `ORD-MB-DIV-...`), atualizar a ordem existente com o método de pagamento escolhido e gerar o payload PIX/MP, evitando duplicar registros.
-
-### 6. Paridade SHA-256 Twin-Server & Build de Produção
-1. Espelhar `artifacts/api-server/demo-server.mjs` para `scripts/demo-server.mjs`.
-2. Espelhar `artifacts/api-server/whatsapp-ai-service.mjs` para `scripts/whatsapp-ai-service.mjs`.
-3. Validar SHA-256 byte-a-byte idêntico em ambos os pares:
-   `(Get-FileHash artifacts/api-server/demo-server.mjs).Hash -eq (Get-FileHash scripts/demo-server.mjs).Hash`
-   `(Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs).Hash -eq (Get-FileHash scripts/whatsapp-ai-service.mjs).Hash`
-4. Executar `npm --prefix artifacts/limpeza run build` (código de saída 0 obrigatório).
-5. Executar os testes pontuais:
-   - `node --test tests/minibar-backend-flow.test.mjs`
-   - `node --test tests/challenger-m1-2-verification.test.mjs`
-   - `node --test tests/minibar-stress-challenger.test.mjs`
-6. Executar `git add`, `git commit` e `git push origin main`.
-
-Documente em `changes.md` e `handoff.md` e notifique o Project Orchestrator via `send_message`.
-
-
-## 2026-10-21T22:19:43Z
-Você é o subagente worker_m4 (teamwork_preview_worker).
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-Missão do Worker M4 (CRM 360, Analytics Demográfico & Sofia IA — Features F29 a F33):
-1. CRM 360 & LTV Agregado (crm-guests.tsx & demo-server.mjs — F29)
-2. Analytics Demográfico de Consumo (crm-guests.tsx & demo-server.mjs — F30)
-3. Remoção de Textos Legados & FAQ (whatsapp-ai-service.mjs & demo-server.mjs — F31)
-4. Sofia IA: Contexto e Módulo de Minibar (whatsapp-ai-service.mjs — F32)
-5. Cobrança Proativa de Divergências & Quitação (guest-minibar.tsx & demo-server.mjs — F33)
-6. Paridade SHA-256 Twin-Server & Build de Produção
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seções R6 e R7).
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md` (Features F19, F20, F21).
+3. Leia o plano já estruturado em `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m4_contracts_aso\progress.md`.
 
+MANDATORY INTEGRITY WARNING:
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-## 2026-10-21T22:56:07Z
-**Context**: Verificação de execução dos testes pontuais e finalização de M4.
-**Content**: A tarefa task-405 do teste `minibar-backend-flow.test.mjs` finalizou com erro de porta ('Falha ao iniciar servidor de testes na porta 4199'). Verifique se há algum processo node remanescente prendendo a porta 4199, execute os testes pontuais autorizados, realize o commit e git push para origin main, e envie seu relatório de handoff.
-**Action**: Concluir execução de testes, git push e enviar handoff report.
+PROPRIEDADE EXCLUSIVA DE ESCRITA:
+- `artifacts/api-server/hr/payroll.mjs` e `scripts/hr/payroll.mjs`
+- `artifacts/api-server/hr/contracts-aso.mjs` e `scripts/hr/contracts-aso.mjs`
+- `artifacts/api-server/hr/router.mjs` e `scripts/hr/router.mjs`
+- `artifacts/api-server/hr/index.mjs` e `scripts/hr/index.mjs`
+- `tests/hr-m4-payroll-contracts.test.mjs`
+- `.agents/teamwork/worker_m4/*`
+
+SUAS TAREFAS DE IMPLEMENTAÇÃO:
+
+1. **Implementar `artifacts/api-server/hr/payroll.mjs` e espelhar identicamente em `scripts/hr/payroll.mjs`**:
+   - `calculateInssProgressive(baseSalary)`:
+     * Faixas oficiais 2026:
+       Faixa 1 (até R$ 1.518,00): alíquota 7,5% (dedução R$ 0,00);
+       Faixa 2 (R$ 1.518,01 até R$ 2.793,88): alíquota 9,0% (dedução R$ 22,77);
+       Faixa 3 (R$ 2.793,89 até R$ 4.190,83): alíquota 12,0% (dedução R$ 106,59);
+       Faixa 4 (R$ 4.190,84 até R$ 8.157,41): alíquota 14,0% (dedução R$ 190,40);
+       Teto máximo do INSS: R$ 951,64.
+     * Retornar `{ inssValue, effectiveRate, bracket }`.
+   - `calculateDsrReflex(amount, workingDays, dsrAndHolidays)`:
+     * Fórmula legal per Súmula 172 e 60, I do TST: `(amount / workingDays) * dsrAndHolidays`.
+   - `calculateMonthlyPayroll(db, employeeId, yearMonth, options)`:
+     * Valida colaborador CLT com `isCltEmployee` (Cris e Grazi IDs 2, 3 retornam HTTP 403 Forbidden).
+     * Carga mensal padrão: 220 horas para regime 44h 6x1.
+     * Salário base: `emp.baseSalary` ou R$ 2.400,00 (cozinha) / R$ 1.800,00 (camareira). Valor da hora normal = `salarioBase / 220`.
+     * Apuração de horas trabalhadas no mês a partir de `db.hrTimeRecords` e `schedules.mjs`:
+       - Horas extras 50% em dias úteis (`he50Minutes / 60 * valorHora * 1.5`);
+       - Horas extras 100% em domingos e feriados (`he100Minutes / 60 * valorHora * 2.0`);
+       - Adicional noturno urbano (22h às 05h com hora ficta reduzida 52m30s, fator 1.142857 e 20% legal per Art. 73 CLT e Súmula 60 TST).
+     * Determinação dinâmica de dias úteis e domingos/feriados do mês via calendário e feriados oficiais de `getOfficialHolidays(year)` em `schedules.mjs`.
+     * Reflexos de DSR sobre Horas Extras (Súmula 172 TST) e DSR sobre Adicional Noturno (Súmula 60, I TST).
+     * Descontos oficiais:
+       - INSS progressivo sobre a base de incidência previdenciária;
+       - Vale-Transporte: desconto de 6% do salário base per Lei 7.418/85 (ou o custo real de vales, o que for menor);
+       - Faltas e Atrasos injustificados (baseados em `delayMinutes` da tolerância ou faltas da competência);
+       - Adiantamentos salariais / vales quinzenais.
+     * Bases e Totais: `totalProventos`, `totalDescontos`, `salarioLiquido`, `baseFgts`, `fgtsMes` (8%), `baseInss`.
+   - `generatePayslip(db, payrollRecord)`:
+     * Holerite detalhado com Razão Social CorpFlats Soho Residence, dados do colaborador, linhas de proventos e descontos, bases legais de INSS/FGTS e valor líquido por extenso.
+   - `registerPayrollPayment(db, payrollId, paymentData)`:
+     * Registro de quitação com chave PIX, código de transação, comprovante, data/hora e atualização de status para `pago`.
+   - `closeMonthlyPayroll(db, yearMonth, options)`:
+     * Fechamento da competência e gravação em `db.hrPayroll`.
+
+2. **Implementar `artifacts/api-server/hr/contracts-aso.mjs` e espelhar identicamente em `scripts/hr/contracts-aso.mjs`**:
+   - `generateContractDocument(templateId, employee, options)`:
+     * Geração das 4 minutas legais parametrizadas:
+       1. `contrato_trabalho_clt`: Contrato Individual de Trabalho 44h 6x1 (empregador CorpFlats Soho Residence, dados do colaborador, salário, função, jornada 44h 6x1, local Campos dos Goytacazes/RJ, obrigações CLT);
+       2. `termo_vale_transporte`: Termo de Opção ou Renúncia de Vale-Transporte com autorização de desconto de até 6% per Lei 7.418/85;
+       3. `acordo_banco_horas`: Acordo Individual de Compensação e Banco de Horas (Art. 59 § 5º CLT);
+       4. `termo_autorizacao_descontos`: Termo de Autorização de Descontos em Folha per Art. 462 CLT (adiantamentos, danos com dolo/culpa, benefícios).
+   - `signContractWithCanvas(db, contractId, signaturePayload)`:
+     * Recebe assinatura em Base64 dataURL (`data:image/png;base64,...`), `ipAddress`, `userAgent`, `signedAt`.
+     * Calcula hash SHA-256 probatório do documento e atualiza status para `signed`.
+   - Gestão de ASO (NR-7 / PCMSO):
+     * `registerAsoExam(db, asoData)`:
+       Suporta os 5 exames: `admissional`, `periodico`, `retorno_trabalho`, `mudanca_risco`, `demissional`.
+       Calcula `expirationDate` automaticamente (1 ano para periódico padrão).
+       Grava em `db.hrAso` (e `db.hrAsoRecords`).
+     * `checkAsoAlerts(db, options)`:
+       Retorna `{ expired, expiring_30_days, expiring_60_days }`.
+     * Rejeita qualquer tentativa para Cris ou Grazi com HTTP 403 Forbidden.
+
+3. **Atualizar `router.mjs` e `index.mjs` (em `artifacts/` e `scripts/`)**:
+   - Expor rotas de Folha: `/api/hr/payroll/calculate`, `/api/hr/payroll/close-month`, `/api/hr/payroll`, `/api/hr/payroll/:id`, `/api/hr/payroll/:id/payslip`, `/api/hr/payroll/:id/pay-pix`.
+   - Expor rotas de Contratos: `/api/hr/contracts/templates`, `/api/hr/contracts/generate`, `/api/hr/contracts/:id/sign`, `/api/hr/contracts/:id`, `/api/hr/contracts/employee/:employeeId`.
+   - Expor rotas de ASO: `/api/hr/aso`, `/api/hr/aso/alerts`, `/api/hr/aso/:id`, `/api/hr/aso/employee/:employeeId`.
+   - Em `index.mjs`, inicializar coleções `hrPayroll = []`, `hrContracts = []`, `hrAso = []`, `hrAsoRecords = []` com proteção de poda de 5 anos em `pruneDatabase()`.
+
+4. **Criar a Suíte de Testes Pontual Dedicada**:
+   - Arquivo: `tests/hr-m4-payroll-contracts.test.mjs`.
+   - 14 subtestes dedicados cobrindo:
+     * M4-1: Cálculo folha 220h (Cozinheiro R$ 2.400 / Camareira R$ 1.800)
+     * M4-2: Apuração HE 50% e 100%
+     * M4-3: Reflexo DSR sobre HE per Súmula 172 TST
+     * M4-4: Adicional Noturno e Reflexo DSR sobre Noturno per Súmula 60 TST
+     * M4-5: Tabela progressiva INSS 2026 com parcelas a deduzir em todas as faixas
+     * M4-6: Desconto Vale-Transporte (teto 6%)
+     * M4-7: Emissão de Holerite com bases FGTS/INSS e valor líquido
+     * M4-8: Baixa e quitação PIX com chave e comprovante
+     * M4-9: Geração das 4 minutas contratuais
+     * M4-10: Assinatura eletrônica Canvas com metadados probatórios (IP, timestamp, hash SHA-256)
+     * M4-11: Cadastro e histórico de ASO (5 exames NR-7)
+     * M4-12: Motor de alertas preventivos de ASO (vencidos, 30 e 60 dias)
+     * M4-13: Blindagem absoluta de Cris e Grazi (HTTP 403 Forbidden em folha, contratos e ASO)
+     * M4-14: Auditoria de paridade Twin-Server SHA-256 (36/36 arquivos)
+
+5. **Execução e Verificação**:
+   - `node --test tests/hr-m4-payroll-contracts.test.mjs` -> Deve passar 14/14 PASS!
+   - `node scripts/check-twin-parity.mjs` -> Deve auditar 36/36 arquivos e reportar 100% PASS!
+   - Regressões:
+     * `node --test tests/hr-m1-backend-core.test.mjs` (7/7 PASS)
+     * `node --test tests/hr-m2-timekeeping-compliance.test.mjs` (10/10 PASS)
+     * `node --test tests/hr-m3-whatsapp-schedules.test.mjs` (16/16 PASS)
+   - NUNCA executar `tests/*.test.mjs` globais.
+
+Entregue seu relatório detalhado em `handoff.md` no seu diretório e avise o orquestrador via `send_message`.

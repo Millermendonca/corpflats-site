@@ -1,20 +1,23 @@
-## 2026-10-11T03:36:41Z
-Você é o Challenger 2 (Resilience, Concurrency & Parity Challenger) do Milestone M4 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m4_2
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-Você DEVE LER ORIGINAL_REQUEST.md e PROJECT.md antes de iniciar.
+## 2026-10-22T14:44:09Z
+Você é o Challenger M4-2 (challenger_m4_2) para o Marco M4 (Estresse Adversarial de Segurança, Blindagem de Prestadoras, Canvas Signature Tampering e Alertas de ASO).
+Seu diretório de trabalho exclusivo é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m4_2`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-Missão Adversarial Empírica:
-1. Desafie a resiliência e concorrência do sistema:
-   - Teste concorrência de pré-reservas simultâneas para o mesmo flat e datas (TOCTOU safety).
-   - Teste a expiração automática de holds e liberação de disponibilidade.
-   - Teste bulk-update de tarifas com ranges extensos e confirme consistência na matriz e na cotação.
-   - Teste a paridade SHA-256 byte-a-byte idêntica de todos os servidores espelho (`demo-server.mjs`, `whatsapp-ai-service.mjs`, `zapi-service.mjs`).
-2. Execute as suítes de teste de stress:
-   `node --test tests/challenger-m3-tariff-adversarial.test.mjs`
-   `node --test tests/challenger-m3-ui-actions.test.mjs`
-   `node --test tests/challenger-tariff-stress.test.mjs`
-3. Emita seu veredicto: APPROVE ou REQUEST_CHANGES.
-Escreva seu relatório em: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m4_2\handoff.md`.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4\handoff.md`.
+
+SUA MISSÃO ADVERSARIAL:
+1. Criar o script temporário `.agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs`.
+2. Estressar a blindagem absoluta de Cris e Grazi:
+   - Tentar calcular folha, fechar mês, gerar contrato CLT, assinar contrato e cadastrar exame ASO para IDs 2, 3, "2", "3", "cris", "grazi", e assertar que TODOS retornam HTTP 403 Forbidden!
+3. Estressar assinatura eletrônica Canvas e selo SHA-256:
+   - Assinar contrato, alterar o texto da minuta posteriormente e verificar que o hash original diverge da minuta adulterada.
+4. Estressar horizontes de alerta de ASO:
+   - Testar exames vencidos (ontem), a vencer em 30 dias (limiares no dia 30 e dia 31), a vencer em 60 dias (limiares no dia 60 e dia 61), e exames com mais de 60 dias (não devem gerar alertas).
+5. Executar o script criado (`node .agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs`).
+6. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+7. Enviar mensagem ao orquestrador via `send_message`.

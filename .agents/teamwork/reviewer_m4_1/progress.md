@@ -1,22 +1,16 @@
-# Progress Heartbeat - Reviewer 1 (Backend Core & AI Reviewer)
+# Progress — Reviewer M4-1
 
-Last visited: 2026-10-11T03:50:30Z
+Last visited: 2026-10-22T14:50:35Z
 Status: Completed
 
-## Completed
-- Initialized briefing, dispatch tracking, and review mission
-- Verified authoritative requirements in ORIGINAL_REQUEST.md and PROJECT.md
-- Validated backend test suites:
-  - `node --test tests/tariff-engine.test.mjs` -> PASS (8/8)
-  - `node --test tests/bot-actions-api.test.mjs` -> PASS (5/5)
-  - `node --test tests/whatsapp-ai-agent.test.mjs` -> PASS (24/24)
-- Verified SHA-256 twin server parity:
-  - `demo-server.mjs` -> MATCH (619d2221...)
-  - `whatsapp-ai-service.mjs` -> MATCH (77a220e7...)
-  - `zapi-service.mjs` -> MATCH (ae158451...)
-- Executed adversarial stress suites:
-  - `tests/challenger-tariff-stress.test.mjs` -> PASS (26/26)
-  - `tests/challenger-m1-rest-atomic-stress.test.mjs` -> PASS (14/14)
-- Verified frontend build: `npm run build` in `artifacts/limpeza` -> SUCCESS (50.53s)
-- Completed Adversarial & Integrity Audit: no facade implementations, genuine calculations and protocols
-- Compiled final handoff report in `handoff.md` with verdict APPROVE
+## Tasks
+- [x] Receber dispatch e inicializar BRIEFING.md e DISPATCH.md
+- [x] Ler ORIGINAL_REQUEST.md (seção R6) e orchestrator_17/PROJECT.md (Feature F19)
+- [x] Ler handoff.md do worker_m4
+- [x] Inspecionar detalhadamente `artifacts/api-server/hr/payroll.mjs` e `scripts/hr/payroll.mjs`
+- [x] Inspecionar `tests/hr-m4-payroll-contracts.test.mjs`
+- [x] Executar o teste pontual do M4 (`node --test tests/hr-m4-payroll-contracts.test.mjs` -> 14/14 PASS)
+- [x] Executar a auditoria de paridade twin-server (`node scripts/check-twin-parity.mjs` -> 36/36 PASS 100%)
+- [x] Teste adversarial e de estresse matemático (valores limites, zero, teto INSS, VT maior/menor que 6%, DSR sem HE/AN, etc. -> 100% PASS)
+- [x] Elaborar relatório formal `handoff.md` e emitir veredicto APPROVE
+- [x] Notificar o orquestrador via `send_message`

@@ -1,32 +1,26 @@
-## 2026-10-21T21:29:19Z
-Você é o subagente reviewer_m3_2 (teamwork_preview_reviewer).
+## 2026-10-22T12:54:38Z
+Você é o Reviewer 2 (reviewer_m3_2) para o Marco M3 (Escalas 6x1 44h, Art. 58 CLT, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT).
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seções R4 e R7).
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md` (Features F15, F16, F17, F18).
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md`.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
-
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M3, Features F19 a F28)
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md
-5. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\changes.md
-
-Missão do Reviewer M3_2 (Portais Anserve, Admin CorpFlats, NFs e QR Codes A6):
-1. Inspecione `artifacts/limpeza/src/pages/anserve-restock.tsx`:
-   - Fluxo de PIN de 4 dígitos via `/api/minibar/auth-pin`, priorização de checkouts do dia, conferência de consumo declarado vs físico, reposição de cortesias e apontamento de divergências com fotos.
-2. Inspecione `artifacts/limpeza/src/pages/anserve-dashboard.tsx`:
-   - Fila de NFs pendentes com formato de discriminação (todos os itens, água, consumo frigobar), CPF/CNPJ e e-mail.
-   - Upload de NF com disparo multicanal e extrato financeiro com cálculo de líquido à Anserve.
-3. Inspecione `artifacts/limpeza/src/pages/minibar-admin.tsx`:
-   - Catálogo de produtos, matriz de gabarito padrão nominal por flat e gerador de cartões A6 com QR Code para os 19 flats do Soho Residence e estilos `@media print`.
-4. Inspecione `artifacts/limpeza/src/App.tsx`:
-   - Rotas `/frigobar-reposicao`, `/anserve`, `/frigobar-gestao`, `/frigobar` registradas com lazy loading e guardas de permissão.
-5. Verifique a compilação: `npm --prefix artifacts/limpeza run build` (saída 0).
-6. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
-NUNCA execute testes globais `tests/*.test.mjs`.
-
-Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+SUA MISSÃO DE REVISÃO TÉCNICA:
+1. Examinar minuciosamente o código implementado em `artifacts/api-server/hr/schedules.mjs` e seu espelho em `scripts/hr/schedules.mjs`:
+   - Feriados oficiais: municipais de Campos dos Goytacazes/RJ (Santo Amaro 15/01, Santíssimo Salvador 06/08), estadual do RJ (São Jorge 23/04), móveis e nacionais.
+   - `generateMonthlySchedule`: grade 6x1 44h (modalidades 7h20 e 8h+4h), limite de 6 dias consecutivos sem folga (OJ 410 TST), revezamento dominical (quinzenal para mulheres per Art. 386 CLT e máx 7 semanas para homens).
+   - `calculatePunchTolerance`: Art. 58 §1º CLT (5 min/batida, 10 min/dia) e aplicação estrita da regra da integralidade (Súmula 366 TST).
+   - `calculateDayOvertimeAndNight`: apuração de horas extras 50% em dias normais e 100% em DSR trabalhado e feriados (Lei 605/49 Art. 9º).
+   - `calculateNightShiftAndExtension`: horário noturno urbano (22h00 às 05h00), hora ficta de 52m30s (fator 60/52.5 = 1.142857), adicional de 20% e prorrogação pós-05h00 per Súmula 60, II do TST.
+   - Gestão de Férias: validação do Art. 134 CLT (máx 3 períodos, um >= 14 dias, nenhum < 5 dias, proibição de início 2 dias antes de DSR ou feriado) e alerta de risco de dobra do concessivo (Art. 137 CLT).
+   - Blindagem estrita de Cris (`id: 2`) e Grazi (`id: 3`): nenhuma rotina CLT deve aceitar ou processar prestadoras.
+2. Executar as verificações pontuais:
+   - `node --test tests/hr-m3-whatsapp-schedules.test.mjs` (NUNCA rodar testes globais).
+   - `node --test tests/hr-m2-timekeeping-compliance.test.mjs` (verificar ausência de regressões).
+3. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+4. Enviar mensagem ao orquestrador via `send_message`.

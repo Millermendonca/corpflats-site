@@ -676,3 +676,98 @@ Integrity mode: development
 - [ ] Interfaces dedicadas para Repositora Anserve (visão por flat, consumo declarado, apontamento de divergência e reposição de pagos + cortesias), Supervisão Anserve (fila de NFs pendentes, anexo de foto/arquivo da NF, relatórios e extrato) e Admin CorpFlats (catálogo, QR codes por flat, extrato de repasse Anserve, CRM e insights demográficos por cidade/estado).
 - [ ] Integração no CRM (`crm-guests.tsx`) exibindo o perfil de consumo de frigobar de cada hóspede e na Sofia (`whatsapp-ai-service.mjs`) respondendo e enviando o link de pagamento quando o hóspede mencionar consumo de frigobar.
 - [ ] O comando `npm --prefix artifacts/limpeza run build` executa sem erros de compilação TypeScript/Vite.
+
+
+## 2026-10-22T09:58:01Z
+
+Construir um **Sistema Completo de Gestão de Funcionários CLT (RH, Ponto Eletrônico com Selfie/GPS e Whitelist de Aparelho, Automação WhatsApp, Escalas 6x1, Motor de Conformidade CLT/Sindicato com Travas em 3 Níveis, Folha de Pagamento, Contratos e Controle de ASO)** integrado ao sistema hoteleiro existente (`Guest-Flow-Manager` / CorpFlats). O sistema atenderá inicialmente 1 funcionário de cozinha e 1 camareira em regime CLT, mantendo intacto e isolado o fluxo atual das prestadoras de serviço diaristas (**Cris** e **Grazi**), que não entram como funcionárias CLT.
+
+Working directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+Integrity mode: development
+
+## Requirements
+
+### R1. Cadastro de Funcionários CLT vs. Isolamento de Prestadoras de Serviço (Cris e Grazi)
+- Criar o módulo completo de gestão de funcionários CLT com pré-configuração inicial para **1 Funcionário de Cozinha** e **1 Camareira CLT**, contendo dados pessoais, matrícula/CTPS, cargo, categoria sindical (Hotéis, Restaurantes e Similares), regime de jornada padrão **6x1 (44h semanais — ex: 7h20/dia ou 8h seg-sex + 4h sáb, com 1h de almoço)** totalmente editável, horário de almoço programado, salário base, adicionais, chave PIX e histórico funcional.
+- **Isolamento estrito de Cris e Grazi**: As colaboradoras **Cris** e **Grazi** devem continuar exatamente como estão hoje (prestadoras de serviço / diaristas com pagamento por faxina no extrato de governança), sendo explicitamente excluídas de lembretes de ponto CLT, banco de horas, folha CLT e travas trabalhistas.
+
+### R2. Registro de Ponto com Selfie, GPS, Cerca Virtual e Whitelist de Aparelho
+- Disponibilizar interface mobile-first de batida de ponto (Entrada, Saída Almoço, Retorno Almoço, Saída e Pausas) que exige captura de **Selfie ao vivo** via câmera e **Geolocalização (GPS)** com cálculo de distância em relação às coordenadas do hotel (cerca virtual/geofence configurável).
+- **Controle de Aparelho Autorizado (Device Whitelist)**: Permitir que o ponto seja batido pelo celular do próprio funcionário ou por um aparelho dedicado da empresa, contando com uma opção de **Whitelist de Aparelho** no painel Admin:
+  - O Admin pode cadastrar/autorizar um aparelho específico (ex: botão *"Autorizar este aparelho como Terminal Oficial"* gerando token/fingerprint persistente no dispositivo, ou autorizar aparelhos específicos por funcionário).
+  - Quando a chave **"Exigir Aparelho Autorizado (Bloquear demais aparelhos)"** estiver **desativada** (padrão inicial enquanto o aparelho da empresa ainda não foi comprado), os funcionários batem ponto normalmente pelos seus celulares.
+  - Quando a chave estiver **ativada**, apenas o(s) aparelho(s) na whitelist podem registrar ponto, bloqueando batidas vindas de outros dispositivos/celulares.
+
+### R3. Automação de Ponto no WhatsApp (Lembretes, Confirmação Imediata e Histórico Acumulado)
+- **Confirmação imediata na conversa do WhatsApp a cada batida**: Sempre que o funcionário registrar qualquer batida de ponto, enviar mensagem automática no WhatsApp do funcionário contendo:
+  1. Confirmação da batida realizada (tipo de batida, data, hora exata, status de GPS/aparelho);
+  2. Histórico diário dos dias anteriores do mês vigente + todas as batidas registradas no dia atual;
+  3. Resumo atualizado de horas trabalhadas no dia e no mês, com **saldo acumulado (horas extras / banco de horas) ou horas faltantes** em comparação com a carga horária prevista até a data.
+- **Lembretes automáticos via WhatsApp**:
+  - Lembrete quando o funcionário esquecer de bater o ponto de entrada ou saída após o horário previsto na escala (+ tolerância configurável);
+  - Lembrete nos horários programados de **saída para o almoço** e **retorno do almoço**;
+  - **Alerta preventivo de pausa intrajornada (limite de 6h)**: Monitorar o tempo contínuo trabalhado desde a entrada e disparar lembrete/alerta antes de completar **6 horas seguidas de trabalho** sem saída para o almoço/pausa obrigatória;
+  - **Exclusão automática em dias de folga e férias**: O motor de lembretes deve verificar a escala ativa e **nunca** enviar lembretes de ponto em dias de folga (DSR), férias, feriados dispensados ou afastamentos médicos.
+
+### R4. Montagem de Escalas, Horas Extras, Adicional Noturno e Controle de Férias
+- **Gestão de Escalas**: Calendário/construtor de escala (padrão 6x1 44h semanais ou personalizada) definindo horários de entrada, intervalo de almoço, saída e dias de folga semanal (DSR) e folgas dominicais cíclicas.
+- **Cálculo de Jornada, Horas Extras e Adicional Noturno**:
+  - Apuração automática de horas normais, tolerância legal (Art. 58 §1º CLT — 5 min por batida / 10 min diários), **horas extras** (50% dias úteis / 100% domingos e feriados) e saldo acumulado/faltante;
+  - Cálculo automático de **adicional noturno** (trabalho entre 22:00 e 05:00 e prorrogação, com percentual configurável padrão 20% e hora ficta noturna reduzida de 52m30s).
+- **Controle de Férias**: Contabilização automática de período aquisitivo (12 meses) e período concessivo (12 meses subsequentes), programação de gozo de férias (incluindo fracionamento em até 3 períodos conforme CLT: um deles >= 14 dias e demais >= 5 dias), alertas de risco de férias vencidas (dobra) e bloqueio de escalas/lembretes durante o período de férias.
+
+### R5. Motor de Conformidade Trabalhista (CLT e Sindicato) com 3 Níveis de Trava Configuráveis
+- Implementar um motor de regras trabalhistas e sindicais onde **cada regra pode ser configurada individualmente** pelo Admin em **3 níveis de ação**:
+  1. **`Apenas Alerta`** (`alert`): Permite a operação e gera alerta imediato no painel e no WhatsApp do gestor;
+  2. **`Trava com Senha/Justificativa do Admin`** (`admin_override`): Bloqueia a operação até que o Admin insira justificativa/senha autorizando a exceção;
+  3. **`Bloqueio Total`** (`hard_block`): Impede terminantemente o salvamento da escala ou o registro da ação em desconformidade.
+- **Regras monitoradas pelo motor (com parâmetros editáveis no painel)**:
+  - Trabalhar mais de **6 horas contínuas** sem pausa de almoço/intrajornada (ou intervalo de almoço inferior ao mínimo legal de 1h para jornadas > 6h);
+  - Descanso **interjornada inferior a 11 horas** consecutivas entre o fim de um expediente e o início do próximo (Art. 66 CLT);
+  - Trabalhar mais de **6 dias consecutivos sem folga** (DSR — Art. 67 CLT / OJ 410 SDI-1 TST) ou violar a frequência máxima de domingos trabalhados sem folga dominical;
+  - Exceder o limite de **2 horas extras diárias** (Art. 59 CLT) ou 10 horas totais trabalhadas no dia;
+  - Escalar funcionário em período de **férias**, afastamento médico ou com **ASO vencido**;
+  - Bater ponto fora do raio de GPS permitido (cerca virtual) ou fora do aparelho na whitelist.
+
+### R6. Controle de Pagamento (Folha/Holerite), Contratos/Constituição e Controle de ASO
+- **Controle de Pagamento / Folha Mensal**: Cálculo da folha mensal de cada funcionário CLT somando salário base, horas extras (50%/100%), reflexo DSR, adicional noturno, descontos (INSS, vale-transporte, faltas/atrasos, adiantamentos/vales), geração de recibo/demonstrativo de pagamento (PDF/impressão/envio WhatsApp) e registro de pagamento/baixa via PIX.
+- **Assinatura de Contrato e Constituição (Admissão/DP)**: Geração de documentos contratuais (Contrato de Trabalho CLT, Acordo de Compensação/Banco de Horas, Termo de Uso de Ponto/Celular, Ficha de EPI) com assinatura eletrônica na tela (canvas de assinatura + hash/IP/timestamp) e checklist de documentos de admissão.
+- **Controle de ASO (Saúde Ocupacional / PCMSO)**: Cadastro e histórico de exames ocupacionais (**Admissional, Periódico, Retorno ao Trabalho, Mudança de Risco/Função e Demissional**), com status de aptidão, médico/clínica, anexo/comprovante, data de realização, data de vencimento e alertas automáticos antes do vencimento.
+
+### R7. Paridade de Arquitetura, Build e Testes Pontuais do Repositório
+- Manter paridade estrita (100% SHA-256) entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
+- Integrar as novas rotas e telas no frontend React (`artifacts/limpeza/src/`) seguindo o design system do projeto e o controle de permissões (`permissions.ts`).
+- Executar `npm run build` em `artifacts/limpeza` e criar/executar **exclusivamente** o teste pontual dedicado ao novo módulo (`tests/hr-employee-management.test.mjs`), respeitando estritamente as diretrizes do `AGENTS.md` (proibido rodar varreduras de testes globais).
+
+## Acceptance Criteria
+
+### Isolamento e Cadastro CLT (R1)
+- [ ] Existência de cadastro funcional para Funcionário de Cozinha e Camareira CLT com jornada 6x1 (44h semanais) e regras sindicais configuráveis.
+- [ ] Verificação programática de que Cris e Grazi permanecem marcadas como prestadoras de serviço (`prestadora` / não-CLT) e que a API de lembretes/folha CLT nunca inclui Cris ou Grazi.
+
+### Ponto com Selfie, GPS e Whitelist de Aparelho (R2)
+- [ ] Endpoint e UI de registro de ponto exigem payload de selfie (base64/dataURL) e coordenadas GPS (`lat`, `lng`, `accuracy`), calculando distância para a cerca virtual do hotel.
+- [ ] Quando a Whitelist de Aparelho está desativada, qualquer dispositivo válido registra ponto; quando a Whitelist está ativada com um `deviceId` autorizado, requisições com outro `deviceId` são bloqueadas conforme o nível de trava configurado.
+
+### Automação WhatsApp — Confirmação, Histórico Acumulado e Lembretes (R3)
+- [ ] Cada batida de ponto gera e registra/envia mensagem WhatsApp contendo: (a) data e hora da batida atual, (b) histórico dos dias anteriores do mês + batidas do dia, e (c) saldo acumulado ou horas faltantes frente à carga horária.
+- [ ] Motor de lembretes gera avisos de esquecimento de entrada/saída, saída/volta do almoço e alerta preventivo antes de 6h contínuas sem pausa.
+- [ ] Em dias marcados na escala como `folga`, `ferias` ou `afastamento`, o motor de lembretes retorna 0 disparos para o funcionário.
+
+### Escalas, Horas Extras, Adicional Noturno e Férias (R4)
+- [ ] Motor de cálculo apura corretamente horas normais, horas extras (50% e 100%) e adicional noturno (22h–05h com hora reduzida 52m30s).
+- [ ] Controle de férias calcula períodos aquisitivo e concessivo, valida regras de fracionamento CLT (Art. 134 §1º) e emite alerta de proximidade de vencimento.
+
+### Motor de Conformidade CLT/Sindicato com 3 Níveis de Trava (R5)
+- [ ] Cada regra trabalhista (intrajornada > 6h sem pausa, almoço < 1h, interjornada < 11h, > 6 dias seguidos sem folga, > 2h extras/dia, ASO vencido, férias vencidas, fora do GPS/Whitelist) possui configuração independente entre `alert` (Apenas Alerta), `admin_override` (Trava com Senha/Justificativa do Admin) e `hard_block` (Bloqueio Total).
+- [ ] Testes automatizados comprovam os 3 comportamentos: `alert` permite e gera alerta; `admin_override` retorna erro 403/422 sem justificativa/senha e permite quando enviada autorização do Admin; `hard_block` rejeita com erro 400/403 mesmo com tentativa de override comum.
+
+### Pagamento, Contratos e ASO (R6)
+- [ ] Fechamento de folha mensal calcula proventos (salário + HE + ad. noturno) e descontos, gerando recibo/holerite detalhado.
+- [ ] Módulo de contratos gera minuta contratual preenchida e registra assinatura eletrônica com data/hora/IP.
+- [ ] Módulo de ASO registra exames (admissional, periódico, etc.), calcula vencimento e sinaliza exames vencidos ou a vencer.
+
+### Build, Paridade Twin-Server e Teste Pontual (R7)
+- [ ] `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` possuem hash SHA-256 idêntico.
+- [ ] `npm --prefix artifacts/limpeza run build` compila com código de saída 0 sem erros.
+- [ ] Teste pontual `node tests/hr-employee-management.test.mjs` passa 100% das asserções sem executar testes de outros módulos.

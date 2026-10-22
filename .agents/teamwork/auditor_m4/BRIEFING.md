@@ -1,66 +1,52 @@
-# BRIEFING — 2026-10-01T00:07:30Z
+# BRIEFING — 2026-10-22T14:48:30Z
 
 ## Mission
-Forensic integrity audit for Milestone M4 (Maid Flat Card R6 & PMS Calendar R7 Integrations).
+Forensic integrity audit of Milestone M4 (Folha, Holerite, FGTS, DSR, Vale Transporte, Contratos CLT, Aditivos, ASO, Blindagem PJ/Prestadores Cris e Grazi, Paridade de Gêmeos).
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
-- Roles: critic, specialist, auditor
+- Roles: [critic, specialist, auditor]
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m4
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Target: Milestone M4 (R6 & R7)
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Target: Milestone M4 (Folha de Pagamento, Holerites, Contratos, ASO, Blindagem PJ, Gêmeos Digitais)
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
 - Trust NOTHING — verify everything independently
-- HARD VETO RULE: If you find ANY evidence of hardcoded mocks, test circumvention, or unpushed commits, issue an INTEGRITY VIOLATION verdict. Otherwise, issue CLEAN.
-- Strict SHA256 parity between artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs
-- Check build exit code 0 and dist/ freshness
-- Verify git status clean and pushed to origin main per AGENTS.md
+- Strict test execution rules: NEVER run global tests (`tests/*.test.mjs`), only dedicated point tests (`node --test tests/hr-m4-payroll-contracts.test.mjs`)
+- Verify binary twin parity byte-by-byte (SHA-256) across 36 twins
+- Verify authentic labor calculations (INSS 2026 progressive, IRPF 2026, Súmulas 172 & 60 TST, Art. 462 CLT, MP 2.200-2, NR-7)
+- Verify zero hardcoded test facades or fabricated results
+- Ensure Cris and Grazi shielding produces 403 Forbidden on payroll, CLT contracts, and ASO
+- Final verdict must be binary: CLEAN or INTEGRITY VIOLATION
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-10-01T00:07:30Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T14:48:30Z
 
 ## Audit Scope
-- **Work product**: Milestone M4 implementation (flat-card.tsx, pms-calendar.tsx, dist/ assets, demo-server.mjs mirror, tests/service-orders-integrations.test.mjs)
-- **Profile loaded**: General Project / Forensic Auditor
+- **Work product**: Milestone M4 implementation in `artifacts/api-server/hr/` and `scripts/hr/` (payroll.mjs, contracts-aso.mjs, router.mjs, index.mjs), dedicated point tests, and PJ shielding.
+- **Profile loaded**: General Project / Forensic Integrity Audit
 - **Audit type**: forensic integrity check
 
 ## Audit Progress
 - **Phase**: reporting
 - **Checks completed**:
-  - [x] Read ORIGINAL_REQUEST.md, PROJECT.md, and worker_m4/handoff.md
-  - [x] SHA256 parity between demo-server.mjs and mirror (C5168B7D93CBB9F332AD8700F8401786B67523908E8CA14FEF2044D4BB830E6B)
-  - [x] Mock & facade detection: 0 hardcoded strings, 0 dummy functions found
-  - [x] R6 requirements verification: border amber, batch checkbox lock, pulse badge, body info callout, disabled buttons with Radix Tooltip
-  - [x] R7 requirements verification: timeline visual block, suppression of delete trash, details modal, reservation conflict banner, admin confirmation override in handleSaveRes and drag-drop
-  - [x] Build verification: npm run build in artifacts/limpeza succeeded with exit code 0 (28.93s, 3,346 modules transformed)
-  - [x] Git sync verification: commit a5735d1 pushed to origin/main, 0 unpushed commits, clean working tree for M4 assets
-  - [x] Automated test execution: 20/20 integrations suite PASS, 45/45 service orders core suites PASS, 31/31 admin challenge PASS
+  - Read ORIGINAL_REQUEST.md, PROJECT.md, and worker_m4/handoff.md
+  - Source code audit of payroll.mjs & contracts-aso.mjs (hardcoded checks, facade detection, authentic labor formula verification)
+  - Verify Cris & Grazi shielding logic
+  - Check twin parity via `node scripts/check-twin-parity.mjs` (36/36 files PASS)
+  - Empirically execute dedicated test `node --test tests/hr-m4-payroll-contracts.test.mjs` (14/14 PASS)
+  - Check for pre-populated artifacts or test execution violations (zero detected)
 - **Checks remaining**: None
-- **Findings so far**: CLEAN
+- **Findings so far**: CLEAN — 100% genuine implementation, authentic formulas, zero hardcoded facades, airtight shielding of Cris and Grazi.
 
 ## Key Decisions Made
-- Confirmed full compliance with all R6 and R7 requirements without any mock facades or shortcuts.
-- Verified remote sync on origin main (commit a5735d1).
-- Issuing CLEAN forensic verdict.
+- Confirmed that worker adhered strictly to point tests without executing global test suites.
+- Confirmed that twin parity across all 36 runtime files is at 100% SHA-256 byte-by-byte match.
 
 ## Artifact Index
-- DISPATCH.md — audit dispatch prompt
-- BRIEFING.md — persistent auditor memory
-- progress.md — liveness heartbeat
-- handoff.md — final audit report
-
-## Attack Surface
-- **Hypotheses tested**:
-  - Did worker_m4 use hardcoded mock responses or dummy booleans? Verified NO: full dynamic integration with flat.serviceInProgress and blockItem.isServiceBlock.
-  - Can maid start cleaning while contractor is in room? Verified NO: both dirty and will_clean action buttons disabled with Radix Tooltip.
-  - Can batch cleaning select flats under service? Verified NO: selectable checkbox guarded with !flat.serviceInProgress.
-  - Does PMS calendar allow overriding service blocks? Verified YES: displays warning banner and prompts confirm() dialog rather than hard-blocking admin.
-  - Are commits unpushed? Verified NO: origin/main is synced at commit a5735d1.
-- **Vulnerabilities found**: None in M4 scope.
-- **Untested angles**: None.
-
-## Loaded Skills
-- None requested/required.
+- DISPATCH.md — Initial dispatch instructions
+- BRIEFING.md — Situational awareness and working memory
+- progress.md — Audit execution progress
+- handoff.md — Forensic Audit Report with final CLEAN verdict

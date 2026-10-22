@@ -1,190 +1,164 @@
-# Handoff Report — Review & Adversarial Challenge: Milestone M1 (Minibar Backend & Security)
+# Relatório de Revisão & Auditoria Adversarial — Marco M1 (Backend Core & Isolamento de Prestadoras)
 
-**Agent**: `reviewer_m1_1` (teamwork_preview_reviewer)  
-**Roles**: reviewer, critic  
-**Date**: 2026-10-21T19:35:00Z  
-**Verdict**: **REQUEST_CHANGES**
-
----
-
-## 1. Observation
-
-### Obs 1: Paridade SHA-256 dos Servidores Gêmeos Quebrada
-Comando executado:
-```powershell
-(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash
-(Get-FileHash 'scripts/demo-server.mjs').Hash
-(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
-```
-Resultado verbatim observado:
-```
-CEAA95F59664B8AE45754C43BC18013E3F976980801988E6AF82BC9B6FD221ED
-D8EA1FCAA3EFAC57759B613CC2F484E8DC851F76DCDB680A78406525330BA5F8
-False
-```
-Diferença encontrada via `git diff scripts/demo-server.mjs artifacts/api-server/demo-server.mjs`:
-```diff
-diff --git a/artifacts/api-server/demo-server.mjs b/artifacts/api-server/demo-server.mjs
-index 37ca26d..101d64b 100644
---- a/artifacts/api-server/demo-server.mjs
-+++ b/artifacts/api-server/demo-server.mjs
-@@ -27255,6 +27255,7 @@ function formatTriggerTitle(trigger) {
-     payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
-     sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
-     pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
-+    pre_checkin_enter_prompt: "Pós Check-in Online • Botão: Informar que Entrei",
-     room_ready: "Apartamento Pronto • Acesso Liberado",
-     checkin_completed: "Check-in Realizado • Boas-Vindas",
-     checkout_completed: "Check-out Realizado • Agradecimento",
-```
-Timestamp de modificação:
-- `artifacts/api-server/demo-server.mjs`: `2026-10-21T16:19:32`
-- `scripts/demo-server.mjs`: `2026-10-21T16:13:28`
-
-### Obs 2: Execução do Teste Pontual Obrigatório (`node --test tests/minibar-backend-flow.test.mjs`)
-Comando executado:
-```powershell
-node --test tests/minibar-backend-flow.test.mjs
-```
-Resultado verbatim observado:
-```
-TAP version 13
-# Subtest: Milestone M1 — Minibar Backend Core & APIs Suite
-    # Subtest: F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
-    not ok 1 - F01 / Paridade SHA-256: demo-server.mjs em artifacts/ e scripts/ devem ter hashes idênticos byte-a-byte
-      ---
-      duration_ms: 20.262
-      location: 'file:///C:/Users/mille/OneDrive/Hotel/Documentos%20h%C3%B3spedes/Guest-Flow-Manager/tests/minibar-backend-flow.test.mjs:41:3'
-      failureType: 'testCodeFailure'
-      error: 'Arquivos gêmeos de demo-server.mjs devem possuir paridade exata SHA-256'
-      code: 'ERR_ASSERTION'
-      name: 'AssertionError'
-      expected: 'd8ea1fcaa3efac57759b613cc2f484e8dc851f76dcdb680a78406525330ba5f8'
-      actual: 'ceaa95f59664b8ae45754c43bc18013e3f976980801988e6af82bc9b6fd221ed'
-...
-# tests 20
-# suites 2
-# pass 19
-# fail 1
-# cancelled 0
-# skipped 0
-# todo 0
-# duration_ms 6322.0747
-```
-No `handoff.md` do `worker_m1`, linhas 16-24, foi atestado `pass 20, fail 0` e paridade `True`, o que diverge da execução real no repositório.
-
-### Obs 3: Desacoplamento Financeiro Verificado
-Em `artifacts/api-server/demo-server.mjs`, linhas 46175-46263 e 46291-46400:
-- O valor do pedido de frigobar (`order.totalAmount`) é mantido exclusivamente dentro de `db.minibarOrders`.
-- Nenhuma operação das rotas `/api/minibar/*` ou dos webhooks `/api/pms/inter/webhook` e `/api/pms/mercadopago/webhook` altera o campo `r.totalAmount` de qualquer reserva em `db.reservations`.
-- O teste pontual (subtestes 6 e 8) valida explicitamente que após criação de pedidos PIX e Cartão, o `dataPortal.reservation.totalAmount` permanece estritamente `450.00`.
-
-### Obs 4: Validação dos 4 Dígitos do Contexto do Flat (`/api/minibar/flat-context`)
-Em `artifacts/api-server/demo-server.mjs`, linhas 45954-45985:
-- Exige `digits.length === 4` e número do flat.
-- Testa contra os 4 últimos dígitos do celular (`reservation.guestPhone.endsWith(digits)`) e também contra o CPF (`reservation.guestDocument.endsWith(digits)`).
-- Retorna 400 se incorreto (`"Dígitos incorretos ou nenhuma reserva ativa no flat"`).
-
-### Obs 5: Retenção Mínima em `pruneDatabase`
-Em `artifacts/api-server/demo-server.mjs`, linhas 8736-8753:
-- Se `db.minibarOrders.length > 3000`, expurga apenas pedidos cancelados/não pagos anteriores a `getOffsetDateStr(-730)`. Pedidos pagos (`paymentStatus === "pago"`) são retidos indefinidamente (`(orderDate >= cutoffDate) || (o.paymentStatus === "pago")`).
-- `db.minibarInspections` retém todas as inspeções por no mínimo 730 dias.
-
-### Obs 6: Anti-abuso de Cortesia e Brecha em Pedidos Mistos Pendentes
-Em `artifacts/api-server/demo-server.mjs`, linhas 46168-46173:
-```javascript
-const paidOrders = (db.minibarOrders || []).filter(o =>
-  (o.reservationCode === finalResCode || String(o.reservationId) === String(reservation?.id)) &&
-  o.paymentStatus === "pago"
-);
-const alreadyConsumedCourtesy = paidOrders.some(o => (o.items || []).some(i => i.isCourtesy));
-```
-- A verificação de cortesia já usufruída checa **apenas** `o.paymentStatus === "pago"`.
-- Se o hóspede fizer um pedido com cortesia + item pago (ex: kit cortesia + água), o pedido é criado com `paymentStatus: "pendente"`.
-- Enquanto o pedido estiver pendente, `alreadyConsumedCourtesy` permanece `false`. O hóspede pode abrir múltiplos checkouts simultâneos com cortesia e quitar todos, obtendo múltiplas cortesias gratuitas.
-
-### Obs 7: Seleção de Reserva em Flats Vagos (`findActiveOrRecentReservationForFlat`)
-Em `artifacts/api-server/demo-server.mjs`, linhas 45796-45798:
-```javascript
-// Ordena decrescente por checkinDate
-validReservations.sort((a, b) => String(b.checkinDate || "").localeCompare(String(a.checkinDate || "")));
-return validReservations[0];
-```
-- Se o flat estiver vago hoje e o hóspede tiver feito checkout recente (ontem), mas houver uma reserva futura cadastrada (ex: daqui a 1 mês), `b.checkinDate` selecionará a reserva **futura**.
-- Quando o hóspede recém-saído escanear o QR code para acertar o frigobar, seus 4 dígitos falharão porque o flat context foi vinculado à reserva futura do próximo hóspede.
-
-### Obs 8: TDZ ReferenceError no `loadDatabase`
-No boot do servidor (capturado nos logs):
-```
-[Database] Erro ao ler database: ReferenceError: Cannot access 'DEFAULT_INTER_CONFIG' before initialization
-    at getInterCertificates (artifacts/api-server/demo-server.mjs:41147:43)
-    at loadDatabase (artifacts/api-server/demo-server.mjs:6652:56)
-    at async artifacts/api-server/demo-server.mjs:9500:1
-```
-`DEFAULT_INTER_CONFIG` é declarada com `const` na linha 41147, mas referenciada por `loadDatabase` na linha 6652 antes de ser inicializada.
+- **Revisor**: Reviewer 1 (`reviewer_m1_1`)
+- **Papéis**: Reviewer, Adversarial Critic
+- **Milestone**: M1 (Backend Core & Isolamento de Prestadoras)
+- **Data/Hora**: 2026-10-22T10:42:00Z
+- **Veredicto**: **APPROVE**
 
 ---
 
-## 2. Logic Chain
+## 1. Observation (O que foi diretamente observado)
 
-1. **Paridade Twin-Server & Quebra de Teste** (Obs 1 e Obs 2):
-   - A regra R10 do projeto e o checklist do despacho exigem paridade exata SHA-256 byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-   - A execução de `Get-FileHash` resultou em `False` devido a uma inserção na linha 27255 de `artifacts/api-server/demo-server.mjs`.
-   - O primeiro teste do arquivo pontual `tests/minibar-backend-flow.test.mjs` falhou (`not ok 1 - F01 / Paridade SHA-256`), resultando em 19/20 testes passados e saída com código 1.
-   - Portanto, a entrega atual está formalmente quebrada e viola o critério de aceitação de entrega do Marco M1.
+1. **Execução Independente do Teste Pontual Dedicado (`tests/hr-m1-backend-core.test.mjs`)**:
+   - Comando executado: `node --test tests/hr-m1-backend-core.test.mjs`
+   - Código de saída: `0`
+   - Saída verbatim:
+     ```
+     TAP version 13
+     # Subtest: M1-1: Twin-Server Parity (100% SHA-256)
+     ok 1 - M1-1: Twin-Server Parity (100% SHA-256)
+       ---
+       duration_ms: 42.1132
+       ...
+     # Subtest: M1-2: Isolamento Estrito de Prestadoras (Cris e Grazi)
+     ok 2 - M1-2: Isolamento Estrito de Prestadoras (Cris e Grazi)
+       ---
+       duration_ms: 0.8005
+       ...
+     # Subtest: M1-3: Seed Seguro e Validação de Funcionários CLT
+     ok 3 - M1-3: Seed Seguro e Validação de Funcionários CLT
+       ---
+       duration_ms: 0.5457
+       ...
+     # Subtest: M1-4: Inicialização de Coleções de RH (ensureHrCollections)
+     ok 4 - M1-4: Inicialização de Coleções de RH (ensureHrCollections)
+       ---
+       duration_ms: 1.5706
+       ...
+     # Subtest: M1-5: Proteção contra Poda em pruneDatabase() (Guarda de 5 Anos)
+     ok 5 - M1-5: Proteção contra Poda em pruneDatabase() (Guarda de 5 Anos)
+       ---
+       duration_ms: 0.3478
+       ...
+     # Subtest: M1-6: Endpoints CRUD de RH via Roteador Express
+     ok 6 - M1-6: Endpoints CRUD de RH via Roteador Express
+       ---
+       duration_ms: 123.7343
+       ...
+     1..6
+     # tests 6
+     # suites 0
+     # pass 6
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 936.2781
+     ```
 
-2. **Divergência de Atestação no Handoff** (Obs 2):
-   - O `handoff.md` do `worker_m1` declarou 20 testes passados e paridade `True`.
-   - Como o hash está divergente e o teste falha na linha 41, o trabalho não pode ser aprovado sem a devida reconciliação.
+2. **Auditoria de Paridade Twin-Server SHA-256**:
+   - Comando executado: `node scripts/check-twin-parity.mjs`
+   - Código de saída: `0`
+   - Verificados 29/29 pares de arquivos gêmeos entre `artifacts/api-server/` e `scripts/`, incluindo:
+     - `demo-server.mjs`: SHA-256 idêntico (`40d5c1392673...`)
+     - `hr/employees.mjs`: SHA-256 idêntico (`6ecf7f5b9a2a...`)
+     - `hr/index.mjs`: SHA-256 idêntico (`052cc413c36c...`)
+     - `hr/router.mjs`: SHA-256 idêntico (`1c81898ace4b...`)
+     - Todos os 13 serviços adicionais de `artifacts/api-server/` e submódulo `wbp/`.
 
-3. **Qualidade e Completude das Features F01 a F10** (Obs 3, Obs 4, Obs 5):
-   - As 19 rotas e funcionalidades de negócio (catálogo, gabarito, 4 dígitos, checkout PIX/Cartão, webhooks, NF-e, inspeção com Sofia WhatsApp, repasse financeiro e analytics) funcionam corretamente de ponta a ponta quando testadas no servidor.
-   - O desacoplamento financeiro foi rigorosamente respeitado: `r.totalAmount` permanece intacto em todos os fluxos.
-   - A retenção de 730 dias em `pruneDatabase` está devidamente implementada.
+3. **Inspeção de `artifacts/api-server/hr/employees.mjs`**:
+   - Linhas 8–11: `hashPin(pin)` utiliza SHA-256 nativo via `crypto.createHash("sha256")`.
+   - Linhas 17–36: `isPrestadora(entity)` verifica IDs (`2`, `3`, `"2"`, `"3"`), usernames (`"cris"`, `"grazi"`), nomes/apelidos contendo `"cris"` ou `"grazi"`, telefones (`22988486446`, `22999106204`) e `contractType` (`"prestador"`, `"prestadora"`, `"diarista"`).
+   - Linhas 41–47: `isCltEmployee(emp)` aplica filtragem rigorosa: rejeita nulos, entidades identificadas por `isPrestadora`, exige `contractType === "clt"`, rejeita `isClt === false` ou `cltExempt === true` e exige `active !== false`.
+   - Linhas 52–58: `validateRecipientNotPrestador(recipient)` lança `[CRITICAL_SECURITY_VIOLATION]` caso uma prestadora seja passada como destinatária de rotinas CLT.
+   - Linhas 63–253: `getDefaultHrEmployees()` cria sementes com schema completo para Cozinheira Geral (`emp_cozinha_01`, Sebastiana Ramos dos Santos, CLT-001, 44h semanais, salário R$ 1.780,00, 20% insalubridade, PIN "4021") e Camareira CLT (`emp_camareira_01`, Luciana Moreira Ribeiro, CLT-002, 44h semanais, salário R$ 1.650,00, 20% insalubridade, PIN "1234").
+   - Linhas 258–265: `sanitizeEmployee(emp)` remove `pinHash` e `pin`, expondo apenas o boolean `pinConfigured`.
+   - Linhas 270–281: `calculateTimeDiffMinutes(startTime, endTime)` calcula minutos considerando cruzamento de meia-noite.
+   - Linhas 359–528: `createEmployee(db, payload, author)` valida unicidade de CPF (11 dígitos), matrícula sequencial, obrigatoriedade de intervalo intrajornada >= 60 min para jornadas > 6h (Art. 71 CLT), salário base > 0, PIN de 4 dígitos e inicializa `functionalHistory` para auditoria. Rejeita expressamente nomes contendo "Cris" ou "Grazi".
+   - Linhas 533–667: `updateEmployee(db, id, payload, author)` bloqueia prestadoras, audita em `functionalHistory` alterações salariais, de cargo e de status, valida Art. 71 CLT caso a escala seja modificada e rejeita nomes de prestadoras.
 
-4. **Vulnerabilidades de Borda Identificadas** (Obs 6, Obs 7, Obs 8):
-   - A verificação de cortesia em pedidos mistos pendentes permite bypass caso o hóspede faça pedidos simultâneos antes da compensação.
-   - A seleção de flat vago escolhe reservas do futuro em vez do hóspede de checkout recente.
-   - O TDZ no boot causa `ReferenceError` capturado no catch de `loadDatabase()`.
+4. **Inspeção de `artifacts/api-server/hr/router.mjs`**:
+   - Linhas 13–136: `createHrRouter({ db, saveDatabase })` monta:
+     - `GET /health`: status do módulo.
+     - `GET /employees`: listagem filtrada por `isCltEmployee`, sanitizada (sem hashes) e excluindo Cris e Grazi.
+     - `POST /employees`: criação com status 201 e chamada a `saveDatabase("hr_employee_create")`, retornando 400 em caso de validação inválida.
+     - `GET /employees/:id`: busca individual, retornando 404 se `isPrestadora` for true ou colaborador inexistente.
+     - `PATCH /employees/:id`: atualização com auditoria e chamada a `saveDatabase("hr_employee_update")`, retornando 404 para prestadoras ou não encontrados, e 400/403 para validações e acesso negado.
+
+5. **Inspeção de `artifacts/api-server/hr/index.mjs`**:
+   - Linhas 20–40: `getDefaultHrSettings()` com geofence no Soho (-21.7584, -41.3262, raio de 150m), tolerância de 10 min, limite diário de 10h e 2h extras.
+   - Linhas 46–112: `getDefaultHrComplianceSettings()` com 10 regras sindicais/trabalhistas configuradas nos 3 níveis (`alert`, `admin_override`, `hard_block`).
+   - Linhas 117–140: `ensureHrCollections(db)` garante a existência e integridade das 11 coleções no `db`.
+   - Linhas 146–151: `initHrWhatsAppAutomation` silenciado com `if (process.env.NODE_ENV === "test") return;` para evitar timers pendentes ou mensagens indesejadas em testes.
+
+6. **Inspeção das Conexões em `artifacts/api-server/demo-server.mjs`**:
+   - Linha 228: Importação de `createHrRouter, ensureHrCollections, initHrWhatsAppAutomation`.
+   - Linhas 1086–1087: `defaultUsers` com `contractType: "prestador"` explicitado para Cris (`id: 2`) e Grazi (`id: 3`).
+   - Linhas 1472, 6501 e 6744: Invocação de `ensureHrCollections(db)` na inicialização em memória, após carga de disco e após carga do PostgreSQL.
+   - Linha 1497: Montagem canônica `app.use("/api/hr", createHrRouter({ db, saveDatabase }));`.
+   - Linhas 5139 e 5160: `sanitizeMaidUsers()` assegurando continuamente `contractType = "prestador"`.
+   - Linhas 8890–8905: `LIMITS` em `pruneDatabase()` remove todas as 11 coleções de RH da poda por limites curtos.
+   - Linhas 8968–8980: Aplicação de retenção legal de 5 anos (1825 dias) para grandes volumes (>50.000 em `hrTimeRecords` e >20.000 em `hrComplianceAudits`).
+   - Linhas 50588–50589: `initHrWhatsAppAutomation` acionado na inicialização do servidor HTTP fora de ambiente de teste.
 
 ---
 
-## 3. Caveats
+## 2. Logic Chain (Cadeia de Raciocínio)
 
-- As 19 asserções funcionais de frigobar em `tests/minibar-backend-flow.test.mjs` passam com sucesso. A única falha decorre da divergência de 1 linha (`pre_checkin_enter_prompt` adicionada por outra atividade paralela em `artifacts/api-server/demo-server.mjs` sem ser copiada para `scripts/demo-server.mjs`).
-- Como a role de reviewer proíbe modificação de código de implementação (`Review-only — do NOT modify implementation code`), a correção não foi aplicada diretamente pelo reviewer, sendo devolvida ao worker para ajuste.
-
----
-
-## 4. Conclusion
-
-**Veredito**: **REQUEST_CHANGES**
-
-O Marco M1 está com a sua lógica de negócio implementada com excelência e robustez (19 dos 20 testes de frigobar passando, desacoplamento financeiro total, auditoria e telemetria ativas). Contudo, **NÃO PODE SER APROVADO** pelos seguintes motivos mandatórios:
-1. **[CRÍTICO - BLOQUEANTE]**: Falha no subteste 1 de `tests/minibar-backend-flow.test.mjs` devido à quebra de paridade SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-2. **[MAJOR]**: Vulnerabilidade anti-abuso de cortesias para pedidos mistos pendentes (Obs 6).
-3. **[MAJOR]**: Precedência errônea de reservas futuras sobre checkout recente no QR Code de flat vago (Obs 7).
-4. **[MINOR]**: `ReferenceError` em `loadDatabase` por Temporal Dead Zone em `DEFAULT_INTER_CONFIG` (Obs 8).
+1. A partir da **Observação 2**, a paridade de 29/29 arquivos gêmeos foi confirmada de forma automatizada por SHA-256, cumprindo integralmente o requisito arquitetural R7 / F1 do projeto (`artifacts/api-server/` vs `scripts/`).
+2. A partir da **Observação 3 e 4**, as entidades de colaboradores CLT em `employees.mjs` e as rotas em `router.mjs` implementam regras de negócio reais, completas e defensivas:
+   - Validações de jornada 6x1 (44h) e intervalo intrajornada (Art. 71 CLT: >= 60 min para turnos > 6h) são aplicadas tanto na criação quanto na atualização.
+   - A guarda de isolamento de Cris e Grazi opera em múltiplas camadas (IDs 2 e 3, nomes, apelidos, telefones e tipo de contrato), impedindo vazamento ou tratamento indevido como CLT.
+   - Hashes de PIN (`pinHash`) e credenciais nunca são expostos em endpoints de leitura da API (`sanitizeEmployee`).
+3. A partir da **Observação 5 e 6**, a inicialização das 11 coleções no `db` (`ensureHrCollections`) é chamada em todos os pontos de hidratação do banco de dados (inicialização, disco e nuvem Postgres), e a função de poda (`pruneDatabase()`) respeita o requisito de guarda documental legal de 5 anos (1825 dias).
+4. A partir da **Observação 1**, o teste pontual dedicado `tests/hr-m1-backend-core.test.mjs` cobre todas as camadas (paridade, isolamento, schemas, coleções, poda e CRUD via Express) com 100% de sucesso (6/6 subtestes) e tempo de execução inferior a 1 segundo, sem afetar ou acionar suítes globais.
+5. Não foi detectada nenhuma violação de integridade (sem hardcodes de testes, sem facades simuladas, sem atalhos espúrios, sem adulteração de logs).
 
 ---
 
-## 5. Verification Method
+## 3. Caveats (Ressalvas)
 
-Para o worker ou orquestrador verificar a resolução:
+- **Parâmetro `payload.id` em `createEmployee`**: A função `createEmployee` aceita um `payload.id` opcional. Embora `isPrestadora({ id })` bloqueie buscas e atualizações para IDs 2 e 3, recomenda-se adicionar uma guarda explícita `if (payload.id && isPrestadora({ id: payload.id }))` no início de `createEmployee` para garantir rejeição imediata no momento da criação caso um cliente tente passar explicitamente `id: 2` ou `id: 3`.
+- **Autenticação em `/api/hr`**: Os endpoints atuais utilizam `req.user?.username || "admin"` como autor padrão das ações em `functionalHistory`. A amarração com middleware de sessão/token JWT dos administradores será consolidada no Marco M5.
+- **Testes Globais Preservados**: Conforme determinado estritamente no `AGENTS.md`, apenas o teste pontual `node --test tests/hr-m1-backend-core.test.mjs` foi executado. Nenhuma varredura global foi realizada.
 
-1. **Paridade SHA-256**:
+---
+
+## 4. Conclusion (Conclusão & Veredicto)
+
+**Veredicto**: **APPROVE**
+
+A implementação do **Marco M1 (Backend Core & Isolamento de Prestadoras)** cumpre com excelência todos os critérios de aceite definidos no `PROJECT.md` e `ORIGINAL_REQUEST.md`:
+- Estrutura modular limpa e expansível sob `artifacts/api-server/hr/` e espelho em `scripts/hr/`.
+- 100% de paridade SHA-256 restabelecida em todos os 29 arquivos gêmeos.
+- Isolamento estrito e inviolável de Cris e Grazi como prestadoras de serviço diaristas.
+- Sementes padrão corretas para Cozinheira Geral (CLT-001) e Camareira CLT (CLT-002).
+- Proteção jurídica contra poda indevida com guarda de 5 anos (1825 dias).
+- Roteador Express com operações CRUD funcionais, validação legal e trilha de auditoria em `functionalHistory`.
+
+O Marco M1 está apto e homologado para o avanço ao Marco M2 (Ponto Eletrônico & Motor de Conformidade em 3 Níveis).
+
+---
+
+## 5. Verification Method (Método de Verificação Independente)
+
+Para auditar de forma independente este veredicto:
+
+1. **Executar a auditoria de paridade Twin-Server SHA-256**:
    ```powershell
-   Copy-Item -Path 'artifacts/api-server/demo-server.mjs' -Destination 'scripts/demo-server.mjs' -Force
-   (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+   node scripts/check-twin-parity.mjs
    ```
-   *Condição de invalidação*: Se retornar `False`, rejeitar imediatamente.
+   *Critério*: Código de saída `0`, status `100% PASS` (29/29 arquivos).
 
-2. **Execução Estrita do Teste Pontual**:
+2. **Executar a suíte de testes pontual dedicada do Marco M1**:
    ```powershell
-   node --test tests/minibar-backend-flow.test.mjs
+   node --test tests/hr-m1-backend-core.test.mjs
    ```
-   *Critério de aprovação*: Deve retornar exatamente:
-   `# tests 20`
-   `# pass 20`
-   `# fail 0`
-   com código de saída 0.
+   *Critério*: Código de saída `0`, 6 subtestes com status `ok`, 0 falhas.
+
+3. **Inspecionar os arquivos de código implementados**:
+   - `artifacts/api-server/hr/employees.mjs`
+   - `artifacts/api-server/hr/router.mjs`
+   - `artifacts/api-server/hr/index.mjs`
+   - `artifacts/api-server/demo-server.mjs`

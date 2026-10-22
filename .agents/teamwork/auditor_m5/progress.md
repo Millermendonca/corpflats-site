@@ -1,16 +1,17 @@
-# Progress - Forensic Auditor M5
+# Audit Progress — auditor_m5
 
-Last visited: 2026-10-01T00:31:50Z
+- **Current Status**: Complete — Forensic Audit Completed with CLEAN Verdict
+- **Last visited**: 2026-10-22T16:02:00Z
 
-## Current Status
-Forensic audit complete. All checks passed. Preparing handoff report and dispatching message to parent.
-
-## Steps
-- [x] Received dispatch & initialized BRIEFING.md
-- [x] Read authoritative documents (ORIGINAL_REQUEST.md, PROJECT.md, worker_m5_e2e/handoff.md)
-- [x] Cheating / Mock Facade Detection: PASS (no mocks, genuine implementation)
-- [x] Backend Mirror Parity Verification: PASS (SHA-256 match, 0 diff bytes)
-- [x] Git status and remote push verification: PASS (HEAD == origin/main, 0 unpushed commits)
-- [x] Build verification (artifacts/limpeza): PASS (exit code 0, dist/ fresh and 0 diff)
-- [x] Automated test battery execution: PASS (114/114 tests passed, 0 failures)
-- [x] Writing handoff.md and sending message to parent orchestrator
+## Checklist
+- [x] Dispatch received and saved
+- [x] Initial Briefing created
+- [x] Read ORIGINAL_REQUEST.md
+- [x] Read PROJECT.md
+- [x] Read worker_m5 handoff.md
+- [x] Inspect ponto-mobile.tsx & hr-dashboard.tsx for facades/stubs (CLEAN)
+- [x] Run Twin-Server SHA-256 parity script (36/36 PASS)
+- [x] Run production build (`npm --prefix artifacts/limpeza run build` exit code 0)
+- [x] Verify legal isolation (Cris & Grazi / CLT vs Prestadoras in frontend & backend) (CLEAN & IMPENETRABLE)
+- [x] Verify AGENTS.md test rule compliance (no global tests executed; dedicated test 12/12 PASS)
+- [x] Generate final verdict and handoff.md (CLEAN)

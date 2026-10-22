@@ -1,17 +1,22 @@
-## 2026-10-11T03:36:40Z
-Você é o Reviewer 2 (Frontend Admin UI & Twin Parity Reviewer) do Milestone M4 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m4_2
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-Você DEVE LER ORIGINAL_REQUEST.md e PROJECT.md antes de iniciar.
+## 2026-10-22T14:44:08Z
+Você é o Reviewer M4-2 (reviewer_m4_2) para o Marco M4 (Contratos de Trabalho com Assinatura Canvas e Controle de Saúde Ocupacional ASO).
+Seu diretório de trabalho exclusivo é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m4_2`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-Missão de Revisão do M4:
-1. Revise a conformidade com R5 no Frontend:
-   - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`: Highlight Card da Chave Mestra, 5 interruptores granulares com suspensão visual quando desligada, indicador tri-modal de status em tempo real, seção avançada para hold minutes e handover message.
-   - `artifacts/limpeza/src/pages/tarifas.tsx`: 2 abas estruturadas, Mapa de Tarifas Diárias com matriz flats x dias, navegação de canais (Direto, Booking, Airbnb) e meses, modal de ajuste individual e restauração SEBRAE, modal de edição em lote (Bulk Update) com preview dinâmico, preservação dos parâmetros e taxas adicionais do site (`siteConfig`).
-2. Valide o processo de build do frontend:
-   `npm --prefix artifacts/limpeza run build`
-3. Valide a paridade estrita SHA-256 entre `artifacts/api-server/` e `scripts/`.
-4. Emita seu veredicto: APPROVE ou REQUEST_CHANGES.
-Escreva seu relatório em: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m4_2\handoff.md`.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seção R6).
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md` (Features F20 e F21).
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4\handoff.md`.
+
+SUA MISSÃO DE REVISÃO TÉCNICA:
+1. Auditar minuciosamente `artifacts/api-server/hr/contracts-aso.mjs` e seu espelho em `scripts/hr/contracts-aso.mjs`:
+   - `generateContractDocument`: verificar as 4 minutas contratuais (`contrato_trabalho_clt`, `termo_vale_transporte`, `acordo_banco_horas`, `termo_autorizacao_descontos`).
+   - `signContractWithCanvas`: verificar captura em Canvas Base64, coleta de IP, timestamp, user-agent e selo criptográfico SHA-256 per MP 2.200-2/2001 e Lei 14.063/2020.
+   - Gestão de ASO: cadastro dos 5 exames per NR-7 (`admissional`, `periodico`, `retorno_trabalho`, `mudanca_risco`, `demissional`), vencimento padrão de 1 ano e alertas preventivos (`expired`, `expiring_30_days`, `expiring_60_days`).
+   - Blindagem estrita de Cris e Grazi com HTTP 403 Forbidden em todos os endpoints de contratos e ASO.
+2. Executar a verificação pontual:
+   `node --test tests/hr-m4-payroll-contracts.test.mjs` (14/14 PASS).
+3. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+4. Enviar mensagem ao orquestrador via `send_message`.

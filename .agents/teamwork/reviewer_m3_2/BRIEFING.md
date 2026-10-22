@@ -1,63 +1,72 @@
-# BRIEFING — 2026-10-21T21:40:00Z
+# BRIEFING — 2026-10-22T13:05:00Z
 
 ## Mission
-Objective review and adversarial audit of Milestone M3 work products for Portais Anserve, Admin CorpFlats, NFs e QR Codes A6 (Features F19 to F28), verifying implementation correctness, edge cases, integrity, and frontend build.
+Revisão técnica e crítica adversarial profunda do Marco M3 (Escalas 6x1 44h, Art. 58 CLT, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT).
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: reviewer & critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: M3 (Minibar & Anserve Integration)
-- Instance: 2 of 2 (reviewer_m3_2)
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Milestone: M3
+- Instance: 2 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- NUNCA executar testes globais `tests/*.test.mjs`, varreduras ou em lote (AGENTS.md)
-- Only write metadata to `.agents/teamwork/reviewer_m3_2/`
-- Report findings with clear verdict (APPROVE / REQUEST_CHANGES)
-- Check actively for integrity violations (hardcoding, facades, shortcuts, self-certifying)
+- NUNCA executar testes globais, em lote ou varreduras (apenas testes pontuais especificados)
+- Blindagem estrita de Cris (id: 2) e Grazi (id: 3) contra inclusão em regras CLT
+- Detecção ativa de violações de integridade (mockings fraudulentos, facade implementations, bypass)
+- Veredicto explícito: APPROVE ou REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:40:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T13:05:00Z
 
 ## Review Scope
-- **Files reviewed**:
-  - `artifacts/limpeza/src/pages/anserve-restock.tsx` (PIN auth, checkout prioritization, physical vs declared check, courtesy restock, divergence reporting with photos)
-  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx` (Pending NF queue, discrimination format, CPF/CNPJ & email, upload NF with multichannel delivery, financial statement & net calculation)
-  - `artifacts/limpeza/src/pages/minibar-admin.tsx` (Product catalog, nominal template matrix per flat, A6 card generator with QR codes for 19 Soho flats, print styles)
-  - `artifacts/limpeza/src/App.tsx` (Routes `/frigobar-reposicao`, `/anserve`, `/frigobar-gestao`, `/frigobar`, lazy loading & route guards)
-  - `artifacts/limpeza/src/lib/permissions.ts` (RBAC roles `anserve_repositora` and `anserve_gestor`, module sets and route aliases)
-  - `artifacts/limpeza/src/components/layout.tsx` (Sidebar category, BottomNav context-aware links)
-  - `artifacts/limpeza/src/pages/equipe.tsx` (User management modals, role dropdowns and badges)
+- **Files to review**:
+  - `artifacts/api-server/hr/schedules.mjs`
+  - `scripts/hr/schedules.mjs`
+  - `artifacts/api-server/hr/whatsapp-automation.mjs`
+  - `scripts/hr/whatsapp-automation.mjs`
+  - `artifacts/api-server/hr/router.mjs`
+  - `tests/hr-m3-whatsapp-schedules.test.mjs`
+  - `tests/hr-m2-timekeeping-compliance.test.mjs`
+- **Interface contracts**: `PROJECT.md` (Features F15, F16, F17, F18) e `ORIGINAL_REQUEST.md` (R4, R7)
+- **Review criteria**: conformidade legal estrita (CLT, Súmulas e OJs do TST), integridade de código, exatidão dos feriados municipais/estaduais/nacionais, ausência de regressões, blindagem de prestadoras PJ.
 
 ## Key Decisions Made
-- All 4 primary files and supporting RBAC files inspected line-by-line.
-- Integrity verification: No hardcoded mocks, facades, or test bypasses detected. Implementation contains authentic business logic, dynamic state, and error handling.
-- Independent compilation verified: `npm --prefix artifacts/limpeza run build` completed with return code 0 in 40.77s.
-- Verdict: APPROVE.
+- Executadas as suítes pontuais autorizadas: `hr-m3-whatsapp-schedules.test.mjs` (12/12 PASS), `hr-m2-timekeeping-compliance.test.mjs` (10/10 PASS) e `hr-m1-backend-core.test.mjs` (7/7 PASS).
+- Realizada auditoria adversarial minuciosa do código-fonte de `schedules.mjs`.
+- Identificada violação de integridade e falhas graves de lógica:
+  1. INTEGRITY VIOLATION: Hardcoded test reference date em `getVacations` (`const refDate = new Date("2026-10-22T00:00:00.000Z");`).
+  2. FACADE / CRITICAL BUG: `calculateNightShiftAndExtension` assume que qualquer batida é turno noturno e aplica 420 min de adicional noturno a turnos diurnos (ex: 06h00 às 14h20).
+  3. MAJOR BUG: `calculatePunchTolerance` credita atrasos como horas extras (`creditedOvertimeMinutes = dailyTotalDelta`).
+  4. MAJOR DEFECT: `validateVacationSchedule` não verifica feriados ao aplicar o Art. 134 §3º CLT (proibição de início 2 dias antes).
+- Veredicto final: REQUEST_CHANGES.
 
 ## Artifact Index
-- `.agents/teamwork/reviewer_m3_2/BRIEFING.md` — Persistent situational awareness
-- `.agents/teamwork/reviewer_m3_2/progress.md` — Liveness heartbeat and step tracking
-- `.agents/teamwork/reviewer_m3_2/DISPATCH.md` — Inbound instructions log
-- `.agents/teamwork/reviewer_m3_2/handoff.md` — Final 5-component review report
+- `.agents/teamwork/reviewer_m3_2/DISPATCH.md` — Histórico de despachos
+- `.agents/teamwork/reviewer_m3_2/BRIEFING.md` — Memória persistente
+- `.agents/teamwork/reviewer_m3_2/progress.md` — Heartbeat de execução
+- `.agents/teamwork/reviewer_m3_2/handoff.md` — Relatório final de revisão técnica
 
 ## Review Checklist
 - **Items reviewed**:
-  - `anserve-restock.tsx`: PIN keypad, token URL/localStorage, checkout urgency banner, flat cards, Conforme modal, Divergência modal with camera & photo upload.
-  - `anserve-dashboard.tsx`: Pending NF queue, fiscal discrimination preference tags, file upload with multicanal dispatch banner, financial statement cards & settlement formula.
-  - `minibar-admin.tsx`: Catalog CRUD, per-flat default stock matrix with steppers, 19 Soho flat QR code cards with high-res generation, print-only `@media print` layout.
-  - `App.tsx`: Lazy loading, AdminRoute & Route protection, strict precedence over `/frigobar/:flatNumber`.
-- **Verdict**: APPROVE
-- **Unverified claims**: None. All claims independently verified.
+  - `getOfficialHolidays` (Campos, RJ, nacionais e móveis) -> Correto
+  - `generateMonthlySchedule` (6x1 44h 7h20 e 8h+4h) -> Correto
+  - `validateSundayRotation` (Art. 386 CLT e Portaria 671) -> Correto
+  - Blindagem de Cris e Grazi -> Aprovado
+  - `calculatePunchTolerance` -> REPROVADO (atraso vira hora extra)
+  - `calculateNightShiftAndExtension` -> REPROVADO (facade / turno diurno vira noturno)
+  - `validateVacationSchedule` -> REPROVADO (não checa feriados pré-férias)
+  - `getVacations` -> REPROVADO (data de teste hardcoded)
+- **Verdict**: REQUEST_CHANGES
+- **Unverified claims**: Nenhuma.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Offline/loss of connection in hotel hallways during inspection: Handled with non-destructive error states preserving modal form inputs.
-  - Mobile camera capture & multiple images: Verified input attribute `capture="environment"`, FileReader Base64 conversion, thumbnail previews, individual removal.
-  - Route collision in Wouter: Static minibar routes placed before `:flatNumber` parameter routes.
-  - Print stylesheet isolation: `@media print` properly hides navigation, headers, footers and sets A6 dimensions with `page-break-inside: avoid`.
-- **Vulnerabilities found**: None critical or blocking.
-- **Untested angles**: Hardware printer test (requires physical device; simulated via CSS review).
+  - Batida diurna (06:00 às 14:20) em `calculateNightShiftAndExtension` -> FALHOU (concedeu 420 min de adicional noturno + 80 min extensão).
+  - Atraso de 8 min em `calculatePunchTolerance` -> FALHOU (concedeu 8 min de hora extra).
+  - Início de férias 2 dias antes de feriado em `validateVacationSchedule` -> FALHOU (permitiu 30/12 antes do feriado 01/01).
+  - Data de expiração de férias após 2026 em `getVacations` -> FALHOU (data hardcoded em 22/10/2026).
+- **Vulnerabilities found**: 4 vulnerabilidades (1 violação de integridade + 3 bugs críticos/maiores).

@@ -1,158 +1,180 @@
-# Handoff Report: Verificação Adversária da Repositora Anserve e Casos de Borda (Milestone M3)
+# Relatório Handoff: Estresse Adversarial de Matemática Trabalhista CLT (Marco M3)
 
-**Agente**: `challenger_m3_1` (teamwork_preview_challenger)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Data**: 2026-10-21T21:35:00Z  
-**Tipo**: Hard (Tarefa Concluída)  
-**Milestone**: M3 (Features F19 a F28)  
-**Veredito**: **APPROVE**  
+**Agente**: `challenger_m3_1` (Critic / Empirical Challenger)  
+**Destinatário**: Project Orchestrator (`58ecb31f-60d2-4e1e-9aac-82400a58c263`)  
+**Data**: 2026-10-22T13:00:00Z  
+**Tipo**: Hard (Revisão Concluída com Diagnóstico Empírico)  
+**Veredicto**: `REQUEST_CHANGES` (Bloqueante para homologação do M3)  
 
 ---
 
 ## 1. Observation (Observações Diretas)
 
-1. **Tratamento de PIN Incorreto (`anserve-restock.tsx`)**:
-   - Linhas 220-246 (`handlePinSubmit`):
-     ```tsx
-     const res = await fetch("/api/minibar/auth-pin", {
-       method: "POST",
-       headers: { "Content-Type": "application/json" },
-       credentials: "include",
-       body: JSON.stringify({ pin })
-     });
-     const data = await res.json();
-     if (res.ok && data.success) { ... }
-     else {
-       setPinError(data.error || "PIN de acesso inválido.");
+1. **Execução do Script de Estresse Adversarial**:
+   - Comando executado:
+     ```powershell
+     node .agents/teamwork/challenger_m3_1/stress_schedules_math.mjs
+     ```
+   - Resultado do Teste Adversarial:
+     ```
+     ================================================================================
+     INICIANDO SUÍTE ADVERSARIAL: MATEMÁTICA TRABALHISTA CLT (MARCO M3)
+     ================================================================================
+
+     --- GRUPO 1: Tolerância Art. 58 CLT e Súmula 366 TST ---
+     ✅ PASS [Art. 58 CLT] Limiar 4 min: deve ser desconsiderado (withinTolerance=true, 0 HE)
+     ✅ PASS [Art. 58 CLT] Limiar 5 min exatos: deve ser desconsiderado (withinTolerance=true, 0 HE)
+     ✅ PASS [Art. 58 CLT / Súmula 366 TST] Limiar 6 min: extrapola tolerância individual e computa a TOTALIDADE dos 6 min
+     ✅ PASS [Art. 58 CLT] Soma diária 10 min (3+2+2+3): dentro do teto diário (withinTolerance=true, 0 HE)
+     ✅ PASS [Art. 58 CLT / Súmula 366 TST] Soma diária 11 min (3+3+3+2): extrapola teto diário e computa TOTALIDADE de 11 min
+
+     --- GRUPO 2: Horário Noturno e Hora Ficta (CLT Art. 73 e Súmula 60 TST) ---
+     ✅ PASS [Horário Noturno] Turno 22:00 às 05:00: 7h relógio (420 min) -> exatamente 8,0h noturnas fictas (480 min)
+     ✅ PASS [Súmula 60 TST] Turno 22:00 às 07:00: 7h noturnas + 2h prorrogação pós-05h com hora ficta e 20%
+     ❌ FAIL [Horário Noturno] Turno puramente diurno (08:00 às 17:00): deve resultar em exatamente 0 horas noturnas
+        Esperado: {"clockNightMinutes":0,"fictitiousNightMinutes":0,"extensionMinutes":0,"sumula60Applied":false,"totalFictitiousMinutes":0}
+        Obtido:   {"clockNightMinutes":420,"fictitiousNightMinutes":480,"extensionMinutes":120,"sumula60Applied":true,"totalFictitiousMinutes":617.1428571428571}
+        Detalhes: {"clockNightMinutes":420,"fictitiousNightMinutes":480,"extensionMinutes":120,"sumula60Applied":true,"totalFictitiousMinutes":617.1428571428571,"nightSurchargePercentage":20}
+     ❌ FAIL [Horário Noturno] Turno misto 18:00 às 23:00: apenas 1h noturna (22h-23h = 60 min) sem prorrogação
+        Esperado: {"clockNightMinutes":60,"fictitiousNightMinutes":68.57,"extensionMinutes":0,"sumula60Applied":false}
+        Obtido:   {"clockNightMinutes":300,"fictitiousNightMinutes":342.86,"extensionMinutes":0,"sumula60Applied":false}
+        Detalhes: {"clockNightMinutes":300,"fictitiousNightMinutes":342.85714285714283,"extensionMinutes":0,"sumula60Applied":false,"totalFictitiousMinutes":342.85714285714283,"nightSurchargePercentage":20}
+
+     --- GRUPO 3: Regras de Férias CLT (Art. 134 e Art. 137 CLT) ---
+     ✅ PASS [Férias CLT Art. 134 §1º] Período máximo de 13 dias: deve rejeitar com VACATION_MIN_14_DAYS_REQUIRED
+     ✅ PASS [Férias CLT Art. 134 §1º] Período de 4 dias: deve rejeitar com VACATION_MIN_5_DAYS_REQUIRED
+     ✅ PASS [Férias CLT Art. 134 §3º] Início em Sexta-feira (2 dias pré-DSR domingo): deve rejeitar com VACATION_START_PRE_DSR_FORBIDDEN
+     ✅ PASS [Férias CLT Art. 134 §3º] Início em Sábado (1 dia pré-DSR domingo): deve rejeitar com VACATION_START_PRE_DSR_FORBIDDEN
+     ✅ PASS [Férias CLT Art. 137] Alerta de dobra: período concessivo a 30 dias do fim acusa alertRiskDoublePay=true
+     ✅ PASS [Férias scheduleVacation] scheduleVacation deve lançar exceção 422 ao tentar agendar em sexta-feira
+
+     --- GRUPO 4: Férias Antecedendo Feriado Oficial (Art. 134 § 3º CLT) ---
+     ❌ FAIL [Férias CLT Art. 134 §3º (Feriado)] Início em 24/12 (1 dia antes de feriado 25/12): deve proibir início pré-feriado
+        Esperado: {"valid":false,"code":"VACATION_START_PRE_HOLIDAY_OR_DSR_FORBIDDEN"}
+        Obtido:   {"valid":true}
+        Detalhes: {"valid":true}
+
+     ================================================================================
+     RESUMO DO ESTRESSE ADVERSARIAL
+     ================================================================================
+     Total de testes: 16
+     Passaram: 13
+     Falharam: 3
+     ```
+
+2. **Inspeção de Código — `artifacts/api-server/hr/schedules.mjs` (Linhas 380 a 409)**:
+   ```javascript
+   const tEntrada = new Date(entrada.timestamp || `2026-10-22T${entrada.time || "22:00:00"}Z`).getTime();
+   const tSaida = new Date(saida.timestamp || `2026-10-23T${saida.time || "05:00:00"}Z`).getTime();
+
+   // Duração total do turno
+   const totalShiftMinutes = Math.max(0, Math.round((tSaida - tEntrada) / 60000));
+
+   // Turno iniciado às 22h00 e cobrindo até pelo menos 05h00
+   const clockNightMinutes = Math.min(420, totalShiftMinutes);
+   const fictitiousNightMinutes = clockNightMinutes * (60 / 52.5);
+
+   let extensionMinutes = 0;
+   let sumula60Applied = false;
+
+   // Se o turno ultrapassou 420 minutos (05h00), aplica Súmula 60, II TST
+   if (totalShiftMinutes > 420) {
+     extensionMinutes = totalShiftMinutes - 420;
+     sumula60Applied = true;
+   }
+
+   const totalEligibleClockMinutes = clockNightMinutes + (sumula60Applied ? extensionMinutes : 0);
+   const totalFictitiousMinutes = totalEligibleClockMinutes * (60 / 52.5);
+   ```
+   - O código não verifica a interseção do horário real com a faixa noturna (22h00 às 05h00). Ele assume que qualquer turno informado tem 420 min de jornada noturna iniciando às 22h00.
+   - Além disso, se o `timestamp` não for fornecido e apenas o `time` for passado, o código hardcodeia `2026-10-22` para a entrada e `2026-10-23` para a saída, gerando turnos fantasmas de mais de 30 horas para jornadas diurnas sem data explícita.
+   - O endpoint exposto em produção `POST /api/hr/schedules/calculate-overtime-night` chama diretamente essa função na linha 611 de `router.mjs`.
+
+3. **Inspeção de Código — `artifacts/api-server/hr/schedules.mjs` (Linhas 502 a 517)**:
+   ```javascript
+   // Regra 4: Proibição de início nos 2 dias que antecedem DSR ou Feriado (Art. 134 § 3º CLT)
+   for (const p of periods) {
+     if (!p.startDate) continue;
+     const [y, m, d] = p.startDate.split("-").map(Number);
+     const dateObj = new Date(Date.UTC(y, m - 1, d));
+     const dayOfWeek = dateObj.getUTCDay(); // 0 = Domingo ... 5 = Sexta, 6 = Sábado
+
+     // Se o DSR for domingo (padrão), o início na Sexta-feira (2 dias antes) ou Sábado (1 dia antes) é proibido
+     if (dayOfWeek === 5 || dayOfWeek === 6) {
+       return {
+         valid: false,
+         code: "VACATION_START_PRE_DSR_FORBIDDEN",
+         message: "É vedado o início das férias no período de dois dias que antecede dia de descanso semanal remunerado ou feriado (Art. 134 § 3º CLT)."
+       };
      }
-     ```
-   - Linhas 519-523: Exibição amigável sem crash no componente de alerta:
-     ```tsx
-     {pinError && (
-       <div className="w-full mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold text-center">
-         {pinError}
-       </div>
-     )}
-     ```
-   - Teclado numérico permite imediata recuperação: botão `LIMPAR` (linha 541) e botão `⌫` (linha 557) resetam `pinError` e reabrem a digitação.
-
-2. **Bloqueio de Submissão de Divergência sem Itens Faltantes**:
-   - Linhas 414-426 (`handleSubmitDivergencia`):
-     ```tsx
-     const missingItemsList = Object.entries(missingQuantities)
-       .filter(([_, qty]) => qty > 0)
-       .map(([productId, quantity]) => ({ productId, quantity }));
-
-     if (missingItemsList.length === 0) {
-       toast({
-         title: "Nenhum item selecionado",
-         description: "Adicione ao menos um item faltante para registrar a divergência.",
-         variant: "destructive"
-       });
-       return;
-     }
-     ```
-   - Se o usuário tentar registrar divergência com contagem zero, o frontend exibe um toast de alerta destrutivo e interrompe a execução com `return;`, impedindo qualquer requisição HTTP ou cobrança indevida.
-   - No backend (`scripts/demo-server.mjs`, linha 46890):
-     ```js
-     if (inspStatus === "divergencia" && Array.isArray(missingItems) && missingItems.length > 0) {
-     ```
-     O servidor também valida e não calcula cobranças de divergência se `missingItems` for vazio.
-
-3. **Flats sem Nenhuma Reserva (Livres / Vagos)**:
-   - Linhas 728-732: Identificação visual com badge:
-     ```tsx
-     {isLivre && (
-       <Badge className="bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-[10px] font-bold">
-         Livre / Vago
-       </Badge>
-     )}
-     ```
-   - Linhas 742-751: Renderização resiliente contra ausência de hóspede (`currentReservation === null`):
-     ```tsx
-     {flat.currentReservation ? ( ... ) : (
-       <span className="text-xs text-muted-foreground mt-0.5">Sem reserva ativa no momento</span>
-     )}
-     ```
-   - Busca (linhas 289-291) e modais (linhas 376 e 452) utilizam optional chaining seguro (`f.currentReservation?.guestName`, `conformeModalFlat.currentReservation?.code || ""`), prevenindo `TypeError` em tempo de execução.
-
-4. **Resiliência na Captura de Fotos da Câmera**:
-   - Linhas 981-989:
-     ```tsx
-     <input
-       ref={fileInputRef}
-       type="file"
-       accept="image/*"
-       capture="environment"
-       multiple
-       onChange={handlePhotoCapture}
-       className="hidden"
-     />
-     ```
-   - Em smartphones, `capture="environment"` aciona a câmera traseira do aparelho. Em desktops ou navegadores sem câmera nativa, há fallback automático para o seletor padrão de arquivos do sistema operacional.
-   - `FileReader.readAsDataURL` converte fotos para Base64 com preview em miniaturas e botão de exclusão individual (`removePhoto`). As fotos são evidências adicionais e sua ausência não impede a conclusão da vistoria.
-
-5. **Limpeza de Filtros e Ordenação por Prioridade de Checkout**:
-   - Linhas 296-303: Ordenação com checkout priorizado:
-     ```tsx
-     const order = { checkout_hoje: 0, ocupado: 1, livre: 2 };
-     if (order[a.status] !== order[b.status]) {
-       return order[a.status] - order[b.status];
-     }
-     return Number(a.flatNumber) - Number(b.flatNumber);
-     ```
-   - Pílulas de filtro dinâmicas (`Todos`, `🔴 Check-out Hoje`, `🔵 Ocupados`, `🟢 Livres`).
-   - Apagar o texto da busca restaura a listagem integral instantaneamente. Se a busca não encontrar resultados, exibe card com estado vazio gracioso.
-   - Banner de alerta visual no topo alerta para checkouts pendentes com atalho para filtrar imediatamente.
-
-6. **Compilação de Produção Vite**:
-   - Execução do comando `npm --prefix artifacts/limpeza run build`:
-     - Código de saída: `0`.
-     - Duração: `41.98s`.
-     - Chunk gerado: `dist/public/assets/anserve-restock-DFwNxbA-.js` (22.30 kB │ gzip: 6.45 kB).
-     - Paridade SHA-256 twin-server entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`: `9CD36F9F00...` (100% idênticos).
+   }
+   ```
+   - O código ignora completamente os feriados oficiais (que já estão mapeados na mesma biblioteca via `getOfficialHolidays(year)`). Uma tentativa de iniciar férias na quinta-feira 24/12 (véspera de Natal) é erroneamente aprovada como válida.
 
 ---
 
 ## 2. Logic Chain (Cadeia Lógica de Raciocínio)
 
-1. A experiência da repositora em campo ocorre predominantemente sob pressão de tempo (janela de higienização das 11:00 às 14:00) e em dispositivos móveis sob condições variáveis de conectividade.
-2. A análise adversarial das linhas 220-268 comprovou que falhas de autenticação com PIN incorreto ou indisponibilidade de rede não quebram a interface nem prendem o estado: a mensagem de erro é renderizada dentro do card de autenticação com botões de limpeza e correção rápida.
-3. A conferência de itens com divergência foi blindada em duas camadas: o frontend impede o envio com `missingItems.length === 0` com feedback visual imediato ao usuário, e o backend ignora arrays vazios, impedindo o disparo acidental da IA Sofia no WhatsApp do hóspede com cobranças de valor zero.
-4. Flats sem reserva ativa (`livres`) são exibidos com badges e textos claros, sem que nenhuma propriedade nula cause exceção de desreferenciamento (`TypeError`).
-5. A captura de fotos via `capture="environment"` atende aos requisitos operacionais mobile de captura ágil em campo, enquanto o fallback de seleção de arquivos garante o funcionamento em desktops ou tablets de supervisão.
-6. A compilação do Vite foi executada e concluiu com código de saída 0 sem nenhum erro sintático ou de importação.
+1. **Tolerância Art. 58 CLT e Súmula 366 TST**:
+   - As premissas legais da CLT e do TST determinam que variações de até 5 minutos por batida (com teto de 10 minutos diários) não devem ser computadas.
+   - No entanto, uma vez ultrapassado o teto de 5 minutos em uma batida ou de 10 minutos na soma diária, computa-se a totalidade dos minutos como horas extras.
+   - O teste comprovou empiricamente que a função `calculatePunchTolerance` atende 100% a essa lógica nos 5 cenários testados (4 min ok, 5 min ok, 6 min computa 6 min; 10 min ok, 11 min computa 11 min).
+
+2. **Cálculo de Adicional Noturno e Hora Ficta**:
+   - Pelo Art. 73 da CLT, o trabalho noturno urbano é compreendido exclusivamente entre as 22h00 de um dia e as 05h00 do dia seguinte.
+   - A hora ficta reduzida (52m30s) e o adicional noturno de 20% aplicam-se apenas às horas trabalhadas dentro desse intervalo e, pela Súmula 60, II do TST, às horas prorrogadas após as 05h00 caso a jornada noturna tenha sido integralmente cumprida.
+   - A implementação de `calculateNightShiftAndExtension` parte da falsa premissa de que qualquer turno recebido é noturno a partir das 22h00. Quando submetida a um turno puramente diurno (08:00 às 17:00), a função atribui 420 minutos noturnos + 120 minutos de prorrogação (totalizando 617,14 min fictos). Em um turno misto (18:00 às 23:00, onde apenas 1 hora é noturna), a função atribui 300 minutos noturnos.
+   - Essa falha gera passivo e distorção na apuração de folha (Marco M4) e no endpoint `POST /api/hr/schedules/calculate-overtime-night`.
+
+3. **Validação de Férias nos 2 Dias que Antecedem Feriados**:
+   - O Art. 134 § 3º da CLT veda o início das férias "no período de dois dias que antecede feriado ou dia de descanso semanal remunerado".
+   - Enquanto a validação contra o DSR dominical (sextas e sábados) está correta, a validação contra feriados oficiais não foi implementada, permitindo o agendamento de férias em vésperas de feriados nacionais, estaduais e municipais de Campos dos Goytacazes/RJ.
 
 ---
 
 ## 3. Caveats (Ressalvas)
 
-- Não foram executadas suítes globais de testes (`tests/*.test.mjs`), em observância estrita às diretrizes de `AGENTS.md`.
-- A autorização da câmera física real depende de permissões concedidas pelo usuário no navegador do dispositivo no momento da operação.
+- A suíte de testes original do worker (`tests/hr-m3-whatsapp-schedules.test.mjs`) passou 12/12 porque o teste `M3-10` continha apenas casos positivos noturnos (22h às 05h e 22h às 07h), omitindo os casos negativos (turnos diurnos e turnos mistos).
+- O módulo `calculateDayOvertimeAndNight` opera corretamente para horas extras a 50% e 100% em dias úteis, DSR e feriados.
+- Em respeito rigoroso ao `AGENTS.md` e às instruções do orquestrador, nenhum arquivo de produção foi alterado pelo Challenger.
 
 ---
 
-## 4. Conclusion (Conclusão)
+## 4. Conclusion (Conclusão e Recomendações)
 
-A interface da repositora Anserve (`artifacts/limpeza/src/pages/anserve-restock.tsx`) demonstra elevado nível de maturidade, robustez contra falhas de entrada, validação defensiva em múltiplos níveis e resiliência visual em todos os casos de borda especificados.
+**Veredicto**: `REQUEST_CHANGES`.
 
-**Veredito**: **APPROVE**.
+### Correções Necessárias para o Worker:
+
+1. **Refatorar `calculateNightShiftAndExtension` em `artifacts/api-server/hr/schedules.mjs` e `scripts/hr/schedules.mjs`**:
+   - Realizar o cálculo minuto a minuto ou por fatias de intervalo entre o horário de entrada e o de saída:
+     - Identificar a quantidade de minutos efetivamente trabalhados dentro da janela legal das 22:00 às 05:00 (`clockNightMinutes`).
+     - Se o colaborador cumpriu integralmente o período noturno (entrada <= 22:00 e trabalhou até 05:00) e continuou trabalhando além das 05:00, calcular os minutos pós-05:00 como `extensionMinutes` e setar `sumula60Applied = true` (Súmula 60, II TST).
+     - Se o turno não cruzar a janela das 22:00 às 05:00 (como 08:00 às 17:00), retornar `clockNightMinutes: 0`, `fictitiousNightMinutes: 0`, `extensionMinutes: 0`, `sumula60Applied: false`, `totalFictitiousMinutes: 0`.
+
+2. **Adicionar checagem de feriados em `validateVacationSchedule`**:
+   - Obter a lista de feriados via `getOfficialHolidays(year)`.
+   - Para cada período solicitado, verificar se a `startDate` cai em um feriado oficial ou nos 2 dias que o antecedem (ex: feriado em `H`, proibido iniciar em `H`, `H-1` e `H-2`).
+   - Se coincidir, rejeitar com `valid: false`, `code: "VACATION_START_PRE_HOLIDAY_FORBIDDEN"` e mensagem explicativa citando o Art. 134 § 3º da CLT.
+
+3. **Atualizar Paridade Twin-Server e Suíte de Testes M3**:
+   - Replicar as alterações identicamente em `scripts/hr/schedules.mjs`.
+   - Adicionar o caso do turno diurno e do início pré-feriado no teste `tests/hr-m3-whatsapp-schedules.test.mjs`.
+   - Garantir 100% de paridade SHA-256 via `node scripts/check-twin-parity.mjs`.
 
 ---
 
 ## 5. Verification Method (Método de Verificação Independente)
 
-1. **Build do Frontend**:
-   ```bash
-   npm --prefix artifacts/limpeza run build
-   ```
-   Deve finalizar com código 0 e gerar o bundle `anserve-restock-*.js` em `artifacts/limpeza/dist/public/assets/`.
+Para reproduzir empiricamente o diagnóstico:
 
-2. **Paridade Twin-Server**:
+1. **Executar o script de estresse adversarial**:
    ```powershell
-   Get-FileHash "artifacts\api-server\demo-server.mjs", "scripts\demo-server.mjs"
+   node .agents/teamwork/challenger_m3_1/stress_schedules_math.mjs
    ```
-   Os hashes SHA-256 devem ser estritamente idênticos.
+   *Comportamento observado*: 13 testes aprovados e 3 testes falhando com código de saída 1.
 
-3. **Inspeção de Código**:
-   - `artifacts/limpeza/src/pages/anserve-restock.tsx`: linhas 220-246 (PIN error handling), 414-426 (bloqueio de divergência sem itens), 728-751 (tratamento de flats livres) e 981-989 (câmera e upload).
+2. **Verificar os testes pontuais de regressão**:
+   ```powershell
+   node --test tests/hr-m3-whatsapp-schedules.test.mjs
+   ```

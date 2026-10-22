@@ -1,18 +1,18 @@
-# Progress — challenger_m2_1
+# Progress - challenger_m2_1
 
-Last visited: 2026-10-21T21:05:30Z
-Status: Completed
+**Status**: Adversarial Testing Complete
+**Last visited**: 2026-10-22T11:38:40Z
 
-## Tasks
-- [x] Initialize DISPATCH.md and BRIEFING.md
-- [x] Read required documents (ORIGINAL_REQUEST.md, AGENTS.md, PROJECT.md, worker_m2 handoff.md)
-- [x] Read and inspect `guest-minibar.tsx` completely (1396 lines)
-- [x] Adversarially analyze edge cases:
-  - [x] 1a. Empty cart (subtotal 0) without courtesy: blocked via `disabled={totalQuantity === 0}` on catalog and `selectedItemsList.length === 0` in submit.
-  - [x] 1b. OTP length < 4 handling: input maxLength=4, auto-submits only at len=4, button disabled when len != 4, internal guard `if (digits.length !== 4) return`.
-  - [x] 1c. Wrong 4 digits handling: friendly error displayed in styled Alert banner, sets loading=false in finally, dismisses error on new digit typing, no crash.
-  - [x] 1d. Validation of email and document before checkout submission: analyzed. Pre-fill and custom toggle functional, recommendation noted for M3.
-  - [x] 1e. Polling timer cleanup: cleared on success, cleared on modal cancel, cleared on component unmount via `useEffect`.
-- [x] Run Vite build: `npm --prefix artifacts/limpeza run build` (Task 42 exited with code 0 in 31.39s)
-- [x] Complete handoff report (`handoff.md`) with explicit verdict: APPROVE
-- [ ] Send coordination message to Orchestrator
+## Completed Steps
+- Read ORIGINAL_REQUEST.md, PROJECT.md, and worker_m2/handoff.md.
+- Developed and executed dedicated adversarial stress harness `stress_geofence.mjs` (33 tests).
+- Verified Geofence threshold boundaries (149.9m, 150.0m, 150.1m North & East).
+- Discovered 2 mathematical edge-case bugs in `calculateDistanceHaversine` (Antipodes IEEE 754 NaN and Infinity NaN).
+- Validated Selfie validation, SHA-256 avalanche resistance, and large image database bloat protection (10/10 PASS).
+- Validated Device Whitelist bypass vectors, employee usurpation, and prototype pollution (9/9 PASS).
+- Verified HTTP endpoints `/api/hr/punch` and Admin Override flow.
+- Verified unit test suite `tests/hr-m2-timekeeping-compliance.test.mjs` (8/8 PASS).
+- Verified twin-server parity (32/32 PASS).
+
+## Next Step
+- Authoring final `handoff.md` and notifying orchestrator.

@@ -1,28 +1,29 @@
-## 2026-10-21T21:29:19Z
-
-Você é o subagente challenger_m3_2 (teamwork_preview_challenger).
+## 2026-10-22T12:54:39Z
+Você é o Challenger 2 (challenger_m3_2) para o Marco M3 (Estresse Adversarial de WhatsApp, Silenciamento de DSR/Férias e Blindagem de Prestadoras).
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_2
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_2`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md`.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
-
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md (Milestone M3)
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md
-
-Missão do Challenger M3_2 (Verificação Adversária de NFs, Impressão A6 e Extrato):
-1. Inspecione adversarialmente `anserve-dashboard.tsx` e `minibar-admin.tsx`:
-   - Tentativa de upload de arquivo inválido ou vazio na Nota Fiscal.
-   - Preservação dos dados fiscais (CPF/CNPJ e modelo de discriminação escolhido pelo hóspede) na emissão da NF.
-   - Consistência matemática da tabela de repasse financeiro (abatimento de cartão 3.99%, PIX 0.99%, comissão e crédito de cortesia).
-   - Estilização `@media print` no gerador de displays A6 (verifique se oculta menus, barras e elementos desnecessários e formata 1 card A6 limpo por página).
-2. Execute o build do Vite: `npm --prefix artifacts/limpeza run build`.
-3. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
-NUNCA execute testes globais `tests/*.test.mjs`.
-
-Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+SUA MISSÃO ADVERSARIAL:
+1. Criar um script temporário em seu diretório de trabalho:
+   `.agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs`.
+2. Tentar burlar a blindagem estrita de Cris e Grazi:
+   - Tentar enviar comprovante de ponto via WhatsApp para Cris (`id: 2`), Grazi (`id: 3`), `"2"`, `"3"`, `"cris"`, `"grazi"` ou payload disfarçado.
+   - DEVE ser sumariamente bloqueado com exceção/erro de segurança e HTTP 403 Forbidden!
+   - Tentar disparar lembrete de escala para Cris e Grazi -> DEVE ser 100% ignorado sem envio de mensagens.
+3. Testar o Silenciamento em DSR, Férias e Afastamento:
+   - Configurar escala com `isDsr: true` ou `status: "folga"` e chamar `checkEmployeeReminders` -> DEVE retornar 0 mensagens enviadas.
+   - Configurar férias ativas para a data e chamar `checkEmployeeReminders` -> DEVE retornar 0 mensagens enviadas.
+   - Configurar afastamento médico e chamar `checkEmployeeReminders` -> DEVE retornar 0 mensagens enviadas.
+4. Testar a Idempotência dos Lembretes Preventivos:
+   - Chamar `checkEmployeeReminders` para esquecimento de entrada duas vezes seguidas no mesmo dia -> a primeira pode enviar, a segunda DEVE ser ignorada por idempotência registrada em `db.hrWhatsAppLogs`.
+5. Executar o script criado (`node .agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs`).
+6. NÃO alterar arquivos de produção do projeto.
+7. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+8. Enviar mensagem ao orquestrador via `send_message`.

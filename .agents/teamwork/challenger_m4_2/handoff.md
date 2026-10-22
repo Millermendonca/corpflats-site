@@ -1,143 +1,189 @@
-# Handoff Report — Challenger 2 (Milestone M4)
+# Handoff Report — Challenger M4-2 (challenger_m4_2)
 
-**Role**: Challenger 2 (Resilience, Concurrency & Parity Challenger)  
-**Target Milestone**: M4 (Full Verification, Parity Audit, Build & Deploy)  
-**Date**: 2026-10-11T03:53:30Z  
-**Verdict**: **APPROVE**
+- **Autor**: Challenger M4-2 (`challenger_m4_2`)
+- **Papel**: critic, specialist (Empirical Challenger)
+- **Destinatário**: Project Orchestrator (`orchestrator_17` / `58ecb31f-60d2-4e1e-9aac-82400a58c263`)
+- **Data/Hora**: 2026-10-22T14:52:00Z
+- **Diretório de Trabalho**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m4_2`
+- **Veredicto**: `REQUEST_CHANGES` (Bloqueio mandatório até correção das brechas de blindagem de prestadoras)
 
 ---
 
 ## 1. Observation
 
-### 1.1 Twin-Server Mirror Parity (Byte-to-byte SHA-256)
-Direct cryptographic hash evaluation was executed comparing all mirrored files between `artifacts/api-server/` and `scripts/`:
+Durante a execução do harness adversarial empírico `.agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs`, foram auditadas as três dimensões críticas do Marco M4:
 
+### A. Blindagem de Prestadoras (Cris e Grazi - IDs 2, 3, "2", "3", "cris", "grazi")
+O comando de estresse executado foi:
+```powershell
+node .agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs
 ```
-demo-server.mjs:
-  - artifacts/api-server/demo-server.mjs: 619d2221fefe3cf5ba8ce4ada2a58e1e63a60231a0c54222f3304e1a29318d13
-  - scripts/demo-server.mjs:              619d2221fefe3cf5ba8ce4ada2a58e1e63a60231a0c54222f3304e1a29318d13
-  - Match: TRUE (Byte-for-byte identical)
+Resultados observados:
+1. **Calcular Folha (`POST /api/hr/payroll/calculate`)**:
+   - Para todos os 6 IDs testados (`2, 3, "2", "3", "cris", "grazi"`), retornou `HTTP 403 Forbidden` com código `PRESTADORA_PAYROLL_BLOCKED` (6/6 PASS).
+2. **Gerar Contrato CLT (`POST /api/hr/contracts/generate`)**:
+   - Para todos os 6 IDs testados, retornou `HTTP 403 Forbidden` com código `PRESTADORA_CONTRACT_BLOCKED` (6/6 PASS).
+3. **Cadastrar Exame ASO (`POST /api/hr/aso`)**:
+   - Para todos os 6 IDs testados, retornou `HTTP 403 Forbidden` com código `PRESTADORA_ASO_BLOCKED` (6/6 PASS).
+4. **Fechar Mês (`POST /api/hr/payroll/close-month`)**:
+   - **FALHA OBSERVADA (0/6 PASS)**: Ao enviar `{ employeeId: targetId, yearMonth: "2026-05" }`, a rota retornou `HTTP 201 Created` em vez de `HTTP 403 Forbidden`.
+   - Inspeção de código em `artifacts/api-server/hr/router.mjs` (linhas 801–816):
+     ```javascript
+     router.post("/payroll/close-month", (req, res) => {
+       try {
+         const { yearMonth } = req.body;
+         if (!yearMonth) {
+           return res.status(400).json({ success: false, error: "Campo obrigatório: yearMonth..." });
+         }
+         const summary = closeMonthlyPayroll(db, yearMonth, req.body);
+         ...
+         res.status(201).json(summary);
+     ```
+     Não há validação de `employeeId` contra Cris ou Grazi no endpoint de fechamento mensal.
+5. **Assinar Contrato (`POST /api/hr/contracts/:id/sign`)**:
+   - **FALHA OBSERVADA (0/6 PASS)**:
+     - Via 1: Ao tentar assinar passando o ID da prestadora na URL (`POST /api/hr/contracts/${targetId}/sign`), a rota retornou `HTTP 404 CONTRACT_NOT_FOUND` em vez de `HTTP 403 Forbidden`.
+     - Via 2: Ao tentar assinar um contrato presente na base com `employeeId` de prestadora (`mockContract.employeeId === 2`), a rota retornou `HTTP 200 OK` e assinou o contrato com sucesso (`signContractWithCanvas`), gerando selo probatório para uma prestadora autônoma!
+   - Inspeção de código em `artifacts/api-server/hr/contracts-aso.mjs` (linhas 263–310):
+     ```javascript
+     export function signContractWithCanvas(db, contractId, signaturePayload = {}) {
+       ...
+       const idx = db.hrContracts.findIndex(c => c.id === contractId);
+       if (idx === -1) {
+         const err = new Error(`Contrato ${contractId} não encontrado.`);
+         err.statusCode = 404;
+         err.code = "CONTRACT_NOT_FOUND";
+         throw err;
+       }
+       const contract = db.hrContracts[idx];
+       // Nenhuma checagem de isPrestadora(contract) ou contract.employeeId!
+     ```
+   - Inspeção de código em `artifacts/api-server/hr/router.mjs` (linhas 956–983):
+     ```javascript
+     router.post("/contracts/:id/sign", (req, res) => {
+       ...
+       const signed = signContractWithCanvas(db, req.params.id, payload);
+     ```
+     Não há nenhuma guarda `isPrestadora` nem no roteador nem no serviço de assinatura.
 
-whatsapp-ai-service.mjs:
-  - artifacts/api-server/whatsapp-ai-service.mjs: 77a220e752b1e23dadd530c4b6fbcbc2b72f77fcbc6c652be01fea85fcd299fb
-  - scripts/whatsapp-ai-service.mjs:              77a220e752b1e23dadd530c4b6fbcbc2b72f77fcbc6c652be01fea85fcd299fb
-  - Match: TRUE (Byte-for-byte identical)
+### B. Assinatura Canvas e Detecção de Tampering SHA-256
+1. Contrato CLT gerado com hash SHA-256 autêntico (`1db159dfc75c...`).
+2. Assinatura em Canvas realizada via API gerando selo final probatório (`0a57909b8034...`).
+3. **Ataque de Adulteração de Minuta**:
+   - Adicionada cláusula adulterada posteriormente no texto da minuta.
+   - Hash adulterado (`a35e96337ae5...`) divergiu instantaneamente do hash original (`1db159dfc75c...`).
+   - Recálculo do selo probatório (`44e97a6483cb...`) divergiu do selo original (`0a57909b8034...`), comprovando a quebra da integridade jurídica per MP 2.200-2/2001 e Lei 14.063/2020.
+4. **Ataque de Forja de Imagem Canvas**:
+   - Hash da assinatura forjada (`cb460f6cacf8...`) divergiu do hash da assinatura legítima (`53f01d18fd6a...`).
+5. **Ataque de Spoofing de IP nos Metadados**:
+   - Alteração do IP de auditoria invalidou o selo final SHA-256.
+6. Total: 6/6 PASS.
 
-zapi-service.mjs:
-  - artifacts/api-server/zapi-service.mjs: ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb
-  - scripts/zapi-service.mjs:              ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb
-  - Match: TRUE (Byte-for-byte identical)
-
-Auxiliary Services:
-  - fnrh-pdf-service.mjs:    845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b (Match: TRUE)
-  - fnrh-serpro-service.mjs: daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a (Match: TRUE)
-  - mail-service.mjs:        3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c (Match: TRUE)
-```
-
-### 1.2 Automated Stress Test Suites Execution
-The three test suites mandated by the orchestrator and additional suites were executed directly:
-
-1. **`node --test tests/challenger-m3-tariff-adversarial.test.mjs`**:
-   - Result: 4 tests, 1 suite, 4 pass, 0 fail (Duration: 4.50s).
-   - Verifies channel navigation, individual cell overrides, bulk update filtering, and contract payload keys.
-
-2. **`node --test tests/challenger-m3-ui-actions.test.mjs`**:
-   - Result: 20 tests, 4 suites, 20 pass, 0 fail (Duration: 4.29s).
-   - Verifies tri-modal state machine, UI component invariants, disabled states, and dynamic toggle behavior.
-
-3. **`node --test tests/challenger-tariff-stress.test.mjs`**:
-   - Result: 26 tests, 9 suites, 26 pass, 0 fail (Duration: 3.85s).
-   - Verifies leap/non-leap years, weekend markup dynamics, channel aliases, precedence hierarchy, bulk update stress (360 items in 35ms), and calendar query performance.
-
-4. **`node --test tests/challenger-m4-concurrency-resilience.test.mjs`** (Created specifically for M4):
-   - Result: 12 tests, 5 suites, 12 pass, 0 fail (Duration: 6.76s).
-   - Subtest 2.1: 10 concurrent pre-reservations burst → Exactly 1 returned 200 OK, 9 returned 409 Conflict (`FLAT_UNAVAILABLE`). Database inspection on disk verified exactly 1 active reservation record.
-   - Subtest 2.2: 4 staggered mutually overlapping pre-reservations race → Exactly 1 returned 200 OK, 3 returned 409 Conflict.
-   - Subtest 2.3: 5 simultaneous commits on the same pre-reservation → No double booking or corruption; PMS status remained cleanly `confirmada` with `pmsConfirmed: true`.
-   - Subtest 3.1: Real-time hold expiration (1.2s hold duration) → While active, flat blocked; after expiration, `GET /api/bot-actions/availability` automatically cleaned up record to `status = "expirada"`, freed flat in returned availability list, rejected commit with 400 `PRE_RESERVATION_EXPIRED`, and allowed a fresh pre-reservation to succeed immediately.
-   - Subtest 3.2: Configurable hold duration → `preReservationHoldMinutes: 45` produced exact 45-minute expiration timestamp in response.
-   - Subtest 4.1: Large-range bulk update (60 days across June 1 to July 30) for Direct (R$ 450) and Booking (R$ 550) → 60 overrides successfully saved per channel.
-   - Subtest 4.2: Matrix consistency across June and July → All 30 days of June returned exact rate 450.00 (direct) and 550.00 (booking) with `hasOverride: true`. July 31 gracefully returned non-override rate.
-   - Subtest 4.3: Quote calculation consistency → 7-night and 30-night stays via `POST /api/bot-actions/quote` strictly equaled the mathematical sum of daily overridden rates plus configured fees (`cleaningFee`, `extraBedFee`, `breakfastFee`).
-
-5. **`node --test tests/challenger-m4-journey.test.mjs`**:
-   - Result: 11 tests, 1 suite, 11 pass, 0 fail (Duration: 6.08s).
-
-6. **Regression Verification**:
-   - `node --test tests/bot-actions-api.test.mjs`: 5/5 pass.
-   - `node --test tests/tariff-engine.test.mjs`: 8/8 pass.
-   - `node --test tests/whatsapp-ai-agent.test.mjs`: 24/24 pass.
-   - **Total Verified Tests Across Suites**: 110 tests, 110 pass, 0 fail.
-
-### 1.3 Production Frontend Compilation
-- Command: `npm run build` in `artifacts/limpeza`
-- Output: `✓ 3353 modules transformed. rendering chunks... computing gzip size... ✓ built in 36.71s`
-- Exit Code: 0.
+### C. Horizontes de Alerta de ASO (NR-7 / PCMSO)
+Data de referência fixada: `2026-05-15`.
+1. Exame vencido ontem (`2026-05-14`, diff = -1 dia): classificado em `expired` com `daysRemaining = -1` (PASS).
+2. Exame vencendo no dia 30 (`2026-06-14`, diff = 30 dias): classificado em `expiring_30_days` com `daysRemaining = 30` (PASS).
+3. Exame vencendo no dia 31 (`2026-06-15`, diff = 31 dias): classificado em `expiring_60_days` e excluído de `30_days` (PASS).
+4. Exame vencendo no dia 60 (`2026-07-14`, diff = 60 dias): classificado em `expiring_60_days` com `daysRemaining = 60` (PASS).
+5. Exame vencendo no dia 61 (`2026-07-15`, diff = 61 dias): **zero alertas gerados**, sem falsos positivos (PASS).
+6. Exame vencendo em 120 dias (`2026-09-12`, diff = 120 dias): **zero alertas gerados** (PASS).
+7. Total de alertas retornados pela API: 4 (1 vencido, 1 em 30d, 2 em 60d). Total: 5/5 PASS.
 
 ---
 
 ## 2. Logic Chain
 
-1. **TOCTOU & Race Condition Safety**:
-   - In `demo-server.mjs` (`/api/bot-actions/pre-reserve`, lines 20972-20963):
-     Availability conflict checking against `db.reservations` and `db.roomBlocks` is synchronous.
-     Reservation insertion into `db.reservations` (`db.reservations.unshift(newReservation)`) and atomic disk persistence (`saveDatabase("bot_pre_reserve")`) occur synchronously before yielding the Node.js single-threaded event loop to async operations (e.g., QR Code generation).
-   - In our empirical 10-request burst test (`tests/challenger-m4-concurrency-resilience.test.mjs`), because each incoming request evaluates `hasConflict` against an synchronously mutated in-memory array, exactly the first arrived request succeeds and registers itself. The subsequent 9 requests encounter the newly registered reservation in `db.reservations` and synchronously return 409 Conflict.
-   - Therefore, double-booking through concurrent API calls is structurally prevented.
-
-2. **Hold Expiration & Availability Release Lifecycle**:
-   - When `/api/bot-actions/availability` is requested (lines 20712-20724), all records with `status === "pre_reserva"` whose `expiresAt` is in the past and `paymentStatus !== "pago_total"` are automatically transitioned to `status = "expirada"` and persisted to disk.
-   - Expired holds are excluded from `busyFlatSet`, immediately returning the accommodation unit to the pool of available flats.
-   - When attempting to commit an expired reservation (`POST /api/bot-actions/commit-reservation`), lines 21127-21144 detect `isExpired`, transition the status to `"expirada"` if not already done, and reject the request with HTTP 400 `PRE_RESERVATION_EXPIRED`.
-   - Empirically confirmed in real-time execution in Subtest 3.1.
-
-3. **Tariff Bulk-Update & Quote Calculation Consistency**:
-   - Bulk-update endpoint (`POST /api/tariffs/bulk-update`, lines 20486-20575) applies overrides to `db.tariffOverrides` across specified date ranges, flats, and channels.
-   - Both `/api/tariffs/calendar` and `/api/bot-actions/quote` resolve rates through `calculateDailyRate` and `findEffectiveTariffOverride`.
-   - Empirically confirmed in Subtests 4.1, 4.2, and 4.3 across 60 days: individual calendar matrix cells and multi-night quote calculations yield 100% identical rates (R$ 450 for Direct, R$ 550 for Booking, and exact additive sums across 7 and 30-night stays).
-
-4. **Mirror Server Parity Mandate**:
-   - Direct SHA-256 calculation confirms 100% identical byte-for-byte hashes between `artifacts/api-server/` and `scripts/` for `demo-server.mjs`, `whatsapp-ai-service.mjs`, and `zapi-service.mjs`, as well as auxiliary services.
+1. **Premissa Mandatória de Segurança (ORIGINAL_REQUEST § R1 e AGENTS.md)**:
+   Cris (ID: 2) e Grazi (ID: 3) são prestadoras de serviço diaristas autônomas. Qualquer operação funcional de folha, contratos CLT, assinatura ou ASO que envolva essas identidades deve ser terminantemente rejeitada com `HTTP 403 Forbidden`.
+2. **Observação das Falhas**:
+   - Ao submeter requisições para `POST /api/hr/payroll/close-month` com `{ employeeId: 2, ... }`, o servidor aceita a chamada e retorna `HTTP 201 Created`. Embora `closeMonthlyPayroll` filtre internamente os funcionários que entram na folha, a API não rejeita a tentativa explícita de fechar mês para uma prestadora com `HTTP 403 Forbidden`.
+   - Ao submeter requisições para `POST /api/hr/contracts/:id/sign`, se `:id` for um ID de prestadora (ex: `2` ou `"cris"`), o servidor responde `404` em vez de `403`. Pior: se um contrato associado a uma prestadora existir na coleção (por injeção ou legado), `signContractWithCanvas` e o endpoint executam a assinatura com `HTTP 200 OK`, emitindo selo de assinatura digital trabalhista para prestadora autônoma.
+3. **Conclusão Lógica**:
+   A blindagem em `router.mjs` e `contracts-aso.mjs` possui duas brechas evidentes. O critério mandatório estabelecido no despacho ("assertar que TODOS retornam HTTP 403 Forbidden!") foi violado em 2 das 5 operações requeridas.
 
 ---
 
 ## 3. Caveats
 
-- **No Caveats**. All 4 mission items were rigorously tested and empirically validated with zero mocks on live server instances.
+- **Escopo restrito a Review-Only**: Conforme a regra de ouro do Challenger, nenhuma modificação foi realizada nos arquivos de produção (`artifacts/api-server/` ou `scripts/`).
+- **Isolamento de Testes**: Todo o estresse foi conduzido via harness pontual isolado (`.agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs`) sobre instâncias em memória e portas temporárias efêmeras, sem disparos reais ou efeitos colaterais.
 
 ---
 
 ## 4. Conclusion
 
-The system under test demonstrates complete resilience, concurrency safety (impervious to TOCTOU double-booking), reliable automatic hold expiration and availability recovery, strict mathematical and matrix consistency across tariff bulk updates and quotes, and byte-for-byte SHA-256 mirror parity.
+**Veredicto**: `REQUEST_CHANGES`
 
-Final Verdict: **APPROVE**.
+Para aprovação final do Marco M4, o worker responsável deve aplicar as seguintes correções pontuais:
+
+1. **Em `artifacts/api-server/hr/router.mjs` (e espelho `scripts/hr/router.mjs`)**:
+   - No endpoint `POST /api/hr/payroll/close-month` (linha ~801):
+     Adicionar validação de `employeeId`:
+     ```javascript
+     const { employeeId } = req.body;
+     const idStr = String(employeeId || "").toLowerCase().trim();
+     if (
+       employeeId === 2 ||
+       employeeId === 3 ||
+       employeeId === "2" ||
+       employeeId === "3" ||
+       idStr === "cris" ||
+       idStr === "grazi" ||
+       isPrestadora({ id: employeeId })
+     ) {
+       return res.status(403).json({
+         success: false,
+         error: "Operação não permitida para prestadoras de serviço autônomas (Cris e Grazi).",
+         code: "PRESTADORA_PAYROLL_BLOCKED"
+       });
+     }
+     ```
+   - No endpoint `POST /api/hr/contracts/:id/sign` (linha ~956):
+     Validar `req.params.id`, `req.body.employeeId` e consultar o contrato alvo antes de assinar. Se pertencer a prestadora, responder com `HTTP 403 Forbidden` (`PRESTADORA_CONTRACT_BLOCKED`).
+
+2. **Em `artifacts/api-server/hr/contracts-aso.mjs` (e espelho `scripts/hr/contracts-aso.mjs`)**:
+   - Na função `signContractWithCanvas(db, contractId, signaturePayload)`:
+     Adicionar guarda imediata:
+     ```javascript
+     const contractIdStr = String(contractId || "").toLowerCase().trim();
+     const payloadEmpId = signaturePayload?.employeeId;
+     const payloadIdStr = String(payloadEmpId || "").toLowerCase().trim();
+
+     if (
+       contractId === 2 || contractId === 3 || contractIdStr === "2" || contractIdStr === "3" || contractIdStr === "cris" || contractIdStr === "grazi" ||
+       payloadEmpId === 2 || payloadEmpId === 3 || payloadIdStr === "2" || payloadIdStr === "3" || payloadIdStr === "cris" || payloadIdStr === "grazi" ||
+       isPrestadora({ id: contractId }) || isPrestadora({ id: payloadEmpId })
+     ) {
+       const err = new Error("Operação não permitida para prestadoras de serviço autônomas (Cris e Grazi).");
+       err.statusCode = 403;
+       err.code = "PRESTADORA_CONTRACT_BLOCKED";
+       throw err;
+     }
+     ```
+     E logo após recuperar `const contract = db.hrContracts[idx];`:
+     ```javascript
+     if (contract.employeeId === 2 || contract.employeeId === 3 || String(contract.employeeId) === "2" || String(contract.employeeId) === "3" || isPrestadora({ id: contract.employeeId })) {
+       const err = new Error("Operação não permitida para prestadoras de serviço autônomas (Cris e Grazi).");
+       err.statusCode = 403;
+       err.code = "PRESTADORA_CONTRACT_BLOCKED";
+       throw err;
+     }
+     ```
+
+3. **Garantir Paridade Twin-Server**:
+   - Reexecutar `node scripts/check-twin-parity.mjs` após aplicar as correções nos arquivos de `artifacts/` e `scripts/`.
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce all empirical findings:
+Para reproduzir empiricamente os resultados deste relatório e comprovar a resolução das vulnerabilidades apontadas:
 
-1. **Verify Twin-Server SHA-256 Parity**:
+1. **Executar o harness adversarial**:
    ```powershell
-   node -e "const fs = require('fs'); const crypto = require('crypto'); const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/demo-server.mjs')).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/demo-server.mjs')).digest('hex'); console.log('Match:', h1 === h2);"
+   node .agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs
    ```
-   *Expected output: `Match: true`*
-
-2. **Execute Full Adversarial Suite**:
-   ```powershell
-   node --test tests/challenger-m4-concurrency-resilience.test.mjs
-   node --test tests/challenger-m3-tariff-adversarial.test.mjs
-   node --test tests/challenger-m3-ui-actions.test.mjs
-   node --test tests/challenger-tariff-stress.test.mjs
-   node --test tests/challenger-m4-journey.test.mjs
-   ```
-   *Expected output: 100% pass across all 73 tests.*
-
-3. **Verify Frontend Build**:
-   ```powershell
-   cd artifacts/limpeza
-   npm run build
-   ```
-   *Expected output: Exit code 0, dist/public generated.*
+   *Condição de aprovação*:
+   - Blindagem Prestadoras: **30 PASS | 0 FAIL** (100% de retorno HTTP 403 para todos os 6 IDs nos 5 fluxos).
+   - Assinatura Canvas & Tampering: **6 PASS | 0 FAIL**.
+   - Horizontes Alerta ASO: **5 PASS | 0 FAIL**.

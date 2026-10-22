@@ -1,61 +1,70 @@
-# BRIEFING — 2026-10-21T21:03:00Z
+# BRIEFING — 2026-10-22T11:45:00Z
 
 ## Mission
-Revisão e teste adversarial de UX Mobile, Portão OTP, Dados Fiscais e Checkout do Frigobar em guest-minibar.tsx (M2: F11-F18).
+Independent review and adversarial critique of Milestone M2 (Motor de Conformidade em 3 Níveis & Blindagem de Cris/Grazi).
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_reviewer
+- Archetype: reviewer_and_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_2
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M2
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- NUNCA executar testes globais `tests/*.test.mjs`
-- NUNCA violar integridade (verificar ausência de hardcodes, facades, etc.)
+- NUNCA executar testes globais, varreduras ou em lote (apenas testes pontuais)
+- Actively check for integrity violations (hardcoded test data, dummy facades, fake verification)
+- Twin-server parity 100% SHA-256 match requirement across twin files
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T21:03:00Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T11:45:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/limpeza/src/pages/guest-minibar.tsx`, `artifacts/limpeza/src/App.tsx`, `artifacts/limpeza/src/pages/guest-portal.tsx`
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, `PROJECT.md` (M2: F11-F18), `worker_m2/handoff.md`, `worker_m2/changes.md`
-- **Review criteria**:
-  - Portão OTP (4 dígitos celular/CPF, InputOTP, validação POST /api/minibar/flat-context, saudação primeiro nome, sessionStorage)
-  - Acesso Direto (/minha-reserva/:code/frigobar, GET /api/minibar/reservation-context/:code)
-  - Gabarito Não-Editável ("Padrão no flat: X un." via defaultStock)
-  - Aviso Mandatório (frigobar não faturável na diária de hospedagem)
-  - Opções de NF (3 opções de discriminação, CPF/CNPJ com máscara, e-mail)
-  - Checkout (PIX com QR code/copia e cola/polling 2.5s, Cartão MP, Cortesia R$ 0,00)
-  - Build status: `npm --prefix artifacts/limpeza run build` (saída 0)
+- **Files to review**:
+  - `artifacts/api-server/hr/compliance.mjs`
+  - `scripts/hr/compliance.mjs`
+  - `artifacts/api-server/hr/timekeeping.mjs`
+  - `scripts/hr/timekeeping.mjs`
+  - `artifacts/api-server/hr/router.mjs`
+  - `scripts/hr/router.mjs`
+  - `tests/hr-m2-timekeeping-compliance.test.mjs`
+- **Interface contracts**: `.agents/teamwork/ORIGINAL_REQUEST.md` (R1, R2, R5, R7), `.agents/teamwork/orchestrator_17/PROJECT.md`
+- **Review criteria**: Correctness, 3-level compliance logic (alert, admin_override, hard_block), contractor shielding (Cris id:2 & Grazi id:3 HTTP 403), audit logging in `hrComplianceAudits`, twin parity, edge cases, adversarial challenge.
 
 ## Review Checklist
 - **Items reviewed**:
-  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (1396 linhas)
-  - `artifacts/limpeza/src/App.tsx` (linhas 300–311 com precedência Wouter)
-  - `artifacts/limpeza/src/pages/guest-portal.tsx` (menu dropdown e card dedicado)
-  - Build Vite de produção (`npm --prefix artifacts/limpeza run build`)
-- **Verdict**: APPROVE
-- **Unverified claims**: Nenhuma. Todos os requisitos foram verificados no código e o build executou com código 0.
+  - `artifacts/api-server/hr/compliance.mjs` and `scripts/hr/compliance.mjs`
+  - `artifacts/api-server/hr/timekeeping.mjs` and `scripts/hr/timekeeping.mjs`
+  - `artifacts/api-server/hr/router.mjs` and `scripts/hr/router.mjs`
+  - `artifacts/api-server/hr/index.mjs` and `scripts/hr/index.mjs`
+  - `tests/hr-m2-timekeeping-compliance.test.mjs`
+  - `scripts/check-twin-parity.mjs`
+- **Verdict**: REQUEST_CHANGES
+- **Unverified claims**: 
+  - Worker claimed full compliance on all endpoints, but `/compliance/validate` violates contract by returning HTTP 200 on blocks, crashes on missing date, and does not return 403 for Cris/Grazi.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Acesso por reload de página com portão OTP: validado mecanismo de cache via `sessionStorage` (`gfm_minibar_auth_${flatNum}`).
-  - Captura incorreta de rotas no Wouter: verificado posicionamento estrito antes de `/minha-reserva/:code`.
-  - Tentativa de edição do gabarito nominal: verificado elemento estático informativo (`span` com `select-none`).
-  - Vazamento de cobrança em cortesias gratuitas: verificado bypass de pagamento e transição direta para `success` quando `totalAmount === 0`.
-  - Tratamento de falhas de rede no polling e OTP: blocos try/catch e timeouts verificados.
-- **Vulnerabilities found**: Nenhuma vulnerabilidade crítica ou falha de integridade detectada.
-- **Untested angles**: Testes pontuais de UI em navegadores móveis reais (fora do escopo estático/build).
+  - H1: `POST /api/hr/compliance/validate` conforms to PROJECT.md §3 HTTP status codes (400, 422, 403) -> DISPROVEN (returns HTTP 200 on all failure modes).
+  - H2: `POST /api/hr/compliance/validate` rejects Cris and Grazi with HTTP 403 Forbidden -> DISPROVEN (returns HTTP 200).
+  - H3: `validatePunchCompliance` handles payload without explicit date -> DISPROVEN (throws RangeError: Invalid time value at `prevDate.toISOString()`).
+  - H4: `GET /api/hr/compliance/rules` returns distinct catalog of 10 rules -> PARTIAL (returns 17 entries with 7 duplicates due to alias object references).
+  - H5: Twin parity is 100% SHA-256 matched -> CONFIRMED (32/32 matched).
+  - H6: Point test `tests/hr-m2-timekeeping-compliance.test.mjs` passes -> CONFIRMED (8/8 pass, but bypasses testing `/compliance/*` endpoints over HTTP).
+- **Vulnerabilities found**:
+  - V1: `POST /api/hr/compliance/validate` returns HTTP 200 `{ success: true, allowed: false }` for hard_block, admin_override, and Cris/Grazi.
+  - V2: `POST /api/hr/compliance/validate` crashes with HTTP 400 `{ error: "Invalid time value" }` when `date` is omitted.
+  - V3: Missing HTTP tests for compliance endpoints in test suite.
+  - V4: `GET /compliance/rules` returns duplicate entries (17 instead of 10).
+- **Untested angles**: None within M2 scope.
 
 ## Key Decisions Made
-- Aprovação integral do Milestone M2 (Features F11 a F18).
-- Nenhuma execução de testes globais conforme AGENTS.md.
+- Issue REQUEST_CHANGES verdict detailing 3 critical findings, 1 major finding, 1 minor finding, with clear remediation steps for worker_m2.
 
 ## Artifact Index
-- `BRIEFING.md` — memória persistente de trabalho
-- `progress.md` — liveness heartbeat
-- `handoff.md` — relatório final de verificação e veredito
+- `handoff.md` — Final review report
+- `progress.md` — Liveness heartbeat
+- `DISPATCH.md` — Initial dispatch prompt
+- `BRIEFING.md` — Agent working memory

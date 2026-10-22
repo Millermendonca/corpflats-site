@@ -1,65 +1,59 @@
-# BRIEFING — 2026-10-21T21:04:00Z
+# BRIEFING — 2026-10-22T11:46:00Z
 
 ## Mission
-Review and adversarially challenge Milestone M2 Frontend Architecture, Routes, and Build integrity (Features F11-F18), specifically focusing on App.tsx route precedence in Wouter, guest-portal.tsx integration, and Vite production build.
+Quality and adversarial review of Milestone M2 (Ponto Eletrônico Mobile & Submódulo Timekeeping) per Portaria 671 MTP compliance and architectural requirements.
 
 ## 🔒 My Identity
-- Archetype: reviewer_and_critic
+- Archetype: reviewer_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m2_1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: M2
-- Instance: 1 of 2
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Milestone: M2 - Ponto Eletrônico Mobile & Submódulo Timekeeping
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- NUNCA executar testes globais tests/*.test.mjs ou varreduras
-- Only run specific build and verification checks
-- All findings must be evidence-backed and verified
-- Active integrity checks for facades, hardcoded results, and shortcuts
+- Respect strict test execution rules: never run global tests `tests/*.test.mjs`, run only `node --test tests/hr-m2-timekeeping-compliance.test.mjs`
+- Adversarial scrutiny: check for integrity violations (hardcoded test results, facade logic, bypassed checks)
+- Verify Portaria 671 MTP compliance: 6-punch cycle, NSR sequential increment, Haversine 150m geofence, SHA-256 selfie hash, device whitelist toggle
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: not yet
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T11:46:00Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/limpeza/src/App.tsx` (verified)
-  - `artifacts/limpeza/src/pages/guest-portal.tsx` (verified)
-  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (verified)
-  - `artifacts/limpeza/dist/` (verified)
-- **Interface contracts**: `PROJECT.md` (Milestone M2), `ORIGINAL_REQUEST.md`, `AGENTS.md`
-- **Review criteria**: Route precedence in Wouter, component imports, UI integration in guest portal, Vite build pass, artifact generation, integrity checks
-
-## Key Decisions Made
-- Confirmed strict route precedence in `App.tsx`: public minibar routes (lines 300-310) are declared before generic `/minha-reserva/:code` (line 311).
-- Confirmed `guest-portal.tsx` includes both dropdown menu shortcut (lines 1870-1876) and premium dedicated minibar card (lines 3348-3392) with amber decoupled billing warning and direct navigation to `/minha-reserva/${reservation.code || code}/frigobar`.
-- Independently ran `npm --prefix artifacts/limpeza run build`: completed with exit code 0, 3392 modules transformed in 32.17s.
-- Integrity verification: No hardcoded results, no facades, no bypassed logic detected. Full 1396 lines of robust implementation in `guest-minibar.tsx`.
-- Verdict: APPROVE.
-
-## Artifact Index
-- `DISPATCH.md` — Dispatch message from orchestrator
-- `BRIEFING.md` — Situational awareness and working memory
-- `progress.md` — Liveness heartbeat and task tracker
-- `handoff.md` — 5-component handoff report with APPROVE verdict
+  - `artifacts/api-server/hr/timekeeping.mjs` & `scripts/hr/timekeeping.mjs`
+  - `artifacts/api-server/hr/compliance.mjs` & `scripts/hr/compliance.mjs`
+  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`
+  - `artifacts/api-server/hr/index.mjs` & `scripts/hr/index.mjs`
+  - `tests/hr-m2-timekeeping-compliance.test.mjs`
+- **Interface contracts**:
+  - `.agents/teamwork/ORIGINAL_REQUEST.md` (R2)
+  - `.agents/teamwork/orchestrator_17/PROJECT.md`
+- **Review criteria**:
+  - Correctness, Portaria 671 MTP conformance, security, edge cases, anti-fraud geofencing, NSR monotonicity, adversarial integrity.
 
 ## Review Checklist
-- **Items reviewed**:
-  - `artifacts/limpeza/src/App.tsx` (lines 1-45, 285-345)
-  - `artifacts/limpeza/src/pages/guest-portal.tsx` (lines 1-45, 1850-1890, 3340-3410)
-  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (full component: 1396 lines)
-  - Vite build output (`npm --prefix artifacts/limpeza run build`)
-  - Git status and commit history (`git status`, `git log -2 --oneline`)
+- **Items reviewed**: `artifacts/api-server/hr/timekeeping.mjs`, `compliance.mjs`, `router.mjs`, `index.mjs`, and tests
 - **Verdict**: APPROVE
-- **Unverified claims**: None. All claims independently verified.
+- **Unverified claims**: none (all core claims verified via live test and code inspection)
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Wouter route shadowing by generic wildcard `/minha-reserva/:code` -> Proved impossible due to explicit prior declaration.
-  - Memory leak in status polling timer on unmount/cancellation -> Proved mitigated via `useEffect` cleanup and cancel handlers.
-  - Hardcoded test outputs or facade implementations -> Proved absent; authentic dynamic state and API integration.
-  - Viewport overlap on mobile fixed bottom bar -> Proved mitigated via container `pb-32` and `inset-x-0` positioning.
-  - Zero-cost courtesy redemption breaking payment flow -> Proved handled with direct transition to success state.
-- **Vulnerabilities found**: 0 critical/major/minor issues.
-- **Untested angles**: Hardware-level camera photo capture on physical devices (depends on browser permissions, but API contracts are sound).
+  - Geofence bypass via invalid/null coordinates -> Defended (`isWithin: false`, `Infinity`)
+  - Whitelist bypass with forged terminal claim -> Defended (verified server-side in DB)
+  - Diarista (Cris/Grazi) punch contamination -> Defended (HTTP 403 Forbidden with security violation)
+  - Monotonicity of NSR -> Defended (sequential atomic $+1$ on each punch and adjustment)
+- **Vulnerabilities found**: None critical; single-process memory assumption for NSR noted as caveat.
+- **Untested angles**: Horizontal multi-instance load balancing concurrency (not applicable to single-node architecture).
+
+## Key Decisions Made
+- Confirmed zero integrity violations, no facade code, no bypassed checks.
+- Issued verdict APPROVE with comprehensive handoff report.
+
+## Artifact Index
+- DISPATCH.md — Initial dispatch instructions
+- BRIEFING.md — Persistent context & situational awareness
+- progress.md — Liveness heartbeat
+- handoff.md — Complete 5-component review and adversarial challenge report

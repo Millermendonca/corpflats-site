@@ -1,20 +1,26 @@
-## 2026-10-11T03:36:40Z
-Você é o Reviewer 1 (Backend Core & AI Reviewer) do Milestone M4 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m4_1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-Você DEVE LER ORIGINAL_REQUEST.md e PROJECT.md antes de iniciar.
+## 2026-10-22T14:44:08Z
+Você é o Reviewer M4-1 (reviewer_m4_1) para o Marco M4 (Folha de Pagamento, INSS Progressivo 2026, Reflexos DSR, Vale-Transporte e Baixa PIX).
+Seu diretório de trabalho exclusivo é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m4_1`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-Missão de Revisão do M4:
-1. Revise a conformidade com R1, R2, R3 e R4:
-   - R1: Chave Mestra Global (`apiActionsEnabled`), matriz de 5 interruptores (`allowedActions`), retorno HTTP 403 `ACTION_DISABLED` com `requiresHandover: true` quando desligado.
-   - R2: Motor de Tarifas Inteligente baseado em `getFinancialSettings()` (SEBRAE), sazonalidade, markups de canais (Direto 0%, Booking +18%, Airbnb +15%), fim de semana (+15%), overrides individuais e em lote.
-   - R3: Esteira autônoma de reservas PMS: verificação de disponibilidade, pré-reserva com hold temporário (30 min) e liberação automática, payload PIX BACEN, commit permanente.
-   - R4: Serviço de IA WhatsApp (`whatsapp-ai-service.mjs`): tools vazias quando chave mestra desligada (modo concierge), injeção adaptativa apenas de ações ativas quando ligada, loop multi-turn e proteção anti-crash sem erro 500.
-2. Execute a validação das suítes de teste de backend:
-   `node --test tests/tariff-engine.test.mjs`
-   `node --test tests/bot-actions-api.test.mjs`
-   `node --test tests/whatsapp-ai-agent.test.mjs`
-3. Emita seu veredicto: APPROVE ou REQUEST_CHANGES.
-Escreva seu relatório em: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m4_1\handoff.md`.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seção R6).
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md` (Feature F19).
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4\handoff.md`.
+
+SUA MISSÃO DE REVISÃO TÉCNICA:
+1. Auditar minuciosamente `artifacts/api-server/hr/payroll.mjs` e seu espelho em `scripts/hr/payroll.mjs`:
+   - `calculateInssProgressive`: verificar as 4 faixas oficiais do INSS 2026, deduções por parcela e teto de R$ 951,64.
+   - `calculateDsrReflex`: verificar o cálculo de reflexos sobre Horas Extras (Súmula 172 TST) e Adicional Noturno (Súmula 60, I TST).
+   - `calculateMonthlyPayroll`: apuração de 220h mensais, horas extras 50%/100%, desconto de VT até 6% (Lei 7.418/85), bases de cálculo de FGTS (8%) e INSS, e valor líquido.
+   - `generatePayslip`: layout do holerite com identificação do empregador, colaborador e itens discriminados.
+   - `registerPayrollPayment`: registro de baixa e quitação PIX com chave e comprovante.
+2. Executar a verificação pontual:
+   `node --test tests/hr-m4-payroll-contracts.test.mjs` (deve passar 14/14).
+   NUNCA executar testes globais `tests/*.test.mjs`.
+3. Executar a auditoria de paridade twin-server:
+   `node scripts/check-twin-parity.mjs` (deve auditar 36/36 arquivos com 100% SHA-256 match).
+4. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+5. Enviar mensagem ao orquestrador via `send_message`.

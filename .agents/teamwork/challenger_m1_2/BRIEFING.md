@@ -1,62 +1,59 @@
-# BRIEFING — 2026-10-21T19:34:10Z
+# BRIEFING — 2026-10-22T10:42:30Z
 
 ## Mission
-Verificação adversária empírica de desacoplamento financeiro (reserva vs frigobar), reconciliação de webhooks (Inter e Mercado Pago) e exatidão matemática do extrato de repasse Anserve no ecossistema de frigobar do Guest-Flow-Manager.
+Adversarial stress-testing and empirical validation of Milestone M1 (CLT Base Architecture & Clean Isolations) to find bugs, bypasses in Cris/Grazi isolation, and validation flaws in Employee CRUD.
 
 ## 🔒 My Identity
-- Archetype: empirical_challenger
+- Archetype: EMPIRICAL CHALLENGER
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
+- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M1
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
-- Review-only: do NOT modify implementation code; report any failures as findings
-- NUNCA executar testes globais, varreduras ou em lote (`tests/*.test.mjs` proibido)
-- Executar EXCLUSIVAMENTE o teste pontual e isolado criado para esta verificação
-- Sem mascarar/silenciar notificações em código
-- `.agents/teamwork/` must contain only metadata — source, tests, or data there is a violation
-- Concluir com veredito explícito: APPROVE ou REQUEST_CHANGES
+- Review-only — do NOT modify implementation code directly (findings reported in handoff)
+- Empirical verification mandatory: write and execute adversarial tests, verify outcomes
+- Never run global/batch tests (`tests/*.test.mjs`), only run strictly targeted tests for M1
+- Never put source/test files inside `.agents/teamwork/`
+- Explicit verdict in handoff.md: APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T19:34:10Z
+- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
+- Updated: 2026-10-22T10:42:30Z
 
 ## Review Scope
-- **Files to review**:
+- **Files reviewed**:
+  - `artifacts/api-server/hr/employees.mjs`
+  - `artifacts/api-server/hr/router.mjs`
+  - `artifacts/api-server/hr/index.mjs`
   - `artifacts/api-server/demo-server.mjs`
-  - `scripts/demo-server.mjs`
-  - `tests/minibar-backend-flow.test.mjs`
-- **Interface contracts**:
-  - `POST /api/minibar/orders`
-  - Webhooks: `POST /api/pms/inter/webhook` e `POST /api/pms/mercadopago/webhook`
-  - `GET /api/minibar/settlement`
-- **Review criteria**:
-  - Desacoplamento financeiro: `r.totalAmount` inalterado sob criação, pagamento ou cancelamento de pedidos de frigobar
-  - Conciliação de webhooks: Inter (txId) e Mercado Pago (payment.id + external_reference) liquidam pedido (`status = "pago"`)
-  - Cálculo matemático exato do extrato de repasse Anserve: vendas brutas - taxas de cartão - comissão + custo de cortesias = repasse líquido exato
+  - `tests/hr-m1-backend-core.test.mjs`
+  - `tests/hr-m1-challenger2.test.mjs`
+  - Worker handoff: `.agents/teamwork/worker_m1/handoff.md`
+- **Interface contracts**: `.agents/teamwork/orchestrator_17/PROJECT.md`
+- **Review criteria**: Cris/Grazi absolute isolation, Art. 71 CLT break rule (8h -> >= 1h break), CPF/salary validation, edge cases in `isCltEmployee` / `isPrestadora`.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Hipótese 1: Criar, pagar ou cancelar pedidos de frigobar afeta o totalAmount da reserva? -> FALSO. Total permanece perfeitamente desacoplado.
-  - Hipótese 2: O webhook do Banco Inter com txId correto liquida o pedido? -> VERDADEIRO. Liquida e preenche metadados.
-  - Hipótese 3: O webhook do Mercado Pago com payment.id e external_reference liquida o pedido? -> FALSO. Permanece pendente porque o backend exige chamada externa HTTPS síncrona a `api.mercadopago.com` e ignora `external_reference` do payload.
-  - Hipótese 4: O extrato de repasse Anserve segue rigorosamente a fórmula matemática? -> VERDADEIRO. Matemática 100% exata.
-- **Vulnerabilities found**:
-  - Webhook Mercado Pago não liquida pedidos via payload de webhook sem conexão real online autenticada a `api.mercadopago.com`, pois não lê `external_reference` do body. Teste do worker mascarava isso asserindo apenas status 200 HTTP sem verificar a liquidação da ordem.
-- **Untested angles**:
-  - N/A
+  - H1: getEmployeeById(2) or (3) can leak Cris/Grazi data or bypass filter. -> REJECTED (returns null, 404 in API).
+  - H2: POST /api/hr/employees can register "Cris" or "Grazi" via casing/spacing/variations. -> REJECTED (blocked by name validation).
+  - H3: isCltEmployee / isPrestadora can be fooled by uppercase/lowercase, spaces, or partial objects. -> REJECTED (robust guards pass 100%).
+  - H4: CRUD allows daily journey 8h with <1h lunch interval (Art. 71 CLT violation). -> REJECTED (blocked in create and update).
+  - H5: CRUD allows salary <= 0 or duplicate CPF. -> REJECTED (all blocked with descriptive errors).
+- **Vulnerabilities found**: None. System is resilient with defense-in-depth across domain guards and HTTP endpoints.
+- **Untested angles**: M2 (ponto mobile/geofencing), M3 (WhatsApp automation/escalas), M4 (folha/contratos) which are planned for subsequent milestones.
 
 ## Loaded Skills
-- None explicitly loaded
+- None specified in dispatch.
 
 ## Key Decisions Made
-- Veredito: REQUEST_CHANGES devido à falha de liquidação no webhook do Mercado Pago.
+- Authored and ran `tests/hr-m1-challenger2.test.mjs` (10 adversarial subtests covering all edge cases, 100% pass).
+- Verdict: APPROVE.
 
 ## Artifact Index
-- `.agents/teamwork/challenger_m1_2/DISPATCH.md` — Registro de despacho do orchestrator
-- `.agents/teamwork/challenger_m1_2/BRIEFING.md` — Memória persistente de trabalho
-- `.agents/teamwork/challenger_m1_2/progress.md` — Heartbeat e liveness log
-- `.agents/teamwork/challenger_m1_2/handoff.md` — Relatório formal com veredito
-- `tests/challenger-m1-2-verification.test.mjs` — Suíte adversária empírica isolada
+- `.agents/teamwork/challenger_m1_2/DISPATCH.md` — Initial dispatch
+- `.agents/teamwork/challenger_m1_2/BRIEFING.md` — Persistent awareness
+- `.agents/teamwork/challenger_m1_2/progress.md` — Liveness & execution tracking
+- `.agents/teamwork/challenger_m1_2/handoff.md` — Final adversarial report
+- `tests/hr-m1-challenger2.test.mjs` — Targeted empirical adversarial test suite

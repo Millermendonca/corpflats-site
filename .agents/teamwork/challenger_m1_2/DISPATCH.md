@@ -1,30 +1,22 @@
-## 2026-10-21T19:19:35Z
-
-Você é o subagente challenger_m1_2 (teamwork_preview_challenger).
+## 2026-10-22T10:37:09Z
+Você é o Challenger 2 (challenger_m1_2) para o Marco M1.
 Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2`
+A raiz do projeto é:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO:
+1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
+3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
-
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
-
-Missão do Challenger M1_2:
-Verificação adversária de desacoplamento financeiro, webhooks e extrato de repasse:
-1. Teste o desacoplamento financeiro:
-   - Prove empiricamente que a criação, pagamento ou cancelamento de pedidos de frigobar NÃO altera o valor `r.totalAmount` da reserva em nenhuma hipótese.
-2. Teste a conciliação de webhooks:
-   - Webhook do Banco Inter com `txId` correto liquida o pedido (`status = "pago"`).
-   - Webhook do Mercado Pago com `payment.id` e `external_reference` liquida o pedido.
-3. Teste o cálculo matemático do extrato de repasse Anserve (`/api/minibar/settlement`):
-   - Vendas brutas - taxas de cartão - comissão + custo de cortesias = repasse líquido exato.
-4. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
-NUNCA execute testes globais `tests/*.test.mjs`. Apenas seus testes pontuais isolados.
-
-Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
+SUA MISSÃO ADVERSARIAL:
+1. Tentar violar o isolamento de Cris e Grazi:
+   - Tente forçar consulta por ID 2 ou ID 3 em `getEmployeeById` ou `GET /api/hr/employees/2`.
+   - Tente submeter `POST /api/hr/employees` com nome "Cris" ou "Grazi".
+   - Teste a função `isCltEmployee` e `isPrestadora` contra casos extremos (ex: maiúsculas/minúsculas, espaços extras, objetos parciais).
+2. Tentar quebrar as validações de CRUD:
+   - Cadastrar funcionário com jornada diária de 8h mas intervalo de almoço de apenas 30 minutos (deve falhar por violar Art. 71 CLT).
+   - Cadastrar funcionário com salário <= 0 ou CPF duplicado.
+3. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
+4. Enviar mensagem ao orquestrador.
