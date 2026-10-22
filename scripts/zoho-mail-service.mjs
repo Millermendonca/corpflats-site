@@ -1498,7 +1498,9 @@ export async function listWebmailMessages(db, {
       if (msgBrStr !== todayBrStr) return false;
     }
 
-    const recLow = `${m.recipient || ""} ${(m.to || []).join(" ")} ${(m.cc || []).join(" ")}`.toLowerCase();
+    const toStr = Array.isArray(m.to) ? m.to.join(" ") : String(m.to || "");
+    const ccStr = Array.isArray(m.cc) ? m.cc.join(" ") : String(m.cc || "");
+    const recLow = `${m.recipient || ""} ${toStr} ${ccStr}`.toLowerCase();
     const subjLow = String(m.subject || "").toLowerCase();
     const tplLow = String(m.templateKey || "").toLowerCase();
 
