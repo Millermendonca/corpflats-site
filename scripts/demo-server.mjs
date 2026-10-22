@@ -24738,7 +24738,7 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
 
   if (saveDatabase) saveDatabase();
 
-  const cleanWaTarget = cleanGuestPhone.startsWith("55") ? cleanGuestPhone : `55${cleanGuestPhone}`;
+  const cleanWaTarget = cleanGuestPhone;
   const whatsappUrl = `https://wa.me/${cleanWaTarget}?text=${encodeURIComponent(msg)}`;
 
   return {
@@ -27775,10 +27775,10 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
     const digits = String(raw).replace(/\D/g, "");
     if (!digits) return;
     phoneCandidates.add(digits);
+    const cleaned = cleanWhatsAppPhone(raw);
+    if (cleaned) phoneCandidates.add(cleaned);
     if (digits.startsWith("55") && digits.length >= 12) {
       phoneCandidates.add(digits.substring(2));
-    } else if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
-      phoneCandidates.add("55" + digits);
     }
   };
 
@@ -38010,7 +38010,7 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
 
   saveDatabase();
 
-  const fallbackUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(msgText)}`;
+  const fallbackUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msgText)}`;
 
   res.json({
     success: apiResult.success,

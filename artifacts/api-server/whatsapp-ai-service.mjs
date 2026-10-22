@@ -2132,10 +2132,10 @@ export function hasGuestRequestedSpecificFlat(db, res, targetFlatNumber = null) 
     const digits = String(raw).replace(/\D/g, "");
     if (!digits) return;
     phoneCandidates.add(digits);
+    const cleaned = cleanWhatsAppPhone(raw);
+    if (cleaned) phoneCandidates.add(cleaned);
     if (digits.startsWith("55") && digits.length >= 12) {
       phoneCandidates.add(digits.substring(2));
-    } else if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
-      phoneCandidates.add("55" + digits);
     }
   };
 

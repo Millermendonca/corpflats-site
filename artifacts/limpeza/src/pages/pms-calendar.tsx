@@ -42,7 +42,7 @@ import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
@@ -214,7 +214,7 @@ export default function PmsCalendar() {
   } | null>(null);
 
   const verifyGuestPhoneWhatsApp = async (phoneToVerify: string) => {
-    const cleanDigits = phoneToVerify.replace(/\D/g, "");
+    const cleanDigits = cleanWhatsAppPhone(phoneToVerify);
     if (cleanDigits.length < 10) {
       setPhoneVerification(null);
       return null;
@@ -224,7 +224,7 @@ export default function PmsCalendar() {
     }
     setPhoneVerification({ phone: cleanDigits, checking: true });
     try {
-      const res = await fetch(`/api/whatsapp/phone-exists/${cleanDigits}`);
+      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(cleanDigits)}`);
       if (res.ok) {
         const data = await res.json();
         const verResult = {
@@ -3300,7 +3300,7 @@ export default function PmsCalendar() {
     }
 
     if (formGuestPhone.trim().replace(/\D/g, "").length >= 10) {
-      const cleanDigits = formGuestPhone.trim().replace(/\D/g, "");
+      const cleanDigits = cleanWhatsAppPhone(formGuestPhone);
       let ver = phoneVerification && phoneVerification.phone === cleanDigits && phoneVerification.checked !== undefined ? phoneVerification : null;
       if (!ver) {
         setSavingRes(true);
@@ -7055,7 +7055,7 @@ export default function PmsCalendar() {
                       <div className="flex items-center gap-2">
                         {(formGuestPhone || selectedRes.guestPhone) && (
                           <a
-                            href={`https://wa.me/55${String(formGuestPhone || selectedRes.guestPhone).replace(/\D/g, "")}`}
+                            href={`https://wa.me/${cleanWhatsAppPhone(formGuestPhone || selectedRes.guestPhone)}`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
@@ -8712,7 +8712,7 @@ export default function PmsCalendar() {
               const guestName = selectedRes.guestName || "Hóspede"
               const flatNum = selectedRes.flatNumber || ""
               const guestPhone = (selectedRes.guestPhone || "").replace(/\D/g, "")
-              const waPhone = guestPhone.length >= 10 ? (guestPhone.startsWith("55") ? guestPhone : `55${guestPhone}`) : ""
+              const waPhone = cleanWhatsAppPhone(selectedRes.guestPhone || "")
 
               const checkinUrl = getCheckinUrl(selectedRes, 1, origin, settings)
 

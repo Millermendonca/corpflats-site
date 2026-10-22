@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, cleanWhatsAppPhone } from "@/hooks/use-quick-messages"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
@@ -184,7 +184,7 @@ export function ReservationHoverCard({
   const guestName = resItem.guestName || resItem.guests?.[0]?.name || "Hóspede Sem Nome"
   const rawPhone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
   const cleanPhone = rawPhone.replace(/\D/g, "")
-  const finalWaPhone = cleanPhone.length === 10 || cleanPhone.length === 11 ? `55${cleanPhone}` : cleanPhone
+  const finalWaPhone = cleanWhatsAppPhone(rawPhone)
   const recipients = getReservationRecipients(resItem)
 
   const flatNumber = resItem.flatNumber || flat?.number || "Flat"

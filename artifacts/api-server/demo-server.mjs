@@ -4599,41 +4599,12 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   });
 
-  // 3. Auditoria Universal de Integridade de Reservas e Hóspedes em TODOS os Flats
+  // 3. Auditoria Universal de Integridade de Reservas em TODOS os Flats
   const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
   const activeFlatsMap = new Map();
   db.flats.forEach(f => {
     activeFlatsMap.set(String(f.number), f);
     activeFlatsMap.set(Number(f.id), f);
-  });
-
-  // 3.0 Limpeza de endereços genéricos de fallback de NFS-e (Av. Pelinca / 28035-000) que tenham vazado para hóspedes no CRM
-  (db.guests || []).forEach(g => {
-    const cleanGcep = String(g.cep || "").replace(/\D/g, "");
-    const rawGaddr = String(g.address || g.street || g.logradouro || "").trim();
-    const isPelincaPlaceholder = cleanGcep === "28035000" && (!rawGaddr || /^(av\.?\s*pelinca|avenida\s*pelinca)/i.test(rawGaddr));
-    if (isPelincaPlaceholder) {
-      g.cep = "";
-      if (/^(av\.?\s*pelinca|avenida\s*pelinca)/i.test(rawGaddr)) {
-        g.address = "";
-        g.street = "";
-        g.logradouro = "";
-        if (g.number === "100" || g.streetNumber === "100") {
-          g.number = "";
-          g.streetNumber = "";
-          g.numero = "";
-        }
-        if (/^pelinca$/i.test(String(g.neighborhood || g.bairro || "").trim())) {
-          g.neighborhood = "";
-          g.bairro = "";
-        }
-      }
-      if (/^campos/i.test(String(g.city || g.cidade || "").trim()) && !g.isCamposResident) {
-        g.city = "";
-        g.cidade = "";
-      }
-      changed = true;
-    }
   });
 
   db.reservations.forEach(r => {
@@ -4653,62 +4624,6 @@ function reconcileUniversalIntegrity(incomingState = null) {
     if (r.code === "RES-408-0294" || (String(r.flatNumber) === "408" && r.guestName && r.guestName.toLowerCase().includes("felipe junqueira"))) {
       if (r.checkoutDate !== "2026-09-30") {
         r.checkoutDate = "2026-09-30";
-        changed = true;
-      }
-    }
-
-    // Sanitização de falsos-positivos no Radar Campos (ex: RES-408-0494 com documento do Rio de Janeiro/RJ e residência em Rio das Ostras, ou reservas poluídas pelo fallback 28035-000)
-    if (r.isCamposResident || (r.riskAttentionReason && String(r.riskAttentionReason).toLowerCase().includes("campos"))) {
-      const g0 = r.guests?.[0] || {};
-      const effCity = r.guestCity || r.city || g0.city || "";
-      const effAddr = r.guestAddress || r.address || g0.address || "";
-      const effState = r.guestState || r.state || g0.state || "";
-      const effOrigin = r.originCity || g0.originCity || "";
-      const effCep = r.guestCep || r.cep || g0.cep || "";
-      const aiDoc = r.aiDocInspection || g0.aiDocInspection || null;
-      const aiExplicitlyNotCampos = Boolean(
-        aiDoc &&
-        aiDoc.isCamposResident === false &&
-        aiDoc.extractedCity &&
-        !isCamposDosGoytacazes(aiDoc.extractedCity, "", aiDoc.extractedState || "")
-      );
-      const cityExplicitlyNotCampos = Boolean(
-        effCity &&
-        String(effCity).trim().length >= 3 &&
-        !isCamposDosGoytacazes(effCity, effAddr, effState, "")
-      );
-      const actuallyCampos = Boolean(
-        (aiDoc && aiDoc.isCamposResident === true && isCamposDosGoytacazes(aiDoc.extractedCity || "Campos dos Goytacazes", "", aiDoc.extractedState || "RJ")) ||
-        isCamposDosGoytacazes(effCity, effAddr, effState, cityExplicitlyNotCampos || aiExplicitlyNotCampos ? "" : effCep) ||
-        isCamposDosGoytacazes(effOrigin, "", effState, "")
-      );
-
-      if (!actuallyCampos && (aiExplicitlyNotCampos || cityExplicitlyNotCampos || !r._camposRadarSanitizedV2)) {
-        r.isCamposResident = false;
-        r._camposRadarSanitizedV2 = true;
-        if (Array.isArray(r.guests)) {
-          r.guests.forEach(gg => {
-            if (gg) {
-              gg.isCamposResident = false;
-              if (gg.riskAttentionReason && String(gg.riskAttentionReason).toLowerCase().includes("campos")) {
-                gg.riskAttentionAlert = false;
-                gg.riskAttentionReason = "";
-              }
-            }
-          });
-        }
-        if (!r.riskAttentionReason || String(r.riskAttentionReason).toLowerCase().includes("campos")) {
-          r.riskAttentionAlert = false;
-          r.riskAttentionReason = "";
-        }
-        const linkedGuest = (db.guests || []).find(gx => gx.id === r.guestId);
-        if (linkedGuest && linkedGuest.isCamposResident) {
-          linkedGuest.isCamposResident = false;
-          if (!linkedGuest.riskAttentionReason || String(linkedGuest.riskAttentionReason).toLowerCase().includes("campos")) {
-            linkedGuest.riskAttentionAlert = false;
-            linkedGuest.riskAttentionReason = "";
-          }
-        }
         changed = true;
       }
     }
@@ -7134,10 +7049,7 @@ function mergeGuestRecords(target, source) {
   const isGenericPelincaCep = (val) => !val || String(val).replace(/\D/g, "") === "28035000";
 
   const srcAddr = source.street || source.logradouro || source.address || source.endereco || source.tomadorEndereco || "";
-  const srcCep = String(source.cep || source.guestCep || source.zipCode || source.postalCode || source.tomadorCep || "").replace(/\D/g, "");
-  const isSourceGenericPelincaFallback = isGenericPelincaAddr(srcAddr) && isGenericPelincaCep(srcCep);
-
-  if ((!target.address || isGenericPelincaAddr(target.address)) && srcAddr && !isGenericPelincaAddr(srcAddr)) {
+  if ((!target.address || isGenericPelincaAddr(target.address)) && srcAddr && (!isGenericPelincaAddr(srcAddr) || !target.address)) {
     let parsedStreet = String(source.street || source.logradouro || srcAddr).trim();
     let parsedNum = String(source.number || source.streetNumber || source.numero || source.tomadorNumero || "").trim();
     let parsedBairro = String(source.neighborhood || source.bairro || source.tomadorBairro || "").trim();
@@ -7168,11 +7080,11 @@ function mergeGuestRecords(target, source) {
       target.bairro = parsedBairro;
     }
   }
-  if (!target.street && (source.street || target.address) && !isGenericPelincaAddr(source.street || target.address)) {
+  if (!target.street && (source.street || target.address)) {
     target.street = source.street || target.address;
   }
   const srcNum = source.number || source.streetNumber || source.numero || source.tomadorNumero;
-  if ((!target.number || (target.number === "100" && srcNum && srcNum !== "100")) && srcNum && !isSourceGenericPelincaFallback) {
+  if ((!target.number || (target.number === "100" && srcNum && srcNum !== "100")) && srcNum) {
     target.number = srcNum;
     target.streetNumber = srcNum;
     target.numero = srcNum;
@@ -7184,14 +7096,15 @@ function mergeGuestRecords(target, source) {
     target.complemento = c;
   }
   const srcBairro = source.neighborhood || source.bairro || source.tomadorBairro;
-  if ((!target.neighborhood || isGenericPelincaBairro(target.neighborhood)) && srcBairro && !isGenericPelincaBairro(srcBairro)) {
+  if ((!target.neighborhood || isGenericPelincaBairro(target.neighborhood)) && srcBairro && (!isGenericPelincaBairro(srcBairro) || !target.neighborhood)) {
     target.neighborhood = srcBairro;
     target.bairro = srcBairro;
   }
-  if ((!target.cep || isGenericPelincaCep(target.cep)) && srcCep && !isGenericPelincaCep(srcCep)) {
+  const srcCep = String(source.cep || source.guestCep || source.zipCode || source.postalCode || source.tomadorCep || "").replace(/\D/g, "");
+  if ((!target.cep || isGenericPelincaCep(target.cep)) && srcCep && (!isGenericPelincaCep(srcCep) || !target.cep)) {
     target.cep = srcCep;
   }
-  if (!target.city && (source.city || source.cidade || source.municipio || (!isSourceGenericPelincaFallback && source.tomadorCidade))) {
+  if (!target.city && (source.city || source.cidade || source.municipio || source.tomadorCidade)) {
     const ct = String(source.city || source.cidade || source.municipio || source.tomadorCidade).replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
     target.city = ct;
     target.cidade = ct;
@@ -7632,43 +7545,43 @@ export function isCamposDosGoytacazes(cityStr = "", addressStr = "", stateStr = 
   const s = String(stateStr || "").toLowerCase().trim();
   const cleanCep = String(cepStr || "").replace(/\D/g, "");
 
-  // Ignora endereço/CEP padrão de fallback de NFS-e (Av. Pelinca / 28035-000)
-  const isPelincaFallback = cleanCep === "28035000" && (!a || /^(av\.?\s*pelinca|avenida\s*pelinca)/i.test(a));
-
-  const text = `${c} ${a}`;
-  if (text.includes("goytacazes") || text.includes("goitacazes")) return true;
-
-  // Limpa eventual sufixo de UF na string de cidade (ex: "campos / rj", "campos - rj", "campos, rj", "campos rj")
-  const cleanCityOnly = c.replace(/\s*(?:\/|-|,|\s)\s*(?:rj|rio de janeiro)\s*$/, "").trim();
-  const isCityExplicitlyCampos = (
-    cleanCityOnly === "campos" ||
-    cleanCityOnly === "campos dos goytacazes" ||
-    cleanCityOnly === "campos dos goitacazes" ||
-    cleanCityOnly === "municipio de campos" ||
-    c.includes("campos/rj") ||
-    c.includes("campos-rj") ||
-    c.includes("campos, rj")
-  );
-  if (isCityExplicitlyCampos) return true;
-
-  // Se uma outra cidade explícita foi informada (ex: "rio de janeiro", "rio das ostras", "sao jose dos campos", "carangola", "macae"),
-  // jamais marcar como Campos por nome de rua ("Rua Siqueira Campos") ou CEP residual em cache
-  const hasExplicitOtherCity = cleanCityOnly.length >= 3 && cleanCityOnly !== "nao informada" && cleanCityOnly !== "nao informado";
-  if (hasExplicitOtherCity) {
-    return false;
-  }
-
-  if (
-    a.includes("campos dos goytacazes") ||
-    a.includes("campos dos goitacazes") ||
-    a.includes("campos/rj") ||
-    a.includes("campos-rj") ||
-    a.includes("campos - rj")
-  ) {
+  if (cleanCep.length >= 5 && (cleanCep.startsWith("280") || cleanCep.startsWith("281"))) {
     return true;
   }
+  
+  const text = `${c} ${a}`;
+  if (text.includes("goytacazes") || text.includes("goitacazes")) return true;
+  
+  if (/\bcampos\b/.test(c)) {
+    if (c.includes("jordao") || c.includes("novos") || c.includes("altos") || c.includes("lindos") || c.includes("verdes") || c.includes("belos") || c.includes("julio")) {
+      return false;
+    }
+    if (
+      s === "rj" || 
+      s.includes("rio de janeiro") || 
+      text.includes("rj") || 
+      text.includes("rio de janeiro") || 
+      c === "campos" || 
+      c.startsWith("campos ") || 
+      c.endsWith(" campos") || 
+      c.includes("campos/rj") || 
+      c.includes("campos-rj") || 
+      c.includes("campos, rj")
+    ) {
+      return true;
+    }
+  }
 
-  if (!isPelincaFallback && cleanCep.length >= 5 && (cleanCep.startsWith("280") || cleanCep.startsWith("281"))) {
+  if (/\bcampos\b/.test(a) && (
+    s === "rj" ||
+    s.includes("rio de janeiro") ||
+    text.includes("rj") || 
+    text.includes("rio de janeiro") || 
+    a.includes("campos dos goytacazes") || 
+    a.includes("campos dos goitacazes") ||
+    a.includes("campos/rj") ||
+    a.includes("campos-rj")
+  )) {
     return true;
   }
 
@@ -7678,7 +7591,7 @@ export function isCamposDosGoytacazes(cityStr = "", addressStr = "", stateStr = 
 export function checkYouthLocalRisk({ birthDate, city, address, phone, state, originCity, cep }) {
   const age = calculateGuestAge(birthDate);
   const isUnder30 = age !== null && age < 30;
-  const isCampos = isCamposDosGoytacazes(city, address, state, cep) || isCamposDosGoytacazes(originCity, "", state, "");
+  const isCampos = isCamposDosGoytacazes(city, address, state, cep) || isCamposDosGoytacazes(originCity, "", state, cep);
   const cleanPhone = String(phone || "").replace(/\D/g, "");
   let ddd = "";
   if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
@@ -8357,14 +8270,14 @@ export async function inspectDocumentWithAI({
 
   const isCamposFromInput = Boolean(
     isCamposDosGoytacazes(effectiveCity, effectiveAddress, effectiveState, effectiveCep) ||
-    isCamposDosGoytacazes(effectiveOrigin, "", effectiveState, "") ||
-    isCamposDosGoytacazes(streamExtractedCity, "", effectiveState, "") ||
+    isCamposDosGoytacazes(effectiveOrigin, "", effectiveState, effectiveCep) ||
+    isCamposDosGoytacazes(streamExtractedCity, "", effectiveState, effectiveCep) ||
     textStreamMentionsCampos ||
     lowFileName.includes("campos_dos_goytacazes") ||
     lowFileName.includes("cnh_campos") ||
     lowFileName.includes("rg_campos") ||
     lowFileName.includes("campos_rj") ||
-    (lowFileName.includes("campos") && !lowFileName.includes("jordao") && !lowFileName.includes("novos") && !cleanProvidedName.toLowerCase().includes("campos"))
+    (lowFileName.includes("campos") && !lowFileName.includes("jordao") && !lowFileName.includes("novos"))
   );
 
   const apiKey = (process.env.NODE_ENV === "test" || process.env.PORT === "5055")
@@ -8437,13 +8350,10 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
           const ageFromExt = calculateAge(extBirth);
           const aiCalculatedAge = ageFromExt !== null ? ageFromExt : (typeof parsed.calculatedAge === "number" ? parsed.calculatedAge : initialCalculatedAge);
           const aiIsMinor = ageFromExt !== null ? (ageFromExt < 18) : (typeof parsed.isMinor === "boolean" ? parsed.isMinor : initialIsMinor);
-          const docCityIsCampos = isCamposDosGoytacazes(parsed.extractedCity, parsed.extractedAddress || "", parsed.extractedState || "");
-          const docHasOtherCity = Boolean(parsed.extractedCity && String(parsed.extractedCity).trim().length >= 3 && !docCityIsCampos);
           const aiIsCampos = Boolean(
-            docCityIsCampos ||
-            (!docHasOtherCity && parsed.isCamposResident) ||
-            isCamposDosGoytacazes(effectiveCity, effectiveAddress, effectiveState, effectiveCep) ||
-            isCamposDosGoytacazes(effectiveOrigin, "", effectiveState, "")
+            parsed.isCamposResident ||
+            isCamposFromInput ||
+            isCamposDosGoytacazes(parsed.extractedCity, parsed.extractedAddress || "", parsed.extractedState || "")
           );
 
           const isOfficial = Boolean(parsed.isOfficialDocument !== false);
@@ -20886,30 +20796,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (req.body[f] !== undefined) r[f] = req.body[f];
   }
 
-  if (req.body.isCamposResident !== undefined) {
-    const isCamposVal = Boolean(req.body.isCamposResident);
-    r.isCamposResident = isCamposVal;
-    if (Array.isArray(r.guests) && r.guests[0]) {
-      r.guests[0].isCamposResident = isCamposVal;
-      if (!isCamposVal) {
-        r.guests[0].riskAttentionAlert = false;
-        r.guests[0].riskAttentionReason = "";
-      }
-    }
-    if (!isCamposVal && !req.body.riskAttentionAlert) {
-      r.riskAttentionAlert = false;
-      r.riskAttentionReason = "";
-      if (r.aiDocInspection && typeof r.aiDocInspection === "object" && r.aiDocInspection.isCamposResident) {
-        r.aiDocInspection.isCamposResident = false;
-      }
-    } else if (isCamposVal) {
-      r.riskAttentionAlert = true;
-      if (!r.riskAttentionReason) {
-        r.riskAttentionReason = "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
-      }
-    }
-  }
-
   if (r.flatId !== undefined) {
     const matchedFlat = (db.flats || []).find(f => f.id === Number(r.flatId));
     if (matchedFlat) {
@@ -21243,16 +21129,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
     if (req.body.autoEmitInvoice !== undefined) {
       matchedGuest.autoEmitInvoice = r.autoEmitInvoice;
-    }
-    if (req.body.isCamposResident !== undefined) {
-      matchedGuest.isCamposResident = Boolean(req.body.isCamposResident);
-      if (!matchedGuest.isCamposResident && !req.body.riskAttentionAlert) {
-        matchedGuest.riskAttentionAlert = false;
-        matchedGuest.riskAttentionReason = "";
-        if (matchedGuest.aiDocInspection && typeof matchedGuest.aiDocInspection === "object" && matchedGuest.aiDocInspection.isCamposResident) {
-          matchedGuest.aiDocInspection.isCamposResident = false;
-        }
-      }
     }
   }
 
@@ -24862,7 +24738,7 @@ async function notifyLostItemGuest({ item, db, saveDatabase, bypassTestMode = fa
 
   if (saveDatabase) saveDatabase();
 
-  const cleanWaTarget = cleanGuestPhone.startsWith("55") ? cleanGuestPhone : `55${cleanGuestPhone}`;
+  const cleanWaTarget = cleanGuestPhone;
   const whatsappUrl = `https://wa.me/${cleanWaTarget}?text=${encodeURIComponent(msg)}`;
 
   return {
@@ -25782,34 +25658,27 @@ app.get("/api/pms/guests", (req, res) => {
       lastStayDate = sortedRes[0].checkoutDate || sortedRes[0].checkinDate;
     }
 
-    // Backfill de foto e endereço do check-in digital se disponível em alguma estadia (sem usar o fallback fiscal Av. Pelinca)
+    // Backfill de foto e endereço do check-in digital se disponível em alguma estadia
     let photoUrl = g.photoUrl || null;
     let docPhotoUrl = g.docPhotoUrl || null;
     let signatureUrl = g.signatureUrl || null;
-    let guestStreet = (!isGenericPelincaStreet(g.street || g.logradouro) ? (g.street || g.logradouro) : "") || "";
-    let guestAddress = (!isGenericPelincaStreet(g.address) ? g.address : "") || guestStreet || "";
-    let guestNumber = (guestStreet ? (g.number || g.streetNumber || g.numero) : "") || "";
-    let guestComplement = g.complement || g.complemento || "";
-    let guestNeighborhood = (guestStreet || !/^pelinca$/i.test(String(g.neighborhood || g.bairro || "").trim()) ? (g.neighborhood || g.bairro) : "") || "";
-    let guestCep = (!isGenericPelincaCep(g.cep) ? String(g.cep || "").replace(/\D/g, "") : "") || "";
-    const rawGuestCity = String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
-    let guestCity = (guestStreet || guestCep || !/^campos(\s+dos\s+goytacazes)?$/i.test(rawGuestCity) || g.isCamposResident === true)
-      ? rawGuestCity
-      : "";
-    let guestState = g.state || g.uf || "";
     for (const r of guestReservations) {
       if (!photoUrl && (r.selfieUrl || r.photoUrl)) photoUrl = r.selfieUrl || r.photoUrl;
       if (!docPhotoUrl && (r.docPhotoUrl || r.documentPhotoUrl)) docPhotoUrl = r.docPhotoUrl || r.documentPhotoUrl;
       if (!signatureUrl && r.signatureUrl) signatureUrl = r.signatureUrl;
-      if (!guestStreet && (r.guestStreet || r.street) && !isGenericPelincaStreet(r.guestStreet || r.street)) guestStreet = r.guestStreet || r.street;
-      if (!guestAddress && (r.guestAddress || r.address) && !isGenericPelincaStreet(r.guestAddress || r.address)) guestAddress = r.guestAddress || r.address;
-      if (!guestNumber && (r.guestStreetNumber || r.streetNumber || r.number)) guestNumber = r.guestStreetNumber || r.streetNumber || r.number;
-      if (!guestComplement && (r.guestComplement || r.complement)) guestComplement = r.guestComplement || r.complement;
-      if (!guestNeighborhood && (r.guestNeighborhood || r.neighborhood)) guestNeighborhood = r.guestNeighborhood || r.neighborhood;
-      if (!guestCep && (r.guestCep || r.cep) && !isGenericPelincaCep(r.guestCep || r.cep)) guestCep = String(r.guestCep || r.cep).replace(/\D/g, "");
-      if (!guestCity && (r.guestCity || r.city)) guestCity = String(r.guestCity || r.city).replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
-      if (!guestState && (r.guestState || r.state)) guestState = r.guestState || r.state;
     }
+
+    const normGuestAddr = normalizeTomadorAddressFields({
+      tomadorStreet: g.street || g.logradouro,
+      tomadorEndereco: g.address || g.street || g.logradouro,
+      tomadorNumero: g.number || g.streetNumber || g.numero,
+      tomadorComplemento: g.complement || g.complemento,
+      tomadorBairro: g.neighborhood || g.bairro,
+      tomadorCidade: g.city || g.cidade,
+      tomadorUf: g.state || g.uf,
+      tomadorCep: g.cep,
+      tomadorCodigoMunicipio: g.ibgeCode || g.codigoMunicipio
+    });
 
     return {
       ...g,
@@ -25825,17 +25694,17 @@ app.get("/api/pms/guests", (req, res) => {
       signatureUrl,
       birthDate: g.birthDate || "",
       gender: g.gender || "",
-      address: guestAddress,
-      street: guestStreet,
-      logradouro: guestStreet,
-      streetNumber: guestNumber,
-      number: guestNumber,
-      numero: guestNumber,
-      complement: guestComplement,
-      neighborhood: guestNeighborhood,
-      cep: guestCep,
-      city: guestCity,
-      state: guestState,
+      address: g.address || normGuestAddr.logradouro || "",
+      street: g.street || normGuestAddr.logradouro || "",
+      logradouro: g.logradouro || normGuestAddr.logradouro || "",
+      streetNumber: g.streetNumber || g.number || normGuestAddr.numero || "",
+      number: g.number || g.streetNumber || normGuestAddr.numero || "",
+      numero: g.numero || g.number || g.streetNumber || normGuestAddr.numero || "",
+      complement: g.complement || normGuestAddr.complemento || "",
+      neighborhood: g.neighborhood || normGuestAddr.bairro || "",
+      cep: g.cep || normGuestAddr.cep || "",
+      city: String(g.city || normGuestAddr.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim(),
+      state: g.state || normGuestAddr.uf || "",
       vehiclePlate: g.vehiclePlate || "",
       vehicleModel: g.vehicleModel || "",
       vehicleBrand: g.vehicleBrand || "",
@@ -25987,18 +25856,15 @@ app.get("/api/pms/guests/:id", async (req, res) => {
   }
 
   for (const inv of guestInvoices) {
-    const isFallbackPelincaInv = isGenericPelincaCep(inv.tomadorCep) || isGenericPelincaStreet(inv.tomadorEndereco);
-    if (!isFallbackPelincaInv) {
-      if ((!cep || isGenericPelincaCep(cep)) && inv.tomadorCep) {
-        cep = String(inv.tomadorCep).replace(/\D/g, "");
-      }
-      if (!address && inv.tomadorEndereco) address = inv.tomadorEndereco;
-      if (!streetNumber && inv.tomadorNumero) streetNumber = inv.tomadorNumero;
-      if (!complement && inv.tomadorComplemento) complement = inv.tomadorComplemento;
-      if (!neighborhood && inv.tomadorBairro) neighborhood = inv.tomadorBairro;
-      if (!city && inv.tomadorCidade) city = inv.tomadorCidade;
-      if (!state && inv.tomadorUf) state = inv.tomadorUf;
+    if ((!cep || isGenericPelincaCep(cep)) && inv.tomadorCep && !isGenericPelincaCep(inv.tomadorCep)) {
+      cep = String(inv.tomadorCep).replace(/\D/g, "");
     }
+    if (!address && inv.tomadorEndereco) address = inv.tomadorEndereco;
+    if (!streetNumber && inv.tomadorNumero) streetNumber = inv.tomadorNumero;
+    if (!complement && inv.tomadorComplemento) complement = inv.tomadorComplemento;
+    if (!neighborhood && inv.tomadorBairro) neighborhood = inv.tomadorBairro;
+    if (!city && inv.tomadorCidade) city = inv.tomadorCidade;
+    if (!state && inv.tomadorUf) state = inv.tomadorUf;
   }
 
   if (!cep && address) {
@@ -26339,31 +26205,23 @@ const handleUpdateGuest = async (req, res) => {
   }
 
   // Sincroniza docPhotoUrl, hasMinor e isCamposResident com as reservas do hóspede
-  {
+  if (guest.docPhotoUrl) {
     const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
     (db.reservations || []).forEach(r => {
       const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
       if ((cleanDoc && resDoc === cleanDoc) || r.guestId === guest.id) {
-        if (guest.docPhotoUrl && (!r.docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl)) {
+        if (!r.docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl) {
           r.docPhotoUrl = guest.docPhotoUrl;
         }
-        if (guest.docPhotoUrl && r.guests?.[0] && (!r.guests[0].docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl)) {
+        if (r.guests?.[0] && (!r.guests[0].docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl)) {
           r.guests[0].docPhotoUrl = guest.docPhotoUrl;
         }
         if (guest.hasMinor !== undefined) r.hasMinor = Boolean(guest.hasMinor);
         if (guest.isCamposResident !== undefined) {
           r.isCamposResident = Boolean(guest.isCamposResident);
-          if (r.guests?.[0]) r.guests[0].isCamposResident = Boolean(guest.isCamposResident);
           if (guest.isCamposResident) {
             r.riskAttentionAlert = true;
             r.riskAttentionReason = guest.riskAttentionReason || "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
-          } else if (!req.body.riskAttentionAlert) {
-            r.riskAttentionAlert = false;
-            r.riskAttentionReason = "";
-            if (r.guests?.[0]) {
-              r.guests[0].riskAttentionAlert = false;
-              r.guests[0].riskAttentionReason = "";
-            }
           }
         }
       }
@@ -27917,10 +27775,10 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
     const digits = String(raw).replace(/\D/g, "");
     if (!digits) return;
     phoneCandidates.add(digits);
+    const cleaned = cleanWhatsAppPhone(raw);
+    if (cleaned) phoneCandidates.add(cleaned);
     if (digits.startsWith("55") && digits.length >= 12) {
       phoneCandidates.add(digits.substring(2));
-    } else if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
-      phoneCandidates.add("55" + digits);
     }
   };
 
@@ -29960,20 +29818,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   // Avaliação Consolidada de Morador de Campos dos Goytacazes e Menor de Idade
-  const effectiveCity = city || guest.city || "";
-  const effectiveState = state || req.body.state || guest.state || "";
-  const effectiveCep = cep || req.body.cep || guest.cep || "";
-  const effectiveOriginCity = originCity || req.body.originCity || guest.originCity || "";
-  const hasExplicitNonCamposLocation = Boolean(
-    (effectiveCity && !isCamposDosGoytacazes(effectiveCity, address || guest.address, effectiveState, effectiveCep)) ||
-    (aiDocInspection && aiDocInspection.isCamposResident === false && aiDocInspection.extractedCity && !isCamposDosGoytacazes(aiDocInspection.extractedCity, "", effectiveState, ""))
-  );
   const isCamposFromDocOrInput = Boolean(
+    req.body.isCamposResident ||
     aiDocInspection?.isCamposResident ||
-    isCamposDosGoytacazes(effectiveCity, address || guest.address, effectiveState, effectiveCep) ||
-    isCamposDosGoytacazes(effectiveOriginCity, "", originState || req.body.originState || guest.originState || effectiveState, effectiveCep) ||
-    riskAssessment.isCampos ||
-    (req.body.isCamposResident && !hasExplicitNonCamposLocation)
+    isCamposDosGoytacazes(city || guest.city, address || guest.address, state || guest.state, cep || guest.cep) ||
+    isCamposDosGoytacazes(originCity || req.body.originCity || guest.originCity, "", state || guest.state, cep || guest.cep) ||
+    riskAssessment.isCampos
   );
 
   const effectiveIsMinor = Boolean(aiDocInspection?.isMinor || isMinorCalculated);
@@ -30042,16 +29892,13 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   guest.isMinor = effectiveIsMinor;
   guest.minorAge = effectiveAge;
   guest.minorKinship = minorKinship || guest.minorKinship || "";
-  guest.isCamposResident = isCamposFromDocOrInput;
+  guest.isCamposResident = Boolean(isCamposFromDocOrInput || guest.isCamposResident);
   if (isCamposFromDocOrInput) {
     guest.riskAttentionAlert = true;
     guest.riskAttentionReason = riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
   } else if (riskAssessment.isTriggered) {
     guest.riskAttentionAlert = true;
     guest.riskAttentionReason = riskAssessment.reason;
-  } else {
-    guest.riskAttentionAlert = false;
-    guest.riskAttentionReason = "";
   }
   guest.aiVerification = aiVerification;
   if (aiDocInspection) {
@@ -30154,7 +30001,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   targetGuest.isMinor = effectiveIsMinor;
   targetGuest.minorAge = effectiveAge;
   targetGuest.minorKinship = minorKinship || "";
-  targetGuest.isCamposResident = isCamposFromDocOrInput;
+  targetGuest.isCamposResident = Boolean(isCamposFromDocOrInput || targetGuest.isCamposResident);
   targetGuest.riskAttentionAlert = Boolean(isCamposFromDocOrInput || riskAssessment.isTriggered);
   targetGuest.riskAttentionReason = isCamposFromDocOrInput
     ? (riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ")
@@ -30205,13 +30052,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     if (selfieUrl) r.selfieUrl = selfieUrl;
     if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
     if (signatureUrl) r.signatureUrl = signatureUrl;
-    r.isCamposResident = isCamposFromDocOrInput;
+    r.isCamposResident = Boolean(isCamposFromDocOrInput || r.isCamposResident);
     if (isCamposFromDocOrInput) {
       r.riskAttentionAlert = true;
       r.riskAttentionReason = riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
-    } else if (!riskAssessment.isTriggered) {
-      r.riskAttentionAlert = false;
-      r.riskAttentionReason = "";
     }
     if (effectiveIsMinor) {
       r.hasMinor = true;
@@ -30234,11 +30078,9 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
   r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
   r.hasMinor = Boolean(effectiveIsMinor || r.hasMinor || r.guests.some(g => g.isMinor));
-  r.isCamposResident = Boolean(isCamposFromDocOrInput || r.guests.some(g => g.index !== Number(guestIndex) && g.isCamposResident));
+  r.isCamposResident = Boolean(isCamposFromDocOrInput || r.isCamposResident || r.guests.some(g => g.isCamposResident));
   r.riskAttentionAlert = Boolean(r.isCamposResident || r.guests.some(g => g.riskAttentionAlert) || riskAssessment.isTriggered);
-  if (!r.riskAttentionAlert) {
-    r.riskAttentionReason = "";
-  } else if (r.isCamposResident && !r.riskAttentionReason) {
+  if (r.isCamposResident && !r.riskAttentionReason) {
     r.riskAttentionReason = riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
   } else if (r.riskAttentionAlert && !r.riskAttentionReason) {
     r.riskAttentionReason = r.guests.find(g => g.riskAttentionAlert)?.riskAttentionReason || riskAssessment.reason || "";
@@ -38168,7 +38010,7 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
 
   saveDatabase();
 
-  const fallbackUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(msgText)}`;
+  const fallbackUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msgText)}`;
 
   res.json({
     success: apiResult.success,

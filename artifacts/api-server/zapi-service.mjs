@@ -1345,18 +1345,40 @@ Tenha uma excelente estadia! Se precisar de suporte, estamos à disposição.`,
 // ── Sanitização de Telefone WhatsApp ───────────────────────────────────────────
 export function cleanWhatsAppPhone(rawPhone) {
   if (!rawPhone) return "";
-  let digits = String(rawPhone).replace(/\D/g, "");
+  const str = String(rawPhone).trim();
+  const hasExplicitPlus = str.startsWith("+");
+  let digits = str.replace(/\D/g, "");
   if (!digits) return "";
-  
-  // Remove zeros à esquerda (ex: 022998505276 -> 22998505276)
+
+  const hadInternationalDoubleZero = digits.startsWith("00");
+  // Remove zeros à esquerda (ex: 022998505276 -> 22998505276 ou 001832... -> 1832...)
   while (digits.startsWith("0")) {
     digits = digits.substring(1);
   }
+  if (!digits) return "";
 
-  // Se tem 10 ou 11 dígitos (DDD + número no Brasil), adiciona 55
-  if (digits.length === 10 || digits.length === 11) {
-    digits = "55" + digits;
+  // Auto-correção de número EUA/Canadá (+1) de 11 dígitos que recebeu prefixo "55" indevidamente (ex: 5518323619294 -> 18323619294).
+  // No Brasil, qualquer número de 13 dígitos começando com 55 é obrigatoriamente móvel (55 + DDD + 9XXXXXXXX, logo o 5º dígito é sempre '9').
+  if (digits.length === 13 && digits.startsWith("551") && digits[4] !== "9") {
+    digits = digits.substring(2);
   }
+
+  // Se o número veio explicitamente com '+' ou '00' internacional e não começa com 55, preserva o DDI estrangeiro
+  if ((hasExplicitPlus || hadInternationalDoubleZero) && !digits.startsWith("55")) {
+    return digits;
+  }
+
+  // Se tem 10 dígitos (DDD [1-9][1-9] + 8 dígitos fixo/móvel no Brasil), adiciona 55
+  if (digits.length === 10 && /^[1-9][1-9]\d{8}$/.test(digits)) {
+    return "55" + digits;
+  }
+
+  // Se tem 11 dígitos: no Brasil é obrigatoriamente DDD ([1-9][1-9]) + 9º dígito ('9') + 8 dígitos.
+  // Números internacionais de 11 dígitos (como EUA/Canadá 1 + 3 dígitos área + 7 dígitos, ex: 18323619294) não têm '9' na 3ª posição.
+  if (digits.length === 11 && /^[1-9][1-9]9\d{8}$/.test(digits)) {
+    return "55" + digits;
+  }
+
   return digits;
 }
 
@@ -1875,9 +1897,6 @@ export function evaluateZapiChannelPolicy(configOrOptions, maybeOptions = {}) {
 
   const rawPhone = phone || "";
   let cleanPhone = cleanWhatsAppPhone(rawPhone) || String(rawPhone).replace(/\D/g, "");
-  if (cleanPhone && !cleanPhone.startsWith("55") && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
-    cleanPhone = `55${cleanPhone}`;
-  }
   if (!cleanPhone) {
     return {
       allowed: false,
@@ -2014,9 +2033,6 @@ export function evaluateZapiChannelPolicy(configOrOptions, maybeOptions = {}) {
     if (channel.redirectToWhitelistOnTest === true && Array.isArray(channel.whitelist) && channel.whitelist.length > 0) {
       const rawTarget = channel.whitelist[0];
       let targetPhone = cleanWhatsAppPhone(rawTarget) || String(rawTarget).replace(/\D/g, "");
-      if (!targetPhone.startsWith("55") && targetPhone.length <= 11) {
-        targetPhone = `55${targetPhone}`;
-      }
 
       const displayOriginal = typeof formatPhoneDisplay === "function" ? formatPhoneDisplay(cleanPhone) : cleanPhone;
       const channelName = channel.name || resolvedChannelId;
@@ -5527,13 +5543,16 @@ export async function getZapiGroups(config) {
 
 // ── Formatador de Telefone para Interface do Chat ──────────────────────────────
 export function formatPhoneDisplay(phone = "") {
-  const digits = String(phone || "").replace(/\D/g, "");
+  const digits = cleanWhatsAppPhone(phone) || String(phone || "").replace(/\D/g, "");
   if (!digits) return phone;
   if (digits.length === 13 && digits.startsWith("55")) {
     return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
   }
   if (digits.length === 12 && digits.startsWith("55")) {
     return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 8)}-${digits.slice(8)}`;
+  }
+  if (digits.length === 11 && digits.startsWith("1") && digits[2] !== "9") {
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
   }
   if (digits.length === 11) {
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
@@ -5844,6 +5863,17 @@ export function appendMessageToConversation(db, {
 export function syncWhatsappConversationsStore(db) {
   if (!db) return;
   if (!db.whatsappConversations) db.whatsappConversations = [];
+
+  for (const conv of db.whatsappConversations) {
+    if (conv && !conv.isGroup && conv.phone) {
+      const healed = cleanWhatsAppPhone(conv.phone);
+      if (healed && healed !== conv.phone) {
+        conv.phone = healed;
+        conv.id = healed;
+        conv.formattedPhone = formatPhoneDisplay(healed);
+      }
+    }
+  }
 
   for (const r of (db.reservations || [])) {
     const phones = getReservationPhones(r, db);

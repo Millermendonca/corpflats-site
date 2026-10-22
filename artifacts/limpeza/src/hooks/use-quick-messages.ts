@@ -64,6 +64,42 @@ export interface ReservationRecipients {
   }
 }
 
+export function cleanWhatsAppPhone(rawPhone?: string | null): string {
+  if (!rawPhone) return ""
+  const str = String(rawPhone).trim()
+  const hasExplicitPlus = str.startsWith("+")
+  let digits = str.replace(/\D/g, "")
+  if (!digits) return ""
+
+  const hadInternationalDoubleZero = digits.startsWith("00")
+  while (digits.startsWith("0")) {
+    digits = digits.substring(1)
+  }
+  if (!digits) return ""
+
+  // Auto-correção de número EUA/Canadá (+1) de 11 dígitos que recebeu prefixo "55" indevidamente (ex: 5518323619294 -> 18323619294)
+  if (digits.length === 13 && digits.startsWith("551") && digits[4] !== "9") {
+    digits = digits.substring(2)
+  }
+
+  // Se o número veio explicitamente com '+' ou '00' internacional e não começa com 55, preserva o DDI estrangeiro
+  if ((hasExplicitPlus || hadInternationalDoubleZero) && !digits.startsWith("55")) {
+    return digits
+  }
+
+  // Se tem 10 dígitos (DDD [1-9][1-9] + 8 dígitos no Brasil), adiciona 55
+  if (digits.length === 10 && /^[1-9][1-9]\d{8}$/.test(digits)) {
+    return "55" + digits
+  }
+
+  // Se tem 11 dígitos: no Brasil é obrigatoriamente DDD ([1-9][1-9]) + 9º dígito ('9') + 8 dígitos
+  if (digits.length === 11 && /^[1-9][1-9]9\d{8}$/.test(digits)) {
+    return "55" + digits
+  }
+
+  return digits
+}
+
 export function isPureBillingQuickMessage(qm?: Partial<WhatsAppQuickMessage> | null): boolean {
   if (!qm) return false
   const id = String(qm.id || "").toLowerCase()
@@ -812,25 +848,15 @@ export function useQuickMessages() {
     const resCode = resItem.code || resItem.reservationCode || String(resItem.id || "")
 
     // Fallback phones
-    const guestPhone = recipients.guest.cleanDigits.length === 10 || recipients.guest.cleanDigits.length === 11 
-      ? `55${recipients.guest.cleanDigits}` 
-      : recipients.guest.cleanDigits
-    const requesterPhone = recipients.requester.cleanDigits.length === 10 || recipients.requester.cleanDigits.length === 11 
-      ? `55${recipients.requester.cleanDigits}` 
-      : recipients.requester.cleanDigits
+    const guestPhone = cleanWhatsAppPhone(recipients.guest.phone || recipients.guest.cleanDigits)
+    const requesterPhone = cleanWhatsAppPhone(recipients.requester.phone || recipients.requester.cleanDigits)
 
     const matchedCompanion = recipients.companions.find(
       c => c.key === targetMode || (opts.guestIndex && c.index === Number(opts.guestIndex))
     )
-    const companionDigits = matchedCompanion?.cleanDigits || ""
-    const companionPhone = companionDigits.length === 10 || companionDigits.length === 11
-      ? `55${companionDigits}`
-      : companionDigits
+    const companionPhone = cleanWhatsAppPhone(matchedCompanion?.phone || matchedCompanion?.cleanDigits || "")
 
-    const cleanCustomPhone = opts.customPhone ? opts.customPhone.replace(/\D/g, "") : ""
-    const formattedCustomPhone = cleanCustomPhone.length === 10 || cleanCustomPhone.length === 11
-      ? `55${cleanCustomPhone}`
-      : cleanCustomPhone
+    const formattedCustomPhone = cleanWhatsAppPhone(opts.customPhone || "")
 
     const isMultiGuestMode = targetMode === "all_guests" || targetMode === "all"
     const allowRequesterFallbackToGuest = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
@@ -959,10 +985,7 @@ export async function sendDirectZapiWithFallback(options: {
   toast?: (opts: { title: string; description?: string; variant?: "default" | "destructive" }) => void;
   label?: string;
 }): Promise<{ success: boolean; method: "zapi" | "wa_web"; fallback?: boolean }> {
-  const rawDigits = (options.phone || "").replace(/\D/g, "")
-  const cleanPhone = rawDigits.length === 10 || rawDigits.length === 11
-    ? `55${rawDigits}`
-    : rawDigits
+  const cleanPhone = cleanWhatsAppPhone(options.phone)
 
   const waWebUrl = cleanPhone
     ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(options.message)}`
@@ -1032,10 +1055,7 @@ export async function sendDirectZapiWithFallback(options: {
 }
 
 export function buildDirectWaWebUrl(phone?: string | null, message: string = ""): string {
-  const rawDigits = (phone || "").replace(/\D/g, "")
-  const cleanPhone = rawDigits.length === 10 || rawDigits.length === 11
-    ? `55${rawDigits}`
-    : rawDigits
+  const cleanPhone = cleanWhatsAppPhone(phone)
   return cleanPhone
     ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
     : `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`
@@ -1063,25 +1083,15 @@ export function buildQuickMessageWaWebUrl(
     targetMode = "requester"
   }
 
-  const guestPhone = recipients.guest.cleanDigits.length === 10 || recipients.guest.cleanDigits.length === 11
-    ? `55${recipients.guest.cleanDigits}`
-    : recipients.guest.cleanDigits
-  const requesterPhone = recipients.requester.cleanDigits.length === 10 || recipients.requester.cleanDigits.length === 11
-    ? `55${recipients.requester.cleanDigits}`
-    : recipients.requester.cleanDigits
+  const guestPhone = cleanWhatsAppPhone(recipients.guest.phone || recipients.guest.cleanDigits)
+  const requesterPhone = cleanWhatsAppPhone(recipients.requester.phone || recipients.requester.cleanDigits)
 
   const matchedCompanion = recipients.companions.find(
     c => c.key === targetMode || (opts.guestIndex && c.index === Number(opts.guestIndex))
   )
-  const companionDigits = matchedCompanion?.cleanDigits || ""
-  const companionPhone = companionDigits.length === 10 || companionDigits.length === 11
-    ? `55${companionDigits}`
-    : companionDigits
+  const companionPhone = cleanWhatsAppPhone(matchedCompanion?.phone || matchedCompanion?.cleanDigits || "")
 
-  const cleanCustomPhone = opts.customPhone ? opts.customPhone.replace(/\D/g, "") : ""
-  const formattedCustomPhone = cleanCustomPhone.length === 10 || cleanCustomPhone.length === 11
-    ? `55${cleanCustomPhone}`
-    : cleanCustomPhone
+  const formattedCustomPhone = cleanWhatsAppPhone(opts.customPhone || "")
 
   const allowRequesterFallbackToGuest = !recipients.requester.isDifferentFromGuest || !recipients.requester.hasOwnContact
   const effectiveTargetPhone = formattedCustomPhone
