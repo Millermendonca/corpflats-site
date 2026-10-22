@@ -27450,7 +27450,7 @@ const handleCheckout = async (req, res) => {
         tomadorNome: r.guestName,
         tomadorCpfCnpj: r.guestDocument || guest?.document || guest?.documentNumber || "",
         localNome: "CorpFlats",
-        localEndereco: "Rua Conselheiro Otaviano, 509 - Centro, Campos dos Goytacazes/RJ",
+        localEndereco: "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes/RJ",
         flatNumber: String(r.flatNumber || "113"),
         checkIn: r.checkinDate,
         checkOut: r.checkoutDate,
@@ -33807,6 +33807,12 @@ function getFiscalData() {
       inv904.qrCodeUrl = "https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=33010091247964813000165000000000090426106901763295";
     }
     for (const inv of db.invoices) {
+      if (inv.discriminacao && String(inv.discriminacao).includes("Conselheiro Otaviano, 509")) {
+        inv.discriminacao = String(inv.discriminacao).replace(/Conselheiro Otaviano,\s*509/gi, "Conselheiro Otaviano, 209");
+      }
+      if (inv.descricaoServico && String(inv.descricaoServico).includes("Conselheiro Otaviano, 509")) {
+        inv.descricaoServico = String(inv.descricaoServico).replace(/Conselheiro Otaviano,\s*509/gi, "Conselheiro Otaviano, 209");
+      }
       if (inv.chaveAcesso && String(inv.linkPrefeitura || "").includes("/consultapublica/danfse?chave=")) {
         inv.linkPrefeitura = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${inv.chaveAcesso}`;
         inv.qrCodeUrl = inv.linkPrefeitura;
@@ -33962,6 +33968,10 @@ app.get("/api/nfse/settings", (req, res) => {
       inscricaoMunicipal: "142591",
       razaoSocial: "Rental Miller's LTDA"
     };
+    saveDatabase();
+  }
+  if (db.fiscalSettings?.descriptionTemplate && db.fiscalSettings.descriptionTemplate.includes("Conselheiro Otaviano, 509")) {
+    db.fiscalSettings.descriptionTemplate = db.fiscalSettings.descriptionTemplate.replace(/Conselheiro Otaviano,\s*509/gi, "Conselheiro Otaviano, 209");
     saveDatabase();
   }
   res.json(db.fiscalSettings);
