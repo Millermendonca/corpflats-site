@@ -1267,10 +1267,16 @@ export function sendEmailAsync({
   direction = "outbound",
   metadata = {},
   attachments = [],
-  overrides = {}
+  overrides = {},
+  onDeliveryResult = null
 }) {
   if (!recipient || !subject) {
     console.warn("[MailService] Destinatário ou assunto ausentes. Abortando.");
+    if (typeof onDeliveryResult === "function") {
+      try {
+        onDeliveryResult({ success: false, status: "failed", error: "Destinatário ou assunto de e-mail ausentes." });
+      } catch (_) {}
+    }
     return null;
   }
 
@@ -1346,11 +1352,33 @@ export function sendEmailAsync({
       logEntry.metadata.sentAt = new Date().toISOString();
       delete logEntry.metadata.error;
       console.log(`[MailService] ✓ E-mail enviado para ${recipient} (MsgID: ${info.messageId})`);
+      if (typeof onDeliveryResult === "function") {
+        try {
+          onDeliveryResult({
+            success: true,
+            status: "sent",
+            messageId: info.messageId,
+            sentAt: logEntry.metadata.sentAt,
+            communicationId: logEntry.id
+          });
+        } catch (_) {}
+      }
     } catch (err) {
       logEntry.status = "failed";
       logEntry.metadata.error = err.message || String(err);
       logEntry.metadata.failedAt = new Date().toISOString();
       console.error(`[MailService] ✗ Falha ao enviar e-mail para ${recipient}:`, err.message);
+      if (typeof onDeliveryResult === "function") {
+        try {
+          onDeliveryResult({
+            success: false,
+            status: "failed",
+            error: logEntry.metadata.error,
+            failedAt: logEntry.metadata.failedAt,
+            communicationId: logEntry.id
+          });
+        } catch (_) {}
+      }
     } finally {
       if (typeof saveDatabase === "function") saveDatabase();
     }

@@ -34,7 +34,11 @@ import {
   Home,
   AlertCircle,
   Clock,
-  Sparkle
+  Users,
+  UserCheck,
+  UserPlus,
+  Phone,
+  Edit3
 } from "lucide-react";
 
 export interface MinibarProduct {
@@ -60,6 +64,17 @@ export interface MinibarOrderItem {
   isCourtesy?: boolean;
 }
 
+export interface FlatGuestSlot {
+  index: number;
+  guestId?: number | string | null;
+  name: string;
+  firstName: string;
+  phone: string;
+  email: string;
+  cpf: string;
+  role: string;
+}
+
 export interface MinibarReservation {
   guestName: string;
   firstName: string;
@@ -72,6 +87,9 @@ export interface MinibarReservation {
   checkIn?: string;
   checkOut?: string;
   status?: string;
+  numGuests?: number;
+  matchedGuestIndex?: number;
+  matchedGuestRole?: string;
 }
 
 export type InvoicePreference = "detailed" | "water" | "minibar_consumption";
@@ -140,7 +158,19 @@ export default function GuestMinibar() {
   const [catalog, setCatalog] = useState<MinibarProduct[]>([]);
   const [defaultStock, setDefaultStock] = useState<Record<string, number>>({});
   const [paidItems, setPaidItems] = useState<MinibarOrderItem[]>([]);
+  const [paidOrdersHistory, setPaidOrdersHistory] = useState<any[]>([]);
   const [courtesyConsumed, setCourtesyConsumed] = useState(false);
+
+  // Múltiplos Hóspedes no mesmo Flat (Consumo e Nota Separados)
+  const [reservationGuests, setReservationGuests] = useState<FlatGuestSlot[]>([]);
+  const [selectedGuestIndex, setSelectedGuestIndex] = useState<number>(1);
+  const [showAddCompanionModal, setShowAddCompanionModal] = useState(false);
+  const [companionForm, setCompanionForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    cpf: ""
+  });
 
   // Estados do Portão OTP (4 Dígitos)
   const [otpValue, setOtpValue] = useState("");
@@ -158,12 +188,14 @@ export default function GuestMinibar() {
   // Carrinho de Consumo: { productId: quantity }
   const [cart, setCart] = useState<Record<string, number>>({});
 
-  // Formulário Fiscal
+  // Formulário Fiscal & Contato Automático (WhatsApp + E-mail já cadastrados)
   const [invoicePreference, setInvoicePreference] = useState<InvoicePreference>("detailed");
   const [docChoice, setDocChoice] = useState<"cadastrado" | "personalizado">("cadastrado");
   const [customDocument, setCustomDocument] = useState("");
   const [customCompanyName, setCustomCompanyName] = useState("");
   const [invoiceEmail, setInvoiceEmail] = useState("");
+  const [invoicePhone, setInvoicePhone] = useState("");
+  const [isEditingContact, setIsEditingContact] = useState(false);
 
   // Pagamento
   const [paymentMethod, setPaymentMethod] = useState<"pix" | "credit_card">("pix");
@@ -180,6 +212,135 @@ export default function GuestMinibar() {
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Hóspede consumidor ativo selecionado
+  const activeConsumerGuest = useMemo<FlatGuestSlot>(() => {
+    const found = reservationGuests.find((g) => g.index === selectedGuestIndex);
+    if (found) return found;
+    return {
+      index: 1,
+      guestId: null,
+      name: reservation?.guestName || "Hóspede",
+      firstName: reservation?.firstName || "Hóspede",
+      phone: reservation?.phone || "",
+      email: reservation?.email || "",
+      cpf: reservation?.document || "",
+      role: "1º Hóspede (Titular)"
+    };
+  }, [reservationGuests, selectedGuestIndex, reservation]);
+
+  // Troca de hóspede consumidor no flat (atualiza CPF, WhatsApp e E-mail automaticamente)
+  const handleSelectConsumerGuest = (guestSlot: FlatGuestSlot) => {
+    setSelectedGuestIndex(guestSlot.index);
+    setInvoiceEmail(guestSlot.email || "");
+    setInvoicePhone(guestSlot.phone || "");
+    if (guestSlot.cpf) {
+      setCustomDocument(formatDocMask(guestSlot.cpf));
+      setDocChoice("cadastrado");
+    } else {
+      setCustomDocument("");
+      setDocChoice("personalizado");
+    }
+    setReservation((prev) =>
+      prev
+        ? {
+            ...prev,
+            guestName: guestSlot.name,
+            firstName: guestSlot.firstName || guestSlot.name.split(" ")[0] || "Hóspede",
+            phone: guestSlot.phone,
+            email: guestSlot.email,
+            document: guestSlot.cpf,
+            matchedGuestIndex: guestSlot.index,
+            matchedGuestRole: guestSlot.role
+          }
+        : prev
+    );
+  };
+
+  // Adicionar/identificar 2º ou 3º hóspede para pagar separado
+  const handleConfirmCompanionGuest = () => {
+    const cleanName = companionForm.name.trim();
+    if (!cleanName) return;
+    const nextIdx = Math.max(...reservationGuests.map((g) => g.index), 1) + 1;
+    const newSlot: FlatGuestSlot = {
+      index: nextIdx,
+      guestId: null,
+      name: cleanName,
+      firstName: cleanName.split(" ")[0] || cleanName,
+      phone: companionForm.phone.trim(),
+      email: companionForm.email.trim(),
+      cpf: companionForm.cpf.replace(/\D/g, ""),
+      role: `${nextIdx}º Hóspede (Acompanhante)`
+    };
+    setReservationGuests((prev) => [...prev, newSlot]);
+    handleSelectConsumerGuest(newSlot);
+    setShowAddCompanionModal(false);
+    setCompanionForm({ name: "", phone: "", email: "", cpf: "" });
+  };
+
+  const applyContextResponse = (data: any, fallbackCodeOrFlat: string) => {
+    const guestsList: FlatGuestSlot[] = Array.isArray(data.reservationGuests) && data.reservationGuests.length > 0
+      ? data.reservationGuests
+      : [
+          {
+            index: 1,
+            guestId: data.guestId || null,
+            name: data.guestName || "Hóspede",
+            firstName: data.firstName || data.guestName?.split(" ")[0] || "Hóspede",
+            phone: data.phone || "",
+            email: data.email || "",
+            cpf: data.document || "",
+            role: "1º Hóspede (Titular)"
+          }
+        ];
+
+    const matchedIdx = Number(data.matchedGuestIndex) || 1;
+    const matchedSlot = guestsList.find((g) => g.index === matchedIdx) || guestsList[0];
+
+    setReservationGuests(guestsList);
+    setSelectedGuestIndex(matchedSlot.index);
+
+    setReservation({
+      guestName: matchedSlot.name || data.guestName,
+      firstName: matchedSlot.firstName || data.firstName || data.guestName?.split(" ")[0] || "Hóspede",
+      phone: matchedSlot.phone || data.phone || "",
+      email: matchedSlot.email || data.email || "",
+      document: matchedSlot.cpf || data.document || "",
+      reservationCode: data.reservationCode || fallbackCodeOrFlat,
+      reservationId: data.reservationId,
+      flatNumber: String(data.flatNumber || ""),
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      status: data.status,
+      numGuests: Number(data.numGuests) || guestsList.length || 1,
+      matchedGuestIndex: matchedSlot.index,
+      matchedGuestRole: matchedSlot.role
+    });
+
+    setCatalog(data.catalog || []);
+    setDefaultStock(data.defaultStock || {});
+    setPaidItems(data.paidItems || []);
+    setPaidOrdersHistory(data.paidOrdersHistory || []);
+    setCourtesyConsumed(Boolean(data.courtesyConsumed));
+
+    const resolvedEmail = matchedSlot.email || data.email || "";
+    const resolvedPhone = matchedSlot.phone || data.phone || "";
+    setInvoiceEmail(resolvedEmail);
+    setInvoicePhone(resolvedPhone);
+    setIsEditingContact(!resolvedEmail && !resolvedPhone);
+
+    const resolvedDoc = matchedSlot.cpf || data.document || "";
+    if (resolvedDoc) {
+      setCustomDocument(formatDocMask(resolvedDoc));
+      setDocChoice("cadastrado");
+    } else {
+      setDocChoice("personalizado");
+    }
+
+    if (data.pendingDiscrepancyOrder) {
+      setDivergenceOrder((prev: any) => prev || data.pendingDiscrepancyOrder);
+    }
+  };
+
   // Carrega contexto direto por código de reserva
   const loadContextByReservationCode = async (code: string) => {
     setStep("loading");
@@ -188,27 +349,7 @@ export default function GuestMinibar() {
       const res = await fetch(`/api/minibar/reservation-context/${encodeURIComponent(code)}`);
       const data = await res.json();
       if (res.ok && data.success) {
-        setReservation({
-          guestName: data.guestName,
-          firstName: data.firstName || data.guestName?.split(" ")[0] || "Hóspede",
-          phone: data.phone,
-          email: data.email,
-          document: data.document,
-          reservationCode: data.reservationCode || code,
-          reservationId: data.reservationId,
-          flatNumber: String(data.flatNumber || ""),
-          checkIn: data.checkIn,
-          checkOut: data.checkOut,
-          status: data.status
-        });
-        setCatalog(data.catalog || []);
-        setDefaultStock(data.defaultStock || {});
-        setPaidItems(data.paidItems || []);
-        setCourtesyConsumed(Boolean(data.courtesyConsumed));
-        setInvoiceEmail(data.email || "");
-        if (data.document) {
-          setCustomDocument(formatDocMask(data.document));
-        }
+        applyContextResponse(data, code);
         setStep("catalog");
       } else {
         setOtpError(data.error || "Reserva não encontrada ou encerrada.");
@@ -238,29 +379,9 @@ export default function GuestMinibar() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setReservation({
-          guestName: data.guestName,
-          firstName: data.firstName || data.guestName?.split(" ")[0] || "Hóspede",
-          phone: data.phone,
-          email: data.email,
-          document: data.document,
-          reservationCode: data.reservationCode,
-          reservationId: data.reservationId,
-          flatNumber: String(data.flatNumber || flatNum),
-          checkIn: data.checkIn,
-          checkOut: data.checkOut,
-          status: data.status
-        });
-        setCatalog(data.catalog || []);
-        setDefaultStock(data.defaultStock || {});
-        setPaidItems(data.paidItems || []);
-        setCourtesyConsumed(Boolean(data.courtesyConsumed));
-        setInvoiceEmail(data.email || "");
-        if (data.document) {
-          setCustomDocument(formatDocMask(data.document));
-        }
+        applyContextResponse(data, data.reservationCode || flatNum);
 
-        // Armazena no sessionStorage para não pedir os 4 dígitos a cada reload da aba
+        // Armazena no sessionStorage incluindo os 4 dígitos para preservar qual dos hóspedes do flat autenticou
         try {
           sessionStorage.setItem(
             `gfm_minibar_auth_${flatNum}`,
@@ -268,6 +389,7 @@ export default function GuestMinibar() {
               flatNumber: flatNum,
               reservationCode: data.reservationCode,
               last4Digits: digits,
+              matchedGuestIndex: data.matchedGuestIndex || 1,
               authAt: Date.now()
             })
           );
@@ -276,7 +398,7 @@ export default function GuestMinibar() {
         setStep("catalog");
       } else {
         if (res.status === 401) {
-          setOtpError(data.error || "Os 4 dígitos não coincidem com o celular ou documento cadastrado no flat.");
+          setOtpError(data.error || "Os 4 dígitos não coincidem com o celular ou documento de nenhum hóspede cadastrado no flat.");
         } else if (res.status === 404) {
           setOtpError(data.error || `Nenhuma reserva ativa ou recente encontrada para o Flat ${flatNum}.`);
         } else {
@@ -295,7 +417,6 @@ export default function GuestMinibar() {
     if (codeFromUrl) {
       loadContextByReservationCode(codeFromUrl);
     } else if (flatFromUrl) {
-      // Checa se já temos sessão salva no sessionStorage para este flat
       let cachedAuth: any = null;
       try {
         const stored = sessionStorage.getItem(`gfm_minibar_auth_${flatFromUrl}`);
@@ -304,10 +425,10 @@ export default function GuestMinibar() {
         }
       } catch (_) {}
 
-      if (cachedAuth?.reservationCode) {
-        loadContextByReservationCode(cachedAuth.reservationCode);
-      } else if (cachedAuth?.last4Digits) {
+      if (cachedAuth?.last4Digits) {
         verifyFlatContextWithDigits(flatFromUrl, cachedAuth.last4Digits);
+      } else if (cachedAuth?.reservationCode) {
+        loadContextByReservationCode(cachedAuth.reservationCode);
       } else {
         setStep("otp_gate");
       }
@@ -316,11 +437,33 @@ export default function GuestMinibar() {
     }
   }, [codeFromUrl, flatFromUrl]);
 
-  // Leitura e carregamento de ordem de divergência apurada em vistoria (?ord=) (F33)
+  // Leitura de ordem de divergência (?ord=) ou retorno de pagamento Mercado Pago (?payment=success&orderId=)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const searchParams = new URLSearchParams(window.location.search);
     const ord = searchParams.get("ord");
+    const paymentParam = searchParams.get("payment");
+    const returnedOrderId = searchParams.get("orderId") || ord;
+
+    if (paymentParam === "success" && returnedOrderId) {
+      fetch(`/api/minibar/orders/${encodeURIComponent(returnedOrderId)}/status`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.success && data.order) {
+            setActiveOrder({
+              orderId: data.order.id,
+              totalAmount: data.order.totalAmount,
+              paymentStatus: data.status
+            });
+            if (data.status === "pago" || data.status === "paid") {
+              setPaymentStatus("pago");
+              setStep("success");
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
     if (ord) {
       setDivergenceLoading(true);
       fetch(`/api/minibar/orders/${encodeURIComponent(ord)}/status`)
@@ -328,18 +471,19 @@ export default function GuestMinibar() {
         .then((data) => {
           if (data && data.success && data.order) {
             setDivergenceOrder(data.order);
-            // Se ainda não temos reserva ativa ou se a URL não tem código, sincroniza
             if (!codeFromUrl && data.order.reservationCode) {
               loadContextByReservationCode(data.order.reservationCode);
             } else if (!codeFromUrl && !flatFromUrl) {
               setStep("catalog");
               if (data.order.flatNumber) {
-                setReservation((prev: any) => prev || {
-                  guestName: data.order.guestName || "Hóspede",
-                  firstName: (data.order.guestName || "Hóspede").split(" ")[0],
-                  reservationCode: data.order.reservationCode || "",
-                  flatNumber: String(data.order.flatNumber)
-                });
+                setReservation((prev: any) =>
+                  prev || {
+                    guestName: data.order.guestName || "Hóspede",
+                    firstName: (data.order.guestName || "Hóspede").split(" ")[0],
+                    reservationCode: data.order.reservationCode || "",
+                    flatNumber: String(data.order.flatNumber)
+                  }
+                );
               }
             }
           }
@@ -359,7 +503,7 @@ export default function GuestMinibar() {
     };
   }, []);
 
-  // Polling de Pagamento
+  // Polling de Pagamento (dá baixa automática em compras avulsas e também em divergências)
   const startPaymentPolling = (orderId: string) => {
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
@@ -372,6 +516,9 @@ export default function GuestMinibar() {
         const data = await res.json();
         if (data.success && (data.status === "pago" || data.status === "paid")) {
           setPaymentStatus("pago");
+          if (divergenceOrder && divergenceOrder.id === orderId) {
+            setDivergenceOrder((prev: any) => (prev ? { ...prev, paymentStatus: "pago" } : prev));
+          }
           if (pollingRef.current) {
             clearInterval(pollingRef.current);
             pollingRef.current = null;
@@ -409,7 +556,6 @@ export default function GuestMinibar() {
 
       qty += count;
       let unitVal = prod.price;
-      // Se for cortesia gratuita
       if (prod.isCourtesy && !courtesyConsumed) {
         unitVal = 0;
       }
@@ -444,7 +590,7 @@ export default function GuestMinibar() {
     return catalog.filter((p) => p.category === selectedCategory);
   }, [catalog, selectedCategory]);
 
-  // Submissão do Pedido no Checkout
+  // Submissão do Pedido no Checkout (com suporte ao hóspede específico do flat)
   const handleCheckoutSubmit = async () => {
     if (selectedItemsList.length === 0) {
       setOrderError("Selecione ao menos um item consumido.");
@@ -456,8 +602,11 @@ export default function GuestMinibar() {
 
     const docToSend =
       docChoice === "cadastrado"
-        ? (reservation?.document || "").replace(/\D/g, "")
+        ? (activeConsumerGuest.cpf || reservation?.document || "").replace(/\D/g, "")
         : customDocument.replace(/\D/g, "");
+
+    const emailToSend = (invoiceEmail || activeConsumerGuest.email || reservation?.email || "").trim();
+    const phoneToSend = (invoicePhone || activeConsumerGuest.phone || reservation?.phone || "").trim();
 
     const orderPayload = {
       reservationCode: reservation?.reservationCode || codeFromUrl,
@@ -470,8 +619,17 @@ export default function GuestMinibar() {
       invoicePreference,
       document: docToSend,
       documentType: docToSend.length === 14 ? "cnpj" : "cpf",
-      email: invoiceEmail.trim(),
-      companyName: customCompanyName.trim()
+      email: emailToSend,
+      phone: phoneToSend,
+      companyName: customCompanyName.trim(),
+      consumerGuest: {
+        index: activeConsumerGuest.index,
+        guestId: activeConsumerGuest.guestId || null,
+        name: activeConsumerGuest.name,
+        phone: phoneToSend,
+        email: emailToSend,
+        document: docToSend
+      }
     };
 
     try {
@@ -490,7 +648,6 @@ export default function GuestMinibar() {
 
       setActiveOrder(data);
 
-      // Se for pedido exclusivamente de cortesia de boas-vindas gratuita (R$ 0.00)
       if (data.isCourtesyOnly || data.totalAmount === 0 || data.paymentStatus === "pago") {
         setPaymentStatus("pago");
         setStep("success");
@@ -498,7 +655,6 @@ export default function GuestMinibar() {
         return;
       }
 
-      // Se for Cartão de Crédito
       if (paymentMethod === "credit_card") {
         setPaymentStatus("pendente");
         setStep("payment");
@@ -507,7 +663,6 @@ export default function GuestMinibar() {
           window.open(data.initPoint, "_blank");
         }
       } else {
-        // PIX
         setPaymentStatus("pendente");
         setStep("payment");
         startPaymentPolling(data.orderId);
@@ -529,15 +684,19 @@ export default function GuestMinibar() {
     });
   };
 
-  // Quitação Direta de Divergência Apurada em Vistoria (F33)
+  // Quitação Direta de Divergência Apurada em Vistoria (F33 - Qualquer um dos hóspedes do flat pode pagar)
   const handleSettleDivergence = async (method: "pix" | "credit_card") => {
     if (!divergenceOrder) return;
     setSettlingDivergence(true);
     setOrderError(null);
 
-    const docToSend = docChoice === "cadastrado"
-      ? (reservation?.document || divergenceOrder.guestDocument || "").replace(/\D/g, "")
-      : customDocument.replace(/\D/g, "");
+    const docToSend =
+      docChoice === "cadastrado"
+        ? (activeConsumerGuest.cpf || reservation?.document || divergenceOrder.guestDocument || "").replace(/\D/g, "")
+        : customDocument.replace(/\D/g, "");
+
+    const emailToSend = (invoiceEmail || activeConsumerGuest.email || divergenceOrder.guestEmail || "").trim();
+    const phoneToSend = (invoicePhone || activeConsumerGuest.phone || divergenceOrder.guestPhone || "").trim();
 
     const orderPayload = {
       orderId: divergenceOrder.id,
@@ -548,8 +707,17 @@ export default function GuestMinibar() {
       invoicePreference,
       document: docToSend,
       documentType: docToSend.length === 14 ? "cnpj" : "cpf",
-      email: (invoiceEmail || divergenceOrder.guestEmail || "").trim(),
-      companyName: customCompanyName.trim()
+      email: emailToSend,
+      phone: phoneToSend,
+      companyName: customCompanyName.trim(),
+      consumerGuest: {
+        index: activeConsumerGuest.index,
+        guestId: activeConsumerGuest.guestId || null,
+        name: activeConsumerGuest.name,
+        phone: phoneToSend,
+        email: emailToSend,
+        document: docToSend
+      }
     };
 
     try {
@@ -571,6 +739,7 @@ export default function GuestMinibar() {
 
       if (data.alreadyPaid || data.paymentStatus === "pago") {
         setPaymentStatus("pago");
+        setDivergenceOrder((prev: any) => (prev ? { ...prev, paymentStatus: "pago" } : prev));
         setStep("success");
       } else {
         setPaymentStatus("pendente");
@@ -646,14 +815,14 @@ export default function GuestMinibar() {
               Frigobar Flat {flatDisplay}
             </h1>
             <p className="text-xs text-slate-400 leading-relaxed px-2">
-              Para liberar o cardápio e registrar seu consumo com segurança, informe os <strong>4 últimos dígitos</strong> do celular ou documento cadastrado na reserva.
+              Digite os <strong>4 últimos dígitos do seu celular ou CPF</strong>. Se houver 2 ou mais hóspedes no flat, o sistema identifica automaticamente <strong>quem está consumindo</strong> para pagamento e Nota Fiscal separados!
             </p>
           </div>
 
           <div className="space-y-4 pt-2">
             <div className="flex flex-col items-center justify-center space-y-3">
               <Label className="text-xs text-slate-300 font-semibold tracking-wide uppercase">
-                4 Últimos Dígitos do Celular ou CPF
+                4 Últimos Dígitos do Seu Celular ou CPF
               </Label>
               <InputOTP
                 maxLength={4}
@@ -692,12 +861,12 @@ export default function GuestMinibar() {
               {otpLoading ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Validando Reserva...</span>
+                  <span>Identificando Hóspede...</span>
                 </>
               ) : (
                 <>
                   <Lock className="w-4 h-4" />
-                  <span>Abrir Frigobar</span>
+                  <span>Abrir Meu Frigobar</span>
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </>
               )}
@@ -762,7 +931,6 @@ export default function GuestMinibar() {
                 if (val.toUpperCase().startsWith("RES-") || val.length >= 6) {
                   loadContextByReservationCode(val);
                 } else {
-                  // É número de flat
                   setLocation(`/frigobar/flat/${val}`);
                 }
               }}
@@ -785,41 +953,154 @@ export default function GuestMinibar() {
       <div className="min-h-screen bg-slate-950 text-slate-100 pb-32">
         {/* Topo / Header Mobile */}
         <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 sm:px-6">
-          <div className="max-w-xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+          <div className="max-w-xl mx-auto flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-10 h-10 rounded-2xl bg-cyan-600/20 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0">
                 <Refrigerator className="w-5 h-5" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <h1 className="text-sm sm:text-base font-black text-white leading-tight">
                     Frigobar Flat {reservation?.flatNumber}
                   </h1>
                   <Badge variant="outline" className="bg-cyan-950/60 text-cyan-300 border-cyan-800/80 text-[10px] font-bold">
-                    Autoatendimento
+                    {activeConsumerGuest.role}
                   </Badge>
                 </div>
-                <p className="text-xs text-slate-400">
-                  Olá, <strong className="text-white">{reservation?.firstName || "Hóspede"}</strong>! 👋
+                <p className="text-xs text-slate-400 truncate">
+                  Consumindo como: <strong className="text-white">{activeConsumerGuest.name}</strong> 👋
                 </p>
               </div>
             </div>
 
-            {reservation?.reservationCode && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setLocation(`/minha-reserva/${reservation.reservationCode}`)}
-                className="text-xs text-slate-400 hover:text-white rounded-xl h-9 px-2.5"
-              >
-                <Home className="w-4 h-4 mr-1" />
-                <span className="hidden sm:inline">Portal</span>
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {flatFromUrl && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setOtpValue("");
+                    setStep("otp_gate");
+                  }}
+                  title="Trocar hóspede pelos 4 dígitos do telefone"
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 rounded-xl h-8 px-2 bg-cyan-950/40 border border-cyan-800/50"
+                >
+                  <Users className="w-3.5 h-3.5 mr-1" />
+                  <span>Trocar</span>
+                </Button>
+              )}
+              {reservation?.reservationCode && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLocation(`/minha-reserva/${reservation.reservationCode}`)}
+                  className="text-xs text-slate-400 hover:text-white rounded-xl h-8 px-2"
+                >
+                  <Home className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </header>
 
-        <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-5">
+        <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-4">
+          {/* ── Seletor de Hóspede do Flat (2+ Hóspedes: Consumo, Pagamento e NF Separados) ── */}
+          <Card className="bg-slate-900/90 border-slate-800 rounded-2xl p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
+                <Users className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>Quem está consumindo agora? (Pagamento e NF individuais)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddCompanionModal((v) => !v)}
+                className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 shrink-0"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>+ Outro hóspede</span>
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {reservationGuests.map((g) => {
+                const isSelected = g.index === selectedGuestIndex;
+                return (
+                  <button
+                    key={g.index}
+                    type="button"
+                    onClick={() => handleSelectConsumerGuest(g)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 ${
+                      isSelected
+                        ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                        : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-600"
+                    }`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                    <div className="text-left">
+                      <span className="block leading-tight">{g.name}</span>
+                      <span className={`text-[10px] block font-medium ${isSelected ? "text-slate-900" : "text-slate-400"}`}>
+                        {g.index === 1 ? "1º Hóspede" : `${g.index}º Hóspede`}
+                        {g.phone ? ` • final ${g.phone.replace(/\D/g, "").slice(-4)}` : ""}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {showAddCompanionModal && (
+              <div className="p-3.5 bg-slate-950/90 border border-cyan-500/40 rounded-xl space-y-3 animate-in fade-in">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-cyan-300">
+                    Identificar 2º Hóspede / Acompanhante (para pagar e receber NF separado)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCompanionModal(false)}
+                    className="text-xs text-slate-400 hover:text-white"
+                  >
+                    Fechar
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <Input
+                    placeholder="Seu Nome Completo *"
+                    value={companionForm.name}
+                    onChange={(e) => setCompanionForm((p) => ({ ...p, name: e.target.value }))}
+                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
+                  />
+                  <Input
+                    placeholder="Seu WhatsApp (com DDD)"
+                    value={companionForm.phone}
+                    onChange={(e) => setCompanionForm((p) => ({ ...p, phone: e.target.value }))}
+                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
+                  />
+                  <Input
+                    type="email"
+                    placeholder="Seu E-mail (para Nota Fiscal)"
+                    value={companionForm.email}
+                    onChange={(e) => setCompanionForm((p) => ({ ...p, email: e.target.value }))}
+                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
+                  />
+                  <Input
+                    placeholder="Seu CPF ou CNPJ"
+                    value={companionForm.cpf}
+                    onChange={(e) => setCompanionForm((p) => ({ ...p, cpf: formatDocMask(e.target.value) }))}
+                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleConfirmCompanionGuest}
+                  disabled={!companionForm.name.trim()}
+                  className="w-full h-10 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-xl"
+                >
+                  Confirmar e Consumir no Meu Nome
+                </Button>
+              </div>
+            )}
+          </Card>
+
           {/* ── Banner de Quitação Direta de Divergência Apurada em Vistoria (F33) ── */}
           {divergenceOrder && (
             divergenceOrder.paymentStatus === "pago" ? (
@@ -827,54 +1108,54 @@ export default function GuestMinibar() {
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-emerald-300">Vistoria de Checkout: Quitado</p>
+                    <p className="text-xs font-bold text-emerald-300">Conferência de Frigobar: Quitado ✓</p>
                     <p className="text-[11px] text-emerald-400/80">
-                      A pendência de checkout <strong>#{divergenceOrder.id}</strong> (Flat {divergenceOrder.flatNumber}) foi quitada com sucesso!
+                      A pendência de consumo <strong>#{divergenceOrder.id}</strong> (Flat {divergenceOrder.flatNumber}) foi dada baixa automaticamente!
                     </p>
                   </div>
                 </div>
                 <Badge className="bg-emerald-600 text-white text-[10px]">Pago</Badge>
               </div>
             ) : (
-              <Card className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border-2 border-amber-500/50 rounded-3xl p-5 shadow-xl space-y-3.5">
+              <Card className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border-2 border-amber-500/50 rounded-3xl p-4 sm:p-5 shadow-xl space-y-3.5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
                       <AlertTriangle className="w-5 h-5" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h2 className="text-sm sm:text-base font-black text-amber-200">
-                          Vistoria de Checkout: Consumo Pendente
+                          Conferência de Frigobar: Consumo Pendente
                         </h2>
                         <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
-                          Apurado
+                          Divergência Apurada
                         </Badge>
                       </div>
                       <p className="text-xs text-slate-300">
-                        Ordem <strong>#{divergenceOrder.id}</strong> • Flat {divergenceOrder.flatNumber}
+                        Ordem <strong>#{divergenceOrder.id}</strong> • Flat {divergenceOrder.flatNumber} (Qualquer hóspede do flat pode quitar)
                       </p>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <div className="text-base sm:text-lg font-black text-amber-300">
                       {formatBRL(divergenceOrder.totalAmount || 0)}
                     </div>
                     <Badge variant="outline" className="text-amber-400 border-amber-500/40 text-[9px]">
-                      Aguardando Pagamento
+                      Pendente
                     </Badge>
                   </div>
                 </div>
 
                 <div className="bg-slate-950/70 rounded-2xl p-3 border border-slate-800 space-y-1.5">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Itens Não Declarados Identificados na Vistoria:
+                    Itens Apurados na Conferência da Repositora:
                   </p>
                   <div className="space-y-1">
                     {Array.isArray(divergenceOrder.items) && divergenceOrder.items.map((it: any, idx: number) => (
                       <div key={idx} className="flex items-center justify-between text-xs text-slate-200">
                         <span>{it.quantity}x {it.name || it.productName || it.itemName || it.productId}</span>
-                        <span className="font-semibold font-mono">
+                        <span className="font-semibold font-mono text-amber-300">
                           {formatBRL(it.totalPrice || ((it.unitPrice || 0) * it.quantity) || 0)}
                         </span>
                       </div>
@@ -882,11 +1163,19 @@ export default function GuestMinibar() {
                   </div>
                 </div>
 
+                <div className="text-[11px] text-slate-300 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80 flex items-center justify-between gap-2">
+                  <span>
+                    Pagando como: <strong className="text-white">{activeConsumerGuest.name}</strong>
+                    {activeConsumerGuest.phone ? ` (WhatsApp: ${activeConsumerGuest.phone})` : ""}
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-semibold shrink-0">Baixa automática imediata</span>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <Button
                     onClick={() => handleSettleDivergence("pix")}
                     disabled={settlingDivergence}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs h-10 rounded-xl gap-1.5 shadow-sm"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs h-11 rounded-xl gap-1.5 shadow-sm"
                   >
                     <QrCode className="w-4 h-4" />
                     <span>{settlingDivergence ? "Gerando..." : "Quitar via PIX"}</span>
@@ -894,7 +1183,7 @@ export default function GuestMinibar() {
                   <Button
                     onClick={() => handleSettleDivergence("credit_card")}
                     disabled={settlingDivergence}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs h-10 rounded-xl gap-1.5 shadow-sm"
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs h-11 rounded-xl gap-1.5 shadow-sm"
                   >
                     <CreditCard className="w-4 h-4" />
                     <span>{settlingDivergence ? "Processando..." : "Quitar com Cartão"}</span>
@@ -905,17 +1194,17 @@ export default function GuestMinibar() {
           )}
 
           {/* ── Aviso Mandatório de Desacoplamento Financeiro ── */}
-          <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3 shadow-sm">
+          <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3 shadow-sm">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div className="text-xs text-amber-200/90 leading-relaxed space-y-1">
+            <div className="text-xs text-amber-200/90 leading-relaxed space-y-0.5">
               <p className="font-bold text-amber-300">Aviso importante:</p>
               <p>
-                O consumo de frigobar é um serviço independente e não pode ser faturado junto com a diária de hospedagem.
+                O consumo de frigobar é independente e não pode ser faturado junto com a diária de hospedagem.
               </p>
             </div>
           </div>
 
-          {/* ── Seção de Itens já Pagos na mesma reserva (se houver) ── */}
+          {/* ── Seção de Itens já Pagos na mesma reserva (com identificação de qual hóspede pagou) ── */}
           {paidItems.length > 0 && (
             <Card className="bg-slate-900/60 border-slate-800/80 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -937,9 +1226,29 @@ export default function GuestMinibar() {
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-400 italic">
-                * Os itens acima já foram quitados e não constam na cobrança de novos consumos.
-              </p>
+              {paidOrdersHistory.length > 0 && (
+                <div className="pt-1 border-t border-slate-800/80 space-y-1">
+                  {paidOrdersHistory.map((ord: any) => (
+                    <div key={ord.id} className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>
+                        Pago por <strong className="text-slate-200">{ord.guestName}</strong> ({formatBRL(ord.totalAmount)})
+                      </span>
+                      {ord.invoiceFileUrl ? (
+                        <a
+                          href={ord.invoiceFileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-cyan-400 hover:underline font-semibold"
+                        >
+                          Baixar NF
+                        </a>
+                      ) : (
+                        <span className="text-slate-500">NF em emissão</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           )}
 
@@ -989,7 +1298,6 @@ export default function GuestMinibar() {
                   }`}
                 >
                   <div className="p-4 flex items-center justify-between gap-3">
-                    {/* Imagem / Ícone Placeholder do Produto */}
                     <div className="w-14 h-14 rounded-2xl bg-slate-800/90 border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden relative">
                       {prod.imageUrl ? (
                         <img
@@ -997,7 +1305,6 @@ export default function GuestMinibar() {
                           alt={prod.name}
                           className="w-full h-full object-cover"
                           onError={(e) => {
-                            // fallback on image load error
                             (e.target as HTMLElement).style.display = "none";
                           }}
                         />
@@ -1013,7 +1320,6 @@ export default function GuestMinibar() {
                       </div>
                     </div>
 
-                    {/* Detalhes do Produto */}
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <h3 className="text-sm font-bold text-white truncate">{prod.name}</h3>
@@ -1024,7 +1330,6 @@ export default function GuestMinibar() {
                         )}
                       </div>
 
-                      {/* Selo/Badge do Padrão Nominal Não-Editável */}
                       <div className="flex flex-wrap items-center gap-2 pt-0.5">
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800/90 border border-slate-700 text-[10px] font-semibold text-slate-300 select-none">
                           <Package className="w-3 h-3 text-cyan-400 shrink-0" />
@@ -1037,7 +1342,6 @@ export default function GuestMinibar() {
                       </div>
                     </div>
 
-                    {/* Controles de Quantidade (- / +) */}
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
@@ -1080,7 +1384,7 @@ export default function GuestMinibar() {
               <span className="text-[11px] text-slate-400 block font-medium">
                 {totalQuantity === 0
                   ? "Nenhum item selecionado"
-                  : `${totalQuantity} ${totalQuantity === 1 ? "item selecionado" : "itens selecionados"}`}
+                  : `${totalQuantity} ${totalQuantity === 1 ? "item" : "itens"} (${activeConsumerGuest.firstName})`}
               </span>
               <div className="text-lg sm:text-xl font-black text-cyan-400">
                 {formatBRL(totalAmount)}
@@ -1109,6 +1413,9 @@ export default function GuestMinibar() {
   // 5. TELA: CHECKOUT & DADOS FISCAIS
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "checkout") {
+    const activePhoneDisplay = invoicePhone || activeConsumerGuest.phone || reservation?.phone || "";
+    const activeEmailDisplay = invoiceEmail || activeConsumerGuest.email || reservation?.email || "";
+
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 pb-28">
         <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 sm:px-6">
@@ -1122,17 +1429,24 @@ export default function GuestMinibar() {
               <ArrowLeft className="w-4 h-4 mr-1" />
               <span>Voltar ao Frigobar</span>
             </Button>
-            <span className="text-xs font-bold text-slate-300">Resumo & Dados da NF</span>
+            <span className="text-xs font-bold text-slate-300">
+              Checkout • {activeConsumerGuest.firstName}
+            </span>
           </div>
         </header>
 
         <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-5">
           {/* Resumo do Pedido */}
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
-            <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <Receipt className="w-4 h-4 text-cyan-400" />
-              <span>Resumo do Consumo no Flat {reservation?.flatNumber}</span>
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-cyan-400" />
+                <span>Resumo do Consumo — Flat {reservation?.flatNumber}</span>
+              </h2>
+              <Badge variant="outline" className="bg-cyan-950/60 text-cyan-300 border-cyan-800 text-[10px]">
+                {activeConsumerGuest.name}
+              </Badge>
+            </div>
 
             <div className="divide-y divide-slate-800 text-xs">
               {selectedItemsList.map((item) => (
@@ -1168,7 +1482,7 @@ export default function GuestMinibar() {
                 <span>Preferência de Descrição na Nota Fiscal</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Selecione como os itens devem constar na Nota Fiscal emitida pela distribuidora conveniada (Anserve):
+                Selecione como os itens devem constar na sua Nota Fiscal:
               </p>
             </div>
 
@@ -1186,7 +1500,7 @@ export default function GuestMinibar() {
                 <div className="space-y-0.5">
                   <span className="text-xs font-bold block">1. Discriminar todos os itens consumidos</span>
                   <span className="text-[11px] text-slate-400 block">
-                    Lista detalhada de cada refrigerante, água, cerveja ou snack consumido.
+                    Lista detalhada de cada item consumido.
                   </span>
                 </div>
               </label>
@@ -1200,7 +1514,7 @@ export default function GuestMinibar() {
                 <div className="space-y-0.5">
                   <span className="text-xs font-bold block">2. Lançar tudo como "Água"</span>
                   <span className="text-[11px] text-slate-400 block">
-                    Recomendado para viajantes a trabalho cuja política corporativa veda bebidas alcoólicas ou doces em reembolso.
+                    Ideal para reembolso corporativo com restrição de itens.
                   </span>
                 </div>
               </label>
@@ -1214,22 +1528,22 @@ export default function GuestMinibar() {
                 <div className="space-y-0.5">
                   <span className="text-xs font-bold block">3. Lançar tudo como "Consumo de Frigobar"</span>
                   <span className="text-[11px] text-slate-400 block">
-                    Descrição consolidada padrão de serviços de conveniência em hospedagem.
+                    Descrição consolidada padrão de conveniência.
                   </span>
                 </div>
               </label>
             </RadioGroup>
           </Card>
 
-          {/* Dados Fiscais: Documento (CPF / CNPJ) e E-mail */}
+          {/* Dados Fiscais: Documento (CPF / CNPJ) e Envio Automático para WhatsApp + E-mail Cadastrados */}
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <Building2 className="w-4 h-4 text-cyan-400" />
-              <span>Dados para Envio da Nota Fiscal</span>
+              <span>Documento & Envio Automático da Nota Fiscal</span>
             </h2>
 
             <div className="space-y-3">
-              {reservation?.document && (
+              {activeConsumerGuest.cpf && (
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -1240,7 +1554,7 @@ export default function GuestMinibar() {
                         : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
                     }`}
                   >
-                    Usar meu CPF ({formatDocMask(reservation.document)})
+                    Meu CPF ({formatDocMask(activeConsumerGuest.cpf)})
                   </button>
                   <button
                     type="button"
@@ -1256,10 +1570,10 @@ export default function GuestMinibar() {
                 </div>
               )}
 
-              {docChoice === "personalizado" || !reservation?.document ? (
+              {docChoice === "personalizado" || !activeConsumerGuest.cpf ? (
                 <div className="space-y-3 pt-1">
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-300 font-semibold">CPF ou CNPJ da Empresa</Label>
+                    <Label className="text-xs text-slate-300 font-semibold">CPF ou CNPJ na Nota</Label>
                     <Input
                       placeholder="000.000.000-00 ou 00.000.000/0000-00"
                       value={customDocument}
@@ -1282,21 +1596,71 @@ export default function GuestMinibar() {
                 </div>
               ) : null}
 
-              <div className="space-y-1 pt-1">
-                <Label className="text-xs text-slate-300 font-semibold flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>E-mail para Recebimento da Nota Fiscal</span>
-                </Label>
-                <Input
-                  type="email"
-                  placeholder="seuemail@exemplo.com"
-                  value={invoiceEmail}
-                  onChange={(e) => setInvoiceEmail(e.target.value)}
-                  className="h-11 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
-                />
-                <span className="text-[10px] text-slate-400 block">
-                  A distribuidora Anserve emitirá e enviará o PDF da Nota Fiscal para este e-mail.
-                </span>
+              {/* Resumo Automático do WhatsApp e E-mail já cadastrados do Hóspede */}
+              <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>Envio Automático para seu Cadastro</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingContact((v) => !v)}
+                    className="text-[11px] text-cyan-400 hover:underline inline-flex items-center gap-1 font-semibold"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    <span>{isEditingContact ? "Ocultar edição" : "Alterar contato"}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-2">
+                    <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[10px] text-slate-400 block">WhatsApp da NF:</span>
+                      <strong className="text-slate-200 truncate block">
+                        {activePhoneDisplay || "Não cadastrado"}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-2">
+                    <Mail className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[10px] text-slate-400 block">E-mail da NF:</span>
+                      <strong className="text-slate-200 truncate block">
+                        {activeEmailDisplay || "Apenas via WhatsApp"}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-slate-400">
+                  Assim que a Nota Fiscal for emitida, nosso sistema envia automaticamente para o seu <strong>WhatsApp</strong> e <strong>E-mail</strong> cadastrados com monitoramento de entrega.
+                </p>
+
+                {isEditingContact && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-800/80">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-300 font-semibold">WhatsApp para Recebimento</Label>
+                      <Input
+                        placeholder="(11) 99999-9999"
+                        value={invoicePhone}
+                        onChange={(e) => setInvoicePhone(e.target.value)}
+                        className="h-10 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-300 font-semibold">E-mail para Recebimento</Label>
+                      <Input
+                        type="email"
+                        placeholder="seuemail@exemplo.com"
+                        value={invoiceEmail}
+                        onChange={(e) => setInvoiceEmail(e.target.value)}
+                        className="h-10 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -1335,7 +1699,7 @@ export default function GuestMinibar() {
                 >
                   <CreditCard className="w-5 h-5 text-indigo-400" />
                   <span className="text-xs font-bold">Cartão de Crédito</span>
-                  <span className="text-[10px] text-slate-400 font-medium">Mercado Pago</span>
+                  <span className="text-[10px] text-slate-400 font-medium">Consumo de Frigobar</span>
                 </button>
               </div>
             </Card>
@@ -1400,13 +1764,12 @@ export default function GuestMinibar() {
               Total: {formatBRL(activeOrder?.totalAmount || totalAmount)}
             </h1>
             <p className="text-xs text-slate-400">
-              Consumo Frigobar — Flat {reservation?.flatNumber}
+              Consumo de Frigobar — Flat {reservation?.flatNumber} ({activeConsumerGuest.name})
             </p>
           </div>
 
           {paymentMethod === "pix" ? (
             <div className="space-y-4">
-              {/* QR Code Imagem */}
               <div className="p-4 bg-white rounded-2xl w-56 h-56 mx-auto shadow-inner flex items-center justify-center">
                 <img
                   src={qrImageUrl}
@@ -1415,7 +1778,6 @@ export default function GuestMinibar() {
                 />
               </div>
 
-              {/* Botão Copia e Cola */}
               <div className="space-y-2">
                 <Button
                   onClick={handleCopyPix}
@@ -1439,7 +1801,6 @@ export default function GuestMinibar() {
                 </p>
               </div>
 
-              {/* Indicador de Polling Ativo */}
               <div className="p-3 bg-slate-800/80 border border-slate-700/60 rounded-xl flex items-center justify-center gap-2 text-xs text-cyan-300">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
                 <span>Aguardando confirmação bancária em tempo real...</span>
@@ -1450,14 +1811,14 @@ export default function GuestMinibar() {
               <div className="p-6 bg-slate-800/60 rounded-2xl border border-slate-700 text-center space-y-3">
                 <CreditCard className="w-10 h-10 text-indigo-400 mx-auto" />
                 <p className="text-xs text-slate-300">
-                  Você está sendo redirecionado para o ambiente seguro do Mercado Pago.
+                  Ambiente seguro do Mercado Pago (<strong>Consumo de Frigobar - Flat {reservation?.flatNumber}</strong>).
                 </p>
                 {activeOrder?.initPoint && (
                   <Button
                     onClick={() => window.open(activeOrder.initPoint, "_blank")}
                     className="w-full h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2"
                   >
-                    <span>Abrir Checkout Mercado Pago</span>
+                    <span>Abrir Pagamento Cartão (Mercado Pago)</span>
                     <ExternalLink className="w-4 h-4" />
                   </Button>
                 )}
@@ -1479,11 +1840,11 @@ export default function GuestMinibar() {
                   clearInterval(pollingRef.current);
                   pollingRef.current = null;
                 }
-                setStep("checkout");
+                setStep("catalog");
               }}
               className="text-xs text-slate-400 hover:text-white"
             >
-              Cancelar e Voltar ao Checkout
+              Cancelar e Voltar
             </Button>
           </div>
         </Card>
@@ -1511,7 +1872,7 @@ export default function GuestMinibar() {
             <p className="text-xs text-slate-300">
               {isFree
                 ? `Sua cortesia de boas-vindas do Flat ${reservation?.flatNumber} foi registrada com sucesso.`
-                : `Recebemos a confirmação do seu consumo no Flat ${reservation?.flatNumber}.`}
+                : `O consumo no Flat ${reservation?.flatNumber} (${activeConsumerGuest.name}) foi quitado e baixado automaticamente!`}
             </p>
           </div>
 
@@ -1519,6 +1880,10 @@ export default function GuestMinibar() {
             <div className="flex items-center justify-between text-slate-400">
               <span>Pedido:</span>
               <strong className="text-slate-200">{activeOrder?.orderId || "ORD-MB-SUCESSO"}</strong>
+            </div>
+            <div className="flex items-center justify-between text-slate-400">
+              <span>Hóspede:</span>
+              <strong className="text-slate-200">{activeConsumerGuest.name}</strong>
             </div>
             <div className="flex items-center justify-between text-slate-400">
               <span>Valor Total:</span>
@@ -1534,17 +1899,27 @@ export default function GuestMinibar() {
                   : "Itens Discriminados"}
               </strong>
             </div>
-            {invoiceEmail && (
+            {(invoicePhone || activeConsumerGuest.phone) && (
+              <div className="flex items-center justify-between text-slate-400">
+                <span>WhatsApp da NF:</span>
+                <strong className="text-emerald-400 truncate max-w-[180px]">
+                  {invoicePhone || activeConsumerGuest.phone}
+                </strong>
+              </div>
+            )}
+            {(invoiceEmail || activeConsumerGuest.email) && (
               <div className="flex items-center justify-between text-slate-400">
                 <span>E-mail da NF:</span>
-                <strong className="text-slate-200 truncate max-w-[180px]">{invoiceEmail}</strong>
+                <strong className="text-cyan-400 truncate max-w-[180px]">
+                  {invoiceEmail || activeConsumerGuest.email}
+                </strong>
               </div>
             )}
           </div>
 
           <div className="text-xs text-slate-400 leading-relaxed space-y-1">
             <p>
-              A distribuidora Anserve emitirá sua Nota Fiscal e disponibilizará o documento na sua área de reserva, além de enviar uma cópia por e-mail e WhatsApp.
+              Sua Nota Fiscal será enviada automaticamente para o seu <strong>WhatsApp</strong> e <strong>E-mail</strong> cadastrados assim que emitida pela Anserve, além de ficar disponível na sua Área do Hóspede.
             </p>
           </div>
 
@@ -1559,10 +1934,13 @@ export default function GuestMinibar() {
               </Button>
             ) : (
               <Button
-                onClick={() => setLocation("/")}
+                onClick={() => {
+                  setCart({});
+                  setStep("catalog");
+                }}
                 className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-2xl text-xs sm:text-sm"
               >
-                <span>Concluir</span>
+                <span>Voltar ao Frigobar</span>
               </Button>
             )}
           </div>

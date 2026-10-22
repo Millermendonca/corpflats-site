@@ -15,6 +15,7 @@ import {
   Sparkles,
   Calendar,
   User,
+  Users,
   Coffee,
   Check,
   X,
@@ -51,17 +52,34 @@ export interface FlatStatusItem {
   currentReservation?: {
     code: string;
     guestName: string;
+    numGuests?: number;
     checkIn?: string;
     checkOut?: string;
     phone?: string;
   } | null;
   declaredAmount: number;
+  declaredItemsByProduct?: Record<string, number>;
+  declaredOrdersSummary?: Array<{
+    id: string;
+    guestName: string;
+    totalAmount: number;
+    paidAt: string;
+    items: Array<{ productId: string; name: string; quantity: number }>;
+  }>;
+  pendingDiscrepancyOrder?: {
+    id: string;
+    totalAmount: number;
+    paymentStatus: string;
+    items: any[];
+  } | null;
   lastInspection?: {
     id: string;
     inspectedAt: string;
     inspectorName?: string;
     status: "conforme" | "divergencia";
     hasDiscrepancy?: boolean;
+    discrepancyPaid?: boolean;
+    discrepancyResolved?: boolean;
     restockedItems?: any[];
     discrepancyTotalAmount?: number;
     notes?: string;
@@ -110,8 +128,6 @@ export default function AnserveRestockPage() {
   // Modals state
   const [conformeModalFlat, setConformeModalFlat] = useState<FlatStatusItem | null>(null);
   const [divergenciaModalFlat, setDivergenciaModalFlat] = useState<FlatStatusItem | null>(null);
-  const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [selectedFlatHistory, setSelectedFlatHistory] = useState<FlatStatusItem | null>(null);
   const [submittingInspection, setSubmittingInspection] = useState(false);
 
   // Conforme form state
@@ -119,14 +135,11 @@ export default function AnserveRestockPage() {
   const [conformeNotes, setConformeNotes] = useState("");
   const [conformeCourtesyRestock, setConformeCourtesyRestock] = useState(true);
 
-  // Divergência form state
-  const [missingQuantities, setMissingQuantities] = useState<Record<string, number>>({});
+  // Divergência 3-Colunas form state: Contagem da Repositora por produto
+  const [countedQuantities, setCountedQuantities] = useState<Record<string, number>>({});
   const [divergenceNotes, setDivergenceNotes] = useState("");
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Expanded card state
-  const [expandedFlat, setExpandedFlat] = useState<string | null>(null);
 
   // Determine authorized user
   const isAuthorizedRole = useMemo(() => {
@@ -288,10 +301,8 @@ export default function AnserveRestockPage() {
   const filteredFlats = useMemo(() => {
     return flats
       .filter((f) => {
-        // Status filter
         if (statusFilter !== "todos" && f.status !== statusFilter) return false;
 
-        // Search query filter (flat number or guest name)
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase().trim();
           const matchFlat = String(f.flatNumber).toLowerCase().includes(q);
@@ -303,7 +314,6 @@ export default function AnserveRestockPage() {
         return true;
       })
       .sort((a, b) => {
-        // Prioritize checkouts of the day first
         const order = { checkout_hoje: 0, ocupado: 1, livre: 2 };
         if (order[a.status] !== order[b.status]) {
           return order[a.status] - order[b.status];
@@ -340,13 +350,76 @@ export default function AnserveRestockPage() {
     setConformeCourtesyRestock(true);
   };
 
-  // Open "Apontar Divergência" modal
+  // Open "Apontar Divergência" modal (inicializa Coluna 2 com o que o hóspede já declarou na Coluna 1)
   const handleOpenDivergencia = (flat: FlatStatusItem) => {
     setDivergenciaModalFlat(flat);
-    setMissingQuantities({});
+    const declaredMap = flat.declaredItemsByProduct || {};
+    const initialCounted: Record<string, number> = {};
+    for (const [prodId, qty] of Object.entries(declaredMap)) {
+      initialCounted[prodId] = Number(qty) || 0;
+    }
+    setCountedQuantities(initialCounted);
     setDivergenceNotes("");
     setCapturedPhotos([]);
   };
+
+  // Cálculo em tempo real das 3 Colunas da Divergência
+  const discrepancyCalculation = useMemo(() => {
+    if (!divergenciaModalFlat) {
+      return {
+        rows: [],
+        totalDeclaredUnits: 0,
+        totalDeclaredAmount: 0,
+        totalCountedUnits: 0,
+        totalCountedAmount: 0,
+        totalDiffUnits: 0,
+        totalDiffAmount: 0
+      };
+    }
+
+    const declaredMap = divergenciaModalFlat.declaredItemsByProduct || {};
+    const nonCourtesyProducts = products.filter((p) => !p.isCourtesy);
+
+    let totalDeclaredUnits = 0;
+    let totalDeclaredAmount = 0;
+    let totalCountedUnits = 0;
+    let totalCountedAmount = 0;
+    let totalDiffUnits = 0;
+    let totalDiffAmount = 0;
+
+    const rows = nonCourtesyProducts.map((prod) => {
+      const price = Number(prod.price) || 0;
+      const declaredQty = Number(declaredMap[prod.id]) || 0;
+      const countedQty = Number(countedQuantities[prod.id] ?? declaredQty) || 0;
+      const diffQty = Math.max(0, countedQty - declaredQty);
+      const diffAmount = Number((diffQty * price).toFixed(2));
+
+      totalDeclaredUnits += declaredQty;
+      totalDeclaredAmount += declaredQty * price;
+      totalCountedUnits += countedQty;
+      totalCountedAmount += countedQty * price;
+      totalDiffUnits += diffQty;
+      totalDiffAmount += diffAmount;
+
+      return {
+        product: prod,
+        declaredQty,
+        countedQty,
+        diffQty,
+        diffAmount
+      };
+    });
+
+    return {
+      rows,
+      totalDeclaredUnits,
+      totalDeclaredAmount: Number(totalDeclaredAmount.toFixed(2)),
+      totalCountedUnits,
+      totalCountedAmount: Number(totalCountedAmount.toFixed(2)),
+      totalDiffUnits,
+      totalDiffAmount: Number(totalDiffAmount.toFixed(2))
+    };
+  }, [divergenciaModalFlat, products, countedQuantities]);
 
   // Submit "Conforme" inspection
   const handleSubmitConforme = async () => {
@@ -357,10 +430,8 @@ export default function AnserveRestockPage() {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (localToken) headers["x-anserve-token"] = localToken;
 
-      // Construct restocked items
       const restockedItems: Array<{ productId: string; quantity: number; isCourtesy?: boolean }> = [];
 
-      // Add courtesy items if selected (Nespresso, balas, amendoim)
       if (conformeCourtesyRestock) {
         const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
         if (nespresso) {
@@ -416,18 +487,30 @@ export default function AnserveRestockPage() {
     }
   };
 
-  // Submit "Divergência" inspection
+  // Submit "Divergência" inspection (com 3 Colunas em tempo real)
   const handleSubmitDivergencia = async () => {
     if (!divergenciaModalFlat) return;
 
-    const missingItemsList = Object.entries(missingQuantities)
-      .filter(([_, qty]) => qty > 0)
-      .map(([productId, quantity]) => ({ productId, quantity }));
+    const missingItemsList = discrepancyCalculation.rows
+      .filter((r) => r.diffQty > 0)
+      .map((r) => ({
+        productId: r.product.id,
+        quantity: r.diffQty,
+        declaredQuantity: r.declaredQty,
+        countedQuantity: r.countedQty
+      }));
+
+    const countedItemsList = discrepancyCalculation.rows
+      .filter((r) => r.countedQty > 0 || r.declaredQty > 0)
+      .map((r) => ({
+        productId: r.product.id,
+        countedQuantity: r.countedQty
+      }));
 
     if (missingItemsList.length === 0) {
       toast({
-        title: "Nenhum item selecionado",
-        description: "Adicione ao menos um item faltante para registrar a divergência.",
+        title: "Nenhuma divergência apurada",
+        description: "Na coluna 'Contagem da Repositora', informe uma quantidade consumida maior que a informada pelo hóspede.",
         variant: "destructive"
       });
       return;
@@ -439,14 +522,14 @@ export default function AnserveRestockPage() {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (localToken) headers["x-anserve-token"] = localToken;
 
-      // Construct restocked items (restock the missing ones plus courtesy)
-      const restockedItems = missingItemsList.map((m) => ({
-        productId: m.productId,
-        quantity: m.quantity,
-        isCourtesy: false
-      }));
+      const restockedItems = discrepancyCalculation.rows
+        .filter((r) => r.countedQty > 0)
+        .map((r) => ({
+          productId: r.product.id,
+          quantity: r.countedQty,
+          isCourtesy: false
+        }));
 
-      // Add courtesy items
       const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
       if (nespresso) {
         restockedItems.push({ productId: nespresso.id, quantity: 2, isCourtesy: true });
@@ -461,6 +544,7 @@ export default function AnserveRestockPage() {
           reservationCode: divergenciaModalFlat.currentReservation?.code || "",
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
           status: "divergencia",
+          countedItems: countedItemsList,
           missingItems: missingItemsList,
           photos: capturedPhotos,
           notes: divergenceNotes,
@@ -471,8 +555,8 @@ export default function AnserveRestockPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: "Divergência registrada! ⚠️",
-          description: `Cobrança de R$ ${data.inspection?.discrepancyTotalAmount?.toFixed(2) || "0.00"} gerada. A Sofia no WhatsApp acionou o hóspede.`
+          title: "Divergência registrada e enviada ao(s) hóspede(s)! ⚠️",
+          description: `Cobrança de R$ ${Number(data.inspection?.discrepancyTotalAmount || discrepancyCalculation.totalDiffAmount).toFixed(2)} enviada com link de baixa automática.`
         });
         setDivergenciaModalFlat(null);
         fetchData();
@@ -508,7 +592,6 @@ export default function AnserveRestockPage() {
             CorpFlats Soho Residence & Anserve. Digite seu PIN de 4 dígitos para acessar.
           </p>
 
-          {/* PIN Dots Display */}
           <div className="flex items-center gap-3 mb-6">
             {[0, 1, 2, 3].map((index) => {
               const isFilled = pinInput.length > index;
@@ -531,7 +614,6 @@ export default function AnserveRestockPage() {
             </div>
           )}
 
-          {/* Keypad Numeric Matrix */}
           <div className="grid grid-cols-3 gap-3 w-full max-w-[260px] mb-4">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((num) => (
               <button
@@ -590,7 +672,7 @@ export default function AnserveRestockPage() {
               <Package className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg md:text-xl font-black text-foreground">
                   Portal da Repositora Anserve
                 </h1>
@@ -599,7 +681,7 @@ export default function AnserveRestockPage() {
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Conferência de frigobar, apontamento de divergências com fotos e reposição de estoque.
+                Conferência comparativa em 3 colunas (Informado × Contagem × Divergência) e baixa automática no pagamento.
               </p>
             </div>
           </div>
@@ -672,7 +754,7 @@ export default function AnserveRestockPage() {
             <div className="flex items-center gap-2 text-xs font-bold text-red-600 dark:text-red-400">
               <AlertTriangle className="w-4 h-4 shrink-0 animate-bounce" />
               <span>
-                Atenção: Existem <strong>{stats.checkoutHoje} flats com checkout previsto para hoje</strong> que exigem vistoria prioritária antes das 14:00!
+                Atenção: Existem <strong>{stats.checkoutHoje} flats com checkout previsto para hoje</strong> que exigem vistoria prioritária!
               </span>
             </div>
             <Button
@@ -705,7 +787,7 @@ export default function AnserveRestockPage() {
               const isCheckout = flat.status === "checkout_hoje";
               const isOcupado = flat.status === "ocupado";
               const isLivre = flat.status === "livre";
-              const isExpanded = expandedFlat === flat.flatNumber;
+              const declaredEntries = Object.entries(flat.declaredItemsByProduct || {}).filter(([_, q]) => Number(q) > 0);
 
               return (
                 <Card
@@ -719,8 +801,8 @@ export default function AnserveRestockPage() {
                   }`}
                 >
                   <CardHeader className="p-4 pb-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-black text-foreground">
                           Flat {flat.flatNumber}
                         </span>
@@ -742,7 +824,7 @@ export default function AnserveRestockPage() {
                       </div>
 
                       {flat.declaredAmount > 0 && (
-                        <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[11px] font-black">
+                        <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[11px] font-black shrink-0">
                           R$ {flat.declaredAmount.toFixed(2)} Pago
                         </Badge>
                       )}
@@ -750,10 +832,18 @@ export default function AnserveRestockPage() {
 
                     {flat.currentReservation ? (
                       <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                        <span className="font-bold text-foreground truncate max-w-[170px]">
-                          {flat.currentReservation.guestName}
-                        </span>
-                        <span className="font-mono text-[11px]">{flat.currentReservation.code}</span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-bold text-foreground truncate max-w-[160px]">
+                            {flat.currentReservation.guestName}
+                          </span>
+                          {(flat.currentReservation.numGuests || 1) > 1 && (
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 shrink-0">
+                              <Users className="w-2.5 h-2.5 mr-0.5" />
+                              {flat.currentReservation.numGuests} hósp.
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="font-mono text-[11px] shrink-0">{flat.currentReservation.code}</span>
                       </div>
                     ) : (
                       <span className="text-xs text-muted-foreground mt-0.5">Sem reserva ativa no momento</span>
@@ -761,21 +851,62 @@ export default function AnserveRestockPage() {
                   </CardHeader>
 
                   <CardContent className="p-4 pt-2 space-y-3">
-                    {/* Consumo Declarado e Gabarito Resumo */}
+                    {/* Consumo Informado pelo Hóspede + Status de Divergência */}
                     <div className="p-3 rounded-2xl bg-muted/40 border border-border text-xs space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span>Padrão no flat:</span>
-                        <span className="font-semibold text-foreground">
-                          {Array.isArray(flat.defaultStock) ? `${flat.defaultStock.length} itens cadastrados` : "Gabarito padrão"}
-                        </span>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-muted-foreground font-medium">Informado pelo hóspede:</span>
+                        {declaredEntries.length > 0 ? (
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            {declaredEntries.reduce((acc, [_, q]) => acc + Number(q), 0)} un. declaradas
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Nenhum item informado</span>
+                        )}
                       </div>
+
+                      {declaredEntries.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-0.5">
+                          {declaredEntries.map(([prodId, qty]) => {
+                            const p = products.find((x) => x.id === prodId);
+                            return (
+                              <span
+                                key={prodId}
+                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-700 dark:text-emerald-300"
+                              >
+                                {qty}x {p?.name || prodId}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {flat.pendingDiscrepancyOrder && (
+                        <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-between text-[11px] text-amber-700 dark:text-amber-300 mt-1">
+                          <span className="font-bold">⏳ Divergência Pendente:</span>
+                          <span className="font-black">R$ {Number(flat.pendingDiscrepancyOrder.totalAmount).toFixed(2)}</span>
+                        </div>
+                      )}
 
                       {flat.lastInspection && (
                         <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/50">
                           <span className="text-muted-foreground">Última vistoria:</span>
-                          <span className={`font-bold ${flat.lastInspection.status === "conforme" ? "text-emerald-600" : "text-amber-600"}`}>
-                            {flat.lastInspection.status === "conforme" ? "✅ Conforme" : "⚠️ Divergência"} (
-                            {new Date(flat.lastInspection.inspectedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})
+                          <span
+                            className={`font-bold ${
+                              flat.lastInspection.status === "conforme" || flat.lastInspection.discrepancyPaid
+                                ? "text-emerald-600"
+                                : "text-amber-600"
+                            }`}
+                          >
+                            {flat.lastInspection.status === "conforme"
+                              ? "✅ Conforme"
+                              : flat.lastInspection.discrepancyPaid
+                              ? "✅ Divergência Quitada"
+                              : "⚠️ Divergência"} (
+                            {new Date(flat.lastInspection.inspectedAt).toLocaleDateString("pt-BR", {
+                              day: "2-digit",
+                              month: "2-digit"
+                            })}
+                            )
                           </span>
                         </div>
                       )}
@@ -862,7 +993,7 @@ export default function AnserveRestockPage() {
                 <Textarea
                   placeholder="Ex: Frigobar limpo, gelando perfeitamente e 100% abastecido."
                   value={conformeNotes}
-                  onChange={(e) => setConformeNotes(e.target.value)}
+                  onChange={(e) => setConformeNotes(e.target.checked ? e.target.value : e.target.value)}
                   className="text-xs rounded-2xl resize-none min-h-[60px]"
                 />
               </div>
@@ -887,95 +1018,170 @@ export default function AnserveRestockPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Modal: Apontar Divergência */}
+        {/* Modal: Apontar Divergência com 3 Colunas em Tempo Real */}
         <Dialog open={Boolean(divergenciaModalFlat)} onOpenChange={() => setDivergenciaModalFlat(null)}>
-          <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl p-6">
+          <DialogContent className="sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-3xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
-                <span>Apontar Divergência — Flat {divergenciaModalFlat?.flatNumber}</span>
+                <span>Conferência de Divergência — Flat {divergenciaModalFlat?.flatNumber}</span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Indique os itens consumidos que não foram declarados pelo hóspede. A IA Sofia cobrará cordialmente no WhatsApp.
+                Compare o <strong>Consumo Informado pelo Hóspede (Coluna 1)</strong> com a <strong>Contagem da Repositora (Coluna 2)</strong>. O sistema calcula a <strong>Divergência e o Valor em Tempo Real (Coluna 3)</strong>.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 py-2">
-              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-xs">
-                <strong>Importante:</strong> Ao registrar, o sistema gera automaticamente uma cobrança pendente na reserva e a Sofia enviará mensagem com o link de pagamento por PIX/Cartão.
-              </div>
+            <div className="space-y-4 py-1">
+              {divergenciaModalFlat?.currentReservation && (
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold">Hóspede: {divergenciaModalFlat.currentReservation.guestName}</span>
+                    <span className="text-[11px] block opacity-85">
+                      Reserva {divergenciaModalFlat.currentReservation.code} • Ao confirmar, o link de pagamento é enviado no WhatsApp e dá baixa sozinho ao pagar.
+                    </span>
+                  </div>
+                  {(divergenciaModalFlat.currentReservation.numGuests || 1) >= 2 && (
+                    <Badge className="bg-amber-600 text-white text-[10px]">
+                      👥 {divergenciaModalFlat.currentReservation.numGuests} hóspedes (qualquer um pode pagar)
+                    </Badge>
+                  )}
+                </div>
+              )}
 
-              {/* Items Stepper Selection */}
-              <div className="space-y-2">
-                <Label className="text-xs font-bold">Itens Faltantes / Consumo Não Declarado:</Label>
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {products
-                    .filter((p) => !p.isCourtesy)
-                    .map((prod) => {
-                      const qty = missingQuantities[prod.id] || 0;
-                      return (
-                        <div
-                          key={prod.id}
-                          className="flex items-center justify-between p-2.5 rounded-2xl bg-muted/40 border border-border"
-                        >
-                          <div className="flex items-center gap-2.5">
-                            {prod.imageUrl ? (
-                              <img src={prod.imageUrl} alt={prod.name} className="w-8 h-8 rounded-lg object-cover" />
-                            ) : (
-                              <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-bold text-xs">
-                                🧊
-                              </div>
-                            )}
-                            <div>
-                              <div className="font-bold text-xs text-foreground">{prod.name}</div>
-                              <div className="text-[10px] text-muted-foreground">
-                                R$ {Number(prod.price).toFixed(2)} cada
-                              </div>
-                            </div>
-                          </div>
+              {/* Tabela de 3 Colunas em Tempo Real */}
+              <div className="border border-border rounded-2xl overflow-hidden">
+                {/* Cabeçalho das 3 Colunas */}
+                <div className="grid grid-cols-12 bg-muted/70 border-b border-border px-3 py-2.5 text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-muted-foreground items-center">
+                  <div className="col-span-4">Produto</div>
+                  <div className="col-span-2 text-center">1. Informado Hóspede</div>
+                  <div className="col-span-3 text-center">2. Contagem Repositora</div>
+                  <div className="col-span-3 text-right">3. Divergência (R$)</div>
+                </div>
 
-                          <div className="flex items-center gap-2">
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="outline"
-                              disabled={qty === 0}
-                              onClick={() =>
-                                setMissingQuantities((prev) => ({
-                                  ...prev,
-                                  [prod.id]: Math.max(0, qty - 1)
-                                }))
-                              }
-                              className="h-7 w-7 rounded-lg"
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </Button>
-                            <span className="w-6 text-center font-bold text-xs">{qty}</span>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="outline"
-                              onClick={() =>
-                                setMissingQuantities((prev) => ({
-                                  ...prev,
-                                  [prod.id]: qty + 1
-                                }))
-                              }
-                              className="h-7 w-7 rounded-lg"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
+                {/* Linhas de Produtos */}
+                <div className="divide-y divide-border max-h-64 overflow-y-auto">
+                  {discrepancyCalculation.rows.map(({ product: prod, declaredQty, countedQty, diffQty, diffAmount }) => (
+                    <div
+                      key={prod.id}
+                      className={`grid grid-cols-12 px-3 py-2.5 items-center gap-1 transition-colors ${
+                        diffQty > 0 ? "bg-amber-500/10" : "bg-card"
+                      }`}
+                    >
+                      {/* Produto */}
+                      <div className="col-span-4 min-w-0 pr-1">
+                        <div className="font-bold text-xs text-foreground truncate">{prod.name}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          R$ {Number(prod.price).toFixed(2)} • Padrão: {prod.defaultQuantity ?? 2}
                         </div>
-                      );
-                    })}
+                      </div>
+
+                      {/* Coluna 1: Consumo Informado pelo Hóspede */}
+                      <div className="col-span-2 text-center">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs font-black px-2 py-0.5 ${
+                            declaredQty > 0
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {declaredQty} un.
+                        </Badge>
+                      </div>
+
+                      {/* Coluna 2: Contagem da Repositora */}
+                      <div className="col-span-3 flex items-center justify-center gap-1">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          disabled={countedQty <= 0}
+                          onClick={() =>
+                            setCountedQuantities((prev) => ({
+                              ...prev,
+                              [prod.id]: Math.max(0, countedQty - 1)
+                            }))
+                          }
+                          className="h-7 w-7 rounded-lg shrink-0"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={countedQty}
+                          onChange={(e) => {
+                            const val = Math.max(0, parseInt(e.target.value || "0", 10) || 0);
+                            setCountedQuantities((prev) => ({
+                              ...prev,
+                              [prod.id]: val
+                            }));
+                          }}
+                          className="h-7 w-11 text-center font-black text-xs px-1 rounded-lg"
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() =>
+                            setCountedQuantities((prev) => ({
+                              ...prev,
+                              [prod.id]: countedQty + 1
+                            }))
+                          }
+                          className="h-7 w-7 rounded-lg shrink-0"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </div>
+
+                      {/* Coluna 3: Divergência em Tempo Real */}
+                      <div className="col-span-3 text-right">
+                        {diffQty > 0 ? (
+                          <div>
+                            <span className="text-xs font-black text-amber-600 dark:text-amber-400 block">
+                              +{diffQty} un.
+                            </span>
+                            <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300 font-mono">
+                              R$ {diffAmount.toFixed(2)}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                            OK (0)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Rodapé com Totais das 3 Colunas em Tempo Real */}
+                <div className="grid grid-cols-12 bg-muted/90 border-t border-border px-3 py-3 items-center text-xs">
+                  <div className="col-span-4 font-black text-foreground">TOTAL APURADO</div>
+                  <div className="col-span-2 text-center font-bold text-muted-foreground">
+                    {discrepancyCalculation.totalDeclaredUnits} un.
+                    <span className="block text-[10px]">R$ {discrepancyCalculation.totalDeclaredAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="col-span-3 text-center font-bold text-foreground">
+                    {discrepancyCalculation.totalCountedUnits} un.
+                    <span className="block text-[10px]">R$ {discrepancyCalculation.totalCountedAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="col-span-3 text-right">
+                    <span className="text-xs font-black text-amber-600 dark:text-amber-400 block">
+                      +{discrepancyCalculation.totalDiffUnits} un.
+                    </span>
+                    <span className="text-sm font-black text-amber-600 dark:text-amber-400 font-mono">
+                      R$ {discrepancyCalculation.totalDiffAmount.toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
 
               {/* Photo Evidence Capture */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold">Foto do Frigobar (Evidência visual)</Label>
+                  <Label className="text-xs font-bold">Foto do Frigobar (Opcional)</Label>
                   <Button
                     type="button"
                     variant="outline"
@@ -1017,17 +1223,17 @@ export default function AnserveRestockPage() {
 
               {/* Notes */}
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold">Observações para Auditoria</Label>
+                <Label className="text-xs font-bold">Observações (Opcional)</Label>
                 <Textarea
-                  placeholder="Ex: Frigobar conferido no checkout com 2 cervejas a menos do que o pago."
+                  placeholder="Ex: Contagem realizada na saída do hóspede."
                   value={divergenceNotes}
                   onChange={(e) => setDivergenceNotes(e.target.value)}
-                  className="text-xs rounded-2xl resize-none min-h-[60px]"
+                  className="text-xs rounded-2xl resize-none min-h-[52px]"
                 />
               </div>
             </div>
 
-            <DialogFooter className="pt-2">
+            <DialogFooter className="pt-2 flex flex-col sm:flex-row gap-2">
               <Button
                 variant="outline"
                 onClick={() => setDivergenciaModalFlat(null)}
@@ -1036,11 +1242,13 @@ export default function AnserveRestockPage() {
                 Cancelar
               </Button>
               <Button
-                disabled={submittingInspection}
+                disabled={submittingInspection || discrepancyCalculation.totalDiffUnits === 0}
                 onClick={handleSubmitDivergencia}
                 className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
               >
-                {submittingInspection ? "Registrando..." : "Registrar Divergência"}
+                {submittingInspection
+                  ? "Enviando..."
+                  : `Confirmar e Enviar Cobrança (R$ ${discrepancyCalculation.totalDiffAmount.toFixed(2)})`}
               </Button>
             </DialogFooter>
           </DialogContent>

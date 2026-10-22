@@ -1,0 +1,1 @@
+import{as as u,aR as r}from"./index.js";function i(e,s){const t=u(e);if(isNaN(s))return r(e,NaN);if(!s)return t;const o=t.getDate(),n=r(e,t.getTime());n.setMonth(t.getMonth()+s+1,0);const a=n.getDate();return o>=a?n:(t.setFullYear(n.getFullYear(),n.getMonth(),o),t)}function f(e,s){return i(e,-1)}export{i as a,f as s};

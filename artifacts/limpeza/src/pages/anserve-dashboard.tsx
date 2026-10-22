@@ -224,6 +224,74 @@ export default function AnserveDashboardPage() {
   // Staff Inspection History Modal
   const [historyModalStaff, setHistoryModalStaff] = useState<AnserveStaffMember | null>(null);
 
+  // Invoice Delivery Monitor & Manual Retry Modal
+  const [deliveryMonitor, setDeliveryMonitor] = useState<any | null>(null);
+  const [retryModalOrder, setRetryModalOrder] = useState<any | null>(null);
+  const [retryPhoneInput, setRetryPhoneInput] = useState("");
+  const [retryEmailInput, setRetryEmailInput] = useState("");
+  const [retryingInvoice, setRetryingInvoice] = useState(false);
+
+  const fetchDeliveryMonitor = async () => {
+    try {
+      const res = await fetch("/api/minibar/invoices/delivery-monitor", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setDeliveryMonitor(data);
+        }
+      }
+    } catch (err) {
+      console.error("[AnserveDashboard] Erro ao buscar monitor de entrega de NF:", err);
+    }
+  };
+
+  const handleOpenRetryModal = (ord: any) => {
+    setRetryModalOrder(ord);
+    setRetryPhoneInput(ord.guestPhone || "");
+    setRetryEmailInput(ord.guestEmail || "");
+  };
+
+  const handleConfirmRetryInvoice = async () => {
+    if (!retryModalOrder) return;
+    setRetryingInvoice(true);
+    try {
+      const res = await fetch(`/api/minibar/orders/${retryModalOrder.id}/invoice/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          phone: retryPhoneInput.trim() || undefined,
+          email: retryEmailInput.trim() || undefined,
+          channel: "both"
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title: "Reenvio de Nota Fiscal disparado! 🚀",
+          description: `WhatsApp (${retryPhoneInput || "cadastrado"}) e E-mail (${retryEmailInput || "cadastrado"}) atualizados e acionados.`
+        });
+        setRetryModalOrder(null);
+        fetchDeliveryMonitor();
+        fetchAnsReports();
+      } else {
+        toast({
+          title: "Erro ao reenviar NF",
+          description: data.error || "Verifique os dados e tente novamente.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setRetryingInvoice(false);
+    }
+  };
+
   const fetchPendingInvoices = async () => {
     try {
       const res = await fetch("/api/minibar/invoices/pending", { credentials: "include" });
@@ -294,7 +362,13 @@ export default function AnserveDashboardPage() {
   const loadAllData = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchPendingInvoices(), fetchSettlement(), fetchAnsReports(), fetchStaff()]);
+      await Promise.all([
+        fetchPendingInvoices(),
+        fetchSettlement(),
+        fetchAnsReports(),
+        fetchStaff(),
+        fetchDeliveryMonitor()
+      ]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -841,8 +915,111 @@ export default function AnserveDashboardPage() {
             </TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: FILA DE NOTAS FISCAIS PENDENTES */}
+          {/* TAB 1: FILA DE NOTAS FISCAIS PENDENTES & MONITOR DE ENTREGA */}
           <TabsContent value="nfs" className="w-full min-w-0 space-y-4">
+            {/* Monitoramento de Entrega de Notas Fiscais (WhatsApp + E-mail) */}
+            {deliveryMonitor && (
+              <Card
+                className={`rounded-3xl border p-4 sm:p-5 space-y-3 ${
+                  (deliveryMonitor.failedInvoices?.length || 0) > 0
+                    ? "border-rose-500/50 bg-rose-500/5"
+                    : "border-emerald-500/30 bg-emerald-500/5"
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    {(deliveryMonitor.failedInvoices?.length || 0) > 0 ? (
+                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                    ) : (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    )}
+                    <div>
+                      <h4 className="text-xs sm:text-sm font-black text-foreground">
+                        Monitor de Envio de Notas Fiscais (WhatsApp + E-mail)
+                      </h4>
+                      <p className="text-[11px] text-muted-foreground">
+                        O sistema monitora automaticamente cada envio, tenta novamente em caso de falha e alerta para correção ou reenvio manual.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 font-bold">
+                      ✅ {deliveryMonitor.summary?.fullyDeliveredCount || 0} Entregues
+                    </Badge>
+                    {(deliveryMonitor.summary?.retryingCount || 0) > 0 && (
+                      <Badge className="bg-amber-500/15 text-amber-700 border-amber-500/30 font-bold">
+                        🔄 {deliveryMonitor.summary?.retryingCount} Retentando
+                      </Badge>
+                    )}
+                    {(deliveryMonitor.summary?.failedCount || 0) > 0 && (
+                      <Badge className="bg-rose-500/15 text-rose-700 border-rose-500/30 font-bold">
+                        ⚠️ {deliveryMonitor.summary?.failedCount} Com Falha
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {(deliveryMonitor.failedInvoices?.length > 0 || deliveryMonitor.retryingInvoices?.length > 0) && (
+                  <div className="space-y-2 pt-2 border-t border-border/60">
+                    {[...(deliveryMonitor.failedInvoices || []), ...(deliveryMonitor.retryingInvoices || [])].map(
+                      (item: any) => (
+                        <div
+                          key={item.id}
+                          className="p-3 rounded-2xl bg-card border border-rose-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-primary">{item.id}</span>
+                              <Badge variant="outline" className="text-[10px] font-bold">
+                                Flat {item.flatNumber}
+                              </Badge>
+                              <strong className="text-foreground">{item.guestName}</strong>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                              <span
+                                className={
+                                  item.deliveryMonitor?.whatsapp?.status === "sent"
+                                    ? "text-emerald-600 font-semibold"
+                                    : "text-rose-600 font-bold"
+                                }
+                              >
+                                📱 WhatsApp ({item.guestPhone || "s/ tel"}):{" "}
+                                {item.deliveryMonitor?.whatsapp?.status === "sent"
+                                  ? "Enviado ✓"
+                                  : `Falha (${item.deliveryMonitor?.whatsapp?.lastError || "Pendente"})`}
+                              </span>
+                              <span
+                                className={
+                                  item.deliveryMonitor?.email?.status === "sent"
+                                    ? "text-emerald-600 font-semibold"
+                                    : "text-rose-600 font-bold"
+                                }
+                              >
+                                ✉️ E-mail ({item.guestEmail || "s/ email"}):{" "}
+                                {item.deliveryMonitor?.email?.status === "sent"
+                                  ? "Enviado ✓"
+                                  : `Falha (${item.deliveryMonitor?.email?.lastError || "Pendente"})`}
+                              </span>
+                            </div>
+                          </div>
+
+                          <Button
+                            size="sm"
+                            onClick={() => handleOpenRetryModal(item)}
+                            className="rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white h-8 shrink-0"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                            Corrigir Contato / Reenviar NF
+                          </Button>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </Card>
+            )}
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-0.5">
                 <h3 className="text-sm font-bold text-foreground">Pedidos Quitados Aguardando Nota Fiscal</h3>
@@ -1175,9 +1352,19 @@ export default function AnserveDashboardPage() {
                           </td>
                           <td className="p-3.5">
                             {o.invoiceStatus === "anexada" ? (
-                              <Badge className="bg-sky-500/15 text-sky-700 border-sky-500/30 text-[10px]">
-                                Emitida {o.invoiceNumber ? `#${o.invoiceNumber}` : ""}
-                              </Badge>
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge className="bg-sky-500/15 text-sky-700 border-sky-500/30 text-[10px]">
+                                  Emitida {o.invoiceNumber ? `#${o.invoiceNumber}` : ""}
+                                </Badge>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenRetryModal(o)}
+                                  className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
+                                >
+                                  <RefreshCw className="w-2.5 h-2.5" />
+                                  Reenviar / Corrigir
+                                </button>
+                              </div>
                             ) : (
                               <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-500/40">
                                 Pendente NF
@@ -1998,6 +2185,61 @@ export default function AnserveDashboardPage() {
                 className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 {uploadingInvoice ? "Enviando e Disparando..." : "Anexar e Disparar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Corrigir Contato / Reenviar Nota Fiscal */}
+        <Dialog open={Boolean(retryModalOrder)} onOpenChange={() => setRetryModalOrder(null)}>
+          <DialogContent className="sm:max-w-md rounded-3xl p-6">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Send className="w-5 h-5 text-primary" />
+                <span>Reenviar Nota Fiscal — {retryModalOrder?.id}</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Corrija o WhatsApp ou E-mail do hóspede ({retryModalOrder?.guestName}) e reenvie a Nota Fiscal imediatamente.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 py-2 text-xs">
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">WhatsApp do Hóspede (com DDD)</Label>
+                <Input
+                  placeholder="(11) 99999-9999"
+                  value={retryPhoneInput}
+                  onChange={e => setRetryPhoneInput(e.target.value)}
+                  className="h-9 text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">E-mail do Hóspede</Label>
+                <Input
+                  type="email"
+                  placeholder="hospede@email.com"
+                  value={retryEmailInput}
+                  onChange={e => setRetryEmailInput(e.target.value)}
+                  className="h-9 text-xs rounded-xl"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setRetryModalOrder(null)}
+                className="rounded-xl text-xs font-bold"
+              >
+                Cancelar
+              </Button>
+              <Button
+                disabled={retryingInvoice}
+                onClick={handleConfirmRetryInvoice}
+                className="rounded-xl text-xs font-bold bg-primary text-primary-foreground"
+              >
+                {retryingInvoice ? "Reenviando..." : "Salvar Contato e Reenviar NF"}
               </Button>
             </DialogFooter>
           </DialogContent>
