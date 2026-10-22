@@ -59,6 +59,12 @@ import {
   MoreHorizontal,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
+  ChevronUp,
+  ArrowLeft,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Minimize2,
   Maximize2,
   X,
@@ -150,9 +156,67 @@ function formatBytes(bytes?: number) {
   return `${(kb / 1024).toFixed(1)} MB`
 }
 
+// Sanitiza e isola o HTML do e-mail para não vazar CSS global (body / .badge) na SPA e adaptar paddings em telas web e mobile
+function formatEmailHtmlForViewer(rawHtml?: string, fallbackText?: string): string {
+  if (!rawHtml || !rawHtml.trim()) {
+    const safeText = String(fallbackText || "Sem conteúdo de texto.")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br/>")
+    return `<div style="font-size:13.5px;line-height:1.6;color:#1F2937;word-break:break-word;">${safeText}</div>`
+  }
+
+  let html = String(rawHtml)
+  html = html.replace(/<!DOCTYPE[^>]*>/gi, "")
+  html = html.replace(/<\/?(?:html|head|meta|title|body)[^>]*>/gi, "")
+  html = html.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_match, cssContent) => {
+    const scopedCss = String(cssContent)
+      .replace(
+        /\bbody,\s*table,\s*td,\s*a\b/g,
+        ".cf-email-viewer-scope, .cf-email-viewer-scope table, .cf-email-viewer-scope td, .cf-email-viewer-scope a"
+      )
+      .replace(/\btable,\s*td\b/g, ".cf-email-viewer-scope table, .cf-email-viewer-scope td")
+      .replace(/\bbody\s*\{/g, ".cf-email-viewer-scope {")
+      .replace(/\.badge\b/g, ".cf-email-viewer-scope .badge")
+      .replace(/\.wrapper\b/g, ".cf-email-viewer-scope .wrapper")
+    return `<style>${scopedCss}</style>`
+  })
+  html = html.replace(/padding:\s*32px\s+16px\s*;?/gi, "padding: 8px 4px;")
+  html = html.replace(/padding:\s*36px\s+40px\s*;?/gi, "padding: 16px 14px;")
+  return `<div class="cf-email-viewer-scope" style="width:100%;max-width:100%;overflow-x:auto;word-break:break-word;">${html}</div>`
+}
+
 export default function EmailHub() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
+
+  // ── Estado Responsivo Web & Mobile ────────────────────────────────────────
+  const [mobileView, setMobileView] = useState<"list" | "detail">("list")
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  const [readingMaximized, setReadingMaximized] = useState<boolean>(false)
+  const [shellSidebarPinned, setShellSidebarPinned] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("gfm_sidebar_pinned") === "true"
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    const checkPin = () => {
+      try {
+        setShellSidebarPinned(localStorage.getItem("gfm_sidebar_pinned") === "true")
+      } catch {}
+    }
+    window.addEventListener("storage", checkPin)
+    const interval = setInterval(checkPin, 1000)
+    return () => {
+      window.removeEventListener("storage", checkPin)
+      clearInterval(interval)
+    }
+  }, [])
 
   // ── Estado Global do Motor & Status Zoho ──────────────────────────────────
   const [webmailStatus, setWebmailStatus] = useState<any>({
@@ -254,7 +318,8 @@ export default function EmailHub() {
   const [smtpHost, setSmtpHost] = useState("smtp.zoho.com")
   const [smtpPort, setSmtpPort] = useState(465)
   const [smtpUser, setSmtpUser] = useState("")
-  const [smtpPass, setSmtpPass] = useState("")
+  const [smtpPass, setSmtpPass]
+    = useState("")
   const [smtpFromName, setSmtpFromName] = useState("CorpFlats")
   const [smtpFromEmail, setSmtpFromEmail] = useState("")
   const [savingSmtp, setSavingSmtp] = useState(false)
@@ -324,13 +389,14 @@ export default function EmailHub() {
         if (Array.isArray(d.labels)) setLabels(d.labels)
         if (d.zohoStatus) setWebmailStatus((prev: any) => ({ ...prev, ...d.zohoStatus }))
 
-        // Se nenhuma mensagem estiver aberta ou a aberta não estiver na lista, abre a primeira automaticamente em desktop
+        // Se nenhuma mensagem estiver aberta ou a aberta não estiver na lista, abre a primeira automaticamente em desktop (sem forçar detail no mobile)
         if (list.length > 0 && (!activeMessageId || !list.some((m: any) => m.id === activeMessageId))) {
-          openMessageDetail(list[0].id, false)
+          openMessageDetail(list[0].id, false, false)
         } else if (list.length === 0) {
           setActiveMessageId(null)
           setMessageDetail(null)
           setThreadMessages([])
+          setMobileView("list")
         }
       }
     } catch (err) {
@@ -341,10 +407,13 @@ export default function EmailHub() {
     }
   }
 
-  const openMessageDetail = async (id: string, markReadOptimistic = true) => {
+  const openMessageDetail = async (id: string, markReadOptimistic = true, switchToMobileDetail = false) => {
     setActiveMessageId(id)
     setQuickReplyOpen(false)
     setQuickReplyText("")
+    if (switchToMobileDetail) {
+      setMobileView("detail")
+    }
 
     if (markReadOptimistic) {
       setMessages(prev => prev.map(m => (m.id === id ? { ...m, isRead: true } : m)))
@@ -366,6 +435,20 @@ export default function EmailHub() {
       console.error("Erro ao abrir mensagem:", err)
     } finally {
       setLoadingDetail(false)
+    }
+  }
+
+  // Navegação rápida para mensagem anterior / próxima na lista atual
+  const activeMessageIndex = useMemo(() => {
+    if (!activeMessageId) return -1
+    return messages.findIndex(m => m.id === activeMessageId)
+  }, [messages, activeMessageId])
+
+  const navigateAdjacentMessage = (delta: -1 | 1) => {
+    if (activeMessageIndex < 0) return
+    const nextIdx = activeMessageIndex + delta
+    if (nextIdx >= 0 && nextIdx < messages.length) {
+      openMessageDetail(messages[nextIdx].id, true, true)
     }
   }
 
@@ -495,7 +578,25 @@ export default function EmailHub() {
         })
     })
 
-    if (messageDetail && ids.includes(messageDetail.id)) {
+    const removesCurrent =
+      activeMessageId &&
+      ids.includes(activeMessageId) &&
+      ((action === "archive" && selectedFolder !== "archive") ||
+        (action === "trash" && selectedFolder !== "trash") ||
+        action === "deleteForever" ||
+        Boolean(action === "moveToFolder" && extra.targetFolderId && extra.targetFolderId !== selectedFolder))
+
+    if (removesCurrent) {
+      setMobileView("list")
+      const remaining = messages.filter(m => !ids.includes(m.id))
+      if (remaining.length > 0) {
+        openMessageDetail(remaining[0].id, false, false)
+      } else {
+        setActiveMessageId(null)
+        setMessageDetail(null)
+        setThreadMessages([])
+      }
+    } else if (messageDetail && ids.includes(messageDetail.id)) {
       if (action === "star") setMessageDetail((p: any) => ({ ...p, isStarred: true }))
       if (action === "unstar") setMessageDetail((p: any) => ({ ...p, isStarred: false }))
       if (action === "applyLabel" && extra.labelId) {
@@ -1092,67 +1193,107 @@ export default function EmailHub() {
     return activeReservations.find(r => String(r.id) === String(composeReservationId) || r.code === composeReservationId) || null
   }, [composeReservationId, activeReservations])
 
+  const activeFolderLabel = useMemo(() => {
+    if (selectedLabelId) {
+      return `Etiqueta: ${labelsById[selectedLabelId]?.name || ""}`
+    }
+    return (
+      systemFolders.find(f => f.id === selectedFolder)?.name ||
+      customFolders.find(f => f.id === selectedFolder)?.name ||
+      "Caixa de Entrada"
+    )
+  }, [selectedLabelId, labelsById, systemFolders, customFolders, selectedFolder])
+
   return (
     <Shell>
-      <div className="flex flex-col h-[calc(100vh-5.5rem)] min-h-[640px] -mt-2 select-none">
+      <div className="flex flex-col h-[calc(100dvh-7.25rem)] min-h-[480px] md:h-[100dvh] md:min-h-[600px] w-full px-2 pt-2 pb-1.5 md:px-4 md:py-3 overflow-hidden select-none">
         {/* ════════════════════════════════════════════════════════════════════
-            TOPBAR INTEGRADA: STATUS DO MOTOR, ZOHO API, JORNADA & AÇÕES RÁPIDAS
+            TOPBAR INTEGRADA (WEB & MOBILE): STATUS DO MOTOR, ZOHO API & AÇÕES
            ════════════════════════════════════════════════════════════════════ */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2 border-b border-border shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-slate-900 dark:bg-amber-500/20 text-white dark:text-amber-400 flex items-center justify-center shadow-2xs">
+        <div
+          className={`flex items-center justify-between gap-2 pb-2 mb-2 border-b border-border shrink-0 transition-all ${
+            !shellSidebarPinned ? "md:pl-20" : ""
+          } ${mobileView === "detail" ? "hidden md:flex" : "flex"}`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Botão Mobile/Tablet para abrir Gaveta de Pastas e Etiquetas */}
+            <button
+              type="button"
+              onClick={() => setMobileDrawerOpen(true)}
+              className="lg:hidden relative p-2 rounded-xl border border-border bg-card hover:bg-muted text-foreground shrink-0 shadow-2xs"
+              title="Pastas, Etiquetas e Caixas"
+            >
+              <FolderOpen className="w-4 h-4 text-primary" />
+              {(counts.inboxUnread || 0) > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
+                  {counts.inboxUnread}
+                </span>
+              )}
+            </button>
+
+            <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-slate-900 dark:bg-amber-500/20 text-white dark:text-amber-400 hidden sm:flex items-center justify-center shadow-2xs shrink-0">
               <Mail className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold tracking-tight text-foreground leading-none">
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+                <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground leading-none truncate">
                   CorpFlats Webmail
                 </h1>
                 <Badge
                   variant="outline"
                   onClick={() => setConfigModalOpen(true)}
-                  className={`cursor-pointer text-[10px] px-2 py-0 h-5 font-semibold gap-1 rounded-full transition-colors ${
+                  className={`cursor-pointer text-[9.5px] md:text-[10px] px-1.5 md:px-2 py-0 h-4.5 md:h-5 font-semibold gap-1 rounded-full transition-colors shrink-0 ${
                     webmailStatus.oauthConnected
                       ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
                       : "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-800"
                   }`}
                 >
                   <span
-                    className={`w-1.5 h-1.5 rounded-full ${
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                       webmailStatus.oauthConnected ? "bg-emerald-500" : "bg-sky-500"
                     }`}
                   />
-                  {webmailStatus.oauthConnected
-                    ? "Zoho REST API Conectada"
-                    : "Zoho SMTP Ativo • Configurar OAuth2"}
+                  <span className="hidden sm:inline">
+                    {webmailStatus.oauthConnected
+                      ? "Zoho REST API Conectada"
+                      : "Zoho SMTP Ativo • Configurar OAuth2"}
+                  </span>
+                  <span className="sm:hidden">
+                    {webmailStatus.oauthConnected ? "Zoho API" : "SMTP Ativo"}
+                  </span>
                 </Badge>
               </div>
-              <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">
+              <p className="text-[10px] md:text-[11px] text-muted-foreground mt-0.5 font-mono truncate hidden sm:block">
                 {webmailStatus.primaryEmailAddress || "reservas@corpflats.com.br"} • Recepção:{" "}
                 {webmailStatus.receptionEmail}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-0.5 font-semibold truncate sm:hidden">
+                {activeFolderLabel} ({messages.length})
               </p>
             </div>
           </div>
 
           {/* Controles Operacionais Direitos */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
             {/* Switch do Motor Automático Preservado */}
-            <div className="flex items-center gap-2 bg-card px-2.5 py-1 rounded-xl border border-border shadow-2xs">
-              <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 bg-card px-2 py-1 rounded-xl border border-border shadow-2xs">
+              <div className="flex items-center gap-1">
                 {webmailStatus.engineEnabled ? (
-                  <Play className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
+                  <Play className="w-3 h-3 md:w-3.5 md:h-3.5 text-emerald-600 fill-emerald-600 shrink-0" />
                 ) : (
-                  <Pause className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                  <Pause className="w-3 h-3 md:w-3.5 md:h-3.5 text-amber-500 fill-amber-500 shrink-0" />
                 )}
-                <span className="text-[11px] font-bold text-foreground">
-                  Motor {webmailStatus.engineEnabled ? "Ativo" : "Pausado"}
+                <span className="text-[10px] md:text-[11px] font-bold text-foreground whitespace-nowrap">
+                  <span className="hidden sm:inline">Motor </span>
+                  {webmailStatus.engineEnabled ? "Ativo" : "Pausado"}
                 </span>
               </div>
               <Switch
                 checked={webmailStatus.engineEnabled !== false}
                 disabled={togglingEngine}
                 onCheckedChange={handleToggleEngine}
-                className="scale-90 data-[state=checked]:bg-emerald-600"
+                className="scale-75 md:scale-90 data-[state=checked]:bg-emerald-600"
               />
             </div>
 
@@ -1160,60 +1301,320 @@ export default function EmailHub() {
               variant="outline"
               size="sm"
               onClick={() => setLocation("/jornada-reservas")}
-              className="h-8 text-[11px] font-semibold gap-1.5 rounded-xl bg-amber-500/10 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
+              className="hidden sm:inline-flex h-8 text-[11px] font-semibold gap-1.5 rounded-xl bg-amber-500/10 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 px-2.5"
+              title="Mapa da Jornada"
             >
-              <Workflow className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Mapa da Jornada</span>
+              <Workflow className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden xl:inline">Mapa da Jornada</span>
             </Button>
 
             <Button
               variant="outline"
               size="sm"
               onClick={() => setTestModalOpen(true)}
-              className="h-8 text-[11px] font-semibold gap-1.5 rounded-xl"
+              className="hidden sm:inline-flex h-8 text-[11px] font-semibold gap-1.5 rounded-xl px-2.5"
+              title="Testar Disparo SMTP"
             >
-              <Send className="w-3.5 h-3.5 text-primary" />
-              <span className="hidden sm:inline">Testar SMTP</span>
+              <Send className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="hidden lg:inline">Testar SMTP</span>
             </Button>
 
             <Button
               variant="outline"
               size="sm"
               onClick={() => setConfigModalOpen(true)}
-              className="h-8 text-[11px] font-semibold gap-1.5 rounded-xl"
+              className="h-8 text-[11px] font-semibold gap-1.5 rounded-xl px-2 md:px-2.5"
+              title="Configurar Zoho API & SMTP"
             >
-              <Settings className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Zoho API & SMTP</span>
+              <Settings className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden xl:inline">Zoho API & SMTP</span>
             </Button>
           </div>
         </div>
 
         {/* ════════════════════════════════════════════════════════════════════
-            CONTAINER PRINCIPAL 3-PANE SPLIT VIEW (ALTURA TOTAL SEM SCROLL DUPLO)
+            GAVETA DESLIZANTE MOBILE/TABLET (PASTAS, ETIQUETAS & ATALHOS)
            ════════════════════════════════════════════════════════════════════ */}
-        <div className="flex-1 min-h-0 flex rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+        {mobileDrawerOpen && (
+          <div
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs lg:hidden flex"
+            onClick={() => setMobileDrawerOpen(false)}
+          >
+            <div
+              className="w-[285px] max-w-[85vw] h-full bg-card border-r border-border shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-left duration-200"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-3.5 border-b border-border flex items-center justify-between gap-2 bg-muted/20">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-slate-900 dark:bg-amber-500/20 text-white dark:text-amber-400 flex items-center justify-center shrink-0">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-foreground truncate">CorpFlats Webmail</div>
+                    <div className="text-[10px] text-muted-foreground font-mono truncate">
+                      {webmailStatus.primaryEmailAddress || "reservas@corpflats.com.br"}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className="p-1.5 rounded-xl hover:bg-muted text-muted-foreground"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 border-b border-border space-y-2">
+                <Button
+                  onClick={() => {
+                    setMobileDrawerOpen(false)
+                    openComposer({ mode: "new" })
+                  }}
+                  className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-slate-950 text-white font-bold text-xs gap-2 shadow-sm"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                  <span>Escrever E-mail</span>
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-4">
+                {/* Caixas do Sistema */}
+                <div className="space-y-0.5">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                    Caixas & Motor
+                  </div>
+                  {systemFolders.map(fld => {
+                    const isActive = selectedFolder === fld.id && !selectedLabelId
+                    const badgeCount = fld.badgeType === "unread" ? fld.unread : fld.total
+                    return (
+                      <button
+                        key={fld.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedLabelId("")
+                          setSelectedFolder(fld.id)
+                          setMobileView("list")
+                          setMobileDrawerOpen(false)
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all ${
+                          isActive
+                            ? "bg-primary/12 text-primary font-bold shadow-2xs"
+                            : "text-foreground/85 hover:bg-muted/70 font-medium"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {renderFolderIcon(fld.icon, isActive, fld.accent)}
+                          <span className="truncate">{fld.name}</span>
+                        </div>
+                        {badgeCount > 0 && fld.badgeType !== "none" && (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                              fld.id === "inbox" && fld.unread > 0
+                                ? "bg-blue-600 text-white"
+                                : fld.accent === "amber"
+                                ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                                : fld.accent === "rose"
+                                ? "bg-rose-600 text-white"
+                                : isActive
+                                ? "bg-primary/20 text-primary"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {badgeCount}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Pastas Personalizadas */}
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between px-2.5 py-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                      Pastas Personalizadas
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileDrawerOpen(false)
+                        setNewFolderModalOpen(true)
+                      }}
+                      className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-muted"
+                    >
+                      <FolderPlus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {customFolders.map(cf => {
+                    const isActive = selectedFolder === cf.id && !selectedLabelId
+                    return (
+                      <button
+                        key={cf.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedLabelId("")
+                          setSelectedFolder(cf.id)
+                          setMobileView("list")
+                          setMobileDrawerOpen(false)
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all ${
+                          isActive
+                            ? "bg-primary/12 text-primary font-bold"
+                            : "text-foreground/85 hover:bg-muted/70 font-medium"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="w-2.5 h-2.5 rounded-sm shrink-0"
+                            style={{ backgroundColor: cf.color || "#6366F1" }}
+                          />
+                          <span className="truncate">{cf.name}</span>
+                        </div>
+                        {cf.total > 0 && (
+                          <span className="text-[10px] text-muted-foreground font-semibold">{cf.total}</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Etiquetas Coloridas */}
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between px-2.5 py-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                      Etiquetas
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileDrawerOpen(false)
+                        setNewLabelModalOpen(true)
+                      }}
+                      className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-muted"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {labels.map(lb => {
+                    const isActive = selectedLabelId === lb.id
+                    return (
+                      <button
+                        key={lb.id}
+                        type="button"
+                        onClick={() => {
+                          if (selectedLabelId === lb.id) setSelectedLabelId("")
+                          else setSelectedLabelId(lb.id)
+                          setMobileView("list")
+                          setMobileDrawerOpen(false)
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all ${
+                          isActive
+                            ? "bg-primary/12 text-primary font-bold"
+                            : "text-foreground/85 hover:bg-muted/70 font-medium"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: lb.color || "#10B981" }}
+                          />
+                          <span className="truncate">{lb.name}</span>
+                        </div>
+                        {lb.total > 0 && (
+                          <span className="text-[10px] text-muted-foreground font-semibold">{lb.total}</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Rodapé da Gaveta com Atalhos Operacionais */}
+              <div className="p-2.5 border-t border-border bg-muted/20 grid grid-cols-2 gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setMobileDrawerOpen(false)
+                    setTestModalOpen(true)
+                  }}
+                  className="h-8 text-[11px] font-semibold gap-1.5 rounded-xl"
+                >
+                  <Send className="w-3 h-3 text-primary" />
+                  <span>Testar SMTP</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setMobileDrawerOpen(false)
+                    setLocation("/jornada-reservas")
+                  }}
+                  className="h-8 text-[11px] font-semibold gap-1.5 rounded-xl text-amber-700 dark:text-amber-300"
+                >
+                  <Workflow className="w-3 h-3" />
+                  <span>Jornada</span>
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════════════
+            CONTAINER PRINCIPAL 3-PANE SPLIT VIEW (RESPONSIVO WEB & MOBILE)
+           ════════════════════════════════════════════════════════════════════ */}
+        <div className="flex-1 min-h-0 flex rounded-2xl border border-border bg-card shadow-xs overflow-hidden relative">
           {/* ──────────────────────────────────────────────────────────────────
-              COLUNA 1: SIDEBAR DE NAVEGAÇÃO, PASTAS E ETIQUETAS (~235px)
+              COLUNA 1 (DESKTOP lg+): SIDEBAR DE PASTAS E ETIQUETAS (COLAPSÁVEL)
              ────────────────────────────────────────────────────────────────── */}
-          <aside className="w-[220px] xl:w-[240px] shrink-0 border-r border-border bg-muted/20 flex flex-col h-full overflow-hidden">
-            {/* Botão Primário + Escrever */}
-            <div className="p-3 shrink-0">
-              <Button
-                onClick={() => openComposer({ mode: "new" })}
-                className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-slate-950 text-white font-bold text-xs gap-2 shadow-sm transition-all"
+          <aside
+            className={`hidden lg:flex flex-col h-full shrink-0 border-r border-border bg-muted/20 overflow-hidden transition-all duration-200 ${
+              sidebarCollapsed ? "w-[58px]" : "w-[205px] xl:w-[235px]"
+            }`}
+          >
+            {/* Botão Primário + Escrever + Botão Colapsar */}
+            <div className="p-2.5 shrink-0 flex items-center gap-1.5">
+              {sidebarCollapsed ? (
+                <Button
+                  onClick={() => openComposer({ mode: "new" })}
+                  className="w-10 h-10 p-0 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-slate-950 text-white shadow-sm mx-auto"
+                  title="Escrever E-mail"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => openComposer({ mode: "new" })}
+                  className="flex-1 h-9 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-slate-950 text-white font-bold text-xs gap-1.5 shadow-sm transition-all"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                  <span className="truncate">Escrever E-mail</span>
+                </Button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(prev => !prev)}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted shrink-0"
+                title={sidebarCollapsed ? "Expandir pastas" : "Recolher barra de pastas"}
               >
-                <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span>Escrever E-mail</span>
-              </Button>
+                {sidebarCollapsed ? (
+                  <PanelLeftOpen className="w-4 h-4" />
+                ) : (
+                  <PanelLeftClose className="w-4 h-4" />
+                )}
+              </button>
             </div>
 
             {/* Lista de Caixas do Sistema + Pastas Personalizadas + Etiquetas */}
             <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-4">
               {/* Caixas do Sistema */}
               <div className="space-y-0.5">
-                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                  Caixas & Motor
-                </div>
+                {!sidebarCollapsed && (
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                    Caixas & Motor
+                  </div>
+                )}
                 {systemFolders.map(fld => {
                   const isActive = selectedFolder === fld.id && !selectedLabelId
                   const badgeCount = fld.badgeType === "unread" ? fld.unread : fld.total
@@ -1221,11 +1622,14 @@ export default function EmailHub() {
                     <button
                       key={fld.id}
                       type="button"
+                      title={fld.name}
                       onClick={() => {
                         setSelectedLabelId("")
                         setSelectedFolder(fld.id)
                       }}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all ${
+                      className={`w-full flex items-center ${
+                        sidebarCollapsed ? "justify-center px-1 py-2" : "justify-between px-2.5 py-1.5"
+                      } rounded-xl text-xs transition-all relative ${
                         isActive
                           ? "bg-primary/12 text-primary font-bold shadow-2xs"
                           : "text-foreground/85 hover:bg-muted/70 font-medium"
@@ -1233,9 +1637,9 @@ export default function EmailHub() {
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         {renderFolderIcon(fld.icon, isActive, fld.accent)}
-                        <span className="truncate">{fld.name}</span>
+                        {!sidebarCollapsed && <span className="truncate">{fld.name}</span>}
                       </div>
-                      {badgeCount > 0 && fld.badgeType !== "none" && (
+                      {badgeCount > 0 && fld.badgeType !== "none" && !sidebarCollapsed && (
                         <span
                           className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                             fld.id === "inbox" && fld.unread > 0
@@ -1252,109 +1656,178 @@ export default function EmailHub() {
                           {badgeCount}
                         </span>
                       )}
+                      {badgeCount > 0 && fld.badgeType !== "none" && sidebarCollapsed && (
+                        <span className="w-2 h-2 rounded-full bg-blue-600 absolute top-1.5 right-1.5" />
+                      )}
                     </button>
                   )
                 })}
               </div>
 
               {/* Pastas Personalizadas */}
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between px-2.5 py-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                    Pastas
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setNewFolderModalOpen(true)}
-                    className="text-muted-foreground hover:text-foreground p-0.5 rounded-md hover:bg-muted"
-                    title="Criar Nova Pasta"
-                  >
-                    <FolderPlus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                {customFolders.map(cf => {
-                  const isActive = selectedFolder === cf.id && !selectedLabelId
-                  return (
+              {!sidebarCollapsed && (
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between px-2.5 py-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                      Pastas
+                    </span>
                     <button
-                      key={cf.id}
                       type="button"
-                      onClick={() => {
-                        setSelectedLabelId("")
-                        setSelectedFolder(cf.id)
-                      }}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all ${
-                        isActive
-                          ? "bg-primary/12 text-primary font-bold"
-                          : "text-foreground/85 hover:bg-muted/70 font-medium"
-                      }`}
+                      onClick={() => setNewFolderModalOpen(true)}
+                      className="text-muted-foreground hover:text-foreground p-0.5 rounded-md hover:bg-muted"
+                      title="Criar Nova Pasta"
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span
-                          className="w-2.5 h-2.5 rounded-sm shrink-0"
-                          style={{ backgroundColor: cf.color || "#6366F1" }}
-                        />
-                        <span className="truncate">{cf.name}</span>
-                      </div>
-                      {cf.total > 0 && (
-                        <span className="text-[10px] text-muted-foreground font-semibold">{cf.total}</span>
-                      )}
+                      <FolderPlus className="w-3.5 h-3.5" />
                     </button>
-                  )
-                })}
-              </div>
+                  </div>
+                  {customFolders.map(cf => {
+                    const isActive = selectedFolder === cf.id && !selectedLabelId
+                    return (
+                      <button
+                        key={cf.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedLabelId("")
+                          setSelectedFolder(cf.id)
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all ${
+                          isActive
+                            ? "bg-primary/12 text-primary font-bold"
+                            : "text-foreground/85 hover:bg-muted/70 font-medium"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="w-2.5 h-2.5 rounded-sm shrink-0"
+                            style={{ backgroundColor: cf.color || "#6366F1" }}
+                          />
+                          <span className="truncate">{cf.name}</span>
+                        </div>
+                        {cf.total > 0 && (
+                          <span className="text-[10px] text-muted-foreground font-semibold">{cf.total}</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
 
               {/* Etiquetas Coloridas */}
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between px-2.5 py-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                    Etiquetas
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setNewLabelModalOpen(true)}
-                    className="text-muted-foreground hover:text-foreground p-0.5 rounded-md hover:bg-muted"
-                    title="Nova Etiqueta"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                {labels.map(lb => {
-                  const isActive = selectedLabelId === lb.id
-                  return (
+              {!sidebarCollapsed && (
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between px-2.5 py-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                      Etiquetas
+                    </span>
                     <button
-                      key={lb.id}
                       type="button"
-                      onClick={() => {
-                        if (selectedLabelId === lb.id) setSelectedLabelId("")
-                        else setSelectedLabelId(lb.id)
-                      }}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all ${
-                        isActive
-                          ? "bg-primary/12 text-primary font-bold"
-                          : "text-foreground/85 hover:bg-muted/70 font-medium"
-                      }`}
+                      onClick={() => setNewLabelModalOpen(true)}
+                      className="text-muted-foreground hover:text-foreground p-0.5 rounded-md hover:bg-muted"
+                      title="Nova Etiqueta"
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: lb.color || "#10B981" }}
-                        />
-                        <span className="truncate">{lb.name}</span>
-                      </div>
-                      {lb.total > 0 && (
-                        <span className="text-[10px] text-muted-foreground font-semibold">{lb.total}</span>
-                      )}
+                      <Plus className="w-3.5 h-3.5" />
                     </button>
-                  )
-                })}
-              </div>
+                  </div>
+                  {labels.map(lb => {
+                    const isActive = selectedLabelId === lb.id
+                    return (
+                      <button
+                        key={lb.id}
+                        type="button"
+                        onClick={() => {
+                          if (selectedLabelId === lb.id) setSelectedLabelId("")
+                          else setSelectedLabelId(lb.id)
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all ${
+                          isActive
+                            ? "bg-primary/12 text-primary font-bold"
+                            : "text-foreground/85 hover:bg-muted/70 font-medium"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: lb.color || "#10B981" }}
+                          />
+                          <span className="truncate">{lb.name}</span>
+                        </div>
+                        {lb.total > 0 && (
+                          <span className="text-[10px] text-muted-foreground font-semibold">{lb.total}</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </aside>
 
           {/* ──────────────────────────────────────────────────────────────────
-              COLUNA 2: LISTA DE E-MAILS / THREADS (~390px a 420px)
+              COLUNA 2: LISTA DE E-MAILS / THREADS (RESPONSIVA MOBILE & WEB)
              ────────────────────────────────────────────────────────────────── */}
-          <section className="w-full md:w-[360px] xl:w-[405px] shrink-0 border-r border-border flex flex-col h-full bg-background overflow-hidden">
+          <section
+            className={`${
+              mobileView === "list" ? "flex w-full" : "hidden"
+            } ${
+              readingMaximized && messageDetail
+                ? "md:hidden"
+                : "md:flex md:w-[300px] lg:w-[335px] xl:w-[375px] 2xl:w-[405px]"
+            } shrink-0 md:border-r border-border flex-col h-full bg-background overflow-hidden`}
+          >
+            {/* Barra Horizontal de Pastas Rápidas para Mobile & Tablet (< lg) */}
+            <div className="lg:hidden px-2.5 pt-2 pb-1.5 border-b border-border bg-muted/25 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
+              {systemFolders.map(fld => {
+                const isActive = selectedFolder === fld.id && !selectedLabelId
+                const badgeCount = fld.badgeType === "unread" ? fld.unread : fld.total
+                return (
+                  <button
+                    key={fld.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedLabelId("")
+                      setSelectedFolder(fld.id)
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap flex items-center gap-1.5 transition-all shrink-0 ${
+                      isActive
+                        ? "bg-primary text-primary-foreground shadow-2xs"
+                        : "bg-card text-foreground/80 border border-border/70 hover:bg-muted"
+                    }`}
+                  >
+                    <span>
+                      {fld.id === "inbox"
+                        ? "Entrada"
+                        : fld.id === "queue"
+                        ? "Fila"
+                        : fld.id === "failed"
+                        ? "Falhas"
+                        : fld.id === "starred"
+                        ? "Estrela"
+                        : fld.id === "all"
+                        ? "Todos"
+                        : fld.name}
+                    </span>
+                    {badgeCount > 0 && fld.badgeType !== "none" && (
+                      <span
+                        className={`text-[9.5px] px-1.5 rounded-full font-bold ${
+                          isActive ? "bg-white/25 text-white" : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {badgeCount}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                onClick={() => setMobileDrawerOpen(true)}
+                className="px-2.5 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap flex items-center gap-1 bg-card text-primary border border-primary/30 shrink-0"
+              >
+                <Tag className="w-3 h-3" />
+                <span>Pastas & Etiquetas</span>
+              </button>
+            </div>
+
             {/* Barra de Busca Instantânea + Quick Toggles */}
             <div className="p-2.5 border-b border-border space-y-2 shrink-0 bg-card/50">
               <div className="relative">
@@ -1403,11 +1876,11 @@ export default function EmailHub() {
 
             {/* Barra de Ações em Massa (Bulk Actions Toolbar) */}
             <div className="px-3 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <button
                   type="button"
                   onClick={toggleSelectAll}
-                  className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs"
+                  className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs shrink-0"
                   title="Selecionar todos"
                 >
                   {allSelected ? (
@@ -1467,12 +1940,7 @@ export default function EmailHub() {
                   </div>
                 ) : (
                   <span className="text-[11px] font-semibold text-muted-foreground truncate">
-                    {selectedLabelId
-                      ? `Etiqueta: ${labelsById[selectedLabelId]?.name || ""}`
-                      : systemFolders.find(f => f.id === selectedFolder)?.name ||
-                        customFolders.find(f => f.id === selectedFolder)?.name ||
-                        "Mensagens"}{" "}
-                    ({messages.length})
+                    {activeFolderLabel} ({messages.length})
                   </span>
                 )}
               </div>
@@ -1481,7 +1949,7 @@ export default function EmailHub() {
                 type="button"
                 onClick={() => fetchMessages(true)}
                 disabled={loadingMessages || syncingRemote}
-                className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
                 title="Sincronizar Agora com Zoho Mail"
               >
                 <RefreshCw
@@ -1505,7 +1973,7 @@ export default function EmailHub() {
             )}
 
             {/* Lista de Cards de Linha do E-mail */}
-            <div className="flex-1 overflow-y-auto divide-y divide-border/70">
+            <div className="flex-1 overflow-y-auto divide-y divide-border/70 pb-16 md:pb-0">
               {loadingMessages ? (
                 <div className="p-6 space-y-3">
                   {[1, 2, 3, 4, 5].map(n => (
@@ -1550,7 +2018,7 @@ export default function EmailHub() {
                         if (isDraft) {
                           openComposer({ mode: "draft", sourceMessage: item })
                         } else {
-                          openMessageDetail(item.id, true)
+                          openMessageDetail(item.id, true, true)
                         }
                       }}
                       className={`group relative px-3 py-2.5 cursor-pointer transition-colors flex items-start gap-2.5 ${
@@ -1574,7 +2042,7 @@ export default function EmailHub() {
                           <button
                             type="button"
                             onClick={e => toggleSelectOne(item.id, e)}
-                            className="text-muted-foreground hover:text-foreground"
+                            className="text-muted-foreground hover:text-foreground p-0.5"
                           >
                             {isSelected ? (
                               <CheckSquare className="w-3.5 h-3.5 text-primary" />
@@ -1588,7 +2056,7 @@ export default function EmailHub() {
                               e.stopPropagation()
                               executeBulkAction([item.id], item.isStarred ? "unstar" : "star")
                             }}
-                            className="text-muted-foreground hover:text-amber-500"
+                            className="text-muted-foreground hover:text-amber-500 p-0.5"
                           >
                             <Star
                               className={`w-3.5 h-3.5 ${
@@ -1705,12 +2173,53 @@ export default function EmailHub() {
                               )
                             })}
                         </div>
+
+                        {/* Botões Diretos Visíveis no Mobile para Fila Agendada ou Falha SMTP (Sem depender de Hover) */}
+                        {((isScheduled && item.queueId) || (isFailed && item.communicationId)) && (
+                          <div
+                            onClick={e => e.stopPropagation()}
+                            className="flex md:hidden items-center gap-1.5 mt-2 pt-1.5 border-t border-border/50"
+                          >
+                            {isScheduled && item.queueId && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={dispatchingQueueId === item.queueId}
+                                  onClick={e => handleQueueSendNow(item.queueId, e)}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-bold flex items-center gap-1"
+                                >
+                                  <Send className="w-2.5 h-2.5" />
+                                  <span>Enviar Agora</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={e => handleCancelQueueItem(item.queueId, e)}
+                                  className="px-2 py-1 rounded-lg bg-rose-500/10 text-rose-600 text-[10px] font-bold flex items-center gap-1"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                  <span>Cancelar</span>
+                                </button>
+                              </>
+                            )}
+                            {isFailed && item.communicationId && (
+                              <button
+                                type="button"
+                                disabled={resendingCommId === item.communicationId}
+                                onClick={e => handleResendFailed(item.communicationId, e)}
+                                className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-bold flex items-center gap-1"
+                              >
+                                <RefreshCw className="w-2.5 h-2.5" />
+                                <span>Reenviar Agora</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
 
-                      {/* Hover Quick Actions (Flutuante ao passar o mouse na linha) */}
+                      {/* Hover Quick Actions (Desktop) */}
                       <div
                         onClick={e => e.stopPropagation()}
-                        className="hidden group-hover:flex items-center gap-1 absolute right-2 top-2 bg-card/95 backdrop-blur-xs border border-border shadow-sm rounded-xl px-1.5 py-1 z-10"
+                        className="hidden md:group-hover:flex items-center gap-1 absolute right-2 top-2 bg-card/95 backdrop-blur-xs border border-border shadow-sm rounded-xl px-1.5 py-1 z-10"
                       >
                         {isScheduled && item.queueId ? (
                           <>
@@ -1791,11 +2300,15 @@ export default function EmailHub() {
           </section>
 
           {/* ──────────────────────────────────────────────────────────────────
-              COLUNA 3: PAINEL DE LEITURA E CONVERSA EM THREAD (FLEX 1)
+              COLUNA 3: PAINEL DE LEITURA E CONVERSA EM THREAD (MOBILE & WEB)
              ────────────────────────────────────────────────────────────────── */}
-          <main className="hidden md:flex flex-1 flex-col h-full bg-card overflow-hidden">
+          <main
+            className={`${
+              mobileView === "detail" ? "flex w-full" : "hidden md:flex"
+            } flex-1 min-w-0 flex-col h-full bg-card overflow-hidden`}
+          >
             {!messageDetail ? (
-              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+              <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-12 text-center text-muted-foreground">
                 <div className="w-14 h-14 rounded-2xl bg-muted/60 flex items-center justify-center mb-3">
                   <Mail className="w-6 h-6 text-muted-foreground/50" />
                 </div>
@@ -1804,12 +2317,147 @@ export default function EmailHub() {
                   Visualize o histórico em conversa, anexos FNRH, vínculo com reservas ou clique em{" "}
                   <strong>+ Escrever E-mail</strong>.
                 </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMobileView("list")}
+                  className="mt-4 md:hidden rounded-xl text-xs gap-1.5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Voltar para a Lista</span>
+                </Button>
               </div>
             ) : (
               <>
-                {/* Toolbar Superior da Mensagem Aberta */}
-                <div className="px-4 py-2 border-b border-border flex items-center justify-between gap-2 bg-muted/15 shrink-0 flex-wrap">
+                {/* Barra de Navegação Mobile (< md) no Topo da Leitura */}
+                <div
+                  className={`md:hidden px-2.5 py-2 border-b border-border flex items-center justify-between gap-1.5 bg-muted/25 shrink-0 ${
+                    !shellSidebarPinned ? "pl-14" : ""
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setMobileView("list")}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-card border border-border text-xs font-bold text-foreground shadow-2xs active:scale-95 transition-transform"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5 text-primary" />
+                    <span>Voltar</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {/* Anterior / Próximo na Lista */}
+                    <button
+                      type="button"
+                      disabled={activeMessageIndex <= 0}
+                      onClick={() => navigateAdjacentMessage(-1)}
+                      className="p-1.5 rounded-xl border border-border bg-card disabled:opacity-35 text-foreground"
+                      title="Mensagem anterior"
+                    >
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={activeMessageIndex < 0 || activeMessageIndex >= messages.length - 1}
+                      onClick={() => navigateAdjacentMessage(1)}
+                      className="p-1.5 rounded-xl border border-border bg-card disabled:opacity-35 text-foreground"
+                      title="Próxima mensagem"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        executeBulkAction([messageDetail.id], "archive", { toastMsg: "Conversa arquivada" })
+                      }
+                      className="p-1.5 rounded-xl border border-border bg-card text-foreground"
+                      title="Arquivar"
+                    >
+                      <Archive className="w-3.5 h-3.5" />
+                    </button>
+
+                    <Select
+                      onValueChange={val =>
+                        executeBulkAction([messageDetail.id], "moveToFolder", {
+                          targetFolderId: val,
+                          toastMsg: "Movido para a pasta"
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-7 w-8 px-1.5 rounded-xl border border-border bg-card justify-center [&>svg:last-child]:hidden">
+                        <FolderInput className="w-3.5 h-3.5 text-muted-foreground" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="inbox">📥 Caixa de Entrada</SelectItem>
+                        <SelectItem value="archive">🗄️ Arquivo</SelectItem>
+                        {customFolders.map(cf => (
+                          <SelectItem key={cf.id} value={cf.id}>
+                            📁 {cf.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      onValueChange={val =>
+                        executeBulkAction([messageDetail.id], "applyLabel", {
+                          labelId: val,
+                          toastMsg: "Etiqueta aplicada"
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-7 w-8 px-1.5 rounded-xl border border-border bg-card justify-center [&>svg:last-child]:hidden">
+                        <Tag className="w-3.5 h-3.5 text-muted-foreground" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {labels.map(lb => (
+                          <SelectItem key={lb.id} value={lb.id}>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-2 h-2 rounded-full"
+                                style={{ backgroundColor: lb.color }}
+                              />
+                              <span>{lb.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        executeBulkAction([messageDetail.id], "trash", {
+                          toastMsg: "Movido para a lixeira"
+                        })
+                      }
+                      className="p-1.5 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-500/10 text-rose-600"
+                      title="Excluir"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Toolbar Superior da Mensagem Aberta (Web md+) */}
+                <div className="hidden md:flex px-3 lg:px-4 py-2 border-b border-border items-center justify-between gap-2 bg-muted/15 shrink-0 flex-wrap">
                   <div className="flex items-center gap-1 flex-wrap">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setReadingMaximized(prev => !prev)}
+                      className="h-8 text-xs font-semibold gap-1 rounded-xl px-2 text-muted-foreground hover:text-foreground"
+                      title={readingMaximized ? "Mostrar lista de mensagens" : "Expandir painel de leitura"}
+                    >
+                      {readingMaximized ? (
+                        <Minimize2 className="w-3.5 h-3.5 text-primary" />
+                      ) : (
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      )}
+                    </Button>
+
+                    <div className="h-4 w-px bg-border mx-0.5" />
+
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1826,7 +2474,7 @@ export default function EmailHub() {
                       className="h-8 text-xs font-semibold gap-1.5 rounded-xl px-2.5"
                     >
                       <ReplyAll className="w-3.5 h-3.5" />
-                      <span className="hidden lg:inline">Resp. a todos</span>
+                      <span className="hidden xl:inline">Resp. a todos</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -1835,10 +2483,10 @@ export default function EmailHub() {
                       className="h-8 text-xs font-semibold gap-1.5 rounded-xl px-2.5"
                     >
                       <Forward className="w-3.5 h-3.5" />
-                      <span className="hidden lg:inline">Encaminhar</span>
+                      <span className="hidden xl:inline">Encaminhar</span>
                     </Button>
 
-                    <div className="h-4 w-px bg-border mx-1" />
+                    <div className="h-4 w-px bg-border mx-0.5" />
 
                     <Button
                       variant="ghost"
@@ -1861,7 +2509,7 @@ export default function EmailHub() {
                         })
                       }
                     >
-                      <SelectTrigger className="h-8 w-auto min-w-[110px] text-[11px] rounded-xl border-none bg-transparent hover:bg-muted px-2 gap-1">
+                      <SelectTrigger className="h-8 w-auto min-w-[95px] text-[11px] rounded-xl border-none bg-transparent hover:bg-muted px-2 gap-1">
                         <FolderInput className="w-3.5 h-3.5 text-muted-foreground" />
                         <SelectValue placeholder="Mover..." />
                       </SelectTrigger>
@@ -1885,7 +2533,7 @@ export default function EmailHub() {
                         })
                       }
                     >
-                      <SelectTrigger className="h-8 w-auto min-w-[110px] text-[11px] rounded-xl border-none bg-transparent hover:bg-muted px-2 gap-1">
+                      <SelectTrigger className="h-8 w-auto min-w-[95px] text-[11px] rounded-xl border-none bg-transparent hover:bg-muted px-2 gap-1">
                         <Tag className="w-3.5 h-3.5 text-muted-foreground" />
                         <SelectValue placeholder="Etiqueta..." />
                       </SelectTrigger>
@@ -1929,8 +2577,8 @@ export default function EmailHub() {
                     </Button>
                   </div>
 
-                  {/* Botões Especiais quando o E-mail é da Fila Agendada ou Falha */}
-                  <div className="flex items-center gap-2">
+                  {/* Navegação Anterior / Próximo + Botões de Fila/Falha na Web */}
+                  <div className="flex items-center gap-1.5">
                     {messageDetail.queueId && messageDetail.status === "scheduled" && (
                       <>
                         <Button
@@ -1940,7 +2588,7 @@ export default function EmailHub() {
                           className="h-8 text-xs font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white"
                         >
                           <Send className="w-3.5 h-3.5" />
-                          <span>Antecipar e Enviar Agora</span>
+                          <span>Enviar Agora</span>
                         </Button>
                         <Button
                           variant="outline"
@@ -1965,28 +2613,80 @@ export default function EmailHub() {
                             resendingCommId === messageDetail.communicationId ? "animate-spin" : ""
                           }`}
                         />
-                        <span>Tentar Novamente (Reenviar)</span>
+                        <span>Reenviar</span>
                       </Button>
                     )}
+
+                    <div className="flex items-center gap-0.5 ml-1">
+                      <button
+                        type="button"
+                        disabled={activeMessageIndex <= 0}
+                        onClick={() => navigateAdjacentMessage(-1)}
+                        className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 text-muted-foreground hover:text-foreground"
+                        title="E-mail anterior"
+                      >
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={activeMessageIndex < 0 || activeMessageIndex >= messages.length - 1}
+                        onClick={() => navigateAdjacentMessage(1)}
+                        className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 text-muted-foreground hover:text-foreground"
+                        title="Próximo e-mail"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
+                {/* Banner Mobile de Fila Agendada quando aberto no celular */}
+                {messageDetail.queueId && messageDetail.status === "scheduled" && (
+                  <div className="md:hidden px-3 py-2 bg-amber-500/15 border-b border-amber-300 dark:border-amber-800 flex items-center justify-between gap-2 shrink-0">
+                    <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                      ⏳ Disparo agendado na fila
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        disabled={dispatchingQueueId === messageDetail.queueId}
+                        onClick={() => handleQueueSendNow(messageDetail.queueId)}
+                        className="h-7 px-2.5 text-[11px] font-bold gap-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>Enviar Agora</span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleCancelQueueItem(messageDetail.queueId)}
+                        className="h-7 px-2 text-[11px] font-semibold rounded-lg text-rose-600 border-rose-300"
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Área Rolável de Leitura da Conversa */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-4 select-text">
+                <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-5 space-y-3.5 md:space-y-4 select-text">
                   {/* Banner de Erro se o disparo falhou */}
-                  {messageDetail.status === "failed" && messageDetail.metadata?.error && (
-                    <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 flex items-center justify-between gap-3 text-xs text-rose-700 dark:text-rose-300">
-                      <div className="flex items-center gap-2.5">
-                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  {messageDetail.status === "failed" && (
+                    <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-rose-700 dark:text-rose-300">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
                         <div>
                           <div className="font-bold">Falha no envio SMTP</div>
-                          <div className="text-[11px] opacity-90">{messageDetail.metadata.error}</div>
+                          <div className="text-[11px] opacity-90">
+                            {messageDetail.metadata?.error || "Não foi possível entregar ao servidor SMTP."}
+                          </div>
                         </div>
                       </div>
                       <Button
                         size="sm"
+                        disabled={resendingCommId === (messageDetail.communicationId || messageDetail.id)}
                         onClick={() => handleResendFailed(messageDetail.communicationId || messageDetail.id)}
-                        className="h-7 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-xl shrink-0"
+                        className="h-7 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-xl shrink-0 self-end sm:self-center"
                       >
                         Reenviar Agora
                       </Button>
@@ -1995,13 +2695,13 @@ export default function EmailHub() {
 
                   {/* SMART CRM CARD: Contexto da Reserva Vinculada */}
                   {messageDetail.matchedReservation && (
-                    <div className="p-3.5 rounded-2xl bg-slate-900/[0.03] dark:bg-white/[0.04] border border-border flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                      <div className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 font-bold text-xs">
+                    <div className="p-3 rounded-2xl bg-slate-900/[0.03] dark:bg-white/[0.04] border border-border flex flex-col xl:flex-row xl:items-center justify-between gap-2.5">
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 font-bold text-xs">
                           <Building2 className="w-4 h-4" />
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-bold text-foreground">
                               Flat {messageDetail.matchedReservation.flatNumber} •{" "}
                               {messageDetail.matchedReservation.guestName}
@@ -2017,7 +2717,7 @@ export default function EmailHub() {
                               }`}
                             >
                               {messageDetail.matchedReservation.fnhrCompleted
-                                ? "✓ FNRH Digital Assinada"
+                                ? "✓ FNRH Assinada"
                                 : "FNRH Pendente"}
                             </Badge>
                             {messageDetail.matchedReservation.vehiclePlate && (
@@ -2037,14 +2737,14 @@ export default function EmailHub() {
                                 <strong>
                                   {messageDetail.matchedReservation.attachmentsAvailableCount} doc(s) oficial(is)
                                 </strong>{" "}
-                                disponíveis na reserva
+                                na reserva
                               </span>
                             )}
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1.5 flex-wrap shrink-0">
                         <Button
                           variant="outline"
                           size="sm"
@@ -2055,7 +2755,7 @@ export default function EmailHub() {
                               templateKey: "portaria"
                             })
                           }
-                          className="h-7 text-[11px] font-bold rounded-xl gap-1"
+                          className="h-7 text-[11px] font-bold rounded-xl gap-1 flex-1 sm:flex-initial"
                         >
                           <Building2 className="w-3 h-3 text-blue-600" />
                           <span>Enviar p/ Portaria</span>
@@ -2070,7 +2770,7 @@ export default function EmailHub() {
                               templateKey: "garagem"
                             })
                           }
-                          className="h-7 text-[11px] font-bold rounded-xl gap-1"
+                          className="h-7 text-[11px] font-bold rounded-xl gap-1 flex-1 sm:flex-initial"
                         >
                           <Car className="w-3 h-3 text-amber-600" />
                           <span>Liberar Garagem</span>
@@ -2079,10 +2779,10 @@ export default function EmailHub() {
                     </div>
                   )}
 
-                  {/* Header Principal do Assunto (`20px`, semibold) + Etiquetas */}
-                  <div className="space-y-2 pb-3 border-b border-border">
-                    <div className="flex items-start justify-between gap-3">
-                      <h2 className="text-[20px] font-semibold text-foreground leading-snug">
+                  {/* Header Principal do Assunto + Etiquetas */}
+                  <div className="space-y-2 pb-2.5 border-b border-border">
+                    <div className="flex items-start justify-between gap-2.5">
+                      <h2 className="text-base sm:text-lg md:text-[20px] font-semibold text-foreground leading-snug break-words">
                         {messageDetail.subject}
                       </h2>
                       <button
@@ -2104,9 +2804,9 @@ export default function EmailHub() {
                     </div>
 
                     {/* Pílulas de Etiquetas Aplicadas */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {Array.isArray(messageDetail.labels) &&
-                        messageDetail.labels.map((lid: string) => {
+                    {Array.isArray(messageDetail.labels) && messageDetail.labels.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {messageDetail.labels.map((lid: string) => {
                           const lb = labelsById[lid]
                           if (!lb) return null
                           return (
@@ -2131,15 +2831,15 @@ export default function EmailHub() {
                             </span>
                           )
                         })}
-                    </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Visualização em Thread (Acordeão de Mensagens da Conversa) */}
                   <div className="space-y-3">
-                    {threadMessages.map((tm, idx) => {
+                    {threadMessages.map(tm => {
                       const isExpanded =
                         expandedThreadIds.includes(tm.id) || threadMessages.length === 1
-                      const isLast = idx === threadMessages.length - 1
 
                       return (
                         <div
@@ -2156,27 +2856,27 @@ export default function EmailHub() {
                                 prev.includes(tm.id) ? prev.filter(x => x !== tm.id) : [...prev, tm.id]
                               )
                             }}
-                            className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:bg-muted/30"
+                            className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-start sm:items-center justify-between gap-2 sm:gap-3 cursor-pointer hover:bg-muted/30"
                           >
-                            <div className="flex items-center gap-3 min-w-0">
+                            <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 min-w-0">
                               <div
-                                className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${getAvatarColor(
+                                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${getAvatarColor(
                                   tm.fromEmail || tm.recipient
                                 )}`}
                               >
                                 {getInitials(tm.fromName || tm.fromEmail)}
                               </div>
                               <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-xs font-bold text-foreground">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-bold text-foreground truncate">
                                     {tm.fromName || tm.fromEmail}
                                   </span>
-                                  <span className="text-[11px] text-muted-foreground font-mono">
+                                  <span className="text-[10.5px] text-muted-foreground font-mono truncate hidden sm:inline">
                                     &lt;{tm.fromEmail}&gt;
                                   </span>
                                 </div>
                                 {isExpanded ? (
-                                  <div className="text-[11px] text-muted-foreground">
+                                  <div className="text-[11px] text-muted-foreground break-all sm:break-normal">
                                     Para: <strong className="text-foreground">{tm.recipient}</strong>
                                     {tm.cc ? ` • Cc: ${tm.cc}` : ""}
                                   </div>
@@ -2188,33 +2888,34 @@ export default function EmailHub() {
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2 shrink-0 text-[11px] text-muted-foreground">
+                            <div className="flex items-center gap-1.5 shrink-0 text-[10px] sm:text-[11px] text-muted-foreground">
                               <span>
                                 {new Date(tm.scheduledFor || tm.created_at).toLocaleString("pt-BR", {
                                   day: "2-digit",
                                   month: "short",
-                                  year: "numeric",
                                   hour: "2-digit",
                                   minute: "2-digit"
                                 })}
                               </span>
-                              {threadMessages.length > 1 && (
-                                isExpanded ? (
+                              {threadMessages.length > 1 &&
+                                (isExpanded ? (
                                   <ChevronDown className="w-4 h-4" />
                                 ) : (
                                   <ChevronRight className="w-4 h-4" />
-                                )
-                              )}
+                                ))}
                             </div>
                           </div>
 
                           {/* Corpo Renderizado e Anexos (Quando Expandido) */}
                           {isExpanded && (
-                            <div className="px-4 pb-4 pt-1 border-t border-border/60 space-y-4">
+                            <div className="px-2.5 sm:px-4 pb-3.5 sm:pb-4 pt-1.5 border-t border-border/60 space-y-3.5">
                               <div
-                                className="rounded-xl overflow-x-auto p-3 bg-[#F8FAFC] text-[#1F2937] border border-[#E5E7EB]"
+                                className="cf-email-html-viewer rounded-xl overflow-x-auto p-2.5 sm:p-3.5 bg-[#F8FAFC] text-[#1F2937] border border-[#E5E7EB] text-xs sm:text-sm leading-relaxed break-words"
                                 dangerouslySetInnerHTML={{
-                                  __html: tm.bodyHtml || `<p>${tm.bodyText || tm.snippet || ""}</p>`
+                                  __html: formatEmailHtmlForViewer(
+                                    tm.bodyHtml,
+                                    tm.bodyText || tm.snippet || ""
+                                  )
                                 }}
                               />
 
@@ -2225,7 +2926,7 @@ export default function EmailHub() {
                                     <Paperclip className="w-3.5 h-3.5" />
                                     <span>Anexos ({tm.attachments.length})</span>
                                   </div>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                     {tm.attachments.map((att: any, aIdx: number) => (
                                       <a
                                         key={att.id || aIdx}
@@ -2261,9 +2962,9 @@ export default function EmailHub() {
                   </div>
 
                   {/* Caixa de Resposta Rápida (Quick Reply) no Rodapé da Conversa */}
-                  <div className="pt-2">
+                  <div className="pt-2 pb-2">
                     {!quickReplyOpen ? (
-                      <div className="flex items-center gap-2">
+                      <div className="hidden md:flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => setQuickReplyOpen(true)}
@@ -2292,8 +2993,8 @@ export default function EmailHub() {
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-primary/40 bg-card shadow-sm p-3.5 space-y-3">
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-1">
+                          <span className="truncate">
                             Respondendo para:{" "}
                             <strong className="text-foreground">
                               {messageDetail.direction === "inbound"
@@ -2312,7 +3013,7 @@ export default function EmailHub() {
                               className="h-6 text-[11px] gap-1 px-2"
                             >
                               <Maximize2 className="w-3 h-3" />
-                              <span>Expandir no Compositor</span>
+                              <span>Expandir</span>
                             </Button>
                             <button
                               type="button"
@@ -2332,11 +3033,11 @@ export default function EmailHub() {
                           className="text-xs rounded-xl"
                         />
 
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-muted-foreground">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <span className="text-[10.5px] text-muted-foreground hidden sm:inline">
                             Enviado com assinatura e layout oficial CorpFlats
                           </span>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 ml-auto">
                             <Button
                               variant="ghost"
                               size="sm"
@@ -2360,33 +3061,87 @@ export default function EmailHub() {
                     )}
                   </div>
                 </div>
+
+                {/* Barra de Ação Fixa no Rodapé da Leitura Mobile (< md) */}
+                <div className="md:hidden px-3 py-2 border-t border-border bg-card/95 backdrop-blur-xs grid grid-cols-3 gap-2 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openComposer({ mode: "reply", sourceMessage: messageDetail })}
+                    className="h-9 rounded-xl text-xs font-bold gap-1.5"
+                  >
+                    <Reply className="w-3.5 h-3.5 text-primary" />
+                    <span>Responder</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openComposer({ mode: "replyall", sourceMessage: messageDetail })}
+                    className="h-9 rounded-xl text-xs font-semibold gap-1.5"
+                  >
+                    <ReplyAll className="w-3.5 h-3.5" />
+                    <span>Resp. Todos</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openComposer({ mode: "forward", sourceMessage: messageDetail })}
+                    className="h-9 rounded-xl text-xs font-semibold gap-1.5"
+                  >
+                    <Forward className="w-3.5 h-3.5" />
+                    <span>Encaminhar</span>
+                  </Button>
+                </div>
               </>
             )}
           </main>
+
+          {/* Botão Flutuante (FAB) + Escrever no Mobile quando na Lista */}
+          {mobileView === "list" && !composeOpen && (
+            <button
+              type="button"
+              onClick={() => openComposer({ mode: "new" })}
+              className="md:hidden fixed bottom-[4.75rem] right-4 z-30 h-12 px-4 rounded-full bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-bold text-xs shadow-xl flex items-center gap-2 active:scale-95 transition-transform border border-white/15"
+            >
+              <Plus className="w-4 h-4 stroke-[2.5]" />
+              <span>Escrever</span>
+            </button>
+          )}
         </div>
 
         {/* ════════════════════════════════════════════════════════════════════
-            JANELA FLUTUANTE DE COMPOSIÇÃO (DOCKED COMPOSE MODAL - ESTILO GMAIL)
+            JANELA DE COMPOSIÇÃO (FULL-SCREEN NO MOBILE / DOCKED GMAIL NA WEB)
            ════════════════════════════════════════════════════════════════════ */}
         {composeOpen && (
           <div
             className={
               composeMaximized
-                ? "fixed inset-4 md:inset-10 z-50 bg-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+                ? "fixed inset-0 sm:inset-4 md:inset-8 z-[60] bg-card border border-border sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
                 : composeMinimized
-                ? "fixed bottom-0 right-6 z-50 w-[300px] bg-slate-900 text-white rounded-t-2xl shadow-xl overflow-hidden"
-                : "fixed bottom-0 right-4 md:right-6 z-50 w-[95vw] sm:w-[560px] max-h-[86vh] bg-card border border-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden"
+                ? "fixed bottom-[4.5rem] sm:bottom-0 right-3 sm:right-6 z-[60] w-[280px] sm:w-[300px] bg-slate-900 text-white rounded-2xl sm:rounded-t-2xl sm:rounded-b-none shadow-xl overflow-hidden"
+                : "fixed inset-0 z-[60] sm:inset-auto sm:bottom-0 sm:right-6 sm:z-50 sm:w-[560px] sm:max-h-[88vh] bg-card border border-border sm:rounded-t-2xl shadow-2xl flex flex-col overflow-hidden"
             }
           >
-            {/* Barra de Título da Janela Flutuante */}
+            {/* Barra de Título da Janela de Composição */}
             <div
               onClick={() => {
                 if (composeMinimized) setComposeMinimized(false)
               }}
-              className="px-4 py-2.5 bg-slate-900 text-white flex items-center justify-between gap-2 cursor-pointer shrink-0"
+              className="px-3.5 sm:px-4 py-2.5 bg-slate-900 text-white flex items-center justify-between gap-2 cursor-pointer shrink-0"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <Send className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation()
+                    setComposeOpen(false)
+                  }}
+                  className="sm:hidden p-1 -ml-1 rounded-lg hover:bg-white/15 text-slate-200"
+                  title="Voltar"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <Send className="w-3.5 h-3.5 text-amber-400 shrink-0 hidden sm:inline" />
                 <span className="text-xs font-bold truncate">
                   {composeSubject.trim() || "Nova Mensagem • CorpFlats"}
                 </span>
@@ -2404,7 +3159,7 @@ export default function EmailHub() {
                     setComposeMinimized(!composeMinimized)
                     setComposeMaximized(false)
                   }}
-                  className="p-1 rounded hover:bg-white/15 text-slate-200"
+                  className="hidden sm:inline-flex p-1 rounded hover:bg-white/15 text-slate-200"
                   title="Minimizar"
                 >
                   <Minimize2 className="w-3.5 h-3.5" />
@@ -2415,7 +3170,7 @@ export default function EmailHub() {
                     setComposeMaximized(!composeMaximized)
                     setComposeMinimized(false)
                   }}
-                  className="p-1 rounded hover:bg-white/15 text-slate-200"
+                  className="hidden sm:inline-flex p-1 rounded hover:bg-white/15 text-slate-200"
                   title="Maximizar"
                 >
                   <Maximize2 className="w-3.5 h-3.5" />
@@ -2433,9 +3188,9 @@ export default function EmailHub() {
 
             {/* Corpo do Compositor (Oculto quando minimizado) */}
             {!composeMinimized && (
-              <div className="flex-1 overflow-y-auto p-3.5 space-y-3 flex flex-col">
+              <div className="flex-1 overflow-y-auto p-3 sm:p-3.5 space-y-3 flex flex-col">
                 {/* Superpoder Hoteleiro: Vínculo com Reserva + Templates Rápidos */}
-                <div className="p-2.5 rounded-xl bg-muted/40 border border-border space-y-2">
+                <div className="p-2.5 rounded-xl bg-muted/40 border border-border space-y-2 shrink-0">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-foreground">
                       <Sparkles className="w-3.5 h-3.5 text-amber-500" />
@@ -2468,7 +3223,7 @@ export default function EmailHub() {
                   </div>
 
                   {/* Botões de Templates Rápidos */}
-                  <div className="flex items-center gap-1 flex-wrap">
+                  <div className="flex items-center gap-1 overflow-x-auto no-scrollbar sm:flex-wrap pb-0.5">
                     {[
                       { key: "portaria", label: "🏢 Portaria (Liberação)" },
                       { key: "garagem", label: "🚗 Garagem (PFB)" },
@@ -2481,7 +3236,7 @@ export default function EmailHub() {
                         key={t.key}
                         type="button"
                         onClick={() => applyComposerTemplate(t.key, composeReservationId)}
-                        className={`px-2 py-1 rounded-lg text-[10.5px] font-bold transition-colors ${
+                        className={`px-2 py-1 rounded-lg text-[10.5px] font-bold whitespace-nowrap shrink-0 transition-colors ${
                           composeTemplateKey === t.key
                             ? "bg-amber-600 text-white"
                             : "bg-background hover:bg-muted text-foreground border border-border"
@@ -2504,7 +3259,7 @@ export default function EmailHub() {
                         />
                         <span>
                           📎 Anexar FNRH PDF + Documento Oficial de{" "}
-                          <strong>{selectedComposeReservation.guestName}</strong> automaticamente
+                          <strong>{selectedComposeReservation.guestName}</strong>
                         </span>
                       </label>
                     </div>
@@ -2512,15 +3267,15 @@ export default function EmailHub() {
                 </div>
 
                 {/* Destinatários (Para, Cc, Cco em formato de Chips) */}
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 shrink-0">
                   <div className="flex items-center gap-1.5 border-b border-border pb-1.5 flex-wrap">
                     <span className="text-xs font-bold text-muted-foreground w-10">Para:</span>
                     {composeToChips.map(chip => (
                       <span
                         key={chip}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/12 text-primary text-[11px] font-semibold"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/12 text-primary text-[11px] font-semibold max-w-full"
                       >
-                        <span>{chip}</span>
+                        <span className="truncate">{chip}</span>
                         <button
                           type="button"
                           onClick={() => setComposeToChips(composeToChips.filter(c => c !== chip))}
@@ -2529,30 +3284,47 @@ export default function EmailHub() {
                         </button>
                       </span>
                     ))}
-                    <input
-                      type="email"
-                      value={composeToInput}
-                      onChange={e => setComposeToInput(e.target.value)}
-                      onKeyDown={e =>
-                        handleChipKeyDown(
-                          e,
-                          composeToInput,
-                          setComposeToInput,
-                          composeToChips,
-                          setComposeToChips
-                        )
-                      }
-                      onBlur={() => {
-                        if (composeToInput.trim() && !composeToChips.includes(composeToInput.trim())) {
-                          setComposeToChips([...composeToChips, composeToInput.trim()])
-                          setComposeToInput("")
+                    <div className="flex items-center flex-1 min-w-[140px] gap-1">
+                      <input
+                        type="email"
+                        value={composeToInput}
+                        onChange={e => setComposeToInput(e.target.value)}
+                        onKeyDown={e =>
+                          handleChipKeyDown(
+                            e,
+                            composeToInput,
+                            setComposeToInput,
+                            composeToChips,
+                            setComposeToChips
+                          )
                         }
-                      }}
-                      placeholder={
-                        composeToChips.length === 0 ? "Digite o e-mail e pressione Enter..." : ""
-                      }
-                      className="flex-1 min-w-[140px] bg-transparent text-xs outline-none"
-                    />
+                        onBlur={() => {
+                          if (composeToInput.trim() && !composeToChips.includes(composeToInput.trim())) {
+                            setComposeToChips([...composeToChips, composeToInput.trim()])
+                            setComposeToInput("")
+                          }
+                        }}
+                        placeholder={
+                          composeToChips.length === 0 ? "Digite o e-mail..." : ""
+                        }
+                        className="flex-1 bg-transparent text-xs outline-none"
+                      />
+                      {composeToInput.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const clean = composeToInput.trim()
+                            if (clean && !composeToChips.includes(clean)) {
+                              setComposeToChips([...composeToChips, clean])
+                            }
+                            setComposeToInput("")
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-primary text-primary-foreground text-[10px] font-bold"
+                        >
+                          +Add
+                        </button>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1 text-[10.5px]">
                       <button
                         type="button"
@@ -2618,6 +3390,12 @@ export default function EmailHub() {
                               setComposeCcChips
                             )
                           }
+                          onBlur={() => {
+                            if (composeCcInput.trim() && !composeCcChips.includes(composeCcInput.trim())) {
+                              setComposeCcChips([...composeCcChips, composeCcInput.trim()])
+                              setComposeCcInput("")
+                            }
+                          }}
                           placeholder="Com cópia..."
                           className="flex-1 bg-transparent text-xs outline-none"
                         />
@@ -2654,6 +3432,12 @@ export default function EmailHub() {
                               setComposeBccChips
                             )
                           }
+                          onBlur={() => {
+                            if (composeBccInput.trim() && !composeBccChips.includes(composeBccInput.trim())) {
+                              setComposeBccChips([...composeBccChips, composeBccInput.trim()])
+                              setComposeBccInput("")
+                            }
+                          }}
                           placeholder="Cópia oculta..."
                           className="flex-1 bg-transparent text-xs outline-none"
                         />
@@ -2675,7 +3459,7 @@ export default function EmailHub() {
                 </div>
 
                 {/* Barra de Ferramentas Rich Text + Toggle de Preview 600px */}
-                <div className="flex items-center justify-between gap-2 bg-muted/30 px-2 py-1 rounded-xl border border-border">
+                <div className="flex items-center justify-between gap-2 bg-muted/30 px-2 py-1 rounded-xl border border-border shrink-0">
                   <div className="flex items-center gap-0.5">
                     <button
                       type="button"
@@ -2753,11 +3537,16 @@ export default function EmailHub() {
 
                 {/* Editor de Corpo ou Preview HTML 600px */}
                 {composePreviewMode ? (
-                  <div className="flex-1 min-h-[180px] max-h-[300px] overflow-y-auto rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                  <div className="flex-1 min-h-[180px] sm:max-h-[300px] overflow-y-auto rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-2.5 sm:p-3">
                     {composeRichHtml ? (
-                      <div dangerouslySetInnerHTML={{ __html: composeRichHtml }} />
+                      <div
+                        className="cf-email-html-viewer"
+                        dangerouslySetInnerHTML={{
+                          __html: formatEmailHtmlForViewer(composeRichHtml)
+                        }}
+                      />
                     ) : (
-                      <div className="bg-white border border-[#E5E7EB] rounded-lg p-5 text-[#374151] text-xs space-y-3">
+                      <div className="bg-white border border-[#E5E7EB] rounded-lg p-4 sm:p-5 text-[#374151] text-xs space-y-3">
                         <div className="font-bold text-sm text-[#111827] border-b pb-2">
                           CorpFlats • Preview Transacional
                         </div>
@@ -2785,13 +3574,13 @@ export default function EmailHub() {
                       handleFilesSelected(e.dataTransfer.files)
                     }}
                     placeholder="Escreva sua mensagem aqui (ou arraste arquivos para anexar)..."
-                    className="flex-1 text-xs rounded-xl resize-none"
+                    className="flex-1 min-h-[160px] text-xs rounded-xl resize-none"
                   />
                 )}
 
                 {/* Lista de Anexos Adicionados no Compositor */}
                 {composeAttachments.length > 0 && (
-                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1 shrink-0">
                     {composeAttachments.map((att, idx) => (
                       <span
                         key={idx}
