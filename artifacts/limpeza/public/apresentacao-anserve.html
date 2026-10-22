@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manual & Apresentação Oficial — Frigobar Digital CorpFlats & Anserve</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap');
+
+    :root {
+      --bg-dark: #090d16;
+      --card-dark: #111827;
+      --border-dark: #1f2937;
+      --teal: #0d9488;
+      --teal-light: #ccfbf1;
+      --cyan: #06b6d4;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #e11d48;
+      --indigo: #4f46e5;
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-600: #475569;
+      --slate-700: #334155;
+      --slate-800: #1e293b;
+      --slate-900: #0f172a;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #cbd5e1;
+      color: var(--slate-900);
+      line-height: 1.4;
+      padding: 24px 0 60px;
+    }
+
+    /* Barra Flutuante Web (oculta no PDF) */
+    .top-action-bar {
+      max-width: 210mm;
+      margin: 0 auto 18px;
+      background: #0f172a;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    }
+    .top-action-bar .title {
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .top-action-bar .btn-print {
+      background: linear-gradient(135deg, #06b6d4, #0d9488);
+      color: #fff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 10px;
+      font-weight: 800;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Estrutura de Página A4 */
+    .a4-page {
+      width: 210mm;
+      min-height: 296mm;
+      max-height: 296mm;
+      margin: 0 auto 22px;
+      background: #ffffff;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      page-break-after: always;
+      break-after: page;
+    }
+    .a4-page:last-of-type {
+      page-break-after: auto;
+      break-after: auto;
+    }
+
+    @page {
+      size: A4 portrait;
+      margin: 0;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .a4-page {
+        margin: 0;
+        box-shadow: none;
+        border-radius: 0;
+        width: 210mm;
+        height: 296.5mm;
+        max-height: 296.5mm;
+      }
+    }
+
+    /* Cabeçalho de Página */
+    .page-header {
+      background: linear-gradient(135deg, #090d16 0%, #0f172a 65%, #134e4a 100%);
+      color: #ffffff;
+      padding: 18px 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 3px solid #0d9488;
+    }
+    .page-header .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .page-header .brand-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 11px;
+      background: rgba(20, 184, 166, 0.2);
+      border: 1px solid rgba(45, 212, 191, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 19px;
+    }
+    .page-header h1 {
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+    .page-header p {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+    .page-badge {
+      background: rgba(6, 182, 212, 0.16);
+      border: 1px solid rgba(6, 182, 212, 0.45);
+      color: #67e8f9;
+      padding: 5px 11px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .page-body {
+      padding: 18px 26px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .page-footer {
+      padding: 10px 26px;
+      background: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #64748b;
+      font-weight: 600;
+    }
+
+    /* Utilitários Tipográficos e Cards */
+    .section-title {
+      font-size: 12.5px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 6px;
+    }
+    .section-title span.dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #0d9488;
+      display: inline-block;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 9px;
+    }
+
+    .info-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .info-card.highlight-teal {
+      background: #f0fdfa;
+      border-color: #99f6e4;
+    }
+    .info-card.highlight-amber {
+      background: #fffbeb;
+      border-color: #fde68a;
+    }
+    .info-card.highlight-indigo {
+      background: #eef2ff;
+      border-color: #c7d2fe;
+    }
+
+    .link-box {
+      background: #0f172a;
+      color: #fff;
+      border-radius: 12px;
+      padding: 12px 14px;
+      border: 1px solid #1e293b;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 7px;
+    }
+    .link-box .role-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 6px;
+      width: fit-content;
+    }
+    .link-box h3 {
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+    }
+    .link-box p {
+      font-size: 10.5px;
+      color: #cbd5e1;
+      line-height: 1.35;
+    }
+    .url-pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px;
+      font-weight: 700;
+      background: rgba(6, 182, 212, 0.14);
+      border: 1px solid rgba(6, 182, 212, 0.45);
+      color: #67e8f9;
+      padding: 6px 9px;
+      border-radius: 8px;
+      text-decoration: none;
+      display: block;
+      word-break: break-all;
+    }
+
+    /* Mockups de Telas (Prints Fidedignos da Interface Real) */
+    .screen-print {
+      background: #090d16;
+      color: #f1f5f9;
+      border-radius: 14px;
+      border: 2px solid #1e293b;
+      overflow: hidden;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+    }
+    .screen-print.light-ui {
+      background: #ffffff;
+      color: #0f172a;
+      border: 1.5px solid #cbd5e1;
+    }
+    .screen-topbar {
+      background: #111827;
+      padding: 7px 12px;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 9.5px;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .screen-print.light-ui .screen-topbar {
+      background: #f1f5f9;
+      border-bottom: 1px solid #e2e8f0;
+      color: #475569;
+    }
+    .dots {
+      display: flex;
+      gap: 4px;
+    }
+    .dots span {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+    .dots .r { background: #ef4444; }
+    .dots .y { background: #f59e0b; }
+    .dots .g { background: #10b981; }
+
+    .screen-content {
+      padding: 11px 13px;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .step-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .step-list li {
+      font-size: 10.8px;
+      color: #334155;
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+    }
+    .step-num {
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: #0d9488;
+      color: #fff;
+      font-size: 9.5px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    table.clean-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+    table.clean-table th {
+      background: #f1f5f9;
+      color: #475569;
+      text-align: left;
+      padding: 6px 8px;
+      font-weight: 800;
+      border-bottom: 1px solid #cbd5e1;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    table.clean-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #1e293b;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Barra Flutuante Web (Não sai na impressão/PDF) -->
+  <div class="top-action-bar no-print">
+    <div class="title">
+      <span>🧊 Apresentação & Manual Operacional — Gestão de Frigobar Anserve & CorpFlats</span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <a class="btn-print" href="/Apresentacao_Gestor_Anserve_Frigobar.pdf" download="Apresentacao_Gestor_Anserve_Frigobar.pdf">
+        ⬇️ Baixar PDF Pronto
+      </a>
+      <button class="btn-print" style="background:#334155;" onclick="window.print()">
+        🖨️ Imprimir
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- PÁGINA 1: CAPA EXECUTIVA, FLUXO EM 4 ETAPAS & LINKS DIRETOS DE ACESSO     -->
+  <!-- ========================================================================= -->
+  <section class="a4-page">
+    <header class="page-header" style="padding: 24px 26px;">
+      <div class="brand">
+        <div class="brand-icon">🧊</div>
+        <div>
+          <span style="font-size: 10px; font-weight: 800; color: #5eead4; text-transform: uppercase; letter-spacing: 0.08em;">
+            Parceria Operacional • CorpFlats Soho Residence & Anserve
+          </span>
+          <h1 style="font-size: 20px; margin-top: 2px;">
+            Ecossistema de Venda e Gestão de Frigobar nos Flats
+          </h1>
+          <p style="font-size: 11.5px; color: #cbd5e1;">
+            Guia Completo de Links de Acesso, Telas do Sistema, Conferência Mobile, Notas Fiscais e Repasse Financeiro
+          </p>
+        </div>
+      </div>
+      <div class="page-badge">Pág. 1 / 5</div>
+    </header>
+
+    <div class="page-body">
+      <!-- Como Funciona em 4 Passos -->
+      <div>
+        <div class="section-title"><span class="dot"></span> 1. Visão Geral: Como Funciona a Operação de Ponta a Ponta</div>
+        <div class="grid-4">
+          <div class="info-card highlight-teal">
+            <div style="font-size: 10px; font-weight: 900; color: #0f766e;">ETAPA 1 • NO FLAT</div>
+            <div style="font-size: 12px; font-weight: 800; margin: 3px 0;">Hóspede Escaneia e Paga</div>
+            <p style="font-size: 10px; color: #334155;">
+              Escaneia o QR Code no frigobar, digita os 4 últimos dígitos do celular, escolhe os itens (com fotos) e paga na hora via <strong>PIX ou Cartão</strong>.
+            </p>
+          </div>
+          <div class="info-card">
+            <div style="font-size: 10px; font-weight: 900; color: #0369a1;">ETAPA 2 • VISTORIA</div>
+            <div style="font-size: 12px; font-weight: 800; margin: 3px 0;">Repositora Confere</div>
+            <p style="font-size: 10px; color: #334155;">
+              Pelo celular (com PIN de 4 dígitos), vê o que o hóspede já declarou. Confirma <strong>Conforme</strong> ou preenche a <strong>Contagem nas 3 Colunas</strong>.
+            </p>
+          </div>
+          <div class="info-card highlight-amber">
+            <div style="font-size: 10px; font-weight: 900; color: #b45309;">ETAPA 3 • COBRANÇA IA</div>
+            <div style="font-size: 12px; font-weight: 800; margin: 3px 0;">Sofia Cobra Divergência</div>
+            <p style="font-size: 10px; color: #334155;">
+              Se faltou item não pago, a IA Sofia envia o link no WhatsApp do(s) hóspede(s). Quando pago, <strong>dá baixa sozinho</strong> na pendência!
+            </p>
+          </div>
+          <div class="info-card highlight-indigo">
+            <div style="font-size: 10px; font-weight: 900; color: #4338ca;">ETAPA 4 • GESTÃO & NF</div>
+            <div style="font-size: 12px; font-weight: 800; margin: 3px 0;">Anserve Anexa a NF</div>
+            <p style="font-size: 10px; color: #334155;">
+              A Anserve anexa o PDF/foto da Nota Fiscal no painel e o sistema <strong>dispara sozinho</strong> para o WhatsApp e E-mail do cliente.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mapa Oficial de Links de Acesso -->
+      <div>
+        <div class="section-title"><span class="dot"></span> 2. Links Diretos de Acesso de Cada Perfil (Clique ou Escaneie)</div>
+        <div class="grid-2">
+          <!-- Link 1: Gestor Anserve -->
+          <div class="link-box" style="border-left: 4px solid #14b8a6;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span class="role-tag" style="background:rgba(20,184,166,0.2); color:#5eead4;">
+                  🏢 1. ACESSO DO GESTOR / SUPERVISÃO ANSERVE
+                </span>
+                <span style="font-size:9.5px; color:#94a3b8;">PC ou Celular</span>
+              </div>
+              <h3>Painel de Gestão & Supervisão Anserve</h3>
+              <p style="margin-top:3px;">
+                Fila de Notas Fiscais pendentes com anexo e envio automático, Relatórios de Vendas com exportação CSV (Excel), Gestão de Funcionárias (Criar, Senha, PIN e Produtividade) e Extrato de Repasse.
+              </p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:4px;">
+              <span style="font-size:9.5px; color:#94a3b8; font-weight:700;">LINK DIRETO DO GESTOR:</span>
+              <a class="url-pill" href="https://corpflats.com.br/anserve" target="_blank">
+                https://corpflats.com.br/anserve
+              </a>
+              <span style="font-size:9px; color:#64748b;">
+                * Atalho alternativo: <strong>https://corpflats.com.br/frigobar-gestao</strong> (Login em <strong>/login</strong>)
+              </span>
+            </div>
+          </div>
+
+          <!-- Link 2: Funcionária Repositora -->
+          <div class="link-box" style="border-left: 4px solid #38bdf8;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span class="role-tag" style="background:rgba(56,189,248,0.2); color:#7dd3fc;">
+                  📱 2. ACESSO DA FUNCIONÁRIA REPOSITORA
+                </span>
+                <span style="font-size:9.5px; color:#94a3b8;">100% Otimizado p/ Celular</span>
+              </div>
+              <h3>Portal Mobile de Conferência e Reposição</h3>
+              <p style="margin-top:3px;">
+                Acesso instantâneo digitando apenas o <strong>PIN de 4 dígitos</strong> da funcionária. Exibe os 19 flats por prioridade (Check-outs do dia em vermelho), itens pagos pelo hóspede e tabela de divergência em 3 colunas.
+              </p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:4px;">
+              <span style="font-size:9.5px; color:#94a3b8; font-weight:700;">LINK DIRETO DA FUNCIONÁRIA (SALVAR NO CELULAR):</span>
+              <a class="url-pill" href="https://corpflats.com.br/frigobar-reposicao" target="_blank">
+                https://corpflats.com.br/frigobar-reposicao
+              </a>
+              <span style="font-size:9px; color:#64748b;">
+                * Atalho alternativo: <strong>https://corpflats.com.br/anserve/reposicao</strong> (Acesso via PIN 4 dígitos)
+              </span>
+            </div>
+          </div>
+
+          <!-- Link 3: Hóspede (QR Code por Flat) -->
+          <div class="link-box" style="border-left: 4px solid #fbbf24;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span class="role-tag" style="background:rgba(251,191,36,0.2); color:#fde68a;">
+                  🧊 3. ACESSO DO HÓSPEDE (QR CODE NO FLAT)
+                </span>
+                <span style="font-size:9.5px; color:#94a3b8;">Sem App • No Navegador</span>
+              </div>
+              <h3>Cardápio & Checkout Express por Flat</h3>
+              <p style="margin-top:3px;">
+                Cada um dos 19 flats possui seu próprio QR Code exclusivo colado no frigobar. Também pode ser acessado por dentro do Portal da Reserva do hóspede mesmo após sair do flat.
+              </p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:4px;">
+              <span style="font-size:9.5px; color:#94a3b8; font-weight:700;">EXEMPLO DE LINK POR FLAT (101 AO 1304):</span>
+              <a class="url-pill" href="https://corpflats.com.br/frigobar/flat/101" target="_blank">
+                https://corpflats.com.br/frigobar/flat/101
+              </a>
+              <span style="font-size:9px; color:#64748b;">
+                * Link pela reserva (enviado pela Sofia): <strong>/minha-reserva/{CODIGO}/frigobar</strong>
+              </span>
+            </div>
+          </div>
+
+          <!-- Link 4: Diretoria CorpFlats -->
+          <div class="link-box" style="border-left: 4px solid #a855f7;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span class="role-tag" style="background:rgba(168,85,247,0.2); color:#e9d5ff;">
+                  📊 4. ADMINISTRAÇÃO CORPFLATS
+                </span>
+                <span style="font-size:9.5px; color:#94a3b8;">Acesso Diretoria</span>
+              </div>
+              <h3>Central Estratégica & Gabarito de Flats</h3>
+              <p style="margin-top:3px;">
+                Configuração do catálogo de produtos, preços de venda e custo de repasse, quantidade padrão no frigobar de cada flat (gabarito), impressão das placas A6 de QR Code e conciliação.
+              </p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:4px;">
+              <span style="font-size:9.5px; color:#94a3b8; font-weight:700;">LINK ADMIN CORPFLATS:</span>
+              <a class="url-pill" href="https://corpflats.com.br/frigobar" target="_blank">
+                https://corpflats.com.br/frigobar
+              </a>
+              <span style="font-size:9px; color:#64748b;">
+                * Menu lateral: <strong>Gestão do Hotel → Frigobar & Anserve</strong>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resumo de Segurança e Menus no Sistema -->
+      <div class="info-card" style="background:#f8fafc; border-left: 4px solid #0d9488;">
+        <div style="font-size:11.5px; font-weight:800; color:#0f172a; margin-bottom:4px;">
+          🔐 Como funciona a separação de acessos entre o Gestor Anserve e as Funcionárias Repositoras?
+        </div>
+        <div class="grid-2" style="gap:10px; font-size:10.3px; color:#334155;">
+          <div>
+            • <strong>Gestor Anserve (<code>/anserve</code>)</strong>: Possui visão gerencial completa da operação Anserve. Pode <strong>criar, editar, resetar senha/PIN e excluir funcionárias repositoras</strong>, baixar planilhas CSV de vendas e produtividade, anexar Notas Fiscais e auditar o extrato de repasse.
+          </div>
+          <div>
+            • <strong>Funcionária Repositora (<code>/frigobar-reposicao</code>)</strong>: Possui acesso focado 100% na operação de campo pelo celular (via PIN de 4 dígitos). Visualiza apenas a fila de flats para conferência e reposição, sem acesso a dados financeiros de repasse ou configurações.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="page-footer">
+      <span>CorpFlats Soho Residence • Ecossistema de Frigobar Digital</span>
+      <span>Documento de Apresentação & Onboarding Anserve — Página 1 de 5</span>
+    </footer>
+  </section>
+
+  <!-- ========================================================================= -->
+  <!-- PÁGINA 2: JORNADA DO HÓSPEDE (PRINTS DAS TELAS MOBILE & 2+ HÓSPEDES)      -->
+  <!-- ========================================================================= -->
+  <section class="a4-page">
+    <header class="page-header">
+      <div class="brand">
+        <div class="brand-icon">📱</div>
+        <div>
+          <h1>Jornada 1 — Autoatendimento do Hóspede no Celular</h1>
+          <p>Identificação individual (2+ hóspedes no flat), cardápio com gabarito padrão e pagamento PIX/Cartão</p>
+        </div>
+      </div>
+      <div class="page-badge">Pág. 2 / 5</div>
+    </header>
+
+    <div class="page-body">
+      <div class="section-title">
+        <span class="dot"></span> Prints das 3 Telas do Hóspede (Ao escanear o QR Code no Flat)
+      </div>
+
+      <!-- 3 Mockups Mobile Lado a Lado -->
+      <div class="grid-3">
+        <!-- Tela 1: Portão 4 Dígitos -->
+        <div class="screen-print">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>/frigobar/flat/605</span>
+          </div>
+          <div class="screen-content" style="text-align:center; display:flex; flex-direction:column; gap:8px;">
+            <div style="width:36px; height:36px; border-radius:10px; background:#06b6d4; color:#090d16; margin:0 auto; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:18px;">🧊</div>
+            <div style="font-size:9px; color:#22d3ee; font-weight:800;">✨ CorpFlats Soho Residence</div>
+            <div style="font-size:13px; font-weight:900; color:#fff;">Frigobar Flat 605</div>
+            <p style="font-size:9.2px; color:#94a3b8; line-height:1.3;">
+              Digite os <strong>4 últimos dígitos do seu celular ou CPF</strong>. Se houver 2+ pessoas no flat, o sistema identifica <strong>quem está consumindo</strong> para pagamento e NF separados!
+            </p>
+            <div style="display:flex; justify-content:center; gap:6px; margin:4px 0;">
+              <div style="width:30px; height:36px; background:#1e293b; border:1.5px solid #06b6d4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:900; color:#22d3ee; font-size:14px;">9</div>
+              <div style="width:30px; height:36px; background:#1e293b; border:1.5px solid #06b6d4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:900; color:#22d3ee; font-size:14px;">8</div>
+              <div style="width:30px; height:36px; background:#1e293b; border:1.5px solid #06b6d4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:900; color:#22d3ee; font-size:14px;">4</div>
+              <div style="width:30px; height:36px; background:#1e293b; border:1.5px solid #06b6d4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:900; color:#22d3ee; font-size:14px;">2</div>
+            </div>
+            <div style="background:#0891b2; color:#090d16; font-weight:900; font-size:10px; padding:8px; border-radius:10px;">
+              🔒 Abrir Meu Frigobar →
+            </div>
+          </div>
+        </div>
+
+        <!-- Tela 2: Cardápio + Seletor 2 Hóspedes + Gabarito -->
+        <div class="screen-print">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>Cardápio Mobile</span>
+          </div>
+          <div class="screen-content" style="display:flex; flex-direction:column; gap:7px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div style="font-size:10.5px; font-weight:900; color:#fff;">Frigobar Flat 605</div>
+                <div style="font-size:8.8px; color:#94a3b8;">Consumindo: <strong style="color:#fff;">Carlos Silva</strong></div>
+              </div>
+              <span class="badge-pill" style="background:#164e63; color:#67e8f9;">2º Hóspede</span>
+            </div>
+
+            <!-- Seletor de Hóspede do Flat -->
+            <div style="background:#111827; border:1px solid #1f2937; border-radius:9px; padding:6px;">
+              <div style="font-size:8px; font-weight:800; color:#cbd5e1; margin-bottom:4px;">👥 QUEM ESTÁ CONSUMINDO? (NF SEPARADA)</div>
+              <div style="display:flex; gap:4px;">
+                <span style="font-size:8px; background:#1e293b; color:#94a3b8; padding:3px 6px; border-radius:6px;">1º João (Titular)</span>
+                <span style="font-size:8px; background:#06b6d4; color:#090d16; font-weight:900; padding:3px 6px; border-radius:6px;">✓ 2º Carlos • 9842</span>
+              </div>
+            </div>
+
+            <!-- Produto 1 -->
+            <div style="background:#111827; border:1.5px solid #06b6d4; border-radius:9px; padding:6px; display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div style="font-size:9.5px; font-weight:800; color:#fff;">Cerveja Heineken 330ml</div>
+                <div style="font-size:8px; color:#cbd5e1; margin-top:2px;">
+                  <span style="background:#1e293b; padding:1px 5px; border-radius:4px;">📦 Padrão no flat: <strong>4 un.</strong></span>
+                  <strong style="color:#22d3ee; margin-left:4px;">R$ 14,00</strong>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <span style="width:18px; height:18px; background:#1e293b; border-radius:5px; text-align:center; font-size:11px;">-</span>
+                <strong style="font-size:10px; color:#22d3ee;">2</strong>
+                <span style="width:18px; height:18px; background:#06b6d4; color:#090d16; border-radius:5px; text-align:center; font-weight:900; font-size:11px;">+</span>
+              </div>
+            </div>
+
+            <!-- Produto Cortesia -->
+            <div style="background:#111827; border:1px solid #1f2937; border-radius:9px; padding:6px; display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div style="font-size:9.5px; font-weight:800; color:#fff;">Cápsula Nespresso <span style="color:#34d399; font-size:8px;">[Cortesia 1x]</span></div>
+                <div style="font-size:8px; color:#34d399;">📦 Padrão: 2 un. • Gratuito (1x estadia)</div>
+              </div>
+              <strong style="font-size:9.5px; color:#34d399;">0</strong>
+            </div>
+
+            <!-- Barra Inferior -->
+            <div style="background:#0891b2; color:#090d16; border-radius:8px; padding:6px 8px; display:flex; justify-content:space-between; align-items:center; font-weight:900; font-size:9.5px;">
+              <span>2 itens (R$ 28,00)</span>
+              <span>Pagar Agora →</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tela 3: Checkout Fiscal & Envio Automático -->
+        <div class="screen-print">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>Checkout & Dados da NF</span>
+          </div>
+          <div class="screen-content" style="display:flex; flex-direction:column; gap:6px;">
+            <div style="font-size:10px; font-weight:900; color:#fff;">📄 Descrição na Nota Fiscal:</div>
+            <div style="background:#164e63; border:1px solid #06b6d4; border-radius:7px; padding:4px 7px; font-size:8.5px; color:#fff;">
+              <strong>(•) 1. Discriminar todos os itens</strong>
+            </div>
+            <div style="background:#111827; border:1px solid #1f2937; border-radius:7px; padding:4px 7px; font-size:8.5px; color:#cbd5e1;">
+              ( ) 2. Lançar tudo como <strong>"Água"</strong> (Corporativo)
+            </div>
+            <div style="background:#111827; border:1px solid #1f2937; border-radius:7px; padding:4px 7px; font-size:8.5px; color:#cbd5e1;">
+              ( ) 3. Lançar como <strong>"Consumo de Frigobar"</strong>
+            </div>
+
+            <div style="font-size:9.5px; font-weight:800; color:#fff; margin-top:2px;">🏢 CPF ou CNPJ da Empresa:</div>
+            <div style="display:flex; gap:4px;">
+              <span style="flex:1; background:#164e63; border:1px solid #06b6d4; color:#67e8f9; font-size:8px; font-weight:800; padding:4px; border-radius:6px; text-align:center;">Meu CPF Cadastrado</span>
+              <span style="flex:1; background:#1e293b; color:#94a3b8; font-size:8px; padding:4px; border-radius:6px; text-align:center;">Outro CPF / CNPJ</span>
+            </div>
+
+            <!-- Envio Automático WhatsApp + Email -->
+            <div style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.4); border-radius:8px; padding:5px 7px; font-size:8px;">
+              <div style="color:#34d399; font-weight:800;">✓ Envio Automático p/ seu Cadastro:</div>
+              <div style="color:#e2e8f0; margin-top:2px;">📱 WhatsApp: (11) 99876-9842</div>
+              <div style="color:#e2e8f0;">✉️ E-mail: carlos@empresa.com.br</div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:2px;">
+              <div style="background:#059669; color:#fff; font-size:8.5px; font-weight:800; padding:6px; border-radius:7px; text-align:center;">PIX (Banco Inter)</div>
+              <div style="background:#4f46e5; color:#fff; font-size:8.5px; font-weight:800; padding:6px; border-radius:7px; text-align:center;">Cartão (Frigobar)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recursos Detalhados da Jornada do Hóspede -->
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="section-title"><span class="dot"></span> Recursos Inteligentes para o Hóspede</div>
+          <ul class="step-list">
+            <li>
+              <span class="step-num">1</span>
+              <div><strong>2 ou mais Hóspedes no Mesmo Flat (Conta Separada):</strong> Quando dois colegas de trabalho dividem o flat, ao digitar os 4 últimos dígitos do próprio celular, o sistema reconhece qual hóspede está comprando (ou permite alternar/adicionar acompanhante) para que <strong>cada um pague separado e receba sua Nota Fiscal separada</strong>.</div>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <div><strong>Gabarito Informativo Não-Editável ("Padrão no flat: X un."):</strong> Cada produto mostra quantas unidades havia originalmente no frigobar. Se o hóspede bebeu todas as águas e esqueceu quantas tinham, ele vê na hora sem erro.</div>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <div><strong>Aviso de Faturamento Independente:</strong> Informa claramente que o frigobar é pago na hora (PIX ou Cartão) e não pode ser faturado junto com a diária da hospedagem.</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="info-card highlight-teal">
+          <div class="section-title"><span class="dot"></span> Personalização da Nota Fiscal & Envio</div>
+          <ul class="step-list">
+            <li>
+              <span class="step-num">4</span>
+              <div><strong>3 Opções de Descrição na Nota Fiscal:</strong> O hóspede escolhe no checkout se deseja: <strong>(1) Discriminar todos os itens</strong>, <strong>(2) Lançar como "Água"</strong> (muito utilizado em reembolso corporativo) ou <strong>(3) Lançar como "Consumo de Frigobar"</strong>. Essa escolha aparece destacada para a Anserve na hora de emitir a nota!</div>
+            </li>
+            <li>
+              <span class="step-num">5</span>
+              <div><strong>CPF do Hóspede ou CNPJ da Empresa:</strong> Já puxa o CPF cadastrado no check-in, mas permite trocar por CNPJ corporativo com Razão Social.</div>
+            </li>
+            <li>
+              <span class="step-num">6</span>
+              <div><strong>Envio Automático sem Redigitação:</strong> Usa automaticamente o <strong>WhatsApp e o E-mail já cadastrados</strong> do hóspede (permitindo editar apenas se ele quiser outro contato).</div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <footer class="page-footer">
+      <span>Link de exemplo do QR Code do Flat: https://corpflats.com.br/frigobar/flat/101</span>
+      <span>Documento de Apresentação & Onboarding Anserve — Página 2 de 5</span>
+    </footer>
+  </section>
+
+  <!-- ========================================================================= -->
+  <!-- PÁGINA 3: PORTAL DA FUNCIONÁRIA REPOSITORA (TABELA DE 3 COLUNAS)          -->
+  <!-- ========================================================================= -->
+  <section class="a4-page">
+    <header class="page-header">
+      <div class="brand">
+        <div class="brand-icon">📋</div>
+        <div>
+          <h1>Jornada 2 — Portal da Funcionária Repositora (<code>/frigobar-reposicao</code>)</h1>
+          <p>Acesso por PIN de 4 dígitos, visão dos 19 flats e conferência de divergência em 3 colunas em tempo real</p>
+        </div>
+      </div>
+      <div class="page-badge">Pág. 3 / 5</div>
+    </header>
+
+    <div class="page-body">
+      <!-- Topo: PIN + Grid de Flats -->
+      <div class="grid-2">
+        <!-- Print: Painel de Flats da Repositora -->
+        <div class="screen-print light-ui">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>https://corpflats.com.br/frigobar-reposicao</span>
+          </div>
+          <div class="screen-content" style="display:flex; flex-direction:column; gap:7px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong style="font-size:11px;">📦 Portal da Repositora Anserve</strong>
+              <span class="badge-pill" style="background:#e0f2fe; color:#0369a1;">19 Flats Soho</span>
+            </div>
+            <div style="display:flex; gap:4px; font-size:8.5px; font-weight:800;">
+              <span style="background:#0f172a; color:#fff; padding:3px 7px; border-radius:6px;">Todos (19)</span>
+              <span style="background:#fef2f2; color:#dc2626; border:1px solid #fecaca; padding:3px 7px; border-radius:6px;">🔴 Check-out Hoje (4)</span>
+              <span style="background:#eff6ff; color:#1d4ed8; padding:3px 7px; border-radius:6px;">🔵 Ocupados (12)</span>
+            </div>
+            <!-- Card de Flat em Checkout -->
+            <div style="border:1.5px solid #f87171; background:#fef2f2; border-radius:10px; padding:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                  <strong style="font-size:11px;">Flat 605</strong>
+                  <span class="badge-pill" style="background:#dc2626; color:#fff; margin-left:4px;">CHECK-OUT HOJE</span>
+                </div>
+                <span class="badge-pill" style="background:#d1fae5; color:#047857;">R$ 12,00 Pago</span>
+              </div>
+              <div style="font-size:9px; color:#475569; margin:3px 0;">Hóspede: <strong>João Mendes</strong> (👥 2 hósp.) • RES-605</div>
+              <div style="background:#fff; border:1px solid #e2e8f0; border-radius:7px; padding:5px; font-size:8.5px; margin-bottom:6px;">
+                <div style="display:flex; justify-content:space-between;">
+                  <span>Informado pelo hóspede:</span>
+                  <strong style="color:#059669;">2 un. declaradas</strong>
+                </div>
+                <div style="margin-top:3px;">
+                  <span style="background:#ecfdf5; color:#047857; padding:1px 5px; border-radius:4px; font-weight:700;">2x Água sem Gás</span>
+                </div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:5px;">
+                <div style="background:#059669; color:#fff; text-align:center; padding:5px; border-radius:7px; font-size:9px; font-weight:800;">✓ Conforme</div>
+                <div style="background:#fff; border:1px solid #f59e0b; color:#b45309; text-align:center; padding:5px; border-radius:7px; font-size:9px; font-weight:800;">⚠️ Divergência</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Instruções de Uso da Repositora -->
+        <div class="info-card">
+          <div class="section-title"><span class="dot"></span> Passo a Passo da Funcionária no Celular</div>
+          <ul class="step-list">
+            <li>
+              <span class="step-num">1</span>
+              <div><strong>Login Instantâneo com PIN de 4 Dígitos:</strong> Ao abrir <code>/frigobar-reposicao</code>, a funcionária digita apenas seu PIN numérico (ex: <code>1234</code>) criado pelo Gestor Anserve.</div>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <div><strong>Prioridade Automática de Check-outs:</strong> Os flats com saída no dia aparecem no topo com alerta vermelho <strong>🔴 Check-out Hoje</strong> para conferência imediata.</div>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <div><strong>Visão do Consumo Já Pago pelo Hóspede:</strong> Cada card já mostra na hora o que o hóspede declarou e pagou pelo QR Code (ex: <em>"2x Água sem Gás — R$ 12,00 Pago"</em>).</div>
+            </li>
+            <li>
+              <span class="step-num">4</span>
+              <div><strong>Se Estiver Tudo Certo → Botão "Conforme":</strong> Com 1 toque em <strong>Conforme</strong>, ela confirma que a contagem bateu e registra a reposição dos itens pagos e do kit de cortesias (Nespresso, balas e amendoim).</div>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Destaque Principal: Print da Conferência de Divergência em 3 Colunas em Tempo Real -->
+      <div>
+        <div class="section-title">
+          <span class="dot"></span> Quando Há Divergência: Tabela Comparativa de 3 Colunas em Tempo Real + Baixa Automática
+        </div>
+        <div class="screen-print light-ui">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>Modal: Conferência de Divergência — Flat 605 (Cálculo Automático em Tempo Real)</span>
+          </div>
+          <div class="screen-content">
+            <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:6px 10px; font-size:9.5px; color:#92400e; display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span><strong>Hóspede: João Mendes (Reserva RES-605)</strong> • Link enviado no WhatsApp com baixa automática ao pagar.</span>
+              <span class="badge-pill" style="background:#d97706; color:#fff;">👥 2 hóspedes (qualquer um pode pagar)</span>
+            </div>
+
+            <table class="clean-table" style="border:1px solid #cbd5e1; border-radius:8px; overflow:hidden;">
+              <thead>
+                <tr style="background:#e2e8f0;">
+                  <th style="width:34%;">Produto</th>
+                  <th style="width:20%; text-align:center;">Coluna 1: Informado Hóspede</th>
+                  <th style="width:24%; text-align:center;">Coluna 2: Contagem Repositora</th>
+                  <th style="width:22%; text-align:right;">Coluna 3: Divergência (Tempo Real)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Água Mineral s/ Gás</strong> <span style="color:#64748b;">(R$ 6,00 • Padrão: 4)</span></td>
+                  <td style="text-align:center;"><span class="badge-pill" style="background:#d1fae5; color:#047857;">2 un.</span></td>
+                  <td style="text-align:center; font-family:monospace; font-weight:800;">[ - ] &nbsp; 2 &nbsp; [ + ]</td>
+                  <td style="text-align:right; color:#059669; font-weight:800;">OK (0)</td>
+                </tr>
+                <tr style="background:#fffbeb;">
+                  <td><strong>Cerveja Heineken 330ml</strong> <span style="color:#64748b;">(R$ 14,00 • Padrão: 4)</span></td>
+                  <td style="text-align:center;"><span class="badge-pill" style="background:#f1f5f9; color:#64748b;">0 un.</span></td>
+                  <td style="text-align:center; font-family:monospace; font-weight:900; color:#b45309;">[ - ] &nbsp; 2 &nbsp; [ + ]</td>
+                  <td style="text-align:right; color:#b45309; font-weight:900;">+2 un. &nbsp;|&nbsp; R$ 28,00</td>
+                </tr>
+                <tr style="background:#fffbeb;">
+                  <td><strong>Coca-Cola Lata 350ml</strong> <span style="color:#64748b;">(R$ 8,00 • Padrão: 4)</span></td>
+                  <td style="text-align:center;"><span class="badge-pill" style="background:#f1f5f9; color:#64748b;">0 un.</span></td>
+                  <td style="text-align:center; font-family:monospace; font-weight:900; color:#b45309;">[ - ] &nbsp; 1 &nbsp; [ + ]</td>
+                  <td style="text-align:right; color:#b45309; font-weight:900;">+1 un. &nbsp;|&nbsp; R$ 8,00</td>
+                </tr>
+                <tr style="background:#f1f5f9; font-weight:900;">
+                  <td>TOTAL APURADO EM TEMPO REAL</td>
+                  <td style="text-align:center; color:#475569;">2 un. (R$ 12,00)</td>
+                  <td style="text-align:center; color:#0f172a;">5 un. (R$ 48,00)</td>
+                  <td style="text-align:right; color:#b45309; font-size:11px;">+3 un. • R$ 36,00</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+              <span style="font-size:9.5px; color:#475569;">📷 Opção de anexar foto do frigobar + observação de auditoria</span>
+              <span style="background:#d97706; color:#fff; font-weight:900; font-size:10px; padding:6px 14px; border-radius:8px;">
+                Confirmar e Enviar Cobrança (R$ 36,00)
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explicação da Baixa Automática -->
+      <div class="info-card highlight-amber">
+        <div style="font-size:11px; font-weight:900; color:#92400e; margin-bottom:3px;">
+          🤖 O que acontece quando a Repositora clica em "Confirmar e Enviar Cobrança"?
+        </div>
+        <p style="font-size:10.2px; color:#78350f;">
+          1. O sistema gera o pedido pendente da diferença (ex: R$ 36,00) e a <strong>IA Sofia envia mensagem amigável no WhatsApp do(s) hóspede(s) do flat</strong> com a lista dos itens e o link direto de pagamento.<br/>
+          2. Se houver 2 ou mais hóspedes no flat, <strong>qualquer um deles pode pagar</strong> pelo link via PIX ou Cartão.<br/>
+          3. Assim que pago, o sistema <strong>dá baixa sozinho na pendência</strong> (muda para <em>"✅ Divergência Quitada"</em>), computa o pagamento no histórico da reserva e coloca o pedido na fila de Notas Fiscais da Anserve!
+        </p>
+      </div>
+    </div>
+
+    <footer class="page-footer">
+      <span>Link direto da Repositora: https://corpflats.com.br/frigobar-reposicao</span>
+      <span>Documento de Apresentação & Onboarding Anserve — Página 3 de 5</span>
+    </footer>
+  </section>
+
+  <!-- ========================================================================= -->
+  <!-- PÁGINA 4: PAINEL DO GESTOR ANSERVE (/anserve) — NOTAS FISCAIS E VENDAS    -->
+  <!-- ========================================================================= -->
+  <section class="a4-page">
+    <header class="page-header">
+      <div class="brand">
+        <div class="brand-icon">🧾</div>
+        <div>
+          <h1>Jornada 3 — Painel do Gestor Anserve (<code>/anserve</code>) • NFs e Vendas</h1>
+          <p>Fila de Notas Fiscais com disparo automático (WhatsApp + E-mail), monitor de entrega e relatórios CSV</p>
+        </div>
+      </div>
+      <div class="page-badge">Pág. 4 / 5</div>
+    </header>
+
+    <div class="page-body">
+      <!-- Aba 1: Fila de Notas Fiscais + Monitor de Entrega -->
+      <div>
+        <div class="section-title"><span class="dot"></span> Aba 1: Fila de Notas Fiscais Pendentes & Monitor Automático de Entrega</div>
+        <div class="screen-print light-ui">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>https://corpflats.com.br/anserve — Aba "Notas Fiscais"</span>
+          </div>
+          <div class="screen-content" style="display:flex; flex-direction:column; gap:8px;">
+            <!-- Barra de Abas -->
+            <div style="display:flex; gap:5px; background:#f1f5f9; padding:4px; border-radius:9px; font-size:9px; font-weight:800;">
+              <span style="background:#ffffff; color:#0f172a; padding:4px 9px; border-radius:7px; box-shadow:0 1px 2px rgba(0,0,0,0.08);">📄 Notas Fiscais (2)</span>
+              <span style="color:#64748b; padding:4px 9px;">📊 Vendas (CSV)</span>
+              <span style="color:#64748b; padding:4px 9px;">👥 Funcionárias (3)</span>
+              <span style="color:#64748b; padding:4px 9px;">📦 Conferências</span>
+              <span style="color:#64748b; padding:4px 9px;">💲 Extrato de Repasse</span>
+            </div>
+
+            <!-- Monitor de Envio de NFs -->
+            <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:9px; padding:7px 10px; display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-size:9.2px;">
+                <strong style="color:#166534;">✅ Monitor de Envio de Notas Fiscais (WhatsApp + E-mail)</strong>
+                <div style="color:#475569; font-size:8.5px;">Monitora cada envio automaticamente, refaz tentativa em caso de falha e permite corrigir contato/reenviar.</div>
+              </div>
+              <div style="display:flex; gap:4px;">
+                <span class="badge-pill" style="background:#dcfce7; color:#15803d;">✅ 18 Entregues</span>
+                <span class="badge-pill" style="background:#ffe4e6; color:#be123c;">⚠️ 0 Falhas</span>
+              </div>
+            </div>
+
+            <!-- Card de Pedido Aguardando NF -->
+            <div style="border:1px solid #cbd5e1; border-radius:10px; padding:9px 11px; display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <strong style="font-family:monospace; font-size:10px; color:#0d9488;">ORD-MB-9041</strong>
+                  <span class="badge-pill" style="background:#f1f5f9; color:#0f172a;">Flat 605</span>
+                  <span class="badge-pill" style="background:#e0f2fe; color:#0369a1;">💧 Lançar como "Água"</span>
+                </div>
+                <div style="font-size:9.2px; color:#334155;">
+                  <strong>Hóspede:</strong> Carlos Silva &nbsp;|&nbsp; <strong>CNPJ p/ Emissão:</strong> 12.345.678/0001-90 &nbsp;|&nbsp; <strong>WhatsApp/E-mail:</strong> Cadastrados ✓
+                </div>
+                <div style="font-size:8.8px; color:#64748b;">
+                  <strong>Itens Consumidos:</strong> 2x Cerveja Heineken 330ml (Solicitou emitir descrição como "Água")
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:12px; font-weight:900; color:#059669; margin-bottom:4px;">R$ 28,00</div>
+                <span style="background:#0d9488; color:#fff; font-size:9px; font-weight:800; padding:5px 10px; border-radius:7px; display:inline-block;">
+                  📤 Anexar Nota Fiscal
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Aba 2: Relatório Resumido de Vendas & Exportação CSV -->
+      <div>
+        <div class="section-title"><span class="dot"></span> Aba 2: Relatório de Vendas & Exportação para Excel (CSV)</div>
+        <div class="screen-print light-ui">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>https://corpflats.com.br/anserve — Aba "Vendas (CSV)"</span>
+          </div>
+          <div class="screen-content" style="display:flex; flex-direction:column; gap:8px;">
+            <div class="grid-4">
+              <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px;">
+                <span style="font-size:8px; color:#64748b; font-weight:700;">VENDAS PAGAS NO PERÍODO</span>
+                <div style="font-size:12px; font-weight:900; color:#059669;">R$ 2.480,00</div>
+              </div>
+              <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px;">
+                <span style="font-size:8px; color:#64748b; font-weight:700;">UNIDADES VENDIDAS</span>
+                <div style="font-size:12px; font-weight:900; color:#0f172a;">312 un.</div>
+              </div>
+              <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px;">
+                <span style="font-size:8px; color:#64748b; font-weight:700;">PIX VS. CARTÃO</span>
+                <div style="font-size:9.5px; font-weight:800; color:#0f172a;">PIX: R$ 1.820 | Cartão: R$ 660</div>
+              </div>
+              <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px; display:flex; flex-direction:column; justify-content:center; gap:3px;">
+                <span style="background:#059669; color:#fff; font-size:8.5px; font-weight:800; padding:4px 6px; border-radius:5px; text-align:center;">⬇️ Exportar Vendas (CSV)</span>
+                <span style="background:#eef2ff; color:#4338ca; font-size:8.5px; font-weight:800; padding:3px 6px; border-radius:5px; text-align:center;">⬇️ Exportar Produtos (CSV)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explicação Prática das Duas Abas -->
+      <div class="grid-2">
+        <div class="info-card highlight-teal">
+          <div style="font-size:11px; font-weight:900; color:#0f766e; margin-bottom:4px;">
+            📤 Como funciona o Anexo e Envio Automático da Nota Fiscal?
+          </div>
+          <p style="font-size:10px; color:#334155;">
+            • Você não precisa enviar a Nota Fiscal manualmente para o cliente.<br/>
+            • Basta clicar em <strong>"Anexar Nota Fiscal"</strong> e selecionar o PDF ou foto da nota emitida.<br/>
+            • O sistema <strong>envia automaticamente no WhatsApp e no E-mail do hóspede</strong> e disponibiliza na Área da Reserva dele.<br/>
+            • Caso o WhatsApp ou e-mail do hóspede apresente qualquer erro, o <strong>Monitor de Entrega</strong> tenta reenviar sozinho e exibe o botão <strong>"Corrigir Contato / Reenviar NF"</strong>.
+          </p>
+        </div>
+
+        <div class="info-card">
+          <div style="font-size:11px; font-weight:900; color:#0f172a; margin-bottom:4px;">
+            📊 Relatórios de Vendas e Exportação CSV (Excel)
+          </div>
+          <p style="font-size:10px; color:#334155;">
+            • Na aba <strong>Vendas (CSV)</strong>, o gestor filtra por data inicial/final, por Flat (101 a 1304) ou por status.<br/>
+            • Visualiza o ranking de saída de cada produto (quantidade vendida, preço de venda e custo de repasse).<br/>
+            • Com 1 clique em <strong>Exportar Vendas (CSV)</strong> ou <strong>Exportar Produtos (CSV)</strong>, baixa a planilha pronta para abrir no Excel.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="page-footer">
+      <span>Link direto do Gestor Anserve: https://corpflats.com.br/anserve</span>
+      <span>Documento de Apresentação & Onboarding Anserve — Página 4 de 5</span>
+    </footer>
+  </section>
+
+  <!-- ========================================================================= -->
+  <!-- PÁGINA 5: GESTÃO DE FUNCIONÁRIAS, PRODUTIVIDADE & EXTRATO DE REPASSE      -->
+  <!-- ========================================================================= -->
+  <section class="a4-page">
+    <header class="page-header">
+      <div class="brand">
+        <div class="brand-icon">👥</div>
+        <div>
+          <h1>Jornada 4 — Gestão de Funcionárias, Produtividade & Repasse</h1>
+          <p>Controle total da equipe de reposição pela Anserve e transparência financeira no Extrato de Repasse</p>
+        </div>
+      </div>
+      <div class="page-badge">Pág. 5 / 5</div>
+    </header>
+
+    <div class="page-body">
+      <!-- Aba 3: Gestão de Funcionárias e Produtividade -->
+      <div>
+        <div class="section-title"><span class="dot"></span> Aba 3: Gestão de Funcionárias de Reposição & Relatório de Produtividade</div>
+        <div class="screen-print light-ui">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>https://corpflats.com.br/anserve — Aba "Funcionárias"</span>
+          </div>
+          <div class="screen-content" style="display:flex; flex-direction:column; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <strong style="font-size:10.5px;">👥 Equipe de Reposição & Conferência (Anserve)</strong>
+                <div style="font-size:8.5px; color:#64748b;">Cadastre funcionárias, redefina senhas/PINs de 4 dígitos e acompanhe a produtividade individual.</div>
+              </div>
+              <div style="display:flex; gap:5px;">
+                <span style="background:#f1f5f9; border:1px solid #cbd5e1; color:#0f172a; font-size:8.5px; font-weight:800; padding:4px 8px; border-radius:6px;">⬇️ Exportar Produtividade (CSV)</span>
+                <span style="background:#0d9488; color:#fff; font-size:8.5px; font-weight:800; padding:4px 8px; border-radius:6px;">+ Nova Funcionária</span>
+              </div>
+            </div>
+
+            <table class="clean-table" style="border:1px solid #cbd5e1;">
+              <thead>
+                <tr>
+                  <th>Funcionária</th>
+                  <th>WhatsApp & PIN Mobile</th>
+                  <th style="text-align:center;">Status</th>
+                  <th style="text-align:center;">Conferências</th>
+                  <th style="text-align:center;">Itens Repostos</th>
+                  <th style="text-align:center;">Divergências Apuradas</th>
+                  <th style="text-align:right;">Ações do Gestor</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Maria Oliveira</strong> <span style="color:#64748b;">(@maria.anserve)</span></td>
+                  <td>📱 (11) 98811-2233 • <span class="badge-pill" style="background:#e0f2fe; color:#0369a1;">PIN: 4821</span></td>
+                  <td style="text-align:center;"><span class="badge-pill" style="background:#dcfce7; color:#15803d;">Ativa</span></td>
+                  <td style="text-align:center; font-weight:800;">42 vistorias</td>
+                  <td style="text-align:center; font-weight:800; color:#0284c7;">118 un.</td>
+                  <td style="text-align:center; font-weight:800; color:#d97706;">5 (R$ 142,00)</td>
+                  <td style="text-align:right; font-size:8.5px; font-weight:800; color:#0d9488;">[Relatório] [Senha/PIN] [Editar] [Excluir]</td>
+                </tr>
+                <tr>
+                  <td><strong>Ana Paula Souza</strong> <span style="color:#64748b;">(@ana.anserve)</span></td>
+                  <td>📱 (11) 97722-3344 • <span class="badge-pill" style="background:#e0f2fe; color:#0369a1;">PIN: 3090</span></td>
+                  <td style="text-align:center;"><span class="badge-pill" style="background:#dcfce7; color:#15803d;">Ativa</span></td>
+                  <td style="text-align:center; font-weight:800;">31 vistorias</td>
+                  <td style="text-align:center; font-weight:800; color:#0284c7;">86 un.</td>
+                  <td style="text-align:center; font-weight:800; color:#d97706;">3 (R$ 84,00)</td>
+                  <td style="text-align:right; font-size:8.5px; font-weight:800; color:#0d9488;">[Relatório] [Senha/PIN] [Editar] [Excluir]</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Aba 5: Extrato de Fechamento e Repasse -->
+      <div>
+        <div class="section-title"><span class="dot"></span> Aba 5: Extrato de Fechamento & Repasse (CorpFlats ↔ Anserve)</div>
+        <div class="screen-print light-ui">
+          <div class="screen-topbar">
+            <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+            <span>https://corpflats.com.br/anserve — Aba "Extrato de Repasse"</span>
+          </div>
+          <div class="screen-content">
+            <div class="grid-4">
+              <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:7px;">
+                <span style="font-size:8px; color:#64748b; font-weight:800;">1. TOTAL VENDIDO PAGO</span>
+                <div style="font-size:12.5px; font-weight:900; color:#0f172a;">R$ 2.480,00</div>
+                <span style="font-size:8px; color:#64748b;">Recebido via PIX/Cartão</span>
+              </div>
+              <div style="background:#fff1f2; border:1px solid #fecdd3; border-radius:8px; padding:7px;">
+                <span style="font-size:8px; color:#be123c; font-weight:800;">2. (-) TAXAS DE GATEWAY</span>
+                <div style="font-size:12.5px; font-weight:900; color:#e11d48;">- R$ 32,90</div>
+                <span style="font-size:8px; color:#be123c;">Taxa real Cartão/PIX</span>
+              </div>
+              <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:7px;">
+                <span style="font-size:8px; color:#0f766e; font-weight:800;">3. (+) REEMBOLSO CORTESIAS</span>
+                <div style="font-size:12.5px; font-weight:900; color:#0d9488;">+ R$ 195,00</div>
+                <span style="font-size:8px; color:#0f766e;">Nespresso, balas e amendoim</span>
+              </div>
+              <div style="background:#ecfdf5; border:1.5px solid #10b981; border-radius:8px; padding:7px;">
+                <span style="font-size:8px; color:#047857; font-weight:900;">4. (=) LÍQUIDO A RECEBER</span>
+                <div style="font-size:13.5px; font-weight:900; color:#059669;">R$ 2.394,10</div>
+                <span style="font-size:8px; color:#047857; font-weight:700;">Repasse líquido Anserve</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resumo Final de Recursos para o Gestor -->
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="section-title"><span class="dot"></span> O que o Gestor faz na Aba "Funcionárias"?</div>
+          <ul class="step-list">
+            <li>
+              <span class="step-num">1</span>
+              <div><strong>Criar e Excluir Funcionárias:</strong> Cadastra quantas repositoras quiser informando Nome, Login, Senha inicial, WhatsApp e o <strong>PIN de 4 dígitos</strong> para uso no celular.</div>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <div><strong>Resetar Senha e PIN a Qualquer Hora:</strong> Se uma funcionária esquecer o PIN ou senha, o gestor redefine em 5 segundos clicando no botão de chave 🔐.</div>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <div><strong>Auditar Produtividade Individual:</strong> Vê quantos flats cada funcionária vistoriou, quantos itens repôs, quantas divergências recuperou e o histórico detalhado com data e hora.</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="info-card highlight-teal">
+          <div class="section-title"><span class="dot"></span> Resumo Rápido dos Links para Favoritar</div>
+          <div style="display:flex; flex-direction:column; gap:7px; font-size:10.2px;">
+            <div style="background:#ffffff; border:1px solid #99f6e4; padding:7px 10px; border-radius:8px;">
+              <strong>1. Link do Gestor Anserve (Supervisão, NFs, Vendas e Equipe):</strong><br/>
+              <a href="https://corpflats.com.br/anserve" style="color:#0d9488; font-family:monospace; font-weight:800;">https://corpflats.com.br/anserve</a>
+            </div>
+            <div style="background:#ffffff; border:1px solid #99f6e4; padding:7px 10px; border-radius:8px;">
+              <strong>2. Link das Funcionárias Repositoras (Celular via PIN):</strong><br/>
+              <a href="https://corpflats.com.br/frigobar-reposicao" style="color:#0284c7; font-family:monospace; font-weight:800;">https://corpflats.com.br/frigobar-reposicao</a>
+            </div>
+            <div style="background:#ffffff; border:1px solid #99f6e4; padding:7px 10px; border-radius:8px;">
+              <strong>3. Link de Exemplo do Hóspede (QR Code no Flat):</strong><br/>
+              <a href="https://corpflats.com.br/frigobar/flat/101" style="color:#4f46e5; font-family:monospace; font-weight:800;">https://corpflats.com.br/frigobar/flat/101</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="page-footer">
+      <span>CorpFlats Soho Residence & Anserve • Manual Operacional Completo</span>
+      <span>Documento de Apresentação & Onboarding Anserve — Página 5 de 5</span>
+    </footer>
+  </section>
+
+</body>
+</html>
