@@ -247,27 +247,71 @@ export default function PmsCalendar() {
 
   const isResCamposResident = (r: any, g?: any) => {
     if (!r) return false;
-    if (r.isCamposResident || r.riskAttentionAlert) return true;
-    if (g?.isCamposResident) return true;
-    const checkStr = (s?: string) => {
+    if (r.isCamposResident === true) return true;
+    const isCamposCityName = (s?: string) => {
       if (!s) return false;
-      const l = s.toLowerCase();
-      return l.includes("campos") || l.includes("goytacazes") || l.includes("goitacazes");
+      const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*\/\s*[a-z]{2}\s*$/, "").trim();
+      if (!l) return false;
+      if (
+        l.includes("sao jose dos campos") ||
+        l.includes("campos do jordao") ||
+        l.includes("campos novos") ||
+        l.includes("campos belos") ||
+        l.includes("campos altos") ||
+        l.includes("campos gerais") ||
+        l.includes("campos sales") ||
+        l.includes("campos lindos") ||
+        l.includes("siqueira campos")
+      ) {
+        return false;
+      }
+      return (
+        l.includes("goytacazes") ||
+        l.includes("goitacazes") ||
+        l === "campos" ||
+        l === "campos rj" ||
+        l === "campos-rj" ||
+        /^campos\s*[-/,]\s*rj$/.test(l) ||
+        l.startsWith("campos dos goytacazes") ||
+        l.startsWith("campos dos goitacazes")
+      );
     };
-    if (checkStr(r.originCity) || checkStr(r.guestCity) || checkStr(r.city) || checkStr(r.guestAddress)) return true;
-    if (checkStr(g?.city) || checkStr(g?.originCity) || checkStr(g?.address)) return true;
-    if (r.riskAttentionReason && checkStr(r.riskAttentionReason)) return true;
-    if (Array.isArray(r.guests) && r.guests.some((guest: any) => 
-      guest?.isCamposResident || 
-      guest?.riskAttentionAlert || 
-      checkStr(guest?.city) || 
-      checkStr(guest?.originCity) || 
-      checkStr(guest?.address)
+    const isCamposAddrStr = (s?: string) => {
+      if (!s) return false;
+      const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      if (/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(l)) return false;
+      return l.includes("goytacazes") || l.includes("goitacazes") || /campos\s*[-/,]\s*rj/.test(l);
+    };
+    const isCamposCepStr = (cepVal?: string, addrVal?: string) => {
+      const cleanCep = String(cepVal || "").replace(/\D/g, "");
+      if (cleanCep.length < 5) return false;
+      if (cleanCep === "28035000" && (!addrVal || /pelinca/i.test(addrVal))) return false;
+      return cleanCep.startsWith("280") || cleanCep.startsWith("281");
+    };
+
+    const allowGuestFallback = r.isCamposResident !== false;
+    if (allowGuestFallback && g?.isCamposResident === true) return true;
+
+    const primaryCity = String(
+      r.guestCity || r.city || r.originCity || (allowGuestFallback ? (g?.city || g?.originCity) : "") || ""
+    ).trim();
+    if (primaryCity && !isCamposCityName(primaryCity) && !isCamposCityName(r.originCity)) {
+      return false;
+    }
+
+    if (isCamposCityName(r.originCity) || isCamposCityName(r.guestCity) || isCamposCityName(r.city) || isCamposAddrStr(r.guestAddress)) return true;
+    if (allowGuestFallback && (isCamposCityName(g?.city) || isCamposCityName(g?.originCity) || isCamposAddrStr(g?.address))) return true;
+    if (r.riskAttentionReason && isCamposCityName(r.riskAttentionReason)) return true;
+    if (Array.isArray(r.guests) && r.guests.some((guest: any) =>
+      guest?.isCamposResident === true ||
+      isCamposCityName(guest?.city) ||
+      isCamposCityName(guest?.originCity) ||
+      isCamposAddrStr(guest?.address)
     )) {
       return true;
     }
-    const cleanCep = String(r.guestCep || r.cep || g?.cep || "").replace(/\D/g, "");
-    if (cleanCep.length >= 5 && (cleanCep.startsWith("280") || cleanCep.startsWith("281"))) return true;
+    if (isCamposCepStr(r.guestCep || r.cep, r.guestAddress || r.address)) return true;
+    if (allowGuestFallback && isCamposCepStr(g?.cep, g?.address || g?.street)) return true;
     return false;
   };
 
@@ -384,6 +428,8 @@ export default function PmsCalendar() {
               title: "📍 Alerta: Morador de Campos/RJ",
               description: "Hóspede de Campos dos Goytacazes/RJ incluído no radar operacional da recepção."
             })
+          } else if (aiData.isCamposResident === false) {
+            setFormIsCamposResident(false)
           }
         }
       } catch (aiErr) {
@@ -2456,13 +2502,17 @@ export default function PmsCalendar() {
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (isUnpaidPreReserva ? "pendente" : (resItem.paymentStatus || "pendente")))
     setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
     setFormNotes(resItem.notes || "")
-    const matchedGuest = crmGuests.find(g => 
-      (resItem.guestId && String(g.id) === String(resItem.guestId)) ||
-      (g.documentNumber && resItem.guestDocument && g.documentNumber.replace(/\D/g, '') === resItem.guestDocument.replace(/\D/g, '')) ||
-      (g.phone && resItem.guestPhone && g.phone.replace(/\D/g, '') === resItem.guestPhone.replace(/\D/g, '')) ||
-      (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
-      (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim())
-    )
+    const resCleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "")
+    const resCleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "")
+    const matchedGuest = crmGuests.find(g => {
+      const gDoc = String(g.documentNumber || g.document || "").replace(/\D/g, "")
+      const gPhone = String(g.phone || "").replace(/\D/g, "")
+      return (resItem.guestId && String(g.id) === String(resItem.guestId)) ||
+        (gDoc.length >= 8 && resCleanDoc.length >= 8 && gDoc === resCleanDoc) ||
+        (gPhone.length >= 8 && resCleanPhone.length >= 8 && gPhone === resCleanPhone) ||
+        (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
+        (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim())
+    })
 
     setFormEarlyCheckin(Boolean(resItem.earlyCheckinAuthorized))
     setFormReceptionNotes(resItem.receptionNotes || "")
@@ -2531,9 +2581,7 @@ export default function PmsCalendar() {
         setFormDocPhotoUrl(g.docPhotoUrl)
         setFormDocFileName("documento_crm")
       }
-      if (g.city && g.city.toLowerCase().includes("campos")) {
-        setFormIsCamposResident(true)
-      }
+      setFormIsCamposResident(isResCamposResident({ isCamposResident: g.isCamposResident }, g))
       toast({
         title: "Hóspede Selecionado do CRM",
         description: `${g.name || g.fullName} carregado com sucesso.`
@@ -4274,13 +4322,17 @@ export default function PmsCalendar() {
                           : null;
 
                         // Verificação dinâmica de Mensalista (por reserva ou por cadastro no CRM)
-                        const matchedGuest = (data.guests || []).find((g: any) => 
-                          (g.id && g.id === resItem.guestId) ||
-                          (g.document && resItem.guestDocument && g.document.replace(/\D/g, '') === resItem.guestDocument.replace(/\D/g, '')) ||
-                          (g.phone && resItem.guestPhone && g.phone.replace(/\D/g, '') === resItem.guestPhone.replace(/\D/g, '')) ||
-                          (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
-                          (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim())
-                        );
+                        const resCardCleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "");
+                        const resCardCleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "");
+                        const matchedGuest = (data.guests || []).find((g: any) => {
+                          const gDoc = String(g.document || g.documentNumber || "").replace(/\D/g, "");
+                          const gPhone = String(g.phone || "").replace(/\D/g, "");
+                          return (g.id && g.id === resItem.guestId) ||
+                            (gDoc.length >= 8 && resCardCleanDoc.length >= 8 && gDoc === resCardCleanDoc) ||
+                            (gPhone.length >= 8 && resCardCleanPhone.length >= 8 && gPhone === resCardCleanPhone) ||
+                            (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
+                            (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim());
+                        });
 
                         const isMensalista = Boolean(
                           resItem.isMonthlyGuest || 

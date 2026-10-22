@@ -188,21 +188,64 @@ export function ReservationHoverCard({
   const recipients = getReservationRecipients(resItem)
 
   const flatNumber = resItem.flatNumber || flat?.number || "Flat"
+  const isCamposCityStr = (s?: string) => {
+    if (!s) return false
+    const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*\/\s*[a-z]{2}\s*$/, "").trim()
+    if (!l) return false
+    if (
+      l.includes("sao jose dos campos") ||
+      l.includes("campos do jordao") ||
+      l.includes("campos novos") ||
+      l.includes("campos belos") ||
+      l.includes("campos altos") ||
+      l.includes("campos gerais") ||
+      l.includes("campos sales") ||
+      l.includes("campos lindos") ||
+      l.includes("siqueira campos")
+    ) {
+      return false
+    }
+    return (
+      l.includes("goytacazes") ||
+      l.includes("goitacazes") ||
+      l === "campos" ||
+      l === "campos rj" ||
+      l === "campos-rj" ||
+      /^campos\s*[-/,]\s*rj$/.test(l) ||
+      l.startsWith("campos dos goytacazes") ||
+      l.startsWith("campos dos goitacazes")
+    )
+  }
+  const isCamposAddrStr = (s?: string) => {
+    if (!s) return false
+    const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
+    if (/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(l)) return false
+    return l.includes("goytacazes") || l.includes("goitacazes") || /campos\s*[-/,]\s*rj/.test(l)
+  }
+  const isCamposCepStr = (cepVal?: string, addrVal?: string) => {
+    const cleanCep = String(cepVal || "").replace(/\D/g, "")
+    if (cleanCep.length < 5) return false
+    if (cleanCep === "28035000" && (!addrVal || /pelinca/i.test(addrVal))) return false
+    return cleanCep.startsWith("280") || cleanCep.startsWith("281")
+  }
+  const primaryHoverCity = String(resItem.guestCity || resItem.city || resItem.originCity || "").trim()
+  const hasNonCamposPrimaryCity = Boolean(primaryHoverCity && !isCamposCityStr(primaryHoverCity) && !isCamposCityStr(resItem.originCity))
   const isCampos = Boolean(
-    resItem.isCamposResident ||
-    (resItem.originCity && (resItem.originCity.toLowerCase().includes("campos") || resItem.originCity.toLowerCase().includes("goytacazes"))) ||
-    (resItem.guestCity && (resItem.guestCity.toLowerCase().includes("campos") || resItem.guestCity.toLowerCase().includes("goytacazes"))) ||
-    (resItem.city && (resItem.city.toLowerCase().includes("campos") || resItem.city.toLowerCase().includes("goytacazes"))) ||
-    (resItem.guestAddress && resItem.guestAddress.toLowerCase().includes("campos")) ||
-    (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos")) ||
-    (Array.isArray(resItem.guests) && resItem.guests.some((g: any) =>
-      g?.isCamposResident ||
-      (g?.originCity && (g.originCity.toLowerCase().includes("campos") || g.originCity.toLowerCase().includes("goytacazes"))) ||
-      (g?.city && (g.city.toLowerCase().includes("campos") || g.city.toLowerCase().includes("goytacazes"))) ||
-      (g?.address && g.address.toLowerCase().includes("campos"))
-    )) ||
-    (String(resItem.guestCep || resItem.cep || "").replace(/\D/g, "").startsWith("280") ||
-     String(resItem.guestCep || resItem.cep || "").replace(/\D/g, "").startsWith("281"))
+    resItem.isCamposResident === true ||
+    (!hasNonCamposPrimaryCity && (
+      isCamposCityStr(resItem.originCity) ||
+      isCamposCityStr(resItem.guestCity) ||
+      isCamposCityStr(resItem.city) ||
+      isCamposAddrStr(resItem.guestAddress) ||
+      isCamposCityStr(resItem.riskAttentionReason) ||
+      (Array.isArray(resItem.guests) && resItem.guests.some((g: any) =>
+        g?.isCamposResident === true ||
+        isCamposCityStr(g?.originCity) ||
+        isCamposCityStr(g?.city) ||
+        isCamposAddrStr(g?.address)
+      )) ||
+      isCamposCepStr(resItem.guestCep || resItem.cep, resItem.guestAddress || resItem.address)
+    ))
   )
   const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
   const checkinStr = format(parseISO(resItem.checkinDate), "dd/MM")

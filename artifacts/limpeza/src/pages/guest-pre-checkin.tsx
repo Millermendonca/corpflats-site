@@ -718,7 +718,16 @@ export default function GuestPreCheckin() {
           const resCpf = String(gDoc || "").replace(/\D/g, "")
           const profEmail = String(prof?.email || "").trim().toLowerCase()
           const resEmail = String(gEmail || "").trim().toLowerCase()
-          const isSamePersonCache = (profCpf && resCpf && profCpf === resCpf) || (profEmail && resEmail && profEmail === resEmail) || (!resCpf && !resEmail)
+          const profPhone = String(prof?.phone || "").replace(/\D/g, "")
+          const resPhone = String(gPhone || "").replace(/\D/g, "")
+          const profName = String(prof?.name || prof?.fullName || "").trim().toLowerCase()
+          const resName = String(gName || "").trim().toLowerCase()
+          const isSamePersonCache = Boolean(
+            (profCpf.length >= 8 && resCpf.length >= 8 && profCpf === resCpf) ||
+            (profEmail.includes("@") && resEmail.includes("@") && profEmail === resEmail) ||
+            (profPhone.length >= 8 && resPhone.length >= 8 && profPhone === resPhone) ||
+            (profName.length >= 5 && resName.length >= 5 && profName === resName)
+          )
           if (isSamePersonCache && prof?.docPhotoUrl) {
             doc = prof.docPhotoUrl
           }
@@ -729,10 +738,28 @@ export default function GuestPreCheckin() {
       } catch {}
     }
 
-    // Sincronização direta com perfil permanente do hóspede autenticado
+    // Sincronização direta com perfil permanente do hóspede autenticado (somente se for a mesma pessoa da reserva)
     if (isTitular) {
       getCurrentSession().then((sessionUser) => {
         if (!sessionUser) return
+        const sessCpf = String(sessionUser.document || "").replace(/\D/g, "")
+        const resCpf = String(gDoc || "").replace(/\D/g, "")
+        const sessEmail = String(sessionUser.email || "").trim().toLowerCase()
+        const resEmail = String(gEmail || "").trim().toLowerCase()
+        const sessPhone = String(sessionUser.phone || "").replace(/\D/g, "")
+        const resPhone = String(gPhone || "").replace(/\D/g, "")
+        const sessName = String(sessionUser.name || sessionUser.fullName || "").trim().toLowerCase()
+        const resName = String(gName || "").trim().toLowerCase()
+        const isGenericResName = !resName || /^h[oó]spede\s*\d*$/i.test(resName)
+        const isSameSess = Boolean(
+          (sessCpf.length >= 8 && resCpf.length >= 8 && sessCpf === resCpf) ||
+          (sessEmail.includes("@") && resEmail.includes("@") && sessEmail === resEmail) ||
+          (sessPhone.length >= 8 && resPhone.length >= 8 && sessPhone === resPhone) ||
+          (sessName.length >= 5 && resName.length >= 5 && sessName === resName) ||
+          (!resCpf && !resEmail && !resPhone && isGenericResName)
+        )
+        if (!isSameSess) return
+
         if (!gName && sessionUser.name) setFullName(sessionUser.name)
         if (!gEmail && sessionUser.email) setEmail(sessionUser.email)
         if (!gPhone && sessionUser.phone) setPhone(sessionUser.phone)
@@ -754,7 +781,8 @@ export default function GuestPreCheckin() {
         if (!currentG?.state && !guest.state && !res.guestState && sessionUser.state) {
           setState(sessionUser.state)
         }
-        if (sessionUser.cep) {
+        const sessCleanCep = String(sessionUser.cep || "").replace(/\D/g, "")
+        if (!currentG?.cep && !guest.cep && !res.guestCep && !res.cep && sessCleanCep && sessCleanCep !== "28035000") {
           setCep(sessionUser.cep)
         }
         if (sessionUser.vehicle?.plate && !v?.plate) {
@@ -764,16 +792,11 @@ export default function GuestPreCheckin() {
           setVehicleColor(sessionUser.vehicle.color || "")
           setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
         }
-        const sessCpf = String(sessionUser.document || "").replace(/\D/g, "")
-        const resCpf = String(gDoc || "").replace(/\D/g, "")
-        const sessEmail = String(sessionUser.email || "").trim().toLowerCase()
-        const resEmail = String(gEmail || "").trim().toLowerCase()
-        const isSameSess = (sessCpf && resCpf && sessCpf === resCpf) || (sessEmail && resEmail && sessEmail === resEmail) || (!resCpf && !resEmail)
-        if (isSameSess && !doc && sessionUser.docPhotoUrl) {
+        if (!doc && sessionUser.docPhotoUrl) {
           setDocPhoto(sessionUser.docPhotoUrl)
           setIsSavedDocFromProfile(true)
         }
-        if (isSameSess && !selfie && sessionUser.photoUrl) {
+        if (!selfie && sessionUser.photoUrl) {
           setSelfiePhoto(sessionUser.photoUrl)
         }
       }).catch(() => {})
@@ -1245,13 +1268,46 @@ export default function GuestPreCheckin() {
           minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
           minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null,
           aiDocResult: aiDocResult || null,
-          isCamposResident: Boolean(
-            aiDocResult?.isCamposResident ||
-            (city && (city.toLowerCase().includes("campos") || city.toLowerCase().includes("goytacazes"))) ||
-            (originCity && (originCity.toLowerCase().includes("campos") || originCity.toLowerCase().includes("goytacazes"))) ||
-            (address && (address.toLowerCase().includes("campos") || address.toLowerCase().includes("goytacazes"))) ||
-            (cep && (cep.replace(/\D/g, "").startsWith("280") || cep.replace(/\D/g, "").startsWith("281")))
-          ),
+          isCamposResident: (() => {
+            const isCamposCityStr = (s?: string) => {
+              if (!s) return false
+              const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*\/\s*[a-z]{2}\s*$/, "").trim()
+              if (!l) return false
+              if (
+                l.includes("sao jose dos campos") ||
+                l.includes("campos do jordao") ||
+                l.includes("campos novos") ||
+                l.includes("campos belos") ||
+                l.includes("campos altos") ||
+                l.includes("campos gerais") ||
+                l.includes("campos sales") ||
+                l.includes("campos lindos") ||
+                l.includes("siqueira campos")
+              ) return false
+              return (
+                l.includes("goytacazes") ||
+                l.includes("goitacazes") ||
+                l === "campos" ||
+                l === "campos rj" ||
+                l === "campos-rj" ||
+                /^campos\s*[-/,]\s*rj$/.test(l) ||
+                l.startsWith("campos dos goytacazes") ||
+                l.startsWith("campos dos goitacazes")
+              )
+            }
+            const cleanSubCep = String(cep || "").replace(/\D/g, "")
+            const isValidCamposCep = (cleanSubCep.startsWith("280") || cleanSubCep.startsWith("281")) && cleanSubCep !== "28035000"
+            const hasExplicitOtherCity = Boolean(city && city.trim() !== "" && !isCamposCityStr(city) && !isCamposCityStr(originCity))
+            return Boolean(
+              aiDocResult?.isCamposResident ||
+              isCamposCityStr(city) ||
+              isCamposCityStr(originCity) ||
+              (!hasExplicitOtherCity && (
+                (address && (address.toLowerCase().includes("goytacazes") || address.toLowerCase().includes("goitacazes"))) ||
+                isValidCamposCep
+              ))
+            )
+          })(),
           vehiclePlate: cleanPlate,
           vehicleBrand: cleanBrand,
           vehicleModel: cleanModel,
