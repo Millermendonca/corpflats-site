@@ -57,9 +57,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   })
   const closeTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Accordion state (Reservas & Hospedagem open by default)
+  // Accordion state (Reservas & Hospedagem and Frigobar & Anserve open by default)
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>(() => ({
-    reservas: true
+    reservas: true,
+    frigobar: true
   }))
 
   const togglePin = () => {

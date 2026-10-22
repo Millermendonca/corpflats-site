@@ -392,6 +392,18 @@ export function hasModuleAccess(
     return false;
   }
 
+  // Garante que perfis Admin/Dev sempre enxerguem os módulos de Frigobar & Anserve mesmo se allowedModules foi salvo antes da criação do módulo
+  const frigobarModules = ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"];
+  if ((user.role === "dev" || user.role === "admin") && frigobarModules.includes(canonical)) {
+    return true;
+  }
+  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+    return true;
+  }
+  if (user.role === "anserve_repositora" && canonical === "/frigobar-reposicao") {
+    return true;
+  }
+
   // Lista efetiva de módulos permitidos
   const allowed = Array.isArray(user.allowedModules)
     ? user.allowedModules
@@ -402,6 +414,7 @@ export function hasModuleAccess(
   }
 
   if (canonical === "/raio-x-flats") {
+    if (user.role === "admin" || user.role === "dev") return true;
     const hubEquivalents = ["/servicos", "/tasks", "/observations", "/surveys"];
     return allowed.some(m => hubEquivalents.includes(canonicalizeRoute(m)));
   }

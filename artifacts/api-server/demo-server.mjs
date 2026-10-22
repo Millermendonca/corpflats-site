@@ -1047,6 +1047,16 @@ export function hasModuleAccess(user, path) {
   if (DEV_ONLY_MODULES.includes(canonical) && user.role !== "dev") {
     return false;
   }
+  const frigobarModules = ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"];
+  if ((user.role === "admin" || user.role === "dev") && frigobarModules.includes(canonical)) {
+    return true;
+  }
+  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+    return true;
+  }
+  if (user.role === "anserve_repositora" && canonical === "/frigobar-reposicao") {
+    return true;
+  }
   const allowed = Array.isArray(user.allowedModules)
     ? user.allowedModules
     : getDefaultModulesForRole(user.role);
@@ -1185,11 +1195,30 @@ export function ensureSystemUsers(database) {
     changed = true;
   }
 
-  // 5. Garantia de allowedModules para todos os usuários da base
+  // 5. Garantia de allowedModules para todos os usuários da base + migração automática dos módulos de Frigobar/Anserve
   for (const u of database.users) {
     if (!Array.isArray(u.allowedModules)) {
       u.allowedModules = getDefaultModulesForRole(u.role);
       changed = true;
+    } else if (u.role === "dev" || u.role === "admin") {
+      for (const reqMod of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+        if (!u.allowedModules.includes(reqMod)) {
+          u.allowedModules.push(reqMod);
+          changed = true;
+        }
+      }
+    } else if (u.role === "anserve_gestor") {
+      for (const reqMod of ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+        if (!u.allowedModules.includes(reqMod)) {
+          u.allowedModules.push(reqMod);
+          changed = true;
+        }
+      }
+    } else if (u.role === "anserve_repositora") {
+      if (!u.allowedModules.includes("/frigobar-reposicao")) {
+        u.allowedModules.push("/frigobar-reposicao");
+        changed = true;
+      }
     }
   }
 
@@ -9589,6 +9618,25 @@ function verifyAuthToken(token) {
   }
 }
 
+export function resolveEffectiveAllowedModules(userObj) {
+  if (!userObj) return [];
+  const base = Array.isArray(userObj.allowedModules)
+    ? [...userObj.allowedModules]
+    : [...getDefaultModulesForRole(userObj.role)];
+  if (userObj.role === "dev" || userObj.role === "admin") {
+    for (const m of ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+      if (!base.includes(m)) base.push(m);
+    }
+  } else if (userObj.role === "anserve_gestor") {
+    for (const m of ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]) {
+      if (!base.includes(m)) base.push(m);
+    }
+  } else if (userObj.role === "anserve_repositora") {
+    if (!base.includes("/frigobar-reposicao")) base.push("/frigobar-reposicao");
+  }
+  return base;
+}
+
 export function getAuthUser(req) {
   const token = req.cookies?.[AUTH_COOKIE_NAME] || req.headers?.["authorization"]?.replace("Bearer ", "");
   if (!token) return null;
@@ -9602,7 +9650,7 @@ export function getAuthUser(req) {
       username: found.username,
       name: found.name || found.username,
       role: found.role,
-      allowedModules: Array.isArray(found.allowedModules) ? found.allowedModules : getDefaultModulesForRole(found.role)
+      allowedModules: resolveEffectiveAllowedModules(found)
     };
   } catch {
     return null;
@@ -10673,7 +10721,7 @@ app.post("/api/auth/login", (req, res) => {
     username: found.username,
     role: found.role,
     name: found.name || found.username,
-    allowedModules: Array.isArray(found.allowedModules) ? found.allowedModules : getDefaultModulesForRole(found.role),
+    allowedModules: resolveEffectiveAllowedModules(found),
     mustChangePassword: mustChange,
     passwordExpired: expired
   });
@@ -10739,7 +10787,7 @@ app.get("/api/admin/users", (req, res) => {
     pin: u.pin || "",
     active: u.active !== false,
     lastLoginAt: u.lastLoginAt || null,
-    allowedModules: Array.isArray(u.allowedModules) ? u.allowedModules : getDefaultModulesForRole(u.role)
+    allowedModules: resolveEffectiveAllowedModules(u)
   }));
   res.json(list);
 });
