@@ -769,43 +769,43 @@ export default function MinibarAdminPage() {
         }
       `}</style>
 
-      <div className="max-w-7xl mx-auto px-4 py-4 md:py-6 space-y-6 pb-24 print:hidden">
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 space-y-4 sm:space-y-6 pb-28 min-w-0 overflow-x-hidden print:hidden">
         {/* Header */}
-        <div className="bg-card border border-border p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
-              <Package className="w-6 h-6" />
+        <div className="w-full min-w-0 bg-card border border-border p-4 sm:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
+              <Package className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl md:text-2xl font-black text-foreground">
+                <h1 className="text-base sm:text-xl md:text-2xl font-black text-foreground leading-tight break-words">
                   Central Estratégica de Frigobar (CorpFlats)
                 </h1>
                 <Badge className="bg-primary/15 text-primary border-primary/30 text-[10px] font-bold">
                   Diretoria & Inteligência 360°
                 </Badge>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                 Insights exclusivos de consumo, gestão completa da Anserve (gestores e repositoras), catálogo, gabarito, QR Codes e repasse.
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1.5 bg-muted/40 border border-border rounded-xl px-2.5 py-1">
-              <Calendar className="w-3.5 h-3.5 text-primary" />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto shrink-0">
+            <div className="flex items-center justify-between sm:justify-start gap-1.5 bg-muted/40 border border-border rounded-xl px-2.5 py-1.5 w-full sm:w-auto min-w-0">
+              <Calendar className="w-3.5 h-3.5 text-primary shrink-0" />
               <input
                 type="date"
                 value={extratoStartDate}
                 onChange={e => setExtratoStartDate(e.target.value)}
-                className="bg-transparent text-xs font-mono outline-none"
+                className="bg-transparent text-[11px] sm:text-xs font-mono outline-none min-w-0 flex-1 sm:flex-initial"
               />
-              <span className="text-xs text-muted-foreground">até</span>
+              <span className="text-[11px] text-muted-foreground shrink-0">até</span>
               <input
                 type="date"
                 value={extratoEndDate}
                 onChange={e => setExtratoEndDate(e.target.value)}
-                className="bg-transparent text-xs font-mono outline-none"
+                className="bg-transparent text-[11px] sm:text-xs font-mono outline-none min-w-0 flex-1 sm:flex-initial"
               />
             </div>
 
@@ -814,7 +814,7 @@ export default function MinibarAdminPage() {
               size="sm"
               onClick={loadAll}
               disabled={refreshing}
-              className="rounded-xl text-xs font-bold h-9"
+              className="rounded-xl text-xs font-bold h-9 w-full sm:w-auto"
             >
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? "animate-spin" : ""}`} />
               Atualizar
@@ -823,68 +823,68 @@ export default function MinibarAdminPage() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-4">
-          <TabsList className="bg-muted/50 p-1 rounded-2xl border border-border flex flex-wrap h-auto gap-1">
-            <TabsTrigger value="insights" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>Insights & Inteligência 360°</span>
-              <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] py-0 px-1.5">
+        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="w-full min-w-0 space-y-4">
+          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-2 sm:flex sm:flex-wrap h-auto gap-1.5">
+            <TabsTrigger value="insights" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span className="truncate">Insights 360°</span>
+              <Badge className="hidden sm:inline-flex bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] py-0 px-1.5 shrink-0">
                 Só Admin
               </Badge>
             </TabsTrigger>
 
-            <TabsTrigger value="catalogo" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <Package className="w-3.5 h-3.5 text-primary" />
-              <span>Catálogo & Cortesias</span>
+            <TabsTrigger value="catalogo" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <Package className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="truncate">Catálogo & Cortesias</span>
             </TabsTrigger>
 
-            <TabsTrigger value="gabarito" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <Sliders className="w-3.5 h-3.5 text-sky-600" />
-              <span>Gabarito por Flat</span>
+            <TabsTrigger value="gabarito" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <Sliders className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              <span className="truncate">Gabarito por Flat</span>
             </TabsTrigger>
 
-            <TabsTrigger value="equipe" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <Users className="w-3.5 h-3.5 text-teal-600" />
-              <span>Equipe Anserve (Gestores & Funcionárias)</span>
+            <TabsTrigger value="equipe" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span className="truncate">Equipe Anserve</span>
             </TabsTrigger>
 
-            <TabsTrigger value="qrcodes" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <QrCode className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Gerador de QR Codes A6</span>
+            <TabsTrigger value="qrcodes" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <QrCode className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="truncate">QR Codes A6</span>
             </TabsTrigger>
 
-            <TabsTrigger value="extrato" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Extrato CorpFlats ↔ Anserve</span>
+            <TabsTrigger value="extrato" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate">Extrato Repasse</span>
             </TabsTrigger>
           </TabsList>
 
           {/* TAB 1: CENTRAL DE INSIGHTS & INTELIGÊNCIA 360° (EXCLUSIVA ADMIN CORPFLATS) */}
-          <TabsContent value="insights" className="space-y-6">
+          <TabsContent value="insights" className="w-full min-w-0 space-y-5">
             {/* Banner Exclusivo */}
-            <div className="bg-gradient-to-r from-indigo-950/90 via-slate-900 to-teal-950/90 text-white p-5 rounded-3xl border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Badge className="bg-amber-400 text-slate-950 font-black text-[10px]">
+            <div className="w-full min-w-0 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-teal-950/90 text-white p-4 sm:p-5 rounded-3xl border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md">
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="bg-amber-400 text-slate-950 font-black text-[10px] shrink-0">
                     🔒 EXCLUSIVO DIRETORIA CORPFLATS
                   </Badge>
-                  <span className="text-xs text-indigo-200 font-semibold">
+                  <span className="text-[11px] sm:text-xs text-indigo-200 font-semibold">
                     Oculto para Gestores e Repositoras da Anserve
                   </span>
                 </div>
-                <h2 className="text-lg font-black">
+                <h2 className="text-base sm:text-lg font-black leading-snug">
                   Inteligência Comportamental, Demográfica e Rentabilidade do Frigobar
                 </h2>
-                <p className="text-xs text-slate-300 max-w-3xl">
+                <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
                   Cruzamento automático de vendas com origem geográfica (FNRH/CRM), canal de reserva (Booking/Airbnb/Direto), perfil de reembolso corporativo, horários de pico, curva ABC e recuperação via IA Sofia.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2 shrink-0">
+              <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 w-full md:w-auto shrink-0">
                 <Button
                   size="sm"
                   variant="secondary"
                   onClick={handleExportDemographicsCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
                 >
                   <Download className="w-3.5 h-3.5" />
                   CSV Demografia
@@ -893,7 +893,7 @@ export default function MinibarAdminPage() {
                   size="sm"
                   variant="secondary"
                   onClick={handleExportProductMatrixCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
                 >
                   <Download className="w-3.5 h-3.5" />
                   CSV Curva ABC
@@ -902,7 +902,7 @@ export default function MinibarAdminPage() {
                   size="sm"
                   variant="secondary"
                   onClick={handleExportFlatsRankingCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
                 >
                   <Download className="w-3.5 h-3.5" />
                   CSV Flats
@@ -1006,19 +1006,19 @@ export default function MinibarAdminPage() {
             )}
 
             {/* 1. GEOGRAFIA & DEMOGRAFIA: POR ESTADO (UF) E CIDADE */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Card className="rounded-3xl border border-border overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full min-w-0">
+              <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
                 <CardHeader className="p-4 border-b border-border bg-card">
                   <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-indigo-600" />
+                    <MapPin className="w-4 h-4 text-indigo-600 shrink-0" />
                     <span>Consumo por Estado de Origem (UF)</span>
                   </CardTitle>
                   <CardDescription className="text-xs">
                     O que cada estado mais consome e qual o ticket médio regional
                   </CardDescription>
                 </CardHeader>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-xs text-left">
                     <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                       <tr>
                         <th className="p-3">UF</th>
@@ -1059,18 +1059,18 @@ export default function MinibarAdminPage() {
                 </div>
               </Card>
 
-              <Card className="rounded-3xl border border-border overflow-hidden">
+              <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
                 <CardHeader className="p-4 border-b border-border bg-card">
                   <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-sky-600" />
+                    <Building2 className="w-4 h-4 text-sky-600 shrink-0" />
                     <span>Top Cidades Emissoras de Hóspedes</span>
                   </CardTitle>
                   <CardDescription className="text-xs">
                     Preferência de produto por município de residência do hóspede
                   </CardDescription>
                 </CardHeader>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full min-w-[440px] text-xs text-left">
                     <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                       <tr>
                         <th className="p-3">Cidade (UF)</th>
@@ -1105,19 +1105,19 @@ export default function MinibarAdminPage() {
             </div>
 
             {/* 2. CANAL DE RESERVA (OTA vs DIRETO) & REEMBOLSO CORPORATIVO (NOTA FISCAL) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Card className="rounded-3xl border border-border overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full min-w-0">
+              <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
                 <CardHeader className="p-4 border-b border-border bg-card">
                   <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
+                    <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>Consumo por Canal da Reserva (Direto vs. Booking vs. Airbnb)</span>
                   </CardTitle>
                   <CardDescription className="text-xs">
                     Qual canal traz o hóspede que mais consome frigobar e qual dá mais divergência
                   </CardDescription>
                 </CardHeader>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-xs text-left">
                     <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                       <tr>
                         <th className="p-3">Canal de Origem</th>
@@ -1146,10 +1146,10 @@ export default function MinibarAdminPage() {
                 </div>
               </Card>
 
-              <Card className="rounded-3xl border border-border p-4 space-y-4">
+              <Card className="rounded-3xl border border-border p-4 space-y-4 w-full min-w-0">
                 <div>
                   <h3 className="text-sm font-black text-foreground flex items-center gap-2">
-                    <Briefcase className="w-4 h-4 text-sky-600" />
+                    <Briefcase className="w-4 h-4 text-sky-600 shrink-0" />
                     <span>Raio-X de Reembolso Corporativo & Preferência Fiscal</span>
                   </h3>
                   <p className="text-xs text-muted-foreground">
@@ -1179,27 +1179,27 @@ export default function MinibarAdminPage() {
                   })}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between">
-                    <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
                       <span className="text-[10px] text-muted-foreground block">Nota em CPF (Pessoa Física)</span>
                       <strong className="text-sm font-black">
                         {insightsData?.corporateVsLeisure?.documentTypes?.cpf?.count || 0} pedidos
                       </strong>
                     </div>
-                    <span className="font-mono text-xs font-bold text-emerald-600">
+                    <span className="font-mono text-xs font-bold text-emerald-600 shrink-0">
                       R$ {Number(insightsData?.corporateVsLeisure?.documentTypes?.cpf?.revenue || 0).toFixed(2)}
                     </span>
                   </div>
 
-                  <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between">
-                    <div>
+                  <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
                       <span className="text-[10px] text-muted-foreground block">Nota em CNPJ (Empresa)</span>
                       <strong className="text-sm font-black">
                         {insightsData?.corporateVsLeisure?.documentTypes?.cnpj?.count || 0} pedidos
                       </strong>
                     </div>
-                    <span className="font-mono text-xs font-bold text-sky-600">
+                    <span className="font-mono text-xs font-bold text-sky-600 shrink-0">
                       R$ {Number(insightsData?.corporateVsLeisure?.documentTypes?.cnpj?.revenue || 0).toFixed(2)}
                     </span>
                   </div>
@@ -1208,10 +1208,10 @@ export default function MinibarAdminPage() {
             </div>
 
             {/* 3. TEMPORALIDADE (DIA DA SEMANA & HORÁRIO) E PERFIL DE ESTADIA */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <Card className="rounded-3xl border border-border p-4 space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full min-w-0">
+              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
                 <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-primary" />
+                  <Calendar className="w-3.5 h-3.5 text-primary shrink-0" />
                   <span>Consumo por Dia da Semana</span>
                 </h3>
                 <div className="space-y-2">
@@ -1235,9 +1235,9 @@ export default function MinibarAdminPage() {
                 </div>
               </Card>
 
-              <Card className="rounded-3xl border border-border p-4 space-y-3">
+              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
                 <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-amber-500" />
+                  <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                   <span>Faixa de Horário do Consumo</span>
                 </h3>
                 <div className="space-y-2.5">
@@ -1261,9 +1261,9 @@ export default function MinibarAdminPage() {
                 </div>
               </Card>
 
-              <Card className="rounded-3xl border border-border p-4 space-y-3">
+              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
                 <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-teal-600" />
+                  <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
                   <span>Duração da Estadia & Ocupação</span>
                 </h3>
                 <div className="space-y-2">
@@ -1302,11 +1302,11 @@ export default function MinibarAdminPage() {
             </div>
 
             {/* 4. CURVA ABC DE PRODUTOS, MARGEM DE LUCRO & CESTA DE COMPRAS */}
-            <Card className="rounded-3xl border border-border overflow-hidden">
+            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <ShoppingBag className="w-4 h-4 text-primary" />
+                    <ShoppingBag className="w-4 h-4 text-primary shrink-0" />
                     <span>Matriz Curva ABC, Margem de Lucro & Diagnóstico de Giro do Catálogo</span>
                   </CardTitle>
                   <CardDescription className="text-xs">
@@ -1314,8 +1314,8 @@ export default function MinibarAdminPage() {
                   </CardDescription>
                 </div>
               </CardHeader>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
+              <div className="w-full overflow-x-auto">
+                <table className="w-full min-w-[680px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
                       <th className="p-3">Curva</th>
@@ -1379,7 +1379,7 @@ export default function MinibarAdminPage() {
 
             {/* Cesta de Compras (Market Basket) */}
             {Array.isArray(insightsData?.marketBasketPairs) && insightsData.marketBasketPairs.length > 0 && (
-              <Card className="rounded-3xl border border-border p-4 space-y-3">
+              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
                 <div>
                   <h3 className="text-sm font-black text-foreground">
                     🤝 Cesta de Compras — Produtos Mais Consumidos Juntos na Mesma Estadia
@@ -1408,18 +1408,18 @@ export default function MinibarAdminPage() {
             )}
 
             {/* 5. RANKING DE PERFORMANCE POR FLAT */}
-            <Card className="rounded-3xl border border-border overflow-hidden">
+            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card">
                 <CardTitle className="text-sm font-black flex items-center gap-2">
-                  <Award className="w-4 h-4 text-amber-500" />
+                  <Award className="w-4 h-4 text-amber-500 shrink-0" />
                   <span>Ranking de Performance de Frigobar por Flat (19 UHs)</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
                   Faturamento, ticket médio, taxa de divergência nas conferências e item campeão de cada flat
                 </CardDescription>
               </CardHeader>
-              <div className="overflow-x-auto max-h-96">
-                <table className="w-full text-xs text-left">
+              <div className="w-full overflow-x-auto max-h-96">
+                <table className="w-full min-w-[600px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border sticky top-0">
                     <tr>
                       <th className="p-3">Flat</th>
@@ -1456,8 +1456,8 @@ export default function MinibarAdminPage() {
           </TabsContent>
 
           {/* TAB 2: CATÁLOGO */}
-          <TabsContent value="catalogo" className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <TabsContent value="catalogo" className="w-full min-w-0 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button
                   size="sm"
@@ -1480,7 +1480,7 @@ export default function MinibarAdminPage() {
                 ))}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 <div className="relative w-full sm:w-64">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -1494,7 +1494,7 @@ export default function MinibarAdminPage() {
                 <Button
                   size="sm"
                   onClick={() => handleOpenProductModal()}
-                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-8 shrink-0"
+                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-8 shrink-0 w-full sm:w-auto"
                 >
                   <Plus className="w-3.5 h-3.5 mr-1" />
                   Novo Produto
@@ -1502,11 +1502,11 @@ export default function MinibarAdminPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full min-w-0">
               {filteredProducts.map(p => (
-                <Card key={p.id} className="rounded-3xl border border-border bg-card p-4 space-y-3 shadow-xs">
+                <Card key={p.id} className="rounded-3xl border border-border bg-card p-4 space-y-3 shadow-xs w-full min-w-0">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
                       {p.imageUrl ? (
                         <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
                       ) : (
@@ -1514,9 +1514,9 @@ export default function MinibarAdminPage() {
                           🧊
                         </div>
                       )}
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <strong className="text-sm font-bold text-foreground">{p.name}</strong>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <strong className="text-sm font-bold text-foreground break-words">{p.name}</strong>
                           {p.isCourtesy && (
                             <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 text-[9px] font-bold">
                               Cortesia Free
@@ -1531,7 +1531,7 @@ export default function MinibarAdminPage() {
                       size="icon"
                       variant="ghost"
                       onClick={() => handleOpenProductModal(p)}
-                      className="h-8 w-8 rounded-xl text-muted-foreground hover:text-foreground"
+                      className="h-8 w-8 rounded-xl text-muted-foreground hover:text-foreground shrink-0"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </Button>
@@ -1560,21 +1560,21 @@ export default function MinibarAdminPage() {
           </TabsContent>
 
           {/* TAB 3: GABARITO POR FLAT */}
-          <TabsContent value="gabarito" className="space-y-4">
-            <div className="bg-card border border-border p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="space-y-0.5">
+          <TabsContent value="gabarito" className="w-full min-w-0 space-y-4">
+            <div className="bg-card border border-border p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
+              <div className="space-y-0.5 min-w-0">
                 <h3 className="text-sm font-bold text-foreground">Configuração do Gabarito Nominal do Frigobar</h3>
                 <p className="text-xs text-muted-foreground">
                   Ajuste a quantidade padrão de cada item que deve constar no frigobar abastecido.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <span className="text-xs font-bold text-muted-foreground">Aplicar em:</span>
                 <select
                   value={selectedFlatForStock}
                   onChange={e => handleSelectFlatForStock(e.target.value)}
-                  className="h-8 text-xs rounded-xl border border-input bg-background px-3 font-bold"
+                  className="h-8 text-xs rounded-xl border border-input bg-background px-3 font-bold flex-1 sm:flex-initial min-w-0"
                 >
                   <option value="global">🌐 Padrão Global (Todos os Flats)</option>
                   {SOHO_FLATS.map(f => (
@@ -1588,22 +1588,22 @@ export default function MinibarAdminPage() {
                   size="sm"
                   onClick={handleSaveDefaultStock}
                   disabled={savingStock}
-                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-8"
+                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-8 w-full sm:w-auto"
                 >
                   {savingStock ? "Salvando..." : "Salvar Gabarito"}
                 </Button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 w-full min-w-0">
               {products.map(prod => {
                 const qty = stockQuantities[prod.id] || 0;
                 return (
                   <div
                     key={prod.id}
-                    className="p-3.5 rounded-2xl bg-card border border-border flex items-center justify-between gap-3 shadow-xs"
+                    className="p-3.5 rounded-2xl bg-card border border-border flex items-center justify-between gap-3 shadow-xs w-full min-w-0"
                   >
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       {prod.imageUrl ? (
                         <img src={prod.imageUrl} alt={prod.name} className="w-9 h-9 rounded-xl object-cover shrink-0" />
                       ) : (
@@ -1611,9 +1611,9 @@ export default function MinibarAdminPage() {
                           🧊
                         </div>
                       )}
-                      <div>
-                        <div className="font-bold text-xs text-foreground">{prod.name}</div>
-                        <span className="text-[10px] text-muted-foreground">{prod.category}</span>
+                      <div className="min-w-0">
+                        <div className="font-bold text-xs text-foreground truncate">{prod.name}</div>
+                        <span className="text-[10px] text-muted-foreground block truncate">{prod.category}</span>
                       </div>
                     </div>
 
@@ -1656,11 +1656,11 @@ export default function MinibarAdminPage() {
           </TabsContent>
 
           {/* TAB 4: GESTÃO COMPLETA DE EQUIPE ANSERVE (GESTORES + FUNCIONÁRIAS) */}
-          <TabsContent value="equipe" className="space-y-5">
-            <div className="bg-card border border-border p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h3 className="text-base font-black text-foreground flex items-center gap-2">
-                  <Users className="w-5 h-5 text-teal-600" />
+          <TabsContent value="equipe" className="w-full min-w-0 space-y-5">
+            <div className="bg-card border border-border p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full min-w-0">
+              <div className="space-y-1 min-w-0">
+                <h3 className="text-sm sm:text-base font-black text-foreground flex items-center gap-2">
+                  <Users className="w-5 h-5 text-teal-600 shrink-0" />
                   <span>Gestão Geral da Equipe Anserve (Supervisores & Repositoras)</span>
                 </h3>
                 <p className="text-xs text-muted-foreground">
@@ -1668,12 +1668,12 @@ export default function MinibarAdminPage() {
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 shrink-0 w-full sm:w-auto">
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => handleOpenCreateStaff("anserve_gestor")}
-                  className="rounded-xl text-xs font-bold h-9 gap-1.5 border-teal-500/40 text-teal-700 dark:text-teal-300"
+                  className="rounded-xl text-xs font-bold h-9 gap-1.5 border-teal-500/40 text-teal-700 dark:text-teal-300 w-full sm:w-auto"
                 >
                   <ShieldCheck className="w-4 h-4" />
                   <span>Novo Gestor Anserve</span>
@@ -1681,7 +1681,7 @@ export default function MinibarAdminPage() {
                 <Button
                   size="sm"
                   onClick={() => handleOpenCreateStaff("anserve_repositora")}
-                  className="rounded-xl text-xs font-bold h-9 gap-1.5 bg-primary text-primary-foreground"
+                  className="rounded-xl text-xs font-bold h-9 gap-1.5 bg-primary text-primary-foreground w-full sm:w-auto"
                 >
                   <UserPlus className="w-4 h-4" />
                   <span>Nova Funcionária (Repositora)</span>
@@ -1689,7 +1689,7 @@ export default function MinibarAdminPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {[
                 { key: "todos", label: `Todos (${staffList.length})` },
                 {
@@ -1713,9 +1713,9 @@ export default function MinibarAdminPage() {
               ))}
             </div>
 
-            <Card className="rounded-3xl border border-border overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
+            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+              <div className="w-full overflow-x-auto">
+                <table className="w-full min-w-[680px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
                       <th className="p-3.5">Colaborador</th>

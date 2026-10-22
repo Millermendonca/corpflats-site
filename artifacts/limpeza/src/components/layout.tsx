@@ -899,7 +899,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </aside>
       
       {/* Conteúdo Principal */}
-      <main className="flex-1 flex flex-col min-w-0 max-h-[100dvh] overflow-y-auto pb-20 md:pb-0 print:max-h-none print:h-auto print:overflow-visible print:pb-0 print:m-0 print:p-0">
+      <main className="flex-1 flex flex-col w-full min-w-0 max-w-full md:max-h-[100dvh] overflow-x-hidden overflow-y-auto pb-24 md:pb-0 print:max-h-none print:h-auto print:overflow-visible print:pb-0 print:m-0 print:p-0">
         {children}
       </main>
 

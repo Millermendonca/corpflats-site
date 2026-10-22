@@ -752,43 +752,43 @@ export default function AnserveDashboardPage() {
 
   return (
     <Shell>
-      <div className="max-w-7xl mx-auto px-4 py-4 md:py-6 space-y-6 pb-24">
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 space-y-4 sm:space-y-6 pb-28 min-w-0 overflow-x-hidden">
         {/* Header */}
-        <div className="bg-card border border-border p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
-              <Building2 className="w-6 h-6" />
+        <div className="w-full min-w-0 bg-card border border-border p-4 sm:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+              <Building2 className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl md:text-2xl font-black text-foreground">
+                <h1 className="text-base sm:text-xl md:text-2xl font-black text-foreground leading-tight break-words">
                   Painel de Gestão & Supervisão Anserve
                 </h1>
                 <Badge className="bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30 text-[10px] font-bold">
                   Operação & Equipe
                 </Badge>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                 Fila de Notas Fiscais, relatório de vendas com exportação CSV, gestão de funcionárias de reposição e extrato de repasse.
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1.5 bg-muted/40 border border-border rounded-xl px-2.5 py-1">
-              <Calendar className="w-3.5 h-3.5 text-teal-600" />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto shrink-0">
+            <div className="flex items-center justify-between sm:justify-start gap-1.5 bg-muted/40 border border-border rounded-xl px-2.5 py-1.5 w-full sm:w-auto min-w-0">
+              <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
               <input
                 type="date"
                 value={startDate}
                 onChange={e => setStartDate(e.target.value)}
-                className="bg-transparent text-xs font-mono outline-none"
+                className="bg-transparent text-[11px] sm:text-xs font-mono outline-none min-w-0 flex-1 sm:flex-initial"
               />
-              <span className="text-xs text-muted-foreground">até</span>
+              <span className="text-[11px] text-muted-foreground shrink-0">até</span>
               <input
                 type="date"
                 value={endDate}
                 onChange={e => setEndDate(e.target.value)}
-                className="bg-transparent text-xs font-mono outline-none"
+                className="bg-transparent text-[11px] sm:text-xs font-mono outline-none min-w-0 flex-1 sm:flex-initial"
               />
             </div>
             <Button
@@ -796,7 +796,7 @@ export default function AnserveDashboardPage() {
               size="sm"
               onClick={loadAllData}
               disabled={refreshing}
-              className="rounded-xl text-xs font-bold h-9"
+              className="rounded-xl text-xs font-bold h-9 w-full sm:w-auto"
             >
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? "animate-spin" : ""}`} />
               Atualizar
@@ -805,44 +805,44 @@ export default function AnserveDashboardPage() {
         </div>
 
         {/* Tabs Control */}
-        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-4">
-          <TabsList className="bg-muted/50 p-1 rounded-2xl border border-border flex flex-wrap h-auto gap-1">
-            <TabsTrigger value="nfs" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <FileText className="w-3.5 h-3.5 text-primary" />
-              <span>Fila de Notas Fiscais</span>
+        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="w-full min-w-0 space-y-4">
+          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-2 sm:flex sm:flex-wrap h-auto gap-1.5">
+            <TabsTrigger value="nfs" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="truncate">Notas Fiscais</span>
               {pendingOrders.length > 0 && (
-                <span className="bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                <span className="bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0">
                   {pendingOrders.length}
                 </span>
               )}
             </TabsTrigger>
 
-            <TabsTrigger value="vendas" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Relatório de Vendas (CSV)</span>
+            <TabsTrigger value="vendas" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <BarChart3 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="truncate">Vendas (CSV)</span>
             </TabsTrigger>
 
-            <TabsTrigger value="equipe" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <Users className="w-3.5 h-3.5 text-teal-600" />
-              <span>Funcionárias & Produtividade</span>
-              <Badge variant="secondary" className="text-[10px] py-0 px-1.5">
+            <TabsTrigger value="equipe" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span className="truncate">Funcionárias</span>
+              <Badge variant="secondary" className="text-[10px] py-0 px-1.5 shrink-0">
                 {staffList.length}
               </Badge>
             </TabsTrigger>
 
-            <TabsTrigger value="estoque" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <Package className="w-3.5 h-3.5 text-sky-600" />
-              <span>Conferências & Estoque</span>
+            <TabsTrigger value="estoque" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
+              <Package className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              <span className="truncate">Conferências</span>
             </TabsTrigger>
 
-            <TabsTrigger value="extrato" className="rounded-xl text-xs font-bold px-4 py-2 flex items-center gap-2">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Extrato de Repasse</span>
+            <TabsTrigger value="extrato" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0 col-span-2 sm:col-span-1">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate">Extrato de Repasse</span>
             </TabsTrigger>
           </TabsList>
 
           {/* TAB 1: FILA DE NOTAS FISCAIS PENDENTES */}
-          <TabsContent value="nfs" className="space-y-4">
+          <TabsContent value="nfs" className="w-full min-w-0 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-0.5">
                 <h3 className="text-sm font-bold text-foreground">Pedidos Quitados Aguardando Nota Fiscal</h3>
@@ -955,12 +955,12 @@ export default function AnserveDashboardPage() {
           </TabsContent>
 
           {/* TAB 2: RELATÓRIO RESUMIDO DE VENDAS & EXPORTAÇÃO CSV */}
-          <TabsContent value="vendas" className="space-y-5">
+          <TabsContent value="vendas" className="w-full min-w-0 space-y-5">
             {/* Summary KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full min-w-0">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Vendas Pagas no Período</span>
-                <div className="text-xl font-black text-emerald-600">
+                <div className="text-lg sm:text-xl font-black text-emerald-600">
                   R$ {Number(reportsData?.salesSummary?.totalPaidRevenue || 0).toFixed(2)}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
@@ -968,9 +968,9 @@ export default function AnserveDashboardPage() {
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Unidades Vendidas</span>
-                <div className="text-xl font-black text-foreground">
+                <div className="text-lg sm:text-xl font-black text-foreground">
                   {reportsData?.salesSummary?.totalUnitsSold || 0} un.
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
@@ -978,19 +978,19 @@ export default function AnserveDashboardPage() {
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">PIX vs. Cartão</span>
-                <div className="text-sm font-black text-foreground pt-1">
+                <div className="text-xs sm:text-sm font-black text-foreground pt-1">
                   PIX: R$ {Number(reportsData?.salesSummary?.byPaymentMethod?.pix || 0).toFixed(2)}
                 </div>
-                <span className="text-[11px] text-muted-foreground block font-semibold">
+                <span className="text-[10px] sm:text-[11px] text-muted-foreground block font-semibold">
                   Cartão: R$ {Number(reportsData?.salesSummary?.byPaymentMethod?.credit_card || 0).toFixed(2)}
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Divergências em Aberto</span>
-                <div className="text-xl font-black text-amber-600">
+                <div className="text-lg sm:text-xl font-black text-amber-600">
                   R$ {Number(reportsData?.salesSummary?.totalPendingRevenue || 0).toFixed(2)}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
@@ -1000,8 +1000,8 @@ export default function AnserveDashboardPage() {
             </div>
 
             {/* Filters & CSV Export Bar */}
-            <Card className="rounded-3xl border border-border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2 flex-1">
+            <Card className="rounded-3xl border border-border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 w-full min-w-0">
+              <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <div className="relative w-full sm:w-64">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -1015,7 +1015,7 @@ export default function AnserveDashboardPage() {
                 <select
                   value={salesFlatFilter}
                   onChange={e => setSalesFlatFilter(e.target.value)}
-                  className="h-8 text-xs rounded-xl border border-input bg-background px-2.5 font-bold"
+                  className="h-8 text-xs rounded-xl border border-input bg-background px-2.5 font-bold flex-1 sm:flex-initial"
                 >
                   <option value="todos">Todos os Flats</option>
                   {SOHO_FLATS.map(f => (
@@ -1028,7 +1028,7 @@ export default function AnserveDashboardPage() {
                 <select
                   value={salesStatusFilter}
                   onChange={e => setSalesStatusFilter(e.target.value)}
-                  className="h-8 text-xs rounded-xl border border-input bg-background px-2.5 font-bold"
+                  className="h-8 text-xs rounded-xl border border-input bg-background px-2.5 font-bold flex-1 sm:flex-initial"
                 >
                   <option value="todos">Todos os Status</option>
                   <option value="pago">Somente Pagos</option>
@@ -1036,12 +1036,12 @@ export default function AnserveDashboardPage() {
                 </select>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto">
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={handleExportProductsCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
                 >
                   <Download className="w-3.5 h-3.5 text-indigo-600" />
                   <span>Exportar Produtos (CSV)</span>
@@ -1049,7 +1049,7 @@ export default function AnserveDashboardPage() {
                 <Button
                   size="sm"
                   onClick={handleExportSalesCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="rounded-xl text-xs font-bold h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white w-full sm:w-auto"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Exportar Vendas (CSV)</span>
@@ -1060,14 +1060,14 @@ export default function AnserveDashboardPage() {
             {/* Sales Summary by Product */}
             {Array.isArray(reportsData?.salesSummary?.byProduct) &&
               reportsData.salesSummary.byProduct.length > 0 && (
-                <Card className="rounded-3xl border border-border overflow-hidden">
+                <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
                   <CardHeader className="p-4 border-b border-border bg-muted/20">
                     <CardTitle className="text-xs font-black uppercase tracking-wider text-muted-foreground">
                       Resumo de Saída por Produto (Vendas Pagas)
                     </CardTitle>
                   </CardHeader>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
+                  <div className="w-full overflow-x-auto">
+                    <table className="w-full min-w-[460px] text-xs text-left">
                       <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                         <tr>
                           <th className="p-3">Produto</th>
@@ -1096,9 +1096,9 @@ export default function AnserveDashboardPage() {
               )}
 
             {/* Orders Table */}
-            <Card className="rounded-3xl border border-border overflow-hidden">
-              <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between">
-                <div>
+            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+              <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between gap-2">
+                <div className="min-w-0">
                   <CardTitle className="text-sm font-black text-foreground">
                     Listagem de Vendas do Frigobar
                   </CardTitle>
@@ -1106,13 +1106,13 @@ export default function AnserveDashboardPage() {
                     Histórico objetivo de vendas para controle e conciliação da Anserve
                   </CardDescription>
                 </div>
-                <Badge variant="outline" className="text-xs font-bold">
+                <Badge variant="outline" className="text-xs font-bold shrink-0">
                   {filteredReportOrders.length} registros
                 </Badge>
               </CardHeader>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
+              <div className="w-full overflow-x-auto">
+                <table className="w-full min-w-[680px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
                       <th className="p-3.5">Pedido / Data</th>
@@ -1197,12 +1197,12 @@ export default function AnserveDashboardPage() {
           </TabsContent>
 
           {/* TAB 3: GESTÃO DE FUNCIONÁRIAS & PRODUTIVIDADE ANSERVE */}
-          <TabsContent value="equipe" className="space-y-5">
+          <TabsContent value="equipe" className="w-full min-w-0 space-y-5">
             {/* Top Action Bar */}
-            <div className="bg-card border border-border p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h3 className="text-base font-black text-foreground flex items-center gap-2">
-                  <Users className="w-5 h-5 text-teal-600" />
+            <div className="bg-card border border-border p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full min-w-0">
+              <div className="space-y-1 min-w-0">
+                <h3 className="text-sm sm:text-base font-black text-foreground flex items-center gap-2">
+                  <Users className="w-5 h-5 text-teal-600 shrink-0" />
                   <span>Equipe de Reposição & Conferência (Anserve)</span>
                 </h3>
                 <p className="text-xs text-muted-foreground">
@@ -1210,12 +1210,12 @@ export default function AnserveDashboardPage() {
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 shrink-0 w-full sm:w-auto">
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={handleExportProductivityCsv}
-                  className="rounded-xl text-xs font-bold h-9 gap-1.5"
+                  className="rounded-xl text-xs font-bold h-9 gap-1.5 w-full sm:w-auto"
                 >
                   <Download className="w-3.5 h-3.5 text-teal-600" />
                   <span>Exportar Produtividade (CSV)</span>
@@ -1223,7 +1223,7 @@ export default function AnserveDashboardPage() {
                 <Button
                   size="sm"
                   onClick={handleOpenCreateStaff}
-                  className="rounded-xl text-xs font-bold h-9 gap-1.5 bg-teal-600 hover:bg-teal-700 text-white"
+                  className="rounded-xl text-xs font-bold h-9 gap-1.5 bg-teal-600 hover:bg-teal-700 text-white w-full sm:w-auto"
                 >
                   <UserPlus className="w-4 h-4" />
                   <span>Nova Funcionária</span>
@@ -1232,18 +1232,18 @@ export default function AnserveDashboardPage() {
             </div>
 
             {/* Productivity Summary Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full min-w-0">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Funcionárias Cadastradas</span>
-                <div className="text-2xl font-black text-foreground">{staffList.length}</div>
+                <div className="text-xl sm:text-2xl font-black text-foreground">{staffList.length}</div>
                 <span className="text-[10px] text-emerald-600 font-bold block">
                   {staffList.filter(s => s.active !== false).length} ativas para vistoria
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Conferências no Período</span>
-                <div className="text-2xl font-black text-teal-600">
+                <div className="text-xl sm:text-2xl font-black text-teal-600">
                   {reportsData?.productivitySummary?.totalInspections || 0}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
@@ -1252,9 +1252,9 @@ export default function AnserveDashboardPage() {
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Unidades Repostas</span>
-                <div className="text-2xl font-black text-sky-600">
+                <div className="text-xl sm:text-2xl font-black text-sky-600">
                   {staffList.reduce((acc, s) => acc + (s.productivity?.totalItemsRestockedQty || 0), 0)} un.
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
@@ -1263,9 +1263,9 @@ export default function AnserveDashboardPage() {
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
                 <span className="text-[11px] text-muted-foreground font-semibold">Consumos Não Declarados Apurados</span>
-                <div className="text-2xl font-black text-amber-600">
+                <div className="text-xl sm:text-2xl font-black text-amber-600">
                   R${" "}
                   {staffList
                     .reduce((acc, s) => acc + (s.productivity?.discrepancyAmountDetected || 0), 0)
@@ -1282,10 +1282,10 @@ export default function AnserveDashboardPage() {
             </div>
 
             {/* Staff & Productivity Table */}
-            <Card className="rounded-3xl border border-border overflow-hidden">
+            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card">
                 <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
-                  <Award className="w-4 h-4 text-teal-600" />
+                  <Award className="w-4 h-4 text-teal-600 shrink-0" />
                   <span>Quadro de Funcionárias & Desempenho Individual</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
@@ -1293,8 +1293,8 @@ export default function AnserveDashboardPage() {
                 </CardDescription>
               </CardHeader>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
+              <div className="w-full overflow-x-auto">
+                <table className="w-full min-w-[740px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
                       <th className="p-3.5">Funcionária</th>
@@ -1459,10 +1459,10 @@ export default function AnserveDashboardPage() {
           </TabsContent>
 
           {/* TAB 4: VISÃO DE ESTOQUE E REPOSIÇÕES */}
-          <TabsContent value="estoque" className="space-y-4">
-            <Card className="rounded-3xl border border-border overflow-hidden">
-              <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between">
-                <div>
+          <TabsContent value="estoque" className="w-full min-w-0 space-y-4">
+            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+              <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between gap-2">
+                <div className="min-w-0">
                   <CardTitle className="text-sm font-black text-foreground">
                     Histórico de Conferências & Reposições Físicas nos Flats
                   </CardTitle>
@@ -1470,13 +1470,13 @@ export default function AnserveDashboardPage() {
                     Registro auditável de todas as vistorias feitas pelas repositoras no período selecionado
                   </CardDescription>
                 </div>
-                <Badge variant="outline" className="text-xs font-bold">
+                <Badge variant="outline" className="text-xs font-bold shrink-0">
                   {(reportsData?.productivitySummary?.inspections || []).length} vistorias
                 </Badge>
               </CardHeader>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
+              <div className="w-full overflow-x-auto">
+                <table className="w-full min-w-[640px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
                       <th className="p-3.5">Data / Hora</th>
