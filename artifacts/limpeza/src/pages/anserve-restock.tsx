@@ -156,8 +156,13 @@ export default function AnserveRestockPage() {
   useEffect(() => {
     if (user?.name) {
       setInspectorName(user.name);
-    } else if (!inspectorName) {
-      setInspectorName("Repositora Anserve");
+    } else {
+      const savedName = typeof window !== "undefined" ? localStorage.getItem("corpflats_anserve_user_name") : null;
+      if (savedName) {
+        setInspectorName(savedName);
+      } else if (!inspectorName) {
+        setInspectorName("Repositora Anserve");
+      }
     }
   }, [user]);
 
@@ -229,6 +234,10 @@ export default function AnserveRestockPage() {
         if (data.token) {
           localStorage.setItem("corpflats_anserve_token", data.token);
           setLocalToken(data.token);
+        }
+        if (data.user?.name) {
+          localStorage.setItem("corpflats_anserve_user_name", data.user.name);
+          setInspectorName(data.user.name);
         }
         toast({
           title: "Acesso liberado!",

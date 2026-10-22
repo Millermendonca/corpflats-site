@@ -10736,6 +10736,7 @@ app.get("/api/admin/users", (req, res) => {
     whatsapp: u.whatsapp || u.phone || "",
     phone: u.phone || u.whatsapp || "",
     pixKey: u.pixKey || "",
+    pin: u.pin || "",
     active: u.active !== false,
     lastLoginAt: u.lastLoginAt || null,
     allowedModules: Array.isArray(u.allowedModules) ? u.allowedModules : getDefaultModulesForRole(u.role)
@@ -10746,7 +10747,7 @@ app.get("/api/admin/users", (req, res) => {
 app.post("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) return res.status(403).json({ error: "Acesso negado." });
-  const { username, password, role = "camareira", name, whatsapp, phone, pixKey, allowedModules } = req.body || {};
+  const { username, password, role = "camareira", name, whatsapp, phone, pixKey, pin, allowedModules } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ error: "Nome de usuário e senha são obrigatórios." });
@@ -10760,7 +10761,7 @@ app.post("/api/admin/users", (req, res) => {
   if (targetRole === "dev" && userAuth.role !== "dev") {
     return res.status(403).json({ error: "Apenas desenvolvedores podem cadastrar usuários com perfil dev." });
   }
-  const allowedRoles = ["dev", "admin", "recepcao", "camareira"];
+  const allowedRoles = ["dev", "admin", "recepcao", "camareira", "anserve_repositora", "anserve_gestor"];
   if (!allowedRoles.includes(targetRole)) {
     targetRole = "camareira";
   }
@@ -10789,6 +10790,7 @@ app.post("/api/admin/users", (req, res) => {
     whatsapp: cleanPh,
     phone: cleanPh,
     pixKey: (pixKey || "").trim(),
+    pin: pin ? String(pin).trim() : "",
     active: true,
     allowedModules: finalAllowedModules,
     passwordHash: hashPassword(password),
@@ -10804,6 +10806,7 @@ app.post("/api/admin/users", (req, res) => {
     role: newUser.role,
     whatsapp: newUser.whatsapp,
     pixKey: newUser.pixKey,
+    pin: newUser.pin,
     active: newUser.active,
     allowedModules: newUser.allowedModules
   });
@@ -10821,7 +10824,7 @@ app.patch("/api/admin/users/:id", (req, res) => {
     return res.status(403).json({ error: "Apenas desenvolvedores podem alterar contas de desenvolvedor." });
   }
 
-  const { name, username, role, whatsapp, phone, pixKey, active, allowedModules } = req.body || {};
+  const { name, username, role, whatsapp, phone, pixKey, pin, active, allowedModules } = req.body || {};
 
   if (username !== undefined && username.trim()) {
     const existing = db.users.find(u => u.id !== id && u.username.toLowerCase() === username.trim().toLowerCase());
@@ -10835,7 +10838,7 @@ app.patch("/api/admin/users/:id", (req, res) => {
     if (role === "dev" && userAuth.role !== "dev") {
       return res.status(403).json({ error: "Apenas desenvolvedores podem promover usuários a dev." });
     }
-    const allowedRoles = ["dev", "admin", "camareira", "recepcao"];
+    const allowedRoles = ["dev", "admin", "camareira", "recepcao", "anserve_repositora", "anserve_gestor"];
     if (allowedRoles.includes(role)) {
       if (user.role !== role) {
         roleChanged = true;
@@ -10868,6 +10871,7 @@ app.patch("/api/admin/users/:id", (req, res) => {
     user.phone = cleanPh;
   }
   if (pixKey !== undefined) user.pixKey = String(pixKey).trim();
+  if (pin !== undefined) user.pin = String(pin).trim();
   if (active !== undefined) user.active = Boolean(active);
 
   saveDatabase();
@@ -10881,6 +10885,7 @@ app.patch("/api/admin/users/:id", (req, res) => {
       whatsapp: user.whatsapp || "",
       phone: user.phone || "",
       pixKey: user.pixKey || "",
+      pin: user.pin || "",
       active: user.active !== false,
       allowedModules: Array.isArray(user.allowedModules) ? user.allowedModules : getDefaultModulesForRole(user.role)
     }
@@ -47500,7 +47505,11 @@ app.post("/api/minibar/inspections", async (req, res) => {
     const user = getAuthUser(req);
     const pinHeader = req.headers["x-anserve-pin"];
     const tokenHeader = req.headers["x-anserve-token"];
-    const isPinValid = pinHeader && String(pinHeader).trim() === String(db.minibarSettings?.anservePin || "1234");
+    const pinStr = pinHeader ? String(pinHeader).trim() : "";
+    const matchedPinUser = pinStr
+      ? (db.users || []).find(u => u.active !== false && (u.role === "anserve_repositora" || u.role === "anserve_gestor") && u.pin && String(u.pin).trim() === pinStr)
+      : null;
+    const isPinValid = Boolean(matchedPinUser) || (pinStr && pinStr === String(db.minibarSettings?.anservePin || "1234"));
     const testToken = req.headers["x-test-token"] || req.headers["authorization"];
     const isTestAuthorized = testToken === "test-token" || testToken === "Bearer test-token";
     const isStaff = isMinibarStaff(user) || isPinValid || Boolean(tokenHeader) || isTestAuthorized;
@@ -47517,6 +47526,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
       flatNumber,
       reservationCode,
       inspectedBy,
+      inspectorId: bodyInspectorId,
       status,
       missingItems,
       photos,
@@ -47684,6 +47694,18 @@ app.post("/api/minibar/inspections", async (req, res) => {
       }
     }
 
+    const resolvedInspectorUser =
+      user ||
+      matchedPinUser ||
+      (bodyInspectorId ? (db.users || []).find(u => Number(u.id) === Number(bodyInspectorId)) : null) ||
+      (inspectedBy
+        ? (db.users || []).find(
+            u =>
+              (u.name && u.name.trim().toLowerCase() === String(inspectedBy).trim().toLowerCase()) ||
+              (u.username && u.username.trim().toLowerCase() === String(inspectedBy).trim().toLowerCase())
+          )
+        : null);
+
     const inspection = {
       id: `INSP-MB-${Date.now()}`,
       flatNumber: flatStr,
@@ -47691,8 +47713,9 @@ app.post("/api/minibar/inspections", async (req, res) => {
       reservationCode: finalResCode,
       guestName: reservation?.guestName || null,
       guestPhone: reservation?.guestPhone || null,
-      inspectorId: user?.id || null,
-      inspectorName: inspectedBy || user?.name || "Repositora Anserve",
+      inspectorId: resolvedInspectorUser?.id || bodyInspectorId || null,
+      inspectorUsername: resolvedInspectorUser?.username || null,
+      inspectorName: inspectedBy || resolvedInspectorUser?.name || resolvedInspectorUser?.username || "Repositora Anserve",
       inspectedAt: new Date().toISOString(),
       status: hasDiscrepancy ? "divergencia" : "conforme",
       hasDiscrepancy,
@@ -48169,27 +48192,50 @@ app.get("/api/minibar/analytics/demographics", (req, res) => {
   }
 });
 
-// Autenticação Rápida Mobile por PIN da Repositora
+// Autenticação Rápida Mobile por PIN da Repositora (Suporta PIN Individual por Funcionária + PIN Padrão)
 app.post("/api/minibar/auth-pin", (req, res) => {
   try {
     const { pin } = req.body || {};
-    const configuredPin = db.minibarSettings?.anservePin || "1234";
+    const pinStr = String(pin || "").trim();
+    const configuredPin = String(db.minibarSettings?.anservePin || "1234").trim();
 
-    if (!pin || String(pin).trim() !== String(configuredPin).trim()) {
+    if (!pinStr) {
       return res.status(401).json({ success: false, error: "PIN de acesso incorreto." });
     }
 
-    const repositoraUser = (db.users || []).find(u => u.username === "repositora") || {
-      id: 10,
-      username: "repositora",
-      name: "Repositora Anserve",
-      role: "anserve_repositora"
-    };
+    // 1. Tenta localizar funcionária ativa com este PIN individual
+    let matchedUser = (db.users || []).find(
+      u =>
+        u.active !== false &&
+        (u.role === "anserve_repositora" || u.role === "anserve_gestor") &&
+        u.pin &&
+        String(u.pin).trim() === pinStr
+    );
+
+    // 2. Fallback para o PIN global da operação Anserve
+    if (!matchedUser && pinStr === configuredPin) {
+      matchedUser = (db.users || []).find(u => u.username === "repositora") || {
+        id: 10,
+        username: "repositora",
+        name: "Repositora Anserve",
+        role: "anserve_repositora"
+      };
+    }
+
+    if (!matchedUser) {
+      return res.status(401).json({ success: false, error: "PIN de acesso incorreto." });
+    }
+
+    if (matchedUser.active === false) {
+      return res.status(403).json({ success: false, error: "Este cadastro de repositora está inativo." });
+    }
+
+    matchedUser.lastLoginAt = new Date().toISOString();
 
     const token = createAuthToken({
-      id: repositoraUser.id,
-      username: repositoraUser.username,
-      role: repositoraUser.role,
+      id: matchedUser.id,
+      username: matchedUser.username,
+      role: matchedUser.role,
       v: AUTH_SESSION_VERSION
     });
 
@@ -48203,12 +48249,1357 @@ app.post("/api/minibar/auth-pin", (req, res) => {
     res.json({
       success: true,
       user: {
-        id: repositoraUser.id,
-        name: repositoraUser.name,
-        role: repositoraUser.role,
-        allowedModules: getDefaultModulesForRole(repositoraUser.role)
+        id: matchedUser.id,
+        username: matchedUser.username,
+        name: matchedUser.name || matchedUser.username,
+        role: matchedUser.role,
+        allowedModules: getDefaultModulesForRole(matchedUser.role)
       },
       token
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F11: Gestão Hierárquica de Equipe Anserve & Produtividade Individual ─────
+function computeAnserveStaffMetrics(staffUser, inspectionsList, ordersList) {
+  const uid = Number(staffUser.id);
+  const uname = (staffUser.username || "").trim().toLowerCase();
+  const fullName = (staffUser.name || "").trim().toLowerCase();
+
+  const matchingInspections = inspectionsList.filter(insp => {
+    if (insp.inspectorId && Number(insp.inspectorId) === uid) return true;
+    const iUname = (insp.inspectorUsername || "").trim().toLowerCase();
+    if (iUname && uname && iUname === uname) return true;
+    const iName = (insp.inspectorName || insp.inspectedBy || "").trim().toLowerCase();
+    if (iName && ((fullName && iName === fullName) || (uname && iName === uname))) return true;
+    // Se for a repositora padrão (username === 'repositora') e a inspeção tiver o nome genérico sem outro ID
+    if (uname === "repositora" && !insp.inspectorId && (iName === "repositora anserve" || iName === "repositora")) {
+      return true;
+    }
+    return false;
+  });
+
+  let conformeCount = 0;
+  let discrepancyCount = 0;
+  let discrepancyAmountDetected = 0;
+  let discrepancyAmountRecovered = 0;
+  let paidItemsRestockedQty = 0;
+  let courtesyItemsRestockedQty = 0;
+  let paidItemsRestockedCost = 0;
+  let courtesyItemsRestockedCost = 0;
+  const flatsSet = new Set();
+
+  for (const insp of matchingInspections) {
+    if (insp.flatNumber) flatsSet.add(String(insp.flatNumber));
+    const isDiv = insp.hasDiscrepancy || insp.status === "divergencia";
+    if (isDiv) {
+      discrepancyCount += 1;
+      const divAmt = Number(insp.discrepancyTotalAmount) || 0;
+      discrepancyAmountDetected += divAmt;
+      if (insp.chargeOrderId) {
+        const linkedOrder = ordersList.find(o => o.id === insp.chargeOrderId);
+        if (linkedOrder && linkedOrder.paymentStatus === "pago") {
+          discrepancyAmountRecovered += Number(linkedOrder.totalAmount) || divAmt;
+        }
+      }
+    } else {
+      conformeCount += 1;
+    }
+
+    for (const rItem of insp.restockedItems || []) {
+      const q = Number(rItem.quantity) || 0;
+      const c = Number(rItem.totalCost) || (q * (Number(rItem.unitCost) || 0));
+      if (rItem.isCourtesy) {
+        courtesyItemsRestockedQty += q;
+        courtesyItemsRestockedCost += c;
+      } else {
+        paidItemsRestockedQty += q;
+        paidItemsRestockedCost += c;
+      }
+    }
+  }
+
+  const sortedInsp = [...matchingInspections].sort((a, b) =>
+    String(b.inspectedAt || b.createdAt || "").localeCompare(String(a.inspectedAt || a.createdAt || ""))
+  );
+
+  return {
+    inspectionsCount: matchingInspections.length,
+    conformeCount,
+    discrepancyCount,
+    conformityRatePct:
+      matchingInspections.length > 0
+        ? Number(((conformeCount / matchingInspections.length) * 100).toFixed(1))
+        : 100,
+    discrepancyAmountDetected: Number(discrepancyAmountDetected.toFixed(2)),
+    discrepancyAmountRecovered: Number(discrepancyAmountRecovered.toFixed(2)),
+    paidItemsRestockedQty,
+    courtesyItemsRestockedQty,
+    totalItemsRestockedQty: paidItemsRestockedQty + courtesyItemsRestockedQty,
+    paidItemsRestockedCost: Number(paidItemsRestockedCost.toFixed(2)),
+    courtesyItemsRestockedCost: Number(courtesyItemsRestockedCost.toFixed(2)),
+    flatsVisitedCount: flatsSet.size,
+    flatsVisited: Array.from(flatsSet),
+    lastInspectionAt: sortedInsp[0]?.inspectedAt || sortedInsp[0]?.createdAt || null,
+    recentInspections: sortedInsp.slice(0, 50)
+  };
+}
+
+app.get("/api/minibar/staff", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+
+    const { startDate, endDate, roleFilter } = req.query;
+    const isCorpFlatsAdmin = !userAuth || userAuth.role === "admin" || userAuth.role === "dev";
+
+    // Filtra inspeções pelo período solicitado para o cálculo de produtividade
+    const filteredInspections = (db.minibarInspections || []).filter(i => {
+      const d = String(i.inspectedAt || i.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
+    const allOrders = db.minibarOrders || [];
+
+    const staffUsers = (db.users || []).filter(u => {
+      if (isCorpFlatsAdmin) {
+        if (roleFilter && roleFilter !== "todos") {
+          return u.role === roleFilter;
+        }
+        return u.role === "anserve_repositora" || u.role === "anserve_gestor";
+      }
+      // Gestor Anserve vê e gerencia exclusivamente as funcionárias de reposição (anserve_repositora)
+      return u.role === "anserve_repositora";
+    });
+
+    const staffList = staffUsers.map(u => {
+      const productivity = computeAnserveStaffMetrics(u, filteredInspections, allOrders);
+      return {
+        id: u.id,
+        username: u.username,
+        name: u.name || u.username,
+        role: u.role,
+        whatsapp: u.whatsapp || u.phone || "",
+        phone: u.phone || u.whatsapp || "",
+        pixKey: u.pixKey || "",
+        pin: u.pin || "",
+        active: u.active !== false,
+        lastLoginAt: u.lastLoginAt || null,
+        createdAt: u.createdAt || null,
+        allowedModules: Array.isArray(u.allowedModules) ? u.allowedModules : getDefaultModulesForRole(u.role),
+        productivity
+      };
+    });
+
+    res.json({
+      success: true,
+      canManageManagers: isCorpFlatsAdmin,
+      staff: staffList
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/minibar/staff", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+
+    const isCorpFlatsAdmin = !userAuth || userAuth.role === "admin" || userAuth.role === "dev";
+    const { username, password, name, role = "anserve_repositora", whatsapp, phone, pixKey, pin } = req.body || {};
+
+    if (!username || !String(username).trim() || !password || String(password).trim().length < 4) {
+      return res.status(400).json({
+        success: false,
+        error: "Login (@usuário) e senha (mínimo 4 caracteres) são obrigatórios."
+      });
+    }
+
+    // Trava de hierarquia: Gestor Anserve só pode criar anserve_repositora
+    if (!isCorpFlatsAdmin && role !== "anserve_repositora") {
+      return res.status(403).json({
+        success: false,
+        error: "O gestor da Anserve pode cadastrar apenas funcionárias de reposição (anserve_repositora)."
+      });
+    }
+
+    const targetRole = isCorpFlatsAdmin && role === "anserve_gestor" ? "anserve_gestor" : "anserve_repositora";
+
+    if ((db.users || []).some(u => u.username && u.username.toLowerCase() === String(username).trim().toLowerCase())) {
+      return res.status(409).json({ success: false, error: "Já existe um usuário com este login (@usuário)." });
+    }
+
+    const cleanPin = pin ? String(pin).replace(/\D/g, "").slice(0, 6) : "";
+    if (cleanPin && (db.users || []).some(u => u.pin && String(u.pin) === cleanPin)) {
+      return res.status(409).json({ success: false, error: "Este PIN já está em uso por outra funcionária." });
+    }
+
+    const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
+    const nextId = (db.users || []).length > 0 ? Math.max(...db.users.map(u => Number(u.id) || 0)) + 1 : 1;
+
+    const newStaff = {
+      id: nextId,
+      username: String(username).trim(),
+      name: String(name || username).trim(),
+      role: targetRole,
+      whatsapp: cleanPh,
+      phone: cleanPh,
+      pixKey: String(pixKey || "").trim(),
+      pin: cleanPin,
+      active: true,
+      allowedModules: getDefaultModulesForRole(targetRole),
+      passwordHash: hashPassword(String(password).trim()),
+      createdAt: new Date().toISOString(),
+      password_updated_at: new Date().toISOString()
+    };
+
+    db.users.push(newStaff);
+    saveDatabase("minibar_staff_created");
+
+    res.status(201).json({
+      success: true,
+      member: {
+        id: newStaff.id,
+        username: newStaff.username,
+        name: newStaff.name,
+        role: newStaff.role,
+        whatsapp: newStaff.whatsapp,
+        phone: newStaff.phone,
+        pixKey: newStaff.pixKey,
+        pin: newStaff.pin,
+        active: newStaff.active,
+        createdAt: newStaff.createdAt,
+        allowedModules: newStaff.allowedModules
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch("/api/minibar/staff/:id", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+
+    const isCorpFlatsAdmin = !userAuth || userAuth.role === "admin" || userAuth.role === "dev";
+    const targetId = Number(req.params.id);
+    const targetUser = (db.users || []).find(u => Number(u.id) === targetId);
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: "Colaborador não encontrado." });
+    }
+
+    // Trava de segurança hierárquica
+    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora") {
+      return res.status(403).json({
+        success: false,
+        error: "O gestor da Anserve pode editar apenas funcionárias de reposição."
+      });
+    }
+    if (isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_gestor") {
+      return res.status(403).json({
+        success: false,
+        error: "Use /api/admin/users para editar colaboradores de outros departamentos."
+      });
+    }
+
+    const { name, username, role, whatsapp, phone, pixKey, pin, active } = req.body || {};
+
+    if (username !== undefined && String(username).trim()) {
+      const cleanU = String(username).trim();
+      const dup = (db.users || []).find(u => Number(u.id) !== targetId && u.username.toLowerCase() === cleanU.toLowerCase());
+      if (dup) {
+        return res.status(409).json({ success: false, error: "Já existe outro colaborador com este login." });
+      }
+      targetUser.username = cleanU;
+    }
+
+    if (name !== undefined) {
+      targetUser.name = String(name).trim();
+    }
+
+    if (role !== undefined) {
+      if (!isCorpFlatsAdmin && role !== "anserve_repositora") {
+        return res.status(403).json({
+          success: false,
+          error: "Apenas a administração da CorpFlats pode alterar o cargo para Gestor Anserve."
+        });
+      }
+      if (role === "anserve_repositora" || role === "anserve_gestor") {
+        targetUser.role = role;
+        targetUser.allowedModules = getDefaultModulesForRole(role);
+      }
+    }
+
+    if (whatsapp !== undefined || phone !== undefined) {
+      const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
+      targetUser.whatsapp = cleanPh;
+      targetUser.phone = cleanPh;
+    }
+
+    if (pixKey !== undefined) {
+      targetUser.pixKey = String(pixKey).trim();
+    }
+
+    if (pin !== undefined) {
+      const cleanPin = String(pin).replace(/\D/g, "").slice(0, 6);
+      if (cleanPin && (db.users || []).some(u => Number(u.id) !== targetId && u.pin && String(u.pin) === cleanPin)) {
+        return res.status(409).json({ success: false, error: "Este PIN já está em uso por outra funcionária." });
+      }
+      targetUser.pin = cleanPin;
+    }
+
+    if (active !== undefined) {
+      targetUser.active = Boolean(active);
+    }
+
+    saveDatabase("minibar_staff_updated");
+
+    res.json({
+      success: true,
+      member: {
+        id: targetUser.id,
+        username: targetUser.username,
+        name: targetUser.name || targetUser.username,
+        role: targetUser.role,
+        whatsapp: targetUser.whatsapp || "",
+        phone: targetUser.phone || "",
+        pixKey: targetUser.pixKey || "",
+        pin: targetUser.pin || "",
+        active: targetUser.active !== false,
+        allowedModules: targetUser.allowedModules
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+const handleResetMinibarStaffPassword = (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+
+    const isCorpFlatsAdmin = !userAuth || userAuth.role === "admin" || userAuth.role === "dev";
+    const targetId = Number(req.params.id);
+    const targetUser = (db.users || []).find(u => Number(u.id) === targetId);
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: "Colaborador não encontrado." });
+    }
+
+    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora") {
+      return res.status(403).json({
+        success: false,
+        error: "O gestor da Anserve pode redefinir a senha apenas de funcionárias de reposição."
+      });
+    }
+    if (isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_gestor") {
+      return res.status(403).json({
+        success: false,
+        error: "Colaborador fora do escopo Anserve."
+      });
+    }
+
+    const { newPassword, newPin } = req.body || {};
+    if (!newPassword && newPin === undefined) {
+      return res.status(400).json({ success: false, error: "Informe a nova senha ou o novo PIN." });
+    }
+
+    if (newPassword) {
+      if (String(newPassword).trim().length < 4) {
+        return res.status(400).json({ success: false, error: "A nova senha deve ter no mínimo 4 caracteres." });
+      }
+      targetUser.passwordHash = hashPassword(String(newPassword).trim());
+      targetUser.password_updated_at = new Date().toISOString();
+    }
+
+    if (newPin !== undefined) {
+      const cleanPin = String(newPin).replace(/\D/g, "").slice(0, 6);
+      if (cleanPin && (db.users || []).some(u => Number(u.id) !== targetId && u.pin && String(u.pin) === cleanPin)) {
+        return res.status(409).json({ success: false, error: "Este PIN já está em uso por outra funcionária." });
+      }
+      targetUser.pin = cleanPin;
+    }
+
+    saveDatabase("minibar_staff_password_reset");
+
+    res.json({
+      success: true,
+      message: `Credenciais de ${targetUser.name || targetUser.username} atualizadas com sucesso!`,
+      pin: targetUser.pin || ""
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+app.post("/api/minibar/staff/:id/reset-password", handleResetMinibarStaffPassword);
+app.patch("/api/minibar/staff/:id/reset-password", handleResetMinibarStaffPassword);
+
+app.delete("/api/minibar/staff/:id", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração CorpFlats." });
+    }
+
+    const isCorpFlatsAdmin = !userAuth || userAuth.role === "admin" || userAuth.role === "dev";
+    const targetId = Number(req.params.id);
+
+    const targetUser = (db.users || []).find(u => Number(u.id) === targetId);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: "Colaborador não encontrado." });
+    }
+
+    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora") {
+      return res.status(403).json({
+        success: false,
+        error: "O gestor da Anserve pode excluir apenas funcionárias de reposição."
+      });
+    }
+    if (isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_gestor") {
+      return res.status(403).json({
+        success: false,
+        error: "Colaborador fora do escopo Anserve."
+      });
+    }
+
+    if (userAuth && Number(userAuth.id) === targetId) {
+      return res.status(400).json({ success: false, error: "Você não pode excluir seu próprio cadastro." });
+    }
+
+    db.users = (db.users || []).filter(u => Number(u.id) !== targetId);
+    saveDatabase("minibar_staff_deleted");
+
+    res.json({ success: true, deletedId: targetId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F12: Relatório Resumido de Vendas & Produtividade da Equipe Anserve (CSV) ─
+app.get("/api/minibar/anserve-reports", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    if (!isTestBypass && !isMinibarAdmin(userAuth)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao Gestor Anserve e Administração." });
+    }
+
+    const { startDate, endDate, flatNumber, status, productId } = req.query;
+    const productsCatalog = db.minibarProducts || [];
+
+    const filteredOrders = (db.minibarOrders || []).filter(o => {
+      if (!o) return false;
+      const d = String(o.paidAt || o.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      if (flatNumber && flatNumber !== "todos" && String(o.flatNumber) !== String(flatNumber)) return false;
+      if (status && status !== "todos" && o.paymentStatus !== status) return false;
+      if (productId && productId !== "todos") {
+        const hasProd = (o.items || []).some(it => it.productId === productId);
+        if (!hasProd) return false;
+      }
+      return true;
+    });
+
+    const filteredInspections = (db.minibarInspections || []).filter(i => {
+      if (!i) return false;
+      const d = String(i.inspectedAt || i.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      if (flatNumber && flatNumber !== "todos" && String(i.flatNumber) !== String(flatNumber)) return false;
+      return true;
+    });
+
+    let totalPaidRevenue = 0;
+    let totalPaidCost = 0;
+    let totalPendingRevenue = 0;
+    let totalOrdersPaid = 0;
+    let totalOrdersPending = 0;
+    let totalUnitsSold = 0;
+    const byProductMap = {};
+    const byPaymentMethod = { pix: 0, credit_card: 0, pendente: 0 };
+
+    const enrichedOrders = filteredOrders.map(ord => {
+      const isPaid = ord.paymentStatus === "pago";
+      const amt = Number(ord.totalAmount) || 0;
+      let orderCost = 0;
+      let orderUnits = 0;
+
+      for (const it of ord.items || []) {
+        const prod = productsCatalog.find(p => p.id === it.productId);
+        const qty = Number(it.quantity) || 0;
+        const uPrice = Number(it.unitPrice ?? prod?.price) || 0;
+        const uCost = Number(prod?.cost) || 0;
+        const itemRevenue = Number(it.totalPrice) || (qty * uPrice);
+        const itemCost = qty * uCost;
+
+        orderCost += itemCost;
+        orderUnits += qty;
+
+        if (isPaid) {
+          if (!byProductMap[it.productId]) {
+            byProductMap[it.productId] = {
+              productId: it.productId,
+              productName: it.productName || prod?.name || it.productId,
+              category: prod?.category || "Geral",
+              unitsSold: 0,
+              unitPrice: uPrice,
+              unitCost: uCost,
+              totalRevenue: 0,
+              totalCost: 0
+            };
+          }
+          byProductMap[it.productId].unitsSold += qty;
+          byProductMap[it.productId].totalRevenue += itemRevenue;
+          byProductMap[it.productId].totalCost += itemCost;
+        }
+      }
+
+      if (isPaid) {
+        totalPaidRevenue += amt;
+        totalPaidCost += orderCost;
+        totalOrdersPaid += 1;
+        totalUnitsSold += orderUnits;
+        if (ord.paymentMethod === "pix") byPaymentMethod.pix += amt;
+        else byPaymentMethod.credit_card += amt;
+      } else {
+        totalPendingRevenue += amt;
+        totalOrdersPending += 1;
+        byPaymentMethod.pendente += amt;
+      }
+
+      return {
+        id: ord.id,
+        date: ord.paidAt || ord.createdAt,
+        flatNumber: ord.flatNumber,
+        reservationCode: ord.reservationCode || "",
+        guestName: ord.guestName || "Hóspede",
+        paymentMethod: ord.paymentMethod,
+        paymentStatus: ord.paymentStatus,
+        source: ord.source || "guest_qr",
+        totalAmount: Number(amt.toFixed(2)),
+        totalCost: Number(orderCost.toFixed(2)),
+        unitsCount: orderUnits,
+        invoiceStatus: ord.invoice?.status || "pendente",
+        invoiceNumber: ord.invoice?.invoiceNumber || "",
+        invoiceDescriptionType: ord.fiscalPreferences?.invoiceDescriptionType || "detailed",
+        documentNumber: ord.fiscalPreferences?.documentNumber || ord.guestDocument || "",
+        itemsSummary: (ord.items || []).map(it => `${it.quantity}x ${it.productName || it.productId}`).join(", "),
+        items: ord.items || []
+      };
+    });
+
+    const repositoras = (db.users || []).filter(u => u.role === "anserve_repositora");
+    const staffProductivity = repositoras.map(u => {
+      const m = computeAnserveStaffMetrics(u, filteredInspections, db.minibarOrders || []);
+      return {
+        id: u.id,
+        username: u.username,
+        name: u.name || u.username,
+        active: u.active !== false,
+        whatsapp: u.whatsapp || "",
+        pin: u.pin || "",
+        ...m
+      };
+    }).sort((a, b) => b.inspectionsCount - a.inspectionsCount);
+
+    const totalInspections = filteredInspections.length;
+    const totalDiscrepancies = filteredInspections.filter(i => i.hasDiscrepancy || i.status === "divergencia").length;
+    const totalConforme = totalInspections - totalDiscrepancies;
+
+    res.json({
+      success: true,
+      period: { startDate: startDate || null, endDate: endDate || null },
+      salesSummary: {
+        totalPaidRevenue: Number(totalPaidRevenue.toFixed(2)),
+        totalPaidCost: Number(totalPaidCost.toFixed(2)),
+        totalPendingRevenue: Number(totalPendingRevenue.toFixed(2)),
+        totalOrdersPaid,
+        totalOrdersPending,
+        totalUnitsSold,
+        averageTicket: totalOrdersPaid > 0 ? Number((totalPaidRevenue / totalOrdersPaid).toFixed(2)) : 0,
+        byPaymentMethod: {
+          pix: Number(byPaymentMethod.pix.toFixed(2)),
+          credit_card: Number(byPaymentMethod.credit_card.toFixed(2)),
+          pendente: Number(byPaymentMethod.pendente.toFixed(2))
+        },
+        byProduct: Object.values(byProductMap)
+          .map(p => ({
+            ...p,
+            totalRevenue: Number(p.totalRevenue.toFixed(2)),
+            totalCost: Number(p.totalCost.toFixed(2))
+          }))
+          .sort((a, b) => b.unitsSold - a.unitsSold),
+        orders: enrichedOrders.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      },
+      productivitySummary: {
+        totalInspections,
+        totalConforme,
+        totalDiscrepancies,
+        conformityRatePct: totalInspections > 0 ? Number(((totalConforme / totalInspections) * 100).toFixed(1)) : 100,
+        byStaff: staffProductivity,
+        inspections: filteredInspections.sort((a, b) => String(b.inspectedAt || "").localeCompare(String(a.inspectedAt || "")))
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── F13: Super-Motor de Inteligência & Insights 360° (EXCLUSIVO ADMIN CORPFLATS) ─
+app.get("/api/minibar/analytics/insights-360", (req, res) => {
+  try {
+    const userAuth = getAuthUser(req);
+    const isTestBypass = process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true";
+    // Estritamente exclusivo para Admin e Dev da CorpFlats (Bloqueia Gestor e Repositora Anserve)
+    if (!isTestBypass && (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev"))) {
+      return res.status(403).json({
+        success: false,
+        error: "Acesso exclusivo à Diretoria / Administração da CorpFlats."
+      });
+    }
+
+    const { startDate, endDate } = req.query;
+    const allOrders = (db.minibarOrders || []).filter(o => {
+      if (!o) return false;
+      const d = String(o.paidAt || o.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
+
+    const paidOrders = allOrders.filter(o => o.paymentStatus === "pago");
+    const allInspections = (db.minibarInspections || []).filter(i => {
+      if (!i) return false;
+      const d = String(i.inspectedAt || i.createdAt || "").split("T")[0];
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
+
+    const productsCatalog = db.minibarProducts || [];
+    const reservations = db.reservations || [];
+    const guests = db.guests || [];
+    const flatsList = [
+      "101", "102", "113", "114", "116", "211", "212", "215",
+      "313", "408", "509", "511", "512", "605", "712", "715",
+      "904", "905", "907", "1004", "1304"
+    ];
+
+    const inferCategory = (productId, productName) => {
+      const prod = productsCatalog.find(p => p.id === productId);
+      const raw = `${prod?.category || ""} ${productName || ""} ${prod?.name || ""} ${productId || ""}`.toLowerCase();
+      if (raw.includes("cerveja") || raw.includes("heineken") || raw.includes("stella") || raw.includes("corona") || raw.includes("alco")) {
+        return "Cervejas & Alcoólicos";
+      }
+      if (raw.includes("coca") || raw.includes("refrigerante") || raw.includes("guaran") || raw.includes("soda") || raw.includes("fanta") || raw.includes("tônica") || raw.includes("tonica")) {
+        return "Refrigerantes";
+      }
+      if (raw.includes("água") || raw.includes("agua") || raw.includes("suco") || raw.includes("isotônico") || raw.includes("gatorade") || raw.includes("coco")) {
+        return "Água & Sucos";
+      }
+      if (raw.includes("nespresso") || raw.includes("café") || raw.includes("cafe") || raw.includes("cápsula") || raw.includes("capsula") || raw.includes("energético") || raw.includes("red bull")) {
+        return "Cafés & Especiais";
+      }
+      if (raw.includes("amendoim") || raw.includes("snack") || raw.includes("chocolate") || raw.includes("pringles") || raw.includes("batata") || raw.includes("bala") || raw.includes("castanha") || raw.includes("kitkat")) {
+        return "Snacks & Chocolates";
+      }
+      return prod?.category || "Outros";
+    };
+
+    const inferStateFromPhone = (phoneStr) => {
+      if (!phoneStr) return null;
+      const clean = String(phoneStr).replace(/\D/g, "");
+      const ddd = clean.startsWith("55") ? clean.slice(2, 4) : clean.slice(0, 2);
+      const dddNum = parseInt(ddd, 10);
+      if (isNaN(dddNum)) return null;
+      if ([21, 22, 24].includes(dddNum)) return "RJ";
+      if (dddNum >= 11 && dddNum <= 19) return "SP";
+      if ([31, 32, 33, 34, 35, 37, 38].includes(dddNum)) return "MG";
+      if ([27, 28].includes(dddNum)) return "ES";
+      if (dddNum >= 41 && dddNum <= 46) return "PR";
+      if (dddNum >= 47 && dddNum <= 49) return "SC";
+      if (dddNum >= 51 && dddNum <= 55) return "RS";
+      if (dddNum === 61) return "DF";
+      if ([62, 64].includes(dddNum)) return "GO";
+      if ([71, 73, 74, 75, 77].includes(dddNum)) return "BA";
+      if ([81, 87].includes(dddNum)) return "PE";
+      if ([85, 88].includes(dddNum)) return "CE";
+      return null;
+    };
+
+    const normalizeChannelName = (rawChannel) => {
+      const ch = String(rawChannel || "").toLowerCase();
+      if (ch.includes("booking")) return "Booking.com";
+      if (ch.includes("airbnb")) return "Airbnb";
+      if (ch.includes("corp") || ch.includes("empresa") || ch.includes("faturado") || ch.includes("b2b")) return "Corporativo / B2B";
+      return "Direto / Site & WhatsApp";
+    };
+
+    // Estruturas de agregação
+    let totalRevenue = 0;
+    let totalCost = 0;
+    let totalUnitsSold = 0;
+    const stateMap = {};
+    const cityMap = {};
+    const channelMap = {
+      "Direto / Site & WhatsApp": { channel: "Direto / Site & WhatsApp", ordersCount: 0, revenue: 0, units: 0, discrepancies: 0, categories: {} },
+      "Booking.com": { channel: "Booking.com", ordersCount: 0, revenue: 0, units: 0, discrepancies: 0, categories: {} },
+      "Airbnb": { channel: "Airbnb", ordersCount: 0, revenue: 0, units: 0, discrepancies: 0, categories: {} },
+      "Corporativo / B2B": { channel: "Corporativo / B2B", ordersCount: 0, revenue: 0, units: 0, discrepancies: 0, categories: {} }
+    };
+
+    const fiscalPrefStats = {
+      water: { label: "Lançar como 'Água'", count: 0, revenue: 0, topRealProducts: {} },
+      minibar_consumption: { label: "Lançar como 'Consumo de Frigobar'", count: 0, revenue: 0, topRealProducts: {} },
+      detailed: { label: "Discriminar Todos os Itens", count: 0, revenue: 0, topRealProducts: {} }
+    };
+    const documentTypeStats = {
+      cpf: { count: 0, revenue: 0 },
+      cnpj: { count: 0, revenue: 0 }
+    };
+
+    const dayNames = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+    const byDayOfWeekMap = dayNames.map((day, idx) => ({
+      dayIndex: idx,
+      day,
+      ordersCount: 0,
+      revenue: 0,
+      units: 0,
+      categories: {}
+    }));
+
+    const hourSlots = [
+      { id: "madrugada", label: "Madrugada (00h–06h)", ordersCount: 0, revenue: 0, units: 0, categories: {} },
+      { id: "manha", label: "Manhã / Check-out (06h–12h)", ordersCount: 0, revenue: 0, units: 0, categories: {} },
+      { id: "tarde", label: "Tarde / Check-in (12h–18h)", ordersCount: 0, revenue: 0, units: 0, categories: {} },
+      { id: "noite", label: "Noite / Jantar (18h–24h)", ordersCount: 0, revenue: 0, units: 0, categories: {} }
+    ];
+
+    const stayLengthBuckets = {
+      short: { id: "short", label: "Curta Estadia (1–2 noites)", ordersCount: 0, revenue: 0, units: 0, topCategory: {} },
+      mid: { id: "mid", label: "Média Estadia (3–4 noites)", ordersCount: 0, revenue: 0, units: 0, topCategory: {} },
+      long: { id: "long", label: "Long-Stay (5+ noites)", ordersCount: 0, revenue: 0, units: 0, topCategory: {} }
+    };
+
+    const guestCountBuckets = {
+      solo: { id: "solo", label: "Individual (1 hóspede)", ordersCount: 0, revenue: 0, units: 0, categories: {} },
+      coupleOrGroup: { id: "coupleOrGroup", label: "Casal / Duplo+ (2+ hóspedes)", ordersCount: 0, revenue: 0, units: 0, categories: {} }
+    };
+
+    const flatMap = {};
+    for (const f of flatsList) {
+      flatMap[f] = {
+        flatNumber: f,
+        ordersCount: 0,
+        revenue: 0,
+        cost: 0,
+        unitsSold: 0,
+        inspectionsCount: 0,
+        discrepancyCount: 0,
+        courtesyCost: 0,
+        products: {}
+      };
+    }
+
+    const productPerfMap = {};
+    for (const prod of productsCatalog) {
+      productPerfMap[prod.id] = {
+        productId: prod.id,
+        name: prod.name,
+        category: prod.category || inferCategory(prod.id, prod.name),
+        isCourtesy: Boolean(prod.isCourtesy),
+        unitPrice: Number(prod.price) || 0,
+        unitCost: Number(prod.cost) || 0,
+        unitsSold: 0,
+        revenue: 0,
+        totalCost: 0,
+        netProfit: 0,
+        ordersPresenceCount: 0
+      };
+    }
+
+    // Co-ocorrência de produtos (Market Basket)
+    const pairCounts = {};
+
+    for (const ord of paidOrders) {
+      const amt = Number(ord.totalAmount) || 0;
+      totalRevenue += amt;
+
+      const resMatch = reservations.find(
+        r =>
+          (ord.reservationCode && r.code === ord.reservationCode) ||
+          (ord.reservationId && String(r.id) === String(ord.reservationId))
+      );
+
+      const cleanDoc = String(ord.guestDocument || resMatch?.guestDocument || "").replace(/\D/g, "");
+      const cleanPh = normalizePhone(ord.guestPhone || resMatch?.guestPhone || "");
+      const guestMatch = guests.find(
+        g =>
+          (resMatch?.guestId && g.id === resMatch.guestId) ||
+          (cleanDoc && String(g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+          (cleanPh && cleanPh.length >= 8 && normalizePhone(g.phone || "") === cleanPh)
+      );
+
+      // 1. Estado e Cidade
+      let state = String(guestMatch?.state || guestMatch?.uf || resMatch?.guestState || "").trim().toUpperCase();
+      let city = String(guestMatch?.city || guestMatch?.cidade || resMatch?.guestCity || "").trim();
+      if (!state && resMatch?.guests?.[0]) {
+        state = String(resMatch.guests[0].state || resMatch.guests[0].uf || "").trim().toUpperCase();
+        if (!city) city = String(resMatch.guests[0].city || resMatch.guests[0].cidade || "").trim();
+      }
+      if (!state) {
+        state = inferStateFromPhone(ord.guestPhone || resMatch?.guestPhone) || "NI";
+      }
+      if (!city) {
+        city = state === "RJ" ? "Rio de Janeiro / Interior RJ" : state === "SP" ? "São Paulo / Interior SP" : `Outras (${state})`;
+      }
+
+      if (!stateMap[state]) {
+        stateMap[state] = {
+          state,
+          ordersCount: 0,
+          revenue: 0,
+          units: 0,
+          categories: {},
+          products: {}
+        };
+      }
+      stateMap[state].ordersCount += 1;
+      stateMap[state].revenue += amt;
+
+      const cityKey = `${city} (${state})`;
+      if (!cityMap[cityKey]) {
+        cityMap[cityKey] = {
+          city,
+          state,
+          cityLabel: cityKey,
+          ordersCount: 0,
+          revenue: 0,
+          units: 0,
+          categories: {},
+          products: {}
+        };
+      }
+      cityMap[cityKey].ordersCount += 1;
+      cityMap[cityKey].revenue += amt;
+
+      // 2. Canal da Reserva
+      const chName = normalizeChannelName(resMatch?.channel || resMatch?.source);
+      if (!channelMap[chName]) {
+        channelMap[chName] = { channel: chName, ordersCount: 0, revenue: 0, units: 0, discrepancies: 0, categories: {} };
+      }
+      channelMap[chName].ordersCount += 1;
+      channelMap[chName].revenue += amt;
+      if (ord.source === "anserve_discrepancy") {
+        channelMap[chName].discrepancies += 1;
+      }
+
+      // 3. Preferências Fiscais (Corporativo vs Lazer)
+      const prefKey = String(ord.fiscalPreferences?.invoiceDescriptionType || "detailed").toLowerCase();
+      const targetPref =
+        prefKey === "water" || prefKey === "water_only"
+          ? fiscalPrefStats.water
+          : prefKey === "minibar_consumption" || prefKey === "generic_minibar"
+            ? fiscalPrefStats.minibar_consumption
+            : fiscalPrefStats.detailed;
+      targetPref.count += 1;
+      targetPref.revenue += amt;
+
+      const docDigitLen = String(ord.fiscalPreferences?.documentNumber || cleanDoc).replace(/\D/g, "").length;
+      const isCnpj = ord.fiscalPreferences?.documentType === "cnpj" || docDigitLen === 14 || Boolean(ord.fiscalPreferences?.companyName);
+      if (isCnpj) {
+        documentTypeStats.cnpj.count += 1;
+        documentTypeStats.cnpj.revenue += amt;
+      } else {
+        documentTypeStats.cpf.count += 1;
+        documentTypeStats.cpf.revenue += amt;
+      }
+
+      // 4. Temporalidade (Dia da Semana e Horário)
+      const dtObj = new Date(ord.paidAt || ord.createdAt || Date.now());
+      const dayIdx = isNaN(dtObj.getTime()) ? 5 : dtObj.getDay();
+      const hourVal = isNaN(dtObj.getTime()) ? 10 : dtObj.getHours();
+      const dayBucket = byDayOfWeekMap[dayIdx] || byDayOfWeekMap[5];
+      dayBucket.ordersCount += 1;
+      dayBucket.revenue += amt;
+
+      let hourSlot = hourSlots[1];
+      if (hourVal >= 0 && hourVal < 6) hourSlot = hourSlots[0];
+      else if (hourVal >= 6 && hourVal < 12) hourSlot = hourSlots[1];
+      else if (hourVal >= 12 && hourVal < 18) hourSlot = hourSlots[2];
+      else hourSlot = hourSlots[3];
+      hourSlot.ordersCount += 1;
+      hourSlot.revenue += amt;
+
+      // 5. Duração da Estadia & Qtd de Hóspedes
+      let nights = Number(resMatch?.nights) || 2;
+      if (resMatch?.checkinDate && resMatch?.checkoutDate) {
+        const diffDays = Math.round(
+          (new Date(resMatch.checkoutDate).getTime() - new Date(resMatch.checkinDate).getTime()) / 86400000
+        );
+        if (diffDays > 0) nights = diffDays;
+      }
+      const stayBucket = nights <= 2 ? stayLengthBuckets.short : nights <= 4 ? stayLengthBuckets.mid : stayLengthBuckets.long;
+      stayBucket.ordersCount += 1;
+      stayBucket.revenue += amt;
+
+      const guestCnt = Number(resMatch?.guestCount || resMatch?.guestsCount || resMatch?.adults) || 1;
+      const gBucket = guestCnt <= 1 ? guestCountBuckets.solo : guestCountBuckets.coupleOrGroup;
+      gBucket.ordersCount += 1;
+      gBucket.revenue += amt;
+
+      // 6. Flat
+      const fNum = String(ord.flatNumber || resMatch?.flatNumber || "").trim();
+      if (fNum) {
+        if (!flatMap[fNum]) {
+          flatMap[fNum] = {
+            flatNumber: fNum,
+            ordersCount: 0,
+            revenue: 0,
+            cost: 0,
+            unitsSold: 0,
+            inspectionsCount: 0,
+            discrepancyCount: 0,
+            courtesyCost: 0,
+            products: {}
+          };
+        }
+        flatMap[fNum].ordersCount += 1;
+        flatMap[fNum].revenue += amt;
+      }
+
+      // 7. Itens do Pedido
+      const uniqueProdNamesInOrder = [];
+      for (const it of ord.items || []) {
+        const qty = Number(it.quantity) || 0;
+        if (qty <= 0) continue;
+        const prod = productsCatalog.find(p => p.id === it.productId);
+        const pName = it.productName || prod?.name || it.productId;
+        const cat = inferCategory(it.productId, pName);
+        const uPrice = Number(it.unitPrice ?? prod?.price) || 0;
+        const uCost = Number(prod?.cost) || 0;
+        const itRev = Number(it.totalPrice) || (qty * uPrice);
+        const itCost = qty * uCost;
+
+        totalUnitsSold += qty;
+        totalCost += itCost;
+
+        stateMap[state].units += qty;
+        stateMap[state].categories[cat] = (stateMap[state].categories[cat] || 0) + qty;
+        stateMap[state].products[pName] = (stateMap[state].products[pName] || 0) + qty;
+
+        cityMap[cityKey].units += qty;
+        cityMap[cityKey].categories[cat] = (cityMap[cityKey].categories[cat] || 0) + qty;
+        cityMap[cityKey].products[pName] = (cityMap[cityKey].products[pName] || 0) + qty;
+
+        channelMap[chName].units += qty;
+        channelMap[chName].categories[cat] = (channelMap[chName].categories[cat] || 0) + qty;
+
+        targetPref.topRealProducts[pName] = (targetPref.topRealProducts[pName] || 0) + qty;
+
+        dayBucket.units += qty;
+        dayBucket.categories[cat] = (dayBucket.categories[cat] || 0) + qty;
+
+        hourSlot.units += qty;
+        hourSlot.categories[cat] = (hourSlot.categories[cat] || 0) + qty;
+
+        stayBucket.units += qty;
+        stayBucket.topCategory[cat] = (stayBucket.topCategory[cat] || 0) + qty;
+
+        gBucket.units += qty;
+        gBucket.categories[cat] = (gBucket.categories[cat] || 0) + qty;
+
+        if (fNum && flatMap[fNum]) {
+          flatMap[fNum].unitsSold += qty;
+          flatMap[fNum].cost += itCost;
+          flatMap[fNum].products[pName] = (flatMap[fNum].products[pName] || 0) + qty;
+        }
+
+        if (!productPerfMap[it.productId]) {
+          productPerfMap[it.productId] = {
+            productId: it.productId,
+            name: pName,
+            category: cat,
+            isCourtesy: Boolean(prod?.isCourtesy),
+            unitPrice: uPrice,
+            unitCost: uCost,
+            unitsSold: 0,
+            revenue: 0,
+            totalCost: 0,
+            netProfit: 0,
+            ordersPresenceCount: 0
+          };
+        }
+        productPerfMap[it.productId].unitsSold += qty;
+        productPerfMap[it.productId].revenue += itRev;
+        productPerfMap[it.productId].totalCost += itCost;
+        productPerfMap[it.productId].netProfit += (itRev - itCost);
+        productPerfMap[it.productId].ordersPresenceCount += 1;
+
+        if (!uniqueProdNamesInOrder.includes(pName)) {
+          uniqueProdNamesInOrder.push(pName);
+        }
+      }
+
+      // Pares para Market Basket (Afinidade)
+      uniqueProdNamesInOrder.sort();
+      for (let i = 0; i < uniqueProdNamesInOrder.length; i++) {
+        for (let j = i + 1; j < uniqueProdNamesInOrder.length; j++) {
+          const pairKey = `${uniqueProdNamesInOrder[i]} + ${uniqueProdNamesInOrder[j]}`;
+          if (!pairCounts[pairKey]) {
+            pairCounts[pairKey] = {
+              pair: pairKey,
+              productA: uniqueProdNamesInOrder[i],
+              productB: uniqueProdNamesInOrder[j],
+              coOccurrences: 0
+            };
+          }
+          pairCounts[pairKey].coOccurrences += 1;
+        }
+      }
+    }
+
+    // Processa Inspeções para Flats, Divergências e Cortesias
+    let totalCourtesyCost = 0;
+    let totalCourtesyUnits = 0;
+    for (const insp of allInspections) {
+      const fNum = String(insp.flatNumber || "").trim();
+      if (fNum && flatMap[fNum]) {
+        flatMap[fNum].inspectionsCount += 1;
+        if (insp.hasDiscrepancy || insp.status === "divergencia") {
+          flatMap[fNum].discrepancyCount += 1;
+        }
+        flatMap[fNum].courtesyCost += Number(insp.restockedCourtesyTotalCost) || 0;
+      }
+      totalCourtesyCost += Number(insp.restockedCourtesyTotalCost) || 0;
+      for (const rIt of insp.restockedItems || []) {
+        if (rIt.isCourtesy) {
+          totalCourtesyUnits += Number(rIt.quantity) || 0;
+        }
+      }
+    }
+
+    // Funil de Honestidade & Recuperação Sofia
+    const discrepancyOrders = allOrders.filter(o => o.source === "anserve_discrepancy");
+    const spontaneousOrders = paidOrders.filter(o => o.source !== "anserve_discrepancy");
+    const recoveredDiscrepancyOrders = discrepancyOrders.filter(o => o.paymentStatus === "pago");
+    const discrepancyTotalAmount = discrepancyOrders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+    const recoveredAmount = recoveredDiscrepancyOrders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+    const recoveryRatePct =
+      discrepancyTotalAmount > 0 ? Number(((recoveredAmount / discrepancyTotalAmount) * 100).toFixed(1)) : 100;
+
+    const getTopKey = (obj) => Object.entries(obj || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || "N/A";
+
+    const byStateList = Object.values(stateMap)
+      .map(s => ({
+        state: s.state,
+        ordersCount: s.ordersCount,
+        revenue: Number(s.revenue.toFixed(2)),
+        units: s.units,
+        averageTicket: s.ordersCount > 0 ? Number((s.revenue / s.ordersCount).toFixed(2)) : 0,
+        sharePct: totalRevenue > 0 ? Number(((s.revenue / totalRevenue) * 100).toFixed(1)) : 0,
+        topCategory: getTopKey(s.categories),
+        topProduct: getTopKey(s.products),
+        categories: s.categories
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const byCityList = Object.values(cityMap)
+      .map(c => ({
+        city: c.city,
+        state: c.state,
+        cityLabel: c.cityLabel,
+        ordersCount: c.ordersCount,
+        revenue: Number(c.revenue.toFixed(2)),
+        units: c.units,
+        averageTicket: c.ordersCount > 0 ? Number((c.revenue / c.ordersCount).toFixed(2)) : 0,
+        topCategory: getTopKey(c.categories),
+        topProduct: getTopKey(c.products)
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 15);
+
+    const byChannelList = Object.values(channelMap)
+      .map(ch => ({
+        channel: ch.channel,
+        ordersCount: ch.ordersCount,
+        revenue: Number(ch.revenue.toFixed(2)),
+        units: ch.units,
+        averageTicket: ch.ordersCount > 0 ? Number((ch.revenue / ch.ordersCount).toFixed(2)) : 0,
+        discrepancies: ch.discrepancies,
+        topCategory: getTopKey(ch.categories)
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // Curva ABC de Produtos
+    const sortedProducts = Object.values(productPerfMap)
+      .filter(p => !p.isCourtesy)
+      .sort((a, b) => b.revenue - a.revenue);
+
+    let cumulativeRev = 0;
+    const productMatrix = sortedProducts.map(p => {
+      cumulativeRev += p.revenue;
+      const cumPct = totalRevenue > 0 ? (cumulativeRev / totalRevenue) * 100 : 100;
+      const sharePct = totalRevenue > 0 ? (p.revenue / totalRevenue) * 100 : 0;
+      const marginPct = p.revenue > 0 ? (p.netProfit / p.revenue) * 100 : p.unitPrice > 0 ? ((p.unitPrice - p.unitCost) / p.unitPrice) * 100 : 0;
+
+      let abcClass = "C";
+      if (p.unitsSold > 0 && cumPct <= 75) abcClass = "A";
+      else if (p.unitsSold > 0 && cumPct <= 95) abcClass = "B";
+
+      let statusTag = "Giro Regular";
+      if (p.unitsSold === 0) statusTag = "Encalhado (Zero Saída)";
+      else if (abcClass === "A") statusTag = "Campeão de Vendas (Curva A)";
+      else if (marginPct >= 50) statusTag = "Alta Margem";
+      else if (abcClass === "C") statusTag = "Baixo Giro (Avaliar Troca)";
+
+      return {
+        ...p,
+        revenue: Number(p.revenue.toFixed(2)),
+        totalCost: Number(p.totalCost.toFixed(2)),
+        netProfit: Number(p.netProfit.toFixed(2)),
+        marginPct: Number(marginPct.toFixed(1)),
+        shareOfRevenuePct: Number(sharePct.toFixed(1)),
+        abcClass,
+        statusTag
+      };
+    });
+
+    const byFlatList = Object.values(flatMap)
+      .map(f => ({
+        flatNumber: f.flatNumber,
+        ordersCount: f.ordersCount,
+        revenue: Number(f.revenue.toFixed(2)),
+        netProfit: Number((f.revenue - f.cost).toFixed(2)),
+        unitsSold: f.unitsSold,
+        averageTicket: f.ordersCount > 0 ? Number((f.revenue / f.ordersCount).toFixed(2)) : 0,
+        inspectionsCount: f.inspectionsCount,
+        discrepancyCount: f.discrepancyCount,
+        discrepancyRatePct: f.inspectionsCount > 0 ? Number(((f.discrepancyCount / f.inspectionsCount) * 100).toFixed(1)) : 0,
+        courtesyCost: Number(f.courtesyCost.toFixed(2)),
+        topProduct: getTopKey(f.products)
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    const marketBasketPairs = Object.values(pairCounts)
+      .sort((a, b) => b.coOccurrences - a.coOccurrences)
+      .slice(0, 8)
+      .map(pair => ({
+        ...pair,
+        shareOfOrdersPct: paidOrders.length > 0 ? Number(((pair.coOccurrences / paidOrders.length) * 100).toFixed(1)) : 0,
+        suggestion: `Posicione "${pair.productB}" ao lado de "${pair.productA}" no frigobar para estimular compra casada.`
+      }));
+
+    // Geração dinâmica de Curiosidades & Insights Executivos em Linguagem Natural
+    const curiosities = [];
+    if (byStateList.length > 0) {
+      const topSt = byStateList[0];
+      curiosities.push({
+        id: "geo_top_state",
+        icon: "🗺️",
+        category: "Geografia & Demografia",
+        title: `Hóspedes de ${topSt.state} lideram o consumo de frigobar`,
+        description: `Originários de ${topSt.state} representam ${topSt.sharePct}% da receita (R$ ${topSt.revenue.toFixed(2)}), com ticket médio de R$ ${topSt.averageTicket.toFixed(2)}. Categoria favorita: ${topSt.topCategory} (destaque para ${topSt.topProduct}).`,
+        metricBadge: `${topSt.sharePct}% da Receita`,
+        tone: "indigo"
+      });
+    }
+
+    const spEntry = byStateList.find(s => s.state === "SP");
+    if (spEntry && spEntry.ordersCount > 0) {
+      curiosities.push({
+        id: "geo_sp_curiosity",
+        icon: "🍺",
+        category: "Curiosidade Regional",
+        title: `Perfil do Hóspede de São Paulo (SP)`,
+        description: `O público de SP tem preferência marcada por "${spEntry.topCategory}", tendo "${spEntry.topProduct}" como item nº 1 e gasto médio de R$ ${spEntry.averageTicket.toFixed(2)} por compra.`,
+        metricBadge: `Top 1 SP: ${spEntry.topProduct}`,
+        tone: "amber"
+      });
+    }
+
+    const maskedNfCount = fiscalPrefStats.water.count + fiscalPrefStats.minibar_consumption.count;
+    const maskedNfPct = paidOrders.length > 0 ? Number(((maskedNfCount / paidOrders.length) * 100).toFixed(1)) : 0;
+    curiosities.push({
+      id: "corp_reimbursement",
+      icon: "💼",
+      category: "Comportamento Corporativo",
+      title: `${maskedNfPct}% dos hóspedes pedem Nota como 'Água' ou 'Consumo de Frigobar'`,
+      description: `Para facilitar reembolso corporativo, ${fiscalPrefStats.water.count} pedidos escolheram descrição "Água" e ${fiscalPrefStats.minibar_consumption.count} escolheram "Consumo de Frigobar". O item real mais comprado sob a descrição "Água" é: ${getTopKey(fiscalPrefStats.water.topRealProducts)}.`,
+      metricBadge: `${maskedNfPct}% Reembolso B2B`,
+      tone: "sky"
+    });
+
+    if (byChannelList[0] && byChannelList[0].ordersCount > 0) {
+      const topCh = byChannelList[0];
+      curiosities.push({
+        id: "channel_leader",
+        icon: "🏨",
+        category: "Canal de Reserva",
+        title: `${topCh.channel} gera o maior volume de frigobar`,
+        description: `Hóspedes vindos de ${topCh.channel} gastam em média R$ ${topCh.averageTicket.toFixed(2)} no frigobar e preferem ${topCh.topCategory}.`,
+        metricBadge: `Ticket R$ ${topCh.averageTicket.toFixed(2)}`,
+        tone: "emerald"
+      });
+    }
+
+    const stagnantProducts = productMatrix.filter(p => p.unitsSold === 0);
+    if (stagnantProducts.length > 0) {
+      curiosities.push({
+        id: "catalog_stagnant",
+        icon: "⚠️",
+        category: "Otimização de Espaço no Frigobar",
+        title: `${stagnantProducts.length} produto(s) sem giro no período`,
+        description: `Itens como "${stagnantProducts.slice(0, 2).map(p => p.name).join(", ")}" não tiveram saída paga registrada. Avalie substituir por itens da Curva A (${productMatrix[0]?.name || "líderes de venda"}).`,
+        metricBadge: `${stagnantProducts.length} Encalhado(s)`,
+        tone: "rose"
+      });
+    }
+
+    if (marketBasketPairs.length > 0) {
+      const topPair = marketBasketPairs[0];
+      curiosities.push({
+        id: "basket_affinity",
+        icon: "🤝",
+        category: "Cesta de Compras (Venda Casada)",
+        title: `Combo favorito: ${topPair.pair}`,
+        description: `Em ${topPair.shareOfOrdersPct}% dos pedidos (${topPair.coOccurrences}x), o hóspede consumiu ambos na mesma ocasião. ${topPair.suggestion}`,
+        metricBadge: `${topPair.shareOfOrdersPct}% Juntos`,
+        tone: "purple"
+      });
+    }
+
+    curiosities.push({
+      id: "sofia_recovery",
+      icon: "🤖",
+      category: "Auditoria & Recuperação IA Sofia",
+      title: `Taxa de Recuperação pós-checkout via Sofia: ${recoveryRatePct}%`,
+      description: `De R$ ${discrepancyTotalAmount.toFixed(2)} apontados em divergências na saída, R$ ${recoveredAmount.toFixed(2)} já foram recuperados após o envio automático do link de pagamento pela Sofia no WhatsApp.`,
+      metricBadge: `R$ ${recoveredAmount.toFixed(2)} Recuperados`,
+      tone: "teal"
+    });
+
+    const netProfit = totalRevenue - totalCost;
+    const profitMarginPct = totalRevenue > 0 ? Number(((netProfit / totalRevenue) * 100).toFixed(1)) : 0;
+
+    res.json({
+      success: true,
+      period: { startDate: startDate || null, endDate: endDate || null },
+      kpis: {
+        totalRevenue: Number(totalRevenue.toFixed(2)),
+        totalCost: Number(totalCost.toFixed(2)),
+        netProfit: Number(netProfit.toFixed(2)),
+        profitMarginPct,
+        totalOrders: paidOrders.length,
+        totalUnitsSold,
+        averageTicket: paidOrders.length > 0 ? Number((totalRevenue / paidOrders.length).toFixed(2)) : 0,
+        courtesyCostTotal: Number(totalCourtesyCost.toFixed(2)),
+        courtesyUnitsTotal: totalCourtesyUnits,
+        discrepancyRecoveryRatePct: recoveryRatePct
+      },
+      curiosities,
+      byState: byStateList,
+      byCity: byCityList,
+      byChannel: byChannelList,
+      corporateVsLeisure: {
+        fiscalPreferences: {
+          water: {
+            label: fiscalPrefStats.water.label,
+            count: fiscalPrefStats.water.count,
+            revenue: Number(fiscalPrefStats.water.revenue.toFixed(2)),
+            topRealProduct: getTopKey(fiscalPrefStats.water.topRealProducts)
+          },
+          minibar_consumption: {
+            label: fiscalPrefStats.minibar_consumption.label,
+            count: fiscalPrefStats.minibar_consumption.count,
+            revenue: Number(fiscalPrefStats.minibar_consumption.revenue.toFixed(2)),
+            topRealProduct: getTopKey(fiscalPrefStats.minibar_consumption.topRealProducts)
+          },
+          detailed: {
+            label: fiscalPrefStats.detailed.label,
+            count: fiscalPrefStats.detailed.count,
+            revenue: Number(fiscalPrefStats.detailed.revenue.toFixed(2)),
+            topRealProduct: getTopKey(fiscalPrefStats.detailed.topRealProducts)
+          }
+        },
+        documentTypes: {
+          cpf: { count: documentTypeStats.cpf.count, revenue: Number(documentTypeStats.cpf.revenue.toFixed(2)) },
+          cnpj: { count: documentTypeStats.cnpj.count, revenue: Number(documentTypeStats.cnpj.revenue.toFixed(2)) }
+        }
+      },
+      temporal: {
+        byDayOfWeek: byDayOfWeekMap.map(d => ({
+          day: d.day,
+          ordersCount: d.ordersCount,
+          revenue: Number(d.revenue.toFixed(2)),
+          units: d.units,
+          topCategory: getTopKey(d.categories)
+        })),
+        byHourSlot: hourSlots.map(h => ({
+          id: h.id,
+          label: h.label,
+          ordersCount: h.ordersCount,
+          revenue: Number(h.revenue.toFixed(2)),
+          units: h.units,
+          topCategory: getTopKey(h.categories)
+        }))
+      },
+      stayProfile: {
+        byStayLength: Object.values(stayLengthBuckets).map(b => ({
+          id: b.id,
+          label: b.label,
+          ordersCount: b.ordersCount,
+          revenue: Number(b.revenue.toFixed(2)),
+          units: b.units,
+          averageTicket: b.ordersCount > 0 ? Number((b.revenue / b.ordersCount).toFixed(2)) : 0,
+          topCategory: getTopKey(b.topCategory)
+        })),
+        byGuestCount: Object.values(guestCountBuckets).map(g => ({
+          id: g.id,
+          label: g.label,
+          ordersCount: g.ordersCount,
+          revenue: Number(g.revenue.toFixed(2)),
+          units: g.units,
+          averageTicket: g.ordersCount > 0 ? Number((g.revenue / g.ordersCount).toFixed(2)) : 0,
+          topCategory: getTopKey(g.categories)
+        }))
+      },
+      byFlat: byFlatList,
+      productMatrix,
+      marketBasketPairs,
+      lossAndRecovery: {
+        spontaneousOrdersCount: spontaneousOrders.length,
+        discrepancyOrdersCount: discrepancyOrders.length,
+        recoveredOrdersCount: recoveredDiscrepancyOrders.length,
+        discrepancyTotalAmount: Number(discrepancyTotalAmount.toFixed(2)),
+        recoveredAmount: Number(recoveredAmount.toFixed(2)),
+        pendingDiscrepancyAmount: Number(Math.max(0, discrepancyTotalAmount - recoveredAmount).toFixed(2)),
+        recoveryRatePct,
+        honestyRatePct:
+          allOrders.length > 0 ? Number(((spontaneousOrders.length / allOrders.length) * 100).toFixed(1)) : 100
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
