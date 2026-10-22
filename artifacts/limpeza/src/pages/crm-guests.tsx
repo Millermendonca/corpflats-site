@@ -368,9 +368,9 @@ export default function CrmGuests() {
     setFormPhone(g.phone || "")
     setFormEmail(g.email || "")
     setFormDocument(g.documentNumber || g.document || "")
-    setFormCity(g.city || g.cidade || "Campos dos Goytacazes")
+    setFormCity(String(g.city || g.cidade || "Campos dos Goytacazes").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim())
     setFormState(g.state || g.uf || "RJ")
-    setFormCep(g.cep || "")
+    const rawCep = String(g.cep || g.guestCep || g.zipCode || "").replace(/\D/g, "").slice(0, 8); setFormCep(rawCep.length > 5 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : rawCep)
     setFormAddress(g.address || g.logradouro || "")
     setFormNumber(g.number || g.numero || "")
     setFormComplement(g.complement || g.complemento || "")
@@ -451,7 +451,7 @@ export default function CrmGuests() {
           credentials: "include"
         })
       }
-      setGuestModalOpen(false)
+      setGuestModalOpen(false); if (editingGuest && activeGuest && activeGuest.id === editingGuest.id) { fetchGuestDetail({ ...activeGuest, ...payload }) }
       fetchGuests()
     } finally {
       setSavingGuest(false)
@@ -1761,14 +1761,14 @@ export default function CrmGuests() {
                     <div className="col-span-2">
                       <div className="text-[10px] uppercase font-bold text-muted-foreground">Endereço Residencial Completo</div>
                       <div className="text-xs font-semibold text-foreground mt-0.5">
-                        {activeGuest.address || "Endereço não cadastrado"}
+                        {activeGuest.address || (activeGuest.street ? [activeGuest.street, activeGuest.streetNumber || activeGuest.number, activeGuest.complement, activeGuest.neighborhood].filter(Boolean).join(", ") : "Endereço não cadastrado")}
                       </div>
                     </div>
 
                     <div className="col-span-2">
-                      <div className="text-[10px] uppercase font-bold text-muted-foreground">Cidade / Estado / País</div>
+                      <div className="grid grid-cols-2 gap-2.5"><div><div className="text-[10px] uppercase font-bold text-muted-foreground">CEP</div><div className="text-xs font-bold text-foreground mt-0.5 font-mono">{(() => { const rawCep = String(activeGuest.cep || activeGuest.guestCep || activeGuest.zipCode || "").replace(/\D/g, ""); return rawCep.length === 8 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : (rawCep || "Não informado"); })()}</div></div><div><div className="text-[10px] uppercase font-bold text-muted-foreground">Cidade / Estado / País</div>
                       <div className="text-xs font-semibold text-foreground mt-0.5">
-                        {activeGuest.city ? `${activeGuest.city}/${activeGuest.state || 'RJ'}` : "Não informada"} • {activeGuest.country || "Brasil"}
+                        {(() => { const cleanCity = String(activeGuest.city || activeGuest.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim(); const cleanState = String(activeGuest.state || activeGuest.uf || "RJ").trim().toUpperCase(); return cleanCity ? `${cleanCity}/${cleanState}` : "Não informada"; })()} • {activeGuest.country || "Brasil"}</div></div>
                       </div>
                     </div>
                   </div>

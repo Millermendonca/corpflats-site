@@ -1260,6 +1260,31 @@ export default function ReceptionTablet() {
                       </span>
                     </div>
                   </div>
+                  {(currentGuest.address || selectedItem.guestAddress || currentGuest.cep || selectedItem.guestCep || selectedItem.cep) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-slate-800">
+                      <div className="sm:col-span-2">
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Endereço Residencial</span>
+                        <span className="font-semibold text-slate-200 text-xs">{currentGuest.address || selectedItem.guestAddress || "Não informado"}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">CEP / Cidade</span>
+                        <span className="font-semibold text-slate-200 font-mono text-xs">
+                          {(() => {
+                            const rawCep = String(currentGuest.cep || selectedItem.guestCep || selectedItem.cep || "").replace(/\D/g, "");
+                            const fmtCep = rawCep.length === 8 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : rawCep;
+                            const rawCity = String(currentGuest.city || selectedItem.guestCity || selectedItem.city || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+                            const rawUf = String(currentGuest.state || selectedItem.guestState || selectedItem.state || "").trim().toUpperCase();
+                            const cityLabel = rawCity ? `${rawCity}${rawUf ? `/${rawUf}` : ""}` : "";
+                            return [fmtCep, cityLabel].filter(Boolean).join(" • ") || "Não informado";
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="hidden"><div><span>
+                      </span>
+                    </div>
+                  </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
                     <div>

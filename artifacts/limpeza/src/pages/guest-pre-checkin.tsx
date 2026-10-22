@@ -2112,9 +2112,21 @@ export default function GuestPreCheckin() {
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">Gênero</span>
                   <span className="font-medium text-slate-700 capitalize">{gender || "Não informado"}</span>
                 </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">CEP</span>
+                  <span className="font-semibold text-slate-800 font-mono">{cep ? formatCep(cep) : "Não informado"}</span>
+                </div>
                 <div className="sm:col-span-3 pt-2 border-t border-slate-200/60">
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">Endereço Residencial</span>
-                  <span className="font-medium text-slate-800">{address ? `${address} • ${city} - ${state}` : "Campos dos Goytacazes - RJ"}</span>
+                  <span className="font-medium text-slate-800">
+                    {(() => {
+                      const cleanCity = String(city || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim()
+                      const cleanState = String(state || "RJ").trim().toUpperCase()
+                      const formattedCep = cep ? formatCep(cep) : ""
+                      if (!address) return `Campos dos Goytacazes - RJ${formattedCep ? ` • CEP ${formattedCep}` : ""}`
+                      return `${address}${cleanCity ? ` • ${cleanCity} - ${cleanState}` : ""}${formattedCep ? ` • CEP ${formattedCep}` : ""}`
+                    })()}
+                  </span>
                 </div>
               </div>
             </div>

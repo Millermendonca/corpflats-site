@@ -7100,14 +7100,18 @@ function mergeGuestRecords(target, source) {
     target.neighborhood = srcBairro;
     target.bairro = srcBairro;
   }
-  const srcCep = String(source.cep || source.tomadorCep || "").replace(/\D/g, "");
+  const srcCep = String(source.cep || source.guestCep || source.zipCode || source.postalCode || source.tomadorCep || "").replace(/\D/g, "");
   if ((!target.cep || isGenericPelincaCep(target.cep)) && srcCep && (!isGenericPelincaCep(srcCep) || !target.cep)) {
     target.cep = srcCep;
   }
   if (!target.city && (source.city || source.cidade || source.municipio || source.tomadorCidade)) {
-    const ct = source.city || source.cidade || source.municipio || source.tomadorCidade;
+    const ct = String(source.city || source.cidade || source.municipio || source.tomadorCidade).replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
     target.city = ct;
     target.cidade = ct;
+  } else if (target.city && /\/\s*[A-Za-z]{2}\s*$/.test(target.city)) {
+    const cleanCt = String(target.city).replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+    target.city = cleanCt;
+    target.cidade = cleanCt;
   }
   if (!target.state && (source.state || source.uf || source.estado || source.tomadorUf)) {
     const st = String(source.state || source.uf || source.estado || source.tomadorUf).toUpperCase();
@@ -7422,7 +7426,15 @@ function reconcileAndMergeGuests(database) {
       fullName: inv.tomadorNome,
       document: inv.tomadorCpfCnpj,
       email: inv.tomadorEmail,
-      phone: inv.tomadorTelefone
+      phone: inv.tomadorTelefone,
+      cep: inv.tomadorCep,
+      address: inv.tomadorEndereco,
+      number: inv.tomadorNumero,
+      complement: inv.tomadorComplemento,
+      neighborhood: inv.tomadorBairro,
+      city: inv.tomadorCidade,
+      state: inv.tomadorUf,
+      ibgeCode: inv.tomadorCodigoMunicipio
     };
 
     if (isDeleted(invCand)) continue;
@@ -25691,7 +25703,7 @@ app.get("/api/pms/guests", (req, res) => {
       complement: g.complement || normGuestAddr.complemento || "",
       neighborhood: g.neighborhood || normGuestAddr.bairro || "",
       cep: g.cep || normGuestAddr.cep || "",
-      city: g.city || normGuestAddr.cidade || "",
+      city: String(g.city || normGuestAddr.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim(),
       state: g.state || normGuestAddr.uf || "",
       vehiclePlate: g.vehiclePlate || "",
       vehicleModel: g.vehicleModel || "",
@@ -25720,7 +25732,7 @@ app.get("/api/pms/guests", (req, res) => {
 });
 
 // Detalhe 360º completo de um Hóspede (Ficha cadastral, mídias, FNHR e histórico unificado)
-app.get("/api/pms/guests/:id", (req, res) => {
+app.get("/api/pms/guests/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!db.guests) db.guests = [];
   reconcileAndMergeGuests(db);
@@ -25746,6 +25758,13 @@ app.get("/api/pms/guests/:id", (req, res) => {
            (cleanDoc && Array.isArray(r.guests) && r.guests.some(rg => (rg.cpf || "").replace(/\D/g, "") === cleanDoc));
   }).sort((a, b) => new Date(b.checkinDate || b.createdAt).getTime() - new Date(a.checkinDate || a.createdAt).getTime());
 
+  // Histórico de Notas Fiscais
+  const guestInvoices = (db.invoices || []).filter(inv => {
+    const invDoc = (inv.tomadorCpfCnpj || "").replace(/\D/g, "");
+    const invName = normalizeName(inv.tomadorNome || "");
+    return (cleanDoc && invDoc === cleanDoc) || (guestNameLower && invName === guestNameLower);
+  }).sort((a, b) => new Date(b.dataEmissao || 0).getTime() - new Date(a.dataEmissao || 0).getTime());
+
   // Backfill de mídias e dados de check-in caso não estejam no cadastro mestre
   let photoUrl = guest.photoUrl || null;
   let docPhotoUrl = guest.docPhotoUrl || null;
@@ -25753,9 +25772,14 @@ app.get("/api/pms/guests/:id", (req, res) => {
   let minorAuthDocUrl = guest.minorAuthDocUrl || null;
   let birthDate = guest.birthDate || "";
   let gender = guest.gender || "";
+  let cep = String(guest.cep || guest.guestCep || guest.zipCode || "").replace(/\D/g, "");
+  let street = guest.street || guest.logradouro || "";
+  let streetNumber = guest.streetNumber || guest.number || guest.numero || "";
+  let complement = guest.complement || guest.complemento || "";
+  let neighborhood = guest.neighborhood || guest.bairro || "";
   let address = guest.address || "";
-  let city = guest.city || "";
-  let state = guest.state || "";
+  let city = guest.city || guest.cidade || "";
+  let state = guest.state || guest.uf || "";
   let vehiclePlate = guest.vehiclePlate || "";
   let vehicleBrand = guest.vehicleBrand || "";
   let vehicleModel = guest.vehicleModel || "";
@@ -25763,10 +25787,29 @@ app.get("/api/pms/guests/:id", (req, res) => {
   let fnhrCompleted = Boolean(guest.fnhrCompleted);
   let fnhrCompletedAt = guest.fnhrCompletedAt || null;
 
+  const extractCepFromText = (txt) => {
+    if (!txt) return "";
+    const m = String(txt).match(/\b(\d{5})-?(\d{3})\b/);
+    return m ? `${m[1]}${m[2]}` : "";
+  };
+
   for (const s of guestReservations) {
     if (!photoUrl && (s.selfieUrl || s.photoUrl)) photoUrl = s.selfieUrl || s.photoUrl;
     if (!docPhotoUrl && (s.docPhotoUrl || s.documentPhotoUrl)) docPhotoUrl = s.docPhotoUrl || s.documentPhotoUrl;
     if (!signatureUrl && s.signatureUrl) signatureUrl = s.signatureUrl;
+    if (!cep && (s.guestCep || s.cep || s.zipCode)) {
+      cep = String(s.guestCep || s.cep || s.zipCode).replace(/\D/g, "");
+    }
+    if (!cep && s.fnrhAuditTrail?.guestAddress) {
+      cep = extractCepFromText(s.fnrhAuditTrail.guestAddress);
+    }
+    if (!street && (s.guestStreet || s.street)) street = s.guestStreet || s.street;
+    if (!streetNumber && (s.guestStreetNumber || s.streetNumber || s.number)) streetNumber = s.guestStreetNumber || s.streetNumber || s.number;
+    if (!complement && (s.guestComplement || s.complement)) complement = s.guestComplement || s.complement;
+    if (!neighborhood && (s.guestNeighborhood || s.neighborhood)) neighborhood = s.guestNeighborhood || s.neighborhood;
+    if (!address && (s.guestAddress || s.address)) address = s.guestAddress || s.address;
+    if (!city && (s.guestCity || s.city)) city = s.guestCity || s.city;
+    if (!state && (s.guestState || s.state)) state = s.guestState || s.state;
     if (!vehiclePlate && s.vehicle?.plate) {
       vehiclePlate = s.vehicle.plate;
       vehicleBrand = s.vehicle.brand || "";
@@ -25791,6 +25834,16 @@ app.get("/api/pms/guests/:id", (req, res) => {
         if (!minorAuthDocUrl && matchSlot.minorAuthDocUrl) minorAuthDocUrl = matchSlot.minorAuthDocUrl;
         if (!birthDate && matchSlot.birthDate) birthDate = matchSlot.birthDate;
         if (!gender && matchSlot.gender) gender = matchSlot.gender;
+        if (!cep && (matchSlot.cep || matchSlot.guestCep || matchSlot.zipCode)) {
+          cep = String(matchSlot.cep || matchSlot.guestCep || matchSlot.zipCode).replace(/\D/g, "");
+        }
+        if (!cep && matchSlot.fnrhAuditTrail?.guestAddress) {
+          cep = extractCepFromText(matchSlot.fnrhAuditTrail.guestAddress);
+        }
+        if (!street && matchSlot.street) street = matchSlot.street;
+        if (!streetNumber && (matchSlot.streetNumber || matchSlot.number)) streetNumber = matchSlot.streetNumber || matchSlot.number;
+        if (!complement && matchSlot.complement) complement = matchSlot.complement;
+        if (!neighborhood && matchSlot.neighborhood) neighborhood = matchSlot.neighborhood;
         if (!address && matchSlot.address) address = matchSlot.address;
         if (!city && matchSlot.city) city = matchSlot.city;
         if (!state && matchSlot.state) state = matchSlot.state;
@@ -25802,6 +25855,71 @@ app.get("/api/pms/guests/:id", (req, res) => {
     }
   }
 
+  for (const inv of guestInvoices) {
+    if ((!cep || isGenericPelincaCep(cep)) && inv.tomadorCep && !isGenericPelincaCep(inv.tomadorCep)) {
+      cep = String(inv.tomadorCep).replace(/\D/g, "");
+    }
+    if (!address && inv.tomadorEndereco) address = inv.tomadorEndereco;
+    if (!streetNumber && inv.tomadorNumero) streetNumber = inv.tomadorNumero;
+    if (!complement && inv.tomadorComplemento) complement = inv.tomadorComplemento;
+    if (!neighborhood && inv.tomadorBairro) neighborhood = inv.tomadorBairro;
+    if (!city && inv.tomadorCidade) city = inv.tomadorCidade;
+    if (!state && inv.tomadorUf) state = inv.tomadorUf;
+  }
+
+  if (!cep && address) {
+    cep = extractCepFromText(address);
+  }
+
+  // Normaliza cidade caso contenha "/ UF" duplicado (ex: "Rio de Janeiro / RJ")
+  if (city && city.includes("/")) {
+    const parts = city.split("/").map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2 && parts[parts.length - 1].length === 2) {
+      if (!state) state = parts[parts.length - 1].toUpperCase();
+      city = parts.slice(0, -1).join(" / ");
+    }
+  }
+
+  // Caso o hóspede tenha logradouro + cidade + UF mas o CEP não tenha sido salvo anteriormente, busca reversamente no ViaCEP
+  if ((!cep || cep.length < 8) && (street || address) && city) {
+    const parsedAddr = normalizeTomadorAddressFields({
+      endereco: address,
+      logradouro: street,
+      numero: streetNumber,
+      complemento: complement,
+      bairro: neighborhood,
+      cep,
+      cidade: city,
+      uf: state || "RJ"
+    });
+    const lookupStreet = (street || parsedAddr.logradouro || "")
+      .split(",")[0]
+      .split(" - ")[0]
+      .replace(/\b(apt|apto|apartamento|bloco|casa|lote|sala|nº|num)\b.*$/i, "")
+      .trim();
+    const lookupCity = (city || parsedAddr.cidade || "").split("/")[0].trim();
+    const lookupUf = (state || parsedAddr.uf || "RJ").trim().toUpperCase();
+    if (lookupStreet.length >= 3 && lookupCity.length >= 3 && lookupUf.length === 2 && !isGenericPelincaStreet(lookupStreet)) {
+      try {
+        const viaRes = await fetch(
+          `https://viacep.com.br/ws/${encodeURIComponent(lookupUf)}/${encodeURIComponent(lookupCity)}/${encodeURIComponent(lookupStreet)}/json/`,
+          { signal: AbortSignal.timeout(2500) }
+        );
+        if (viaRes.ok) {
+          const viaList = await viaRes.json();
+          if (Array.isArray(viaList) && viaList.length > 0) {
+            const normBairro = normalizeName(neighborhood || parsedAddr.bairro || "");
+            const bestMatch = (normBairro && viaList.find(item => normalizeName(item.bairro || "") === normBairro)) || viaList[0];
+            const foundCep = String(bestMatch?.cep || "").replace(/\D/g, "");
+            if (foundCep.length === 8) {
+              cep = foundCep;
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
   // Persiste enriquecimento no cadastro mestre
   let changed = false;
   if (!guest.photoUrl && photoUrl) { guest.photoUrl = photoUrl; changed = true; }
@@ -25809,9 +25927,14 @@ app.get("/api/pms/guests/:id", (req, res) => {
   if (!guest.signatureUrl && signatureUrl) { guest.signatureUrl = signatureUrl; changed = true; }
   if (!guest.birthDate && birthDate) { guest.birthDate = birthDate; changed = true; }
   if (!guest.gender && gender) { guest.gender = gender; changed = true; }
+  if ((!guest.cep || isGenericPelincaCep(guest.cep)) && cep) { guest.cep = cep; changed = true; }
+  if (!guest.street && street) { guest.street = street; guest.logradouro = street; changed = true; }
+  if (!guest.streetNumber && streetNumber) { guest.streetNumber = streetNumber; guest.number = streetNumber; guest.numero = streetNumber; changed = true; }
+  if (!guest.complement && complement) { guest.complement = complement; guest.complemento = complement; changed = true; }
+  if (!guest.neighborhood && neighborhood) { guest.neighborhood = neighborhood; guest.bairro = neighborhood; changed = true; }
   if (!guest.address && address) { guest.address = address; changed = true; }
-  if (!guest.city && city) { guest.city = city; changed = true; }
-  if (!guest.state && state) { guest.state = state; changed = true; }
+  if (city && guest.city !== city) { guest.city = city; guest.cidade = city; changed = true; }
+  if (!guest.state && state) { guest.state = state; guest.uf = state; changed = true; }
   if (!guest.vehiclePlate && vehiclePlate) {
     guest.vehiclePlate = vehiclePlate;
     guest.vehicleBrand = vehicleBrand;
@@ -25825,13 +25948,6 @@ app.get("/api/pms/guests/:id", (req, res) => {
     changed = true;
   }
   if (changed) saveDatabase();
-
-  // Histórico de Notas Fiscais
-  const guestInvoices = (db.invoices || []).filter(inv => {
-    const invDoc = (inv.tomadorCpfCnpj || "").replace(/\D/g, "");
-    const invName = normalizeName(inv.tomadorNome || "");
-    return (cleanDoc && invDoc === cleanDoc) || (guestNameLower && invName === guestNameLower);
-  }).sort((a, b) => new Date(b.dataEmissao || 0).getTime() - new Date(a.dataEmissao || 0).getTime());
 
   // Histórico de Pedidos de Café da Manhã
   const guestBreakfastOrders = (db.breakfastOrders || []).filter(bo => {
@@ -25876,6 +25992,14 @@ app.get("/api/pms/guests/:id", (req, res) => {
     minorAuthDocUrl: guest.minorAuthDocUrl || minorAuthDocUrl,
     birthDate: guest.birthDate || birthDate,
     gender: guest.gender || gender,
+    cep: guest.cep || cep || "",
+    street: guest.street || street || "",
+    logradouro: guest.logradouro || guest.street || street || "",
+    streetNumber: guest.streetNumber || guest.number || streetNumber || "",
+    number: guest.number || guest.streetNumber || streetNumber || "",
+    numero: guest.numero || guest.number || guest.streetNumber || streetNumber || "",
+    complement: guest.complement || complement || "",
+    neighborhood: guest.neighborhood || neighborhood || "",
     address: guest.address || address,
     city: guest.city || city,
     state: guest.state || state,
