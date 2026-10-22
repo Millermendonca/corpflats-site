@@ -25,8 +25,17 @@ const zohoTokenCache = {
   primaryEmailAddress: null,
   accountDisplayName: null,
   lastSyncAt: null,
-  lastError: null
+  lastError: null,
+  lastFolderSyncAt: {},
+  folderMapCache: null,
+  folderMapExpiresAt: 0
 };
+
+const DEMO_SEED_IDS = new Set([
+  "inb_welcome_portaria_1",
+  "inb_guest_question_1",
+  "inb_garage_confirm_1"
+]);
 
 const DEFAULT_SYSTEM_LABELS = [
   { id: "lbl_urgente", name: "Urgente", color: "#EF4444", system: true },
@@ -584,9 +593,180 @@ export function matchEmailWithReservation(db, item) {
 }
 
 /**
+ * Decodifica entidades HTML retornadas pela Zoho Mail API em campos de remetente, destinatário e assunto
+ */
+export function decodeZohoEntities(str = "") {
+  if (!str || typeof str !== "string") return "";
+  return str
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&")
+    .replace(/&nbsp;/gi, " ")
+    .trim();
+}
+
+export function cleanAddressField(raw = "") {
+  const decoded = decodeZohoEntities(raw);
+  return decoded
+    .replace(/"([^"]+)"\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, "$1 <$2>")
+    .replace(/<([^>]+)>/g, "$1")
+    .trim();
+}
+
+/**
+ * Descobre e classifica todas as pastas da conta Zoho Mail (incluindo Inbox principal, Notification e Newsletter)
+ */
+export async function resolveZohoFolders(db, forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && zohoTokenCache.folderMapCache && zohoTokenCache.folderMapExpiresAt > now) {
+    return zohoTokenCache.folderMapCache;
+  }
+
+  const zohoFolderMap = {
+    inbox: null,
+    inboxFolderIds: [],
+    sent: null,
+    drafts: null,
+    trash: null,
+    spam: null,
+    outbox: null,
+    archive: null,
+    folderCategoryById: {},
+    folderNameById: {}
+  };
+
+  const foldersRes = await callZohoMailApi(db, "/accounts/{accountId}/folders");
+  if (foldersRes.ok && Array.isArray(foldersRes.data)) {
+    for (const zf of foldersRes.data) {
+      const fId = String(zf.folderId || "").trim();
+      if (!fId) continue;
+      const fType = String(zf.folderType || "").trim().toLowerCase();
+      const fName = String(zf.folderName || "").trim().toLowerCase();
+      const fPath = String(zf.path || "").trim().toLowerCase();
+
+      zohoFolderMap.folderNameById[fId] = zf.folderName || "";
+
+      if (fType === "sent" || fName === "sent" || fName === "enviados" || fPath === "/sent") {
+        zohoFolderMap.sent = fId;
+        zohoFolderMap.folderCategoryById[fId] = "sent";
+      } else if (fType.includes("draft") || fName.includes("draft") || fName.includes("rascunho")) {
+        zohoFolderMap.drafts = fId;
+        zohoFolderMap.folderCategoryById[fId] = "drafts";
+      } else if (fType.includes("trash") || fName.includes("trash") || fName.includes("lixeira")) {
+        zohoFolderMap.trash = fId;
+        zohoFolderMap.folderCategoryById[fId] = "trash";
+      } else if (fType.includes("spam") || fType.includes("junk") || fName.includes("spam") || fName.includes("lixo")) {
+        zohoFolderMap.spam = fId;
+        zohoFolderMap.folderCategoryById[fId] = "spam";
+      } else if (fType.includes("outbox") || fName.includes("outbox") || fName.includes("saída") || fName.includes("saida")) {
+        zohoFolderMap.outbox = fId;
+        zohoFolderMap.folderCategoryById[fId] = "outbox";
+      } else if (fType.includes("archive") || fName.includes("archive") || fName.includes("arquivo")) {
+        zohoFolderMap.archive = fId;
+        zohoFolderMap.folderCategoryById[fId] = "archive";
+      } else if (fType.includes("template") || fType.includes("snooze") || fName.includes("template") || fName.includes("snooze")) {
+        zohoFolderMap.folderCategoryById[fId] = "other";
+      } else if (fName === "inbox" || fName === "caixa de entrada" || fPath === "/inbox") {
+        // Caixa de Entrada Principal sempre na primeira posição
+        zohoFolderMap.inbox = fId;
+        zohoFolderMap.inboxFolderIds = [fId, ...zohoFolderMap.inboxFolderIds.filter(x => x !== fId)];
+        zohoFolderMap.folderCategoryById[fId] = "inbox";
+      } else if (
+        fType === "inbox" ||
+        fName.includes("inbox") ||
+        fName.includes("notification") ||
+        fName.includes("notifica") ||
+        fName.includes("newsletter")
+      ) {
+        // Pastas inteligentes do Zoho (Notification, Newsletter, etc.) também entram na Caixa de Entrada
+        if (!zohoFolderMap.inboxFolderIds.includes(fId)) {
+          zohoFolderMap.inboxFolderIds.push(fId);
+        }
+        if (!zohoFolderMap.inbox) {
+          zohoFolderMap.inbox = fId;
+        }
+        zohoFolderMap.folderCategoryById[fId] = "inbox";
+      } else {
+        if (!zohoFolderMap.inboxFolderIds.includes(fId)) {
+          zohoFolderMap.inboxFolderIds.push(fId);
+        }
+        zohoFolderMap.folderCategoryById[fId] = "inbox";
+      }
+    }
+
+    zohoTokenCache.folderMapCache = zohoFolderMap;
+    zohoTokenCache.folderMapExpiresAt = now + 5 * 60 * 1000;
+  }
+
+  return zohoFolderMap;
+}
+
+/**
+ * Classifica com precisão a pasta e direção de uma mensagem Zoho com base no folderId real e nos endereços
+ */
+function classifyZohoMessageFolder(zm, zohoFolderMap, fallbackFolder = "inbox") {
+  const zfId = String(zm.folderId || zm.zohoFolderId || "").trim();
+  if (zfId && zohoFolderMap?.folderCategoryById?.[zfId]) {
+    const cat = zohoFolderMap.folderCategoryById[zfId];
+    if (cat && cat !== "other") return cat;
+  }
+  if (zfId && zohoFolderMap?.sent && zfId === String(zohoFolderMap.sent)) return "sent";
+  if (zfId && zohoFolderMap?.drafts && zfId === String(zohoFolderMap.drafts)) return "drafts";
+  if (zfId && zohoFolderMap?.trash && zfId === String(zohoFolderMap.trash)) return "trash";
+  if (zfId && zohoFolderMap?.spam && zfId === String(zohoFolderMap.spam)) return "spam";
+  if (zfId && zohoFolderMap?.archive && zfId === String(zohoFolderMap.archive)) return "archive";
+
+  const fromLower = String(zm.fromAddress || zm.fromEmail || zm.sender || "").toLowerCase();
+  const toLower = String(zm.toAddress || zm.recipient || "").toLowerCase();
+  const isFromOwnDomain = fromLower.includes("@corpflats.com.br");
+  const isToOwnDomain = toLower.includes("@corpflats.com.br");
+
+  if (isFromOwnDomain && !isToOwnDomain && fallbackFolder !== "drafts" && fallbackFolder !== "trash") {
+    return "sent";
+  }
+
+  if (["sent", "drafts", "trash", "spam", "archive", "outbox"].includes(fallbackFolder) && !zfId) {
+    return fallbackFolder;
+  }
+  return "inbox";
+}
+
+/**
+ * Infere etiquetas automáticas inteligentes para mensagens da Zoho Mail API
+ */
+function inferZohoSmartLabels(item, existingLabels = []) {
+  const set = new Set(Array.isArray(existingLabels) ? existingLabels : []);
+  const hay = `${item.fromEmail || ""} ${item.recipient || ""} ${item.subject || ""}`.toLowerCase();
+  if (hay.includes("promenade.com.br") || hay.includes("portaria")) {
+    set.add("lbl_portaria");
+  }
+  if (hay.includes("pfbestacionamentos") || hay.includes("garagem")) {
+    set.add("lbl_garagem");
+  }
+  if (
+    hay.includes("b2breservas") ||
+    hay.includes("booking.com") ||
+    hay.includes("airbnb") ||
+    hay.includes("expedia") ||
+    hay.includes("confirmacao de reserva") ||
+    hay.includes("confirmação de reserva") ||
+    hay.includes("confirmacao da reserva") ||
+    hay.includes("reserva res-")
+  ) {
+    set.add("lbl_reserva");
+  }
+  if (hay.includes("mailer-daemon") || hay.includes("undelivered") || hay.includes("urgente")) {
+    set.add("lbl_urgente");
+  }
+  return Array.from(set);
+}
+
+/**
  * Sincroniza mensagens da Zoho Mail API para o cache local quando OAuth2 está ativo
  */
-export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 40 } = {}) {
+export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 50 } = {}) {
   ensureWebmailCollections(db);
   const oauthCfg = getZohoOAuthConfig(db);
   if (!oauthCfg.isConfigured) {
@@ -594,59 +774,76 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
   }
 
   try {
-    // 1. Primeiro sincroniza pastas remotas se necessário
-    const foldersRes = await callZohoMailApi(db, "/accounts/{accountId}/folders");
-    let zohoFolderMap = {};
-    if (foldersRes.ok && Array.isArray(foldersRes.data)) {
-      for (const zf of foldersRes.data) {
-        const fType = String(zf.folderType || zf.folderName || "").toLowerCase();
-        if (fType.includes("inbox")) zohoFolderMap.inbox = zf.folderId;
-        else if (fType.includes("sent")) zohoFolderMap.sent = zf.folderId;
-        else if (fType.includes("draft")) zohoFolderMap.drafts = zf.folderId;
-        else if (fType.includes("trash")) zohoFolderMap.trash = zf.folderId;
-        else if (fType.includes("spam") || fType.includes("junk")) zohoFolderMap.spam = zf.folderId;
-        else if (fType.includes("outbox")) zohoFolderMap.outbox = zf.folderId;
-        else if (fType.includes("archive")) zohoFolderMap.archive = zf.folderId;
+    const zohoFolderMap = await resolveZohoFolders(db);
+    let rawZohoMessages = [];
+
+    if (search) {
+      const endpoint = `/accounts/{accountId}/messages/search?searchKey=entire:${encodeURIComponent(search)}&limit=${limit}`;
+      const msgRes = await callZohoMailApi(db, endpoint);
+      if (msgRes.ok && Array.isArray(msgRes.data)) {
+        rawZohoMessages.push(...msgRes.data);
+      }
+    } else if (folder === "inbox" || folder === "starred" || folder === "archive") {
+      // Sincroniza em paralelo TODAS as caixas de entrada do Zoho (Inbox principal + Notification + Newsletter)
+      // garantindo que confirmações da B2B Reservas, respostas da Portaria e de Hóspedes apareçam sempre juntas!
+      const targetFolders = zohoFolderMap.inboxFolderIds.length > 0
+        ? zohoFolderMap.inboxFolderIds.slice(0, 6)
+        : (zohoFolderMap.inbox ? [zohoFolderMap.inbox] : [null]);
+
+      const requests = targetFolders.map(fId => {
+        const qp = new URLSearchParams({ limit: String(limit), includeto: "true" });
+        if (fId) qp.set("folderId", String(fId));
+        return callZohoMailApi(db, `/accounts/{accountId}/messages/view?${qp.toString()}`);
+      });
+
+      const results = await Promise.allSettled(requests);
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value?.ok && Array.isArray(r.value.data)) {
+          rawZohoMessages.push(...r.value.data);
+        }
+      }
+    } else {
+      const qp = new URLSearchParams({ limit: String(limit), includeto: "true" });
+      if (zohoFolderMap[folder]) {
+        qp.set("folderId", String(zohoFolderMap[folder]));
+      }
+      const msgRes = await callZohoMailApi(db, `/accounts/{accountId}/messages/view?${qp.toString()}`);
+      if (msgRes.ok && Array.isArray(msgRes.data)) {
+        rawZohoMessages.push(...msgRes.data);
       }
     }
 
-    const queryParams = new URLSearchParams({
-      limit: String(limit),
-      includeto: "true"
-    });
-    if (zohoFolderMap[folder]) {
-      queryParams.set("folderId", String(zohoFolderMap[folder]));
-    }
-
-    const endpoint = search
-      ? `/accounts/{accountId}/messages/search?searchKey=entire:${encodeURIComponent(search)}&limit=${limit}`
-      : `/accounts/{accountId}/messages/view?${queryParams.toString()}`;
-
-    const msgRes = await callZohoMailApi(db, endpoint);
-    if (!msgRes.ok || !Array.isArray(msgRes.data)) {
-      return { ok: false, error: msgRes.error, mode: "hybrid_fallback" };
-    }
-
     let addedOrUpdated = 0;
-    for (const zm of msgRes.data) {
+    for (const zm of rawZohoMessages) {
+      if (!zm || !zm.messageId) continue;
       const zId = `zoho_${zm.messageId}`;
       const existingIdx = db.zohoMessagesCache.findIndex(m => m.id === zId);
       const sentTimeMs = Number(zm.sentDateInGMT || zm.receivedTime || Date.now());
       const isoDate = new Date(sentTimeMs).toISOString();
 
+      const resolvedFolder = classifyZohoMessageFolder(zm, zohoFolderMap, folder);
+      const resolvedDirection = resolvedFolder === "sent" ? "outbound" : (resolvedFolder === "drafts" ? "draft" : "inbound");
+      const cleanFromName = decodeZohoEntities(zm.sender || zm.fromAddress || "Remetente");
+      const cleanFromEmail = cleanAddressField(zm.fromAddress || zm.sender || "");
+      const cleanRecipient = cleanAddressField(zm.toAddress || "");
+      const cleanCc = cleanAddressField(zm.ccAddress || "");
+      const cleanSubject = decodeZohoEntities(zm.subject || "(Sem assunto)");
+      const cleanSnippet = decodeZohoEntities(zm.summary || "");
+
       const mapped = {
         id: zId,
         zohoMessageId: String(zm.messageId),
-        zohoFolderId: String(zm.folderId || zohoFolderMap[folder] || ""),
+        zohoFolderId: String(zm.folderId || zohoFolderMap[resolvedFolder] || ""),
+        zohoFolderName: zohoFolderMap.folderNameById?.[String(zm.folderId || "")] || "",
         threadId: zm.threadId ? `zthread_${zm.threadId}` : undefined,
-        folder: folder === "sent" ? "sent" : folder === "drafts" ? "drafts" : folder === "trash" ? "trash" : folder === "spam" ? "spam" : "inbox",
-        direction: folder === "sent" ? "outbound" : "inbound",
-        fromName: zm.sender || zm.fromAddress || "Remetente",
-        fromEmail: zm.fromAddress || zm.sender || "",
-        recipient: zm.toAddress ? String(zm.toAddress).replace(/&lt;|&gt;/g, "") : "",
-        cc: zm.ccAddress ? String(zm.ccAddress).replace(/&lt;|&gt;/g, "") : "",
-        subject: zm.subject || "(Sem assunto)",
-        snippet: zm.summary || "",
+        folder: resolvedFolder,
+        direction: resolvedDirection,
+        fromName: cleanFromName,
+        fromEmail: cleanFromEmail,
+        recipient: cleanRecipient,
+        cc: cleanCc,
+        subject: cleanSubject,
+        snippet: cleanSnippet,
         bodyHtml: existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].bodyHtml : "",
         isRead: String(zm.status) === "1" || Boolean(zm.isRead),
         isStarred: Boolean(zm.flagid && zm.flagid !== "flag_not_set"),
@@ -654,6 +851,10 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         created_at: isoDate,
         source: "zoho_api"
       };
+      mapped.labels = inferZohoSmartLabels(
+        mapped,
+        existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].labels : []
+      );
 
       if (existingIdx >= 0) {
         db.zohoMessagesCache[existingIdx] = { ...db.zohoMessagesCache[existingIdx], ...mapped };
@@ -663,6 +864,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       addedOrUpdated++;
     }
 
+    zohoTokenCache.lastFolderSyncAt[folder] = Date.now();
     return { ok: true, synced: addedOrUpdated, mode: "zoho_api" };
   } catch (err) {
     return { ok: false, error: err.message, mode: "hybrid_fallback" };
@@ -678,24 +880,41 @@ export function buildUnifiedMessagesList(db) {
   const defaultFromName = smtpCfg.fromName || "CorpFlats";
   const defaultFromEmail = smtpCfg.fromEmail || smtpCfg.user || "reservas@corpflats.com.br";
   const stateMeta = db.emailStateMeta || {};
+  const folderMap = zohoTokenCache.folderMapCache;
+  const hasRealZohoMessages = Array.isArray(db.zohoMessagesCache) && db.zohoMessagesCache.length > 0;
 
   const unified = [];
   const seenIds = new Set();
 
-  // 1. Mensagens da Zoho REST API cacheadas
+  // 1. Mensagens da Zoho REST API cacheadas (com normalização de pasta e entidades HTML)
   for (const zm of db.zohoMessagesCache || []) {
     if (seenIds.has(zm.id)) continue;
     seenIds.add(zm.id);
     const meta = stateMeta[zm.id] || {};
     if (meta.deletedForever) continue;
 
+    const naturalFolder = classifyZohoMessageFolder(zm, folderMap, zm.folder || "inbox");
+    const naturalDirection = naturalFolder === "sent" ? "outbound" : (naturalFolder === "drafts" ? "draft" : "inbound");
+    zm.folder = naturalFolder;
+    zm.direction = naturalDirection;
+    zm.fromName = decodeZohoEntities(zm.fromName || zm.fromEmail || "Remetente");
+    zm.fromEmail = cleanAddressField(zm.fromEmail || "");
+    zm.recipient = cleanAddressField(zm.recipient || "");
+    zm.cc = cleanAddressField(zm.cc || "");
+    zm.subject = decodeZohoEntities(zm.subject || "(Sem assunto)");
+    zm.snippet = decodeZohoEntities(zm.snippet || "");
+
     const item = {
       ...zm,
-      folder: meta.folder || zm.folder || "inbox",
+      folder: meta.folder || naturalFolder,
+      direction: naturalDirection,
       isRead: meta.isRead !== undefined ? meta.isRead : zm.isRead !== false,
       isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(zm.isStarred),
-      labels: Array.isArray(meta.labels) ? meta.labels : (Array.isArray(zm.labels) ? zm.labels : []),
-      status: zm.status || "received"
+      labels: inferZohoSmartLabels(
+        zm,
+        Array.isArray(meta.labels) ? meta.labels : (Array.isArray(zm.labels) ? zm.labels : [])
+      ),
+      status: zm.status || (naturalDirection === "outbound" ? "sent" : "received")
     };
     item.matchedReservation = matchEmailWithReservation(db, item);
     unified.push(item);
@@ -703,6 +922,8 @@ export function buildUnifiedMessagesList(db) {
 
   // 2. Mensagens recebidas locais / Webhooks (db.webmailInboundMessages)
   for (const inb of db.webmailInboundMessages || []) {
+    // Oculta as 3 mensagens de demonstração iniciais assim que a conta real da Zoho Mail API estiver populada
+    if (hasRealZohoMessages && DEMO_SEED_IDS.has(inb.id)) continue;
     if (seenIds.has(inb.id)) continue;
     seenIds.add(inb.id);
     const meta = stateMeta[inb.id] || {};
@@ -961,12 +1182,24 @@ export async function listWebmailMessages(db, {
   labelId = "",
   quickFilter = "all",
   search = "",
-  syncRemote = false
+  syncRemote = false,
+  saveDatabase = null
 } = {}) {
   ensureWebmailCollections(db);
 
-  if (syncRemote) {
-    await syncZohoMessagesToCache(db, { folder, search });
+  const oauthCfg = getZohoOAuthConfig(db);
+  const lastFolderSync = zohoTokenCache.lastFolderSyncAt?.[folder] || 0;
+  const shouldAutoSync =
+    oauthCfg.isConfigured &&
+    folder !== "queue" &&
+    folder !== "outbox" &&
+    (syncRemote || Date.now() - lastFolderSync > 30000);
+
+  if (shouldAutoSync) {
+    const syncRes = await syncZohoMessagesToCache(db, { folder, search });
+    if (syncRes.ok && syncRes.synced > 0 && typeof saveDatabase === "function") {
+      saveDatabase();
+    }
   }
 
   const all = buildUnifiedMessagesList(db);

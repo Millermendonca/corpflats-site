@@ -378,12 +378,25 @@ export default function EmailHub() {
   const [testingSmtp, setTestingSmtp] = useState(false)
 
   // ── Carregamento Inicial e Reativo ────────────────────────────────────────
+  const initialSyncRef = useRef<boolean>(false)
+
   useEffect(() => {
     fetchWebmailStatus()
   }, [])
 
   useEffect(() => {
-    fetchMessages(false)
+    const shouldForceSync = !initialSyncRef.current
+    initialSyncRef.current = true
+    fetchMessages(shouldForceSync)
+  }, [selectedFolder, selectedLabelId, quickFilter, searchQuery])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchMessages(true, true)
+      }
+    }, 60000)
+    return () => clearInterval(interval)
   }, [selectedFolder, selectedLabelId, quickFilter, searchQuery])
 
   const fetchWebmailStatus = async () => {
@@ -416,9 +429,9 @@ export default function EmailHub() {
     }
   }
 
-  const fetchMessages = async (syncRemote = false) => {
+  const fetchMessages = async (syncRemote = false, silentBackground = false) => {
     if (syncRemote) setSyncingRemote(true)
-    else setLoadingMessages(true)
+    else if (!silentBackground) setLoadingMessages(true)
 
     try {
       const params = new URLSearchParams({
