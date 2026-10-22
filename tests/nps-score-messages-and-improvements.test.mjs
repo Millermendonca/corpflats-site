@@ -8,7 +8,8 @@ import {
   processInboundNpsAndSentiment,
   checkPendingNpsManagerAlerts,
   wasNpsSurveySentToPhone,
-  sanitizeAndDispatchTodaySub5Nps
+  sanitizeAndDispatchTodaySub5Nps,
+  renderTemplateButtons
 } from "../scripts/zapi-service.mjs";
 
 test("NPS 1-5 templates, two-step comment collection, and continuous improvements summary", async () => {
@@ -332,4 +333,26 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
   assert.equal(retroRes.dispatched[0].guestName, "Anderson Prates", "Must resolve '??' to official guest name 'Anderson Prates'");
   assert.equal(retroRes.dispatched[0].score, 4);
   assert.match(retroRes.dispatched[0].message, /Anderson/i);
+
+  // 10. Check-out completed & check-out reminder must NEVER include "📍 Já Cheguei no Flat" (btn_cheguei)
+  const checkoutTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_checkout_completed");
+  const checkoutReminderTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_checkout_reminder");
+  const lucianaRes = {
+    id: 480,
+    code: "RES-215-0480",
+    guestName: "Luciana",
+    flatNumber: "215",
+    status: "completed",
+    fnhrCompleted: true,
+    preCheckinCompleted: true,
+    guestSelfCheckin: false
+  };
+  const checkoutBtns = renderTemplateButtons(checkoutTpl.buttons, lucianaRes, db, "https://corpflats.com.br", "guest", checkoutTpl);
+  assert.ok(!checkoutBtns.some((b) => b.id === "btn_cheguei" || /cheguei/i.test(b.label || "")), "Check-out Concluído must never include 'Já Cheguei no Flat'");
+  assert.equal(checkoutBtns.length, 2);
+  assert.equal(checkoutBtns[0].id, "btn_portal");
+  assert.equal(checkoutBtns[1].id, "btn_site");
+
+  const reminderBtns = renderTemplateButtons(checkoutReminderTpl.buttons, { ...lucianaRes, status: "confirmada" }, db, "https://corpflats.com.br", "guest", checkoutReminderTpl);
+  assert.ok(!reminderBtns.some((b) => b.id === "btn_cheguei" || /cheguei/i.test(b.label || "")), "Check-out Reminder must never include 'Já Cheguei no Flat'");
 });

@@ -794,7 +794,7 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
     footer: "CorpFlats • Check-out Concluído",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" },
-      { id: "btn_site", type: "URL", label: "🌐 Reservar Novamente", url: "https://corpflats.com.br/reservar" }
+      { id: "btn_site", type: "URL", label: "🌐 Reservar Novamente", url: "https://corpflats.com.br" }
     ]
   },
   {
@@ -969,7 +969,7 @@ Confirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}
 Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de braços abertos para recebê-lo em suas próximas viagens a Campos!`,
     footer: "CorpFlats • Central de Reservas",
     buttons: [
-      { id: "btn_site", type: "URL", label: "🌐 Reservar Novas Datas", url: "https://corpflats.com.br/reservar" }
+      { id: "btn_site", type: "URL", label: "🌐 Reservar Novas Datas", url: "https://corpflats.com.br" }
     ]
   },
   {
@@ -3185,7 +3185,20 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
                        lowerMsg.includes("como foi sua experiência");
 
   if (isCheckoutOrEndStay || isCancellation || isReviewOnly) {
-    validButtons = validButtons.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+    validButtons = validButtons.filter(b =>
+      b.id !== "btn_cafe" &&
+      b.id !== "btn_cheguei" &&
+      b.id !== "btn_chk" &&
+      b.id !== "btn_pre" &&
+      b.id !== "btn_chk_digital" &&
+      !/j[aá]\s*cheguei/i.test(String(b.label || "")) &&
+      (!b.url || (
+        !String(b.url).includes("/cafe/") &&
+        !String(b.url).includes("/self-checkin") &&
+        !String(b.url).includes("/pre-checkin") &&
+        !String(b.url).includes("/precheckin")
+      ))
+    );
   }
 
   if (validButtons.length > 0) {
@@ -3266,6 +3279,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     idLower.includes("check-out") || 
     idLower.includes("review") || 
     idLower.includes("nps") || 
+    idLower.includes("lost_item") ||
     idLower.includes("saida") || 
     idLower.includes("saída") ||
     eventLower.includes("checkout") || 
@@ -3273,11 +3287,13 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     eventLower.includes("check-out") || 
     eventLower.includes("review") || 
     eventLower.includes("nps") || 
+    eventLower.includes("lost_item") ||
     eventLower.includes("on_checkout") ||
     templateTitle.includes("checkout") || 
     templateTitle.includes("check-out") || 
     templateTitle.includes("saída") || 
     templateTitle.includes("saida") || 
+    templateTitle.includes("achados") ||
     templateTitle.includes("avaliação") || 
     templateTitle.includes("satisfação");
 
@@ -3331,6 +3347,23 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       ))
     );
 
+  // Predicado para identificar botão "Já Cheguei no Flat" (btn_cheguei / /self-checkin)
+  const isChegueiBtn = b =>
+    Boolean(b) && (
+      b.id === "btn_cheguei" ||
+      /j[aá]\s*cheguei/i.test(String(b.label || "")) ||
+      (b.url && String(b.url).includes("/self-checkin"))
+    );
+
+  const hasCheckedOut = Boolean(
+    resStatus === "completed" ||
+    resStatus === "checkout" ||
+    resStatus === "checked_out" ||
+    reservation?.checkoutDone === true ||
+    reservation?.actualCheckoutAt ||
+    (templateId === "tpl_checkout_completed" || triggerEvent === "checkout_completed" || triggerEvent === "on_checkout")
+  );
+
   // ── Lógica Dinâmica de Botões de Check-in e Chegada ────────────────────────
   const isUnpaidPreReserva = Boolean(
     reservation && (
@@ -3347,17 +3380,25 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     // Pré-reserva NÃO permite check-in digital nem autodeclaração de chegada antes do pagamento!
     list = list.filter(b =>
       !isCheckinBtn(b) &&
-      b.id !== "btn_cheguei" &&
+      !isChegueiBtn(b) &&
       b.id !== "btn_cafe" &&
       (!b.url || (!String(b.url).includes("/self-checkin") && !String(b.url).includes("/cafe")))
+    );
+  } else if (isCancellationContext || isCheckoutOrReviewContext || hasCheckedOut) {
+    // Hóspede já foi embora / check-out / pós-checkout / avaliação / cancelamento:
+    // NUNCA enviar botão "Já Cheguei no Flat" nem "Fazer Check-in Online"
+    list = list.filter(b =>
+      !isCheckinBtn(b) &&
+      !isChegueiBtn(b) &&
+      b.id !== "btn_cafe" &&
+      (!b.url || !String(b.url).includes("/cafe/"))
     );
   } else if (hasEnteredFlat) {
     // Se o hóspede já entrou no flat:
     // Remove botões de pré-checkin e de auto-declaração de chegada
     list = list.filter(b => 
       !isCheckinBtn(b) && 
-      b.id !== "btn_cheguei" && 
-      (!b.url || !String(b.url).includes("/self-checkin"))
+      !isChegueiBtn(b)
     );
     // Garante que o Portal do Hóspede está presente
     if (!list.some(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")))) {
@@ -3369,13 +3410,49 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       });
     }
   } else if (isPreCheckinDone) {
-    // Pré-check-in já preenchido, mas ainda NÃO entrou no flat:
-    // Remove botão de pré-checkin e assegura "Já Cheguei no Flat" (btn_cheguei), exceto na confirmação pós-check-in online
+    // Pré-check-in já preenchido, mas ainda NÃO entrou no flat (e não é check-out/pós-estadia):
+    // Remove botão de pré-checkin e assegura "Já Cheguei no Flat" (btn_cheguei) apenas nas mensagens de pré-chegada / quarto pronto
+    const hadCheckinOrChegueiInTemplate = list.some(b => isCheckinBtn(b) || isChegueiBtn(b));
     list = list.filter(b => !isCheckinBtn(b));
 
+    const ALLOWED_TEMPLATES_FOR_CHEGUEI = new Set([
+      "tpl_new_reservation",
+      "tpl_new_reservation_direct",
+      "tpl_new_reservation_ota",
+      "tpl_payment_confirmed",
+      "tpl_sameday_reservation_instructions",
+      "tpl_checkin_day_instructions",
+      "tpl_room_ready_direct",
+      "tpl_room_ready_ota",
+      "tpl_room_ready_regular",
+      "tpl_reservation_updated",
+      "qm_summary_checkin",
+      "qm_payment_confirmed"
+    ]);
+    const ALLOWED_EVENTS_FOR_CHEGUEI = new Set([
+      "reservation_created",
+      "new_reservation",
+      "new_reservation_direct",
+      "new_reservation_ota",
+      "payment_confirmed",
+      "sameday_reservation",
+      "checkin_day_instructions",
+      "room_ready",
+      "room_ready_direct",
+      "room_ready_ota",
+      "room_ready_regular",
+      "reservation_updated"
+    ]);
+
     const isPreCheckinCompletedTpl = templateId === "tpl_pre_checkin_completed" || triggerEvent === "pre_checkin_completed";
-    if (!isPreCheckinCompletedTpl) {
-      const existingChegueiIdx = list.findIndex(b => b.id === "btn_cheguei" || (b.url && String(b.url).includes("/self-checkin")));
+    const shouldInjectCheguei = !isPreCheckinCompletedTpl && (
+      hadCheckinOrChegueiInTemplate ||
+      ALLOWED_TEMPLATES_FOR_CHEGUEI.has(templateId) ||
+      ALLOWED_EVENTS_FOR_CHEGUEI.has(triggerEvent)
+    );
+
+    if (shouldInjectCheguei) {
+      const existingChegueiIdx = list.findIndex(b => isChegueiBtn(b));
       const chegueiBtn = {
         id: "btn_cheguei",
         type: "URL",
@@ -3387,6 +3464,8 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       } else {
         list.unshift(chegueiBtn);
       }
+    } else {
+      list = list.filter(b => !isChegueiBtn(b));
     }
   } else {
     // Pré-check-in PENDENTE:
@@ -3817,20 +3896,37 @@ export async function sendZapiMessage(config, {
   }
 
   // Sanitização de segurança de botões em mensagens de check-out, pós-estadia ou cancelamento
-  const msgContext = `${finalTitle || ""} ${finalMessage || ""}`.toLowerCase();
+  const msgContext = `${finalTitle || ""} ${finalMessage || ""} ${footer || ""} ${triggerEvent || ""}`.toLowerCase();
   const isCheckoutOrEndMessage = msgContext.includes("check-out") || 
                                  msgContext.includes("checkout") || 
+                                 msgContext.includes("on_checkout") ||
                                  msgContext.includes("encerramento da sua estadia") || 
-                                 msgContext.includes("horário limite de saída");
+                                 msgContext.includes("horário limite de saída") ||
+                                 msgContext.includes("lost_item");
   const isCancelMessage = msgContext.includes("cancelamento") || 
                           msgContext.includes("cancelada") || 
                           msgContext.includes("cancelado");
   const isReviewMessage = msgContext.includes("avaliação") || 
-                          msgContext.includes("satisfação");
+                          msgContext.includes("satisfação") ||
+                          msgContext.includes("nps_");
 
   let safeButtons = buttons || [];
   if (isCheckoutOrEndMessage || isCancelMessage || isReviewMessage) {
-    safeButtons = safeButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+    safeButtons = safeButtons.filter(b =>
+      b &&
+      b.id !== "btn_cafe" &&
+      b.id !== "btn_cheguei" &&
+      b.id !== "btn_chk" &&
+      b.id !== "btn_pre" &&
+      b.id !== "btn_chk_digital" &&
+      !/j[aá]\s*cheguei/i.test(String(b.label || "")) &&
+      (!b.url || (
+        !String(b.url).includes("/cafe/") &&
+        !String(b.url).includes("/self-checkin") &&
+        !String(b.url).includes("/pre-checkin") &&
+        !String(b.url).includes("/precheckin")
+      ))
+    );
   }
 
   const validButtons = safeButtons.filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
@@ -6045,14 +6141,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (!db.zapiConfig.connectionState) {
         db.zapiConfig.connectionState = "unknown";
       }
-      if (!db.zapiConfig.webhookDisconnectedUrl) {
+      if (!db.zapiConfig.webhookDisconnectedUrl || db.zapiConfig.webhookDisconnectedUrl.includes("corpflats.onrender.com")) {
         db.zapiConfig.webhookDisconnectedUrl = "https://corpflats.com.br/api/whatsapp/webhook/disconnected";
       }
-      if (!db.zapiConfig.webhookConnectedUrl) {
+      if (!db.zapiConfig.webhookConnectedUrl || db.zapiConfig.webhookConnectedUrl.includes("corpflats.onrender.com")) {
         db.zapiConfig.webhookConnectedUrl = "https://corpflats.com.br/api/whatsapp/webhook/connected";
       }
-      if (!db.zapiConfig.webhookReceivedUrl) {
+      if (!db.zapiConfig.webhookReceivedUrl || db.zapiConfig.webhookReceivedUrl.includes("corpflats.onrender.com")) {
         db.zapiConfig.webhookReceivedUrl = "https://corpflats.com.br/api/whatsapp/webhook/received";
+      }
+      if (db.zapiConfig.publicOrigin && db.zapiConfig.publicOrigin.includes("corpflats.onrender.com")) {
+        db.zapiConfig.publicOrigin = "https://corpflats.com.br";
+      }
+      if (db.settings?.baseUrl && db.settings.baseUrl.includes("corpflats.onrender.com")) {
+        db.settings.baseUrl = "https://corpflats.com.br";
+      }
+      if (db.settings?.serverBaseUrl && db.settings.serverBaseUrl.includes("corpflats.onrender.com")) {
+        db.settings.serverBaseUrl = "https://corpflats.com.br";
+      }
+      if (db.siteConfig?.branding?.siteUrl && db.siteConfig.branding.siteUrl.includes("corpflats.onrender.com")) {
+        db.siteConfig.branding.siteUrl = "https://corpflats.com.br";
       }
       if (db.zapiConfig.conciergeMonitoringEnabled === undefined) {
         db.zapiConfig.conciergeMonitoringEnabled = true;
@@ -6151,11 +6259,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             }
           }
         }
-        // Sanitização geral de botões: erradica qualquer resquício do link quebrado do whatsapp.com/otp/code/
+        // Sanitização geral de botões e domínio oficial corpflats.com.br
+        if (typeof tpl.message === "string" && tpl.message.includes("corpflats.onrender.com")) {
+          tpl.message = tpl.message.replace(/https:\/\/corpflats\.onrender\.com\/reservar\b/g, "https://corpflats.com.br").replace(/corpflats\.onrender\.com/g, "corpflats.com.br");
+        }
         if (Array.isArray(tpl.buttons)) {
           for (const b of tpl.buttons) {
             if (b.url && b.url.includes("whatsapp.com/otp")) {
               b.url = "{{link_copiar_pix}}";
+            }
+            if (b.url && b.url.includes("corpflats.onrender.com")) {
+              b.url = b.url.replace(/https:\/\/corpflats\.onrender\.com\/reservar\b/g, "https://corpflats.com.br").replace(/corpflats\.onrender\.com/g, "corpflats.com.br");
             }
           }
         }
@@ -9353,8 +9467,22 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
         let queueButtons = item.renderedButtons || [];
         const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
-        if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {
-          queueButtons = queueButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+        if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("nps") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {
+          queueButtons = queueButtons.filter(b =>
+            b &&
+            b.id !== "btn_cafe" &&
+            b.id !== "btn_cheguei" &&
+            b.id !== "btn_chk" &&
+            b.id !== "btn_pre" &&
+            b.id !== "btn_chk_digital" &&
+            !/j[aá]\s*cheguei/i.test(String(b.label || "")) &&
+            (!b.url || (
+              !String(b.url).includes("/cafe/") &&
+              !String(b.url).includes("/self-checkin") &&
+              !String(b.url).includes("/pre-checkin") &&
+              !String(b.url).includes("/precheckin")
+            ))
+          );
           item.renderedButtons = queueButtons;
         }
 
@@ -9807,7 +9935,36 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
  * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
  */
 export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false } = {}) {
-  const sendButtons = buttons || item.renderedButtons || [];
+  let sendButtons = buttons || item.renderedButtons || [];
+  const itemCtx = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""}`.toLowerCase();
+  if (
+    itemCtx.includes("checkout") ||
+    itemCtx.includes("check-out") ||
+    itemCtx.includes("on_checkout") ||
+    itemCtx.includes("cancel") ||
+    itemCtx.includes("review") ||
+    itemCtx.includes("nps") ||
+    itemCtx.includes("lost_item") ||
+    itemCtx.includes("saida") ||
+    itemCtx.includes("saída")
+  ) {
+    sendButtons = sendButtons.filter(b =>
+      b &&
+      b.id !== "btn_cafe" &&
+      b.id !== "btn_cheguei" &&
+      b.id !== "btn_chk" &&
+      b.id !== "btn_pre" &&
+      b.id !== "btn_chk_digital" &&
+      !/j[aá]\s*cheguei/i.test(String(b.label || "")) &&
+      (!b.url || (
+        !String(b.url).includes("/cafe/") &&
+        !String(b.url).includes("/self-checkin") &&
+        !String(b.url).includes("/pre-checkin") &&
+        !String(b.url).includes("/precheckin")
+      ))
+    );
+    item.renderedButtons = sendButtons;
+  }
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
 
   // Trava final anti-envio pós-checkout: se for lembrete de check-out ou estadia e o flat/reserva já teve check-out informado, cancela na hora
@@ -10132,6 +10289,31 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
         qItem.error = "Cancelado: alerta de limpeza em andamento é avaliado dinamicamente às 13:45 apenas para flats ainda sendo limpos";
         qItem.updatedAt = nowIso;
         hasChanges = true;
+      }
+      // Higieniza botões de itens agendados de check-out/pós-checkout/cancelamento para nunca levarem "Já Cheguei no Flat"
+      if ((qItem.status === "scheduled" || qItem.status === "pending") && Array.isArray(qItem.renderedButtons) && qItem.renderedButtons.length > 0) {
+        const qCtx = `${qItem.triggerEvent || ""} ${qItem.templateId || ""} ${qItem.title || ""}`.toLowerCase();
+        if (qCtx.includes("checkout") || qCtx.includes("check-out") || qCtx.includes("on_checkout") || qCtx.includes("cancel") || qCtx.includes("review") || qCtx.includes("nps") || qCtx.includes("saida") || qCtx.includes("saída")) {
+          const cleanedBtns = qItem.renderedButtons.filter(b =>
+            b &&
+            b.id !== "btn_cafe" &&
+            b.id !== "btn_cheguei" &&
+            b.id !== "btn_chk" &&
+            b.id !== "btn_pre" &&
+            b.id !== "btn_chk_digital" &&
+            !/j[aá]\s*cheguei/i.test(String(b.label || "")) &&
+            (!b.url || (
+              !String(b.url).includes("/cafe/") &&
+              !String(b.url).includes("/self-checkin") &&
+              !String(b.url).includes("/pre-checkin") &&
+              !String(b.url).includes("/precheckin")
+            ))
+          );
+          if (cleanedBtns.length !== qItem.renderedButtons.length) {
+            qItem.renderedButtons = cleanedBtns;
+            hasChanges = true;
+          }
+        }
       }
     }
   }
