@@ -192,6 +192,8 @@ Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX o
     timingLabel: "Imediato à compensação do pagamento",
     condition: "Reserva direta que muda de status 'pre_reserva' para 'confirmada'",
     channelsAllowed: ["site", "whatsapp"],
+    hasAttachment: true,
+    attachmentName: "Manual_do_Hospede_CorpFlats.pdf",
     description: "Enviada para o solicitante e o hóspede exclusivamente em reservas do Site ou WhatsApp quando o status for convertido de pré-reserva para confirmada. Reservas do Booking/Airbnb NUNCA recebem esta mensagem nem menções a valores ou contas bancárias.",
     messagePreview: `Olá, *{{primeiro_nome}}*! 💚🎉
 Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!
@@ -223,6 +225,8 @@ Realize agora seu pré-checkin digital para liberação rápida na portaria:`,
     timingLabel: "Imediato (feita até 23:59 da véspera)",
     condition: "Origem Site ou WhatsApp confirmada",
     channelsAllowed: ["site", "whatsapp"],
+    hasAttachment: true,
+    attachmentName: "Manual_do_Hospede_CorpFlats.pdf",
     description: "Confirma a reserva com número do flat, status do café da manhã e benefício exclusivo de Early Check-in a partir das 10:00 estritamente mediante disponibilidade.",
     messagePreview: `Olá, *{{nome_hospede}}*! 🌟✨
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
@@ -267,6 +271,8 @@ Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Che
     timingLabel: "Imediato à confirmação da OTA",
     condition: "Origem Booking.com ou Airbnb",
     channelsAllowed: ["booking", "airbnb"],
+    hasAttachment: true,
+    attachmentName: "Manual_do_Hospede_CorpFlats.pdf",
     description: "Reserva confirmada via OTA sem menção a pagamentos nem valores. Comunica check-in às 14:00 e check-out às 12:00, avisa que o flat será liberado a partir das 12:00 se limpo e promove o benefício de Early Check-in às 10:00 em reservas diretas futuras.",
     messagePreview: `Olá, *{{nome_hospede}}*! 🌟
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
@@ -299,6 +305,8 @@ O número do seu flat e instruções de acesso serão enviados no dia da sua che
     timingLabel: "Imediato para reservas criadas hoje após as 07:01",
     condition: "Reserva criada na própria data de check-in a partir das 07:01",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    hasAttachment: true,
+    attachmentName: "Manual_do_Hospede_CorpFlats.pdf",
     description: "Para reservas criadas no próprio dia do check-in após as 07:01, o sistema unifica a confirmação e as instruções de chegada numa única mensagem consolidada para evitar spam no WhatsApp do hóspede.",
     messagePreview: `Olá, *{{primeiro_nome}}*! 🌟🔑
 Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!

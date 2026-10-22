@@ -355,4 +355,22 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
 
   const reminderBtns = renderTemplateButtons(checkoutReminderTpl.buttons, { ...lucianaRes, status: "confirmada" }, db, "https://corpflats.com.br", "guest", checkoutReminderTpl);
   assert.ok(!reminderBtns.some((b) => b.id === "btn_cheguei" || /cheguei/i.test(b.label || "")), "Check-out Reminder must never include 'Já Cheguei no Flat'");
+
+  // 11. PDF Manual attachment: must NOT be on tpl_checkin_completed (when guest clicks "Já cheguei"),
+  // and MUST be enabled on all reservation confirmation templates
+  const checkinCompletedTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_checkin_completed");
+  assert.equal(checkinCompletedTpl.hasAttachment, false, "tpl_checkin_completed must have hasAttachment = false");
+  assert.equal(checkinCompletedTpl.documentUrl, "", "tpl_checkin_completed must not have documentUrl populated");
+
+  for (const confirmId of [
+    "tpl_new_reservation_direct",
+    "tpl_new_reservation_ota",
+    "tpl_payment_confirmed",
+    "tpl_sameday_reservation_instructions"
+  ]) {
+    const confirmTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === confirmId);
+    assert.ok(confirmTpl, `Template ${confirmId} must exist`);
+    assert.equal(confirmTpl.hasAttachment, true, `${confirmId} must have hasAttachment = true`);
+    assert.equal(confirmTpl.documentUrl, "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf", `${confirmId} must attach the PDF manual`);
+  }
 });

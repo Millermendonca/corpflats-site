@@ -718,9 +718,9 @@ Se você notar qualquer detalhe que precise de atenção, desejar solicitar trav
 {{link_portal_hospede}}`,
     footer: "CorpFlats • Soho Residence Service",
     hasAttachment: false,
-    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
-    documentName: "Manual_do_Hospede_CorpFlats.pdf",
-    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖",
+    documentUrl: "",
+    documentName: "",
+    documentCaption: "",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🌐 Abrir Portal do Flat", url: "{{link_portal_hospede}}" },
       { id: "btn_call", type: "CALL", label: "📞 Ligar Administração", phone: "{{telefone_hotel}}" }
@@ -6276,9 +6276,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_payment_confirmed") {
           tpl.channels = ["site", "whatsapp"];
           tpl.recipientTarget = "both";
-          if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas")) {
-            const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
-            if (defPay) {
+          const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
+          if (defPay) {
+            tpl.hasAttachment = true;
+            tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defPay.documentUrl;
+            tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defPay.documentName;
+            tpl.documentCaption = tpl.documentCaption || defPay.documentCaption;
+            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas")) {
               tpl.message = defPay.message;
               tpl.buttons = defPay.buttons;
             }
@@ -6321,10 +6325,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_new_reservation_direct") {
           const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
           if (defDir) {
-            tpl.hasAttachment = defDir.hasAttachment;
-            tpl.documentUrl = defDir.documentUrl;
-            tpl.documentName = defDir.documentName;
-            tpl.documentCaption = defDir.documentCaption;
+            tpl.hasAttachment = true;
+            tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defDir.documentUrl;
+            tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defDir.documentName;
+            tpl.documentCaption = tpl.documentCaption || defDir.documentCaption;
             if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("ESTRITAMENTE MEDIANTE DISPONIBILIDADE")) {
               tpl.message = defDir.message;
               tpl.description = defDir.description;
@@ -6333,6 +6337,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_checkin_completed") {
+          // O manual em PDF NUNCA deve ser enviado no gatilho de chegada ao flat (checkin_completed),
+          // pois já é enviado na confirmação da reserva.
+          tpl.hasAttachment = false;
+          tpl.documentUrl = "";
+          tpl.documentName = "";
+          tpl.documentCaption = "";
           if (!tpl.message.includes("Como está tudo por aí")) {
             const defChk = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_completed");
             if (defChk) {
@@ -6341,9 +6351,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_new_reservation_ota") {
-          if (tpl.message.includes("{{valor_total}}") || !tpl.message.includes("12:00")) {
-            const defOta = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_ota");
-            if (defOta) {
+          const defOta = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_ota");
+          if (defOta) {
+            tpl.hasAttachment = true;
+            tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defOta.documentUrl;
+            tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defOta.documentName;
+            tpl.documentCaption = tpl.documentCaption || defOta.documentCaption;
+            if (tpl.message.includes("{{valor_total}}") || !tpl.message.includes("12:00")) {
               tpl.message = defOta.message;
               tpl.title = defOta.title;
               tpl.description = defOta.description;
@@ -6371,9 +6385,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.recipientTarget = "guest";
         }
         if (tpl.id === "tpl_sameday_reservation_instructions") {
-          if (!tpl.message.includes("instrucao_checkin_ou_chegada") || tpl.message.includes("Como sua reserva foi confirmada") || !tpl.message.includes("status_pagamento")) {
-            const defSame = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
-            if (defSame) {
+          const defSame = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
+          if (defSame) {
+            tpl.hasAttachment = true;
+            tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defSame.documentUrl;
+            tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defSame.documentName;
+            tpl.documentCaption = tpl.documentCaption || defSame.documentCaption;
+            if (!tpl.message.includes("instrucao_checkin_ou_chegada") || tpl.message.includes("Como sua reserva foi confirmada") || !tpl.message.includes("status_pagamento")) {
               tpl.title = defSame.title;
               tpl.description = defSame.description;
               tpl.message = defSame.message;
@@ -6787,9 +6805,24 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       
       // Atualiza também nas configurações gerais se for o manual do hóspede
-      if (db?.zapiConfig && (templateId === "tpl_checkin_completed" || cleanFileName.toLowerCase().includes("manual") || cleanFileName.toLowerCase().includes("guia"))) {
+      const CONFIRMATION_TPL_IDS = [
+        "tpl_new_reservation_direct",
+        "tpl_new_reservation_ota",
+        "tpl_payment_confirmed",
+        "tpl_sameday_reservation_instructions"
+      ];
+      if (db?.zapiConfig && (CONFIRMATION_TPL_IDS.includes(templateId) || cleanFileName.toLowerCase().includes("manual") || cleanFileName.toLowerCase().includes("guia"))) {
         db.zapiConfig.guestGuidePdfUrl = fileUrl;
         db.zapiConfig.guestGuidePdfName = cleanFileName;
+        if (Array.isArray(db.whatsappTemplates)) {
+          for (const t of db.whatsappTemplates) {
+            if (CONFIRMATION_TPL_IDS.includes(t.id)) {
+              t.hasAttachment = true;
+              t.documentUrl = fileUrl;
+              t.documentName = cleanFileName;
+            }
+          }
+        }
       }
 
       saveDatabase();
@@ -7236,8 +7269,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       });
     }
 
-    const hasAttachment = Boolean(template.hasAttachment || template.documentUrl);
-    const docUrl = hasAttachment ? (template.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+    const isCheckinCompletedTpl = template.id === "tpl_checkin_completed" || template.triggerEvent === "checkin_completed";
+    const hasAttachment = !isCheckinCompletedTpl && Boolean(template.hasAttachment === true || (template.hasAttachment === undefined && template.documentUrl));
+    const docUrl = hasAttachment ? (template.documentUrl || db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf") : undefined;
     const docName = hasAttachment ? (template.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
 
     const results = [];
@@ -9628,7 +9662,8 @@ function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, pho
 export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, channel, baseUrl = "https://corpflats.com.br", idPrefix = "q", recipientTarget = null }) {
   const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, target.type, tpl);
   const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, target.type, tpl);
-  const hasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
+  const isCheckinCompletedTpl = tpl.id === "tpl_checkin_completed" || tpl.triggerEvent === "checkin_completed";
+  const hasAttachment = !isCheckinCompletedTpl && Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
   return {
     id: `${idPrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     reservationId: resv.id,
@@ -9994,7 +10029,8 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
   let emailLog = null;
 
   if (item.guestPhone && !skipWhatsApp) {
-    let shouldSendDoc = Boolean(includeDocument && item.documentUrl);
+    const isCheckinCompletedItem = item.triggerEvent === "checkin_completed" || item.templateId === "tpl_checkin_completed";
+    let shouldSendDoc = !isCheckinCompletedItem && Boolean(includeDocument && item.documentUrl);
     const normPhone = normalizePhoneForDedup(item.guestPhone);
     const resKey = String(item.reservationCode || (item.reservationId ? `ID_${item.reservationId}` : "")).trim().toUpperCase();
     const pdfLockKey = (shouldSendDoc && resKey && normPhone) ? `${resKey}:${normPhone}` : "";
@@ -10124,9 +10160,20 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
 export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl = "" }) {
   const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, target.type, tpl);
   const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, target.type, tpl);
-  const rawHasAttachment = Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl));
+  const isCheckinCompletedEvent = eventName === "checkin_completed" || tpl?.id === "tpl_checkin_completed" || tpl?.triggerEvent === "checkin_completed";
+  const isConfirmationEvent =
+    eventName === "reservation_created" ||
+    eventName === "payment_confirmed" ||
+    eventName === "sameday_reservation" ||
+    tpl?.id === "tpl_new_reservation_direct" ||
+    tpl?.id === "tpl_new_reservation_ota" ||
+    tpl?.id === "tpl_payment_confirmed" ||
+    tpl?.id === "tpl_sameday_reservation_instructions";
+  const rawHasAttachment = isCheckinCompletedEvent
+    ? false
+    : Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && (tpl.documentUrl || isConfirmationEvent)));
   let hasAttachment = rawHasAttachment;
-  let docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+  let docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf") : undefined;
   let docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
   const label = `${getRecipientTypeLabel(target.type)}: ${target.name}`;
 

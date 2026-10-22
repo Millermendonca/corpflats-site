@@ -1380,7 +1380,7 @@ export default function WhatsappAutomation() {
     setEditingSendEmail(tpl.sendEmail !== false)
     setEditingEmailSubject(tpl.emailSubject || "")
     setEditingEnabled(tpl.enabled !== false)
-    setEditingHasAttachment(Boolean(tpl.hasAttachment || tpl.documentUrl))
+    setEditingHasAttachment(Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl)))
     setEditingDocumentUrl(tpl.documentUrl || "")
     setEditingDocumentName(tpl.documentName || "Manual_do_Hospede_CorpFlats.pdf")
     setEditingDocumentCaption(tpl.documentCaption || "")
@@ -3775,7 +3775,7 @@ export default function WhatsappAutomation() {
                               ✉️ E-mail
                             </Badge>
                           )}
-                          {(tpl.hasAttachment || tpl.documentUrl) && (
+                          {(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && Boolean(tpl.documentUrl))) && (
                             <Badge 
                               variant="secondary" 
                               className="text-[10px] font-bold py-0.5 px-2 bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200 flex items-center gap-1"
@@ -3867,7 +3867,7 @@ export default function WhatsappAutomation() {
                       )}
 
                       {/* Documento PDF Anexo */}
-                      {(tpl.hasAttachment || tpl.documentUrl) && (
+                      {(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && Boolean(tpl.documentUrl))) && (
                         <div className="p-2 rounded-lg bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 flex items-center gap-2 text-xs text-blue-900 dark:text-blue-300">
                           <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                           <div className="truncate flex-1 min-w-0">
@@ -3942,7 +3942,7 @@ export default function WhatsappAutomation() {
                               selectTemplateForEditing(tpl)
                               setTestMessage(renderPreviewText(tpl.message))
                               setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
-                              setTestIncludeDocument(Boolean(tpl.hasAttachment || tpl.documentUrl))
+                              setTestIncludeDocument(Boolean(tpl.hasAttachment === true || (tpl.hasAttachment === undefined && tpl.documentUrl)))
                               setTestModalOpen(true)
                             }}
                           >
