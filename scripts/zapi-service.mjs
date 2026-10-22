@@ -3170,19 +3170,25 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
   let text = (message || "").trim();
   let validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.type === "REPLY" || b.type === "COPY"));
 
-  // Blindagem de segurança: Se a mensagem contiver termos claros de check-out, cancelamento ou pós-estadia,
-  // nunca incluir links ou botões de café da manhã (/cafe/ ou btn_cafe) no Acesso Rápido!
+  // Blindagem de segurança: Se a mensagem contiver frases específicas de check-out concluído/lembrete de saída, cancelamento ou avaliação,
+  // nunca incluir links ou botões de check-in, chegada ou café da manhã (/cafe/ ou btn_cafe) no Acesso Rápido!
+  // IMPORTANTE: Não usar includes("check-out") genérico no corpo da mensagem, pois confirmações de reserva contêm "• Saída (Check-out): DD/MM/AAAA".
   const lowerMsg = text.toLowerCase();
-  const isCheckoutOrEndStay = lowerMsg.includes("check-out") || 
-                              lowerMsg.includes("checkout") || 
-                              lowerMsg.includes("encerramento da sua estadia") || 
-                              lowerMsg.includes("horário limite de saída");
-  const isCancellation = lowerMsg.includes("cancelamento") || 
-                         lowerMsg.includes("cancelada") || 
-                         lowerMsg.includes("cancelado");
-  const isReviewOnly = lowerMsg.includes("avaliação") || 
-                       lowerMsg.includes("satisfação") || 
-                       lowerMsg.includes("como foi sua experiência");
+  const lowerFooter = (footer || "").toLowerCase();
+  const isCheckoutOrEndStay = lowerMsg.includes("encerramento da sua estadia") || 
+                              lowerMsg.includes("horário limite de saída") ||
+                              lowerMsg.includes("check-out concluído") ||
+                              lowerMsg.includes("agradecemos imensamente pela sua estadia") ||
+                              lowerMsg.includes("sua saída está programada para hoje") ||
+                              lowerFooter.includes("check-out") ||
+                              lowerFooter.includes("agradecemos sua preferência");
+  const isCancellation = lowerMsg.includes("reserva cancelada") || 
+                         lowerMsg.includes("foi cancelada") || 
+                         lowerMsg.includes("cancelamento confirmado") ||
+                         lowerFooter.includes("cancelamento");
+  const isReviewOnly = lowerMsg.includes("pesquisa de satisfação") || 
+                       lowerMsg.includes("como foi sua experiência") ||
+                       lowerFooter.includes("sua opinião vale muito");
 
   if (isCheckoutOrEndStay || isCancellation || isReviewOnly) {
     validButtons = validButtons.filter(b =>
@@ -3730,10 +3736,15 @@ export async function sendZapiDocument(config, {
   const headers = { "Content-Type": "application/json" };
   if (clientToken) headers["Client-Token"] = clientToken;
 
+  // A Z-API adiciona automaticamente ".{extension}" ao fileName no endpoint /send-document/{extension};
+  // removemos a extensão duplicada do final para evitar "Manual_do_Hospede_CorpFlats.pdf.pdf" no WhatsApp
+  const rawFileName = fileName || `Documento.${extension}`;
+  const zapiFileName = rawFileName.replace(new RegExp(`\\.${extension}$`, "i"), "");
+
   const payload = {
     phone: targetPhone,
     document: finalDocument,
-    fileName: fileName || `Documento.${extension}`,
+    fileName: zapiFileName,
     caption: finalCaption || ""
   };
 
@@ -3896,19 +3907,28 @@ export async function sendZapiMessage(config, {
   }
 
   // Sanitização de segurança de botões em mensagens de check-out, pós-estadia ou cancelamento
-  const msgContext = `${finalTitle || ""} ${finalMessage || ""} ${footer || ""} ${triggerEvent || ""}`.toLowerCase();
-  const isCheckoutOrEndMessage = msgContext.includes("check-out") || 
-                                 msgContext.includes("checkout") || 
-                                 msgContext.includes("on_checkout") ||
-                                 msgContext.includes("encerramento da sua estadia") || 
-                                 msgContext.includes("horário limite de saída") ||
-                                 msgContext.includes("lost_item");
-  const isCancelMessage = msgContext.includes("cancelamento") || 
-                          msgContext.includes("cancelada") || 
-                          msgContext.includes("cancelado");
-  const isReviewMessage = msgContext.includes("avaliação") || 
-                          msgContext.includes("satisfação") ||
-                          msgContext.includes("nps_");
+  // IMPORTANTE: Avaliar "check-out"/"checkout" apenas nos metadados (title/footer/triggerEvent),
+  // pois mensagens de confirmação de reserva e instruções do dia contêm "• Saída (Check-out): DD/MM/AAAA" no corpo!
+  const metaContext = `${finalTitle || ""} ${footer || ""} ${triggerEvent || ""}`.toLowerCase();
+  const bodyLower = `${finalMessage || ""}`.toLowerCase();
+  const isCheckoutOrEndMessage = metaContext.includes("check-out") || 
+                                 metaContext.includes("checkout") || 
+                                 metaContext.includes("on_checkout") ||
+                                 metaContext.includes("lost_item") ||
+                                 bodyLower.includes("encerramento da sua estadia") || 
+                                 bodyLower.includes("horário limite de saída") ||
+                                 bodyLower.includes("check-out concluído") ||
+                                 bodyLower.includes("agradecemos imensamente pela sua estadia") ||
+                                 bodyLower.includes("sua saída está programada para hoje");
+  const isCancelMessage = metaContext.includes("cancel") ||
+                          bodyLower.includes("reserva cancelada") || 
+                          bodyLower.includes("foi cancelada");
+  const isReviewMessage = metaContext.includes("avaliação") || 
+                          metaContext.includes("satisfação") ||
+                          metaContext.includes("nps_") ||
+                          metaContext.includes("post_checkout_review") ||
+                          bodyLower.includes("pesquisa de satisfação") ||
+                          bodyLower.includes("como foi sua experiência");
 
   let safeButtons = buttons || [];
   if (isCheckoutOrEndMessage || isCancelMessage || isReviewMessage) {
@@ -6476,11 +6496,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       let sanitizedQueueCafeCount = 0;
       for (const item of db.whatsappQueue) {
         if (item) {
-          const qContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
+          const qContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""}`.toLowerCase();
           const isCheckoutOrCancel = qContext.includes("checkout") || 
                                      qContext.includes("check-out") || 
                                      qContext.includes("cancel") || 
                                      qContext.includes("review") || 
+                                     qContext.includes("nps") ||
                                      qContext.includes("saida") || 
                                      qContext.includes("saída") || 
                                      qContext.includes("avaliação");
@@ -9500,7 +9521,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
 
         let queueButtons = item.renderedButtons || [];
-        const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
+        const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""}`.toLowerCase();
         if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("nps") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {
           queueButtons = queueButtons.filter(b =>
             b &&

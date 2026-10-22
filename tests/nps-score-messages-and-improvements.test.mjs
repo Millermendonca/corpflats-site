@@ -9,7 +9,8 @@ import {
   checkPendingNpsManagerAlerts,
   wasNpsSurveySentToPhone,
   sanitizeAndDispatchTodaySub5Nps,
-  renderTemplateButtons
+  renderTemplateButtons,
+  formatMessageWithLinks
 } from "../scripts/zapi-service.mjs";
 
 test("NPS 1-5 templates, two-step comment collection, and continuous improvements summary", async () => {
@@ -373,4 +374,25 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
     assert.equal(confirmTpl.hasAttachment, true, `${confirmId} must have hasAttachment = true`);
     assert.equal(confirmTpl.documentUrl, "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf", `${confirmId} must attach the PDF manual`);
   }
+
+  // 12. Same-day reservation & confirmation messages mentioning "• Saída (Check-out):" must KEEP "📝 Fazer Check-in Online" (btn_chk)
+  const samedayTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_sameday_reservation_instructions");
+  const angeloRes = {
+    id: 499,
+    code: "RES-715-0499",
+    guestName: "Angelo",
+    flatNumber: "715",
+    status: "confirmada",
+    fnhrCompleted: false,
+    preCheckinCompleted: false,
+    guestSelfCheckin: false
+  };
+  const samedayBtns = renderTemplateButtons(samedayTpl.buttons, angeloRes, db, "https://corpflats.com.br", "guest", samedayTpl);
+  assert.ok(samedayBtns.some((b) => b.id === "btn_chk" && /check-in online/i.test(b.label || "")), "Same-day reservation must include '📝 Fazer Check-in Online' when pre-check-in is pending");
+  const formattedSamedayText = formatMessageWithLinks(
+    "• Entrada (Check-in): Hoje a partir das 14:00\n• Saída (Check-out): 23/10/2026 até às 12:00",
+    samedayTpl.footer,
+    samedayBtns
+  );
+  assert.match(formattedSamedayText, /Fazer Check-in Online/i, "formatMessageWithLinks must not strip btn_chk when message body mentions '• Saída (Check-out):'");
 });
