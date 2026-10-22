@@ -6426,9 +6426,6 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (cleanedOldCount > 0) {
         console.log(`[Z-API Init] Cancelados ${cleanedOldCount} agendamentos antigos ou bloqueados pelo Modo de Teste.`);
       }
-      if (sanitizedQueueCafeCount > 0) {
-        console.log(`[Z-API Init] Sanitizados ${sanitizedQueueCafeCount} agendamentos na fila removendo botões/links indevidos de café.`);
-      }
     }
 
     if (!db.whatsappHistory) {
