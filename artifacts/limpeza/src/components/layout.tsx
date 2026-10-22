@@ -67,6 +67,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       const next = !prev
       try {
         localStorage.setItem("gfm_sidebar_pinned", String(next))
+        window.dispatchEvent(new CustomEvent("gfm-sidebar-pin-changed", { detail: { isPinned: next } }))
       } catch {}
       return next
     })
@@ -328,6 +329,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (href === "/equipe" && (location === "/usuarios" || location === "/usuarios-equipe" || location === "/users")) return true
     if (href === "/configuracoes" && (location === "/settings" || location === "/configuracao" || location === "/ajustes")) return true
     if (href === "/zapi-conexao" && (location === "/conexao-zapi" || location === "/sistema/zapi" || location === "/zapi")) return true
+    if (href === "/emails" && (location === "/email-hub" || location === "/gerenciador-emails")) return true
     if (href === "/jornada-reservas" && (location === "/jornada-comunicacao" || location === "/fluxo-reservas" || location === "/mapa-jornada" || location === "/jornada")) return true
     if (href === "/monitor-servidor" && (location === "/servidor" || location === "/server-monitor")) return true
     if (href === "/ia-status" && (location === "/ai-status" || location === "/status-ia")) return true

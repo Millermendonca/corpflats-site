@@ -76,6 +76,8 @@ import {
   MailCheck,
   MailOpen,
   FolderInput,
+  FolderOpen,
+  RotateCcw,
   Bold,
   Italic,
   Underline,
@@ -156,7 +158,44 @@ function formatBytes(bytes?: number) {
   return `${(kb / 1024).toFixed(1)} MB`
 }
 
-// Sanitiza e isola o HTML do e-mail para não vazar CSS global (body / .badge) na SPA e adaptar paddings em telas web e mobile
+function scopeCssRuleBlock(cssText: string): string {
+  return cssText.replace(/([^{}@]+)\{([^{}]*)\}/g, (_match, rawSelectors, declarations) => {
+    const trimmedSelectors = String(rawSelectors).trim()
+    if (!trimmedSelectors || /^(?:from|to|\d+%)$/i.test(trimmedSelectors)) {
+      return `${rawSelectors}{${declarations}}`
+    }
+    const scopedSelectors = trimmedSelectors
+      .split(",")
+      .map(sel => {
+        const s = sel.trim()
+        if (!s) return ""
+        if (s.includes(".cf-email-viewer-scope")) return s
+        if (/^(?:html|body|:root)$/i.test(s)) return ".cf-email-viewer-scope"
+        const cleaned = s.replace(/^(?:html|body)\s+/i, "")
+        return `.cf-email-viewer-scope ${cleaned}`
+      })
+      .filter(Boolean)
+      .join(", ")
+    return `${scopedSelectors} {${declarations}}`
+  })
+}
+
+function scopeEmailCss(cssContent: string): string {
+  const withoutComments = String(cssContent || "").replace(/\/\*[\s\S]*?\*\//g, "")
+  const mediaPlaceholders: string[] = []
+  const withPlaceholders = withoutComments.replace(
+    /(@media[^{]+)\{([\s\S]*?\})\s*\}/gi,
+    (_m, mediaHeader, innerRules) => {
+      const idx = mediaPlaceholders.length
+      mediaPlaceholders.push(`${mediaHeader}{${scopeCssRuleBlock(innerRules)}}`)
+      return `__CF_MEDIA_${idx}__`
+    }
+  )
+  const scopedBase = scopeCssRuleBlock(withPlaceholders)
+  return scopedBase.replace(/__CF_MEDIA_(\d+)__/g, (_m, idx) => mediaPlaceholders[Number(idx)] || "")
+}
+
+// Sanitiza e isola o HTML do e-mail para não vazar CSS global (body / .badge / table / p / a) na SPA e adaptar em telas web e mobile
 function formatEmailHtmlForViewer(rawHtml?: string, fallbackText?: string): string {
   if (!rawHtml || !rawHtml.trim()) {
     const safeText = String(fallbackText || "Sem conteúdo de texto.")
@@ -164,27 +203,28 @@ function formatEmailHtmlForViewer(rawHtml?: string, fallbackText?: string): stri
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/\n/g, "<br/>")
-    return `<div style="font-size:13.5px;line-height:1.6;color:#1F2937;word-break:break-word;">${safeText}</div>`
+    return `<div class="cf-email-viewer-scope" style="font-size:13.5px;line-height:1.6;color:#1F2937;word-break:break-word;">${safeText}</div>`
   }
 
   let html = String(rawHtml)
   html = html.replace(/<!DOCTYPE[^>]*>/gi, "")
   html = html.replace(/<\/?(?:html|head|meta|title|body)[^>]*>/gi, "")
   html = html.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_match, cssContent) => {
-    const scopedCss = String(cssContent)
-      .replace(
-        /\bbody,\s*table,\s*td,\s*a\b/g,
-        ".cf-email-viewer-scope, .cf-email-viewer-scope table, .cf-email-viewer-scope td, .cf-email-viewer-scope a"
-      )
-      .replace(/\btable,\s*td\b/g, ".cf-email-viewer-scope table, .cf-email-viewer-scope td")
-      .replace(/\bbody\s*\{/g, ".cf-email-viewer-scope {")
-      .replace(/\.badge\b/g, ".cf-email-viewer-scope .badge")
-      .replace(/\.wrapper\b/g, ".cf-email-viewer-scope .wrapper")
-    return `<style>${scopedCss}</style>`
+    return `<style>${scopeEmailCss(cssContent)}</style>`
   })
   html = html.replace(/padding:\s*32px\s+16px\s*;?/gi, "padding: 8px 4px;")
   html = html.replace(/padding:\s*36px\s+40px\s*;?/gi, "padding: 16px 14px;")
-  return `<div class="cf-email-viewer-scope" style="width:100%;max-width:100%;overflow-x:auto;word-break:break-word;">${html}</div>`
+  const responsiveReset = `<style>
+    .cf-email-viewer-scope { width: 100%; max-width: 100%; overflow-x: auto; word-break: break-word; box-sizing: border-box; }
+    .cf-email-viewer-scope * { box-sizing: border-box; }
+    .cf-email-viewer-scope img { max-width: 100% !important; height: auto !important; }
+    .cf-email-viewer-scope table { max-width: 100% !important; }
+    @media (max-width: 640px) {
+      .cf-email-viewer-scope table[width], .cf-email-viewer-scope td[width] { width: 100% !important; min-width: 0 !important; }
+      .cf-email-viewer-scope .container, .cf-email-viewer-scope .wrapper { width: 100% !important; max-width: 100% !important; padding-left: 4px !important; padding-right: 4px !important; }
+    }
+  </style>`
+  return `<div class="cf-email-viewer-scope">${responsiveReset}${html}</div>`
 }
 
 export default function EmailHub() {
@@ -196,6 +236,7 @@ export default function EmailHub() {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
   const [readingMaximized, setReadingMaximized] = useState<boolean>(false)
+  const [isFullscreenApp, setIsFullscreenApp] = useState<boolean>(false)
   const [shellSidebarPinned, setShellSidebarPinned] = useState<boolean>(() => {
     try {
       return localStorage.getItem("gfm_sidebar_pinned") === "true"
@@ -210,11 +251,19 @@ export default function EmailHub() {
         setShellSidebarPinned(localStorage.getItem("gfm_sidebar_pinned") === "true")
       } catch {}
     }
+    const handleCustomPin = (e: Event) => {
+      const custom = e as CustomEvent<{ isPinned?: boolean }>
+      if (typeof custom.detail?.isPinned === "boolean") {
+        setShellSidebarPinned(custom.detail.isPinned)
+      } else {
+        checkPin()
+      }
+    }
     window.addEventListener("storage", checkPin)
-    const interval = setInterval(checkPin, 1000)
+    window.addEventListener("gfm-sidebar-pin-changed", handleCustomPin)
     return () => {
       window.removeEventListener("storage", checkPin)
-      clearInterval(interval)
+      window.removeEventListener("gfm-sidebar-pin-changed", handleCustomPin)
     }
   }, [])
 
@@ -572,6 +621,7 @@ export default function EmailHub() {
           if (!ids.includes(m.id)) return true
           if (action === "archive" && selectedFolder !== "archive") return false
           if (action === "trash" && selectedFolder !== "trash") return false
+          if (action === "moveToInbox" && selectedFolder !== "inbox") return false
           if (action === "deleteForever") return false
           if (action === "moveToFolder" && extra.targetFolderId && extra.targetFolderId !== selectedFolder) return false
           return true
@@ -583,6 +633,7 @@ export default function EmailHub() {
       ids.includes(activeMessageId) &&
       ((action === "archive" && selectedFolder !== "archive") ||
         (action === "trash" && selectedFolder !== "trash") ||
+        (action === "moveToInbox" && selectedFolder !== "inbox") ||
         action === "deleteForever" ||
         Boolean(action === "moveToFolder" && extra.targetFolderId && extra.targetFolderId !== selectedFolder))
 
@@ -1193,6 +1244,20 @@ export default function EmailHub() {
     return activeReservations.find(r => String(r.id) === String(composeReservationId) || r.code === composeReservationId) || null
   }, [composeReservationId, activeReservations])
 
+  const counts = useMemo(() => {
+    const inbox = systemFolders.find(f => f.id === "inbox")
+    const queue = systemFolders.find(f => f.id === "queue")
+    const failed = systemFolders.find(f => f.id === "failed")
+    const drafts = systemFolders.find(f => f.id === "drafts")
+    return {
+      inboxUnread: Number(inbox?.unread || 0),
+      inboxTotal: Number(inbox?.total || 0),
+      queueTotal: Number(queue?.total || 0),
+      failedTotal: Number(failed?.total || 0),
+      draftsTotal: Number(drafts?.total || 0)
+    }
+  }, [systemFolders])
+
   const activeFolderLabel = useMemo(() => {
     if (selectedLabelId) {
       return `Etiqueta: ${labelsById[selectedLabelId]?.name || ""}`
@@ -1206,21 +1271,29 @@ export default function EmailHub() {
 
   return (
     <Shell>
-      <div className="flex flex-col h-[calc(100dvh-7.25rem)] min-h-[480px] md:h-[100dvh] md:min-h-[600px] w-full px-2 pt-2 pb-1.5 md:px-4 md:py-3 overflow-hidden select-none">
+      <div
+        className={`flex flex-col w-full px-2 pt-2 pb-1.5 md:px-4 md:py-3 overflow-hidden select-none ${
+          isFullscreenApp
+            ? "fixed inset-0 z-40 h-[100dvh] bg-background"
+            : "-mb-20 md:mb-0 h-[calc(100dvh-7.5rem)] md:h-[100dvh] min-h-[420px] md:min-h-[560px]"
+        }`}
+      >
         {/* ════════════════════════════════════════════════════════════════════
             TOPBAR INTEGRADA (WEB & MOBILE): STATUS DO MOTOR, ZOHO API & AÇÕES
            ════════════════════════════════════════════════════════════════════ */}
         <div
           className={`flex items-center justify-between gap-2 pb-2 mb-2 border-b border-border shrink-0 transition-all ${
-            !shellSidebarPinned ? "md:pl-20" : ""
+            !shellSidebarPinned && !isFullscreenApp ? "md:pl-20" : ""
           } ${mobileView === "detail" ? "hidden md:flex" : "flex"}`}
         >
           <div className="flex items-center gap-2 min-w-0">
-            {/* Botão Mobile/Tablet para abrir Gaveta de Pastas e Etiquetas */}
+            {/* Botão Mobile/Tablet/Compacto para abrir Gaveta de Pastas e Etiquetas */}
             <button
               type="button"
               onClick={() => setMobileDrawerOpen(true)}
-              className="lg:hidden relative p-2 rounded-xl border border-border bg-card hover:bg-muted text-foreground shrink-0 shadow-2xs"
+              className={`${
+                shellSidebarPinned && !isFullscreenApp ? "xl:hidden" : "lg:hidden"
+              } relative p-2 rounded-xl border border-border bg-card hover:bg-muted text-foreground shrink-0 shadow-2xs`}
               title="Pastas, Etiquetas e Caixas"
             >
               <FolderOpen className="w-4 h-4 text-primary" />
@@ -1329,6 +1402,20 @@ export default function EmailHub() {
               <Settings className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden xl:inline">Zoho API & SMTP</span>
             </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsFullscreenApp(prev => !prev)}
+              className="hidden md:inline-flex h-8 w-8 p-0 rounded-xl shrink-0"
+              title={isFullscreenApp ? "Sair da Tela Cheia" : "Expandir Webmail em Tela Cheia"}
+            >
+              {isFullscreenApp ? (
+                <Minimize2 className="w-3.5 h-3.5 text-primary" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5" />
+              )}
+            </Button>
           </div>
         </div>
 
@@ -1337,7 +1424,9 @@ export default function EmailHub() {
            ════════════════════════════════════════════════════════════════════ */}
         {mobileDrawerOpen && (
           <div
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs lg:hidden flex"
+            className={`fixed inset-0 z-50 bg-black/60 backdrop-blur-xs ${
+              shellSidebarPinned && !isFullscreenApp ? "xl:hidden" : "lg:hidden"
+            } flex`}
             onClick={() => setMobileDrawerOpen(false)}
           >
             <div
@@ -1569,8 +1658,14 @@ export default function EmailHub() {
               COLUNA 1 (DESKTOP lg+): SIDEBAR DE PASTAS E ETIQUETAS (COLAPSÁVEL)
              ────────────────────────────────────────────────────────────────── */}
           <aside
-            className={`hidden lg:flex flex-col h-full shrink-0 border-r border-border bg-muted/20 overflow-hidden transition-all duration-200 ${
-              sidebarCollapsed ? "w-[58px]" : "w-[205px] xl:w-[235px]"
+            className={`${
+              shellSidebarPinned && !isFullscreenApp ? "hidden xl:flex" : "hidden lg:flex"
+            } flex-col h-full shrink-0 border-r border-border bg-muted/20 overflow-hidden transition-all duration-200 ${
+              sidebarCollapsed
+                ? "w-[58px]"
+                : shellSidebarPinned && !isFullscreenApp
+                ? "w-[185px] 2xl:w-[220px]"
+                : "w-[200px] xl:w-[230px]"
             }`}
           >
             {/* Botão Primário + Escrever + Botão Colapsar */}
@@ -1771,11 +1866,17 @@ export default function EmailHub() {
             } ${
               readingMaximized && messageDetail
                 ? "md:hidden"
-                : "md:flex md:w-[300px] lg:w-[335px] xl:w-[375px] 2xl:w-[405px]"
+                : shellSidebarPinned && !isFullscreenApp
+                ? "md:flex md:w-[275px] lg:w-[295px] xl:w-[320px] 2xl:w-[375px]"
+                : "md:flex md:w-[300px] lg:w-[330px] xl:w-[370px] 2xl:w-[405px]"
             } shrink-0 md:border-r border-border flex-col h-full bg-background overflow-hidden`}
           >
-            {/* Barra Horizontal de Pastas Rápidas para Mobile & Tablet (< lg) */}
-            <div className="lg:hidden px-2.5 pt-2 pb-1.5 border-b border-border bg-muted/25 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
+            {/* Barra Horizontal de Pastas Rápidas para Mobile, Tablet & Compacto */}
+            <div
+              className={`${
+                shellSidebarPinned && !isFullscreenApp ? "xl:hidden" : "lg:hidden"
+              } px-2.5 pt-2 pb-1.5 border-b border-border bg-muted/25 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0`}
+            >
               {systemFolders.map(fld => {
                 const isActive = selectedFolder === fld.id && !selectedLabelId
                 const badgeCount = fld.badgeType === "unread" ? fld.unread : fld.total
@@ -1917,26 +2018,57 @@ export default function EmailHub() {
                     >
                       <Mail className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        executeBulkAction(selectedIds, "archive", { toastMsg: "Conversas arquivadas" })
-                      }
-                      className="p-1 rounded-lg hover:bg-muted text-foreground"
-                      title="Arquivar"
-                    >
-                      <Archive className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        executeBulkAction(selectedIds, "trash", { toastMsg: "Movidos para a lixeira" })
-                      }
-                      className="p-1 rounded-lg hover:bg-rose-500/15 text-rose-600"
-                      title="Excluir"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {selectedFolder === "trash" ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            executeBulkAction(selectedIds, "moveToInbox", {
+                              toastMsg: "Restaurados para a Caixa de Entrada"
+                            })
+                          }
+                          className="p-1 rounded-lg hover:bg-emerald-500/15 text-emerald-600"
+                          title="Restaurar para a Caixa de Entrada"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            executeBulkAction(selectedIds, "deleteForever", {
+                              toastMsg: "Excluídos permanentemente"
+                            })
+                          }
+                          className="p-1 rounded-lg hover:bg-rose-500/15 text-rose-600"
+                          title="Excluir Permanentemente"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            executeBulkAction(selectedIds, "archive", { toastMsg: "Conversas arquivadas" })
+                          }
+                          className="p-1 rounded-lg hover:bg-muted text-foreground"
+                          title="Arquivar"
+                        >
+                          <Archive className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            executeBulkAction(selectedIds, "trash", { toastMsg: "Movidos para a lixeira" })
+                          }
+                          className="p-1 rounded-lg hover:bg-rose-500/15 text-rose-600"
+                          title="Excluir"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <span className="text-[11px] font-semibold text-muted-foreground truncate">
@@ -2282,10 +2414,19 @@ export default function EmailHub() {
                             <button
                               type="button"
                               onClick={() =>
-                                executeBulkAction([item.id], "trash", { toastMsg: "Movido para a lixeira" })
+                                executeBulkAction(
+                                  [item.id],
+                                  selectedFolder === "trash" ? "deleteForever" : "trash",
+                                  {
+                                    toastMsg:
+                                      selectedFolder === "trash"
+                                        ? "Excluído permanentemente"
+                                        : "Movido para a lixeira"
+                                  }
+                                )
                               }
                               className="p-1 rounded-lg hover:bg-rose-500/15 text-rose-600"
-                              title="Excluir"
+                              title={selectedFolder === "trash" ? "Excluir Permanentemente" : "Excluir"}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -2304,7 +2445,9 @@ export default function EmailHub() {
              ────────────────────────────────────────────────────────────────── */}
           <main
             className={`${
-              mobileView === "detail" ? "flex w-full" : "hidden md:flex"
+              mobileView === "detail"
+                ? "fixed inset-0 z-[45] md:static md:z-auto flex w-full"
+                : "hidden md:flex"
             } flex-1 min-w-0 flex-col h-full bg-card overflow-hidden`}
           >
             {!messageDetail ? (
@@ -2330,11 +2473,7 @@ export default function EmailHub() {
             ) : (
               <>
                 {/* Barra de Navegação Mobile (< md) no Topo da Leitura */}
-                <div
-                  className={`md:hidden px-2.5 py-2 border-b border-border flex items-center justify-between gap-1.5 bg-muted/25 shrink-0 ${
-                    !shellSidebarPinned ? "pl-14" : ""
-                  }`}
-                >
+                <div className="md:hidden px-2.5 py-2 border-b border-border flex items-center justify-between gap-1.5 bg-muted/25 shrink-0">
                   <button
                     type="button"
                     onClick={() => setMobileView("list")}
@@ -2377,6 +2516,7 @@ export default function EmailHub() {
                     </button>
 
                     <Select
+                      value=""
                       onValueChange={val =>
                         executeBulkAction([messageDetail.id], "moveToFolder", {
                           targetFolderId: val,
@@ -2399,6 +2539,7 @@ export default function EmailHub() {
                     </Select>
 
                     <Select
+                      value=""
                       onValueChange={val =>
                         executeBulkAction([messageDetail.id], "applyLabel", {
                           labelId: val,
@@ -2427,12 +2568,19 @@ export default function EmailHub() {
                     <button
                       type="button"
                       onClick={() =>
-                        executeBulkAction([messageDetail.id], "trash", {
-                          toastMsg: "Movido para a lixeira"
-                        })
+                        executeBulkAction(
+                          [messageDetail.id],
+                          selectedFolder === "trash" ? "deleteForever" : "trash",
+                          {
+                            toastMsg:
+                              selectedFolder === "trash"
+                                ? "Excluído permanentemente"
+                                : "Movido para a lixeira"
+                          }
+                        )
                       }
                       className="p-1.5 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-500/10 text-rose-600"
-                      title="Excluir"
+                      title={selectedFolder === "trash" ? "Excluir Permanentemente" : "Excluir"}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -2502,6 +2650,7 @@ export default function EmailHub() {
 
                     {/* Seletor Rápido para Mover para Pasta */}
                     <Select
+                      value=""
                       onValueChange={val =>
                         executeBulkAction([messageDetail.id], "moveToFolder", {
                           targetFolderId: val,
@@ -2526,6 +2675,7 @@ export default function EmailHub() {
 
                     {/* Seletor Rápido para Aplicar Etiqueta */}
                     <Select
+                      value=""
                       onValueChange={val =>
                         executeBulkAction([messageDetail.id], "applyLabel", {
                           labelId: val,
@@ -2562,16 +2712,40 @@ export default function EmailHub() {
                       <Printer className="w-3.5 h-3.5" />
                     </Button>
 
+                    {selectedFolder === "trash" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          executeBulkAction([messageDetail.id], "moveToInbox", {
+                            toastMsg: "Restaurado para a Caixa de Entrada"
+                          })
+                        }
+                        className="h-8 text-xs font-semibold gap-1 rounded-xl px-2 text-emerald-600 hover:bg-emerald-500/10"
+                        title="Restaurar para a Caixa de Entrada"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span className="hidden xl:inline">Restaurar</span>
+                      </Button>
+                    )}
+
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() =>
-                        executeBulkAction([messageDetail.id], "trash", {
-                          toastMsg: "Movido para a lixeira"
-                        })
+                        executeBulkAction(
+                          [messageDetail.id],
+                          selectedFolder === "trash" ? "deleteForever" : "trash",
+                          {
+                            toastMsg:
+                              selectedFolder === "trash"
+                                ? "Excluído permanentemente"
+                                : "Movido para a lixeira"
+                          }
+                        )
                       }
                       className="h-8 text-xs font-semibold gap-1 rounded-xl px-2 text-rose-600 hover:bg-rose-500/10"
-                      title="Excluir"
+                      title={selectedFolder === "trash" ? "Excluir Permanentemente" : "Excluir"}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
@@ -2632,7 +2806,6 @@ export default function EmailHub() {
                         disabled={activeMessageIndex < 0 || activeMessageIndex >= messages.length - 1}
                         onClick={() => navigateAdjacentMessage(1)}
                         className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 text-muted-foreground hover:text-foreground"
-                        title="Próximo e-mail"
                       >
                         <ChevronDown className="w-4 h-4" />
                       </button>
@@ -2668,8 +2841,26 @@ export default function EmailHub() {
                   </div>
                 )}
 
+                {/* Banner de Rascunho para retomar edição rapidamente */}
+                {(messageDetail.folder === "drafts" || messageDetail.status === "draft") && (
+                  <div className="px-3.5 py-2 bg-amber-500/10 border-b border-amber-300/70 dark:border-amber-800 flex items-center justify-between gap-2 shrink-0">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                      <FileEdit className="w-3.5 h-3.5 shrink-0" />
+                      <span>Este e-mail é um rascunho não enviado.</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => openComposer({ mode: "draft", sourceMessage: messageDetail })}
+                      className="h-7 px-3 text-[11px] font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shrink-0"
+                    >
+                      <FileEdit className="w-3 h-3" />
+                      <span>Continuar Editando</span>
+                    </Button>
+                  </div>
+                )}
+
                 {/* Área Rolável de Leitura da Conversa */}
-                <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-5 space-y-3.5 md:space-y-4 select-text">
+                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 md:p-5 space-y-3.5 md:space-y-4 select-text">
                   {/* Banner de Erro se o disparo falhou */}
                   {messageDetail.status === "failed" && (
                     <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-rose-700 dark:text-rose-300">
