@@ -1048,132 +1048,150 @@ export default function AnserveRestockPage() {
                 </div>
               )}
 
-              {/* Tabela de 3 Colunas em Tempo Real */}
-              <div className="border border-border rounded-2xl overflow-hidden">
-                {/* Cabeçalho das 3 Colunas */}
-                <div className="grid grid-cols-12 bg-muted/70 border-b border-border px-3 py-2.5 text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-muted-foreground items-center">
-                  <div className="col-span-4">Produto</div>
-                  <div className="col-span-2 text-center">1. Informado Hóspede</div>
-                  <div className="col-span-3 text-center">2. Contagem Repositora</div>
-                  <div className="col-span-3 text-right">3. Divergência (R$)</div>
+              {/* Tabela de 3 Colunas em Tempo Real (100% Otimizada para Mobile sem sobreposição) */}
+              <div className="border border-border rounded-2xl overflow-hidden bg-card">
+                {/* Cabeçalho Fixo das 3 Colunas */}
+                <div className="grid grid-cols-3 gap-2 bg-muted/80 border-b border-border px-3 py-2 text-[10px] font-black uppercase tracking-tight text-muted-foreground text-center">
+                  <div className="bg-background/60 rounded-lg py-1 px-1 border border-border/50">
+                    1. Informado
+                    <span className="block text-[9px] font-semibold normal-case opacity-80">Pelo Hóspede</span>
+                  </div>
+                  <div className="bg-background/60 rounded-lg py-1 px-1 border border-border/50">
+                    2. Contagem
+                    <span className="block text-[9px] font-semibold normal-case opacity-80">Da Repositora</span>
+                  </div>
+                  <div className="bg-background/60 rounded-lg py-1 px-1 border border-border/50">
+                    3. Divergência
+                    <span className="block text-[9px] font-semibold normal-case opacity-80">Tempo Real (R$)</span>
+                  </div>
                 </div>
 
-                {/* Linhas de Produtos */}
-                <div className="divide-y divide-border max-h-64 overflow-y-auto">
+                {/* Lista de Produtos com Nome Completo + 3 Colunas Alinhadas */}
+                <div className="divide-y divide-border max-h-[42vh] overflow-y-auto">
                   {discrepancyCalculation.rows.map(({ product: prod, declaredQty, countedQty, diffQty, diffAmount }) => (
                     <div
                       key={prod.id}
-                      className={`grid grid-cols-12 px-3 py-2.5 items-center gap-1 transition-colors ${
+                      className={`p-3 space-y-2 transition-colors ${
                         diffQty > 0 ? "bg-amber-500/10" : "bg-card"
                       }`}
                     >
-                      {/* Produto */}
-                      <div className="col-span-4 min-w-0 pr-1">
-                        <div className="font-bold text-xs text-foreground truncate">{prod.name}</div>
-                        <div className="text-[10px] text-muted-foreground">
+                      {/* Linha 1: Nome completo do produto (sem cortar) + Preço e Padrão */}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-xs sm:text-sm text-foreground leading-snug">
+                          {prod.name}
+                        </span>
+                        <span className="text-[10px] font-semibold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md shrink-0">
                           R$ {Number(prod.price).toFixed(2)} • Padrão: {prod.defaultQuantity ?? 2}
-                        </div>
+                        </span>
                       </div>
 
-                      {/* Coluna 1: Consumo Informado pelo Hóspede */}
-                      <div className="col-span-2 text-center">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs font-black px-2 py-0.5 ${
+                      {/* Linha 2: As 3 Colunas Lado a Lado com Espaçamento Limpo */}
+                      <div className="grid grid-cols-3 gap-2 items-center">
+                        {/* Coluna 1: Consumo Informado pelo Hóspede */}
+                        <div
+                          className={`h-9 rounded-xl border flex flex-col items-center justify-center px-2 ${
                             declaredQty > 0
-                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                              : "text-muted-foreground"
+                              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                              : "bg-muted/40 border-border/60 text-muted-foreground"
                           }`}
                         >
-                          {declaredQty} un.
-                        </Badge>
-                      </div>
+                          <span className="text-xs font-black leading-none">{declaredQty} un.</span>
+                          <span className="text-[9px] opacity-75 mt-0.5">Informado</span>
+                        </div>
 
-                      {/* Coluna 2: Contagem da Repositora */}
-                      <div className="col-span-3 flex items-center justify-center gap-1">
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="outline"
-                          disabled={countedQty <= 0}
-                          onClick={() =>
-                            setCountedQuantities((prev) => ({
-                              ...prev,
-                              [prod.id]: Math.max(0, countedQty - 1)
-                            }))
-                          }
-                          className="h-7 w-7 rounded-lg shrink-0"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </Button>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={countedQty}
-                          onChange={(e) => {
-                            const val = Math.max(0, parseInt(e.target.value || "0", 10) || 0);
-                            setCountedQuantities((prev) => ({
-                              ...prev,
-                              [prod.id]: val
-                            }));
-                          }}
-                          className="h-7 w-11 text-center font-black text-xs px-1 rounded-lg"
-                        />
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="outline"
-                          onClick={() =>
-                            setCountedQuantities((prev) => ({
-                              ...prev,
-                              [prod.id]: countedQty + 1
-                            }))
-                          }
-                          className="h-7 w-7 rounded-lg shrink-0"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      </div>
+                        {/* Coluna 2: Contagem da Repositora */}
+                        <div className="h-9 rounded-xl bg-background border border-border flex items-center justify-between px-1 shadow-2xs">
+                          <button
+                            type="button"
+                            disabled={countedQty <= 0}
+                            onClick={() =>
+                              setCountedQuantities((prev) => ({
+                                ...prev,
+                                [prod.id]: Math.max(0, countedQty - 1)
+                              }))
+                            }
+                            className="w-7 h-7 rounded-lg bg-muted/60 hover:bg-muted active:scale-95 disabled:opacity-30 flex items-center justify-center text-foreground shrink-0"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
 
-                      {/* Coluna 3: Divergência em Tempo Real */}
-                      <div className="col-span-3 text-right">
-                        {diffQty > 0 ? (
-                          <div>
-                            <span className="text-xs font-black text-amber-600 dark:text-amber-400 block">
-                              +{diffQty} un.
-                            </span>
-                            <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300 font-mono">
-                              R$ {diffAmount.toFixed(2)}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                            OK (0)
+                          <span className="font-black text-xs sm:text-sm text-foreground text-center min-w-[24px]">
+                            {countedQty}
                           </span>
-                        )}
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCountedQuantities((prev) => ({
+                                ...prev,
+                                [prod.id]: countedQty + 1
+                              }))
+                            }
+                            className="w-7 h-7 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 active:scale-95 flex items-center justify-center font-bold shrink-0"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Coluna 3: Divergência em Tempo Real */}
+                        <div
+                          className={`h-9 rounded-xl border flex flex-col items-center justify-center px-1.5 ${
+                            diffQty > 0
+                              ? "bg-amber-500/15 border-amber-500/40 text-amber-800 dark:text-amber-300"
+                              : "bg-emerald-500/5 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                          }`}
+                        >
+                          {diffQty > 0 ? (
+                            <>
+                              <span className="text-[11px] font-black leading-none">
+                                +{diffQty} un.
+                              </span>
+                              <span className="text-[10px] font-black font-mono leading-none mt-0.5">
+                                R$ {diffAmount.toFixed(2)}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-[11px] font-bold">OK (0)</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
 
                 {/* Rodapé com Totais das 3 Colunas em Tempo Real */}
-                <div className="grid grid-cols-12 bg-muted/90 border-t border-border px-3 py-3 items-center text-xs">
-                  <div className="col-span-4 font-black text-foreground">TOTAL APURADO</div>
-                  <div className="col-span-2 text-center font-bold text-muted-foreground">
-                    {discrepancyCalculation.totalDeclaredUnits} un.
-                    <span className="block text-[10px]">R$ {discrepancyCalculation.totalDeclaredAmount.toFixed(2)}</span>
+                <div className="bg-muted/90 border-t border-border p-3 space-y-2">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground text-center">
+                    Resumo Total Apurado em Tempo Real
                   </div>
-                  <div className="col-span-3 text-center font-bold text-foreground">
-                    {discrepancyCalculation.totalCountedUnits} un.
-                    <span className="block text-[10px]">R$ {discrepancyCalculation.totalCountedAmount.toFixed(2)}</span>
-                  </div>
-                  <div className="col-span-3 text-right">
-                    <span className="text-xs font-black text-amber-600 dark:text-amber-400 block">
-                      +{discrepancyCalculation.totalDiffUnits} un.
-                    </span>
-                    <span className="text-sm font-black text-amber-600 dark:text-amber-400 font-mono">
-                      R$ {discrepancyCalculation.totalDiffAmount.toFixed(2)}
-                    </span>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-card rounded-xl p-2 border border-border">
+                      <span className="text-[9px] text-muted-foreground font-bold block uppercase">1. Informado</span>
+                      <span className="text-xs font-black text-foreground">{discrepancyCalculation.totalDeclaredUnits} un.</span>
+                      <span className="block text-[10px] font-mono text-muted-foreground">
+                        R$ {discrepancyCalculation.totalDeclaredAmount.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="bg-card rounded-xl p-2 border border-border">
+                      <span className="text-[9px] text-muted-foreground font-bold block uppercase">2. Contagem</span>
+                      <span className="text-xs font-black text-foreground">{discrepancyCalculation.totalCountedUnits} un.</span>
+                      <span className="block text-[10px] font-mono text-muted-foreground">
+                        R$ {discrepancyCalculation.totalCountedAmount.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="bg-amber-500/15 rounded-xl p-2 border border-amber-500/40">
+                      <span className="text-[9px] text-amber-800 dark:text-amber-300 font-black block uppercase">
+                        3. Divergência
+                      </span>
+                      <span className="text-xs font-black text-amber-700 dark:text-amber-300">
+                        +{discrepancyCalculation.totalDiffUnits} un.
+                      </span>
+                      <span className="block text-xs font-black font-mono text-amber-700 dark:text-amber-300">
+                        R$ {discrepancyCalculation.totalDiffAmount.toFixed(2)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
