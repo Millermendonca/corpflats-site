@@ -38,13 +38,20 @@ const DEMO_SEED_IDS = new Set([
 ]);
 
 const DEFAULT_SYSTEM_LABELS = [
-  { id: "lbl_urgente", name: "Urgente", color: "#EF4444", system: true },
-  { id: "lbl_reserva", name: "Reserva", color: "#10B981", system: true },
-  { id: "lbl_portaria", name: "Portaria", color: "#3B82F6", system: true },
-  { id: "lbl_garagem", name: "Garagem", color: "#F59E0B", system: true },
+  { id: "lbl_reserva", name: "Reservas & OTAs", color: "#10B981", system: true },
+  { id: "lbl_hospede", name: "Hóspedes", color: "#06B6D4", system: true },
+  { id: "lbl_portaria", name: "Portaria Soho", color: "#3B82F6", system: true },
+  { id: "lbl_garagem", name: "Garagem PFB", color: "#F59E0B", system: true },
+  { id: "lbl_urgente", name: "Alerta / Erro Entrega", color: "#EF4444", system: true },
   { id: "lbl_financeiro", name: "Financeiro", color: "#8B5CF6", system: true },
-  { id: "lbl_vip", name: "Hóspede VIP", color: "#EC4899", system: true }
+  { id: "lbl_codigos", name: "Códigos & Acessos", color: "#64748B", system: true }
 ];
+
+const LEGACY_EMPTY_FOLDER_IDS = new Set([
+  "fld_portaria",
+  "fld_garagem",
+  "fld_fornecedores"
+]);
 
 /**
  * Garante as coleções necessárias no banco em memória / persistido
@@ -54,24 +61,31 @@ export function ensureWebmailCollections(db) {
   if (!db.settings) db.settings = {};
   if (!db.settings.zohoOAuth) db.settings.zohoOAuth = {};
   if (!Array.isArray(db.emailDrafts)) db.emailDrafts = [];
+  if (!db.emailStateMeta || typeof db.emailStateMeta !== "object") {
+    db.emailStateMeta = {};
+  }
   if (!Array.isArray(db.emailCustomFolders)) {
-    db.emailCustomFolders = [
-      { id: "fld_portaria", name: "Portaria Soho", icon: "Building2", color: "#3B82F6", createdAt: new Date().toISOString() },
-      { id: "fld_garagem", name: "PFB Estacionamentos", icon: "Car", color: "#F59E0B", createdAt: new Date().toISOString() },
-      { id: "fld_fornecedores", name: "Fornecedores & Notas", icon: "Briefcase", color: "#8B5CF6", createdAt: new Date().toISOString() }
-    ];
+    db.emailCustomFolders = [];
+  } else {
+    // Remove pastas vazias legadas que duplicavam as etiquetas de Portaria e Garagem
+    const usedFolders = new Set(
+      Object.values(db.emailStateMeta)
+        .map(m => m?.folder)
+        .filter(Boolean)
+    );
+    db.emailCustomFolders = db.emailCustomFolders.filter(
+      cf => !LEGACY_EMPTY_FOLDER_IDS.has(cf.id) || usedFolders.has(cf.id)
+    );
   }
   if (!Array.isArray(db.emailLabels) || db.emailLabels.length === 0) {
     db.emailLabels = [...DEFAULT_SYSTEM_LABELS];
   } else {
-    for (const defLbl of DEFAULT_SYSTEM_LABELS) {
-      if (!db.emailLabels.some(l => l.id === defLbl.id || l.name.toLowerCase() === defLbl.name.toLowerCase())) {
-        db.emailLabels.push(defLbl);
-      }
-    }
-  }
-  if (!db.emailStateMeta || typeof db.emailStateMeta !== "object") {
-    db.emailStateMeta = {};
+    const defaultById = new Map(DEFAULT_SYSTEM_LABELS.map(l => [l.id, l]));
+    // Atualiza nomes e cores das etiquetas de sistema e preserva etiquetas criadas pelo usuário
+    const customUserLabels = db.emailLabels.filter(
+      l => l && !defaultById.has(l.id) && l.id !== "lbl_vip"
+    );
+    db.emailLabels = [...DEFAULT_SYSTEM_LABELS, ...customUserLabels];
   }
   if (!Array.isArray(db.zohoMessagesCache)) {
     db.zohoMessagesCache = [];
@@ -523,9 +537,9 @@ export function matchEmailWithReservation(db, item) {
     );
   }
 
-  // 2. Busca por código #RES-... ou #CORP-... no assunto ou corpo
+  // 2. Busca por código #RES-... ou #CORP-... no assunto, snippet ou corpo
   if (!matched) {
-    const textToScan = `${item.subject || ""} ${item.snippet || ""}`;
+    const textToScan = `${item.subject || ""} ${item.snippet || ""} ${item.bodyText || ""}`;
     const codeMatch = textToScan.match(/\b(RES-[A-Z0-9-]+|CORP-[A-Z0-9-]+)\b/i);
     if (codeMatch) {
       const targetCode = codeMatch[1].toUpperCase();
@@ -533,13 +547,30 @@ export function matchEmailWithReservation(db, item) {
     }
   }
 
-  // 3. Busca por endereço de e-mail do remetente ou destinatário
+  // 3. Busca por endereço de e-mail do remetente, destinatário ou e-mail citado em erro de entrega (Bounce)
   if (!matched) {
-    const candidateEmails = [item.fromEmail, item.recipient]
+    const extractedFromBody = [];
+    const scanText = `${item.snippet || ""} ${item.bodyText || ""}`;
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    let emMatch;
+    while ((emMatch = emailRegex.exec(scanText)) !== null) {
+      extractedFromBody.push(emMatch[0]);
+    }
+
+    const candidateEmails = [item.fromEmail, item.recipient, ...extractedFromBody]
       .filter(Boolean)
       .flatMap(e => String(e).split(/[,;]/))
       .map(e => e.replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase())
-      .filter(e => e && e.includes("@") && !e.includes("corpflats") && !e.includes("promenade") && !e.includes("pfbestacionamentos"));
+      .filter(
+        e =>
+          e &&
+          e.includes("@") &&
+          !e.includes("corpflats") &&
+          !e.includes("promenade") &&
+          !e.includes("pfbestacionamentos") &&
+          !e.includes("zoho") &&
+          !e.includes("b2breservas")
+      );
 
     if (candidateEmails.length > 0) {
       matched = reservations.find(r => {
@@ -562,7 +593,52 @@ export function matchEmailWithReservation(db, item) {
       if (candidates.length === 1) {
         matched = candidates[0];
       } else if (candidates.length > 1) {
-        matched = candidates.find(r => r.guestName && item.subject.toLowerCase().includes(r.guestName.toLowerCase().split(" ")[0])) || candidates[0];
+        matched =
+          candidates.find(
+            r => r.guestName && item.subject.toLowerCase().includes(r.guestName.toLowerCase().split(" ")[0])
+          ) || candidates[0];
+      }
+    }
+  }
+
+  // 5. Padrão B2B Reservas: "Confirmacao da Reserva: 25057926 (SOBRENOME/NOME) - Check-in: DD/MM/YYYY"
+  if (!matched && item.subject) {
+    const b2bMatch = String(item.subject).match(/\(([^/)]+)\/([^)]+)\)(?:.*Check-in:\s*(\d{2})\/(\d{2})\/(\d{4}))?/i);
+    if (b2bMatch) {
+      const lastToken = b2bMatch[1].trim().toLowerCase();
+      const firstToken = b2bMatch[2].trim().toLowerCase().split(/\s+/)[0];
+      const checkinIso =
+        b2bMatch[3] && b2bMatch[4] && b2bMatch[5] ? `${b2bMatch[5]}-${b2bMatch[4]}-${b2bMatch[3]}` : null;
+
+      matched = reservations.find(r => {
+        if (!r || r.status === "cancelada") return false;
+        const gName = String(r.guestName || "").toLowerCase();
+        const nameMatches = gName.includes(firstToken) && gName.includes(lastToken);
+        if (!nameMatches) return false;
+        if (checkinIso && r.checkinDate && r.checkinDate !== checkinIso) return false;
+        return true;
+      });
+    }
+  }
+
+  // 6. Correlação de Bounce (mailer-daemon / Undelivered Mail) pelo horário do disparo imediatamente anterior
+  if (!matched && item.direction === "inbound") {
+    const fromLower = String(item.fromEmail || "").toLowerCase();
+    const subjLower = String(item.subject || "").toLowerCase();
+    if (fromLower.includes("mailer-daemon") || subjLower.includes("undelivered")) {
+      const bounceMs = new Date(item.created_at || 0).getTime();
+      if (bounceMs > 0 && Array.isArray(db.reservationCommunications)) {
+        const recentComm = db.reservationCommunications.find(c => {
+          if (!c || c.type !== "email" || c.direction === "inbound" || !c.reservation_id) return false;
+          const cMs = new Date(c.created_at || 0).getTime();
+          return bounceMs >= cMs && bounceMs - cMs <= 3 * 60 * 1000;
+        });
+        if (recentComm?.reservation_id) {
+          const targetId = String(recentComm.reservation_id).toUpperCase();
+          matched = reservations.find(
+            r => String(r.id).toUpperCase() === targetId || (r.code && String(r.code).toUpperCase() === targetId)
+          );
+        }
       }
     }
   }
@@ -627,6 +703,7 @@ export async function resolveZohoFolders(db, forceRefresh = false) {
   const zohoFolderMap = {
     inbox: null,
     inboxFolderIds: [],
+    newsletters: null,
     sent: null,
     drafts: null,
     trash: null,
@@ -668,6 +745,12 @@ export async function resolveZohoFolders(db, forceRefresh = false) {
         zohoFolderMap.folderCategoryById[fId] = "archive";
       } else if (fType.includes("template") || fType.includes("snooze") || fName.includes("template") || fName.includes("snooze")) {
         zohoFolderMap.folderCategoryById[fId] = "other";
+      } else if (fName.includes("newsletter") || fPath.includes("newsletter")) {
+        zohoFolderMap.newsletters = fId;
+        if (!zohoFolderMap.inboxFolderIds.includes(fId)) {
+          zohoFolderMap.inboxFolderIds.push(fId);
+        }
+        zohoFolderMap.folderCategoryById[fId] = "newsletters";
       } else if (fName === "inbox" || fName === "caixa de entrada" || fPath === "/inbox") {
         // Caixa de Entrada Principal sempre na primeira posição
         zohoFolderMap.inbox = fId;
@@ -677,10 +760,8 @@ export async function resolveZohoFolders(db, forceRefresh = false) {
         fType === "inbox" ||
         fName.includes("inbox") ||
         fName.includes("notification") ||
-        fName.includes("notifica") ||
-        fName.includes("newsletter")
+        fName.includes("notifica")
       ) {
-        // Pastas inteligentes do Zoho (Notification, Newsletter, etc.) também entram na Caixa de Entrada
         if (!zohoFolderMap.inboxFolderIds.includes(fId)) {
           zohoFolderMap.inboxFolderIds.push(fId);
         }
@@ -708,9 +789,31 @@ export async function resolveZohoFolders(db, forceRefresh = false) {
  */
 function classifyZohoMessageFolder(zm, zohoFolderMap, fallbackFolder = "inbox") {
   const zfId = String(zm.folderId || zm.zohoFolderId || "").trim();
+  const fromLower = String(zm.fromAddress || zm.fromEmail || zm.sender || "").toLowerCase();
+  const toLower = String(zm.toAddress || zm.recipient || "").toLowerCase();
+  const subjLower = String(zm.subject || "").toLowerCase();
+
+  const isOperationalSender =
+    fromLower.includes("b2breservas") ||
+    fromLower.includes("promenade.com.br") ||
+    fromLower.includes("pfbestacionamentos") ||
+    fromLower.includes("booking.com") ||
+    fromLower.includes("airbnb") ||
+    fromLower.includes("expedia") ||
+    fromLower.includes("mailer-daemon") ||
+    subjLower.includes("confirmacao de reserva") ||
+    subjLower.includes("confirmação de reserva") ||
+    subjLower.includes("confirmacao da reserva");
+
   if (zfId && zohoFolderMap?.folderCategoryById?.[zfId]) {
     const cat = zohoFolderMap.folderCategoryById[zfId];
+    if (cat === "newsletters") {
+      return isOperationalSender ? "inbox" : "newsletters";
+    }
     if (cat && cat !== "other") return cat;
+  }
+  if (zfId === "7807358000000009011") {
+    return isOperationalSender ? "inbox" : "newsletters";
   }
   if (zfId && zohoFolderMap?.sent && zfId === String(zohoFolderMap.sent)) return "sent";
   if (zfId && zohoFolderMap?.drafts && zfId === String(zohoFolderMap.drafts)) return "drafts";
@@ -718,8 +821,6 @@ function classifyZohoMessageFolder(zm, zohoFolderMap, fallbackFolder = "inbox") 
   if (zfId && zohoFolderMap?.spam && zfId === String(zohoFolderMap.spam)) return "spam";
   if (zfId && zohoFolderMap?.archive && zfId === String(zohoFolderMap.archive)) return "archive";
 
-  const fromLower = String(zm.fromAddress || zm.fromEmail || zm.sender || "").toLowerCase();
-  const toLower = String(zm.toAddress || zm.recipient || "").toLowerCase();
   const isFromOwnDomain = fromLower.includes("@corpflats.com.br");
   const isToOwnDomain = toLower.includes("@corpflats.com.br");
 
@@ -727,39 +828,140 @@ function classifyZohoMessageFolder(zm, zohoFolderMap, fallbackFolder = "inbox") 
     return "sent";
   }
 
-  if (["sent", "drafts", "trash", "spam", "archive", "outbox"].includes(fallbackFolder) && !zfId) {
+  // Heurística para remetentes conhecidos de marketing/newsletter
+  if (
+    !isOperationalSender &&
+    (fromLower.includes("v4company.com") ||
+      fromLower.includes("gruposenses.com.br") ||
+      fromLower.includes("agendor.com.br") ||
+      fromLower.includes("relacionamento.stone.com.br"))
+  ) {
+    return "newsletters";
+  }
+
+  if (["sent", "drafts", "trash", "spam", "archive", "outbox", "newsletters"].includes(fallbackFolder) && !zfId) {
     return fallbackFolder;
   }
   return "inbox";
 }
 
 /**
- * Infere etiquetas automáticas inteligentes para mensagens da Zoho Mail API
+ * Infere etiquetas automáticas inteligentes EXCLUSIVAMENTE para mensagens recebidas (inbound)
  */
-function inferZohoSmartLabels(item, existingLabels = []) {
-  const set = new Set(Array.isArray(existingLabels) ? existingLabels : []);
-  const hay = `${item.fromEmail || ""} ${item.recipient || ""} ${item.subject || ""}`.toLowerCase();
-  if (hay.includes("promenade.com.br") || hay.includes("portaria")) {
+function inferZohoSmartLabels(item, existingLabels = [], matchedReservation = null) {
+  if (item.direction !== "inbound" || item.folder === "sent" || item.folder === "queue" || item.folder === "drafts") {
+    return [];
+  }
+
+  const validSystemIds = new Set(DEFAULT_SYSTEM_LABELS.map(l => l.id));
+  // Preserva etiquetas customizadas aplicadas manualmente pelo usuário, mas recalcula as de sistema com precisão
+  const set = new Set(
+    (Array.isArray(existingLabels) ? existingLabels : []).filter(
+      id => id && !validSystemIds.has(id) && id !== "lbl_vip"
+    )
+  );
+
+  const fromLower = String(item.fromEmail || item.fromName || "").toLowerCase();
+  const subjLower = String(item.subject || "").toLowerCase();
+  const hay = `${fromLower} ${item.recipient || ""} ${subjLower}`.toLowerCase();
+
+  // 1. Códigos de Acesso / 2FA / Verificação (separados para não poluir a etiqueta Reserva!)
+  const isAccessCode =
+    subjLower.includes("código de acesso") ||
+    subjLower.includes("codigo de acesso") ||
+    subjLower.includes("código de verificação") ||
+    subjLower.includes("codigo de verificacao") ||
+    subjLower.includes("verification code") ||
+    subjLower.includes("código de segurança") ||
+    subjLower.includes("token de acesso");
+
+  if (isAccessCode) {
+    set.add("lbl_codigos");
+  }
+
+  // 2. Portaria Soho
+  if (fromLower.includes("promenade.com.br") || subjLower.includes("portaria")) {
     set.add("lbl_portaria");
   }
-  if (hay.includes("pfbestacionamentos") || hay.includes("garagem")) {
+
+  // 3. Garagem PFB
+  if (fromLower.includes("pfbestacionamentos") || subjLower.includes("garagem")) {
     set.add("lbl_garagem");
   }
+
+  // 4. Alerta / Erro de Entrega (Bounce mailer-daemon ou urgente)
   if (
-    hay.includes("b2breservas") ||
-    hay.includes("booking.com") ||
-    hay.includes("airbnb") ||
-    hay.includes("expedia") ||
-    hay.includes("confirmacao de reserva") ||
-    hay.includes("confirmação de reserva") ||
-    hay.includes("confirmacao da reserva") ||
-    hay.includes("reserva res-")
+    fromLower.includes("mailer-daemon") ||
+    fromLower.includes("postmaster") ||
+    subjLower.includes("undelivered") ||
+    subjLower.includes("failure notice") ||
+    subjLower.includes("falha na entrega") ||
+    subjLower.includes("urgente")
+  ) {
+    set.add("lbl_urgente");
+  }
+
+  // 5. Reservas & OTAs (apenas confirmações, alterações ou assuntos reais de reserva — nunca códigos de login)
+  if (
+    !isAccessCode &&
+    (fromLower.includes("b2breservas") ||
+      fromLower.includes("booking.com") ||
+      fromLower.includes("airbnb") ||
+      fromLower.includes("expedia") ||
+      fromLower.includes("omnibees") ||
+      fromLower.includes("decolar") ||
+      subjLower.includes("confirmacao de reserva") ||
+      subjLower.includes("confirmação de reserva") ||
+      subjLower.includes("confirmacao da reserva") ||
+      subjLower.includes("confirmação da reserva") ||
+      subjLower.includes("nova reserva") ||
+      subjLower.includes("cancelamento de reserva") ||
+      subjLower.includes("reserva res-"))
   ) {
     set.add("lbl_reserva");
   }
-  if (hay.includes("mailer-daemon") || hay.includes("undelivered") || hay.includes("urgente")) {
-    set.add("lbl_urgente");
+
+  // 6. Financeiro (boletos, notas fiscais, comprovantes, faturas, bancos)
+  if (
+    hay.includes("nota fiscal") ||
+    hay.includes("nfs-e") ||
+    hay.includes("nf-e") ||
+    hay.includes("boleto") ||
+    hay.includes("fatura") ||
+    hay.includes("comprovante") ||
+    hay.includes("financeiro") ||
+    (fromLower.includes("stone.com.br") && !fromLower.includes("relacionamento.stone.com.br"))
+  ) {
+    set.add("lbl_financeiro");
   }
+
+  // 7. Hóspedes (e-mails diretos enviados por hóspedes ou vinculados a reserva de hóspede)
+  const isSystemOrPartner =
+    fromLower.includes("b2breservas") ||
+    fromLower.includes("promenade.com.br") ||
+    fromLower.includes("pfbestacionamentos") ||
+    fromLower.includes("mailer-daemon") ||
+    fromLower.includes("zohocorp.com") ||
+    fromLower.includes("zoho.com") ||
+    fromLower.includes("v4company.com") ||
+    fromLower.includes("gruposenses.com.br") ||
+    fromLower.includes("agendor.com.br") ||
+    fromLower.includes("stone.com.br");
+
+  const isPersonalGuestDomain =
+    fromLower.includes("@gmail.com") ||
+    fromLower.includes("@hotmail.com") ||
+    fromLower.includes("@icloud.com") ||
+    fromLower.includes("@outlook.com") ||
+    fromLower.includes("@yahoo.com") ||
+    fromLower.includes("@live.com") ||
+    fromLower.includes("@uol.com.br") ||
+    fromLower.includes("@terra.com.br");
+
+  if (!isSystemOrPartner && !isAccessCode && (matchedReservation || isPersonalGuestDomain)) {
+    set.add("lbl_hospede");
+  }
+
   return Array.from(set);
 }
 
@@ -811,9 +1013,8 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       if (msgRes.ok && Array.isArray(msgRes.data)) {
         rawZohoMessages.push(...msgRes.data);
       }
-    } else if (folder === "inbox" || folder === "starred" || folder === "archive") {
+    } else if (folder === "inbox" || folder === "newsletters" || folder === "starred" || folder === "archive") {
       // Sincroniza em paralelo TODAS as caixas de entrada do Zoho (Inbox principal + Notification + Newsletter)
-      // garantindo que confirmações da B2B Reservas, respostas da Portaria e de Hóspedes apareçam sempre juntas!
       const targetFolders = zohoFolderMap.inboxFolderIds.length > 0
         ? zohoFolderMap.inboxFolderIds.slice(0, 6)
         : (zohoFolderMap.inbox ? [zohoFolderMap.inbox] : [null]);
@@ -879,9 +1080,11 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         created_at: isoDate,
         source: "zoho_api"
       };
+      const matchedRes = matchEmailWithReservation(db, mapped);
       mapped.labels = inferZohoSmartLabels(
         mapped,
-        existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].labels : []
+        existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].labels : [],
+        matchedRes
       );
 
       if (existingIdx >= 0) {
@@ -965,13 +1168,14 @@ export function buildUnifiedMessagesList(db) {
       created_at: correctedIsoDate,
       isRead: meta.isRead !== undefined ? meta.isRead : zm.isRead !== false,
       isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(zm.isStarred),
-      labels: inferZohoSmartLabels(
-        zm,
-        Array.isArray(meta.labels) ? meta.labels : (Array.isArray(zm.labels) ? zm.labels : [])
-      ),
       status: zm.status || (naturalDirection === "outbound" ? "sent" : "received")
     };
     item.matchedReservation = matchEmailWithReservation(db, item);
+    item.labels = inferZohoSmartLabels(
+      item,
+      Array.isArray(meta.labels) ? meta.labels : (Array.isArray(zm.labels) ? zm.labels : []),
+      item.matchedReservation
+    );
     unified.push(item);
   }
 
@@ -987,14 +1191,19 @@ export function buildUnifiedMessagesList(db) {
     const item = {
       ...inb,
       folder: meta.folder || inb.folder || "inbox",
+      direction: "inbound",
       isRead: meta.isRead !== undefined ? meta.isRead : Boolean(inb.isRead),
       isStarred: meta.isStarred !== undefined ? meta.isStarred : Boolean(inb.isStarred),
-      labels: Array.isArray(meta.labels) ? meta.labels : (Array.isArray(inb.labels) ? inb.labels : []),
       hasAttachments: Boolean((inb.attachments && inb.attachments.length > 0) || inb.hasAttachments),
       status: "received",
       source: inb.source || "local_inbound"
     };
     item.matchedReservation = matchEmailWithReservation(db, item);
+    item.labels = inferZohoSmartLabels(
+      item,
+      Array.isArray(meta.labels) ? meta.labels : (Array.isArray(inb.labels) ? inb.labels : []),
+      item.matchedReservation
+    );
     unified.push(item);
   }
 
@@ -1008,26 +1217,8 @@ export function buildUnifiedMessagesList(db) {
     if (meta.deletedForever) continue;
 
     const isFailedOrPending = comm.status === "failed" || comm.status === "pending";
-    const defaultFolder = isFailedOrPending ? "outbox" : (comm.direction === "inbound" ? "inbox" : "sent");
-
-    // Auto-atribui etiquetas inteligentes baseadas no gatilho ou destinatário
-    const autoLabels = new Set(Array.isArray(meta.labels) ? meta.labels : (Array.isArray(comm.labels) ? comm.labels : []));
-    const recipLower = String(comm.recipient || "").toLowerCase();
-    const trig = String(comm.metadata?.trigger || "").toLowerCase();
-    if (meta.labels === undefined) {
-      if (recipLower.includes("promenade.com.br") || trig.includes("checkin") || trig.includes("portaria")) {
-        autoLabels.add("lbl_portaria");
-      }
-      if (recipLower.includes("pfbestacionamentos") || trig.includes("garage")) {
-        autoLabels.add("lbl_garagem");
-      }
-      if (comm.reservation_id && comm.reservation_id !== "0" && comm.reservation_id !== "TEST" && comm.reservation_id !== "MANUAL") {
-        autoLabels.add("lbl_reserva");
-      }
-      if (comm.status === "failed") {
-        autoLabels.add("lbl_urgente");
-      }
-    }
+    const isInboundComm = comm.direction === "inbound";
+    const defaultFolder = isFailedOrPending ? "outbox" : (isInboundComm ? "inbox" : "sent");
 
     const item = {
       id,
@@ -1035,8 +1226,8 @@ export function buildUnifiedMessagesList(db) {
       threadId: comm.threadId || undefined,
       folder: meta.folder || defaultFolder,
       direction: comm.direction || "outbound",
-      fromName: comm.direction === "inbound" ? (comm.fromName || comm.recipient) : defaultFromName,
-      fromEmail: comm.direction === "inbound" ? (comm.fromEmail || comm.recipient) : defaultFromEmail,
+      fromName: isInboundComm ? (comm.fromName || comm.recipient) : defaultFromName,
+      fromEmail: isInboundComm ? (comm.fromEmail || comm.recipient) : defaultFromEmail,
       recipient: comm.recipient || "",
       cc: comm.cc || comm.metadata?.cc || "",
       bcc: comm.bcc || comm.metadata?.bcc || "",
@@ -1046,7 +1237,7 @@ export function buildUnifiedMessagesList(db) {
       bodyText: extractTextSnippet(comm.body || "", 2000),
       isRead: meta.isRead !== undefined ? meta.isRead : true,
       isStarred: meta.isStarred !== undefined ? meta.isStarred : false,
-      labels: Array.from(autoLabels),
+      labels: [],
       status: comm.status || "sent",
       reservation_id: comm.reservation_id,
       metadata: comm.metadata || {},
@@ -1056,10 +1247,13 @@ export function buildUnifiedMessagesList(db) {
       source: "corpflats_engine"
     };
     item.matchedReservation = matchEmailWithReservation(db, item);
+    if (isInboundComm) {
+      item.labels = inferZohoSmartLabels(item, meta.labels || comm.labels || [], item.matchedReservation);
+    }
     unified.push(item);
   }
 
-  // 4. Fila de E-mails Agendados (db.emailQueue -> pasta 'queue')
+  // 4. Fila de E-mails Agendados (db.emailQueue -> pasta 'queue', sem poluir as etiquetas de Recebidos!)
   for (const q of db.emailQueue || []) {
     if (!q || q.status === "cancelled" || q.status === "sent") continue;
     const qId = q.id;
@@ -1083,7 +1277,7 @@ export function buildUnifiedMessagesList(db) {
       bodyText: q.bodyText || "",
       isRead: meta.isRead !== undefined ? meta.isRead : true,
       isStarred: meta.isStarred !== undefined ? meta.isStarred : false,
-      labels: Array.isArray(meta.labels) ? meta.labels : ["lbl_reserva"],
+      labels: [],
       status: "scheduled",
       scheduledFor: q.scheduledFor,
       triggerEvent: q.triggerEvent,
@@ -1153,6 +1347,7 @@ export function getWebmailFoldersAndCounts(db) {
 
   const counts = {
     inbox: { total: 0, unread: 0 },
+    newsletters: { total: 0, unread: 0 },
     starred: { total: 0, unread: 0 },
     drafts: { total: 0, unread: 0 },
     queue: { total: 0, unread: 0 },
@@ -1192,7 +1387,8 @@ export function getWebmailFoldersAndCounts(db) {
       counts.archive.total++;
     }
 
-    if (Array.isArray(m.labels) && fld !== "trash") {
+    // Regra de ouro: etiquetas contam apenas e-mails recebidos (inbound) fora de lixeira/spam
+    if (m.direction === "inbound" && Array.isArray(m.labels) && fld !== "trash" && fld !== "spam") {
       for (const lid of m.labels) {
         if (labelCounts[lid]) {
           labelCounts[lid].total++;
@@ -1204,6 +1400,7 @@ export function getWebmailFoldersAndCounts(db) {
 
   const systemFolders = [
     { id: "inbox", name: "Caixa de Entrada", icon: "Inbox", total: counts.inbox.total, unread: counts.inbox.unread, badgeType: "unread" },
+    { id: "newsletters", name: "Newsletters & Promoções", icon: "Sparkles", total: counts.newsletters.total, unread: counts.newsletters.unread, badgeType: "unread" },
     { id: "starred", name: "Com Estrela", icon: "Star", total: counts.starred.total, unread: counts.starred.unread, badgeType: "total" },
     { id: "drafts", name: "Rascunhos", icon: "FileEdit", total: counts.drafts.total, unread: counts.drafts.unread, badgeType: "total" },
     { id: "queue", name: "Fila Agendada", icon: "Clock", total: counts.queue.total, unread: counts.queue.unread, badgeType: "total", accent: "amber" },
@@ -1229,6 +1426,16 @@ export function getWebmailFoldersAndCounts(db) {
   return { systemFolders, customFolders, labels };
 }
 
+function isNonThreadableGenericSubject(normSubj) {
+  if (!normSubj || normSubj.length <= 4) return true;
+  return (
+    normSubj === "código de acesso" ||
+    normSubj === "codigo de acesso" ||
+    normSubj === "undelivered mail returned to sender" ||
+    normSubj === "delivery status notification (failure)"
+  );
+}
+
 /**
  * Filtra e pagina mensagens para a Coluna 2 (Lista de E-mails / Threads)
  */
@@ -1243,15 +1450,16 @@ export async function listWebmailMessages(db, {
   ensureWebmailCollections(db);
 
   const oauthCfg = getZohoOAuthConfig(db);
-  const lastFolderSync = zohoTokenCache.lastFolderSyncAt?.[folder] || 0;
+  const syncTargetFolder = labelId ? "inbox" : folder;
+  const lastFolderSync = zohoTokenCache.lastFolderSyncAt?.[syncTargetFolder] || 0;
   const shouldAutoSync =
     oauthCfg.isConfigured &&
-    folder !== "queue" &&
-    folder !== "outbox" &&
+    syncTargetFolder !== "queue" &&
+    syncTargetFolder !== "outbox" &&
     (syncRemote || Date.now() - lastFolderSync > 30000);
 
   if (shouldAutoSync) {
-    const syncRes = await syncZohoMessagesToCache(db, { folder, search });
+    const syncRes = await syncZohoMessagesToCache(db, { folder: syncTargetFolder === "newsletters" ? "inbox" : syncTargetFolder, search });
     if (syncRes.ok && syncRes.synced > 0 && typeof saveDatabase === "function") {
       saveDatabase();
     }
@@ -1259,11 +1467,12 @@ export async function listWebmailMessages(db, {
 
   const all = buildUnifiedMessagesList(db);
   const cleanSearch = String(search || "").trim().toLowerCase();
+  const todayBrStr = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
   let filtered = all.filter(m => {
-    // 1. Filtro por Etiqueta (se selecionado na sidebar)
+    // 1. Filtro por Etiqueta (se selecionado na sidebar) -> estritamente apenas recebidos (inbound)
     if (labelId) {
-      if (m.folder === "trash") return false;
+      if (m.direction !== "inbound" || m.folder === "trash" || m.folder === "spam") return false;
       if (!Array.isArray(m.labels) || !m.labels.includes(labelId)) return false;
     } else {
       // 2. Filtro por Pasta
@@ -1276,12 +1485,65 @@ export async function listWebmailMessages(db, {
       }
     }
 
-    // 3. Pílulas de Filtro Rápido (Quick Toggles)
+    // 3. Pílulas de Filtro Rápido Contextuais (Quick Toggles)
     if (quickFilter === "unread" && m.isRead) return false;
     if (quickFilter === "starred" && !m.isStarred) return false;
     if (quickFilter === "hasAttachment" && !m.hasAttachments && !(m.matchedReservation?.attachmentsAvailableCount > 0)) return false;
     if (quickFilter === "hasReservation" && !m.matchedReservation) return false;
     if (quickFilter === "failed" && m.status !== "failed") return false;
+
+    if (quickFilter === "today") {
+      const refIso = (folder === "queue" && !labelId) ? (m.scheduledFor || m.created_at) : m.created_at;
+      const msgBrStr = new Date(refIso || 0).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      if (msgBrStr !== todayBrStr) return false;
+    }
+
+    const recLow = `${m.recipient || ""} ${(m.to || []).join(" ")} ${(m.cc || []).join(" ")}`.toLowerCase();
+    const subjLow = String(m.subject || "").toLowerCase();
+    const tplLow = String(m.templateKey || "").toLowerCase();
+
+    // Filtros contextuais de Enviados (sent)
+    if (quickFilter === "sent_guests") {
+      if (recLow.includes("promenade.com.br") || recLow.includes("pfbestacionamentos")) return false;
+      if (!m.matchedReservation && (subjLow.includes("portaria") || subjLow.includes("garagem"))) return false;
+    }
+    if (quickFilter === "sent_portaria") {
+      if (!recLow.includes("promenade.com.br") && !subjLow.includes("portaria") && !subjLow.includes("liberação de acesso")) return false;
+    }
+    if (quickFilter === "sent_garage") {
+      if (!recLow.includes("pfbestacionamentos") && !subjLow.includes("garagem") && !subjLow.includes("vaga de estacionamento")) return false;
+    }
+
+    // Filtros contextuais da Fila Agendada (queue)
+    if (quickFilter === "queue_24h") {
+      const schedMs = new Date(m.scheduledFor || m.created_at || 0).getTime();
+      if (schedMs > Date.now() + 24 * 3600 * 1000) return false;
+    }
+    if (quickFilter === "queue_checkin") {
+      const isCheckin =
+        tplLow.includes("checkin") ||
+        tplLow.includes("arrival") ||
+        subjLow.includes("check-in") ||
+        subjLow.includes("instruções de chegada") ||
+        subjLow.includes("liberação") ||
+        subjLow.includes("garagem");
+      if (!isCheckin) return false;
+    }
+    if (quickFilter === "queue_welcome") {
+      const isWelcome =
+        tplLow.includes("welcome") ||
+        subjLow.includes("bem-vindo") ||
+        subjLow.includes("boas-vindas") ||
+        subjLow.includes("confirmação");
+      if (!isWelcome) return false;
+    }
+    if (quickFilter === "queue_checkout") {
+      const isCheckout =
+        tplLow.includes("checkout") ||
+        subjLow.includes("check-out") ||
+        subjLow.includes("agradecimento");
+      if (!isCheckout) return false;
+    }
 
     // 4. Busca Instantânea
     if (cleanSearch) {
@@ -1318,13 +1580,13 @@ export async function listWebmailMessages(db, {
   for (const m of all) {
     if (m.folder === "trash" || m.folder === "drafts") continue;
     const normSubj = normalizeThreadSubject(m.subject);
-    const key = m.threadId || (normSubj ? `subj_${normSubj}` : m.id);
+    const key = m.threadId || (!isNonThreadableGenericSubject(normSubj) ? `subj_${normSubj}` : m.id);
     subjectMap.set(key, (subjectMap.get(key) || 0) + 1);
   }
 
   const itemsWithThreadCount = filtered.map(m => {
     const normSubj = normalizeThreadSubject(m.subject);
-    const key = m.threadId || (normSubj ? `subj_${normSubj}` : m.id);
+    const key = m.threadId || (!isNonThreadableGenericSubject(normSubj) ? `subj_${normSubj}` : m.id);
     return {
       ...m,
       threadCount: subjectMap.get(key) || 1
@@ -1408,24 +1670,47 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
     if (typeof saveDatabase === "function") saveDatabase();
   }
 
-  // Agrupa todas as mensagens da mesma conversa (Thread)
+  // Agrupa todas as mensagens da mesma conversa (Thread) e ordena da MAIS RECENTE (topo) para a mais antiga
   const normTargetSubj = normalizeThreadSubject(target.subject);
-  const threadMessages = all
+  const rawThreadMessages = all
     .filter(m => {
       if (m.id === target.id) return true;
       if (m.folder === "trash" || m.folder === "drafts") return false;
       if (target.threadId && m.threadId === target.threadId) return true;
-      if (normTargetSubj && normTargetSubj.length > 4 && normalizeThreadSubject(m.subject) === normTargetSubj) {
+      if (!isNonThreadableGenericSubject(normTargetSubj) && normalizeThreadSubject(m.subject) === normTargetSubj) {
         return true;
       }
       return false;
     })
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-    .map(tm => ({
-      ...tm,
-      bodyHtml: sanitizeEmailHtml(tm.bodyHtml || `<p>${tm.bodyText || tm.snippet || ""}</p>`),
-      attachments: tm.id === target.id ? resolvedAttachments : (tm.attachments || [])
-    }));
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  // Garante que a mensagem mais recente (topo do acordeão) tenha o HTML carregado caso seja da Zoho API
+  const newestInThread = rawThreadMessages[0];
+  if (
+    newestInThread &&
+    newestInThread.id !== target.id &&
+    newestInThread.source === "zoho_api" &&
+    !newestInThread.bodyHtml &&
+    newestInThread.zohoMessageId &&
+    newestInThread.zohoFolderId
+  ) {
+    const newestRes = await callZohoMailApi(
+      db,
+      `/accounts/{accountId}/folders/${newestInThread.zohoFolderId}/messages/${newestInThread.zohoMessageId}/content`
+    );
+    if (newestRes.ok && newestRes.data?.content) {
+      newestInThread.bodyHtml = newestRes.data.content;
+      const cachedNewest = (db.zohoMessagesCache || []).find(c => c.id === newestInThread.id);
+      if (cachedNewest) cachedNewest.bodyHtml = newestInThread.bodyHtml;
+      if (typeof saveDatabase === "function") saveDatabase();
+    }
+  }
+
+  const threadMessages = rawThreadMessages.map(tm => ({
+    ...tm,
+    bodyHtml: sanitizeEmailHtml(tm.bodyHtml || `<p>${tm.bodyText || tm.snippet || ""}</p>`),
+    attachments: tm.id === target.id ? resolvedAttachments : (tm.attachments || [])
+  }));
 
   return {
     ok: true,
