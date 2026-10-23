@@ -6685,31 +6685,36 @@ async function loadDatabase() {
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
-          sanitizeAndRecoverCleanings();
-          await reconcileFromAuditLogs(db, pgPool);
-          sanitizeLostAndFound();
-          sanitizeReservationFlags();
-          const didChange = reconcileUniversalIntegrity({
-            reservations: (!pgLoaded.reservations || pgLoaded.reservations.length === 0) ? localReservations : undefined,
-            cleaningRequests: (!pgLoaded.cleaningRequests || pgLoaded.cleaningRequests.length === 0) ? localCleanings : undefined,
-            guests: (!pgLoaded.guests || pgLoaded.guests.length === 0) ? localGuests : undefined,
-            flats: db.flats,
-            breakfastOrders: (!pgLoaded.breakfastOrders || pgLoaded.breakfastOrders.length === 0) ? localBreakfastOrders : undefined,
-            maidPayments: (!pgLoaded.maidPayments || pgLoaded.maidPayments.length === 0) ? localMaidPayments : undefined,
-            maidStatementEntries: (!pgLoaded.maidStatementEntries || pgLoaded.maidStatementEntries.length === 0) ? localMaidStatementEntries : undefined,
-            lostAndFound: (!pgLoaded.lostAndFound || pgLoaded.lostAndFound.length === 0) ? localLostAndFound : undefined,
-            companies: (!pgLoaded.companies || pgLoaded.companies.length === 0) ? localCompanies : undefined,
-            whatsappHistory: (!pgLoaded.whatsappHistory || pgLoaded.whatsappHistory.length === 0) ? localWhatsappHistory : undefined,
-            whatsappQueue: (!pgLoaded.whatsappQueue || pgLoaded.whatsappQueue.length === 0) ? localWhatsappQueue : undefined,
-            whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined,
-            faqItems: (!pgLoaded.faqItems || pgLoaded.faqItems.length === 0) ? localFaqItems : pgLoaded.faqItems,
-            serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
-            serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers,
-            flatDiaryEntries: (!pgLoaded.flatDiaryEntries || pgLoaded.flatDiaryEntries.length === 0) ? db.flatDiaryEntries : pgLoaded.flatDiaryEntries,
-            serviceCatalog: (!pgLoaded.serviceCatalog || pgLoaded.serviceCatalog.length === 0) ? db.serviceCatalog : pgLoaded.serviceCatalog
-          });
-          syncMaidCredits(2);
-          syncMaidCredits(3);
+          try { sanitizeAndRecoverCleanings(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeAndRecoverCleanings:", e.message); }
+          try { await reconcileFromAuditLogs(db, pgPool); } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileFromAuditLogs:", e.message); }
+          try { sanitizeLostAndFound(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeLostAndFound:", e.message); }
+          try { sanitizeReservationFlags(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeReservationFlags:", e.message); }
+          let didChange = false;
+          try {
+            didChange = reconcileUniversalIntegrity({
+              reservations: (!pgLoaded.reservations || pgLoaded.reservations.length === 0) ? localReservations : undefined,
+              cleaningRequests: (!pgLoaded.cleaningRequests || pgLoaded.cleaningRequests.length === 0) ? localCleanings : undefined,
+              guests: (!pgLoaded.guests || pgLoaded.guests.length === 0) ? localGuests : undefined,
+              flats: db.flats,
+              breakfastOrders: (!pgLoaded.breakfastOrders || pgLoaded.breakfastOrders.length === 0) ? localBreakfastOrders : undefined,
+              maidPayments: (!pgLoaded.maidPayments || pgLoaded.maidPayments.length === 0) ? localMaidPayments : undefined,
+              maidStatementEntries: (!pgLoaded.maidStatementEntries || pgLoaded.maidStatementEntries.length === 0) ? localMaidStatementEntries : undefined,
+              lostAndFound: (!pgLoaded.lostAndFound || pgLoaded.lostAndFound.length === 0) ? localLostAndFound : undefined,
+              companies: (!pgLoaded.companies || pgLoaded.companies.length === 0) ? localCompanies : undefined,
+              whatsappHistory: (!pgLoaded.whatsappHistory || pgLoaded.whatsappHistory.length === 0) ? localWhatsappHistory : undefined,
+              whatsappQueue: (!pgLoaded.whatsappQueue || pgLoaded.whatsappQueue.length === 0) ? localWhatsappQueue : undefined,
+              whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined,
+              faqItems: (!pgLoaded.faqItems || pgLoaded.faqItems.length === 0) ? localFaqItems : pgLoaded.faqItems,
+              serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
+              serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers,
+              flatDiaryEntries: (!pgLoaded.flatDiaryEntries || pgLoaded.flatDiaryEntries.length === 0) ? db.flatDiaryEntries : pgLoaded.flatDiaryEntries,
+              serviceCatalog: (!pgLoaded.serviceCatalog || pgLoaded.serviceCatalog.length === 0) ? db.serviceCatalog : pgLoaded.serviceCatalog
+            });
+          } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileUniversalIntegrity:", e.message); }
+          try {
+            syncMaidCredits(2);
+            syncMaidCredits(3);
+          } catch (_) {}
           pgHydratedSuccessfully = true;
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
           if (didChange || didMigrateEmails) {
@@ -6721,11 +6726,17 @@ async function loadDatabase() {
           console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
         } else {
           pgHydratedSuccessfully = false;
-          console.error("[PostgreSQL] CRÍTICO: Todas as tentativas de leitura inicial de db_state falharam. Escrita em nuvem bloqueada preventivamente para evitar sobrescrita de dados.");
+          console.error("[PostgreSQL] CRÍTICO: Todas as tentativas de leitura inicial de db_state falharam. Escrita em nuvem bloqueada preventivamente e nova tentativa agendada em 8s...");
+          setTimeout(() => {
+            if (!pgHydratedSuccessfully) loadDatabase().catch(() => {});
+          }, 8000);
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha crítica ao sincronizar estado inicial:", err.message);
-        // Não marcar pgHydratedSuccessfully = true em caso de erro para não sobrescrever dados na nuvem!
+        // Não marcar pgHydratedSuccessfully = true em caso de erro para não sobrescrever dados na nuvem, mas agendar auto-recuperação!
+        setTimeout(() => {
+          if (!pgHydratedSuccessfully) loadDatabase().catch(() => {});
+        }, 8000);
       }
     }
 
@@ -28455,7 +28466,10 @@ app.post("/api/emails/send-manual", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // W1. Status consolidado do Webmail (Zoho OAuth2 + Motor SMTP + Pastas + Reservas Ativas)
-app.get("/api/webmail/status", (req, res) => {
+app.get("/api/webmail/status", async (req, res) => {
+  if (pgPool && !pgHydratedSuccessfully) {
+    try { await loadDatabase(); } catch (_) {}
+  }
   ensureWebmailCollections(db);
   const status = getZohoStatusSummary(db);
   const { systemFolders, customFolders, labels } = getWebmailFoldersAndCounts(db);
@@ -28554,6 +28568,9 @@ app.post("/api/webmail/oauth-config", async (req, res) => {
 
 // W3. Listagem, Busca Instantânea e Filtros Rápidos de Mensagens (Coluna 2)
 app.get("/api/webmail/messages", async (req, res) => {
+  if (pgPool && !pgHydratedSuccessfully) {
+    try { await loadDatabase(); } catch (_) {}
+  }
   const {
     folder = "inbox",
     labelId = "",
@@ -28567,7 +28584,8 @@ app.get("/api/webmail/messages", async (req, res) => {
     labelId: String(labelId),
     quickFilter: String(quickFilter),
     search: String(search),
-    syncRemote: sync === "true" || sync === "1"
+    syncRemote: sync === "true" || sync === "1",
+    saveDatabase
   });
 
   res.json(result);

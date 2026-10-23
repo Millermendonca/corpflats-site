@@ -869,6 +869,10 @@ function inferZohoSmartLabels(item, existingLabels = [], matchedReservation = nu
   const isAccessCode =
     subjLower.includes("código de acesso") ||
     subjLower.includes("codigo de acesso") ||
+    subjLower.includes("código de autenticação") ||
+    subjLower.includes("codigo de autenticacao") ||
+    subjLower.includes("autenticação b2b") ||
+    subjLower.includes("autenticacao b2b") ||
     subjLower.includes("código de verificação") ||
     subjLower.includes("codigo de verificacao") ||
     subjLower.includes("verification code") ||
@@ -1431,6 +1435,8 @@ function isNonThreadableGenericSubject(normSubj) {
   return (
     normSubj === "código de acesso" ||
     normSubj === "codigo de acesso" ||
+    normSubj === "código de autenticação b2b" ||
+    normSubj === "codigo de autenticacao b2b" ||
     normSubj === "undelivered mail returned to sender" ||
     normSubj === "delivery status notification (failure)"
   );
