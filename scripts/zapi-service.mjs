@@ -2547,12 +2547,11 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   };
 }
 
-// ── Régua de Acompanhantes: eventos financeiros nunca vão para o 2º/3º hóspede ──
+// ── Régua de Acompanhantes: eventos puramente de cobrança nunca vão para o 2º/3º hóspede ──
 export const COMPANION_EXCLUDED_EVENTS = new Set([
   "pre_reservation_created",
   "payment_pending",
-  "additional_daily_pending",
-  "payment_confirmed"
+  "additional_daily_pending"
 ]);
 
 // ── Cobrança / PIX puro: quando há solicitante distinto, vai EXCLUSIVAMENTE ao solicitante ──
@@ -2570,6 +2569,84 @@ export const PURE_BILLING_TEMPLATE_IDS = new Set([
   "qm_payment_confirmed"
 ]);
 
+// ── Eventos e templates que vão TANTO para o Solicitante (não-hóspede) QUANTO para os Hóspedes ──
+export const REQUESTER_AND_GUEST_EVENTS = new Set([
+  "reservation_created",
+  "new_reservation",
+  "new_reservation_direct",
+  "new_reservation_ota",
+  "payment_confirmed",
+  "sameday_reservation",
+  "checkin_day_instructions",
+  "pre_checkin_reminder",
+  "pre_checkin_completed",
+  "room_ready",
+  "room_ready_direct",
+  "room_ready_ota",
+  "room_ready_regular",
+  "checkin_cleaning_delay",
+  "reservation_updated",
+  "reservation_cancelled"
+]);
+
+export const REQUESTER_AND_GUEST_TEMPLATE_IDS = new Set([
+  "tpl_new_reservation",
+  "tpl_new_reservation_direct",
+  "tpl_new_reservation_ota",
+  "tpl_payment_confirmed",
+  "tpl_sameday_reservation_instructions",
+  "tpl_checkin_day_instructions",
+  "tpl_pre_checkin_reminder",
+  "tpl_pre_checkin_completed",
+  "tpl_room_ready_direct",
+  "tpl_room_ready_ota",
+  "tpl_room_ready_regular",
+  "tpl_checkin_cleaning_delay",
+  "tpl_reservation_updated",
+  "tpl_reservation_cancelled"
+]);
+
+// ── Eventos exclusivos de estadia interna, café, saída, frigobar, achados e avaliação (NUNCA vão ao solicitante não-hóspede) ──
+export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
+  "checkin_completed",
+  "breakfast_reminder",
+  "checkout_reminder",
+  "checkout_completed",
+  "on_checkout",
+  "late_checkout_approved",
+  "post_checkout_review",
+  "nps_approved",
+  "nps_score_4",
+  "nps_score_3",
+  "nps_score_2",
+  "nps_score_1",
+  "nps_feedback_thanks",
+  "lost_item_registered",
+  "lost_item",
+  "minibar_discrepancy",
+  "minibar_invoice"
+]);
+
+export const GUEST_ONLY_TEMPLATE_IDS = new Set([
+  "tpl_checkin_completed",
+  "tpl_breakfast_reminder",
+  "tpl_checkout_reminder",
+  "tpl_checkout_completed",
+  "tpl_late_checkout_approved",
+  "tpl_nps_satisfaction_check",
+  "tpl_post_checkout_review",
+  "tpl_nps_score_4",
+  "tpl_nps_score_3",
+  "tpl_nps_score_2",
+  "tpl_nps_score_1",
+  "tpl_nps_feedback_thanks",
+  "tpl_lost_item_registered",
+  "tpl_lost_item",
+  "qm_breakfast",
+  "qm_checkout_reminder",
+  "qm_review_request"
+]);
+
 export function isPureBillingTemplateOrEvent(tplOrEvent) {
   if (!tplOrEvent) return false;
   if (typeof tplOrEvent === "string") {
@@ -2578,6 +2655,26 @@ export function isPureBillingTemplateOrEvent(tplOrEvent) {
   const id = String(tplOrEvent.id || "").trim();
   const ev = String(tplOrEvent.triggerEvent || "").trim();
   return PURE_BILLING_TEMPLATE_IDS.has(id) || PURE_BILLING_EVENTS.has(ev);
+}
+
+export function isRequesterAndGuestTemplateOrEvent(tplOrEvent) {
+  if (!tplOrEvent) return false;
+  if (typeof tplOrEvent === "string") {
+    return REQUESTER_AND_GUEST_EVENTS.has(tplOrEvent) || REQUESTER_AND_GUEST_TEMPLATE_IDS.has(tplOrEvent);
+  }
+  const id = String(tplOrEvent.id || "").trim();
+  const ev = String(tplOrEvent.triggerEvent || "").trim();
+  return REQUESTER_AND_GUEST_TEMPLATE_IDS.has(id) || REQUESTER_AND_GUEST_EVENTS.has(ev);
+}
+
+export function isGuestOnlyStayOrPostTemplateOrEvent(tplOrEvent) {
+  if (!tplOrEvent) return false;
+  if (typeof tplOrEvent === "string") {
+    return GUEST_ONLY_STAY_AND_POST_EVENTS.has(tplOrEvent) || GUEST_ONLY_TEMPLATE_IDS.has(tplOrEvent);
+  }
+  const id = String(tplOrEvent.id || "").trim();
+  const ev = String(tplOrEvent.triggerEvent || "").trim();
+  return GUEST_ONLY_TEMPLATE_IDS.has(id) || GUEST_ONLY_STAY_AND_POST_EVENTS.has(ev);
 }
 
 export function shouldIncludeCompanions(tpl) {
@@ -2615,24 +2712,30 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
   const guest = recipients.guest;
   const requester = recipients.requester;
   const isPureBilling = isPureBillingTemplateOrEvent(tpl);
-  const isNewReservationConfirm = tpl?.id === "tpl_new_reservation_direct" || tpl?.id === "tpl_new_reservation";
+  const isGuestOnlyStayOrPost = isGuestOnlyStayOrPostTemplateOrEvent(tpl);
+  const isRequesterAndGuest = isRequesterAndGuestTemplateOrEvent(tpl);
+  const requesterHasOwnContact = requester?.hasOwnContact !== undefined
+    ? Boolean(requester.hasOwnContact)
+    : Boolean(requester?.isDifferentFromGuest && (requester?.phone || requester?.email));
 
   let targetMode = options.targetMode || tpl?.recipientTarget || "guest";
-  if (requester?.isDifferentFromGuest) {
+  if (options.excludeRequester) {
+    targetMode = "guest";
+  } else if (requester?.isDifferentFromGuest && !options.forceTargetMode) {
     if (isPureBilling) {
       targetMode = "requester";
-    } else if (isNewReservationConfirm && !options.targetMode && requester.hasOwnContact) {
+    } else if (isGuestOnlyStayOrPost) {
+      targetMode = "guest";
+    } else if (isRequesterAndGuest && requesterHasOwnContact) {
       targetMode = "both";
     }
   }
 
   const includeEmail = options.includeEmail !== undefined ? options.includeEmail : shouldMirrorTemplateToEmail(tpl);
   const onlyGuestIdx = options.onlyGuestIndex ? Number(options.onlyGuestIndex) : 0;
+  const onlyCompanions = Boolean(options.onlyCompanions);
   const raw = [];
   const guestTarget = () => ({ type: "guest", guestIndex: 1, name: guest.name, phone: guest.phone, email: guest.email });
-  const requesterHasOwnContact = requester?.hasOwnContact !== undefined
-    ? Boolean(requester.hasOwnContact)
-    : Boolean(requester?.isDifferentFromGuest && (requester?.phone || requester?.email));
 
   if (onlyGuestIdx > 1 && !(requester?.isDifferentFromGuest && isPureBilling)) {
     const matchedComp = (recipients.companions || []).find(c => Number(c.index) === onlyGuestIdx);
@@ -2655,12 +2758,15 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
         hasCompletedCheckin: true
       });
     }
+    if (!options.excludeRequester && (targetMode === "requester" || targetMode === "both") && requester?.isDifferentFromGuest && (requester.phone || requester.email)) {
+      raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
+    }
   } else {
-    if (targetMode === "guest" || targetMode === "both") {
+    if (!onlyCompanions && (targetMode === "guest" || targetMode === "both")) {
       if (guest.phone || guest.email) raw.push(guestTarget());
     }
 
-    if (targetMode === "requester" || targetMode === "both") {
+    if (!options.excludeRequester && (targetMode === "requester" || targetMode === "both")) {
       if (targetMode === "requester" || requester.isDifferentFromGuest) {
         if (requester.phone || requester.email) {
           raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
@@ -2670,7 +2776,7 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
       }
     }
 
-    if (raw.length === 0 && (guest.phone || guest.email)) {
+    if (!onlyCompanions && raw.length === 0 && (guest.phone || guest.email)) {
       if (!(targetMode === "requester" && requester?.isDifferentFromGuest && requesterHasOwnContact)) {
         raw.push(guestTarget());
       }
@@ -2919,10 +3025,14 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   // Links inteligentes com autenticação por código de reserva
   const linkCheckinDigital = getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db);
-  const linkPortalHospede = recipientGuestIndex && Number(recipientGuestIndex) > 1 
-    ? `${appOrigin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}` 
+  const linkPortalHospede = (recipientIsRequester && requester.isDifferentFromGuest)
+    ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
+    : (recipientGuestIndex && Number(recipientGuestIndex) > 1 
+        ? `${appOrigin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}` 
+        : `${appOrigin}/minha-reserva/${resCode}`);
+  const linkPagamento = (recipientIsRequester && requester.isDifferentFromGuest)
+    ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
     : `${appOrigin}/minha-reserva/${resCode}`;
-  const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
   const linkCopiarPix = `${appOrigin}/copiar-pix/${resCode}`;
   const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
@@ -3310,10 +3420,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     (reservation?.status === "checkin" && reservation?.guestSelfCheckin)
   );
 
+  const recipientsForBtn = getReservationRecipients(reservation || {}, db || {});
+  const rawTargetType = targetRecipient && typeof targetRecipient === "object" ? targetRecipient.type : targetRecipient;
+  const isRequesterBtnTarget = rawTargetType === "requester";
+  const hasSeparateRequester = Boolean(recipientsForBtn.requester?.isDifferentFromGuest);
   const targetGuestIdx = companionTarget ? companionTarget.index : (targetRecipient?.guestIndex || targetRecipient?.index);
-  const linkPortalHospede = targetGuestIdx && Number(targetGuestIdx) > 1 
-    ? `${appOrigin}/minha-reserva/${resCode}?guest=${targetGuestIdx}` 
-    : `${appOrigin}/minha-reserva/${resCode}`;
+  const linkPortalHospede = (isRequesterBtnTarget && hasSeparateRequester)
+    ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
+    : (targetGuestIdx && Number(targetGuestIdx) > 1 
+        ? `${appOrigin}/minha-reserva/${resCode}?guest=${targetGuestIdx}` 
+        : `${appOrigin}/minha-reserva/${resCode}`);
   const linkCheckinDigital = getCheckinUrlSync(reservation, companionTarget ? companionTarget.index : 1, appOrigin, db);
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
@@ -10621,17 +10737,23 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
       const onlyGuestIndex = eventName === "pre_checkin_completed" ? (Number(reservation._checkinGuestIndex) || 0) : 0;
-      const dispatches = buildTemplateTargets(tpl, recipients, { targetMode, onlyGuestIndex });
+      const dispatches = buildTemplateTargets(tpl, recipients, {
+        targetMode,
+        onlyGuestIndex,
+        excludeRequester: Boolean(reservation._excludeRequesterTarget),
+        onlyCompanions: Boolean(reservation._onlyCompanionsTarget)
+      });
 
       for (const d of dispatches) {
         let target = { ...d };
 
-        // Se a reserva tiver solicitante distinto e a alteração foi EXCLUSIVAMENTE financeira,
+        // Se a reserva tiver solicitante distinto (ou para acompanhantes guest_2/guest_3) e a alteração foi EXCLUSIVAMENTE financeira,
         // não envia notificação de atualização ao hóspede/acompanhantes.
-        if (isUpdatedEvent && recipients.requester?.isDifferentFromGuest && target.type !== "requester") {
+        const isCompanionTarget = String(target.type || "").startsWith("guest_");
+        if (isUpdatedEvent && ((recipients.requester?.isDifferentFromGuest && target.type !== "requester") || isCompanionTarget)) {
           const changes = reservation._changesContext || [];
           if (Array.isArray(changes) && changes.length > 0 && !hasNonFinancialChanges(changes)) {
-            console.log(`[Z-API Privacy] Ignorando envio de 'reservation_updated' para o hóspede (${target.name}): alterações foram exclusivamente financeiras e há solicitante distinto (${recipients.requester.name}).`);
+            console.log(`[Z-API Privacy] Ignorando envio de 'reservation_updated' para ${target.type} (${target.name}): alterações foram exclusivamente financeiras.`);
             continue;
           }
         }

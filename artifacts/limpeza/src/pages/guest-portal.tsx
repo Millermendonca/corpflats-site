@@ -298,7 +298,8 @@ export default function GuestPortal() {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(q)}`)
+      const isReqQuery = typeof window !== "undefined" && (new URLSearchParams(window.location.search).get("requester") === "1" || new URLSearchParams(window.location.search).get("view") === "requester")
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(q)}${isReqQuery ? "?requester=1" : ""}`)
       if (!res.ok) {
         const err = await res.json()
         setError(err.error || "Reserva não encontrada.")
@@ -966,8 +967,11 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedSsid(false), 2500)
   }
 
-  const totalAmount = Number(reservation.totalAmount) || 0
-  const rawPaidAmount = Number(reservation.paidAmount) || 0
+  const isRequesterPortalView = typeof window !== "undefined" && (new URLSearchParams(window.location.search).get("requester") === "1" || new URLSearchParams(window.location.search).get("view") === "requester")
+  const hideFinancialForGuest = Boolean(!isRequesterPortalView && (data?.hideFinancialForGuest || reservation?.hideFinancialForGuest))
+  const requesterName = data?.requesterName || reservation?.requesterName || null
+  const totalAmount = hideFinancialForGuest ? 0 : (Number(reservation.totalAmount) || 0)
+  const rawPaidAmount = hideFinancialForGuest ? 0 : (Number(reservation.paidAmount) || 0)
   const hasAmount = totalAmount > 0 || (!isOta && rawPaidAmount > 0)
   const paidAmount = isPaid ? (totalAmount > 0 ? totalAmount : (isOta ? 0 : rawPaidAmount)) : rawPaidAmount
   const pendingAmount = Math.max(0, totalAmount - paidAmount)
@@ -1665,7 +1669,7 @@ export default function GuestPortal() {
                   </Badge>
                 ) : isPaid ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
-                    ✓ <span className="hidden sm:inline">{isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga"}</span>
+                    ✓ <span className="hidden sm:inline">{hideFinancialForGuest ? "Reserva Confirmada" : (isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga")}</span>
                     <span className="sm:hidden">Pago</span>
                   </Badge>
                 ) : (
@@ -2567,7 +2571,7 @@ export default function GuestPortal() {
             const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"]
             const isDirect = directChannels.includes((reservation.channel || "").toLowerCase())
             const isCancelled = reservation.status === "cancelada" || reservation.status === "CANCELLED"
-            const canModify = isDirect && !isCancelled
+            const canModify = isDirect && !isCancelled && !hideFinancialForGuest
 
             if (!canModify) return null
 
@@ -2647,7 +2651,7 @@ export default function GuestPortal() {
               </div>
               <div>
                 <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
-                  {isPaid ? "Pagamento Confirmado & Liquidado" : "Concluir Pagamento da Reserva"}
+                  {hideFinancialForGuest ? (isPaid ? "Reserva Confirmada & Garantida" : "Reserva Gerenciada pelo Solicitante") : (isPaid ? "Pagamento Confirmado & Liquidado" : "Concluir Pagamento da Reserva")}
                 </h2>
                 <span className="text-xs text-slate-500">
                   {isPaid 
@@ -2658,7 +2662,7 @@ export default function GuestPortal() {
             </div>
 
             <Badge className={isPaid ? "bg-emerald-600 text-white font-bold text-xs" : "bg-amber-600 text-white font-bold text-xs"}>
-              {isPaid ? "✓ Pago" : "⏳ Aguardando Pagamento"}
+              {hideFinancialForGuest ? (isPaid ? "✓ Confirmada" : "⏳ Em Confirmação") : (isPaid ? "✓ Pago" : "⏳ Aguardando Pagamento")}
             </Badge>
           </div>
 
@@ -2668,13 +2672,13 @@ export default function GuestPortal() {
               <div className="flex items-center gap-2.5">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                 <div>
-                  <span className="font-bold block text-sm">Status: Pago</span>
+                  <span className="font-bold block text-sm">{hideFinancialForGuest ? "Reserva 100% Confirmada" : "Status: Pago"}</span>
                   <span className="text-emerald-800 text-xs">
                     {isOta 
                       ? (channelLower.includes("booking") 
                           ? "Reserva e pagamento confirmados via Booking.com." 
                           : "Reserva e pagamento confirmados via Airbnb.")
-                      : "Pagamento registrado e confirmado pela administração CorpFlats."}
+                      : (hideFinancialForGuest ? (requesterName ? `Reserva gerenciada por ${requesterName}.` : "Reserva gerenciada pelo solicitante responsável.") : "Pagamento registrado e confirmado pela administração CorpFlats.")}
                   </span>
                 </div>
               </div>
@@ -2731,7 +2735,7 @@ export default function GuestPortal() {
           )}
 
           {/* Botão de Ver e Baixar Recibo de Pagamento e Receber no WhatsApp */}
-          {isPaid && (
+          {isPaid && !hideFinancialForGuest && (
             <div className="pt-2 border-t border-slate-100/80 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Button
                 type="button"
@@ -2755,7 +2759,7 @@ export default function GuestPortal() {
           )}
 
           {/* Se NÃO PAGO: Permanece com Resumo Financeiro Completo para Pagamento */}
-          {!isPaid && (
+          {!isPaid && !hideFinancialForGuest && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Total da Estadia</span>
@@ -2781,7 +2785,7 @@ export default function GuestPortal() {
           )}
 
           {/* Se NÃO PAGO: Seletor de Método e Instruções */}
-          {!isPaid && (
+          {!isPaid && !hideFinancialForGuest && (
             <div className="space-y-4 pt-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 block">

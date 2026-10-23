@@ -94,7 +94,9 @@ import {
   wasNpsSurveySentToPhone,
   getLatestNpsSurveySentInfo,
   sanitizeAndDispatchTodaySub5Nps,
-  resolveBestNpsGuestName
+  resolveBestNpsGuestName,
+  getReservationRecipients,
+  hasNonFinancialChanges
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -21680,11 +21682,41 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const hadCheckoutExtension = (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
     const hadPendingIncrease = pendingAmt > 0 && (r.paymentStatus === "pendente" || r.paymentStatus === "parcial" || (req.body.totalAmount && Number(req.body.totalAmount) > totalAmt));
 
+    // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
+    const guestFacingDiffs = filterGuestFacingDiffs(diffs);
+    const hasNonFinChanges = hasNonFinancialChanges(guestFacingDiffs);
+
     if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0 && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
       triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", r).catch(err => {
         console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
       });
+
+      const recipsForMod = getReservationRecipients(r, db);
+      const hasSeparateReq = Boolean(recipsForMod.requester?.isDifferentFromGuest);
+      const hasCompanions = Array.isArray(recipsForMod.companions) && recipsForMod.companions.length > 0;
+      if ((hasNonFinChanges || isDatesOrFlatChanged) && (hasSeparateReq || hasCompanions)) {
+        if (guestFacingDiffs.length > 0) {
+          const resvForGuests = {
+            ...r,
+            _changesContext: guestFacingDiffs,
+            _excludeRequesterTarget: true,
+            _onlyCompanionsTarget: !hasSeparateReq && hasCompanions
+          };
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForGuests).catch(err => {
+            console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated para hóspedes após additional_daily_pending:", err.message);
+          });
+        }
+      }
+
+      if (isDatesOrFlatChanged) {
+        const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
+        dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
+          origin: originHeader,
+          source: "pms_admin_edit",
+          actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
+        });
+      }
     } else if (!isPreReservationBlocked(r)) {
       const now = new Date();
       const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -21692,9 +21724,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       const todayStr = brDate.toISOString().substring(0, 10);
       const isSameDay = r.checkinDate === todayStr;
       const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
-
-      // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
-      const guestFacingDiffs = filterGuestFacingDiffs(diffs);
 
       // Se a reserva tem check-in HOJE e ainda não recebeu nenhuma confirmação ou instrução do dia
       const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
@@ -22291,11 +22320,23 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     }
   }
 
+  const portalRecips = getReservationRecipients(r, db);
+  const isSeparateRequester = Boolean(portalRecips.requester?.isDifferentFromGuest);
+  const isRequesterView = req.query?.requester === "1" || req.query?.view === "requester";
+  const hideFinancialForGuest = Boolean(isSeparateRequester && !isRequesterView);
+
   res.json({
     checkinProvider: db.settings?.checkinProvider || "proprio",
+    hideFinancialForGuest,
+    isSeparateRequester,
+    isRequesterView,
+    requesterName: isSeparateRequester ? (portalRecips.requester?.name || null) : null,
     reservation: {
       id: r.id,
       code: r.code,
+      hideFinancialForGuest,
+      isSeparateRequester,
+      requesterName: isSeparateRequester ? (portalRecips.requester?.name || null) : null,
       serproReservaId: r.serproReservaId || null,
       serproPrecheckinUrl: r.serproPrecheckinUrl || r.link_precheckin || null,
       link_precheckin: r.link_precheckin || r.serproPrecheckinUrl || null,
@@ -22305,7 +22346,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       cancelledAt: r.cancelledAt || null,
       cancellationReason: r.cancellationReason || null,
       refundStatus: r.refundStatus || null,
-      refundAmount: Number(r.refundAmount) || 0,
+      refundAmount: hideFinancialForGuest ? 0 : (Number(r.refundAmount) || 0),
       doorPassword: (!isCancelledRes && isPaid && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.doorPassword || null) : null,
       accessCode: (!isCancelledRes && isPaid && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.accessCode || null) : null,
       guestName: r.guestName,
@@ -22316,18 +22357,18 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       guestCount: r.guestCount || r.adults || 1,
       guests: r.guests || [],
       channel: r.channel || "site",
-      totalAmount: resolvedTotal,
-      paidAmount: resolvedPaid,
+      totalAmount: hideFinancialForGuest ? 0 : resolvedTotal,
+      paidAmount: hideFinancialForGuest ? 0 : resolvedPaid,
       isPaid,
       paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
       paymentMethod: (r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
-      pixTxId: isSettledByCard ? null : (r.pixTxId || null),
-      pixCopiaECola: r.pixCopiaECola || null,
-      pixEndToEndId: r.pixEndToEndId || null,
-      mpPaymentId: r.mpPaymentId || null,
-      mpPreferenceId: r.mpPreferenceId || null,
-      mpInitPoint: r.mpInitPoint || null,
+      pixTxId: (isSettledByCard || hideFinancialForGuest) ? null : (r.pixTxId || null),
+      pixCopiaECola: hideFinancialForGuest ? null : (r.pixCopiaECola || null),
+      pixEndToEndId: hideFinancialForGuest ? null : (r.pixEndToEndId || null),
+      mpPaymentId: hideFinancialForGuest ? null : (r.mpPaymentId || null),
+      mpPreferenceId: hideFinancialForGuest ? null : (r.mpPreferenceId || null),
+      mpInitPoint: hideFinancialForGuest ? null : (r.mpInitPoint || null),
       hasBreakfast,
       includeBreakfast: hasBreakfast,
       breakfastToken,
