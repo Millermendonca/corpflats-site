@@ -820,6 +820,7 @@ describe("CorpFlats: Comprehensive Reservation Modification Flow E2E Suite", () 
     fs.writeFileSync(isolatedDbPath, JSON.stringify(initialDb, null, 2), "utf-8");
 
     // 2. Spawn isolated server instance
+    let stderrLog = "";
     serverProcess = spawn("node", ["artifacts/api-server/demo-server.mjs"], {
       cwd: rootDir,
       env: {
@@ -829,11 +830,15 @@ describe("CorpFlats: Comprehensive Reservation Modification Flow E2E Suite", () 
         DATABASE_FILE: isolatedDbPath,
         NODE_ENV: "test"
       },
-      stdio: "pipe"
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    serverProcess.stdout.on("data", () => {});
+    serverProcess.stderr.on("data", (chunk) => {
+      stderrLog += chunk.toString();
     });
 
     let isReady = false;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       try {
         const res = await fetch(`${BASE_URL}/api/system/version`);
         if (res.ok) {
@@ -845,7 +850,8 @@ describe("CorpFlats: Comprehensive Reservation Modification Flow E2E Suite", () 
     }
 
     if (!isReady) {
-      throw new Error(`Servidor de teste não inicializou na porta ${TEST_PORT}`);
+      if (serverProcess && serverProcess.pid) killProcessTree(serverProcess.pid);
+      throw new Error(`Servidor de teste não inicializou na porta ${TEST_PORT}. Stderr: ${stderrLog.slice(-500)}`);
     }
   });
 
@@ -2318,12 +2324,16 @@ describe("CorpFlats: Comprehensive Reservation Modification Flow E2E Suite", () 
       });
       assert.strictEqual(res.status, 200);
 
-      // 1. Flat antigo (113) liberado
+      // 1. Flat antigo (113) liberado e notificação de alteração/re-assinatura disparada mesmo com check-in hoje após 07:01
       const db = getDb();
       const r = db.reservations.find((x) => x.id === 18006);
       assert.strictEqual(r.flatNumber, "116");
       assert.strictEqual(r.needsReSignature, true);
       assert.strictEqual(r.fnhrCompleted, false);
+      assert.ok(
+        (r.auditLogs || []).some((l) => l.action === "re_signature_requested"),
+        "Mesmo em reserva same-day após 07:01, a troca de flat deve disparar a notificação de alteração e re-assinatura ao hóspede"
+      );
 
       // 2. Recepção bloqueia entrada física imediatamente
       const repRes = await fetch(`${BASE_URL}/api/reception/today`);

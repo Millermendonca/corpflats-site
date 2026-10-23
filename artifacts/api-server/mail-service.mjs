@@ -1236,12 +1236,21 @@ export function hasReceptionReceivedReservation(reservation, db = {}) {
     const isToReception = recipient.includes(receptionEmail) || cc.includes(receptionEmail);
     if (!isToReception) return false;
 
-    // Disparos que configuram que a portaria recebeu a reserva (rotina 07h, ficha pre-checkin ou entrada)
+    // Disparos que configuram que a portaria recebeu a reserva (rotina 07h, ficha pre-checkin, entrada ou criação no mesmo dia)
     const trigger = c.metadata?.trigger;
     const isInitialDispatch = trigger === "morning_checkin_07h" || 
                               trigger === "pre_checkin" || 
                               trigger === "checkin_confirmed" || 
                               trigger === "pms_reservation_created" ||
+                              trigger === "sameday_pms_created" ||
+                              trigger === "sameday_direct_booking" ||
+                              trigger === "payment_confirmed" ||
+                              trigger === "pms_pre_reservation_confirmed" ||
+                              trigger === "bot_commit_reservation" ||
+                              trigger === "re_signature_checkin" ||
+                              trigger === "reservation_update" ||
+                              trigger === "guest_portal_modify" ||
+                              trigger === "portal_modify_settled" ||
                               (c.subject && c.subject.toUpperCase().includes("CHECK-IN"));
 
     return isInitialDispatch && (c.status === "sent" || c.status === "delivered" || c.status === "pending");

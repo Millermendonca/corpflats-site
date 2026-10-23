@@ -10355,7 +10355,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
         }
 
         // Verifica se já existe agendamento ou envio para essa combinação (reserva + trigger + recipientType)
-        const alreadyQueued = (db.whatsappQueue || []).some(q => 
+        const existingQueuedItem = (db.whatsappQueue || []).find(q => 
           (q.reservationCode === resv.code || q.reservationId === resv.id) &&
           q.triggerEvent === tpl.triggerEvent &&
           (q.recipientType || "guest") === targetItem.type &&
@@ -10369,7 +10369,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           (h.status === "sent" || h.status === "delivered")
         );
 
-        if (!alreadyQueued && !alreadySentInHistory) {
+        if (!existingQueuedItem && !alreadySentInHistory) {
           let scheduledTime = calculateScheduledTime(tpl, resv, db);
           let scheduledDate = new Date(scheduledTime);
 
@@ -10396,6 +10396,42 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
             }));
 
             hasChanges = true;
+          }
+        } else if (existingQueuedItem && existingQueuedItem.status === "scheduled" && !alreadySentInHistory) {
+          // Sincroniza itens ainda agendados ("scheduled") caso datas, flat ou contato da reserva tenham mudado
+          const rawScheduledTime = calculateScheduledTime(tpl, resv, db);
+          const rawScheduledDate = new Date(rawScheduledTime);
+          const nextScheduledFor = rawScheduledDate > now ? rawScheduledTime : existingQueuedItem.scheduledFor;
+
+          if (new Date(nextScheduledFor) > now) {
+            const rebuilt = buildQueueItemForTarget(db, {
+              tpl,
+              resv,
+              target: targetItem,
+              scheduledFor: nextScheduledFor,
+              channel: resvChannel,
+              recipientTarget: targetMode
+            });
+            const hasDiff =
+              existingQueuedItem.scheduledFor !== rebuilt.scheduledFor ||
+              existingQueuedItem.renderedMessage !== rebuilt.renderedMessage ||
+              existingQueuedItem.guestPhone !== rebuilt.guestPhone ||
+              existingQueuedItem.guestEmail !== rebuilt.guestEmail ||
+              existingQueuedItem.guestName !== rebuilt.guestName ||
+              JSON.stringify(existingQueuedItem.renderedButtons || []) !== JSON.stringify(rebuilt.renderedButtons || []);
+
+            if (hasDiff) {
+              existingQueuedItem.scheduledFor = rebuilt.scheduledFor;
+              existingQueuedItem.renderedMessage = rebuilt.renderedMessage;
+              existingQueuedItem.renderedButtons = rebuilt.renderedButtons;
+              existingQueuedItem.emailSubject = rebuilt.emailSubject;
+              existingQueuedItem.guestName = rebuilt.guestName;
+              existingQueuedItem.guestPhone = rebuilt.guestPhone;
+              existingQueuedItem.guestEmail = rebuilt.guestEmail;
+              existingQueuedItem.recipientName = rebuilt.recipientName;
+              existingQueuedItem.updatedAt = nowIso;
+              hasChanges = true;
+            }
           }
         }
       }

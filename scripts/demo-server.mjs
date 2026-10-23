@@ -9207,7 +9207,7 @@ function saveDatabase(reason = "auto_save") {
     invalidateGuestCache();
     invalidateFlatsCache();
 
-    if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason.startsWith("settings_") || reason === "shutdown") {
+    if (process.env.NODE_ENV === "test" || reason.startsWith("manual_") || reason.startsWith("repair_") || reason.startsWith("settings_") || reason === "shutdown") {
       if (localSaveTimeout) {
         clearTimeout(localSaveTimeout);
         localSaveTimeout = null;
@@ -21467,6 +21467,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     changes.push({ field: "guestName", label: "Hóspede Titular", oldValue: oldGuestName, newValue: r.guestName });
   }
 
+  // Preserva o estado de notificação prévia da portaria antes de eventual limpeza de carimbos por mudança de check-in
+  const hadReceptionReceivedBeforeEdit = hasReceptionReceivedReservation(r, db);
+
   // Se a data de checkin mudou, limpa incondicionalmente os carimbos matinais para disparar quando a nova data chegar
   if (oldCheckin !== r.checkinDate) {
     delete r.morningEmailSentDate;
@@ -21504,19 +21507,34 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (changes.length > 0) {
     // Regra de Comunicação Estrita:
     // Apenas dispara e-mail de alteração para a recepção se a reserva NÃO for pré-reserva bloqueada,
-    // for para o dia de hoje (ou estadias correntes) E se a portaria já havia recebido a notificação prévia da reserva.
+    // for para o dia de hoje (ou estadias correntes) E se a portaria já havia recebido a notificação prévia da reserva
+    // (ou se a reserva foi antecipada/remarcada para chegada hoje).
     // Reservas para datas futuras aguardam o dia do check-in para envio pontual às 07:00.
-    if (!isPreReservationBlocked(r) && isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
+    const shouldNotifyReceptionUpdate =
+      !isPreReservationBlocked(r) &&
+      isReservationForTodayOrPast(r) &&
+      (hadReceptionReceivedBeforeEdit || hasReceptionReceivedReservation(r, db) || (isReservationForToday(r) && oldCheckin !== r.checkinDate));
+
+    if (shouldNotifyReceptionUpdate) {
       try {
         const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+        const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || receptionEmail;
         const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+        if (isReservationForToday(r)) {
+          const nowIso = new Date().toISOString();
+          r.morningEmailSentDate = getBrasiliaTodayStr();
+          r.morningEmailSentAt = nowIso;
+          r.receptionNotifiedAt = nowIso;
+        }
 
         sendEmailAsync({
           db,
           saveDatabase,
           reservationId: r.code || r.id,
           recipient: receptionEmail,
+          cc: garageEmail !== receptionEmail ? garageEmail : undefined,
           subject,
           bodyHtml,
           type: "email",
@@ -21675,29 +21693,29 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       const isSameDay = r.checkinDate === todayStr;
       const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
 
-      // Se a reserva tem check-in HOJE e ainda não recebeu as instruções do dia
+      // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
+      const guestFacingDiffs = filterGuestFacingDiffs(diffs);
+
+      // Se a reserva tem check-in HOJE e ainda não recebeu nenhuma confirmação ou instrução do dia
       const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
         (h.reservationCode === r.code || h.reservationId === r.id) &&
-        (h.triggerEvent === "sameday_reservation" || h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "room_ready") &&
+        (
+          h.triggerEvent === "sameday_reservation" ||
+          h.triggerEvent === "checkin_day_instructions" ||
+          h.triggerEvent === "room_ready" ||
+          h.triggerEvent === "reservation_created" ||
+          h.triggerEvent === "payment_confirmed"
+        ) &&
         (h.status === "sent" || h.status === "delivered")
       );
 
-      if (isAfter0701 && !hasReceivedTodayInstructions) {
-        console.log(`[WhatsApp Trigger] Reserva ${r.code} (${r.guestName}) com check-in HOJE (${todayStr}) após 07:01 sem instruções prévias: disparando sameday_reservation.`);
-        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r).catch(err => {
-          console.warn("[WhatsApp Trigger] Erro ao disparar sameday_reservation:", err.message);
-        });
-      } else {
-        // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
-        const guestFacingDiffs = filterGuestFacingDiffs(diffs);
+      if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
         if (guestFacingDiffs.length > 0) {
           console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
           const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
           triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
             console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
           });
-        } else {
-          console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
         }
 
         if (isDatesOrFlatChanged) {
@@ -21708,7 +21726,24 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
             actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
           });
         }
+      } else if (isAfter0701 && !hasReceivedTodayInstructions) {
+        console.log(`[WhatsApp Trigger] Reserva ${r.code} (${r.guestName}) com check-in HOJE (${todayStr}) após 07:01 sem instruções prévias: disparando sameday_reservation.`);
+        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r).catch(err => {
+          console.warn("[WhatsApp Trigger] Erro ao disparar sameday_reservation:", err.message);
+        });
+      } else {
+        console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
       }
+    }
+  }
+
+  // Sincroniza agendamentos de WhatsApp e E-mail caso datas, flat ou contato tenham sido alterados
+  if (!isPreReservationBlocked(r)) {
+    try {
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+      ensureReservationScheduledEmails(db, saveDatabase, r);
+    } catch (schedErr) {
+      console.warn("[Scheduler Sync] Erro ao atualizar filas de comunicação na edição da reserva:", schedErr.message);
     }
   }
 
@@ -23228,7 +23263,9 @@ export async function commitPendingModification(r, pending, {
     }
   });
 
-  // B. Limpeza incondicional de carimbos da rotina matinal em mudança de check-in
+  // B. Preserva o estado de notificação prévia da portaria antes de eventual limpeza de carimbos por mudança de check-in
+  const hadReceptionReceivedBeforeEdit = hasReceptionReceivedReservation(r, db);
+
   if (oldCheckin !== targetCheckin) {
     delete r.morningEmailSentDate;
     delete r.morningEmailSentAt;
@@ -23319,6 +23356,57 @@ export async function commitPendingModification(r, pending, {
     targetUrl: `/reservas?code=${r.code}`
   });
 
+  // 9B. Aviso de Alteração para a Recepção/Portaria (se a estadia for corrente/hoje e já tiver sido informada)
+  if (!isPreReservationBlocked(r) && isReservationForTodayOrPast(r) && (hadReceptionReceivedBeforeEdit || hasReceptionReceivedReservation(r, db) || (isReservationForToday(r) && oldCheckin !== targetCheckin))) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+      const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || receptionEmail;
+      const receptionChanges = [
+        ...(oldCheckin !== targetCheckin || oldCheckout !== targetCheckout ? [{
+          field: "dates",
+          label: "Novo Período",
+          oldValue: `${formatDateBr(oldCheckin)} a ${formatDateBr(oldCheckout)}`,
+          newValue: `${formatDateBr(targetCheckin)} a ${formatDateBr(targetCheckout)}`
+        }] : []),
+        ...(oldFlatNumber !== targetFlatNumber ? [{
+          field: "flatNumber",
+          label: "Apartamento",
+          oldValue: `Flat ${oldFlatNumber}`,
+          newValue: `Flat ${targetFlatNumber}`
+        }] : [])
+      ];
+      if (receptionChanges.length > 0) {
+        const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes: receptionChanges, settings: db.settings });
+        if (isReservationForToday(r)) {
+          const nowIso = new Date().toISOString();
+          r.morningEmailSentDate = getBrasiliaTodayStr();
+          r.morningEmailSentAt = nowIso;
+          r.receptionNotifiedAt = nowIso;
+        }
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: r.code || r.id,
+          recipient: receptionEmail,
+          cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+          subject,
+          bodyHtml,
+          type: "email",
+          direction: "outbound",
+          metadata: {
+            trigger: "portal_modify_settled",
+            flatNumber: r.flatNumber,
+            guestName: r.guestName,
+            changes: receptionChanges
+          }
+        });
+      }
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar aviso de modificação liquidada à portaria:", mailErr.message);
+    }
+  }
+
   // 10. Disparo de Notificações de Re-Assinatura ao Hóspede (WhatsApp & E-mail)
   const modChanges = [
     {
@@ -23352,6 +23440,11 @@ export async function commitPendingModification(r, pending, {
     source: "portal_modify_settled",
     actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
   });
+
+  try {
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+    ensureReservationScheduledEmails(db, saveDatabase, r);
+  } catch (_) {}
 
   // 11. Persistência Atômica no Disco e DB
   saveDatabase("modify_settled_committed");
@@ -24406,6 +24499,9 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     }
   });
 
+  // Preserva o estado de notificação prévia da portaria antes de eventual limpeza de carimbos por mudança de check-in
+  const hadReceptionReceivedBeforeEdit = hasReceptionReceivedReservation(r, db);
+
   // Limpeza incondicional de carimbos da rotina matinal em mudança de check-in
   if (oldCheckin !== newCheckinDate) {
     delete r.morningEmailSentDate;
@@ -24418,20 +24514,35 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   }
 
   // Gatilho B: Notificação de alteração de datas para a recepção/portaria
-  if (isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
+  if (isReservationForTodayOrPast(r) && (hadReceptionReceivedBeforeEdit || hasReceptionReceivedReservation(r, db) || (isReservationForToday(r) && oldCheckin !== newCheckinDate))) {
     try {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+      const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || receptionEmail;
       const changes = [
-        { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(oldCheckin)} a ${formatDateBr(oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
+        { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(oldCheckin)} a ${formatDateBr(oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` },
+        ...(targetFlatNumber && targetFlatNumber !== String(oldFlatNumber) ? [{
+          field: "flatNumber",
+          label: "Apartamento",
+          oldValue: `Flat ${oldFlatNumber}`,
+          newValue: `Flat ${targetFlatNumber}`
+        }] : [])
       ];
       const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+      if (isReservationForToday(r)) {
+        const nowIso = new Date().toISOString();
+        r.morningEmailSentDate = getBrasiliaTodayStr();
+        r.morningEmailSentAt = nowIso;
+        r.receptionNotifiedAt = nowIso;
+      }
 
       sendEmailAsync({
         db,
         saveDatabase,
         reservationId: r.code || r.id,
         recipient: receptionEmail,
+        cc: garageEmail !== receptionEmail ? garageEmail : undefined,
         subject,
         bodyHtml,
         type: "email",
@@ -24514,6 +24625,11 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     source: "portal_modify_direct",
     actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
   });
+
+  try {
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+    ensureReservationScheduledEmails(db, saveDatabase, r);
+  } catch (_) {}
 
   saveDatabase("modify_direct_committed");
 
@@ -27629,12 +27745,12 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
   const guestEmail = r.guestEmail.trim();
 
   // 1. E-mail de Pré-Check-in / Instruções de Chegada (véspera ou dia do check-in às 09:00)
-  const hasWelcome = db.emailQueue.some(q =>
+  const existingWelcome = db.emailQueue.find(q =>
     (q.reservationCode === resCode || q.reservationId === String(r.id)) &&
     q.triggerEvent === "checkin_welcome" &&
     q.status !== "cancelled"
   );
-  if (!hasWelcome && r.checkinDate) {
+  if (r.checkinDate) {
     let schedDate = r.checkinDate;
     try {
       const d = new Date(r.checkinDate + "T09:00:00Z");
@@ -27642,71 +27758,99 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
       schedDate = d.toISOString().split("T")[0];
     } catch {}
 
-    db.emailQueue.push({
-      id: `em_q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      reservationId: String(r.id),
-      reservationCode: resCode,
-      guestName: r.guestName || "Hóspede",
-      recipient: guestEmail,
-      subject: `[INSTRUÇÕES DE CHEGADA] Flat ${r.flatNumber} - CorpFlats Soho`,
-      bodyHtml: wrapEmailTemplate({
-        title: `[INSTRUÇÕES DE CHEGADA] Flat ${r.flatNumber} - CorpFlats Soho`,
-        badge: `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Pré-Check-in</span>`,
-        contentHtml: `
-          <div style="margin-bottom: 20px;">
-            <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Instruções de Chegada • Flat ${r.flatNumber}</h1>
-            <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">Olá, <strong>${r.guestName}</strong>!</p>
-          </div>
-          <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
-            Sua estadia no <strong>Flat ${r.flatNumber}</strong> está próxima! Lembramos que o check-in inicia às 14:00. Preencha sua ficha de check-in digital antecipadamente para agilizar sua entrada na portaria.
-          </div>
-        `
-      }),
-      bodyText: `Olá, ${r.guestName}! Sua estadia no Flat ${r.flatNumber} está próxima! Check-in a partir das 14:00.`,
-      status: "pending",
-      scheduledFor: `${schedDate}T09:00:00.000Z`,
-      triggerEvent: "checkin_welcome",
-      createdAt: new Date().toISOString(),
-      sentAt: null,
-      error: null
+    const welcomeSubject = `[INSTRUÇÕES DE CHEGADA] Flat ${r.flatNumber} - CorpFlats Soho`;
+    const welcomeBodyHtml = wrapEmailTemplate({
+      title: welcomeSubject,
+      badge: `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Pré-Check-in</span>`,
+      contentHtml: `
+        <div style="margin-bottom: 20px;">
+          <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Instruções de Chegada • Flat ${r.flatNumber}</h1>
+          <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">Olá, <strong>${r.guestName}</strong>!</p>
+        </div>
+        <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
+          Sua estadia no <strong>Flat ${r.flatNumber}</strong> está próxima! Lembramos que o check-in inicia às 14:00. Preencha sua ficha de check-in digital antecipadamente para agilizar sua entrada na portaria.
+        </div>
+      `
     });
+    const welcomeBodyText = `Olá, ${r.guestName}! Sua estadia no Flat ${r.flatNumber} está próxima! Check-in a partir das 14:00.`;
+    const welcomeScheduledFor = `${schedDate}T09:00:00.000Z`;
+
+    if (!existingWelcome) {
+      db.emailQueue.push({
+        id: `em_q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationId: String(r.id),
+        reservationCode: resCode,
+        guestName: r.guestName || "Hóspede",
+        recipient: guestEmail,
+        subject: welcomeSubject,
+        bodyHtml: welcomeBodyHtml,
+        bodyText: welcomeBodyText,
+        status: "pending",
+        scheduledFor: welcomeScheduledFor,
+        triggerEvent: "checkin_welcome",
+        createdAt: new Date().toISOString(),
+        sentAt: null,
+        error: null
+      });
+    } else if (existingWelcome.status === "pending" || existingWelcome.status === "scheduled") {
+      existingWelcome.guestName = r.guestName || "Hóspede";
+      existingWelcome.recipient = guestEmail;
+      existingWelcome.subject = welcomeSubject;
+      existingWelcome.bodyHtml = welcomeBodyHtml;
+      existingWelcome.bodyText = welcomeBodyText;
+      existingWelcome.scheduledFor = welcomeScheduledFor;
+    }
   }
 
   // 2. E-mail de Lembrete de Check-out (dia de saída às 08:30)
-  const hasCheckout = db.emailQueue.some(q =>
+  const existingCheckout = db.emailQueue.find(q =>
     (q.reservationCode === resCode || q.reservationId === String(r.id)) &&
     q.triggerEvent === "checkout_reminder" &&
     q.status !== "cancelled"
   );
-  if (!hasCheckout && r.checkoutDate) {
-    db.emailQueue.push({
-      id: `em_q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      reservationId: String(r.id),
-      reservationCode: resCode,
-      guestName: r.guestName || "Hóspede",
-      recipient: guestEmail,
-      subject: `[LEMBRETE DE CHECK-OUT] Flat ${r.flatNumber} - CorpFlats Soho`,
-      bodyHtml: wrapEmailTemplate({
-        title: `[LEMBRETE DE CHECK-OUT] Flat ${r.flatNumber} - CorpFlats Soho`,
-        badge: `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Check-out</span>`,
-        contentHtml: `
-          <div style="margin-bottom: 20px;">
-            <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Lembrete de Check-out • Flat ${r.flatNumber}</h1>
-            <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">Bom dia, <strong>${r.guestName}</strong>!</p>
-          </div>
-          <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
-            Lembramos que hoje encerra sua estadia no <strong>Flat ${r.flatNumber}</strong>. O horário limite de saída é às 12:00. Ao desocupar a unidade, basta entregar a chave na portaria.
-          </div>
-        `
-      }),
-      bodyText: `Bom dia, ${r.guestName}! Lembramos que hoje é a data de saída do Flat ${r.flatNumber} até as 12:00.`,
-      status: "pending",
-      scheduledFor: `${r.checkoutDate}T08:30:00.000Z`,
-      triggerEvent: "checkout_reminder",
-      createdAt: new Date().toISOString(),
-      sentAt: null,
-      error: null
+  if (r.checkoutDate) {
+    const checkoutSubject = `[LEMBRETE DE CHECK-OUT] Flat ${r.flatNumber} - CorpFlats Soho`;
+    const checkoutBodyHtml = wrapEmailTemplate({
+      title: checkoutSubject,
+      badge: `<span class="badge badge-general" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB;">Check-out</span>`,
+      contentHtml: `
+        <div style="margin-bottom: 20px;">
+          <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Lembrete de Check-out • Flat ${r.flatNumber}</h1>
+          <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">Bom dia, <strong>${r.guestName}</strong>!</p>
+        </div>
+        <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px; font-size: 15px; color: #374151; line-height: 1.6;">
+          Lembramos que hoje encerra sua estadia no <strong>Flat ${r.flatNumber}</strong>. O horário limite de saída é às 12:00. Ao desocupar a unidade, basta entregar a chave na portaria.
+        </div>
+      `
     });
+    const checkoutBodyText = `Bom dia, ${r.guestName}! Lembramos que hoje é a data de saída do Flat ${r.flatNumber} até as 12:00.`;
+    const checkoutScheduledFor = `${r.checkoutDate}T08:30:00.000Z`;
+
+    if (!existingCheckout) {
+      db.emailQueue.push({
+        id: `em_q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationId: String(r.id),
+        reservationCode: resCode,
+        guestName: r.guestName || "Hóspede",
+        recipient: guestEmail,
+        subject: checkoutSubject,
+        bodyHtml: checkoutBodyHtml,
+        bodyText: checkoutBodyText,
+        status: "pending",
+        scheduledFor: checkoutScheduledFor,
+        triggerEvent: "checkout_reminder",
+        createdAt: new Date().toISOString(),
+        sentAt: null,
+        error: null
+      });
+    } else if (existingCheckout.status === "pending" || existingCheckout.status === "scheduled") {
+      existingCheckout.guestName = r.guestName || "Hóspede";
+      existingCheckout.recipient = guestEmail;
+      existingCheckout.subject = checkoutSubject;
+      existingCheckout.bodyHtml = checkoutBodyHtml;
+      existingCheckout.bodyText = checkoutBodyText;
+      existingCheckout.scheduledFor = checkoutScheduledFor;
+    }
   }
 
   if (typeof saveDatabase === "function") saveDatabase();
