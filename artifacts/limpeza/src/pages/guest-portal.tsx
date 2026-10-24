@@ -610,7 +610,8 @@ export default function GuestPortal() {
 
   const reservation = data?.reservation
   const channelLower = String(reservation?.channel || "").toLowerCase()
-  const isOta = channelLower.includes("booking") || channelLower.includes("airbnb")
+  const isB2b = Boolean(channelLower === "b2b" || channelLower.includes("b2b") || reservation?.agencyId || reservation?.b2bReservationNumber || reservation?.b2bLocatorRloc)
+  const isOta = channelLower.includes("booking") || channelLower.includes("airbnb") || isB2b
   const rawPayMethod = String(reservation?.paymentMethod || "").toLowerCase()
   const isCardPayment = Boolean(
     rawPayMethod.includes("cartao") ||
@@ -968,7 +969,7 @@ export default function GuestPortal() {
   }
 
   const isRequesterPortalView = typeof window !== "undefined" && (new URLSearchParams(window.location.search).get("requester") === "1" || new URLSearchParams(window.location.search).get("view") === "requester")
-  const hideFinancialForGuest = Boolean(!isRequesterPortalView && (data?.hideFinancialForGuest || reservation?.hideFinancialForGuest))
+  const hideFinancialForGuest = Boolean(isB2b || (!isRequesterPortalView && (data?.hideFinancialForGuest || reservation?.hideFinancialForGuest || reservation?.nfHideFromGuest)))
   const requesterName = data?.requesterName || reservation?.requesterName || null
   const totalAmount = hideFinancialForGuest ? 0 : (Number(reservation.totalAmount) || 0)
   const rawPaidAmount = hideFinancialForGuest ? 0 : (Number(reservation.paidAmount) || 0)

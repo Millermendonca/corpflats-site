@@ -99,6 +99,13 @@ export const CHANNEL_OPTIONS = [
     badgeClass: "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200"
   },
   { 
+    id: "b2b", 
+    label: "B2B / Agências", 
+    icon: "🟣", 
+    description: "Reservas corporativas B2B Reservas / Agências de Viagens",
+    badgeClass: "bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border-violet-200"
+  },
+  { 
     id: "outros", 
     label: "Balcão / Outros", 
     icon: "🏢", 

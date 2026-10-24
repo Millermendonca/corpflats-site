@@ -488,8 +488,8 @@ export function ReservationHoverCard({
                   const uniqueChannels = Array.from(new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase())));
                   if (uniqueChannels.length > 1) {
                     return uniqueChannels.map(ch => {
-                      const label = ch.includes("booking") ? "Booking" : ch.includes("airbnb") ? "Airbnb" : ch.includes("site") ? "Site" : "WhatsApp";
-                      const color = ch.includes("booking") ? "text-sky-700 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-700" : ch.includes("airbnb") ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700" : ch.includes("site") ? "text-indigo-700 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700" : "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700";
+                      const label = ch.includes("b2b") ? "B2B" : ch.includes("booking") ? "Booking" : ch.includes("airbnb") ? "Airbnb" : ch.includes("site") ? "Site" : "WhatsApp";
+                      const color = ch.includes("b2b") ? "text-violet-700 bg-violet-50 border-violet-300 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-700" : ch.includes("booking") ? "text-sky-700 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-700" : ch.includes("airbnb") ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700" : ch.includes("site") ? "text-indigo-700 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700" : "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700";
                       const count = resItem.dailyRates.filter((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase() === ch).length;
                       return (
                         <span key={ch} className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded border shadow-2xs ${color}`}>
@@ -526,6 +526,26 @@ export function ReservationHoverCard({
           <h4 className="text-sm font-black text-slate-900 dark:text-slate-50 truncate leading-snug">
             {guestName}
           </h4>
+
+          {(resItem.agencyName || resItem.agencyTradeName || resItem.companyName || resItem.b2bLocatorRloc || resItem.b2bReservationNumber) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+              {(resItem.agencyTradeName || resItem.agencyName) && (
+                <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30 font-bold truncate max-w-[155px]">
+                  🟣 {resItem.agencyTradeName || resItem.agencyName}
+                </span>
+              )}
+              {resItem.companyName && (
+                <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 font-bold truncate max-w-[155px]">
+                  🏢 {resItem.companyName}
+                </span>
+              )}
+              {resItem.b2bLocatorRloc && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono font-bold">
+                  RLOC: {resItem.b2bLocatorRloc}
+                </span>
+              )}
+            </div>
+          )}
 
           {isCheckoutCompleted && (
             <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 rounded-lg text-emerald-900 dark:text-emerald-200 text-[10.5px] font-bold shadow-2xs">

@@ -164,16 +164,18 @@ export const AVAILABLE_CHANNELS = [
   { id: "whatsapp", label: "WhatsApp", description: "Reservas negociadas diretamente via WhatsApp" },
   { id: "booking", label: "Booking.com", description: "Reservas importadas da Booking.com" },
   { id: "airbnb", label: "Airbnb", description: "Reservas importadas do Airbnb" },
+  { id: "b2b", label: "B2B Reservas", description: "Reservas corporativas via plataforma B2B e agências" },
   { id: "outros", label: "Balcão / Outros", description: "Balcão, presencial ou outros canais" },
 ];
 
-export const ALL_CHANNEL_IDS = ["site", "whatsapp", "booking", "airbnb", "outros"];
+export const ALL_CHANNEL_IDS = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
 
 /**
  * Normaliza qualquer string de canal vinda da reserva para os identificadores canônicos
  */
 export function normalizeReservationChannel(rawChannel) {
   const c = String(rawChannel || "").toLowerCase().trim();
+  if (c.includes("b2b")) return "b2b";
   if (c.includes("booking")) return "booking";
   if (c.includes("airbnb")) return "airbnb";
   if (c.includes("whats") || c.includes("direta") || c.includes("wpp")) return "whatsapp";
@@ -413,7 +415,7 @@ Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Che
     title: "Nova Reserva (Booking/Airbnb) • Confirmação sem valores",
     description: "Enviado para reservas via Booking.com ou Airbnb. Não menciona valores nem pagamento. Informa check-in 14:00, checkout 12:00, liberação com número do flat a partir das 12:00 se limpo, e benefício de 10:00 para reservas diretas.",
     enabled: true,
-    channels: ["booking", "airbnb"],
+    channels: ["booking", "airbnb", "b2b"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -483,7 +485,7 @@ Desejamos uma chegada tranquila e uma estadia incrível! Qualquer dúvida, estam
     title: "Quarto Liberado • Informação de Flat (Booking/Airbnb)",
     description: "Disparado no dia do check-in para reservas Booking/Airbnb: às 12:00 se o flat já estiver limpo, ou às 14:00 (check-in padrão). Revela o número do flat e as instruções de acesso.",
     enabled: true,
-    channels: ["booking", "airbnb"],
+    channels: ["booking", "airbnb", "b2b"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -517,7 +519,7 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
     title: "Quarto Liberado • Entrada Regular (A partir das 14:00)",
     description: "Disparado quando a limpeza do flat é concluída no dia do check-in a partir das 14:00 (horário padrão). Informa que o flat está limpo e liberado, sem menção a early check-in antecipado.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -545,7 +547,7 @@ Desejamos uma chegada tranquila e uma estadia incrível! Qualquer dúvida, estam
     title: "Check-in 13:45 • Limpeza em Andamento & Previsão de Chegada",
     description: "Disparado no dia do check-in às 13:45 (ou logo após) exclusivamente caso o flat ainda esteja sendo limpo e o hóspede ainda não tenha entrado. Pergunta a previsão de chegada do hóspede para priorizar a limpeza ou remanejar acomodação.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
@@ -572,7 +574,7 @@ Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
     title: "Modificação de Reserva • O que foi alterado",
     description: "Enviado quando houver alterações de datas, quarto, valores ou hóspedes. Informa com precisão e clareza apenas os itens alterados (De ➔ Para), sem reenviar os demais dados da reserva.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -596,7 +598,7 @@ Confira o que foi atualizado:
     title: "Lembrete de Pré-Check-in Digital",
     description: "Enviado antes do check-in para quem ainda não concluiu o check-in digital. Trata reservas de 1 ou 2 hóspedes com opção de confirmar viagem individual.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "before_event",
     offsetValue: 24,
@@ -620,7 +622,7 @@ Para que a portaria libere sua entrada com agilidade na chegada, acesse o link s
     title: "Check-in Online Concluído • Confirmação & Instruções de Recepção",
     description: "Enviado imediatamente após o hóspede (titular ou acompanhante) concluir o Check-in Online (FNRH). Confirma que já está tudo pronto e orienta como se identificar na recepção citando a CorpFlats e o nome ou número do flat.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -662,7 +664,7 @@ Desejamos uma excelente viagem e uma ótima estadia! Qualquer dúvida, estamos �
     title: "Dia do Check-in (07:00) • Instruções de Chegada & Acesso",
     description: "Enviado no dia do check-in pontualmente às 07:00 (para reservas feitas antes das 07:00). Inclui endereço, portaria, Wi-Fi, café (se incluso) e botão dinâmico de pré-check-in ou chegada.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
@@ -700,7 +702,7 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     title: "Check-in Realizado • Boas-vindas ao Quarto",
     description: "Enviado assim que o hóspede entra e o check-in é concluído no tablet ou sistema.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -732,7 +734,7 @@ Se você notar qualquer detalhe que precise de atenção, desejar solicitar trav
     title: "Café da Manhã • Montagem da Bandeja (18:00)",
     description: "Enviado às 18:00 da véspera para hóspedes com café que ainda não efetuaram a montagem do pedido.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_before",
     offsetValue: 0,
@@ -755,7 +757,7 @@ Escolha seus itens favoritos clicando no botão abaixo:`,
     title: "Dia do Check-out • Orientações de Saída",
     description: "Enviado no dia de saída às 09:30 relembrando o horário limite das 12:00.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
@@ -779,7 +781,7 @@ Caso necessite estender o horário (Late Check-out), solicite diretamente à adm
     title: "Check-out Confirmado • Agradecimento & Encerramento",
     description: "Enviado imediatamente quando o check-out for confirmado (pelo hóspede no link digital ou pela portaria no WhatsApp).",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -803,7 +805,7 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
     title: "Pós Check-out (24h) • Pesquisa de Satisfação (Filtro NPS)",
     description: "Enviado 24h após o check-out para coletar satisfação interna antes de pedir avaliação no Google. Só hóspedes com nota 5 recebem o link do Google (filtro automático de reputação).",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "after_event",
     offsetValue: 24,
@@ -831,7 +833,7 @@ Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito i
     title: "Pós Check-out • Link Google Review (apenas nota 5) ⭐",
     description: "Enviado automaticamente SOMENTE quando o hóspede responde com nota 5 na pesquisa de satisfação. Protege a reputação no Google evitando avaliações de experiências negativas.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -853,7 +855,7 @@ Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no 
     title: "Pós Check-out • Retorno Nota 4 (Muito Bom) ⭐⭐⭐⭐",
     description: "Enviado automaticamente quando o hóspede avalia com nota 4 na pesquisa pós-checkout. Agradece a avaliação positiva e convida a digitar o que faltou para a experiência ser nota 5.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -875,7 +877,7 @@ Pode digitar aqui mesmo no WhatsApp, sua sugestão vai direto para a nossa gerê
     title: "Pós Check-out • Retorno Nota 3 (Regular) ⭐⭐⭐",
     description: "Enviado automaticamente quando o hóspede avalia com nota 3 na pesquisa pós-checkout. Agradece a sinceridade e pergunta o que pode ser melhorado.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -897,7 +899,7 @@ Basta digitar sua resposta aqui abaixo. Nossa gerência acompanha cada ponto pes
     title: "Pós Check-out • Retorno Nota 2 (Insatisfeito) ⭐⭐",
     description: "Enviado automaticamente quando o hóspede avalia com nota 2 na pesquisa pós-checkout. Pede desculpas e solicita relato para correção imediata.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -917,7 +919,7 @@ Nosso compromisso é oferecer sempre uma hospedagem impecável e gostaríamos de
     title: "Pós Check-out • Retorno Nota 1 (Crítico / Detrator) ⭐",
     description: "Enviado automaticamente quando o hóspede avalia com nota 1 na pesquisa pós-checkout. Acolhimento prioritário da gerência pedindo detalhes do ocorrido.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -937,7 +939,7 @@ Sua avaliação acendeu um alerta prioritário em nossa gerência e queremos mui
     title: "Pós Check-out • Agradecimento após Sugestão de Melhoria (Notas 1 a 4) 🙏",
     description: "Enviado automaticamente assim que o hóspede (que deu nota 1 a 4) termina de digitar sua crítica ou sugestão de melhoria.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -957,7 +959,7 @@ Valorizamos imensamente sua sinceridade — é graças ao seu feedback que evolu
     title: "Cancelamento de Reserva",
     description: "Enviado imediatamente quando uma reserva for cancelada no sistema.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -1007,7 +1009,7 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
     title: "Diária Extra / Alteração • Cobrança Pendente",
     description: "Disparado quando uma reserva de qualquer canal (inclusive Booking/Airbnb) solicita acréscimo de diária ou serviço adicional e fica com saldo pendente a quitar.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "requester",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -1088,7 +1090,7 @@ Para agilizar sua entrada na portaria na chegada, realize com antecedência o se
     title: "Reserva de Hoje (07:01+) • Confirmação & Instruções Imediatas",
     description: "Disparado imediatamente para reservas confirmadas no próprio dia do check-in a partir das 07:01, consolidando confirmação e orientações de entrada sem envios duplicados.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -2431,12 +2433,17 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "");
   const guestEmail = normalizeEmailAddress(reservation.guestEmail || reservation.guests?.[0]?.email);
 
+  const chanLower = String(reservation.channel || reservation.source || "").toLowerCase();
+  const isB2bChannel = chanLower.includes("b2b") || Boolean(reservation.agencyId || reservation.agencyName);
+
   let requesterName = "";
   let requesterPhone = "";
   let requesterEmail = "";
   let requesterType = reservation.requesterType || "guest";
   if (requesterType === "guest") {
-    if (reservation.companyId || reservation.companyName) {
+    if (reservation.agencyId || reservation.agencyName || isB2bChannel) {
+      requesterType = "agency";
+    } else if (reservation.companyId || reservation.companyName) {
       requesterType = "company";
     } else if (
       reservation.requesterInfo &&
@@ -2447,7 +2454,49 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   }
   let requesterCompany = "";
 
-  if (requesterType === "other_person" && reservation.requesterInfo) {
+  if (requesterType === "agency" || (isB2bChannel && requesterType !== "other_person")) {
+    let agencyObj = null;
+    if (reservation.agencyId && Array.isArray(db?.agencies)) {
+      agencyObj = db.agencies.find(a => String(a.id) === String(reservation.agencyId));
+    }
+    if (!agencyObj && reservation.agencyName && Array.isArray(db?.agencies)) {
+      agencyObj = db.agencies.find(a =>
+        a.tradeName?.toLowerCase() === reservation.agencyName?.toLowerCase() ||
+        a.corporateName?.toLowerCase() === reservation.agencyName?.toLowerCase()
+      );
+    }
+    let companyObj = null;
+    if (reservation.companyId && Array.isArray(db?.companies)) {
+      companyObj = db.companies.find(c => String(c.id) === String(reservation.companyId));
+    }
+    const agencyLabel = agencyObj?.tradeName || agencyObj?.corporateName || reservation.agencyName || "";
+    const companyLabel = companyObj?.tradeName || companyObj?.corporateName || reservation.companyName || "";
+    requesterCompany = [agencyLabel, companyLabel].filter(Boolean).join(" / ") || "Agência / Empresa B2B";
+    requesterName = (
+      reservation.agencyAgentName ||
+      agencyLabel ||
+      companyLabel ||
+      reservation.requesterInfo?.name ||
+      "Central B2B / Agência"
+    ).trim();
+    requesterPhone = (
+      reservation.agencyAgentPhone ||
+      reservation.requesterInfo?.phone ||
+      agencyObj?.phone ||
+      companyObj?.phone ||
+      ""
+    ).trim();
+    requesterEmail = normalizeEmailAddress(
+      reservation.agencyAgentEmail ||
+      reservation.requesterInfo?.email ||
+      agencyObj?.financialEmail ||
+      agencyObj?.email ||
+      (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails[0] : "") ||
+      companyObj?.financialEmail ||
+      companyObj?.email ||
+      ""
+    );
+  } else if (requesterType === "other_person" && reservation.requesterInfo) {
     requesterName = (reservation.requesterInfo.name || "").trim();
     requesterPhone = (reservation.requesterInfo.phone || "").trim();
     requesterEmail = normalizeEmailAddress(reservation.requesterInfo.email);
@@ -2477,10 +2526,11 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   const requesterHasOwnEmail = Boolean(requesterEmail);
   const requesterHasOwnContact = requesterHasOwnPhone || requesterHasOwnEmail;
   if (!requesterName) {
-    requesterName = guestName;
+    requesterName = isB2bChannel ? (reservation.agencyName || reservation.companyName || "Agência B2B") : guestName;
   }
-  // Fallback estrito: só usa telefone/e-mail do hóspede se o solicitante não possuir NENHUM contato próprio (nem telefone, nem e-mail)
-  if (!requesterHasOwnContact) {
+  // Fallback estrito: só usa telefone/e-mail do hóspede se o solicitante não possuir NENHUM contato próprio
+  // E NÃO for uma reserva B2B / Agência (para nunca enviar cobrança nem expor valores financeiros ao hóspede B2B)
+  if (!requesterHasOwnContact && !isB2bChannel && !reservation.hideFinancialForGuest && requesterType !== "agency") {
     if (!requesterPhone) {
       requesterPhone = rawGuestPhone;
     }
@@ -2492,6 +2542,9 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   const requesterFirstName = requesterName.split(" ")[0] || requesterName;
   const cleanRequesterDigits = String(requesterPhone).replace(/\D/g, "");
   const isDifferentFromGuest = Boolean(
+    isB2bChannel ||
+    reservation.hideFinancialForGuest ||
+    requesterType === "agency" ||
     (cleanRequesterDigits && cleanGuestDigits && cleanRequesterDigits !== cleanGuestDigits) ||
     (requesterEmail && guestEmail && requesterEmail !== guestEmail) ||
     (requesterType !== "guest" && requesterHasOwnContact) ||
@@ -2957,7 +3010,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
         : 1);
 
   const recipientIsRequester = targetRecipient === "requester" || (targetRecipient && typeof targetRecipient === "object" && targetRecipient.type === "requester");
-  const hideFinancialForGuest = Boolean(requester.isDifferentFromGuest && !recipientIsRequester);
+  const isB2b = String(reservation.channel || "").toLowerCase().includes("b2b") || Boolean(reservation.agencyId || reservation.hideFinancialForGuest);
+  const hideFinancialForGuest = Boolean((isB2b || requester.isDifferentFromGuest) && !recipientIsRequester);
   const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name);
   const primaryRecipientFirstName = companion ? companion.firstName : (recipientIsRequester ? requester.firstName : guest.firstName);
   const primaryRecipientPhone = companion ? companion.phone : (recipientIsRequester ? requester.phone : guest.phone);
@@ -2981,7 +3035,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const pixKey = db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47.964.813/0001-65";
   const titularPix = "CorpFlats Ltda (Banco Inter)";
 
-  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb") || chanLower.includes("b2b");
   const isPaid = isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0);
 
   let paymentStatus = "Aguardando Pagamento";
@@ -2994,7 +3048,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   const rawMethod = String(reservation.paymentMethod || "").toLowerCase();
   let formaPagamento = "PIX";
-  if (
+  if (chanLower.includes("b2b") || rawMethod.includes("b2b") || rawMethod.includes("vcn") || rawMethod.includes("faturado")) {
+    formaPagamento = "Faturamento Corporativo / B2B";
+  } else if (
     rawMethod.includes("cart") ||
     rawMethod.includes("card") ||
     rawMethod.includes("credit") ||
@@ -6285,8 +6341,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (tpl.id === "tpl_breakfast_reminder") {
             tpl.channels = ["site", "whatsapp"];
           } else {
-            tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
+            tpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
           }
+        }
+        // Garante que templates OTA/Gerais existentes incluam o canal "b2b"
+        if (
+          Array.isArray(tpl.channels) &&
+          (tpl.channels.includes("booking") || tpl.channels.includes("airbnb")) &&
+          !tpl.channels.includes("b2b") &&
+          tpl.id !== "tpl_pre_reserva" &&
+          tpl.id !== "tpl_payment_pending" &&
+          tpl.id !== "tpl_payment_confirmed" &&
+          tpl.id !== "tpl_new_reservation_direct"
+        ) {
+          tpl.channels.push("b2b");
         }
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
@@ -6450,7 +6518,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.recipientTarget = "both";
         }
         if (tpl.id === "tpl_room_ready_regular") {
-          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
+          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
           tpl.triggerEvent = "room_ready_regular";
           tpl.recipientTarget = "guest";
         }
@@ -6470,7 +6538,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_checkin_cleaning_delay") {
-          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
+          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
           tpl.triggerEvent = "checkin_cleaning_delay";
           tpl.recipientTarget = "guest";
           if (!tpl.fixedTime || tpl.fixedTime === "14:00") {
@@ -10934,7 +11002,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       }
 
       const resvChannel = normalizeReservationChannel(resv.channel || resv.source || "site");
-      const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb";
+      const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
 
       // Agenda o "quarto pronto" para um horário fixo, criando um item por destinatário (hóspede + acompanhantes)
       const enqueueRoomReadyForTargets = (defTpl, eventName, scheduledFor, idPrefix) => {

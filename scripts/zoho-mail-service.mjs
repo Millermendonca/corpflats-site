@@ -12,6 +12,7 @@ import {
   renderReservationConfirmationEmail,
   renderPreCheckinReminderEmail,
   renderAccessInstructionsEmail,
+  renderB2bAgencyCredentialRequestEmail,
   renderManualEmail,
   resolveReservationAttachments,
   ensureReservationAttachmentsReady
@@ -601,23 +602,39 @@ export function matchEmailWithReservation(db, item) {
     }
   }
 
-  // 5. Padrão B2B Reservas: "Confirmacao da Reserva: 25057926 (SOBRENOME/NOME) - Check-in: DD/MM/YYYY"
-  if (!matched && item.subject) {
-    const b2bMatch = String(item.subject).match(/\(([^/)]+)\/([^)]+)\)(?:.*Check-in:\s*(\d{2})\/(\d{2})\/(\d{4}))?/i);
-    if (b2bMatch) {
-      const lastToken = b2bMatch[1].trim().toLowerCase();
-      const firstToken = b2bMatch[2].trim().toLowerCase().split(/\s+/)[0];
-      const checkinIso =
-        b2bMatch[3] && b2bMatch[4] && b2bMatch[5] ? `${b2bMatch[5]}-${b2bMatch[4]}-${b2bMatch[3]}` : null;
+  // 5. Padrão B2B Reservas: Nº B2B (ex: 25055349, 25057926), RLOC (ex: ZYIK2X) ou "(SOBRENOME/NOME)"
+  if (!matched && (item.subject || item.snippet || item.bodyText)) {
+    const scanB2b = `${item.subject || ""} ${item.snippet || ""} ${item.bodyText || ""}`;
+    const b2bNumMatch = scanB2b.match(/(?:Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*|Reserva\s+B2B\s*#?\s*)(\d{7,10})\b/i);
+    if (b2bNumMatch) {
+      const targetNum = b2bNumMatch[1].trim();
+      matched = reservations.find(
+        r =>
+          r &&
+          r.status !== "cancelada" &&
+          (String(r.b2bReservationNumber || "") === targetNum ||
+            String(r.externalReservationNumber || "") === targetNum ||
+            String(r.b2bLocatorRloc || "") === targetNum)
+      );
+    }
 
-      matched = reservations.find(r => {
-        if (!r || r.status === "cancelada") return false;
-        const gName = String(r.guestName || "").toLowerCase();
-        const nameMatches = gName.includes(firstToken) && gName.includes(lastToken);
-        if (!nameMatches) return false;
-        if (checkinIso && r.checkinDate && r.checkinDate !== checkinIso) return false;
-        return true;
-      });
+    if (!matched && item.subject) {
+      const b2bMatch = String(item.subject).match(/\(([^/)]+)\/([^)]+)\)(?:.*Check-in:\s*(\d{2})\/(\d{2})\/(\d{4}))?/i);
+      if (b2bMatch) {
+        const lastToken = b2bMatch[1].trim().toLowerCase();
+        const firstToken = b2bMatch[2].trim().toLowerCase().split(/\s+/)[0];
+        const checkinIso =
+          b2bMatch[3] && b2bMatch[4] && b2bMatch[5] ? `${b2bMatch[5]}-${b2bMatch[4]}-${b2bMatch[3]}` : null;
+
+        matched = reservations.find(r => {
+          if (!r || r.status === "cancelada") return false;
+          const gName = String(r.guestName || "").toLowerCase();
+          const nameMatches = gName.includes(firstToken) && gName.includes(lastToken);
+          if (!nameMatches) return false;
+          if (checkinIso && r.checkinDate && r.checkinDate !== checkinIso) return false;
+          return true;
+        });
+      }
     }
   }
 
@@ -2295,6 +2312,32 @@ export function buildComposerReservationTemplate(db, { templateKey, reservationI
     };
   }
 
+  if (templateKey === "b2b_credenciamento") {
+    const agency = (db.agencies || []).find(a => Number(a.id) === Number(r.agencyId));
+    const company = (db.companies || []).find(c => Number(c.id) === Number(r.companyId));
+    const rendered = renderB2bAgencyCredentialRequestEmail({
+      reservation: r,
+      flat,
+      agency,
+      company,
+      settings: db.settings,
+      db
+    });
+    const toEmail =
+      r.agencyAgentEmail ||
+      agency?.financialEmail ||
+      (Array.isArray(r.nfDeliveryEmails) && r.nfDeliveryEmails[0]) ||
+      r.guestEmail ||
+      "";
+    return {
+      to: toEmail,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: rendered.bodyText,
+      attachReservationDocs: false
+    };
+  }
+
   return {
     to: r.guestEmail || receptionEmail,
     subject: `Flat ${r.flatNumber} - ${r.guestName} (#${r.code || r.id})`,
@@ -2302,3 +2345,167 @@ export function buildComposerReservationTemplate(db, { templateKey, reservationI
     bodyHtml: ""
   };
 }
+
+/**
+ * Faz o parse de um e-mail ou voucher PDF/HTML da B2B Reservas (BOOKING_WS e OTA_WS)
+ * extraindo os dados das 4 pontas (B2B + Agência + Empresa + Hóspede), Cartão Virtual VCN,
+ * Comissão, Centro de Custo e Regra de Nota Fiscal.
+ */
+export function parseB2bVoucherText(input = {}) {
+  const opts = typeof input === "string" ? { rawText: input } : (input || {});
+  const rawText = opts.rawText || opts.text || "";
+  const htmlText = opts.htmlText || opts.html || "";
+  const subject = opts.subject || "";
+  const combinedHtml = String(htmlText || "");
+  const cleanText = String(rawText || "")
+    .concat("\n", extractTextSnippet(combinedHtml, 25000))
+    .replace(/\r/g, "\n");
+  const fullScan = `${subject || ""}\n${cleanText}`;
+
+  const dmyToIso = (dmy) => {
+    const m = String(dmy || "").match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : "";
+  };
+
+  // 1. Número da Reserva B2B e RLOC
+  const resNumMatch =
+    fullScan.match(/Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*(\d{7,10})/i) ||
+    fullScan.match(/N[uú°º]?(?:mero)?\s+da\s+Reserva\s*[:#-]?\s*(\d{7,10})/i) ||
+    fullScan.match(/Reserva\s+B2B\s*[:#-]?\s*(\d{7,10})/i) ||
+    fullScan.match(/\b(25\d{6})\b/);
+  const b2bReservationNumber = resNumMatch ? resNumMatch[1].trim() : "";
+
+  const rlocMatch =
+    fullScan.match(/(?:RLOC|Localizador(?:\s+da\s+Reserva)?)\s*[:#-]?\s*([A-Z0-9]{5,12})/i);
+  const b2bLocatorRloc = rlocMatch ? rlocMatch[1].trim().toUpperCase() : b2bReservationNumber;
+
+  // 2. Link do Voucher OTA_WS e Link de Conciliação
+  const voucherUrlMatch =
+    combinedHtml.match(/https?:\/\/portal\.b2breservas\.com\.br\/content\/conf_reserva\.php\?cd_reserva=[^\s"'<>]+/i) ||
+    fullScan.match(/https?:\/\/portal\.b2breservas\.com\.br\/content\/conf_reserva\.php\?cd_reserva=[^\s"'<>]+/i);
+  const voucherUrl = voucherUrlMatch ? voucherUrlMatch[0].replace(/&amp;/g, "&") : "";
+
+  const conciliationUrlMatch =
+    combinedHtml.match(/https?:\/\/portal\.b2breservas\.com\.br\/index\.php\?ds_destino=reserva\/conciliacao\/reserva_conciliacao\.php[^\s"'<>]+/i) ||
+    fullScan.match(/https?:\/\/portal\.b2breservas\.com\.br\/index\.php\?ds_destino=reserva\/conciliacao\/reserva_conciliacao\.php[^\s"'<>]+/i);
+  const b2bConciliationUrl = conciliationUrlMatch ? conciliationUrlMatch[0].replace(/&amp;/g, "&") : "";
+
+  const b2bOriginType =
+    voucherUrl || /Confirmacao\s+da\s+Reserva\s*:/i.test(subject) || /\bOTA_WS\b/i.test(fullScan)
+      ? "OTA_WS"
+      : "BOOKING_WS";
+
+  // 3. Hóspede
+  let guestName = "";
+  const subjGuestMatch = String(subject || "").match(/\(([^/)]+)\/([^)]+)\)/);
+  if (subjGuestMatch) {
+    const last = subjGuestMatch[1].trim();
+    const first = subjGuestMatch[2].trim();
+    guestName = `${first} ${last}`.replace(/\s+/g, " ").trim();
+  }
+  const bodyGuestMatch =
+    fullScan.match(/H[oóô\ufffd?]?spede(?:\(s\))?\s*[:\-]\s*([^\n|]+)/i) ||
+    fullScan.match(/Passageiro(?:\(s\))?\s*[:\-]\s*([^\n|]+)/i) ||
+    fullScan.match(/Pax\s*[:\-]\s*([^\n|]+)/i);
+  if (bodyGuestMatch) {
+    const rawPax = bodyGuestMatch[1].trim().replace(/\s*\(ADT\).*$/i, "").trim();
+    if (rawPax.includes("/")) {
+      const [last, first] = rawPax.split("/").map(s => s.trim());
+      if (first && last) guestName = `${first} ${last}`;
+    } else if (rawPax) {
+      guestName = rawPax;
+    }
+  }
+
+  // 4. Datas Check-in / Check-out
+  let checkinDate = "";
+  let checkoutDate = "";
+  const checkinMatch = fullScan.match(/Check-?in\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Entrada\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const checkoutMatch = fullScan.match(/Check-?out\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Sa[ií\ufffd?]?da\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  if (checkinMatch) checkinDate = dmyToIso(checkinMatch[1]);
+  if (checkoutMatch) checkoutDate = dmyToIso(checkoutMatch[1]);
+
+  // 5. Tarifa, Comissão e Café da Manhã
+  const hasBreakfast = !/\bSEM\s+CAF[EÉ\ufffd?]/i.test(fullScan);
+  const commPctMatch = fullScan.match(/(?:Comiss[aã\ufffd?]?o|COMISSIONAD[AO])\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i);
+  let b2bCommissionPct = commPctMatch ? Number(String(commPctMatch[1]).replace(",", ".")) : 0;
+  if (!commPctMatch && /\bCOMISSIONAD[AO]\b/i.test(fullScan)) {
+    b2bCommissionPct = 12;
+  }
+  const b2bRatePolicy = b2bCommissionPct > 0 || /\bCOMISSIONAD[AO]\b/i.test(fullScan) ? "COMISSIONADA" : "NET";
+
+  const rateMatch =
+    fullScan.match(/(?:Di[aá\ufffd?]?ria\s+M[eé\ufffd?]?dia|Valor\s+da\s+Di[aá\ufffd?]?ria|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)\s*[:\-]?\s*R\$\s*([\d.,]+)/i) ||
+    fullScan.match(/R\$\s*(280[.,]00|300[.,]00|313[.,]00|400[.,]00)/i);
+  let dailyRate = 0;
+  if (rateMatch) {
+    dailyRate = Number(String(rateMatch[1]).replace(/\./g, "").replace(",", ".")) || 0;
+  }
+
+  // 6. Agência, Unidade POS, Emissor, Empresa e Centro de Custo
+  const agencyMatch = fullScan.match(/Ag[eê\ufffd?]?ncia\s*[:\-]\s*([^\n]+)/i);
+  const posMatch = fullScan.match(/(?:Unidade(?:\s+POS)?|Filial|Ponto\s+de\s+Venda)\s*[:\-]\s*([^\n]+)/i);
+  const agentMatch = fullScan.match(/(?:Emissor|Agente|Solicitante)\s*[:\-]\s*([^\n]+)/i);
+  const companyMatch = fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]\s*([^\n]+)/i);
+  const costCenterMatch = fullScan.match(/Centro\s+de\s+Custo\s*[:\-]\s*([A-Za-z0-9._-]+)/i);
+
+  // 7. Cartão Virtual VCN & Token
+  const cardMatch = fullScan.match(/\b((?:5\d{3,5}|4\d{3,5}|37\d{2,4})[xX*]{4,8}\d{4})\b/);
+  const vcnTokenMatch = fullScan.match(/(?:Token(?:\s+VCN)?|C[oó\ufffd?]?digo\s+VCN)\s*[:\-]?\s*([A-Z0-9]{6,10})\b/i);
+  const b2bCardMasked = cardMatch ? cardMatch[1] : "";
+  const b2bCardBrand = b2bCardMasked.startsWith("37")
+    ? "American Express"
+    : b2bCardMasked.startsWith("4")
+      ? "Visa"
+      : b2bCardMasked
+        ? "Mastercard"
+        : "";
+  const b2bVcnToken = vcnTokenMatch ? vcnTokenMatch[1].trim().toUpperCase() : "";
+  const b2bPaymentType = /FATURAD[AO]/i.test(fullScan) && !b2bCardMasked && !b2bVcnToken ? "FATURADO" : "VIRTUAL_CARD";
+
+  // 8. Regra de Nota Fiscal e E-mails
+  const allEmails = Array.from(
+    new Set(
+      (fullScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])
+        .map(e => e.trim().toLowerCase())
+        .filter(e => !e.includes("corpflats.com.br") && !e.includes("promenade.com.br"))
+    )
+  );
+
+  const nfHideFromGuest = /N[AÃ\ufffd?]?O\s+ENTREGAR\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF)\s+(?:AO|PARA\s+O)\s+H[OÓ\ufffd?]?SPEDE/i.test(fullScan);
+  let invoiceRecipientType = "guest";
+  if (/EMITIR\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF)\s+EM\s+NOME\s+DA\s+AG[EÊ\ufffd?]?NCIA/i.test(fullScan)) {
+    invoiceRecipientType = "agency";
+  } else if (nfHideFromGuest || /EMITIR\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF)\s+PARA\s*:/i.test(fullScan)) {
+    invoiceRecipientType = "company";
+  }
+
+  return {
+    b2bReservationNumber,
+    b2bLocatorRloc,
+    b2bOriginType,
+    voucherUrl,
+    b2bConciliationUrl,
+    guestName,
+    checkinDate,
+    checkoutDate,
+    hasBreakfast,
+    b2bRatePolicy,
+    b2bCommissionPct,
+    dailyRate,
+    agencyName: agencyMatch ? agencyMatch[1].trim() : "",
+    agencyPosUnit: posMatch ? posMatch[1].trim() : "",
+    agencyAgentName: agentMatch ? agentMatch[1].trim() : "",
+    companyName: companyMatch ? companyMatch[1].trim() : "",
+    costCenter: costCenterMatch ? costCenterMatch[1].trim() : "",
+    b2bPaymentType,
+    b2bCardBrand,
+    b2bCardMasked,
+    b2bVcnToken,
+    b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+    invoiceRecipientType,
+    nfDeliveryEmails: allEmails,
+    nfHideFromGuest
+  };
+}
+

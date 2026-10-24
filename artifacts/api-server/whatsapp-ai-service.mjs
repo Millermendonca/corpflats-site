@@ -15,10 +15,15 @@ import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClien
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
   if (!reservation) return false;
+  const isB2bOrCorporateHidden =
+    String(reservation.channel || "").toLowerCase().includes("b2b") ||
+    Boolean(reservation.hideFinancialForGuest) ||
+    Boolean(reservation.agencyId) ||
+    Boolean(reservation.b2bReservationNumber);
   const recipients = getReservationRecipients(reservation, db);
-  if (!recipients.requester?.isDifferentFromGuest) return false;
+  if (!recipients.requester?.isDifferentFromGuest && !isB2bOrCorporateHidden) return false;
   const cleanSender = cleanWhatsAppPhone(senderPhone);
-  const cleanReq = cleanWhatsAppPhone(recipients.requester.phone);
+  const cleanReq = cleanWhatsAppPhone(recipients.requester?.phone);
   if (cleanSender && cleanReq && matchClientPhone(cleanSender, cleanReq)) {
     return false;
   }

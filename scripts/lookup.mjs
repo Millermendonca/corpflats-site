@@ -129,9 +129,9 @@ export async function lookupCep(cep, db = null) {
     throw new Error("CEP inválido");
   }
 
-  // 1. Verifica cache local no CRM (se houver db com companies ou guests)
+  // 1. Verifica cache local no CRM (se houver db com companies, agencies ou guests)
   if (db) {
-    const localComp = (db.companies || []).find(c => cleanCep(c.cep || "") === clean);
+    const localComp = [...(db.companies || []), ...(db.agencies || [])].find(c => cleanCep(c.cep || "") === clean);
     if (localComp && (localComp.logradouro || localComp.address)) {
       return {
         logradouro: localComp.logradouro || localComp.address || "",
@@ -251,7 +251,7 @@ export async function lookupCep(cep, db = null) {
 }
 
 /**
- * Consulta CNPJ verificando primeiro o CRM local (db.companies) e depois a BrasilAPI (com fallback seguro).
+ * Consulta CNPJ verificando primeiro o CRM local (db.companies e db.agencies) e depois a BrasilAPI (com fallback seguro).
  */
 export async function lookupCnpj(cnpj, db = null) {
   const clean = onlyDigits(cnpj);
@@ -259,9 +259,11 @@ export async function lookupCnpj(cnpj, db = null) {
     throw new Error("CNPJ inválido");
   }
 
-  // 1. Verifica no CRM local (db.companies)
-  if (db && Array.isArray(db.companies)) {
-    const local = db.companies.find(c => onlyDigits(c.cnpj) === clean);
+  // 1. Verifica no CRM local (db.companies ou db.agencies)
+  if (db && (Array.isArray(db.companies) || Array.isArray(db.agencies))) {
+    const localComp = (db.companies || []).find(c => onlyDigits(c.cnpj) === clean);
+    const localAgency = (db.agencies || []).find(a => onlyDigits(a.cnpj) === clean);
+    const local = localComp || localAgency;
     if (local) {
       return {
         razaoSocial: local.corporateName || local.razaoSocial || local.tradeName || "",
@@ -276,6 +278,9 @@ export async function lookupCnpj(cnpj, db = null) {
         cep: cleanCep(local.cep || ""),
         email: local.financialEmail || local.email || "",
         telefone: local.phone || local.telefone || "",
+        entityType: localAgency && !localComp ? "agency" : "company",
+        agencyId: localAgency?.id || null,
+        companyId: localComp?.id || null,
         source: "crm_local"
       };
     }

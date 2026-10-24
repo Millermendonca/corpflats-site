@@ -349,9 +349,9 @@ export class FnrhSerproClient {
     const adultos = Math.max(1, parseInt(reservation.adults || reservation.guestCount || 1, 10));
     const menores = Math.max(0, parseInt(reservation.children || 0, 10));
 
-    // Código OTA se aplicável
-    const isOta = reservation.channel === "booking" || reservation.channel === "airbnb";
-    const numeroReservaOta = isOta ? String(reservation.otaReservationCode || reservation.externalId || "").trim() : "";
+    // Código OTA / B2B se aplicável
+    const isOta = reservation.channel === "booking" || reservation.channel === "airbnb" || reservation.channel === "b2b";
+    const numeroReservaOta = isOta ? String(reservation.b2bReservationNumber || reservation.externalReservationNumber || reservation.otaReservationCode || reservation.externalId || "").trim() : "";
 
     const payload = {
       numero_reserva: numeroReserva,

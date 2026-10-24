@@ -118,6 +118,7 @@ import {
   renderGarageAuthorizationEmail,
   hasReceptionReceivedReservation,
   renderManualEmail,
+  renderB2bAgencyCredentialRequestEmail,
   getBrasiliaTodayStr,
   isReservationForToday,
   isReservationForFuture,
@@ -142,7 +143,8 @@ import {
   performWebmailBulkAction,
   createWebmailCustomFolder,
   createWebmailLabel,
-  buildComposerReservationTemplate
+  buildComposerReservationTemplate,
+  parseB2bVoucherText
 } from "./zoho-mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR, rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 import {
@@ -4366,6 +4368,35 @@ function reconcileUniversalIntegrity(incomingState = null) {
       });
     }
 
+    // 1.8b Agências de Viagens e Turismo (PJ / B2B) (Não-Destrutivo)
+    if (Array.isArray(incomingState.agencies) && incomingState.agencies.length > 0) {
+      if (!db.agencies) db.agencies = [];
+      incomingState.agencies.forEach(incAg => {
+        const cleanIncCnpj = (incAg.cnpj || "").replace(/\D/g, "");
+        const existing = db.agencies.find(a =>
+          (a.id && incAg.id && Number(a.id) === Number(incAg.id)) ||
+          (cleanIncCnpj && cleanIncCnpj.length >= 8 && (a.cnpj || "").replace(/\D/g, "") === cleanIncCnpj) ||
+          (a.corporateName && incAg.corporateName && a.corporateName.trim().toLowerCase() === incAg.corporateName.trim().toLowerCase()) ||
+          (a.tradeName && incAg.tradeName && a.tradeName.trim().toLowerCase() === incAg.tradeName.trim().toLowerCase())
+        );
+        if (!existing) {
+          db.agencies.push({ ...incAg });
+          changed = true;
+        } else {
+          const incDate = incAg.updatedAt || incAg.createdAt || "";
+          const curDate = existing.updatedAt || existing.createdAt || "";
+          if (incDate > curDate) {
+            Object.assign(existing, incAg);
+            changed = true;
+          }
+        }
+      });
+    }
+
+    if (ensureB2bSeedData(db)) {
+      changed = true;
+    }
+
     // 1.9 Histórico de WhatsApp (Não-Destrutivo / Blindado contra perdas em deploy)
     if (Array.isArray(incomingState.whatsappHistory) && incomingState.whatsappHistory.length > 0) {
       if (!db.whatsappHistory) db.whatsappHistory = [];
@@ -6338,11 +6369,897 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       }
     }
 
+    // 5. RECONCILIAR AGÊNCIAS DE VIAGENS (PJ / B2B)
+    if (!db.agencies) db.agencies = [];
+    const agencyLogs = logs.filter(l => l.action && l.action.startsWith("AGENCY_"));
+    for (const al of agencyLogs) {
+      const ad = al.details || {};
+      const aId = Number(ad.agencyId || ad.id);
+      if (al.action === "AGENCY_CREATED") {
+        const cleanCnpj = (ad.cnpj || "").replace(/\D/g, "");
+        const existing = db.agencies.find(a =>
+          (aId && a.id === aId) ||
+          (cleanCnpj && cleanCnpj.length >= 8 && (a.cnpj || "").replace(/\D/g, "") === cleanCnpj) ||
+          (a.corporateName && ad.corporateName && a.corporateName.trim().toLowerCase() === ad.corporateName.trim().toLowerCase()) ||
+          (a.tradeName && ad.tradeName && a.tradeName.trim().toLowerCase() === ad.tradeName.trim().toLowerCase())
+        );
+        if (!existing) {
+          db.agencies.push(ad.fullAgency || {
+            id: aId || (db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1),
+            corporateName: ad.corporateName || "Agência Parceira",
+            razaoSocial: ad.corporateName || "Agência Parceira",
+            tradeName: ad.tradeName || ad.corporateName || "Agência Parceira",
+            nomeFantasia: ad.tradeName || ad.corporateName || "Agência Parceira",
+            cnpj: ad.cnpj || "Isento / Não informado",
+            financialEmail: ad.financialEmail || "",
+            phone: ad.phone || "",
+            contactPerson: ad.contactPerson || "",
+            billingTerms: ad.billingTerms || "VCN / Faturado B2B",
+            defaultRatePolicy: ad.defaultRatePolicy || "COMISSIONADA",
+            defaultCommissionPct: ad.defaultCommissionPct !== undefined ? Number(ad.defaultCommissionPct) : 12,
+            defaultInvoiceRecipient: ad.defaultInvoiceRecipient || "company",
+            posUnits: Array.isArray(ad.posUnits) ? ad.posUnits : [],
+            agents: Array.isArray(ad.agents) ? ad.agents : [],
+            clientCompanies: Array.isArray(ad.clientCompanies) ? ad.clientCompanies : [],
+            notes: ad.notes || "",
+            createdAt: al.timestamp
+          });
+          changed = true;
+        }
+      } else if (al.action === "AGENCY_UPDATED") {
+        const existing = db.agencies.find(a => a.id === aId);
+        if (existing && ad.changes) {
+          Object.assign(existing, ad.changes);
+          changed = true;
+        }
+      } else if (al.action === "AGENCY_DELETED") {
+        const idx = db.agencies.findIndex(a => a.id === aId);
+        if (idx !== -1) {
+          db.agencies.splice(idx, 1);
+          changed = true;
+        }
+      }
+    }
+
     return changed;
   } catch (err) {
     console.warn("[AuditLog Recovery Error]", err.message);
     return false;
   }
+}
+
+export function ensureB2bSeedData(targetDb = db) {
+  let changed = false;
+  if (!Array.isArray(targetDb.agencies)) {
+    targetDb.agencies = [];
+    changed = true;
+  }
+  if (!Array.isArray(targetDb.companies)) {
+    targetDb.companies = [];
+    changed = true;
+  }
+  if (!Array.isArray(targetDb.guests)) {
+    targetDb.guests = [];
+    changed = true;
+  }
+  if (!Array.isArray(targetDb.reservations)) {
+    targetDb.reservations = [];
+    changed = true;
+  }
+
+  // Garante b2b habilitado nas regras de canal de NFS-e
+  if (targetDb.nfseConfig && targetDb.nfseConfig.channelRules) {
+    if (targetDb.nfseConfig.channelRules.b2b === undefined) {
+      targetDb.nfseConfig.channelRules.b2b = true;
+      changed = true;
+    }
+  }
+
+  const seedAgencies = [
+    {
+      corporateName: "Opus Viagens e Eventos Ltda",
+      razaoSocial: "Opus Viagens e Eventos Ltda",
+      tradeName: "Opus Viagens",
+      nomeFantasia: "Opus Viagens",
+      cnpj: "Isento / Não informado",
+      stateRegistration: "",
+      municipalRegistration: "",
+      financialEmail: "lactalis@opusviagens.com.br",
+      emailFinanceiro: "lactalis@opusviagens.com.br",
+      phone: "(11) 3995-2500 / (11) 99155-8446",
+      telefone: "(11) 3995-2500 / (11) 99155-8446",
+      contactPerson: "WEBSERVICE (Unidade POS: LACTALIS DO BRASIL)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa NET (0% comissão)",
+      address: "",
+      logradouro: "",
+      number: "",
+      complement: "",
+      neighborhood: "",
+      cep: "",
+      city: "São Paulo",
+      state: "SP",
+      ibgeCode: "3550308",
+      defaultRatePolicy: "NET",
+      defaultCommissionPct: 0,
+      defaultInvoiceRecipient: "guest",
+      posUnits: [
+        {
+          name: "LACTALIS DO BRASIL",
+          email: "lactalis@opusviagens.com.br",
+          phone: "(11) 3995-2500",
+          agents: ["WEBSERVICE"]
+        }
+      ],
+      agents: [
+        {
+          name: "WEBSERVICE",
+          email: "lactalis@opusviagens.com.br",
+          phone: "(11) 99155-8446",
+          posUnit: "LACTALIS DO BRASIL"
+        }
+      ],
+      clientCompanies: ["Lactalis do Brasil"],
+      notes: "Agência B2B corporativa • Atendimento Lactalis do Brasil. NF emitida para o hóspede com envio para arlindo.barcelos@br.lactalis.com e lactalis@opusviagens.com.br.",
+      createdAt: "2026-10-20T10:00:00.000Z"
+    },
+    {
+      corporateName: "Copastur Viagens e Turismo Ltda",
+      razaoSocial: "Copastur Viagens e Turismo Ltda",
+      tradeName: "Copastur",
+      nomeFantasia: "Copastur",
+      cnpj: "43.637.214/0001-86",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "conciliacao@copastur.com.br",
+      emailFinanceiro: "conciliacao@copastur.com.br",
+      phone: "(21) 3812-1128 / (11) 2394-2122",
+      telefone: "(21) 3812-1128 / (11) 2394-2122",
+      contactPerson: "Mateus Mizumoto (Vibra) / Fernanda Oliveira (Carrefour)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa Comissionada (12%)",
+      address: "Rua da Consolação",
+      logradouro: "Rua da Consolação",
+      endereco: "Rua da Consolação",
+      number: "1601",
+      numero: "1601",
+      complement: "15º Andar",
+      complemento: "15º Andar",
+      neighborhood: "Consolação",
+      bairro: "Consolação",
+      cep: "01415003",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      defaultRatePolicy: "COMISSIONADA",
+      defaultCommissionPct: 12,
+      defaultInvoiceRecipient: "company",
+      posUnits: [
+        {
+          name: "COPASTUR VIBRA ENERGIA",
+          email: "vibra@copastur.com.br",
+          phone: "(21) 3812-1128",
+          agents: ["Mateus Mizumoto dos Santos Oliveira da Silva"]
+        },
+        {
+          name: "COPASTUR GRUPO CARREFOUR",
+          email: "carrefour@copastur.com.br",
+          phone: "(11) 2394-2122",
+          agents: ["Fernanda Leite Ferreira Silva de Oliveira"]
+        }
+      ],
+      agents: [
+        {
+          name: "Mateus Mizumoto dos Santos Oliveira da Silva",
+          email: "vibra@copastur.com.br",
+          phone: "(21) 3812-1128",
+          posUnit: "COPASTUR VIBRA ENERGIA"
+        },
+        {
+          name: "Fernanda Leite Ferreira Silva de Oliveira",
+          email: "carrefour@copastur.com.br",
+          phone: "(11) 2394-2122",
+          posUnit: "COPASTUR GRUPO CARREFOUR"
+        }
+      ],
+      clientCompanies: ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda"],
+      notes: "Agência B2B corporativa • Unidades POS: COPASTUR VIBRA ENERGIA e COPASTUR GRUPO CARREFOUR. E-mail de conciliação: conciliacao@copastur.com.br. Não entregar NF ao hóspede no balcão.",
+      createdAt: "2026-10-20T10:05:00.000Z"
+    },
+    {
+      corporateName: "Avipam Turismo e Tecnologia Ltda",
+      razaoSocial: "Avipam Turismo e Tecnologia Ltda",
+      tradeName: "Avipam SP",
+      nomeFantasia: "Avipam SP",
+      cnpj: "Isento / Não informado",
+      stateRegistration: "",
+      municipalRegistration: "",
+      financialEmail: "cristalia@avipam.com.br",
+      emailFinanceiro: "cristalia@avipam.com.br",
+      phone: "(11) 4890-4500",
+      telefone: "(11) 4890-4500",
+      contactPerson: "Gabriela Soares de Moura Silva (Unidade POS: CRISTALIA)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa NET (0% comissão)",
+      address: "Rua Líbero Badaró",
+      logradouro: "Rua Líbero Badaró",
+      endereco: "Rua Líbero Badaró",
+      number: "377",
+      numero: "377",
+      complement: "17º Andar",
+      complemento: "17º Andar",
+      neighborhood: "Centro",
+      bairro: "Centro",
+      cep: "01009000",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      defaultRatePolicy: "NET",
+      defaultCommissionPct: 0,
+      defaultInvoiceRecipient: "company",
+      posUnits: [
+        {
+          name: "CRISTALIA",
+          email: "cristalia@avipam.com.br",
+          phone: "(11) 4890-4500",
+          agents: ["Gabriela Soares de Moura Silva"]
+        }
+      ],
+      agents: [
+        {
+          name: "Gabriela Soares de Moura Silva",
+          email: "cristalia@avipam.com.br",
+          phone: "(11) 4890-4500",
+          posUnit: "CRISTALIA"
+        }
+      ],
+      clientCompanies: ["Cristália Produtos Químicos Farmacêuticos Ltda"],
+      notes: "Agência B2B corporativa • Atendimento Cristália. E-mails NF: cristalia@avipam.com.br e supervisoresSP@avipam.com.br. Não entregar NF ao hóspede.",
+      createdAt: "2026-10-20T10:10:00.000Z"
+    },
+    {
+      corporateName: "Tripservice Agência de Viagens e Turismo Ltda",
+      razaoSocial: "Tripservice Agência de Viagens e Turismo Ltda",
+      tradeName: "Tripservice",
+      nomeFantasia: "Tripservice",
+      cnpj: "01.261.714/0001-16",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "faturamento@tripservice.com.br",
+      emailFinanceiro: "faturamento@tripservice.com.br",
+      phone: "(47) 2103-8400",
+      telefone: "(47) 2103-8400",
+      contactPerson: "Cristiane (Unidade POS: TRIPSERVICE - CBO HOLDING S.A.)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa Comissionada (12%)",
+      address: "Rua Camboriú",
+      logradouro: "Rua Camboriú",
+      endereco: "Rua Camboriú",
+      number: "79",
+      numero: "79",
+      complement: "",
+      complemento: "",
+      neighborhood: "Fazenda",
+      bairro: "Fazenda",
+      cep: "88301450",
+      city: "Itajaí",
+      cidade: "Itajaí",
+      state: "SC",
+      uf: "SC",
+      ibgeCode: "4208203",
+      codigoMunicipio: "4208203",
+      defaultRatePolicy: "COMISSIONADA",
+      defaultCommissionPct: 12,
+      defaultInvoiceRecipient: "guest",
+      posUnits: [
+        {
+          name: "TRIPSERVICE - CBO HOLDING S.A.",
+          email: "cristiane.batista@tripservice.com.br",
+          phone: "(47) 2103-8400",
+          agents: ["Cristiane"]
+        }
+      ],
+      agents: [
+        {
+          name: "Cristiane",
+          email: "cristiane.batista@tripservice.com.br",
+          phone: "(47) 2103-8400",
+          posUnit: "TRIPSERVICE - CBO HOLDING S.A."
+        }
+      ],
+      clientCompanies: ["CBO - Companhia Brasileira de Offshore"],
+      notes: "Agência B2B corporativa • Atendimento CBO Holding S.A. E-mail Faturamento: faturamento@tripservice.com.br.",
+      createdAt: "2026-10-20T10:15:00.000Z"
+    }
+  ];
+
+  const agencyMapByName = {};
+  for (const sa of seedAgencies) {
+    const cleanSaCnpj = (sa.cnpj || "").replace(/\D/g, "");
+    let existing = targetDb.agencies.find(a =>
+      (cleanSaCnpj && cleanSaCnpj.length === 14 && (a.cnpj || "").replace(/\D/g, "") === cleanSaCnpj) ||
+      (a.corporateName && a.corporateName.trim().toLowerCase() === sa.corporateName.toLowerCase()) ||
+      (a.tradeName && a.tradeName.trim().toLowerCase() === sa.tradeName.toLowerCase())
+    );
+    if (!existing) {
+      const nextId = targetDb.agencies.length > 0 ? Math.max(...targetDb.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
+      existing = { id: nextId, ...sa };
+      targetDb.agencies.push(existing);
+      changed = true;
+    }
+    agencyMapByName[sa.tradeName] = existing;
+    agencyMapByName[sa.corporateName] = existing;
+  }
+
+  const seedCompanies = [
+    {
+      corporateName: "Lactalis do Brasil",
+      razaoSocial: "Lactalis do Brasil",
+      tradeName: "Lactalis do Brasil",
+      nomeFantasia: "Lactalis do Brasil",
+      cnpj: "14.049.467/0001-30",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "lactalis@opusviagens.com.br",
+      emailFinanceiro: "lactalis@opusviagens.com.br",
+      phone: "(11) 3995-2500",
+      telefone: "(11) 3995-2500",
+      contactPerson: "Opus Viagens (Unidade Lactalis)",
+      billingTerms: "B2B via Opus Viagens • Centro de Custo 9000700",
+      defaultCostCenter: "9000700",
+      address: "Avenida Doutora Ruth Cardoso",
+      logradouro: "Avenida Doutora Ruth Cardoso",
+      endereco: "Avenida Doutora Ruth Cardoso",
+      number: "7221",
+      numero: "7221",
+      complement: "",
+      neighborhood: "Pinheiros",
+      bairro: "Pinheiros",
+      cep: "05425902",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      notes: "Empresa corporativa atendida pela agência Opus Viagens • Centro de Custo padrão: 9000700",
+      createdAt: "2026-10-20T10:00:00.000Z"
+    },
+    {
+      corporateName: "Vibra Energia S.A.",
+      razaoSocial: "Vibra Energia S.A.",
+      tradeName: "Vibra Energia",
+      nomeFantasia: "Vibra Energia",
+      cnpj: "34.274.233/0001-02",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "vibra@copastur.com.br",
+      emailFinanceiro: "vibra@copastur.com.br",
+      phone: "(21) 3812-1128",
+      telefone: "(21) 3812-1128",
+      contactPerson: "Mateus Mizumoto (Copastur Vibra Energia)",
+      billingTerms: "B2B via Copastur • Emissão de NFS-e para o CNPJ da Vibra Energia",
+      address: "Rua Correia Vasques",
+      logradouro: "Rua Correia Vasques",
+      endereco: "Rua Correia Vasques",
+      number: "250",
+      numero: "250",
+      complement: "",
+      neighborhood: "Cidade Nova",
+      bairro: "Cidade Nova",
+      cep: "20211140",
+      city: "Rio de Janeiro",
+      cidade: "Rio de Janeiro",
+      state: "RJ",
+      uf: "RJ",
+      ibgeCode: "3304557",
+      codigoMunicipio: "3304557",
+      notes: "Empresa corporativa atendida pela agência Copastur (Unidade COPASTUR VIBRA ENERGIA). Emitir NF com dados da Vibra Energia e enviar para vibra@copastur.com.br / conciliacao@copastur.com.br.",
+      createdAt: "2026-10-20T10:05:00.000Z"
+    },
+    {
+      corporateName: "Cristália Produtos Químicos Farmacêuticos Ltda",
+      razaoSocial: "Cristália Produtos Químicos Farmacêuticos Ltda",
+      tradeName: "Cristália",
+      nomeFantasia: "Cristália",
+      cnpj: "33.054.115/0006-22",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "cristalia@avipam.com.br",
+      emailFinanceiro: "cristalia@avipam.com.br",
+      phone: "(11) 4890-4500",
+      telefone: "(11) 4890-4500",
+      contactPerson: "Gabriela Soares de Moura Silva (Avipam SP)",
+      billingTerms: "B2B via Avipam SP • Emissão de NFS-e para o CNPJ da Cristália",
+      address: "Avenida Paulista",
+      logradouro: "Avenida Paulista",
+      endereco: "Avenida Paulista",
+      number: "2313",
+      numero: "2313",
+      complement: "",
+      neighborhood: "Bela Vista",
+      bairro: "Bela Vista",
+      cep: "01311300",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      notes: "Empresa corporativa atendida pela agência Avipam SP (Unidade CRISTALIA). Emitir NF para Cristália e enviar para cristalia@avipam.com.br e supervisoresSP@avipam.com.br.",
+      createdAt: "2026-10-20T10:10:00.000Z"
+    },
+    {
+      corporateName: "Carrefour Comércio e Indústria Ltda",
+      razaoSocial: "Carrefour Comércio e Indústria Ltda",
+      tradeName: "Grupo Carrefour",
+      nomeFantasia: "Grupo Carrefour",
+      cnpj: "45.543.915/0001-81",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "carrefour@copastur.com.br",
+      emailFinanceiro: "carrefour@copastur.com.br",
+      phone: "(11) 2394-2122",
+      telefone: "(11) 2394-2122",
+      contactPerson: "Fernanda Leite Ferreira Silva de Oliveira (Copastur Carrefour)",
+      billingTerms: "B2B via Copastur • Emissão de NFS-e para o CNPJ do Carrefour",
+      address: "Rua George Eastman",
+      logradouro: "Rua George Eastman",
+      endereco: "Rua George Eastman",
+      number: "213",
+      numero: "213",
+      complement: "",
+      neighborhood: "Vila Tramontano",
+      bairro: "Vila Tramontano",
+      cep: "05690000",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      notes: "Empresa corporativa atendida pela agência Copastur (Unidade COPASTUR GRUPO CARREFOUR). Emitir NF para Carrefour e enviar exclusivamente para conciliacao@copastur.com.br.",
+      createdAt: "2026-10-20T10:12:00.000Z"
+    },
+    {
+      corporateName: "CBO - Companhia Brasileira de Offshore",
+      razaoSocial: "CBO - Companhia Brasileira de Offshore",
+      tradeName: "CBO Holding S.A.",
+      nomeFantasia: "CBO Holding S.A.",
+      cnpj: "Isento / Não informado",
+      stateRegistration: "",
+      municipalRegistration: "",
+      financialEmail: "faturamento@tripservice.com.br",
+      emailFinanceiro: "faturamento@tripservice.com.br",
+      phone: "(47) 2103-8400",
+      telefone: "(47) 2103-8400",
+      contactPerson: "Cristiane (Tripservice - CBO Holding S.A.)",
+      billingTerms: "B2B via Tripservice • Centro de Custo 9009671",
+      defaultCostCenter: "9009671",
+      address: "",
+      logradouro: "",
+      number: "",
+      complement: "",
+      neighborhood: "",
+      cep: "",
+      city: "Rio de Janeiro",
+      cidade: "Rio de Janeiro",
+      state: "RJ",
+      uf: "RJ",
+      ibgeCode: "3304557",
+      codigoMunicipio: "3304557",
+      notes: "Empresa corporativa atendida pela agência Tripservice • Centro de Custo: 9009671.",
+      createdAt: "2026-10-20T10:15:00.000Z"
+    }
+  ];
+
+  const companyMapByName = {};
+  for (const sc of seedCompanies) {
+    const cleanScCnpj = (sc.cnpj || "").replace(/\D/g, "");
+    let existing = targetDb.companies.find(c =>
+      (cleanScCnpj && cleanScCnpj.length === 14 && (c.cnpj || "").replace(/\D/g, "") === cleanScCnpj) ||
+      (c.corporateName && c.corporateName.trim().toLowerCase() === sc.corporateName.toLowerCase()) ||
+      (c.tradeName && c.tradeName.trim().toLowerCase() === sc.tradeName.toLowerCase())
+    );
+    if (!existing) {
+      const nextId = targetDb.companies.length > 0 ? Math.max(...targetDb.companies.map(c => Number(c.id) || 0)) + 1 : 1;
+      existing = { id: nextId, ...sc };
+      targetDb.companies.push(existing);
+      changed = true;
+    }
+    companyMapByName[sc.corporateName] = existing;
+    companyMapByName[sc.tradeName] = existing;
+  }
+
+  // Vincula clientCompanyIds nas agências
+  const linkPairs = [
+    ["Opus Viagens", ["Lactalis do Brasil"]],
+    ["Copastur", ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda"]],
+    ["Avipam SP", ["Cristália Produtos Químicos Farmacêuticos Ltda"]],
+    ["Tripservice", ["CBO - Companhia Brasileira de Offshore"]]
+  ];
+  for (const [agKey, compNames] of linkPairs) {
+    const ag = agencyMapByName[agKey];
+    if (ag) {
+      const ids = compNames.map(cn => companyMapByName[cn]?.id).filter(Boolean);
+      if (!Array.isArray(ag.clientCompanyIds) || ids.some(id => !ag.clientCompanyIds.includes(id))) {
+        ag.clientCompanyIds = Array.from(new Set([...(ag.clientCompanyIds || []), ...ids]));
+        changed = true;
+      }
+    }
+  }
+
+  // 5 Reservas Reais B2B
+  const seedB2bReservations = [
+    {
+      b2bReservationNumber: "25055349",
+      b2bLocatorRloc: "25055349",
+      b2bOriginType: "BOOKING_WS",
+      code: "B2B-25055349",
+      flatId: 1,
+      flatNumber: "113",
+      guestName: "Arlindo Amorim Barcelos",
+      guestEmail: "arlindo.barcelos@br.lactalis.com",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-10-26",
+      checkoutDate: "2026-10-28",
+      nights: 2,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "NET",
+      b2bCommissionPct: 0,
+      dailyRate: 280.00,
+      totalAmount: 560.00,
+      b2bCommissionAmount: 0,
+      b2bNetAmount: 560.00,
+      agencyKey: "Opus Viagens",
+      agencyPosUnit: "LACTALIS DO BRASIL",
+      agencyAgentName: "WEBSERVICE",
+      agencyAgentEmail: "lactalis@opusviagens.com.br",
+      agencyAgentPhone: "(11) 3995-2500 / (11) 99155-8446",
+      companyKey: "Lactalis do Brasil",
+      costCenter: "9000700",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "555047xxxxxx4135",
+      b2bVcnToken: "Q3DQSN1",
+      b2bConciliationUrl: "",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "guest",
+      nfDeliveryEmails: ["arlindo.barcelos@br.lactalis.com", "lactalis@opusviagens.com.br"],
+      nfHideFromGuest: false,
+      notes: "Reserva B2B #25055349 (RLOC: 25055349) • Origem: BOOKING_WS • Agência: Opus Viagens (Unidade POS: LACTALIS DO BRASIL) • Empresa: Lactalis do Brasil (CC: 9000700) • Cartão Virtual Mastercard 555047xxxxxx4135 (Token VCN: Q3DQSN1) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NF emitida para o Hóspede com envio para arlindo.barcelos@br.lactalis.com e lactalis@opusviagens.com.br."
+    },
+    {
+      b2bReservationNumber: "25057926",
+      b2bLocatorRloc: "ZYIK2X",
+      b2bOriginType: "OTA_WS",
+      code: "B2B-25057926",
+      flatId: 4,
+      flatNumber: "211",
+      guestName: "Nilton França",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-10-26",
+      checkoutDate: "2026-10-31",
+      nights: 5,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "COMISSIONADA",
+      b2bCommissionPct: 12,
+      dailyRate: 313.00,
+      totalAmount: 1565.00,
+      b2bCommissionAmount: 187.80,
+      b2bNetAmount: 1377.20,
+      agencyKey: "Copastur",
+      agencyPosUnit: "COPASTUR VIBRA ENERGIA",
+      agencyAgentName: "Mateus Mizumoto dos Santos Oliveira da Silva",
+      agencyAgentEmail: "vibra@copastur.com.br",
+      agencyAgentPhone: "(21) 3812-1128",
+      companyKey: "Vibra Energia S.A.",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "531492xxxxxx1980",
+      b2bVcnToken: "V3GOOX4",
+      b2bConciliationUrl: "https://portal.b2breservas.com.br/index.php?ds_destino=reserva/conciliacao/reserva_conciliacao.php;nr_reserva=28127b268f48196a602a6794a50e09d6d4e47318074a91e84c114ffeb2602e93",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      nfDeliveryEmails: ["vibra@copastur.com.br", "conciliacao@copastur.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25057926 (RLOC: ZYIK2X) • Origem: OTA_WS • Agência: Copastur (Unidade POS: COPASTUR VIBRA ENERGIA | Emissor: Mateus Mizumoto) • Empresa: Vibra Energia S.A. (CNPJ: 34.274.233/0001-02) • Cartão Virtual Mastercard 531492xxxxxx1980 (Token VCN: V3GOOX4) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO (Enviar NF exclusivamente para vibra@copastur.com.br e conciliacao@copastur.com.br)."
+    },
+    {
+      b2bReservationNumber: "25065298",
+      b2bLocatorRloc: "KPO3ZX",
+      b2bOriginType: "OTA_WS",
+      code: "B2B-25065298",
+      flatId: 7,
+      flatNumber: "313",
+      guestName: "Gabriela Silva",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-11-16",
+      checkoutDate: "2026-11-19",
+      nights: 3,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "NET",
+      b2bCommissionPct: 0,
+      dailyRate: 280.00,
+      totalAmount: 840.00,
+      b2bCommissionAmount: 0,
+      b2bNetAmount: 840.00,
+      agencyKey: "Avipam SP",
+      agencyPosUnit: "CRISTALIA",
+      agencyAgentName: "Gabriela Soares de Moura Silva",
+      agencyAgentEmail: "cristalia@avipam.com.br",
+      agencyAgentPhone: "(11) 4890-4500",
+      companyKey: "Cristália Produtos Químicos Farmacêuticos Ltda",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "544165xxxxxx3919",
+      b2bVcnToken: "W3FRPN1",
+      b2bConciliationUrl: "",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      nfDeliveryEmails: ["cristalia@avipam.com.br", "supervisoresSP@avipam.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25065298 (RLOC: KPO3ZX) • Origem: OTA_WS • Agência: Avipam SP (Unidade POS: CRISTALIA | Emissor: Gabriela Soares de Moura Silva) • Empresa: Cristália Produtos Químicos Farmacêuticos Ltda (CNPJ: 33.054.115/0006-22) • Cartão Virtual Mastercard 544165xxxxxx3919 (Token VCN: W3FRPN1) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NÃO ENTREGAR NF AO HÓSPEDE (Enviar NF para cristalia@avipam.com.br e supervisoresSP@avipam.com.br)."
+    },
+    {
+      b2bReservationNumber: "25078591",
+      b2bLocatorRloc: "SUIG3T",
+      b2bOriginType: "OTA_WS",
+      code: "B2B-25078591",
+      flatId: 8,
+      flatNumber: "408",
+      guestName: "Fernanda Oliveira",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-11-02",
+      checkoutDate: "2026-11-03",
+      nights: 1,
+      includeBreakfast: false,
+      ratePlan: "without_breakfast",
+      b2bRatePolicy: "COMISSIONADA",
+      b2bCommissionPct: 12,
+      dailyRate: 300.00,
+      totalAmount: 300.00,
+      b2bCommissionAmount: 36.00,
+      b2bNetAmount: 264.00,
+      agencyKey: "Copastur",
+      agencyPosUnit: "COPASTUR GRUPO CARREFOUR",
+      agencyAgentName: "Fernanda Leite Ferreira Silva de Oliveira",
+      agencyAgentEmail: "carrefour@copastur.com.br",
+      agencyAgentPhone: "(11) 2394-2122",
+      companyKey: "Carrefour Comércio e Indústria Ltda",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "American Express",
+      b2bCardMasked: "374770xxxxx6960",
+      b2bVcnToken: "H4FKTXD",
+      b2bConciliationUrl: "",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      nfDeliveryEmails: ["conciliacao@copastur.com.br", "carrefour@copastur.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25078591 (RLOC: SUIG3T) • Origem: OTA_WS • Agência: Copastur (Unidade POS: COPASTUR GRUPO CARREFOUR | Emissor: Fernanda Leite Ferreira Silva de Oliveira) • Empresa: Carrefour Comércio e Indústria Ltda (CNPJ: 45.543.915/0001-81) • Cartão Virtual American Express 374770xxxxx6960 (Token VCN: H4FKTXD) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO (Enviar NF exclusivamente para conciliacao@copastur.com.br)."
+    },
+    {
+      b2bReservationNumber: "25086142",
+      b2bLocatorRloc: "25086142",
+      b2bOriginType: "BOOKING_WS",
+      code: "B2B-25086142",
+      flatId: 10,
+      flatNumber: "509",
+      guestName: "Marlon Luiz da Silva Pimentel",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-10-26",
+      checkoutDate: "2026-10-28",
+      nights: 2,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "COMISSIONADA",
+      b2bCommissionPct: 12,
+      dailyRate: 313.00,
+      totalAmount: 626.00,
+      b2bCommissionAmount: 75.12,
+      b2bNetAmount: 550.88,
+      agencyKey: "Tripservice",
+      agencyPosUnit: "TRIPSERVICE - CBO HOLDING S.A.",
+      agencyAgentName: "Cristiane",
+      agencyAgentEmail: "cristiane.batista@tripservice.com.br",
+      agencyAgentPhone: "(47) 2103-8400",
+      companyKey: "CBO - Companhia Brasileira de Offshore",
+      costCenter: "9009671",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "544165xxxxxx3610",
+      b2bVcnToken: "M3DNAH4",
+      b2bConciliationUrl: "",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS (Autoriza extras alimentação até R$ 75/refeição + R$ 25 frigobar não alcoólico, teto R$ 100/dia, e estacionamento)",
+      invoiceRecipientType: "guest",
+      nfDeliveryEmails: ["faturamento@tripservice.com.br", "cristiane.batista@tripservice.com.br"],
+      nfHideFromGuest: false,
+      notes: "Reserva B2B #25086142 (RLOC: 25086142) • Origem: BOOKING_WS • Agência: Tripservice (Unidade POS: TRIPSERVICE - CBO HOLDING S.A. | Emissor: Cristiane) • Empresa: CBO - Companhia Brasileira de Offshore (CC: 9009671) • Cartão Virtual Mastercard 544165xxxxxx3610 (Token VCN: M3DNAH4) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS (Obs: autoriza extras de alimentação até R$ 75/refeição + R$ 25 frigobar não alcoólico, teto R$ 100/dia, e estacionamento) • Enviar NF com código identificador para faturamento@tripservice.com.br."
+    }
+  ];
+
+  // Verifica lista de números B2B explicitamente excluídos para não recriar se o admin deletar manualmente
+  const deletedB2bCodes = Array.isArray(targetDb.deletedB2bSeeds) ? targetDb.deletedB2bSeeds : [];
+
+  for (const sr of seedB2bReservations) {
+    if (deletedB2bCodes.includes(sr.b2bReservationNumber) || deletedB2bCodes.includes(sr.code)) continue;
+
+    const existingRes = targetDb.reservations.find(r =>
+      r.code === sr.code ||
+      String(r.b2bReservationNumber) === sr.b2bReservationNumber ||
+      String(r.externalReservationNumber) === sr.b2bReservationNumber ||
+      (r.b2bLocatorRloc && r.b2bLocatorRloc === sr.b2bLocatorRloc && r.checkinDate === sr.checkinDate)
+    );
+    if (existingRes) continue;
+
+    const ag = agencyMapByName[sr.agencyKey];
+    const comp = companyMapByName[sr.companyKey];
+
+    // Upsert do Hóspede no CRM
+    let guest = targetDb.guests.find(g =>
+      (sr.guestEmail && g.email && g.email.toLowerCase() === sr.guestEmail.toLowerCase()) ||
+      (g.name && g.name.trim().toLowerCase() === sr.guestName.toLowerCase()) ||
+      (g.fullName && g.fullName.trim().toLowerCase() === sr.guestName.toLowerCase())
+    );
+    if (!guest) {
+      const nextGuestId = targetDb.guests.length > 0 ? Math.max(...targetDb.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+      guest = {
+        id: nextGuestId,
+        guestCode: `HOSP-${String(nextGuestId).padStart(5, "0")}`,
+        name: sr.guestName,
+        fullName: sr.guestName,
+        phone: sr.guestPhone || "",
+        email: sr.guestEmail || "",
+        document: sr.guestDocument || "",
+        companyId: comp?.id || null,
+        companyName: comp?.corporateName || sr.companyKey,
+        agencyId: ag?.id || null,
+        agencyName: ag?.tradeName || sr.agencyKey,
+        costCenter: sr.costCenter || "",
+        city: comp?.city || "São Paulo",
+        state: comp?.state || "SP",
+        notes: `Hóspede Corporativo B2B • Empresa: ${comp?.corporateName || sr.companyKey} • Agência: ${ag?.tradeName || sr.agencyKey} (Reserva B2B #${sr.b2bReservationNumber})`,
+        tags: ["Corporativo B2B", ag?.tradeName || sr.agencyKey],
+        clientType: "corporativo",
+        createdAt: "2026-10-23T12:00:00.000Z"
+      };
+      targetDb.guests.push(guest);
+      changed = true;
+    }
+
+    const nextResId = targetDb.reservations.length > 0 ? Math.max(...targetDb.reservations.map(r => Number(r.id) || 0)) + 1 : 1;
+    const dailyRates = [];
+    const d1 = new Date(sr.checkinDate + "T00:00:00Z");
+    for (let i = 0; i < sr.nights; i++) {
+      const cur = new Date(d1.getTime() + i * 86400000);
+      dailyRates.push({
+        date: cur.toISOString().substring(0, 10),
+        rate: sr.dailyRate,
+        channel: "b2b"
+      });
+    }
+
+    const newReservation = {
+      id: nextResId,
+      code: sr.code,
+      reservationCode: sr.code,
+      externalReservationNumber: sr.b2bReservationNumber,
+      b2bReservationNumber: sr.b2bReservationNumber,
+      b2bLocatorRloc: sr.b2bLocatorRloc,
+      b2bOriginType: sr.b2bOriginType,
+      flatId: sr.flatId,
+      flatNumber: sr.flatNumber,
+      guestId: guest.id,
+      guestCode: guest.guestCode,
+      guestName: sr.guestName,
+      guestPhone: sr.guestPhone || "",
+      guestEmail: sr.guestEmail || "",
+      guestDocument: sr.guestDocument || "",
+      guestCount: 1,
+      adults: 1,
+      children: 0,
+      guests: [
+        {
+          index: 1,
+          guestId: guest.id,
+          guestCode: guest.guestCode,
+          name: sr.guestName,
+          cpf: sr.guestDocument || "",
+          phone: sr.guestPhone || "",
+          email: sr.guestEmail || "",
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null
+        }
+      ],
+      checkinDate: sr.checkinDate,
+      checkoutDate: sr.checkoutDate,
+      checkinTime: "14:00",
+      checkoutTime: "12:00",
+      channel: "b2b",
+      status: "confirmada",
+      paymentStatus: "pendente",
+      paymentMethod: "vcn_b2b",
+      totalAmount: sr.totalAmount,
+      paidAmount: 0,
+      dailyRate: sr.dailyRate,
+      dailyRates,
+      payments: [],
+      charges: [],
+      includeBreakfast: sr.includeBreakfast,
+      ratePlan: sr.ratePlan,
+      twinBeds: false,
+      extraMattress: false,
+      isMonthlyGuest: false,
+      clientType: "corporativo",
+      // 4-Pontas: Agência + Empresa + Hóspede + B2B
+      agencyId: ag?.id || null,
+      agencyName: ag?.corporateName || sr.agencyKey,
+      agencyTradeName: ag?.tradeName || sr.agencyKey,
+      agencyCnpj: ag?.cnpj || "",
+      agencyPosUnit: sr.agencyPosUnit,
+      agencyAgentName: sr.agencyAgentName,
+      agencyAgentEmail: sr.agencyAgentEmail,
+      agencyAgentPhone: sr.agencyAgentPhone,
+      companyId: comp?.id || null,
+      companyName: comp?.corporateName || sr.companyKey,
+      companyCnpj: comp?.cnpj || "",
+      costCenter: sr.costCenter || "",
+      // Dados Financeiros & Cartão Virtual B2B (VCN)
+      b2bRatePolicy: sr.b2bRatePolicy,
+      b2bCommissionPct: sr.b2bCommissionPct,
+      b2bCommissionAmount: sr.b2bCommissionAmount,
+      b2bNetAmount: sr.b2bNetAmount,
+      b2bPaymentType: sr.b2bPaymentType,
+      b2bCardBrand: sr.b2bCardBrand,
+      b2bCardMasked: sr.b2bCardMasked,
+      b2bVcnToken: sr.b2bVcnToken,
+      b2bConciliationUrl: sr.b2bConciliationUrl,
+      b2bConciliationStatus: "pendente",
+      b2bAuthorizedExpenses: sr.b2bAuthorizedExpenses,
+      // Regras de Emissão e Envio de NFS-e
+      invoiceRecipientType: sr.invoiceRecipientType,
+      nfDeliveryEmails: sr.nfDeliveryEmails,
+      nfHideFromGuest: sr.nfHideFromGuest,
+      notes: sr.notes,
+      specialRequests: `Despesas Autorizadas B2B: ${sr.b2bAuthorizedExpenses}`,
+      breakfastToken: `bfk_b2b_${sr.b2bReservationNumber}`,
+      auditLogs: [
+        {
+          id: `aud_b2b_${sr.b2bReservationNumber}`,
+          timestamp: "2026-10-23T12:00:00.000Z",
+          action: "created",
+          actor: { id: null, name: "B2B Reservas (Integração Voucher)", role: "system", type: "system" },
+          source: `B2B Reservas (${sr.b2bOriginType})`,
+          description: `Reserva B2B #${sr.b2bReservationNumber} (RLOC: ${sr.b2bLocatorRloc}) importada do voucher oficial`,
+          changes: []
+        }
+      ],
+      createdAt: "2026-10-23T12:00:00.000Z",
+      updatedAt: "2026-10-23T12:00:00.000Z"
+    };
+
+    targetDb.reservations.push(newReservation);
+    changed = true;
+  }
+
+  return changed;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -6623,6 +7540,7 @@ async function loadDatabase() {
           const localMaidStatementEntries = [...(db.maidStatementEntries || [])];
           const localLostAndFound = [...(db.lostAndFound || [])];
           const localCompanies = [...(db.companies || [])];
+          const localAgencies = [...(db.agencies || [])];
           const localWhatsappHistory = [...(db.whatsappHistory || [])];
           const localWhatsappQueue = [...(db.whatsappQueue || [])];
           const localWhatsappConversations = [...(db.whatsappConversations || [])];
@@ -6701,6 +7619,7 @@ async function loadDatabase() {
               maidStatementEntries: (!pgLoaded.maidStatementEntries || pgLoaded.maidStatementEntries.length === 0) ? localMaidStatementEntries : undefined,
               lostAndFound: (!pgLoaded.lostAndFound || pgLoaded.lostAndFound.length === 0) ? localLostAndFound : undefined,
               companies: (!pgLoaded.companies || pgLoaded.companies.length === 0) ? localCompanies : undefined,
+              agencies: (!pgLoaded.agencies || pgLoaded.agencies.length === 0) ? localAgencies : undefined,
               whatsappHistory: (!pgLoaded.whatsappHistory || pgLoaded.whatsappHistory.length === 0) ? localWhatsappHistory : undefined,
               whatsappQueue: (!pgLoaded.whatsappQueue || pgLoaded.whatsappQueue.length === 0) ? localWhatsappQueue : undefined,
               whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined,
@@ -17940,6 +18859,28 @@ export const DEFAULT_PAYMENT_METHODS = [
     description: "Checkout Mercado Pago (taxa de processamento 3.99%)",
     active: true,
     isSystem: false
+  },
+  {
+    id: "vcn_b2b",
+    name: "Cartão Virtual B2B (VCN)",
+    channelDefault: "b2b",
+    gatewayFeeRate: 2.99,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 12.0,
+    description: "Cartão Virtual Corporativo B2B (Mastercard / Amex VCN - Agências)",
+    active: true,
+    isSystem: true
+  },
+  {
+    id: "faturado_b2b",
+    name: "Faturado B2B",
+    channelDefault: null,
+    gatewayFeeRate: 0.0,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 12.0,
+    description: "Faturamento corporativo B2B via Agência / Empresa",
+    active: true,
+    isSystem: true
   }
 ];
 
@@ -19197,6 +20138,8 @@ app.get("/api/pms/calendar", (req, res) => {
     reservations,
     blocks,
     guests: db.guests || [],
+    companies: db.companies || [],
+    agencies: db.agencies || [],
     settings: {
       checkinTime: db.settings?.checkinTime || "14:00",
       checkoutTime: db.settings?.checkoutTime || "12:00"
@@ -19231,10 +20174,37 @@ app.post("/api/pms/reservations", async (req, res) => {
     guestDocument,
     guestCount = 1,
     guests = [],
-    requesterType = "guest", // "guest" | "other_person" | "company"
+    requesterType = "guest", // "guest" | "other_person" | "company" | "agency"
     requesterInfo = null,
     companyId = null,
     companyName = "",
+    costCenter = "",
+    agencyId = null,
+    agencyName = "",
+    agencyTradeName = "",
+    agencyCnpj = "",
+    agencyPosUnit = "",
+    agencyAgentName = "",
+    agencyAgentEmail = "",
+    agencyAgentPhone = "",
+    b2bReservationNumber = "",
+    externalReservationNumber = "",
+    b2bLocatorRloc = "",
+    b2bOriginType = "BOOKING_WS",
+    b2bRatePolicy = "NET",
+    b2bCommissionPct = null,
+    b2bCommissionAmount = null,
+    b2bNetAmount = null,
+    b2bPaymentType = "VIRTUAL_CARD",
+    b2bCardBrand = "",
+    b2bCardMasked = "",
+    b2bVcnToken = "",
+    b2bConciliationUrl = "",
+    b2bConciliationStatus = "pendente",
+    b2bAuthorizedExpenses = "DEBITAR SOMENTE DIARIAS",
+    invoiceRecipientType = null,
+    nfDeliveryEmails = null,
+    nfHideFromGuest = null,
     checkinDate,
     checkoutDate,
     checkinTime,
@@ -19299,6 +20269,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   const autoInvoice = Boolean(autoEmitInvoice || req.body.autoEmitInvoice);
 
   const chanLower = String(channel || "").toLowerCase();
+  const isB2b = chanLower === "b2b" || chanLower.includes("b2b") || Boolean(b2bReservationNumber);
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
   const isPropertyCollect = Boolean(
     req.body.paymentCollect === "Property" ||
@@ -19313,8 +20284,9 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   let resolvedPaymentMethod = paymentMethod;
-  if (!resolvedPaymentMethod || (isOta && resolvedPaymentMethod === "pix")) {
-    if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
+  if (!resolvedPaymentMethod || ((isOta || isB2b) && resolvedPaymentMethod === "pix")) {
+    if (isB2b) resolvedPaymentMethod = b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b";
+    else if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
     else if (chanLower.includes("airbnb")) resolvedPaymentMethod = "airbnb";
     else if (chanLower.includes("site")) resolvedPaymentMethod = "pix";
     else resolvedPaymentMethod = "pix";
@@ -19383,17 +20355,20 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
-  // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA)
+  // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA / B2B)
   let resolvedStatus = "pre_reserva";
   if (status) {
     resolvedStatus = String(status).trim();
-  } else if (isOta || resolvedPaymentStatus === "pago_total" || resolvedPaidAmount > 0) {
+  } else if (isOta || isB2b || resolvedPaymentStatus === "pago_total" || resolvedPaidAmount > 0) {
+    resolvedStatus = "confirmada";
+  }
+  if (isB2b && resolvedStatus === "pre_reserva") {
     resolvedStatus = "confirmada";
   }
 
   // Regra oficial (canais diretos): Pré-Reserva nunca tem valor pago — o pagamento só entra via PIX/cartão real
   // ou lançamento posterior (que confirma a reserva).
-  if (resolvedStatus === "pre_reserva" && !isOta) {
+  if (resolvedStatus === "pre_reserva" && !isOta && !isB2b) {
     normalizedPayments = [];
     resolvedPaidAmount = 0;
     resolvedPaymentStatus = "pendente";
@@ -19401,6 +20376,129 @@ app.post("/api/pms/reservations", async (req, res) => {
 
   const flat = db.flats.find(f => f.id === Number(flatId));
   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado." });
+
+  // ── Resolução e Upsert de Agência (CRM de Agências) e Empresa (CRM de Empresas) ──
+  if (!db.agencies) db.agencies = [];
+  if (!db.companies) db.companies = [];
+
+  let resolvedAgency = null;
+  if (agencyId) {
+    resolvedAgency = db.agencies.find(a => Number(a.id) === Number(agencyId));
+  }
+  if (!resolvedAgency && (agencyName || agencyTradeName || agencyCnpj)) {
+    const cleanAgCnpj = String(agencyCnpj || "").replace(/\D/g, "");
+    resolvedAgency = db.agencies.find(a =>
+      (cleanAgCnpj && cleanAgCnpj.length === 14 && String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj) ||
+      (agencyName && a.corporateName && a.corporateName.trim().toLowerCase() === String(agencyName).trim().toLowerCase()) ||
+      (agencyName && a.tradeName && a.tradeName.trim().toLowerCase() === String(agencyName).trim().toLowerCase()) ||
+      (agencyTradeName && a.tradeName && a.tradeName.trim().toLowerCase() === String(agencyTradeName).trim().toLowerCase())
+    );
+    if (!resolvedAgency && (agencyName || agencyTradeName)) {
+      const nextAgId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
+      const agCorpName = String(agencyName || agencyTradeName).trim();
+      const agTrName = String(agencyTradeName || agencyName).trim();
+      resolvedAgency = {
+        id: nextAgId,
+        corporateName: agCorpName,
+        razaoSocial: agCorpName,
+        tradeName: agTrName,
+        nomeFantasia: agTrName,
+        cnpj: agencyCnpj ? String(agencyCnpj).trim() : "Isento / Não informado",
+        financialEmail: String(agencyAgentEmail || "").trim(),
+        emailFinanceiro: String(agencyAgentEmail || "").trim(),
+        phone: String(agencyAgentPhone || "").trim(),
+        telefone: String(agencyAgentPhone || "").trim(),
+        contactPerson: String(agencyAgentName || "").trim(),
+        billingTerms: "Cartão Virtual B2B (VCN)",
+        defaultRatePolicy: b2bRatePolicy || "COMISSIONADA",
+        defaultCommissionPct: b2bCommissionPct !== null ? Number(b2bCommissionPct) : (b2bRatePolicy === "COMISSIONADA" ? 12 : 0),
+        defaultInvoiceRecipient: invoiceRecipientType || "company",
+        posUnits: agencyPosUnit ? [{
+          name: String(agencyPosUnit).trim(),
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          agents: agencyAgentName ? [String(agencyAgentName).trim()] : []
+        }] : [],
+        agents: agencyAgentName ? [{
+          name: String(agencyAgentName).trim(),
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          posUnit: String(agencyPosUnit || "").trim()
+        }] : [],
+        clientCompanies: companyName ? [String(companyName).trim()] : [],
+        notes: "Agência cadastrada automaticamente ao registrar reserva B2B.",
+        createdAt: new Date().toISOString()
+      };
+      db.agencies.push(resolvedAgency);
+    }
+  }
+
+  if (resolvedAgency) {
+    if (!Array.isArray(resolvedAgency.posUnits)) resolvedAgency.posUnits = [];
+    if (!Array.isArray(resolvedAgency.agents)) resolvedAgency.agents = [];
+    if (!Array.isArray(resolvedAgency.clientCompanies)) resolvedAgency.clientCompanies = [];
+    if (agencyPosUnit) {
+      const unitTrim = String(agencyPosUnit).trim();
+      let u = resolvedAgency.posUnits.find(x => x.name && x.name.toLowerCase() === unitTrim.toLowerCase());
+      if (!u) {
+        u = {
+          name: unitTrim,
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          agents: agencyAgentName ? [String(agencyAgentName).trim()] : []
+        };
+        resolvedAgency.posUnits.push(u);
+      } else if (agencyAgentName && Array.isArray(u.agents) && !u.agents.includes(String(agencyAgentName).trim())) {
+        u.agents.push(String(agencyAgentName).trim());
+      }
+    }
+    if (agencyAgentName) {
+      const agTrim = String(agencyAgentName).trim();
+      const exAg = resolvedAgency.agents.find(x => x.name && x.name.toLowerCase() === agTrim.toLowerCase());
+      if (!exAg) {
+        resolvedAgency.agents.push({
+          name: agTrim,
+          email: String(agencyAgentEmail || "").trim(),
+          phone: String(agencyAgentPhone || "").trim(),
+          posUnit: String(agencyPosUnit || "").trim()
+        });
+      }
+    }
+    if (companyName && !resolvedAgency.clientCompanies.includes(String(companyName).trim())) {
+      resolvedAgency.clientCompanies.push(String(companyName).trim());
+    }
+  }
+
+  let resolvedCompany = null;
+  if (companyId) {
+    resolvedCompany = db.companies.find(c => Number(c.id) === Number(companyId));
+  }
+  if (!resolvedCompany && companyName) {
+    resolvedCompany = db.companies.find(c =>
+      (c.corporateName && c.corporateName.trim().toLowerCase() === String(companyName).trim().toLowerCase()) ||
+      (c.tradeName && c.tradeName.trim().toLowerCase() === String(companyName).trim().toLowerCase())
+    );
+    if (!resolvedCompany && isB2b) {
+      const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
+      const compNameTrim = String(companyName).trim();
+      resolvedCompany = {
+        id: nextCompId,
+        corporateName: compNameTrim,
+        razaoSocial: compNameTrim,
+        tradeName: compNameTrim,
+        nomeFantasia: compNameTrim,
+        cnpj: req.body.companyCnpj ? String(req.body.companyCnpj).trim() : "Isento / Não informado",
+        financialEmail: "",
+        phone: "",
+        contactPerson: "",
+        billingTerms: "B2B",
+        defaultCostCenter: costCenter ? String(costCenter).trim() : "",
+        notes: "Empresa vinculada em reserva B2B.",
+        createdAt: new Date().toISOString()
+      };
+      db.companies.push(resolvedCompany);
+    }
+  }
 
   const numGuests = Math.min(Math.max(Number(guestCount) || (Array.isArray(guests) && guests.length > 0 ? guests.length : 1), 1), 3);
   const primaryName = (guestName || guests?.[0]?.name || "Hóspede").trim();
@@ -19424,18 +20522,25 @@ app.post("/api/pms/reservations", async (req, res) => {
   );
 
   if (!guest) {
+    const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
     guest = {
-      id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
+      id: nextGId,
+      guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
       name: primaryName,
+      fullName: primaryName,
       phone: primaryPhone,
       email: primaryEmail,
       document: primaryDoc,
-      companyName: companyName || "",
+      companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
+      companyName: resolvedCompany?.corporateName || companyName || "",
+      agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
+      agencyName: resolvedAgency?.tradeName || agencyName || "",
+      costCenter: costCenter ? String(costCenter).trim() : "",
       city: "",
       notes: "",
-      tags: [],
+      tags: isB2b ? ["Corporativo B2B"] : [],
       isMonthlyGuest: isMonthly,
-      clientType: isMonthly ? "mensalista" : "avulso",
+      clientType: isMonthly ? "mensalista" : (isB2b ? "corporativo" : "avulso"),
       autoEmitInvoice: autoInvoice,
       createdAt: new Date().toISOString()
     };
@@ -19444,7 +20549,11 @@ app.post("/api/pms/reservations", async (req, res) => {
     if (primaryPhone) guest.phone = primaryPhone;
     if (primaryEmail) guest.email = primaryEmail;
     if (primaryDoc) guest.document = primaryDoc;
-    if (companyName) guest.companyName = companyName;
+    if (resolvedCompany?.corporateName || companyName) guest.companyName = resolvedCompany?.corporateName || companyName;
+    if (resolvedCompany?.id) guest.companyId = resolvedCompany.id;
+    if (resolvedAgency?.id) guest.agencyId = resolvedAgency.id;
+    if (resolvedAgency?.tradeName || agencyName) guest.agencyName = resolvedAgency?.tradeName || agencyName;
+    if (costCenter) guest.costCenter = String(costCenter).trim();
     if (isMonthly) {
       guest.isMonthlyGuest = true;
       guest.clientType = "mensalista";
@@ -19619,28 +20728,102 @@ app.post("/api/pms/reservations", async (req, res) => {
     finalRequesterInfo.guestId = reqGuest.id;
   }
 
+  const extResNum = String(b2bReservationNumber || externalReservationNumber || "").trim();
+  const resolvedCode = req.body.code
+    ? String(req.body.code).trim()
+    : (isB2b && extResNum ? `B2B-${extResNum}` : `RES-${String(flat.number)}-${String(resId).padStart(4, "0")}`);
+
+  const resolvedRatePolicy = isB2b
+    ? String(b2bRatePolicy || resolvedAgency?.defaultRatePolicy || "NET").toUpperCase()
+    : undefined;
+  const resolvedCommPct = isB2b
+    ? (b2bCommissionPct !== null && b2bCommissionPct !== undefined
+        ? Number(b2bCommissionPct)
+        : (resolvedRatePolicy === "COMISSIONADA" ? Number(resolvedAgency?.defaultCommissionPct ?? 12) : 0))
+    : undefined;
+  const resolvedCommAmt = isB2b
+    ? (b2bCommissionAmount !== null && b2bCommissionAmount !== undefined
+        ? Number(b2bCommissionAmount)
+        : Number(((finalTotalAmount * (resolvedCommPct || 0)) / 100).toFixed(2)))
+    : undefined;
+  const resolvedNetAmt = isB2b
+    ? (b2bNetAmount !== null && b2bNetAmount !== undefined
+        ? Number(b2bNetAmount)
+        : Number((finalTotalAmount - (resolvedCommAmt || 0)).toFixed(2)))
+    : undefined;
+
+  const resolvedInvRecipient = invoiceRecipientType || resolvedAgency?.defaultInvoiceRecipient || (resolvedCompany ? "company" : "guest");
+  const resolvedNfEmails = Array.isArray(nfDeliveryEmails)
+    ? nfDeliveryEmails.map(e => String(e).trim()).filter(Boolean)
+    : (typeof nfDeliveryEmails === "string" && nfDeliveryEmails.trim()
+        ? nfDeliveryEmails.split(/[;,]+/).map(e => e.trim()).filter(Boolean)
+        : (isB2b
+            ? Array.from(new Set([
+                agencyAgentEmail,
+                resolvedAgency?.financialEmail,
+                resolvedInvRecipient === "guest" ? primaryEmail : ""
+              ].map(e => String(e || "").trim()).filter(Boolean)))
+            : []));
+  const resolvedNfHideFromGuest = nfHideFromGuest !== null && nfHideFromGuest !== undefined
+    ? Boolean(nfHideFromGuest)
+    : (isB2b && resolvedInvRecipient !== "guest");
+
   const newReservation = {
     id: resId,
-    code: `RES-${String(flat.number)}-${String(resId).padStart(4, "0")}`,
+    code: resolvedCode,
+    reservationCode: resolvedCode,
     flatId: flat.id,
     flatNumber: flat.number,
     guestId: guest.id,
+    guestCode: guest.guestCode,
     guestName: primaryName,
     guestPhone: primaryPhone,
     guestEmail: primaryEmail,
+    guestDocument: primaryDoc,
     guestCount: numGuests,
     guests: preparedGuests,
-    requesterType,
+    requesterType: isB2b ? "agency" : requesterType,
     requesterInfo: finalRequesterInfo || null,
-    companyId: companyId ? Number(companyId) : (guest.companyId || null),
-    companyName: companyName || guest.companyName || "",
+    // 4-Pontas: Agência + Empresa + Hóspede + B2B
+    agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
+    agencyName: resolvedAgency?.corporateName || agencyName || "",
+    agencyTradeName: resolvedAgency?.tradeName || agencyTradeName || agencyName || "",
+    agencyCnpj: resolvedAgency?.cnpj || agencyCnpj || "",
+    agencyPosUnit: String(agencyPosUnit || "").trim(),
+    agencyAgentName: String(agencyAgentName || "").trim(),
+    agencyAgentEmail: String(agencyAgentEmail || "").trim(),
+    agencyAgentPhone: String(agencyAgentPhone || "").trim(),
+    companyId: resolvedCompany?.id || (companyId ? Number(companyId) : (guest.companyId || null)),
+    companyName: resolvedCompany?.corporateName || companyName || guest.companyName || "",
+    companyCnpj: resolvedCompany?.cnpj || req.body.companyCnpj || "",
+    costCenter: String(costCenter || resolvedCompany?.defaultCostCenter || "").trim(),
+    // Dados B2B / VCN / Comissão / Conciliação
+    externalReservationNumber: extResNum || undefined,
+    b2bReservationNumber: extResNum || undefined,
+    b2bLocatorRloc: String(b2bLocatorRloc || extResNum || "").trim() || undefined,
+    b2bOriginType: isB2b ? String(b2bOriginType || "BOOKING_WS") : undefined,
+    b2bRatePolicy: resolvedRatePolicy,
+    b2bCommissionPct: resolvedCommPct,
+    b2bCommissionAmount: resolvedCommAmt,
+    b2bNetAmount: resolvedNetAmt,
+    b2bPaymentType: isB2b ? String(b2bPaymentType || "VIRTUAL_CARD") : undefined,
+    b2bCardBrand: isB2b ? String(b2bCardBrand || "") : undefined,
+    b2bCardMasked: isB2b ? String(b2bCardMasked || "") : undefined,
+    b2bVcnToken: isB2b ? String(b2bVcnToken || "") : undefined,
+    b2bConciliationUrl: isB2b ? String(b2bConciliationUrl || "") : undefined,
+    b2bConciliationStatus: isB2b ? String(b2bConciliationStatus || "pendente") : undefined,
+    b2bAuthorizedExpenses: isB2b ? String(b2bAuthorizedExpenses || "DEBITAR SOMENTE DIARIAS") : undefined,
+    // Regras de Tomador e Envio de NFS-e
+    invoiceRecipientType: resolvedInvRecipient,
+    nfDeliveryEmails: resolvedNfEmails,
+    nfHideFromGuest: resolvedNfHideFromGuest,
     invoiceDetails: invoiceDetails || null,
     checkinDate,
     checkoutDate,
     checkinTime: String(checkinTime || db.settings?.checkinTime || "14:00").trim(),
     checkoutTime: String(checkoutTime || db.settings?.checkoutTime || "12:00").trim(),
     status: resolvedStatus,
-    channel,
+    channel: isB2b ? "b2b" : channel,
     paymentMethod: resolvedPaymentMethod,
     dailyRate: finalDailyRate,
     dailyRates: normalizedDailyRates,
@@ -19671,7 +20854,7 @@ app.post("/api/pms/reservations", async (req, res) => {
     specialRequests: specialRequests || "",
     includeBreakfast: Boolean(includeBreakfast),
     isMonthlyGuest: isMonthly,
-    clientType: isMonthly ? "mensalista" : "avulso",
+    clientType: isMonthly ? "mensalista" : (isB2b ? "corporativo" : "avulso"),
     autoEmitInvoice: autoInvoice,
     docPhotoUrl: req.body.docPhotoUrl || guest.docPhotoUrl || null,
     hasMinor: Boolean(req.body.hasMinor || guest.isMinor),
@@ -19726,12 +20909,14 @@ app.post("/api/pms/reservations", async (req, res) => {
       { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat ${flat.number}` },
       { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
       { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: primaryName },
-      { field: "channel", label: "Canal de Origem", oldValue: null, newValue: channel },
+      { field: "channel", label: "Canal de Origem", oldValue: null, newValue: newReservation.channel },
       { field: "paymentMethod", label: "Forma de Pagamento", oldValue: null, newValue: resolvedPaymentMethod },
       { field: "status", label: "Status da Reserva", oldValue: null, newValue: resolvedStatus === "confirmada" ? "Confirmada" : "Pré-Reserva" },
       { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
       { field: "paidAmount", label: "Valor Pago", oldValue: null, newValue: `R$ ${Number(resolvedPaidAmount).toFixed(2)}` },
       { field: "paymentStatus", label: "Status de Pagamento", oldValue: null, newValue: resolvedPaymentStatus },
+      ...(newReservation.agencyName ? [{ field: "agencyName", label: "Agência B2B", oldValue: null, newValue: newReservation.agencyName }] : []),
+      ...(newReservation.companyName ? [{ field: "companyName", label: "Empresa Cliente", oldValue: null, newValue: newReservation.companyName }] : []),
       ...(includeBreakfast ? [{ field: "includeBreakfast", label: "Café da Manhã", oldValue: null, newValue: "Incluso" }] : []),
       ...(isMonthly ? [{ field: "isMonthlyGuest", label: "Cliente Mensalista", oldValue: null, newValue: "Sim" }] : []),
       ...(autoInvoice ? [{ field: "autoEmitInvoice", label: "Auto-Emissão de Nota Fiscal (NFS-e)", oldValue: null, newValue: "Sim" }] : []),
@@ -19820,6 +21005,46 @@ app.post("/api/pms/reservations", async (req, res) => {
 
   db.reservations.unshift(newReservation);
   saveDatabase();
+
+  // ── Gatilho Automático B2B: E-mail cordial para a agência se faltar WhatsApp ou CPF do hóspede ──
+  if (isB2b && (!primaryPhone || !primaryDoc) && req.body.sendAgencyCredentialEmail !== false) {
+    try {
+      const targetAgencyEmail = newReservation.agencyAgentEmail || resolvedAgency?.financialEmail || resolvedNfEmails[0] || "";
+      if (targetAgencyEmail && typeof renderB2bAgencyCredentialRequestEmail === "function") {
+        const baseUrl = `${req.protocol}://${req.get("host")}`;
+        const { subject, bodyHtml, credentialUrl } = renderB2bAgencyCredentialRequestEmail({
+          reservation: newReservation,
+          flat,
+          agency: resolvedAgency,
+          company: resolvedCompany,
+          settings: db.settings,
+          baseUrl,
+          db
+        });
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: newReservation.code || newReservation.id,
+          recipient: targetAgencyEmail,
+          subject,
+          bodyHtml,
+          type: "email",
+          direction: "outbound",
+          metadata: {
+            trigger: "b2b_agency_credential_request",
+            credentialUrl,
+            agencyName: newReservation.agencyName,
+            b2bReservationNumber: newReservation.b2bReservationNumber
+          }
+        });
+        newReservation.b2bCredentialEmailSentAt = new Date().toISOString();
+        newReservation.b2bCredentialEmailRecipient = targetAgencyEmail;
+        saveDatabase();
+      }
+    } catch (b2bEmailErr) {
+      console.warn("[B2B Credential Email] Aviso ao enviar solicitação automática de credenciamento à agência:", b2bEmailErr.message);
+    }
+  }
 
   if (resolvedStatus === "pre_reserva") {
     if (!newReservation.pixCopiaECola && Number(newReservation.totalAmount) > 0) {
@@ -20802,11 +22027,28 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
     "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
-    "companyId", "companyName", "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
+    "companyId", "companyName", "companyCnpj", "costCenter",
+    "agencyId", "agencyName", "agencyTradeName", "agencyCnpj", "agencyPosUnit", "agencyAgentName", "agencyAgentEmail", "agencyAgentPhone",
+    "b2bReservationNumber", "externalReservationNumber", "b2bLocatorRloc", "b2bOriginType",
+    "b2bRatePolicy", "b2bCommissionPct", "b2bCommissionAmount", "b2bNetAmount",
+    "b2bPaymentType", "b2bCardBrand", "b2bCardMasked", "b2bVcnToken", "b2bConciliationUrl", "b2bConciliationStatus", "b2bAuthorizedExpenses",
+    "invoiceRecipientType", "nfDeliveryEmails", "nfHideFromGuest",
+    "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
     "isFlatLocked", "flatLocked", "flatLockReason"
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+
+  if (req.body.b2bReservationNumber !== undefined && !req.body.externalReservationNumber) {
+    r.externalReservationNumber = req.body.b2bReservationNumber;
+  }
+  if (req.body.nfDeliveryEmails !== undefined) {
+    if (Array.isArray(req.body.nfDeliveryEmails)) {
+      r.nfDeliveryEmails = req.body.nfDeliveryEmails.map(e => String(e).trim()).filter(Boolean);
+    } else if (typeof req.body.nfDeliveryEmails === "string") {
+      r.nfDeliveryEmails = req.body.nfDeliveryEmails.split(/[;,]+/).map(e => e.trim()).filter(Boolean);
+    }
   }
 
   if (r.flatId !== undefined) {
@@ -21071,13 +22313,26 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   {
     const ruleChan = String(r.channel || "").toLowerCase();
     const ruleIsOta = ruleChan.includes("booking") || ruleChan.includes("airbnb");
-    if (!ruleIsOta) {
+    const ruleIsB2b = ruleChan === "b2b" || ruleChan.includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (!ruleIsOta && !ruleIsB2b) {
       if (req.body.status === "pre_reserva") {
         r.payments = [];
         r.paidAmount = 0;
         r.paymentStatus = "pendente";
       } else if (req.body.status === undefined && r.status === "pre_reserva" && Number(r.paidAmount) > 0) {
         r.status = "confirmada";
+      }
+    } else if (ruleIsB2b) {
+      if (r.status === "pre_reserva") {
+        r.status = "confirmada";
+      }
+      if (r.b2bRatePolicy) {
+        const commPct = r.b2bCommissionPct !== undefined && r.b2bCommissionPct !== null
+          ? Number(r.b2bCommissionPct)
+          : (r.b2bRatePolicy === "COMISSIONADA" ? 12 : 0);
+        r.b2bCommissionPct = commPct;
+        r.b2bCommissionAmount = Number((((Number(r.totalAmount) || 0) * commPct) / 100).toFixed(2));
+        r.b2bNetAmount = Number(((Number(r.totalAmount) || 0) - r.b2bCommissionAmount).toFixed(2));
       }
     }
   }
@@ -21088,7 +22343,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
     const isMonthly = Boolean(req.body.isMonthlyGuest || req.body.clientType === "mensalista");
     r.isMonthlyGuest = isMonthly;
-    r.clientType = isMonthly ? "mensalista" : "avulso";
+    r.clientType = isMonthly ? "mensalista" : (String(r.channel || "").toLowerCase() === "b2b" ? "corporativo" : "avulso");
   }
   if (req.body.autoEmitInvoice !== undefined) {
     r.autoEmitInvoice = Boolean(req.body.autoEmitInvoice);
@@ -22007,9 +23262,12 @@ function findReservationByLocatorOrContact(query) {
   const raw = String(query).trim();
   if (!raw) return null;
 
-  // 1. Código exato ou ID numérico
+  // 1. Código exato, número B2B, RLOC ou ID numérico
   let r = db.reservations.find(resItem =>
     (resItem.code && resItem.code.toUpperCase() === raw.toUpperCase()) ||
+    (resItem.b2bReservationNumber && String(resItem.b2bReservationNumber).toUpperCase() === raw.toUpperCase()) ||
+    (resItem.externalReservationNumber && String(resItem.externalReservationNumber).toUpperCase() === raw.toUpperCase()) ||
+    (resItem.b2bLocatorRloc && String(resItem.b2bLocatorRloc).toUpperCase() === raw.toUpperCase()) ||
     String(resItem.id) === raw
   );
   if (r) return r;
@@ -22018,7 +23276,10 @@ function findReservationByLocatorOrContact(query) {
   const norm = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
   if (norm.length >= 3) {
     r = db.reservations.find(resItem =>
-      (resItem.code || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm
+      (resItem.code || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm ||
+      String(resItem.b2bReservationNumber || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm ||
+      String(resItem.externalReservationNumber || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm ||
+      String(resItem.b2bLocatorRloc || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm
     );
     if (r) return r;
   }
@@ -22137,7 +23398,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isFirstTimeGuest = priorReservations.length === 0;
 
   const isSiteBooking = r.channel === "site";
-  const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia";
+  const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia" || r.channel === "b2b";
   const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
   const hasEarlyCheckinBenefit = isEarlyAuthorizedManual || isSiteBooking || (isOtaBooking && isFirstTimeGuest);
 
@@ -22177,6 +23438,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isCancelledRes = r.status === "cancelada" || r.status === "cancelled";
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+  const isB2b = chanLower === "b2b" || chanLower.includes("b2b") || Boolean(r.b2bReservationNumber || r.agencyId || r.agencyName);
   const isUnpaidPre = isUnverifiedPreReservation(r);
   let isPaid = !isCancelledRes && !isUnpaidPre && (isOta || Boolean(
     r.paymentStatus === "pago_total" ||
@@ -22184,8 +23446,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
   ));
 
-  // Se a reserva ainda não consta como paga e NÃO está cancelada, verifica ativamente no Mercado Pago / Extrato do Banco Inter
-  if (!isCancelledRes && !isPaid && Number(r.totalAmount) > 0) {
+  // Se a reserva ainda não consta como paga e NÃO está cancelada (e não é B2B com cartão virtual/faturado), verifica ativamente no Mercado Pago / Extrato do Banco Inter
+  if (!isCancelledRes && !isPaid && !isB2b && Number(r.totalAmount) > 0) {
     const prefersCard = Boolean(
       req.query?.payment === "success" ||
       /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
@@ -22262,14 +23524,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
         console.warn("[Guest Portal] Erro ao checar Mercado Pago:", errMp.message);
       }
     }
-  } else if (!isCancelledRes && isPaid && !isOta && r.guestPhone) {
+  } else if (!isCancelledRes && isPaid && !isOta && !isB2b && r.guestPhone) {
     ensurePaymentConfirmationDispatched(r);
   }
 
   const isSettledByCard = Boolean(
     isPaid &&
     !r.pixEndToEndId &&
-    (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(r.paymentMethod || "")))
+    (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite|vcn/i.test(String(r.paymentMethod || "")))
   );
   if (isSettledByCard) {
     let changedCardMeta = false;
@@ -22294,10 +23556,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     saveDatabase();
   }
 
-  canDoEarlyCheckin = Boolean(!isCancelledRes && isPaid && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
+  // Reservas B2B já entram confirmadas e liberam check-in digital e senha da porta imediatamente, mesmo antes da cobrança financeira do VCN
+  const isPortalUnlocked = Boolean(!isCancelledRes && (isPaid || isB2b));
+  canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
 
-  // Se pendente com valor total cadastrado e sem chave PIX ainda, gera cobrança estática PIX com a chave oficial CorpFlats
-  if (!isCancelledRes && !isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
+  // Se pendente com valor total cadastrado e sem chave PIX ainda (e não é B2B), gera cobrança estática PIX com a chave oficial CorpFlats
+  if (!isCancelledRes && !isPaid && !isB2b && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
     try {
       const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
       const staticPayload = generateStaticPixPayload({
@@ -22314,7 +23578,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   }
 
   // Se modo Gov.br (FNRH SERPRO) estiver ativo e a reserva confirmada ainda não tiver link SERPRO, registra automaticamente
-  if (db.settings?.checkinProvider === "gov_fnrh" && !isCancelledRes && isPaid && !isPreReservationBlocked(r) && !r.serproPrecheckinUrl && !r.link_precheckin) {
+  if (db.settings?.checkinProvider === "gov_fnrh" && isPortalUnlocked && !isPreReservationBlocked(r) && !r.serproPrecheckinUrl && !r.link_precheckin) {
     try {
       const serproRes = await fnrhSerproService.registerReservation(r, db.settings);
       if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
@@ -22332,22 +23596,28 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   }
 
   const portalRecips = getReservationRecipients(r, db);
-  const isSeparateRequester = Boolean(portalRecips.requester?.isDifferentFromGuest);
+  const isSeparateRequester = Boolean(portalRecips.requester?.isDifferentFromGuest || isB2b);
   const isRequesterView = req.query?.requester === "1" || req.query?.view === "requester";
-  const hideFinancialForGuest = Boolean(isSeparateRequester && !isRequesterView);
+  // Reservas B2B sempre ocultam valores financeiros para o hóspede
+  const hideFinancialForGuest = Boolean(isB2b || (isSeparateRequester && !isRequesterView));
 
   res.json({
     checkinProvider: db.settings?.checkinProvider || "proprio",
     hideFinancialForGuest,
     isSeparateRequester,
     isRequesterView,
-    requesterName: isSeparateRequester ? (portalRecips.requester?.name || null) : null,
+    requesterName: isSeparateRequester ? (portalRecips.requester?.name || r.agencyTradeName || r.agencyName || r.companyName || null) : null,
     reservation: {
       id: r.id,
       code: r.code,
+      isB2b,
+      b2bReservationNumber: r.b2bReservationNumber || null,
+      b2bLocatorRloc: r.b2bLocatorRloc || null,
+      agencyName: r.agencyTradeName || r.agencyName || null,
+      companyName: r.companyName || null,
       hideFinancialForGuest,
       isSeparateRequester,
-      requesterName: isSeparateRequester ? (portalRecips.requester?.name || null) : null,
+      requesterName: isSeparateRequester ? (portalRecips.requester?.name || r.agencyTradeName || r.agencyName || r.companyName || null) : null,
       serproReservaId: r.serproReservaId || null,
       serproPrecheckinUrl: r.serproPrecheckinUrl || r.link_precheckin || null,
       link_precheckin: r.link_precheckin || r.serproPrecheckinUrl || null,
@@ -22358,8 +23628,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       cancellationReason: r.cancellationReason || null,
       refundStatus: r.refundStatus || null,
       refundAmount: hideFinancialForGuest ? 0 : (Number(r.refundAmount) || 0),
-      doorPassword: (!isCancelledRes && isPaid && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.doorPassword || null) : null,
-      accessCode: (!isCancelledRes && isPaid && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.accessCode || null) : null,
+      doorPassword: (isPortalUnlocked && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.doorPassword || null) : null,
+      accessCode: (isPortalUnlocked && (isCheckinToday || (todayStr >= r.checkinDate && todayStr <= r.checkoutDate) || r.status === "in_house" || r.status === "checkin")) ? (r.accessCode || null) : null,
       guestName: r.guestName,
       guestPhone: r.guestPhone,
       guestEmail: r.guestEmail,
@@ -22370,7 +23640,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       channel: r.channel || "site",
       totalAmount: hideFinancialForGuest ? 0 : resolvedTotal,
       paidAmount: hideFinancialForGuest ? 0 : resolvedPaid,
-      isPaid,
+      isPaid: isPortalUnlocked ? true : isPaid,
       paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
       paymentMethod: (r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
@@ -22420,8 +23690,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     isPastOrExact14h,
     currentHour,
     brasilia: bNow,
-    preCheckinBlocked: Boolean(!isPaid || isPreReservationBlocked(r)),
-    earlyCheckinMessage: (!isPaid || isPreReservationBlocked(r))
+    preCheckinBlocked: Boolean(!isPortalUnlocked || isPreReservationBlocked(r)),
+    earlyCheckinMessage: (!isPortalUnlocked || isPreReservationBlocked(r))
       ? "⏳ Pré-reserva aguardando confirmação do pagamento. Apenas após o pagamento a reserva é confirmada, o check-in digital é liberado e os dados são enviados para a recepção/portaria."
       : (isCheckinToday
           ? (isFlatClean
@@ -22434,7 +23704,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
           : `Check-in a partir das 14:00 em ${r.checkinDate}.`),
     breakfastOrder: existingBreakfastOrder || null,
     preCheckinStatus: {
-      preCheckinBlocked: Boolean(!isPaid || isPreReservationBlocked(r)),
+      preCheckinBlocked: Boolean(!isPortalUnlocked || isPreReservationBlocked(r)),
       totalGuests,
       completedCheckins,
       isFullyCompleted: completedCheckins >= totalGuests,
@@ -22611,6 +23881,283 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Endpoint: Enviar / Reenviar E-mail Cordial de Credenciamento do Hóspede para a Agência B2B
+app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservations/:id/send-b2b-credential-email"], async (req, res) => {
+  try {
+    const idOrCode = String(req.params.id || "").trim();
+    const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) ||
+      (db.reservations || []).find(r => String(r.id) === idOrCode || r.code === idOrCode);
+    if (!reservation) {
+      return res.status(404).json({ error: "Reserva não encontrada." });
+    }
+
+    const linkedAgency = reservation.agencyId
+      ? (db.agencies || []).find(a => String(a.id) === String(reservation.agencyId))
+      : null;
+
+    const targetEmail = String(
+      req.body?.email ||
+      reservation.agencyAgentEmail ||
+      reservation.requesterInfo?.email ||
+      linkedAgency?.financialEmail ||
+      (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails[0] : "") ||
+      ""
+    ).trim();
+
+    if (!targetEmail || !targetEmail.includes("@")) {
+      return res.status(400).json({ error: "E-mail da agência ou emissor não informado na reserva." });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const credentialUrl = `${baseUrl}/credenciamento/${encodeURIComponent(reservation.code)}`;
+    const htmlBody = renderB2bAgencyCredentialRequestEmail({
+      agencyName: reservation.agencyTradeName || reservation.agencyName || linkedAgency?.tradeName || "Agência Parceira",
+      agentName: reservation.agencyAgentName || reservation.requesterInfo?.name || "",
+      guestName: reservation.guestName || "Hóspede",
+      companyName: reservation.companyName || "",
+      reservationCode: reservation.code,
+      b2bReservationNumber: reservation.b2bReservationNumber || reservation.externalReservationNumber || "",
+      b2bLocatorRloc: reservation.b2bLocatorRloc || "",
+      checkinDate: reservation.checkinDate,
+      checkoutDate: reservation.checkoutDate,
+      checkinTime: reservation.checkinTime || "14:00",
+      checkoutTime: reservation.checkoutTime || "12:00",
+      flatNumber: reservation.flatNumber,
+      includeBreakfast: reservation.includeBreakfast !== false,
+      credentialUrl
+    });
+
+    const subject = `Confirmação de Reserva #${reservation.b2bReservationNumber || reservation.code} e Credenciamento de Acesso na Portaria — ${reservation.guestName} | CorpFlats`;
+    const sendRes = await sendNotificationEmail(db.settings, {
+      to: targetEmail,
+      subject,
+      html: htmlBody
+    });
+
+    reservation.b2bCredentialEmailSentAt = new Date().toISOString();
+    reservation.b2bCredentialEmailRecipient = targetEmail;
+    saveDatabase("b2b_credential_email_sent");
+
+    return res.json({
+      success: Boolean(sendRes?.success !== false),
+      recipient: targetEmail,
+      credentialUrl,
+      sentAt: reservation.b2bCredentialEmailSentAt,
+      message: `E-mail cordial de confirmação e credenciamento enviado para ${targetEmail}.`
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint Público: Consulta da Reserva para Credenciamento do Hóspede pela Agência (Sem Valores Financeiros)
+app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential/:code"], (req, res) => {
+  const code = String(req.params.code || "").trim();
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não localizada com este código. Verifique o link enviado no e-mail." });
+  }
+  const linkedGuest = r.guestId
+    ? (db.guests || []).find(g => String(g.id) === String(r.guestId))
+    : null;
+  const linkedAgency = r.agencyId
+    ? (db.agencies || []).find(a => String(a.id) === String(r.agencyId))
+    : null;
+
+  return res.json({
+    reservation: {
+      id: r.id,
+      code: r.code,
+      status: r.status || "confirmada",
+      b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
+      b2bLocatorRloc: r.b2bLocatorRloc || null,
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      checkinTime: r.checkinTime || "14:00",
+      checkoutTime: r.checkoutTime || "12:00",
+      flatNumber: r.flatNumber,
+      includeBreakfast: r.includeBreakfast !== false,
+      agencyName: r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || linkedAgency?.corporateName || null,
+      agencyPosUnit: r.agencyPosUnit || null,
+      agencyAgentName: r.agencyAgentName || null,
+      companyName: r.companyName || null,
+      guestName: r.guestName || linkedGuest?.name || "",
+      guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || "",
+      guestPhone: r.guestPhone || linkedGuest?.phone || "",
+      guestSecondaryPhone: r.guestSecondaryPhone || linkedGuest?.secondaryPhone || "",
+      guestEmail: r.guestEmail || linkedGuest?.email || "",
+      hasDocPhoto: Boolean(r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl)),
+      docPhotoUrl: r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl) || null,
+      credentialCompletedAt: r.b2bCredentialCompletedAt || null
+    }
+  });
+});
+
+// Endpoint Público: Salvar Credenciamento do Hóspede pela Agência + Disparar WhatsApp Operacional ao Hóspede
+app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential/:code"], async (req, res) => {
+  try {
+    const code = String(req.params.code || "").trim();
+    const r = findReservationByLocatorOrContact(code);
+    if (!r) {
+      return res.status(404).json({ error: "Reserva não localizada." });
+    }
+
+    const {
+      guestName,
+      guestDocument,
+      cpf,
+      guestPhone,
+      whatsapp,
+      guestSecondaryPhone,
+      guestEmail,
+      docPhotoBase64,
+      docPhotoUrl,
+      notes
+    } = req.body || {};
+
+    const cleanName = String(guestName || r.guestName || "").trim();
+    const cleanDoc = String(guestDocument || cpf || r.guestDocument || "").replace(/\D/g, "");
+    const cleanPhone = String(guestPhone || whatsapp || r.guestPhone || "").replace(/\D/g, "");
+    const cleanSecPhone = String(guestSecondaryPhone || r.guestSecondaryPhone || "").replace(/\D/g, "");
+    const cleanEmail = String(guestEmail || r.guestEmail || "").trim();
+
+    if (!cleanName) {
+      return res.status(400).json({ error: "O nome completo do hóspede é obrigatório." });
+    }
+    if (!cleanDoc || cleanDoc.length < 5) {
+      return res.status(400).json({ error: "O CPF ou documento de identificação do hóspede é obrigatório para liberação na portaria." });
+    }
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ error: "O WhatsApp do hóspede com DDD é obrigatório para o envio das instruções de acesso." });
+    }
+
+    let finalDocUrl = docPhotoUrl || r.docPhotoUrl || null;
+    if (docPhotoBase64 && String(docPhotoBase64).startsWith("data:")) {
+      finalDocUrl = await uploadImageToStorage(docPhotoBase64, `b2b_cred_${r.code}_${Date.now()}.jpg`);
+    }
+
+    r.guestName = cleanName;
+    r.guestDocument = cleanDoc;
+    r.guestPhone = cleanPhone;
+    if (cleanSecPhone) r.guestSecondaryPhone = cleanSecPhone;
+    if (cleanEmail) r.guestEmail = cleanEmail;
+    if (finalDocUrl) r.docPhotoUrl = finalDocUrl;
+    if (notes) {
+      r.receptionNotes = r.receptionNotes
+        ? `${r.receptionNotes} | Credenciamento Agência: ${String(notes).trim()}`
+        : `Credenciamento Agência: ${String(notes).trim()}`;
+    }
+    r.b2bCredentialCompletedAt = new Date().toISOString();
+    r.updatedAt = r.b2bCredentialCompletedAt;
+
+    if (!Array.isArray(r.guests) || r.guests.length === 0) {
+      r.guests = [{
+        index: 1,
+        isMain: true,
+        name: cleanName,
+        cpf: cleanDoc,
+        phone: cleanPhone,
+        email: cleanEmail,
+        docPhotoUrl: finalDocUrl,
+        hasCompletedCheckin: Boolean(cleanDoc && cleanPhone && finalDocUrl)
+      }];
+    } else {
+      r.guests[0] = {
+        ...r.guests[0],
+        name: cleanName,
+        cpf: cleanDoc,
+        phone: cleanPhone,
+        email: cleanEmail || r.guests[0].email || "",
+        docPhotoUrl: finalDocUrl || r.guests[0].docPhotoUrl || null,
+        hasCompletedCheckin: Boolean(cleanDoc && cleanPhone && (finalDocUrl || r.guests[0].docPhotoUrl))
+      };
+    }
+
+    if (finalDocUrl && cleanDoc && cleanPhone) {
+      r.preCheckinCompleted = true;
+      r.hasPreCheckin = true;
+    }
+
+    // Atualiza o cadastro no CRM de Hóspedes (db.guests)
+    if (!db.guests) db.guests = [];
+    let guestRecord = r.guestId
+      ? db.guests.find(g => String(g.id) === String(r.guestId))
+      : db.guests.find(g => (cleanDoc && String(g.cpf || g.document || "").replace(/\D/g, "") === cleanDoc));
+    if (guestRecord) {
+      guestRecord.name = cleanName;
+      guestRecord.cpf = cleanDoc;
+      guestRecord.document = cleanDoc;
+      guestRecord.phone = cleanPhone;
+      if (cleanSecPhone) guestRecord.secondaryPhone = cleanSecPhone;
+      if (cleanEmail) guestRecord.email = cleanEmail;
+      if (finalDocUrl) guestRecord.docPhotoUrl = finalDocUrl;
+      guestRecord.updatedAt = new Date().toISOString();
+      r.guestId = guestRecord.id;
+    } else {
+      const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+      guestRecord = {
+        id: nextGId,
+        name: cleanName,
+        cpf: cleanDoc,
+        document: cleanDoc,
+        phone: cleanPhone,
+        secondaryPhone: cleanSecPhone,
+        email: cleanEmail,
+        docPhotoUrl: finalDocUrl,
+        companyId: r.companyId || null,
+        companyName: r.companyName || "",
+        agencyId: r.agencyId || null,
+        agencyName: r.agencyName || "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.guests.push(guestRecord);
+      r.guestId = guestRecord.id;
+    }
+
+    saveDatabase("b2b_agency_guest_credential_completed");
+
+    // Dispara imediatamente as instruções operacionais de estadia para o WhatsApp do hóspede (sem valores financeiros)
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    try {
+      await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r, baseUrl);
+    } catch (errWa) {
+      console.warn("[B2B Credential] Aviso ao disparar WhatsApp para o hóspede:", errWa.message);
+    }
+
+    return res.json({
+      success: true,
+      message: "Credenciamento concluído com sucesso! Os dados do hóspede foram liberados para a portaria 24h e as orientações de acesso foram enviadas ao WhatsApp do hóspede.",
+      reservation: {
+        code: r.code,
+        guestName: r.guestName,
+        guestDocument: r.guestDocument,
+        guestPhone: r.guestPhone,
+        guestEmail: r.guestEmail,
+        hasDocPhoto: Boolean(r.docPhotoUrl),
+        credentialCompletedAt: r.b2bCredentialCompletedAt
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint: Parser de Voucher B2B (BOOKING_WS / OTA_WS) a partir de Texto ou E-mail
+app.post(["/api/pms/b2b/parse-voucher", "/api/b2b/parse-voucher"], (req, res) => {
+  try {
+    const { rawText, htmlText, subject } = req.body || {};
+    const parsed = parseB2bVoucherText(rawText || "", htmlText || "", subject || "");
+    if (!parsed) {
+      return res.status(400).json({ error: "Não foi possível identificar um voucher B2B válido no texto informado." });
+    }
+    return res.json({ success: true, parsed });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 
 // Verifica se o horário previsto de chegada é cedo ou muito próximo do horário padrão de check-in (14h)
 // Janela de priorização: das 06:00 até 15:00 (ou termos como "agora", "já cheguei", "meio dia")
@@ -29278,7 +30825,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────
 app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   const code = req.params.code;
-  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code) || findReservationByLocatorOrContact(code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   // Se o modo Gov.br (FNRH SERPRO) estiver ativo e a reserva ainda não tiver link SERPRO, registra sob demanda com fallback seguro
@@ -29519,8 +31066,13 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   const preCheckinBlocked = isPreReservationBlocked(r);
   const activeCheckinProvider = db.settings?.checkinProvider || "proprio";
   const resolvedSerproUrl = r.serproPrecheckinUrl || r.link_precheckin || null;
+  const isB2bRes = Boolean(String(r.channel || "").toLowerCase() === "b2b" || r.b2bReservationNumber || r.agencyId || r.agencyName);
+  const safeRes = isB2bRes
+    ? { ...r, totalAmount: 0, paidAmount: 0, dailyRate: 0, b2bNetAmount: 0, b2bCommissionAmount: 0, hideFinancialForGuest: true }
+    : r;
   res.json({
-    reservation: r,
+    reservation: safeRes,
+    hideFinancialForGuest: isB2bRes,
     guest: guest || {},
     guestCount,
     guests: r.guests,
@@ -33917,6 +35469,11 @@ function getFiscalData() {
   if (db.nfseConfig) {
     db.nfseConfig.ambiente = "producao";
     db.nfseConfig.padrao = "nacional_adn";
+    if (!db.nfseConfig.channelRules) {
+      db.nfseConfig.channelRules = { site: true, whatsapp: true, b2b: true, booking: false, airbnb: false };
+    } else if (db.nfseConfig.channelRules.b2b === undefined) {
+      db.nfseConfig.channelRules.b2b = true;
+    }
   }
   if (!db.nfseConfig || db.nfseConfig.cnpjPrestador !== "47.964.813/0001-65") {
     db.nfseConfig = {
@@ -33940,6 +35497,7 @@ function getFiscalData() {
       channelRules: {
         site: true,
         whatsapp: true,
+        b2b: true,
         booking: false,
         airbnb: false
       }
@@ -34240,55 +35798,121 @@ app.post("/api/invoices/chat", async (req, res) => {
       }
     });
 
-    // Auto-cadastro no CRM (db.companies para PJ ou db.guests para PF)
+    // Auto-cadastro no CRM (db.agencies para Agência PJ, db.companies para Empresa PJ ou db.guests para PF)
     if (result.data?.tomadorNome && result.data?.tomadorCpfCnpj && result.data.tomadorCpfCnpj.length >= 11) {
       const cleanDoc = result.data.tomadorCpfCnpj;
 
       if (cleanDoc.length === 14) {
+        if (!db.agencies) db.agencies = [];
         if (!db.companies) db.companies = [];
-        let comp = db.companies.find(c => (c.cnpj || "").replace(/\D/g, "") === cleanDoc);
-        if (comp) {
-          comp.corporateName = comp.corporateName || result.data.tomadorNome;
-          comp.tradeName = comp.tradeName || result.data.tomadorNomeFantasia || result.data.tomadorNome;
-          comp.financialEmail = result.data.tomadorEmail || comp.financialEmail || "";
-          comp.phone = result.data.tomadorTelefone || comp.phone || "";
-          comp.address = result.data.tomadorEndereco || comp.address || "";
-          comp.logradouro = result.data.tomadorEndereco || comp.logradouro || "";
-          comp.number = result.data.tomadorNumero || comp.number || "";
-          comp.complement = result.data.tomadorComplemento || comp.complement || "";
-          comp.neighborhood = result.data.tomadorBairro || comp.neighborhood || "";
-          comp.cep = result.data.tomadorCep || comp.cep || "";
-          comp.city = result.data.tomadorCidade || comp.city || "Campos dos Goytacazes";
-          comp.state = result.data.tomadorUf || comp.state || "RJ";
-          comp.ibgeCode = result.data.tomadorCodigoMunicipio || comp.ibgeCode || "3301009";
-          comp.updatedAt = new Date().toISOString();
+        const existingAg = db.agencies.find(a => (a.cnpj || "").replace(/\D/g, "") === cleanDoc);
+        const isAgencyTarget = Boolean(
+          existingAg ||
+          req.body?.invoiceRecipientType === "agency" ||
+          req.body?.tomadorTipo === "agency" ||
+          currentData?.invoiceRecipientType === "agency" ||
+          currentData?.tomadorTipo === "agency"
+        );
+
+        if (isAgencyTarget) {
+          let ag = existingAg;
+          if (ag) {
+            ag.corporateName = ag.corporateName || result.data.tomadorNome;
+            ag.razaoSocial = ag.corporateName;
+            ag.tradeName = ag.tradeName || result.data.tomadorNomeFantasia || result.data.tomadorNome;
+            ag.nomeFantasia = ag.tradeName;
+            ag.financialEmail = result.data.tomadorEmail || ag.financialEmail || "";
+            ag.phone = result.data.tomadorTelefone || ag.phone || "";
+            ag.address = result.data.tomadorEndereco || ag.address || "";
+            ag.logradouro = result.data.tomadorEndereco || ag.logradouro || "";
+            ag.number = result.data.tomadorNumero || ag.number || "";
+            ag.complement = result.data.tomadorComplemento || ag.complement || "";
+            ag.neighborhood = result.data.tomadorBairro || ag.neighborhood || "";
+            ag.cep = result.data.tomadorCep || ag.cep || "";
+            ag.city = result.data.tomadorCidade || ag.city || "São Paulo";
+            ag.state = result.data.tomadorUf || ag.state || "SP";
+            ag.ibgeCode = result.data.tomadorCodigoMunicipio || ag.ibgeCode || "3550308";
+            ag.updatedAt = new Date().toISOString();
+          } else {
+            const nextAgId = (db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) : 0) + 1;
+            ag = {
+              id: nextAgId,
+              corporateName: result.data.tomadorNome,
+              razaoSocial: result.data.tomadorNome,
+              tradeName: result.data.tomadorNomeFantasia || result.data.tomadorNome,
+              nomeFantasia: result.data.tomadorNomeFantasia || result.data.tomadorNome,
+              cnpj: cleanDoc,
+              financialEmail: result.data.tomadorEmail || "",
+              phone: result.data.tomadorTelefone || "",
+              address: result.data.tomadorEndereco || "",
+              logradouro: result.data.tomadorEndereco || "",
+              number: result.data.tomadorNumero || "",
+              complement: result.data.tomadorComplemento || "",
+              neighborhood: result.data.tomadorBairro || "",
+              cep: result.data.tomadorCep || "",
+              city: result.data.tomadorCidade || "São Paulo",
+              state: result.data.tomadorUf || "SP",
+              ibgeCode: result.data.tomadorCodigoMunicipio || "3550308",
+              defaultRatePolicy: "COMISSIONADA",
+              defaultCommissionPct: 12,
+              defaultInvoiceRecipient: "agency",
+              posUnits: [],
+              agents: [],
+              clientCompanyIds: [],
+              notes: "Cadastrada automaticamente via Emissão Fiscal",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            db.agencies.unshift(ag);
+          }
+          result.data.agencyId = ag.id;
+          result.data.invoiceRecipientType = "agency";
+          saveDatabase();
         } else {
-          const nextCompId = (db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) : 0) + 1;
-          comp = {
-            id: nextCompId,
-            corporateName: result.data.tomadorNome,
-            tradeName: result.data.tomadorNomeFantasia || result.data.tomadorNome,
-            cnpj: cleanDoc,
-            financialEmail: result.data.tomadorEmail || "",
-            phone: result.data.tomadorTelefone || "",
-            address: result.data.tomadorEndereco || "",
-            logradouro: result.data.tomadorEndereco || "",
-            number: result.data.tomadorNumero || "",
-            complement: result.data.tomadorComplemento || "",
-            neighborhood: result.data.tomadorBairro || "",
-            cep: result.data.tomadorCep || "",
-            city: result.data.tomadorCidade || "Campos dos Goytacazes",
-            state: result.data.tomadorUf || "RJ",
-            ibgeCode: result.data.tomadorCodigoMunicipio || "3301009",
-            notes: "Cadastrado automaticamente via Chat Assistente Fiscal",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          db.companies.unshift(comp);
+          let comp = db.companies.find(c => (c.cnpj || "").replace(/\D/g, "") === cleanDoc);
+          if (comp) {
+            comp.corporateName = comp.corporateName || result.data.tomadorNome;
+            comp.tradeName = comp.tradeName || result.data.tomadorNomeFantasia || result.data.tomadorNome;
+            comp.financialEmail = result.data.tomadorEmail || comp.financialEmail || "";
+            comp.phone = result.data.tomadorTelefone || comp.phone || "";
+            comp.address = result.data.tomadorEndereco || comp.address || "";
+            comp.logradouro = result.data.tomadorEndereco || comp.logradouro || "";
+            comp.number = result.data.tomadorNumero || comp.number || "";
+            comp.complement = result.data.tomadorComplemento || comp.complement || "";
+            comp.neighborhood = result.data.tomadorBairro || comp.neighborhood || "";
+            comp.cep = result.data.tomadorCep || comp.cep || "";
+            comp.city = result.data.tomadorCidade || comp.city || "Campos dos Goytacazes";
+            comp.state = result.data.tomadorUf || comp.state || "RJ";
+            comp.ibgeCode = result.data.tomadorCodigoMunicipio || comp.ibgeCode || "3301009";
+            comp.updatedAt = new Date().toISOString();
+          } else {
+            const nextCompId = (db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) : 0) + 1;
+            comp = {
+              id: nextCompId,
+              corporateName: result.data.tomadorNome,
+              tradeName: result.data.tomadorNomeFantasia || result.data.tomadorNome,
+              cnpj: cleanDoc,
+              financialEmail: result.data.tomadorEmail || "",
+              phone: result.data.tomadorTelefone || "",
+              address: result.data.tomadorEndereco || "",
+              logradouro: result.data.tomadorEndereco || "",
+              number: result.data.tomadorNumero || "",
+              complement: result.data.tomadorComplemento || "",
+              neighborhood: result.data.tomadorBairro || "",
+              cep: result.data.tomadorCep || "",
+              city: result.data.tomadorCidade || "Campos dos Goytacazes",
+              state: result.data.tomadorUf || "RJ",
+              ibgeCode: result.data.tomadorCodigoMunicipio || "3301009",
+              notes: "Cadastrado automaticamente via Chat Assistente Fiscal",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            db.companies.unshift(comp);
+          }
+          result.data.companyId = comp.id;
+          saveDatabase();
+          console.log(`[CRM] Empresa PJ ${comp.corporateName} (CNPJ ${comp.cnpj}) registrada com sucesso via Chat Fiscal!`);
         }
-        result.data.companyId = comp.id;
-        saveDatabase();
-        console.log(`[CRM] Empresa PJ ${comp.corporateName} (CNPJ ${comp.cnpj}) registrada com sucesso via Chat Fiscal!`);
       } else if (cleanDoc.length === 11) {
         if (!db.guests) db.guests = [];
         let existingGuest = db.guests.find(g => (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc);
@@ -34445,10 +36069,42 @@ app.get("/api/nfse/invoices", (req, res) => {
   });
 });
 
+// Helper para construir a discriminação detalhada de NFS-e B2B / 4-Pontas
+function buildB2bNfseDescription(r, guest = null, company = null, agency = null) {
+  if (!r) return "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.";
+  let diarias = 1;
+  if (r.checkinDate && r.checkoutDate) {
+    const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
+    if (diff > 0) diarias = diff;
+  }
+  const guestName = (r.guestName || guest?.fullName || guest?.name || "Hóspede").toUpperCase();
+  const flatNum = r.flatNumber || "N/D";
+  const periodStr = `${r.checkinDate || ""} A ${r.checkoutDate || ""} (${diarias} ${diarias === 1 ? "DIÁRIA" : "DIÁRIAS"} COM CAFÉ DA MANHÃ, WI-FI, ENERGIA E LIMPEZA INCLUSA)`;
+  const metaParts = [];
+  if (r.b2bReservationNumber || r.externalReservationNumber) {
+    metaParts.push(`RESERVA B2B Nº ${r.b2bReservationNumber || r.externalReservationNumber}`);
+  }
+  if (r.b2bLocatorRloc) {
+    metaParts.push(`RLOC: ${r.b2bLocatorRloc}`);
+  }
+  if (r.costCenter) {
+    metaParts.push(`CENTRO DE CUSTO: ${r.costCenter}`);
+  }
+  const compName = company?.corporateName || company?.tradeName || r.companyName || "";
+  if (compName) {
+    metaParts.push(`EMPRESA: ${compName.toUpperCase()}`);
+  }
+  const agName = agency?.tradeName || agency?.corporateName || r.agencyTradeName || r.agencyName || "";
+  if (agName) {
+    metaParts.push(`AGÊNCIA: ${agName.toUpperCase()}${r.agencyPosUnit ? ` (${r.agencyPosUnit.toUpperCase()})` : ""}`);
+  }
+  return `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLAT MOBILIADO CORPFLATS. HÓSPEDE: ${guestName} | FLAT: ${flatNum} | PERÍODO: ${periodStr}${metaParts.length > 0 ? " | " + metaParts.join(" | ") : ""}.`;
+}
+
 // Fila de Reservas Pendentes de Emissão de NFS-e
 app.get("/api/nfse/pending-reservations", (req, res) => {
   getFiscalData();
-  const { search, companyId, status, tomadorType } = req.query;
+  const { search, companyId, agencyId, status, tomadorType } = req.query;
 
   const authorized = (db.invoices || []).filter(i => i.status === "autorizada");
   const authorizedResIds = new Set();
@@ -34474,7 +36130,7 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
     }
 
     const guest = (db.guests || []).find(g =>
-      (r.guestId && g.id === r.guestId) ||
+      (r.guestId && Number(g.id) === Number(r.guestId)) ||
       (r.guestPhone && cleanPhone(g.phone) === cleanPhone(r.guestPhone)) ||
       (r.guestDocument && onlyDigits(g.documentNumber || g.document || g.cpf) === onlyDigits(r.guestDocument))
     );
@@ -34482,78 +36138,119 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
     const effectiveCompanyId = r.companyId || guest?.companyId;
     const company = effectiveCompanyId
       ? (db.companies || []).find(c => Number(c.id) === Number(effectiveCompanyId))
-      : null;
+      : (r.companyCnpj ? (db.companies || []).find(c => onlyDigits(c.cnpj) === onlyDigits(r.companyCnpj)) : null);
 
-    const isPj = Boolean(company) || onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf).length === 14;
-    const resolvedTomadorType = isPj ? "pj" : "pf";
-    const resolvedTomadorPadrao = isPj ? "PJ" : "PF";
+    const effectiveAgencyId = r.agencyId || guest?.agencyId;
+    const agency = effectiveAgencyId
+      ? (db.agencies || []).find(a => Number(a.id) === Number(effectiveAgencyId))
+      : (r.agencyCnpj ? (db.agencies || []).find(a => onlyDigits(a.cnpj) === onlyDigits(r.agencyCnpj)) : null);
 
-    const tomadorNome = isPj
-      ? (company?.corporateName || company?.tradeName || r.guestName)
-      : (r.guestName || guest?.fullName || guest?.name || "Hóspede");
+    let invoiceRecipientType = String(r.invoiceRecipientType || "").toLowerCase();
+    if (!["guest", "company", "agency"].includes(invoiceRecipientType)) {
+      if (agency && r.b2bRatePolicy === "NET" && !company) {
+        invoiceRecipientType = "agency";
+      } else if (company) {
+        invoiceRecipientType = "company";
+      } else if (agency) {
+        invoiceRecipientType = "agency";
+      } else if (onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf).length === 14) {
+        invoiceRecipientType = "company";
+      } else {
+        invoiceRecipientType = "guest";
+      }
+    }
 
-    const tomadorDoc = isPj
-      ? (company?.cnpj || r.guestDocument || "")
-      : (r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
-
-    const tomadorEmail = isPj
-      ? (company?.financialEmail || guest?.email || r.guestEmail || "")
-      : (r.guestEmail || guest?.email || "");
-
-    const tomadorTelefone = isPj
-      ? (company?.phone || guest?.phone || r.guestPhone || "")
-      : (r.guestPhone || guest?.phone || "");
-
-    const resolvedCheckinAddr = !isPj ? resolveGuestDigitalCheckinData({
+    const resolvedCheckinAddr = resolveGuestDigitalCheckinData({
       guestId: guest?.id || r.guestId,
-      cpfCnpj: tomadorDoc,
-      name: tomadorNome,
+      cpfCnpj: r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "",
+      name: r.guestName || guest?.fullName || guest?.name || "",
       reservationId: r.id,
       reservationCode: r.code
-    }) : null;
+    });
 
-    const rawEnd = isPj
-      ? (company?.address || company?.logradouro || guest?.street || guest?.address || "")
-      : (resolvedCheckinAddr?.logradouro || r.street || r.guestStreet || guest?.street || guest?.address || guest?.logradouro || "");
-    const rawNum = isPj
-      ? (company?.number || guest?.streetNumber || guest?.number || "")
-      : (resolvedCheckinAddr?.numero || r.streetNumber || r.guestStreetNumber || guest?.streetNumber || guest?.number || "");
-    const rawComp = isPj
-      ? (company?.complement || guest?.complement || "")
-      : (resolvedCheckinAddr?.complemento || r.complement || r.guestComplement || guest?.complement || "");
-    const rawBairro = isPj
-      ? (company?.neighborhood || guest?.neighborhood || "")
-      : (resolvedCheckinAddr?.bairro || r.neighborhood || r.guestNeighborhood || guest?.neighborhood || "");
-    const rawCep = isPj
-      ? (company?.cep || guest?.cep || "")
-      : (resolvedCheckinAddr?.cep || r.cep || r.guestCep || guest?.cep || "");
-    const rawCidade = isPj
-      ? (company?.city || guest?.city || "Campos dos Goytacazes")
-      : (resolvedCheckinAddr?.cidade || r.city || r.guestCity || guest?.city || "Campos dos Goytacazes");
-    const rawUf = isPj
-      ? (company?.state || guest?.state || "RJ")
-      : (resolvedCheckinAddr?.uf || r.state || r.guestState || guest?.state || "RJ");
-    const rawIbge = isPj
-      ? (company?.ibgeCode || guest?.ibgeCode || "3301009")
-      : (resolvedCheckinAddr?.ibge || guest?.ibgeCode || "3301009");
+    const guestOption = {
+      type: "guest",
+      tomadorType: "pf",
+      tomadorPadrao: "PF",
+      tomadorNome: toTitleCase(r.guestName || guest?.fullName || guest?.name || "Hóspede"),
+      tomadorCpfCnpj: onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""),
+      tomadorEmail: (r.guestEmail || guest?.email || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(r.guestPhone || guest?.phone || ""),
+      tomadorEndereco: (resolvedCheckinAddr?.logradouro || r.street || r.guestStreet || guest?.street || guest?.address || guest?.logradouro || "").trim(),
+      tomadorNumero: (resolvedCheckinAddr?.numero || r.streetNumber || r.guestStreetNumber || guest?.streetNumber || guest?.number || "").trim(),
+      tomadorComplemento: (resolvedCheckinAddr?.complemento || r.complement || r.guestComplement || guest?.complement || "").trim(),
+      tomadorBairro: (resolvedCheckinAddr?.bairro || r.neighborhood || r.guestNeighborhood || guest?.neighborhood || "").trim(),
+      tomadorCep: cleanCep(resolvedCheckinAddr?.cep || r.cep || r.guestCep || guest?.cep || ""),
+      tomadorCidade: (resolvedCheckinAddr?.cidade || r.city || r.guestCity || guest?.city || "Campos dos Goytacazes").trim(),
+      tomadorUf: (resolvedCheckinAddr?.uf || r.state || r.guestState || guest?.state || "RJ").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (resolvedCheckinAddr?.ibge || guest?.ibgeCode || "3301009").trim()
+    };
 
-    const tomadorEndereco = rawEnd;
-    const tomadorNumero = rawNum;
-    const tomadorComplemento = rawComp;
-    const tomadorBairro = rawBairro;
-    const tomadorCep = rawCep;
-    const tomadorCidade = rawCidade;
-    const tomadorUf = rawUf;
-    const tomadorCodigoMunicipio = rawIbge;
+    const companyOption = company ? {
+      type: "company",
+      tomadorType: "pj",
+      tomadorPadrao: "PJ",
+      companyId: Number(company.id),
+      tomadorNome: toTitleCase(company.corporateName || company.tradeName || r.companyName || ""),
+      tomadorCpfCnpj: onlyDigits(company.cnpj || r.companyCnpj || ""),
+      tomadorEmail: (company.financialEmail || r.agencyAgentEmail || guest?.email || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(company.phone || r.guestPhone || ""),
+      tomadorEndereco: (company.address || company.logradouro || "Av. Pelinca").trim(),
+      tomadorNumero: (company.number || "100").trim(),
+      tomadorComplemento: (company.complement || "").trim(),
+      tomadorBairro: (company.neighborhood || "Centro").trim(),
+      tomadorCep: cleanCep(company.cep || "28035000"),
+      tomadorCidade: (company.city || "Campos dos Goytacazes").trim(),
+      tomadorUf: (company.state || "RJ").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (company.ibgeCode || "3301009").trim()
+    } : null;
 
-    const cleanDoc = onlyDigits(tomadorDoc);
+    const agencyOption = agency ? {
+      type: "agency",
+      tomadorType: "agency",
+      tomadorPadrao: "AGÊNCIA PJ",
+      agencyId: Number(agency.id),
+      tomadorNome: toTitleCase(agency.corporateName || agency.razaoSocial || agency.tradeName || r.agencyName || ""),
+      tomadorCpfCnpj: onlyDigits(agency.cnpj || r.agencyCnpj || ""),
+      tomadorEmail: (r.agencyAgentEmail || agency.financialEmail || (Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(r.agencyAgentPhone || agency.phone || ""),
+      tomadorEndereco: (agency.address || agency.logradouro || "Av. Paulista").trim(),
+      tomadorNumero: (agency.number || "1000").trim(),
+      tomadorComplemento: (agency.complement || "").trim(),
+      tomadorBairro: (agency.neighborhood || "Centro").trim(),
+      tomadorCep: cleanCep(agency.cep || "01310100"),
+      tomadorCidade: (agency.city || "São Paulo").trim(),
+      tomadorUf: (agency.state || "SP").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (agency.ibgeCode || "3550308").trim()
+    } : null;
+
+    const activeOption =
+      (invoiceRecipientType === "agency" && agencyOption) ? agencyOption :
+      (invoiceRecipientType === "company" && companyOption) ? companyOption :
+      guestOption;
+
+    const resolvedTomadorType = activeOption.tomadorType;
+    const resolvedTomadorPadrao = activeOption.tomadorPadrao;
+    const tomadorNome = activeOption.tomadorNome;
+    const cleanDoc = activeOption.tomadorCpfCnpj;
+    const tomadorEmail = activeOption.tomadorEmail;
+    const tomadorTelefone = activeOption.tomadorTelefone;
+    const tomadorEndereco = activeOption.tomadorEndereco;
+    const tomadorNumero = activeOption.tomadorNumero;
+    const tomadorComplemento = activeOption.tomadorComplemento;
+    const tomadorBairro = activeOption.tomadorBairro;
+    const tomadorCep = activeOption.tomadorCep;
+    const tomadorCidade = activeOption.tomadorCidade;
+    const tomadorUf = activeOption.tomadorUf;
+    const tomadorCodigoMunicipio = activeOption.tomadorCodigoMunicipio;
+
     const pendingReasons = [];
     let hasPendingDoc = false;
 
     if (!cleanDoc) {
       pendingReasons.push("Documento CPF/CNPJ ausente");
       hasPendingDoc = true;
-    } else if (resolvedTomadorType === "pj" && !isValidCnpj(cleanDoc)) {
+    } else if ((resolvedTomadorType === "pj" || resolvedTomadorType === "agency") && !isValidCnpj(cleanDoc)) {
       pendingReasons.push("CNPJ inválido (Módulo 11)");
       hasPendingDoc = true;
     } else if (resolvedTomadorType === "pf" && !isValidCpf(cleanDoc)) {
@@ -34574,6 +36271,7 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       if (diff > 0) diarias = diff;
     }
     const valorServico = Number(r.totalAmount || (Number(r.dailyRate || 0) * diarias) || 250);
+    const discriminacaoSugerida = buildB2bNfseDescription(r, guest, company, agency);
 
     const item = {
       id: r.id,
@@ -34587,6 +36285,16 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       valorSugerido: valorServico,
       status: r.status,
       channel: r.channel || "direct",
+      invoiceRecipientType,
+      nfDeliveryEmails: Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails : (tomadorEmail ? [tomadorEmail] : []),
+      nfHideFromGuest: Boolean(r.nfHideFromGuest),
+      b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
+      b2bLocatorRloc: r.b2bLocatorRloc || null,
+      b2bRatePolicy: r.b2bRatePolicy || null,
+      b2bCommissionPct: r.b2bCommissionPct !== undefined ? Number(r.b2bCommissionPct) : null,
+      b2bNetAmount: r.b2bNetAmount !== undefined ? Number(r.b2bNetAmount) : null,
+      costCenter: r.costCenter || null,
+      discriminacaoSugerida,
       tomadorType: resolvedTomadorType,
       tomadorPadrao: resolvedTomadorPadrao,
       tomadorNome: toTitleCase(tomadorNome),
@@ -34604,8 +36312,18 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       guestId: guest?.id || r.guestId || null,
       guestName: r.guestName || guest?.fullName || guest?.name || "Hóspede",
       companyId: company?.id ? Number(company.id) : null,
-      companyName: company?.corporateName || company?.tradeName || null,
-      companyCnpj: company?.cnpj || null,
+      companyName: company?.corporateName || company?.tradeName || r.companyName || null,
+      companyCnpj: company?.cnpj || r.companyCnpj || null,
+      agencyId: agency?.id ? Number(agency.id) : (r.agencyId ? Number(r.agencyId) : null),
+      agencyName: agency?.tradeName || agency?.corporateName || r.agencyTradeName || r.agencyName || null,
+      agencyCorporateName: agency?.corporateName || r.agencyName || null,
+      agencyCnpj: agency?.cnpj || r.agencyCnpj || null,
+      agencyPosUnit: r.agencyPosUnit || null,
+      tomadorOptions: {
+        guest: guestOption,
+        company: companyOption,
+        agency: agencyOption
+      },
       hasPendingDoc,
       hasPendingCadastral: pendingReasons.length > 0,
       pendingReasons,
@@ -34619,11 +36337,19 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
   if (companyId) {
     filtered = filtered.filter(p => Number(p.companyId) === Number(companyId));
   }
+  if (agencyId) {
+    filtered = filtered.filter(p => Number(p.agencyId) === Number(agencyId));
+  }
   if (status && status !== "all" && status !== "todas") {
     filtered = filtered.filter(p => p.status === status);
   }
   if (tomadorType && tomadorType !== "all" && tomadorType !== "todas") {
-    filtered = filtered.filter(p => p.tomadorType.toLowerCase() === tomadorType.toLowerCase());
+    const tLower = String(tomadorType).toLowerCase();
+    filtered = filtered.filter(p =>
+      p.tomadorType.toLowerCase() === tLower ||
+      (p.invoiceRecipientType && p.invoiceRecipientType.toLowerCase() === tLower) ||
+      (tLower === "pj" && (p.tomadorType === "pj" || p.tomadorType === "agency"))
+    );
   }
   if (search && search.trim()) {
     const q = search.trim().toLowerCase();
@@ -34632,6 +36358,9 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       p.tomadorNome.toLowerCase().includes(q) ||
       (p.guestName && p.guestName.toLowerCase().includes(q)) ||
       (p.companyName && p.companyName.toLowerCase().includes(q)) ||
+      (p.agencyName && p.agencyName.toLowerCase().includes(q)) ||
+      (p.b2bReservationNumber && String(p.b2bReservationNumber).toLowerCase().includes(q)) ||
+      (p.b2bLocatorRloc && String(p.b2bLocatorRloc).toLowerCase().includes(q)) ||
       (p.code && p.code.toLowerCase().includes(q)) ||
       (p.flatNumber && p.flatNumber.includes(q)) ||
       (cleanQ && p.tomadorCpfCnpj.includes(cleanQ))
@@ -34676,6 +36405,28 @@ async function executeNfseEmissionInternal(payload) {
     return { success: false, badRequest: true, error: "Valor do serviço deve ser maior que zero." };
   }
 
+  const matchedRes = Array.isArray(db.reservations) && (payload.reservationId || payload.reservationCode)
+    ? db.reservations.find(r =>
+        (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
+        (payload.reservationCode && String(r.code) === String(payload.reservationCode))
+      )
+    : null;
+
+  // Identifica se o CNPJ pertence a uma Agência (para nunca misturar Agência em db.companies)
+  if (!db.agencies) db.agencies = [];
+  if (!db.companies) db.companies = [];
+  const existingAgencyByCnpj = cleanDoc.length === 14
+    ? db.agencies.find(a => onlyDigits(a.cnpj) === cleanDoc || (payload.agencyId && Number(a.id) === Number(payload.agencyId)))
+    : null;
+  const isAgencyTomador = Boolean(
+    payload.invoiceRecipientType === "agency" ||
+    payload.tomadorTipo === "agency" ||
+    payload.tomadorType === "agency" ||
+    payload.agencyId ||
+    existingAgencyByCnpj ||
+    (matchedRes && cleanDoc.length === 14 && matchedRes.agencyCnpj && onlyDigits(matchedRes.agencyCnpj) === cleanDoc)
+  );
+
   // Normalização de endereço e tomador (enriquecendo com check-in digital se necessário)
   const resolvedCheckin = cleanDoc.length === 11 ? resolveGuestDigitalCheckinData({
     guestId: payload.guestId,
@@ -34709,10 +36460,104 @@ async function executeNfseEmissionInternal(payload) {
   const endCodMun = normPayAddr.ibge;
   const cleanEmail = (payload.tomadorEmail || resolvedCheckin?.email || "").trim().toLowerCase();
   const cleanTel = cleanPhone(payload.tomadorTelefone || resolvedCheckin?.telefone || "");
-  const resolvedDiscriminacao = payload.discriminacao || payload.descricaoServico || `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`;
-  const resolvedCheckinDate = payload.checkinDate || payload.checkIn || null;
-  const resolvedCheckoutDate = payload.checkoutDate || payload.checkOut || null;
+
+  // Sincronização limpa de CRM ao emitir NFS-e para CNPJ (Agência -> db.agencies; Empresa -> db.companies)
+  let resolvedAgencyId = payload.agencyId ? Number(payload.agencyId) : (existingAgencyByCnpj?.id ? Number(existingAgencyByCnpj.id) : (matchedRes?.agencyId ? Number(matchedRes.agencyId) : null));
+  let resolvedCompanyId = payload.companyId ? Number(payload.companyId) : (matchedRes?.companyId ? Number(matchedRes.companyId) : null);
+
+  if (cleanDoc.length === 14) {
+    if (isAgencyTomador) {
+      let ag = existingAgencyByCnpj;
+      if (!ag) {
+        const nextAgId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
+        ag = {
+          id: nextAgId,
+          corporateName: toTitleCase(tomadorNome),
+          razaoSocial: toTitleCase(tomadorNome),
+          tradeName: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
+          nomeFantasia: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
+          cnpj: cleanDoc,
+          financialEmail: cleanEmail,
+          phone: cleanTel,
+          address: endLogradouro,
+          logradouro: endLogradouro,
+          number: endNumero,
+          complement: endComplemento,
+          neighborhood: endBairro,
+          cep: endCep,
+          city: endCidade,
+          state: endUf,
+          ibgeCode: endCodMun,
+          defaultRatePolicy: "COMISSIONADA",
+          defaultCommissionPct: 12,
+          defaultInvoiceRecipient: "agency",
+          posUnits: [],
+          agents: [],
+          clientCompanyIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.agencies.push(ag);
+      }
+      resolvedAgencyId = Number(ag.id);
+      // Se tomador é Agência, garante que companyId do invoice permaneça a empresa cliente da reserva (ou null), nunca gravando a agência em db.companies
+      if (resolvedCompanyId && Number(resolvedCompanyId) === Number(resolvedAgencyId)) {
+        const isActuallyCompany = db.companies.some(c => Number(c.id) === Number(resolvedCompanyId) && onlyDigits(c.cnpj) !== cleanDoc);
+        if (!isActuallyCompany) resolvedCompanyId = matchedRes?.companyId ? Number(matchedRes.companyId) : null;
+      }
+    } else {
+      let comp = db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc || (resolvedCompanyId && Number(c.id) === Number(resolvedCompanyId)));
+      if (!comp) {
+        const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
+        comp = {
+          id: nextCompId,
+          corporateName: toTitleCase(tomadorNome),
+          tradeName: payload.tomadorNomeFantasia || toTitleCase(tomadorNome),
+          cnpj: cleanDoc,
+          financialEmail: cleanEmail,
+          phone: cleanTel,
+          address: endLogradouro,
+          logradouro: endLogradouro,
+          number: endNumero,
+          complement: endComplemento,
+          neighborhood: endBairro,
+          cep: endCep,
+          city: endCidade,
+          state: endUf,
+          ibgeCode: endCodMun,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.companies.push(comp);
+      }
+      resolvedCompanyId = Number(comp.id);
+    }
+  }
+
+  const defaultDesc = matchedRes
+    ? buildB2bNfseDescription(
+        matchedRes,
+        null,
+        resolvedCompanyId ? db.companies.find(c => Number(c.id) === Number(resolvedCompanyId)) : null,
+        resolvedAgencyId ? db.agencies.find(a => Number(a.id) === Number(resolvedAgencyId)) : null
+      )
+    : `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${payload.flatNumber || ''}. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.`;
+  const resolvedDiscriminacao = payload.discriminacao || payload.descricaoServico || defaultDesc;
+  const resolvedCheckinDate = payload.checkinDate || payload.checkIn || matchedRes?.checkinDate || null;
+  const resolvedCheckoutDate = payload.checkoutDate || payload.checkOut || matchedRes?.checkoutDate || null;
   const resolvedAliquota = Number(payload.aliquota || payload.aliquotaIss || 2.0);
+  const resolvedNfHideFromGuest = payload.nfHideFromGuest !== undefined ? Boolean(payload.nfHideFromGuest) : Boolean(matchedRes?.nfHideFromGuest);
+  const rawDeliveryEmails = Array.isArray(payload.nfDeliveryEmails)
+    ? payload.nfDeliveryEmails
+    : (typeof payload.nfDeliveryEmails === "string" && payload.nfDeliveryEmails.trim()
+        ? payload.nfDeliveryEmails.split(/[;,]+/).map(s => s.trim()).filter(Boolean)
+        : (Array.isArray(matchedRes?.nfDeliveryEmails) && matchedRes.nfDeliveryEmails.length > 0
+            ? matchedRes.nfDeliveryEmails
+            : (cleanEmail ? [cleanEmail] : [])));
+  const guestPersonalEmail = String(matchedRes?.guestEmail || "").trim().toLowerCase();
+  const resolvedNfDeliveryEmails = resolvedNfHideFromGuest && guestPersonalEmail
+    ? rawDeliveryEmails.filter(e => String(e).trim().toLowerCase() !== guestPersonalEmail)
+    : rawDeliveryEmails;
 
   // Motor Oficial Unificado: Padrão Nacional ADN (Gov.br / SEFIN Nacional)
   const motorEscolhido = "padrao_nacional";
@@ -34742,7 +36587,7 @@ async function executeNfseEmissionInternal(payload) {
         cpfCnpj: cleanDoc,
         nome: toTitleCase(tomadorNome),
         telefone: cleanTel,
-        email: cleanEmail,
+        email: resolvedNfDeliveryEmails[0] || (resolvedNfHideFromGuest ? "" : cleanEmail),
         logradouro: endLogradouro || "Av. Pelinca",
         numero: endNumero || "100",
         complemento: endComplemento,
@@ -34753,8 +36598,8 @@ async function executeNfseEmissionInternal(payload) {
       },
       valorServico: valor,
       discriminacao: resolvedDiscriminacao,
-      flatNumber: payload.flatNumber,
-      reservationCode: payload.reservationCode,
+      flatNumber: payload.flatNumber || matchedRes?.flatNumber,
+      reservationCode: payload.reservationCode || matchedRes?.code,
       ambiente: db.nfseConfig?.ambiente || "producao"
     });
 
@@ -34811,11 +36656,18 @@ async function executeNfseEmissionInternal(payload) {
       prestadorRazaoSocial: "Rental Miller's LTDA",
       prestadorCnpj: "47.964.813/0001-65",
       prestadorIm: "142591",
-      companyId: payload.companyId ? Number(payload.companyId) : null,
-      guestId: payload.guestId ? Number(payload.guestId) : (resolvedCheckin?.guestId ? Number(resolvedCheckin.guestId) : null),
+      invoiceRecipientType: isAgencyTomador ? "agency" : (cleanDoc.length === 14 ? "company" : "guest"),
+      agencyId: resolvedAgencyId,
+      companyId: resolvedCompanyId,
+      guestId: payload.guestId ? Number(payload.guestId) : (resolvedCheckin?.guestId ? Number(resolvedCheckin.guestId) : (matchedRes?.guestId ? Number(matchedRes.guestId) : null)),
+      b2bReservationNumber: payload.b2bReservationNumber || matchedRes?.b2bReservationNumber || null,
+      b2bLocatorRloc: payload.b2bLocatorRloc || matchedRes?.b2bLocatorRloc || null,
+      costCenter: payload.costCenter || matchedRes?.costCenter || null,
+      nfDeliveryEmails: resolvedNfDeliveryEmails,
+      nfHideFromGuest: resolvedNfHideFromGuest,
       tomadorNome: toTitleCase(tomadorNome),
       tomadorCpfCnpj: cleanDoc,
-      tomadorEmail: cleanEmail,
+      tomadorEmail: resolvedNfDeliveryEmails[0] || (resolvedNfHideFromGuest ? "" : cleanEmail),
       tomadorTelefone: cleanTel,
       tomadorEndereco: endLogradouro,
       tomadorLogradouro: endLogradouro,
@@ -34826,14 +36678,14 @@ async function executeNfseEmissionInternal(payload) {
       tomadorCidade: endCidade,
       tomadorUf: endUf,
       tomadorCodigoMunicipio: endCodMun,
-      flatNumber: payload.flatNumber ? String(payload.flatNumber) : "",
+      flatNumber: payload.flatNumber ? String(payload.flatNumber) : (matchedRes?.flatNumber ? String(matchedRes.flatNumber) : ""),
       checkinDate: resolvedCheckinDate,
       checkoutDate: resolvedCheckoutDate,
-      reservationId: payload.reservationId ? Number(payload.reservationId) : null,
-      reservationCode: payload.reservationCode || null,
+      reservationId: payload.reservationId ? Number(payload.reservationId) : (matchedRes?.id ? Number(matchedRes.id) : null),
+      reservationCode: payload.reservationCode || matchedRes?.code || null,
       isConsolidated: Boolean(payload.isConsolidated),
-      reservationIds: Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : (payload.reservationId ? [Number(payload.reservationId)] : []),
-      reservationCodes: Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (payload.reservationCode ? [payload.reservationCode] : []),
+      reservationIds: Array.isArray(payload.reservationIds) ? payload.reservationIds.map(Number) : (payload.reservationId ? [Number(payload.reservationId)] : (matchedRes?.id ? [Number(matchedRes.id)] : [])),
+      reservationCodes: Array.isArray(payload.reservationCodes) ? payload.reservationCodes : (payload.reservationCode ? [payload.reservationCode] : (matchedRes?.code ? [matchedRes.code] : [])),
       consolidatedStaysCount: payload.consolidatedStaysCount || (payload.reservationId ? 1 : (Array.isArray(payload.reservationIds) ? payload.reservationIds.length : 1)),
       valorServico: valor,
       aliquota: resolvedAliquota,
@@ -34851,15 +36703,9 @@ async function executeNfseEmissionInternal(payload) {
 
     db.invoices.unshift(newInvoice);
 
-    if (Array.isArray(db.reservations) && (payload.reservationId || payload.reservationCode)) {
-      const matchedRes = db.reservations.find(r =>
-        (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
-        (payload.reservationCode && String(r.code) === String(payload.reservationCode))
-      );
-      if (matchedRes) {
-        matchedRes.invoiceId = newInvoice.id;
-        matchedRes.numeroNfse = newInvoice.numeroNfse;
-      }
+    if (matchedRes) {
+      matchedRes.invoiceId = newInvoice.id;
+      matchedRes.numeroNfse = newInvoice.numeroNfse;
     }
 
     // Se havia item na fila de retentativa fiscal para esta reserva/documento, remove
@@ -34880,6 +36726,7 @@ async function executeNfseEmissionInternal(payload) {
         numeroNfse: newInvoice.numeroNfse,
         codigoVerificacao: newInvoice.codigoVerificacao,
         tomador: newInvoice.tomadorNome,
+        invoiceRecipientType: newInvoice.invoiceRecipientType,
         valor: newInvoice.valorServico,
         link: newInvoice.linkPrefeitura
       },
@@ -34967,15 +36814,24 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
         }
 
         const guest = (db.guests || []).find(g =>
-          (reservationObj.guestId && g.id === reservationObj.guestId) ||
+          (reservationObj.guestId && Number(g.id) === Number(reservationObj.guestId)) ||
           (reservationObj.guestPhone && cleanPhone(g.phone) === cleanPhone(reservationObj.guestPhone))
         );
         const compId = reservationObj.companyId || guest?.companyId;
         const company = compId ? (db.companies || []).find(c => Number(c.id) === Number(compId)) : null;
+        const agId = reservationObj.agencyId || guest?.agencyId;
+        const agency = agId ? (db.agencies || []).find(a => Number(a.id) === Number(agId)) : null;
 
-        const isPj = Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14;
-        const tomadorNome = isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName;
-        const tomadorDoc = isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+        const recType = reservationObj.invoiceRecipientType || (agency && reservationObj.b2bRatePolicy === "NET" && !company ? "agency" : (company ? "company" : (agency ? "agency" : "guest")));
+        const isAg = recType === "agency" && Boolean(agency);
+        const isPj = !isAg && (Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14);
+
+        const tomadorNome = isAg
+          ? (agency.corporateName || agency.tradeName)
+          : (isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName);
+        const tomadorDoc = isAg
+          ? agency.cnpj
+          : (isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""));
 
         let diarias = 1;
         if (reservationObj.checkinDate && reservationObj.checkoutDate) {
@@ -34988,23 +36844,27 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
           reservationCode: reservationObj.code,
           guestId: guest?.id || reservationObj.guestId,
           companyId: company?.id ? Number(company.id) : null,
+          agencyId: agency?.id ? Number(agency.id) : null,
+          invoiceRecipientType: isAg ? "agency" : (isPj ? "company" : "guest"),
+          nfDeliveryEmails: reservationObj.nfDeliveryEmails || [],
+          nfHideFromGuest: Boolean(reservationObj.nfHideFromGuest),
           sistemaEmissor: "padrao_nacional",
           tomadorNome,
           tomadorCpfCnpj: tomadorDoc,
-          tomadorEmail: isPj ? (company?.financialEmail || guest?.email) : (reservationObj.guestEmail || guest?.email),
-          tomadorTelefone: isPj ? (company?.phone || guest?.phone) : (reservationObj.guestPhone || guest?.phone),
-          tomadorEndereco: isPj ? (company?.address || company?.logradouro || guest?.address) : (guest?.address || guest?.logradouro),
-          tomadorNumero: isPj ? (company?.number || guest?.number) : guest?.number,
-          tomadorComplemento: isPj ? (company?.complement || guest?.complement) : guest?.complement,
-          tomadorBairro: isPj ? (company?.neighborhood || guest?.neighborhood) : guest?.neighborhood,
-          tomadorCep: isPj ? (company?.cep || guest?.cep) : guest?.cep,
-          tomadorCidade: isPj ? (company?.city || guest?.city) : guest?.city,
-          tomadorUf: isPj ? (company?.state || guest?.state) : guest?.state,
+          tomadorEmail: isAg ? (reservationObj.agencyAgentEmail || agency.financialEmail) : (isPj ? (company?.financialEmail || guest?.email) : (reservationObj.guestEmail || guest?.email)),
+          tomadorTelefone: isAg ? (reservationObj.agencyAgentPhone || agency.phone) : (isPj ? (company?.phone || guest?.phone) : (reservationObj.guestPhone || guest?.phone)),
+          tomadorEndereco: isAg ? (agency.address || agency.logradouro) : (isPj ? (company?.address || company?.logradouro || guest?.address) : (guest?.address || guest?.logradouro)),
+          tomadorNumero: isAg ? agency.number : (isPj ? (company?.number || guest?.number) : guest?.number),
+          tomadorComplemento: isAg ? agency.complement : (isPj ? (company?.complement || guest?.complement) : guest?.complement),
+          tomadorBairro: isAg ? agency.neighborhood : (isPj ? (company?.neighborhood || guest?.neighborhood) : guest?.neighborhood),
+          tomadorCep: isAg ? agency.cep : (isPj ? (company?.cep || guest?.cep) : guest?.cep),
+          tomadorCidade: isAg ? agency.city : (isPj ? (company?.city || guest?.city) : guest?.city),
+          tomadorUf: isAg ? agency.state : (isPj ? (company?.state || guest?.state) : guest?.state),
           flatNumber: reservationObj.flatNumber,
           checkinDate: reservationObj.checkinDate,
           checkoutDate: reservationObj.checkoutDate,
           valorServico: Number(reservationObj.totalAmount || (Number(reservationObj.dailyRate || 0) * diarias) || 250),
-          discriminacao: `SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. FLAT ${reservationObj.flatNumber || ''}. PERÍODO: ${reservationObj.checkinDate || ''} A ${reservationObj.checkoutDate || ''} (${diarias} ${diarias === 1 ? 'DIÁRIA' : 'DIÁRIAS'}).`
+          discriminacao: buildB2bNfseDescription(reservationObj, guest, company, agency)
         };
       } else if (item && typeof item === "object") {
         payload = { ...item };
@@ -35018,18 +36878,22 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
           }
           if (reservationObj && (!payload.tomadorNome || !payload.tomadorCpfCnpj)) {
             const guest = (db.guests || []).find(g =>
-              (reservationObj.guestId && g.id === reservationObj.guestId) ||
+              (reservationObj.guestId && Number(g.id) === Number(reservationObj.guestId)) ||
               (reservationObj.guestPhone && cleanPhone(g.phone) === cleanPhone(reservationObj.guestPhone))
             );
             const compId = reservationObj.companyId || guest?.companyId;
             const company = compId ? (db.companies || []).find(c => Number(c.id) === Number(compId)) : null;
+            const agId = reservationObj.agencyId || guest?.agencyId;
+            const agency = agId ? (db.agencies || []).find(a => Number(a.id) === Number(agId)) : null;
 
-            const isPj = Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14;
+            const recType = payload.invoiceRecipientType || reservationObj.invoiceRecipientType || (agency && reservationObj.b2bRatePolicy === "NET" && !company ? "agency" : (company ? "company" : "guest"));
+            const isAg = recType === "agency" && Boolean(agency);
+            const isPj = !isAg && (Boolean(company) || onlyDigits(reservationObj.guestDocument).length === 14);
             if (!payload.tomadorNome) {
-              payload.tomadorNome = isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName;
+              payload.tomadorNome = isAg ? agency.corporateName : (isPj ? (company?.corporateName || reservationObj.guestName) : reservationObj.guestName);
             }
             if (!payload.tomadorCpfCnpj) {
-              payload.tomadorCpfCnpj = isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || "");
+              payload.tomadorCpfCnpj = isAg ? agency.cnpj : (isPj ? (company?.cnpj || reservationObj.guestDocument) : (reservationObj.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""));
             }
             if (!payload.valorServico) {
               let diarias = 1;
@@ -35108,29 +36972,34 @@ app.post("/api/nfse/emit-batch", async (req, res) => {
   });
 });
 
-// Emissão Consolidada Corporativa B2B
+// Emissão Consolidada Corporativa B2B (Por Empresa PJ ou Por Agência PJ)
 app.post("/api/nfse/emit-consolidated", async (req, res) => {
   getFiscalData();
   const {
     companyId,
+    agencyId,
     reservationIds = [],
     sistemaEmissor,
     discriminacaoCustom,
     aliquota = 2.0
   } = req.body || {};
 
-  if (!companyId) {
-    return res.status(400).json({ error: "O campo 'companyId' é obrigatório para emissão B2B consolidada." });
+  if (!companyId && !agencyId) {
+    return res.status(400).json({ error: "Informe 'companyId' (Empresa) ou 'agencyId' (Agência B2B) para emissão consolidada." });
   }
 
-  const company = (db.companies || []).find(c => Number(c.id) === Number(companyId));
-  if (!company) {
-    return res.status(404).json({ error: "Empresa parceira não encontrada no cadastro do CRM." });
+  const isAgencyConsolidated = Boolean(agencyId && !companyId);
+  const targetEntity = isAgencyConsolidated
+    ? (db.agencies || []).find(a => Number(a.id) === Number(agencyId))
+    : (db.companies || []).find(c => Number(c.id) === Number(companyId));
+
+  if (!targetEntity) {
+    return res.status(404).json({ error: isAgencyConsolidated ? "Agência de viagens não encontrada no CRM." : "Empresa parceira não encontrada no cadastro do CRM." });
   }
 
-  const cleanCnpj = onlyDigits(company.cnpj);
+  const cleanCnpj = onlyDigits(targetEntity.cnpj);
   if (!isValidCnpj(cleanCnpj)) {
-    return res.status(400).json({ error: "O CNPJ da empresa é inválido pelo algoritmo Módulo 11 da Receita Federal." });
+    return res.status(400).json({ error: "O CNPJ informado é inválido pelo algoritmo Módulo 11 da Receita Federal." });
   }
 
   if (!Array.isArray(reservationIds) || reservationIds.length === 0) {
@@ -35183,36 +37052,45 @@ app.post("/api/nfse/emit-consolidated", async (req, res) => {
     }
     const val = Number(r.totalAmount || (Number(r.dailyRate || 0) * diarias) || 0);
     const subtotal = `R$ ${val.toFixed(2)}`;
-    return `${idx + 1}. Hóspede: ${r.guestName || "Colaborador"} | Flat: ${r.flatNumber || "N/D"} | Período: ${r.checkinDate || ""} a ${r.checkoutDate || ""} (${diarias} ${diarias === 1 ? 'diária' : 'diárias'}) | Subtotal: ${subtotal}`;
+    const extraTags = [
+      r.b2bReservationNumber ? `Reserva B2B: ${r.b2bReservationNumber}` : null,
+      r.b2bLocatorRloc ? `RLOC: ${r.b2bLocatorRloc}` : null,
+      r.companyName ? `Empresa: ${r.companyName}` : null,
+      r.costCenter ? `CC: ${r.costCenter}` : null
+    ].filter(Boolean).join(" | ");
+    return `${idx + 1}. Hóspede: ${r.guestName || "Colaborador"} | Flat: ${r.flatNumber || "N/D"} | Período: ${r.checkinDate || ""} a ${r.checkoutDate || ""} (${diarias} ${diarias === 1 ? 'diária' : 'diárias'})${extraTags ? ` | ${extraTags}` : ""} | Subtotal: ${subtotal}`;
   }).join("\n");
 
   const formattedCnpj = formatCnpj(cleanCnpj);
+  const targetName = targetEntity.corporateName || targetEntity.razaoSocial || targetEntity.tradeName;
   const discriminacaoConsolidada = discriminacaoCustom || req.body?.discriminacao || req.body?.descricaoServico || `SERVIÇOS DE HOSPEDAGEM CORPORATIVA EM FLATS MOBILIADOS CORPFLATS.
-TOMADOR: ${toTitleCase(company.corporateName)} - CNPJ: ${formattedCnpj}
+TOMADOR (${isAgencyConsolidated ? "AGÊNCIA B2B" : "EMPRESA CORPORATIVA"}): ${toTitleCase(targetName)} - CNPJ: ${formattedCnpj}
 FATURAMENTO CONSOLIDADO DE ESTADIAS CORPORATIVAS:
 ${staysBreakdown}
 VALOR TOTAL CONSOLIDADO: R$ ${totalValor.toFixed(2)}
 CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qualquer natureza).`;
 
   const payload = {
-    companyId: Number(company.id),
+    companyId: isAgencyConsolidated ? null : Number(targetEntity.id),
+    agencyId: isAgencyConsolidated ? Number(targetEntity.id) : null,
+    invoiceRecipientType: isAgencyConsolidated ? "agency" : "company",
     isConsolidated: true,
     reservationIds: selectedReservations.map(r => Number(r.id)),
     reservationCodes: selectedReservations.map(r => r.code).filter(Boolean),
     consolidatedStaysCount: selectedReservations.length,
     sistemaEmissor: "padrao_nacional",
-    tomadorNome: toTitleCase(company.corporateName),
+    tomadorNome: toTitleCase(targetName),
     tomadorCpfCnpj: cleanCnpj,
-    tomadorEmail: (company.financialEmail || "").trim().toLowerCase(),
-    tomadorTelefone: cleanPhone(company.phone),
-    tomadorEndereco: company.address || company.logradouro || "Av. Pelinca",
-    tomadorNumero: company.number || "100",
-    tomadorComplemento: company.complement || "",
-    tomadorBairro: company.neighborhood || "Pelinca",
-    tomadorCep: cleanCep(company.cep),
-    tomadorCidade: company.city || "Campos dos Goytacazes",
-    tomadorUf: company.state || "RJ",
-    tomadorCodigoMunicipio: company.ibgeCode || "3301009",
+    tomadorEmail: (targetEntity.financialEmail || "").trim().toLowerCase(),
+    tomadorTelefone: cleanPhone(targetEntity.phone),
+    tomadorEndereco: targetEntity.address || targetEntity.logradouro || "Av. Pelinca",
+    tomadorNumero: targetEntity.number || "100",
+    tomadorComplemento: targetEntity.complement || "",
+    tomadorBairro: targetEntity.neighborhood || "Pelinca",
+    tomadorCep: cleanCep(targetEntity.cep),
+    tomadorCidade: targetEntity.city || (isAgencyConsolidated ? "São Paulo" : "Campos dos Goytacazes"),
+    tomadorUf: targetEntity.state || (isAgencyConsolidated ? "SP" : "RJ"),
+    tomadorCodigoMunicipio: targetEntity.ibgeCode || (isAgencyConsolidated ? "3550308" : "3301009"),
     flatNumber: selectedReservations.map(r => r.flatNumber).filter(Boolean).join(", "),
     checkinDate: selectedReservations[0]?.checkinDate || null,
     checkoutDate: selectedReservations[selectedReservations.length - 1]?.checkoutDate || null,
@@ -35241,7 +37119,7 @@ CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qua
     danfseUrl: emitResult.invoice.danfseUrl,
     valorTotal: totalValor,
     reservationsLinked: selectedReservations.length,
-    message: `NFS-e Corporativa Consolidada Nº ${emitResult.numeroNfse} emitida com sucesso para ${company.corporateName} (${selectedReservations.length} estadias vinculadas).`
+    message: `NFS-e Corporativa Consolidada Nº ${emitResult.numeroNfse} emitida com sucesso para ${targetName} (${selectedReservations.length} estadias vinculadas).`
   });
 });
 
@@ -36213,7 +38091,31 @@ app.get("/api/nfse/lookup-cnpj/:cnpj", async (req, res) => {
   }
   if (cnpj.length !== 14) return res.status(400).json({ error: "CNPJ inválido. Deve conter 14 dígitos." });
 
-  // 1. Checa primeiro no banco local de empresas da CorpFlats (resposta em 0ms)
+  // 1. Checa primeiro no banco local de empresas e agências da CorpFlats (resposta em 0ms)
+  if (db.agencies) {
+    const localAg = db.agencies.find(a => onlyDigits(a.cnpj) === cnpj);
+    if (localAg) {
+      return res.json({
+        razaoSocial: localAg.corporateName || localAg.razaoSocial,
+        nomeFantasia: localAg.tradeName || localAg.nomeFantasia || localAg.corporateName,
+        cnpj: localAg.cnpj,
+        email: localAg.financialEmail || "",
+        telefone: localAg.phone || "",
+        endereco: localAg.address || localAg.logradouro || "",
+        logradouro: localAg.logradouro || localAg.address || "",
+        numero: localAg.number || "",
+        complemento: localAg.complement || "",
+        bairro: localAg.neighborhood || "",
+        cep: localAg.cep || "",
+        cidade: localAg.city || "",
+        uf: localAg.state || "",
+        codigoMunicipio: localAg.ibgeCode || "",
+        agencyId: localAg.id,
+        isAgency: true,
+        origem: "crm_agencias"
+      });
+    }
+  }
   if (db.companies) {
     const local = db.companies.find(c => onlyDigits(c.cnpj) === cnpj);
     if (local) {
@@ -36224,7 +38126,15 @@ app.get("/api/nfse/lookup-cnpj/:cnpj", async (req, res) => {
         email: local.financialEmail || "",
         telefone: local.phone || "",
         endereco: local.address || "",
+        logradouro: local.logradouro || local.address || "",
+        numero: local.number || "",
+        complemento: local.complement || "",
+        bairro: local.neighborhood || "",
+        cep: local.cep || "",
         cidade: local.city || "",
+        uf: local.state || "",
+        codigoMunicipio: local.ibgeCode || "",
+        companyId: local.id,
         origem: "crm_local"
       });
     }
@@ -37430,6 +39340,326 @@ app.delete("/api/companies/:id", (req, res) => {
     actor: req.user || { name: "Usuário", role: "admin" },
     details: { companyId: id, removed },
     source: "CRM Empresas"
+  });
+  res.json({ success: true });
+});
+
+// ── Agências de Viagens B2B / Travel Agencies CRM & 360º Endpoints ──────────
+app.get(["/api/agencies", "/api/pms/agencies"], (req, res) => {
+  ensureB2bSeedData(db);
+  if (!db.agencies) db.agencies = [];
+  const enriched = db.agencies.map(ag => {
+    const agId = Number(ag.id);
+    const agCnpj = onlyDigits(ag.cnpj || "");
+    const reservations = (db.reservations || []).filter(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" && (
+        (r.agencyId && Number(r.agencyId) === agId) ||
+        (agCnpj && onlyDigits(r.agencyCnpj || "") === agCnpj) ||
+        (ag.tradeName && r.agencyName && String(r.agencyName).toLowerCase().includes(String(ag.tradeName).toLowerCase()))
+      )
+    );
+    const totalRevenue = reservations.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
+    const totalCommission = reservations.reduce((acc, r) => acc + (Number(r.b2bCommissionAmount) || 0), 0);
+    const totalNet = reservations.reduce((acc, r) => acc + (Number(r.b2bNetAmount) || (Number(r.totalAmount) || 0) - (Number(r.b2bCommissionAmount) || 0)), 0);
+    return {
+      ...ag,
+      reservationsCount: reservations.length,
+      totalRevenue: Number(totalRevenue.toFixed(2)),
+      totalCommission: Number(totalCommission.toFixed(2)),
+      totalNet: Number(totalNet.toFixed(2))
+    };
+  });
+  res.json(enriched);
+});
+
+app.get(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
+  ensureB2bSeedData(db);
+  const id = Number(req.params.id);
+  const agency = (db.agencies || []).find(a => Number(a.id) === id);
+  if (!agency) return res.status(404).json({ error: "Agência não encontrada" });
+
+  const agCnpj = onlyDigits(agency.cnpj || "");
+  const reservations = (db.reservations || []).filter(r =>
+    (r.agencyId && Number(r.agencyId) === id) ||
+    (agCnpj && onlyDigits(r.agencyCnpj || "") === agCnpj) ||
+    (agency.tradeName && r.agencyName && String(r.agencyName).toLowerCase().includes(String(agency.tradeName).toLowerCase()))
+  );
+
+  const companyIdsSet = new Set(Array.isArray(agency.clientCompanyIds) ? agency.clientCompanyIds.map(Number) : []);
+  reservations.forEach(r => {
+    if (r.companyId) companyIdsSet.add(Number(r.companyId));
+  });
+  const companies = (db.companies || []).filter(c => companyIdsSet.has(Number(c.id)));
+
+  const guestIdsSet = new Set();
+  reservations.forEach(r => {
+    if (r.guestId) guestIdsSet.add(Number(r.guestId));
+  });
+  const guests = (db.guests || []).filter(g => guestIdsSet.has(Number(g.id)) || Number(g.agencyId) === id);
+
+  const invoices = (db.invoices || []).filter(inv =>
+    (inv.agencyId && Number(inv.agencyId) === id) ||
+    (agCnpj && onlyDigits(inv.tomadorCpfCnpj || "") === agCnpj) ||
+    reservations.some(r => Number(r.id) === Number(inv.reservationId))
+  );
+
+  const activeRes = reservations.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
+  const totalRevenue = activeRes.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
+  const totalCommission = activeRes.reduce((acc, r) => acc + (Number(r.b2bCommissionAmount) || 0), 0);
+  const totalNet = activeRes.reduce((acc, r) => acc + (Number(r.b2bNetAmount) || (Number(r.totalAmount) || 0) - (Number(r.b2bCommissionAmount) || 0)), 0);
+
+  res.json({
+    agency,
+    reservations,
+    companies,
+    guests,
+    invoices,
+    stats: {
+      reservationsCount: reservations.length,
+      activeReservationsCount: activeRes.length,
+      companiesCount: companies.length,
+      guestsCount: guests.length,
+      invoicesCount: invoices.length,
+      totalRevenue: Number(totalRevenue.toFixed(2)),
+      totalCommission: Number(totalCommission.toFixed(2)),
+      totalNet: Number(totalNet.toFixed(2))
+    }
+  });
+});
+
+app.post(["/api/agencies", "/api/pms/agencies"], (req, res) => {
+  if (!db.agencies) db.agencies = [];
+  const b = req.body || {};
+  const resolvedCorporateName = (b.corporateName || b.razaoSocial || b.tradeName || b.nomeFantasia || "").trim();
+  if (!resolvedCorporateName) {
+    return res.status(400).json({ error: "Razão Social ou Nome Fantasia da agência é obrigatório." });
+  }
+  const resolvedTradeName = (b.tradeName || b.nomeFantasia || resolvedCorporateName).trim();
+  const resolvedCnpj = (b.cnpj || "").trim();
+  const cleanCnpj = onlyDigits(resolvedCnpj);
+
+  if (cleanCnpj.length === 14) {
+    const existing = db.agencies.find(a => onlyDigits(a.cnpj) === cleanCnpj);
+    if (existing) {
+      if (b.posUnits && Array.isArray(b.posUnits)) existing.posUnits = b.posUnits;
+      if (b.agents && Array.isArray(b.agents)) existing.agents = b.agents;
+      if (b.financialEmail || b.email) existing.financialEmail = (b.financialEmail || b.email).trim();
+      if (b.phone || b.telefone) existing.phone = (b.phone || b.telefone).trim();
+      existing.updatedAt = new Date().toISOString();
+      saveDatabase("agency_upserted_" + existing.id);
+      return res.status(200).json(existing);
+    }
+  }
+
+  const resolvedStateReg = (b.stateRegistration || b.inscricaoEstadual || "").trim();
+  const resolvedMunReg = (b.municipalRegistration || b.inscricaoMunicipal || "").trim();
+  const resolvedEmail = (b.financialEmail || b.emailFinanceiro || b.email || "").trim();
+  const resolvedPhone = (b.phone || b.telefone || "").trim();
+  const resolvedContact = (b.contactPerson || b.contato || "").trim();
+  const resolvedBilling = (b.billingTerms || b.condicaoFaturamento || "Cartão Virtual B2B (VCN) / Faturado").trim();
+  const resolvedNotes = (b.notes || b.observacoes || "").trim();
+  const resolvedAddress = (b.address || b.logradouro || b.endereco || "").trim();
+  const resolvedNumber = (b.number || b.numero || "").trim();
+  const resolvedComplement = (b.complement || b.complemento || "").trim();
+  const resolvedNeighborhood = (b.neighborhood || b.bairro || "").trim();
+  const resolvedCep = String(b.cep || "").replace(/\D/g, "");
+  const resolvedCity = (b.city || b.cidade || b.municipio || "São Paulo").trim();
+  const resolvedState = (b.state || b.uf || b.estado || "SP").trim().toUpperCase();
+  const resolvedIbge = (b.ibgeCode || b.codigoMunicipio || b.codigoIbge || (resolvedCity.toLowerCase().includes("campos") ? "3301009" : "3550308")).trim();
+  const defaultRatePolicy = String(b.defaultRatePolicy || "COMISSIONADA").toUpperCase() === "NET" ? "NET" : "COMISSIONADA";
+  const defaultCommissionPct = b.defaultCommissionPct !== undefined ? Number(b.defaultCommissionPct) : (defaultRatePolicy === "NET" ? 0 : 12);
+  const defaultInvoiceRecipient = ["guest", "company", "agency"].includes(String(b.defaultInvoiceRecipient || "").toLowerCase())
+    ? String(b.defaultInvoiceRecipient).toLowerCase()
+    : (defaultRatePolicy === "NET" ? "agency" : "company");
+
+  const nextId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
+  const newAgency = {
+    id: nextId,
+    corporateName: resolvedCorporateName,
+    razaoSocial: resolvedCorporateName,
+    tradeName: resolvedTradeName,
+    nomeFantasia: resolvedTradeName,
+    cnpj: resolvedCnpj || "Não informado",
+    stateRegistration: resolvedStateReg,
+    inscricaoEstadual: resolvedStateReg,
+    municipalRegistration: resolvedMunReg,
+    inscricaoMunicipal: resolvedMunReg,
+    financialEmail: resolvedEmail,
+    emailFinanceiro: resolvedEmail,
+    phone: resolvedPhone,
+    telefone: resolvedPhone,
+    contactPerson: resolvedContact,
+    contato: resolvedContact,
+    billingTerms: resolvedBilling,
+    defaultRatePolicy,
+    defaultCommissionPct,
+    defaultInvoiceRecipient,
+    posUnits: Array.isArray(b.posUnits) ? b.posUnits : [],
+    agents: Array.isArray(b.agents) ? b.agents : [],
+    clientCompanyIds: Array.isArray(b.clientCompanyIds) ? b.clientCompanyIds.map(Number) : [],
+    notes: resolvedNotes,
+    address: resolvedAddress,
+    logradouro: resolvedAddress,
+    endereco: resolvedAddress,
+    number: resolvedNumber,
+    numero: resolvedNumber,
+    complement: resolvedComplement,
+    complemento: resolvedComplement,
+    neighborhood: resolvedNeighborhood,
+    bairro: resolvedNeighborhood,
+    cep: resolvedCep,
+    city: resolvedCity,
+    cidade: resolvedCity,
+    state: resolvedState,
+    uf: resolvedState,
+    ibgeCode: resolvedIbge,
+    codigoMunicipio: resolvedIbge,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  db.agencies.push(newAgency);
+  saveDatabase("agency_created_" + newAgency.id);
+  logAuditEvent({
+    level: "info",
+    category: "agency",
+    action: "AGENCY_CREATED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { agencyId: newAgency.id, corporateName: newAgency.corporateName, tradeName: newAgency.tradeName, cnpj: newAgency.cnpj, fullAgency: newAgency },
+    source: "CRM Agências"
+  });
+  res.status(201).json(newAgency);
+});
+
+const updateAgencyHandler = (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.agencies) db.agencies = [];
+  const agency = db.agencies.find(a => Number(a.id) === id);
+  if (!agency) return res.status(404).json({ error: "Agência não encontrada" });
+
+  const b = req.body || {};
+  if (b.corporateName !== undefined || b.razaoSocial !== undefined) {
+    const val = (b.corporateName ?? b.razaoSocial ?? "").trim();
+    agency.corporateName = val;
+    agency.razaoSocial = val;
+  }
+  if (b.tradeName !== undefined || b.nomeFantasia !== undefined) {
+    const val = (b.tradeName ?? b.nomeFantasia ?? "").trim();
+    agency.tradeName = val;
+    agency.nomeFantasia = val;
+  }
+  if (b.cnpj !== undefined) agency.cnpj = String(b.cnpj).trim();
+  if (b.stateRegistration !== undefined || b.inscricaoEstadual !== undefined) {
+    const val = (b.stateRegistration ?? b.inscricaoEstadual ?? "").trim();
+    agency.stateRegistration = val;
+    agency.inscricaoEstadual = val;
+  }
+  if (b.municipalRegistration !== undefined || b.inscricaoMunicipal !== undefined) {
+    const val = (b.municipalRegistration ?? b.inscricaoMunicipal ?? "").trim();
+    agency.municipalRegistration = val;
+    agency.inscricaoMunicipal = val;
+  }
+  if (b.financialEmail !== undefined || b.emailFinanceiro !== undefined || b.email !== undefined) {
+    const val = (b.financialEmail ?? b.emailFinanceiro ?? b.email ?? "").trim();
+    agency.financialEmail = val;
+    agency.emailFinanceiro = val;
+  }
+  if (b.phone !== undefined || b.telefone !== undefined) {
+    const val = (b.phone ?? b.telefone ?? "").trim();
+    agency.phone = val;
+    agency.telefone = val;
+  }
+  if (b.contactPerson !== undefined || b.contato !== undefined) {
+    const val = (b.contactPerson ?? b.contato ?? "").trim();
+    agency.contactPerson = val;
+    agency.contato = val;
+  }
+  if (b.billingTerms !== undefined || b.condicaoFaturamento !== undefined) {
+    agency.billingTerms = (b.billingTerms ?? b.condicaoFaturamento ?? "").trim();
+  }
+  if (b.defaultRatePolicy !== undefined) {
+    agency.defaultRatePolicy = String(b.defaultRatePolicy).toUpperCase() === "NET" ? "NET" : "COMISSIONADA";
+  }
+  if (b.defaultCommissionPct !== undefined) {
+    agency.defaultCommissionPct = Number(b.defaultCommissionPct);
+  }
+  if (b.defaultInvoiceRecipient !== undefined) {
+    agency.defaultInvoiceRecipient = String(b.defaultInvoiceRecipient).toLowerCase();
+  }
+  if (Array.isArray(b.posUnits)) agency.posUnits = b.posUnits;
+  if (Array.isArray(b.agents)) agency.agents = b.agents;
+  if (Array.isArray(b.clientCompanyIds)) agency.clientCompanyIds = b.clientCompanyIds.map(Number);
+  if (b.notes !== undefined || b.observacoes !== undefined) {
+    agency.notes = (b.notes ?? b.observacoes ?? "").trim();
+  }
+  if (b.address !== undefined || b.logradouro !== undefined || b.endereco !== undefined) {
+    const val = (b.address ?? b.logradouro ?? b.endereco ?? "").trim();
+    agency.address = val;
+    agency.logradouro = val;
+    agency.endereco = val;
+  }
+  if (b.number !== undefined || b.numero !== undefined) {
+    const val = (b.number ?? b.numero ?? "").trim();
+    agency.number = val;
+    agency.numero = val;
+  }
+  if (b.complement !== undefined || b.complemento !== undefined) {
+    const val = (b.complement ?? b.complemento ?? "").trim();
+    agency.complement = val;
+    agency.complemento = val;
+  }
+  if (b.neighborhood !== undefined || b.bairro !== undefined) {
+    const val = (b.neighborhood ?? b.bairro ?? "").trim();
+    agency.neighborhood = val;
+    agency.bairro = val;
+  }
+  if (b.cep !== undefined) agency.cep = String(b.cep || "").replace(/\D/g, "");
+  if (b.city !== undefined || b.cidade !== undefined || b.municipio !== undefined) {
+    const val = (b.city ?? b.cidade ?? b.municipio ?? "").trim();
+    agency.city = val;
+    agency.cidade = val;
+  }
+  if (b.state !== undefined || b.uf !== undefined || b.estado !== undefined) {
+    const val = String(b.state ?? b.uf ?? b.estado ?? "").trim().toUpperCase();
+    agency.state = val;
+    agency.uf = val;
+  }
+  if (b.ibgeCode !== undefined || b.codigoMunicipio !== undefined || b.codigoIbge !== undefined) {
+    const val = (b.ibgeCode ?? b.codigoMunicipio ?? b.codigoIbge ?? "").trim();
+    agency.ibgeCode = val;
+    agency.codigoMunicipio = val;
+  }
+
+  agency.updatedAt = new Date().toISOString();
+  saveDatabase("agency_updated_" + id);
+  logAuditEvent({
+    level: "info",
+    category: "agency",
+    action: "AGENCY_UPDATED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { agencyId: id, corporateName: agency.corporateName, changes: req.body },
+    source: "CRM Agências"
+  });
+  res.json(agency);
+};
+
+app.patch(["/api/agencies/:id", "/api/pms/agencies/:id"], updateAgencyHandler);
+app.put(["/api/agencies/:id", "/api/pms/agencies/:id"], updateAgencyHandler);
+
+app.delete(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.agencies) db.agencies = [];
+  const agency = db.agencies.find(a => Number(a.id) === id);
+  const removed = agency ? { ...agency } : null;
+  db.agencies = db.agencies.filter(a => Number(a.id) !== id);
+  saveDatabase("agency_deleted_" + id);
+  logAuditEvent({
+    level: "warn",
+    category: "agency",
+    action: "AGENCY_DELETED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { agencyId: id, removed },
+    source: "CRM Agências"
   });
   res.json({ success: true });
 });
@@ -42969,15 +45199,15 @@ function hasRealPaymentEvidence(r) {
 function isUnverifiedPreReservation(r) {
   if (!r) return false;
   const chan = String(r.channel || "").toLowerCase();
-  const isOtaChan = chan.includes("booking") || chan.includes("airbnb");
-  return !isOtaChan && r.status === "pre_reserva" && !hasRealPaymentEvidence(r);
+  const isOtaOrB2bChan = chan.includes("booking") || chan.includes("airbnb") || chan === "b2b" || chan.includes("b2b") || Boolean(r.b2bReservationNumber);
+  return !isOtaOrB2bChan && r.status === "pre_reserva" && !hasRealPaymentEvidence(r);
 }
 
 function isPreReservationBlocked(r) {
   if (!r) return false;
   const chan = String(r.channel || "").toLowerCase();
-  const isOtaChan = chan.includes("booking") || chan.includes("airbnb");
-  if (isOtaChan) return false;
+  const isOtaOrB2bChan = chan.includes("booking") || chan.includes("airbnb") || chan === "b2b" || chan.includes("b2b") || Boolean(r.b2bReservationNumber);
+  if (isOtaOrB2bChan) return false;
   const st = String(r.status || "").toLowerCase();
   if (st === "pre_reserva" || st === "pendente") return true;
   if (isUnverifiedPreReservation(r)) return true;

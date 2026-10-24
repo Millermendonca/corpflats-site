@@ -1588,7 +1588,7 @@ export default function GuestPreCheckin() {
   const isPreReservationBlocked = useMemo(() => {
     if (!reservation) return false
     const chan = String(reservation.channel || "").toLowerCase()
-    const isOtaChan = chan.includes("booking") || chan.includes("airbnb")
+    const isOtaChan = chan.includes("booking") || chan.includes("airbnb") || chan.includes("b2b") || Boolean(reservation.agencyId || reservation.b2bReservationNumber)
     if (isOtaChan) return false
     const st = String(reservation.status || "").toLowerCase()
     if (st === "pre_reserva" || st === "pendente") return true

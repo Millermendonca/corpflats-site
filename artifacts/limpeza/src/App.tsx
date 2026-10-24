@@ -17,6 +17,7 @@ import PmsCalendar from '@/pages/pms-calendar';
 import WhatsappAutomation from '@/pages/whatsapp-automation';
 import WhatsappChat from '@/pages/whatsapp-chat';
 import GuestPreCheckin from '@/pages/guest-pre-checkin';
+import AgencyGuestCredential from '@/pages/agency-guest-credential';
 import VerifyFnrh from '@/pages/verify-fnrh';
 import BookingEngine from '@/pages/booking-engine';
 import GuestBreakfast from '@/pages/guest-breakfast';
@@ -332,6 +333,10 @@ function Router() {
         <Route path="/guest-portal" component={GuestPortalWrapper} />
         <Route path="/pre-checkin/:code" component={GuestPreCheckin} />
         <Route path="/pre-checkin" component={GuestPreCheckin} />
+        <Route path="/credenciamento/:code" component={AgencyGuestCredential} />
+        <Route path="/credenciamento" component={AgencyGuestCredential} />
+        <Route path="/credenciamento-hospede/:code" component={AgencyGuestCredential} />
+        <Route path="/credenciamento-hospede" component={AgencyGuestCredential} />
         <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />
         <Route path="/verificar-ficha" component={VerifyFnrh} />
 

@@ -479,6 +479,7 @@ export default function Payments() {
                       <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
                       <SelectItem value="booking">🔵 Booking.com</SelectItem>
                       <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                      <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

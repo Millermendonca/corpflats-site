@@ -126,7 +126,7 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
   let requesterEmail = ""
   let requesterType: "guest" | "other_person" | "company" = resItem?.requesterType || "guest"
   if (requesterType === "guest") {
-    if (resItem?.companyId || resItem?.companyName) {
+    if (resItem?.agencyId || resItem?.agencyName || String(resItem?.channel || "").toLowerCase() === "b2b" || resItem?.companyId || resItem?.companyName) {
       requesterType = "company"
     } else if (
       resItem?.requesterInfo &&
@@ -142,24 +142,31 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
     requesterPhone = (resItem.requesterInfo.phone || "").trim()
     requesterEmail = String(resItem.requesterInfo.email || "").trim().toLowerCase()
   } else if (requesterType === "company") {
-    requesterCompany = resItem?.companyName || ""
-    let companyObj = null
-    if (resItem.companyId && companies.length > 0) {
-      companyObj = companies.find(c => String(c.id) === String(resItem.companyId))
-    }
-    if (!companyObj && resItem.companyName && companies.length > 0) {
-      companyObj = companies.find(c => 
-        c.tradeName?.toLowerCase() === resItem.companyName?.toLowerCase() ||
-        c.corporateName?.toLowerCase() === resItem.companyName?.toLowerCase()
-      )
-    }
-    if (companyObj) {
-      requesterName = (companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
-      requesterPhone = (companyObj.phone || "").trim()
-      requesterEmail = String(companyObj.email || companyObj.financialEmail || "").trim().toLowerCase()
-      requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany
+    if (resItem?.agencyId || resItem?.agencyName || String(resItem?.channel || "").toLowerCase() === "b2b") {
+      requesterCompany = resItem?.agencyTradeName || resItem?.agencyName || resItem?.companyName || "Agência B2B"
+      requesterName = (resItem?.agencyAgentName || resItem?.agencyTradeName || resItem?.agencyName || resItem?.companyName || "Agência B2B").trim()
+      requesterPhone = (resItem?.agencyAgentPhone || "").trim()
+      requesterEmail = String(resItem?.agencyAgentEmail || "").trim().toLowerCase()
     } else {
-      requesterName = resItem.companyName || "Solicitante Corporativo"
+      requesterCompany = resItem?.companyName || ""
+      let companyObj = null
+      if (resItem.companyId && companies.length > 0) {
+        companyObj = companies.find(c => String(c.id) === String(resItem.companyId))
+      }
+      if (!companyObj && resItem.companyName && companies.length > 0) {
+        companyObj = companies.find(c => 
+          c.tradeName?.toLowerCase() === resItem.companyName?.toLowerCase() ||
+          c.corporateName?.toLowerCase() === resItem.companyName?.toLowerCase()
+        )
+      }
+      if (companyObj) {
+        requesterName = (companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
+        requesterPhone = (companyObj.phone || "").trim()
+        requesterEmail = String(companyObj.email || companyObj.financialEmail || "").trim().toLowerCase()
+        requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany
+      } else {
+        requesterName = resItem.companyName || "Solicitante Corporativo"
+      }
     }
   }
 
@@ -457,7 +464,8 @@ export function renderQuickMessage(
   const recipientGuestIndex = companion ? companion.index : 1
 
   const recipientIsRequester = targetRecipient === "requester"
-  const hideFinancialForGuest = Boolean(requester.isDifferentFromGuest && !recipientIsRequester)
+  const isB2b = String(resItem.channel || "").toLowerCase() === "b2b" || Boolean(resItem.agencyId || resItem.b2bReservationNumber || resItem.b2bLocatorRloc)
+  const hideFinancialForGuest = Boolean((isB2b || requester.isDifferentFromGuest || resItem.nfHideFromGuest) && !recipientIsRequester)
   const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name)
   const primaryRecipientFirstName = companion ? companion.firstName : (recipientIsRequester ? requester.firstName : guest.firstName)
   const primaryRecipientPhone = companion ? companion.phone : (recipientIsRequester ? requester.phone : guest.phone)

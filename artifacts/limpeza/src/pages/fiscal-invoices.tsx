@@ -52,7 +52,7 @@ interface ExtractedData {
 
 interface CrmSearchItem {
   id: string
-  type: "company" | "guest" | "reservation"
+  type: "company" | "agency" | "guest" | "reservation"
   title: string
   subtitle: string
   badge: string
@@ -100,23 +100,28 @@ export default function FiscalInvoicesPage() {
     direct: true,
     whatsapp: true,
     booking: true,
+    b2b: true,
     airbnb: true,
     autoCheckout: true
   })
   const [savingChannelRules, setSavingChannelRules] = useState(false)
 
-  // ── CRM Multi-Entidade (Hóspedes PF, Empresas PJ e Reservas) ───────────────
+  // ── CRM Multi-Entidade (Hóspedes PF, Empresas PJ, Agências B2B e Reservas) ──
   const [guests, setGuests] = useState<any[]>([])
   const [companies, setCompanies] = useState<any[]>([])
+  const [agencies, setAgencies] = useState<any[]>([])
   const [reservations, setReservations] = useState<any[]>([])
   const [guestSearchQuery, setGuestSearchQuery] = useState("")
   const [guestDropdownOpen, setGuestDropdownOpen] = useState(false)
   const [selectedEntity, setSelectedEntity] = useState<any | null>(null)
   const [selectedGuest, setSelectedGuest] = useState<any | null>(null)
   const [linkedCompany, setLinkedCompany] = useState<any | null>(null)
+  const [linkedAgency, setLinkedAgency] = useState<any | null>(null)
   const [linkedGuest, setLinkedGuest] = useState<any | null>(null)
   const [linkedReservation, setLinkedReservation] = useState<any | null>(null)
-  const [tomadorMode, setTomadorMode] = useState<"pj" | "pf">("pf")
+  const [tomadorMode, setTomadorMode] = useState<"pj" | "pf" | "agency">("pf")
+  const [formNfHideFromGuest, setFormNfHideFromGuest] = useState(false)
+  const [formNfDeliveryEmails, setFormNfDeliveryEmails] = useState("")
   const guestComboboxRef = useRef<HTMLDivElement>(null)
 
   // ── Configurações Fiscais e Template de Tags ────────────────────────────────
@@ -174,9 +179,11 @@ export default function FiscalInvoicesPage() {
 
   // ── Faturamento & Lote State ────────────────────────────────────────────────
   const [pendingSearch, setPendingSearch] = useState("")
-  const [pendingTypeFilter, setPendingTypeFilter] = useState<"all" | "pf" | "pj">("all")
+  const [pendingTypeFilter, setPendingTypeFilter] = useState<"all" | "pf" | "pj" | "agency">("all")
   const [pendingCompanyFilter, setPendingCompanyFilter] = useState<string>("all")
+  const [pendingAgencyFilter, setPendingAgencyFilter] = useState<string>("all")
   const [pendingCadastralFilter, setPendingCadastralFilter] = useState<"all" | "ready" | "pending_doc">("all")
+  const [pendingTomadorOverrides, setPendingTomadorOverrides] = useState<Record<string, "guest" | "company" | "agency">>({})
   const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([])
   const [batchModalOpen, setBatchModalOpen] = useState(false)
   const [batchEmitting, setBatchEmitting] = useState(false)
@@ -184,7 +191,9 @@ export default function FiscalInvoicesPage() {
 
   // ── Faturamento B2B Consolidado State ───────────────────────────────────────
   const [consolidatedModalOpen, setConsolidatedModalOpen] = useState(false)
+  const [consolidatedTargetType, setConsolidatedTargetType] = useState<"company" | "agency">("company")
   const [consolidatedCompanyId, setConsolidatedCompanyId] = useState<string>("")
+  const [consolidatedAgencyId, setConsolidatedAgencyId] = useState<string>("")
   const [consolidatedEmitting, setConsolidatedEmitting] = useState(false)
   const [consolidatedResults, setConsolidatedResults] = useState<any | null>(null)
 
@@ -249,6 +258,16 @@ export default function FiscalInvoicesPage() {
     }
   }
 
+  const fetchAgencies = async () => {
+    try {
+      const res = await fetch("/api/agencies", { credentials: "include" })
+      const data = await res.json()
+      if (Array.isArray(data)) setAgencies(data)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   const fetchReservations = async () => {
     try {
       const res = await fetch("/api/pms/calendar?startDate=2026-01-01&endDate=2027-12-31", { credentials: "include" })
@@ -292,6 +311,7 @@ export default function FiscalInvoicesPage() {
     fetchInvoices()
     fetchGuests()
     fetchCompanies()
+    fetchAgencies()
     fetchReservations()
     fetchRetryQueue()
     fetchFiscalSettings()
@@ -358,18 +378,41 @@ export default function FiscalInvoicesPage() {
   }
 
   // ── Helper de Discriminação de Serviços ─────────────────────────────────────
-  const buildCorporateDescription = (guestName: string, flat?: string, checkin?: string, checkout?: string, diarias?: number) => {
-    let desc = `Nota fiscal de prestação de serviços de hospedagem corporativa referente ao colaborador ${guestName}`
+  const buildCorporateDescription = (
+    guestName: string,
+    flat?: string,
+    checkin?: string,
+    checkout?: string,
+    diarias?: number,
+    extra?: { rloc?: string; b2bNumber?: string; costCenter?: string; agencyName?: string; companyName?: string }
+  ) => {
+    let desc = `Nota fiscal de prestação de serviços de hospedagem corporativa referente ao hóspede/colaborador ${guestName}`
     if (flat) desc += `, no Flat ${flat}`
     desc += ".\nLocal: CorpFlats."
     desc += "\nRua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"
     if (diarias) desc += `\nQuantidade de diárias: ${diarias}`
     if (checkin) desc += `\nCheck-in: ${checkin}`
     if (checkout) desc += `\nCheck-out: ${checkout}`
+    const idParts: string[] = []
+    if (extra?.b2bNumber) idParts.push(`Reserva B2B Nº ${extra.b2bNumber}`)
+    if (extra?.rloc) idParts.push(`Localizador RLOC: ${extra.rloc}`)
+    if (extra?.costCenter) idParts.push(`Centro de Custo: ${extra.costCenter}`)
+    if (extra?.companyName) idParts.push(`Empresa: ${extra.companyName}`)
+    if (extra?.agencyName) idParts.push(`Agência: ${extra.agencyName}`)
+    if (idParts.length > 0) {
+      desc += `\nIdentificadores: ${idParts.join(" | ")}`
+    }
     return desc
   }
 
-  const buildStandardDescription = (guestName: string, flat?: string, checkin?: string, checkout?: string, diarias?: number) => {
+  const buildStandardDescription = (
+    guestName: string,
+    flat?: string,
+    checkin?: string,
+    checkout?: string,
+    diarias?: number,
+    extra?: { rloc?: string; b2bNumber?: string; costCenter?: string }
+  ) => {
     let desc = `Nota relativa à hospedagem de ${guestName}`
     if (flat) desc += `, no Flat ${flat}`
     desc += ".\nLocal: CorpFlats."
@@ -377,15 +420,23 @@ export default function FiscalInvoicesPage() {
     if (diarias) desc += `\nQuantidade de diárias: ${diarias}`
     if (checkin) desc += `\nCheck-in: ${checkin}`
     if (checkout) desc += `\nCheck-out: ${checkout}`
+    const idParts: string[] = []
+    if (extra?.b2bNumber) idParts.push(`Reserva B2B Nº ${extra.b2bNumber}`)
+    if (extra?.rloc) idParts.push(`RLOC: ${extra.rloc}`)
+    if (extra?.costCenter) idParts.push(`CC: ${extra.costCenter}`)
+    if (idParts.length > 0) {
+      desc += `\nRef.: ${idParts.join(" | ")}`
+    }
     return desc
   }
 
   // ── Aplicar Empresa (PJ) como Tomadora ─────────────────────────────────────
-  const applyTomadorPJ = (comp: any, guestInfo?: any, stayInfo?: any) => {
+  const applyTomadorPJ = (comp: any, guestInfo?: any, stayInfo?: any, resInfo?: any) => {
     setTomadorMode("pj")
-    const compDoc = (comp.cnpj || "").replace(/\D/g, "")
-    const compName = comp.corporateName || comp.tradeName || comp.razaoSocial || comp.name || "Empresa"
-    const compEmail = comp.financialEmail || comp.email || ""
+    const r = resInfo || linkedReservation
+    const compDoc = (comp.cnpj || r?.companyCnpj || "").replace(/\D/g, "")
+    const compName = comp.corporateName || comp.tradeName || comp.razaoSocial || comp.name || r?.companyName || "Empresa"
+    const compEmail = comp.financialEmail || comp.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
     const compTel = (comp.phone || "").replace(/\D/g, "")
     const compEnd = comp.address || comp.logradouro || comp.endereco || "Av. Pelinca"
     const compNum = comp.number || comp.numero || "100"
@@ -396,15 +447,22 @@ export default function FiscalInvoicesPage() {
     const compCep = (comp.cep || "28035000").replace(/\D/g, "")
     const compIbge = comp.ibgeCode || comp.codigoMunicipio || "3301009"
 
-    const guestName = guestInfo?.fullName || guestInfo?.name || ""
+    const guestName = guestInfo?.fullName || guestInfo?.name || r?.guestName || ""
     const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
     const checkin = stayInfo?.checkIn || extractedData.checkIn || formCheckin
     const checkout = stayInfo?.checkOut || extractedData.checkOut || formCheckout
     const diarias = stayInfo?.quantidadeDiarias || extractedData.quantidadeDiarias || formDiarias
     const valor = stayInfo?.valorServico || extractedData.valorServico || formValor
 
+    const extraIds = r ? {
+      b2bNumber: r.b2bReservationNumber || r.externalReservationNumber || undefined,
+      rloc: r.b2bLocatorRloc || undefined,
+      costCenter: r.costCenter || undefined,
+      agencyName: r.agencyTradeName || r.agencyName || undefined
+    } : undefined
+
     const desc = guestName 
-      ? buildCorporateDescription(guestName, flat, checkin, checkout, diarias)
+      ? buildCorporateDescription(guestName, flat, checkin, checkout, diarias, extraIds)
       : `Nota fiscal de prestação de serviços de hospedagem corporativa.\nLocal: CorpFlats.\nRua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ`
 
     setExtractedData(prev => ({
@@ -449,13 +507,92 @@ export default function FiscalInvoicesPage() {
     }
   }
 
+  // ── Aplicar Agência B2B (PJ) como Tomadora ─────────────────────────────────
+  const applyTomadorAgency = (ag: any, guestInfo?: any, stayInfo?: any, resInfo?: any) => {
+    setTomadorMode("agency")
+    const r = resInfo || linkedReservation
+    const agDoc = (ag.cnpj || r?.agencyCnpj || "").replace(/\D/g, "")
+    const agName = ag.corporateName || ag.razaoSocial || ag.tradeName || ag.name || r?.agencyName || "Agência de Viagens"
+    const agEmail = ag.financialEmail || ag.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
+    const agTel = (ag.phone || r?.agencyAgentPhone || "").replace(/\D/g, "")
+    const agEnd = ag.address || ag.logradouro || ag.endereco || "Av. Paulista"
+    const agNum = ag.number || ag.numero || "100"
+    const agComp = ag.complement || ag.complemento || ""
+    const agBairro = ag.neighborhood || ag.bairro || "Centro"
+    const agCidade = ag.city || ag.cidade || "São Paulo"
+    const agUf = ag.state || ag.uf || "SP"
+    const agCep = (ag.cep || "01310100").replace(/\D/g, "")
+    const agIbge = ag.ibgeCode || ag.codigoMunicipio || "3550308"
+
+    const guestName = guestInfo?.fullName || guestInfo?.name || r?.guestName || "Hóspede"
+    const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
+    const checkin = stayInfo?.checkIn || extractedData.checkIn || formCheckin
+    const checkout = stayInfo?.checkOut || extractedData.checkOut || formCheckout
+    const diarias = stayInfo?.quantidadeDiarias || extractedData.quantidadeDiarias || formDiarias
+    const valor = stayInfo?.valorServico || extractedData.valorServico || formValor
+
+    const extraIds = {
+      b2bNumber: r?.b2bReservationNumber || r?.externalReservationNumber || undefined,
+      rloc: r?.b2bLocatorRloc || undefined,
+      costCenter: r?.costCenter || undefined,
+      companyName: r?.companyName || linkedCompany?.corporateName || linkedCompany?.name || undefined,
+      agencyName: ag.tradeName || ag.corporateName || r?.agencyTradeName || r?.agencyName || undefined
+    }
+
+    const desc = buildCorporateDescription(guestName, flat, checkin, checkout, diarias, extraIds)
+
+    setExtractedData(prev => ({
+      ...prev,
+      tomadorNome: agName,
+      tomadorCpfCnpj: agDoc,
+      tomadorEmail: agEmail,
+      tomadorTelefone: agTel,
+      tomadorEndereco: agEnd,
+      tomadorNumero: agNum,
+      tomadorComplemento: agComp,
+      tomadorBairro: agBairro,
+      tomadorCidade: agCidade,
+      tomadorUf: agUf,
+      tomadorCep: agCep,
+      tomadorCodigoMunicipio: agIbge,
+      descricaoServico: desc,
+      ...(stayInfo || {})
+    }))
+
+    setFormTomadorNome(agName)
+    setFormTomadorDoc(agDoc)
+    setFormTomadorEmail(agEmail)
+    setFormTomadorTelefone(agTel)
+    setFormTomadorEndereco(agEnd)
+    setFormTomadorNumero(agNum)
+    setFormTomadorComplemento(agComp)
+    setFormTomadorBairro(agBairro)
+    setFormTomadorCidade(agCidade)
+    setFormTomadorUf(agUf)
+    setFormTomadorCep(agCep)
+    setFormTomadorIbge(agIbge)
+    setFormDescricao(desc)
+    setFormNfHideFromGuest(true)
+    if (agEmail && !formNfDeliveryEmails) setFormNfDeliveryEmails(agEmail)
+    if (flat) setFormFlatNumber(flat)
+    if (checkin) setFormCheckin(checkin)
+    if (checkout) setFormCheckout(checkout)
+    if (diarias) setFormDiarias(diarias)
+    if (valor) setFormValor(String(valor))
+
+    if (agName && agDoc && valor) {
+      setIsReadyToEmit(true)
+    }
+  }
+
   // ── Aplicar Hóspede (PF) como Tomador ───────────────────────────────────────
-  const applyTomadorPF = (guest: any, stayInfo?: any) => {
+  const applyTomadorPF = (guest: any, stayInfo?: any, resInfo?: any) => {
     setTomadorMode("pf")
-    const guestDoc = (guest.documentNumber || guest.document || guest.cpf || "").replace(/\D/g, "")
-    const guestName = guest.fullName || guest.name || "Hóspede"
-    const guestEmail = guest.email || (guestDoc === "12585736792" ? "millerpessanha@gmail.com" : "")
-    const guestTel = (guest.phone || (guestDoc === "12585736792" ? "22998505276" : "")).replace(/\D/g, "")
+    const r = resInfo || linkedReservation
+    const guestDoc = (guest.documentNumber || guest.document || guest.cpf || r?.guestDocument || "").replace(/\D/g, "")
+    const guestName = guest.fullName || guest.name || r?.guestName || "Hóspede"
+    const guestEmail = guest.email || r?.guestEmail || (guestDoc === "12585736792" ? "millerpessanha@gmail.com" : "")
+    const guestTel = (guest.phone || r?.guestPhone || (guestDoc === "12585736792" ? "22998505276" : "")).replace(/\D/g, "")
     const normAddr = extractNormalizedGuestAddress(guest, guestDoc)
     const guestEnd = normAddr.logradouro
     const guestNum = normAddr.numero
@@ -472,7 +609,13 @@ export default function FiscalInvoicesPage() {
     const diarias = stayInfo?.quantidadeDiarias || extractedData.quantidadeDiarias || formDiarias
     const valor = stayInfo?.valorServico || extractedData.valorServico || formValor
 
-    const desc = buildStandardDescription(guestName, flat, checkin, checkout, diarias)
+    const extraIds = r ? {
+      b2bNumber: r.b2bReservationNumber || r.externalReservationNumber || undefined,
+      rloc: r.b2bLocatorRloc || undefined,
+      costCenter: r.costCenter || undefined
+    } : undefined
+
+    const desc = buildStandardDescription(guestName, flat, checkin, checkout, diarias, extraIds)
 
     setExtractedData(prev => ({
       ...prev,
@@ -516,41 +659,60 @@ export default function FiscalInvoicesPage() {
     }
   }
 
-  // ── Alternar Tomador entre PJ e PF ──────────────────────────────────────────
-  const handleToggleTomadorMode = () => {
-    if (tomadorMode === "pj") {
-      const guest = linkedGuest || selectedGuest
+  // ── Selecionar ou Alternar Tomador (PF, Empresa PJ ou Agência B2B) ─────────
+  const handleSelectTomadorMode = (targetMode: "pf" | "pj" | "agency") => {
+    const guest = linkedGuest || selectedGuest
+    if (targetMode === "pf") {
       if (guest) {
-        applyTomadorPF(guest, extractedData)
+        applyTomadorPF(guest, extractedData, linkedReservation)
         setMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content: `Tomador alternado para Pessoa Física: **${guest.fullName || guest.name}** (CPF: ${guest.documentNumber || guest.cpf || 'Não informado'}). 👤\n\nTodos os detalhes da estadia, flat e valores foram preservados!`
+            content: `Tomador definido para Pessoa Física: **${guest.fullName || guest.name}** (CPF: ${guest.documentNumber || guest.cpf || 'Não informado'}). 👤\n\nTodos os detalhes da estadia, flat e valores foram preservados!`
           }
         ])
       } else {
-        setMessages(prev => [
-          ...prev,
-          { role: "assistant", content: "Não há dados de hóspede PF vinculados para alternar." }
-        ])
+        setTomadorMode("pf")
       }
-    } else {
+    } else if (targetMode === "pj") {
       if (linkedCompany) {
-        applyTomadorPJ(linkedCompany, linkedGuest || selectedGuest, extractedData)
+        applyTomadorPJ(linkedCompany, guest, extractedData, linkedReservation)
         setMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content: `Tomador alternado para Pessoa Jurídica: **${linkedCompany.corporateName || linkedCompany.name}** (CNPJ: ${linkedCompany.cnpj}). 🏢\n\nO colaborador **${(linkedGuest || selectedGuest)?.fullName || ''}** foi mantido na discriminação da nota!`
+            content: `Tomador definido para Empresa Cliente (PJ): **${linkedCompany.corporateName || linkedCompany.name}** (CNPJ: ${linkedCompany.cnpj || 'Não informado'}). 🏢\n\nO hóspede **${guest?.fullName || guest?.name || ''}** e os identificadores da reserva foram mantidos na discriminação da nota!`
           }
         ])
       } else {
+        setTomadorMode("pj")
+      }
+    } else if (targetMode === "agency") {
+      if (linkedAgency) {
+        applyTomadorAgency(linkedAgency, guest, extractedData, linkedReservation)
         setMessages(prev => [
           ...prev,
-          { role: "assistant", content: "Não há empresa corporativa PJ vinculada a este hóspede para alternar." }
+          {
+            role: "assistant",
+            content: `Tomador definido para Agência de Viagens B2B (PJ): **${linkedAgency.corporateName || linkedAgency.tradeName || linkedAgency.name}** (CNPJ: ${linkedAgency.cnpj || 'Não informado'}). 🟣\n\nA discriminação inclui automaticamente Hóspede, Flat, Período, RLOC e Reserva B2B!`
+          }
         ])
+      } else {
+        setTomadorMode("agency")
       }
+    }
+  }
+
+  const handleToggleTomadorMode = () => {
+    if (tomadorMode === "agency") {
+      if (linkedCompany) handleSelectTomadorMode("pj")
+      else handleSelectTomadorMode("pf")
+    } else if (tomadorMode === "pj") {
+      handleSelectTomadorMode("pf")
+    } else {
+      if (linkedAgency) handleSelectTomadorMode("agency")
+      else if (linkedCompany) handleSelectTomadorMode("pj")
     }
   }
 
@@ -592,6 +754,39 @@ export default function FiscalInvoicesPage() {
       state: res.state || res.guestState || resSlot?.state || crmGuest?.state
     } : null
 
+    const crmAgency = agencies.find(a =>
+      (res.agencyId && String(a.id) === String(res.agencyId)) ||
+      (res.agencyCnpj && (a.cnpj || "").replace(/\D/g, "") && (a.cnpj || "").replace(/\D/g, "") === String(res.agencyCnpj).replace(/\D/g, "")) ||
+      (res.agencyName && ((a.corporateName || "").toLowerCase() === String(res.agencyName).toLowerCase() || (a.tradeName || "").toLowerCase() === String(res.agencyName).toLowerCase()))
+    )
+    const foundAgency = crmAgency || (res.agencyName || res.agencyCnpj ? {
+      id: res.agencyId || null,
+      corporateName: res.agencyName || res.agencyTradeName,
+      tradeName: res.agencyTradeName || res.agencyName,
+      cnpj: res.agencyCnpj || "",
+      financialEmail: res.agencyAgentEmail || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "",
+      phone: res.agencyAgentPhone || ""
+    } : null)
+
+    const crmComp = companies.find(c =>
+      (res.companyId && String(c.id) === String(res.companyId)) ||
+      (foundGuest?.companyId && String(c.id) === String(foundGuest.companyId)) ||
+      (res.companyCnpj && (c.cnpj || "").replace(/\D/g, "") && (c.cnpj || "").replace(/\D/g, "") === String(res.companyCnpj).replace(/\D/g, "")) ||
+      (res.companyName && ((c.corporateName || c.name || "").toLowerCase() === String(res.companyName).toLowerCase()))
+    )
+    const foundComp = crmComp || (res.companyName || res.companyCnpj ? {
+      id: res.companyId || null,
+      corporateName: res.companyName,
+      tradeName: res.companyName,
+      cnpj: res.companyCnpj || "",
+      financialEmail: (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || ""
+    } : null)
+
+    setLinkedAgency(foundAgency)
+    setLinkedCompany(foundComp)
+    setFormNfHideFromGuest(Boolean(res.nfHideFromGuest ?? (res.channel === "b2b")))
+    setFormNfDeliveryEmails(Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails.join(", ") : "")
+
     const stayInfo = {
       flatNumber: flat,
       checkIn: checkin,
@@ -603,18 +798,18 @@ export default function FiscalInvoicesPage() {
     if (foundGuest) {
       setLinkedGuest(foundGuest)
       setSelectedGuest(foundGuest)
+    }
 
-      const linkedComp = foundGuest.companyId 
-        ? companies.find(c => String(c.id) === String(foundGuest.companyId))
-        : null
+    const recipientPref: "guest" | "company" | "agency" =
+      res.invoiceRecipientType ||
+      (foundAgency && res.channel === "b2b" ? "agency" : foundComp ? "company" : "guest")
 
-      if (linkedComp) {
-        setLinkedCompany(linkedComp)
-        applyTomadorPJ(linkedComp, foundGuest, stayInfo)
-      } else {
-        setLinkedCompany(null)
-        applyTomadorPF(foundGuest, stayInfo)
-      }
+    if (recipientPref === "agency" && foundAgency) {
+      applyTomadorAgency(foundAgency, foundGuest, stayInfo, res)
+    } else if (recipientPref === "company" && foundComp) {
+      applyTomadorPJ(foundComp, foundGuest, stayInfo, res)
+    } else if (foundGuest) {
+      applyTomadorPF(foundGuest, stayInfo, res)
     } else {
       setExtractedData(prev => ({
         ...prev,
@@ -631,7 +826,7 @@ export default function FiscalInvoicesPage() {
       ...prev,
       {
         role: "assistant",
-        content: `Reserva carregada com sucesso! Flat **${flat}** • **${res.guestName || 'Hóspede'}**\n📅 Período: **${checkin}** a **${checkout}** (${diarias} diárias)\n💰 Valor: **R$ ${Number(valor || 0).toFixed(2)}**\n\nTodos os campos foram preenchidos no Studio para emissão!`
+        content: `Reserva carregada com sucesso! Flat **${flat}** • **${res.guestName || 'Hóspede'}**\n📅 Período: **${checkin}** a **${checkout}** (${diarias} diárias)\n💰 Valor: **R$ ${Number(valor || 0).toFixed(2)}**\n${res.b2bReservationNumber ? `🟣 B2B Nº **${res.b2bReservationNumber}**${res.b2bLocatorRloc ? ` • RLOC **${res.b2bLocatorRloc}**` : ""}\n` : ""}\nTodos os campos foram preenchidos no Studio para emissão!`
       }
     ])
   }
@@ -652,13 +847,14 @@ export default function FiscalInvoicesPage() {
     const diariasParam = urlParams.get("diarias") || urlParams.get("quantidadeDiarias")
     const resCodeParam = urlParams.get("resCode") || urlParams.get("reserva") || urlParams.get("resId")
     const companyIdParam = urlParams.get("companyId")
+    const agencyIdParam = urlParams.get("agencyId")
     const guestIdParam = urlParams.get("guestId")
 
-    if ((companyIdParam && companies.length === 0) || (guestIdParam && guests.length === 0)) {
+    if ((companyIdParam && companies.length === 0) || (agencyIdParam && agencies.length === 0) || (guestIdParam && guests.length === 0)) {
       return
     }
 
-    if (docParam || nomeParam || flatParam || checkinParam || checkoutParam || valorParam || diariasParam || resCodeParam || companyIdParam || guestIdParam) {
+    if (docParam || nomeParam || flatParam || checkinParam || checkoutParam || valorParam || diariasParam || resCodeParam || companyIdParam || agencyIdParam || guestIdParam) {
       urlParamsProcessed.current = true
 
       const cleanDoc = (docParam || "").replace(/\D/g, "")
@@ -676,6 +872,11 @@ export default function FiscalInvoicesPage() {
       if (nomeParam) setFormTomadorNome(nomeParam)
       if (cleanDoc) setFormTomadorDoc(cleanDoc)
 
+      let matchedAgency: any = null
+      if (agencyIdParam && agencies.length > 0) {
+        matchedAgency = agencies.find(a => String(a.id) === String(agencyIdParam))
+      }
+
       let matchedCompany: any = null
       if (companyIdParam && companies.length > 0) {
         matchedCompany = companies.find(c => String(c.id) === String(companyIdParam))
@@ -692,6 +893,9 @@ export default function FiscalInvoicesPage() {
         matchedCompany = companies.find(c => String(c.id) === String(matchedGuest.companyId))
       }
 
+      if (!matchedAgency && cleanDoc.length === 14 && agencies.length > 0) {
+        matchedAgency = agencies.find(a => (a.cnpj || "").replace(/\D/g, "") === cleanDoc)
+      }
       if (!matchedCompany && cleanDoc.length === 14 && companies.length > 0) {
         matchedCompany = companies.find(c => (c.cnpj || "").replace(/\D/g, "") === cleanDoc)
       }
@@ -701,13 +905,13 @@ export default function FiscalInvoicesPage() {
         matchedRes = reservations.find(r => String(r.code) === resCodeParam || String(r.id) === resCodeParam)
       }
 
-      const isPj = Boolean(matchedCompany) || cleanDoc.length === 14
+      if (matchedAgency) setLinkedAgency(matchedAgency)
       if (matchedCompany) setLinkedCompany(matchedCompany)
       if (matchedGuest) {
         setLinkedGuest(matchedGuest)
         setSelectedGuest(matchedGuest)
       }
-      setTomadorMode(isPj ? "pj" : "pf")
+      if (matchedRes) setLinkedReservation(matchedRes)
 
       const stayInfo = {
         flatNumber: flatParam || (matchedRes ? String(matchedRes.flatNumber) : undefined),
@@ -717,10 +921,12 @@ export default function FiscalInvoicesPage() {
         valorServico: valorParam || (matchedRes ? String(matchedRes.totalAmount) : undefined)
       }
 
-      if (matchedCompany) {
-        applyTomadorPJ(matchedCompany, matchedGuest || (nomeParam ? { fullName: nomeParam } : null), stayInfo)
+      if (matchedAgency) {
+        applyTomadorAgency(matchedAgency, matchedGuest || (nomeParam ? { fullName: nomeParam } : null), stayInfo, matchedRes)
+      } else if (matchedCompany) {
+        applyTomadorPJ(matchedCompany, matchedGuest || (nomeParam ? { fullName: nomeParam } : null), stayInfo, matchedRes)
       } else if (matchedGuest || cleanDoc.length === 11) {
-        applyTomadorPF(matchedGuest || { fullName: nomeParam || "Hóspede", documentNumber: cleanDoc }, stayInfo)
+        applyTomadorPF(matchedGuest || { fullName: nomeParam || "Hóspede", documentNumber: cleanDoc }, stayInfo, matchedRes)
       } else {
         setExtractedData(prev => ({
           ...prev,
@@ -730,18 +936,18 @@ export default function FiscalInvoicesPage() {
         }))
       }
 
-      const ready = Boolean((nomeParam || matchedCompany || matchedGuest) && (cleanDoc || matchedCompany?.cnpj || matchedGuest?.documentNumber) && (valorParam || matchedRes?.totalAmount))
+      const ready = Boolean((nomeParam || matchedAgency || matchedCompany || matchedGuest) && (cleanDoc || matchedAgency?.cnpj || matchedCompany?.cnpj || matchedGuest?.documentNumber) && (valorParam || matchedRes?.totalAmount))
       setIsReadyToEmit(ready)
 
       setMessages(prev => [
         ...prev,
         {
           role: "assistant",
-          content: `Dados importados via URL/CRM com sucesso!\n${nomeParam || matchedCompany?.corporateName || matchedCompany?.name || matchedGuest?.fullName ? `• **${nomeParam || matchedCompany?.corporateName || matchedCompany?.name || matchedGuest?.fullName}** (${cleanDoc || matchedCompany?.cnpj || matchedGuest?.documentNumber || 'Sem documento'})\n` : ""}${flatParam || matchedRes?.flatNumber ? `• Flat **${flatParam || matchedRes?.flatNumber}**\n` : ""}${checkinParam ? `• Período: **${checkinParam}** a **${checkoutParam || '—'}** (${diariasNum} diárias)\n` : ""}${valorParam ? `• Valor: **R$ ${Number(valorParam).toFixed(2)}**\n` : ""}\n${isPj ? "🏢 Tomador configurado como Pessoa Jurídica (Empresa)." : "👤 Tomador configurado como Pessoa Física (Hóspede)."}`
+          content: `Dados importados via URL/CRM com sucesso!\n${nomeParam || matchedAgency?.corporateName || matchedCompany?.corporateName || matchedCompany?.name || matchedGuest?.fullName ? `• **${nomeParam || matchedAgency?.corporateName || matchedCompany?.corporateName || matchedCompany?.name || matchedGuest?.fullName}** (${cleanDoc || matchedAgency?.cnpj || matchedCompany?.cnpj || matchedGuest?.documentNumber || 'Sem documento'})\n` : ""}${flatParam || matchedRes?.flatNumber ? `• Flat **${flatParam || matchedRes?.flatNumber}**\n` : ""}${checkinParam ? `• Período: **${checkinParam}** a **${checkoutParam || '—'}** (${diariasNum} diárias)\n` : ""}${valorParam ? `• Valor: **R$ ${Number(valorParam).toFixed(2)}**\n` : ""}`
         }
       ])
     }
-  }, [companies, guests, reservations])
+  }, [companies, agencies, guests, reservations])
 
   // Fechar dropdown de hóspedes ao clicar fora
   useEffect(() => {
@@ -769,6 +975,21 @@ export default function FiscalInvoicesPage() {
     const q = guestSearchQuery.trim().toLowerCase()
     const qDigits = guestSearchQuery.replace(/\D/g, "")
 
+    const matchingAgencies = agencies.filter(a => {
+      if (!q) return true
+      const nameMatch = (a.corporateName || a.tradeName || a.name || "").toLowerCase().includes(q)
+      const cnpjMatch = qDigits ? (a.cnpj || "").replace(/\D/g, "").includes(qDigits) : false
+      const emailMatch = (a.financialEmail || a.email || "").toLowerCase().includes(q)
+      return nameMatch || cnpjMatch || emailMatch
+    }).slice(0, q ? 8 : 4).map(a => ({
+      id: `agency-${a.id}`,
+      type: "agency" as const,
+      title: a.tradeName || a.corporateName || a.name,
+      subtitle: `CNPJ: ${a.cnpj || "Sem CNPJ"}${a.financialEmail || a.email ? ` • ${a.financialEmail || a.email}` : ""}`,
+      badge: "🟣 Agência B2B",
+      raw: a
+    }))
+
     const matchingCompanies = companies.filter(c => {
       if (!q) return true
       const nameMatch = (c.corporateName || c.tradeName || c.razaoSocial || c.name || "").toLowerCase().includes(q)
@@ -780,7 +1001,7 @@ export default function FiscalInvoicesPage() {
       type: "company" as const,
       title: c.corporateName || c.tradeName || c.razaoSocial || c.name,
       subtitle: `CNPJ: ${c.cnpj || "Sem CNPJ"}${c.financialEmail || c.email ? ` • ${c.financialEmail || c.email}` : ""}`,
-      badge: "🏢 PJ",
+      badge: "🏢 Empresa PJ",
       raw: c
     }))
 
@@ -804,28 +1025,40 @@ export default function FiscalInvoicesPage() {
       const guestMatch = (r.guestName || "").toLowerCase().includes(q)
       const flatMatch = String(r.flatNumber || "").toLowerCase().includes(q)
       const codeMatch = (r.code || "").toLowerCase().includes(q)
-      return guestMatch || flatMatch || codeMatch
+      const b2bMatch = String(r.b2bReservationNumber || r.b2bLocatorRloc || "").toLowerCase().includes(q)
+      return guestMatch || flatMatch || codeMatch || b2bMatch
     }).slice(0, q ? 10 : 5).map(r => ({
       id: `res-${r.id || r.code}`,
       type: "reservation" as const,
-      title: `Flat ${r.flatNumber} • ${r.guestName}`,
-      subtitle: `${r.checkinDate || ""} a ${r.checkoutDate || ""}${r.totalAmount ? ` • R$ ${Number(r.totalAmount).toFixed(2)}` : ""}`,
-      badge: "📅 Reserva",
+      title: `Flat ${r.flatNumber} • ${r.guestName}${r.b2bReservationNumber ? ` (B2B #${r.b2bReservationNumber})` : ""}`,
+      subtitle: `${r.checkinDate || ""} a ${r.checkoutDate || ""}${r.totalAmount ? ` • R$ ${Number(r.totalAmount).toFixed(2)}` : ""}${r.agencyTradeName || r.agencyName ? ` • 🟣 ${r.agencyTradeName || r.agencyName}` : ""}`,
+      badge: r.channel === "b2b" ? "🟣 Reserva B2B" : "📅 Reserva",
       raw: r
     }))
 
-    return [...matchingCompanies, ...matchingGuests, ...matchingReservations]
-  }, [companies, guests, reservations, guestSearchQuery])
+    return [...matchingAgencies, ...matchingCompanies, ...matchingGuests, ...matchingReservations]
+  }, [agencies, companies, guests, reservations, guestSearchQuery])
 
   const handleSelectEntity = (item: CrmSearchItem) => {
     setSelectedEntity(item)
     setGuestDropdownOpen(false)
     setGuestSearchQuery(item.title)
 
-    if (item.type === "company") {
+    if (item.type === "agency") {
+      const ag = item.raw
+      setLinkedAgency(ag)
+      applyTomadorAgency(ag, linkedGuest || selectedGuest, extractedData, linkedReservation)
+      setMessages(prev => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Agência B2B selecionada como Tomadora: **${ag.corporateName || ag.tradeName || ag.name}** (CNPJ: ${ag.cnpj || 'Sem CNPJ'}). 🟣\n\nAgora informe o valor e os dados da hospedagem para emitirmos a NFS-e!`
+        }
+      ])
+    } else if (item.type === "company") {
       const comp = item.raw
       setLinkedCompany(comp)
-      applyTomadorPJ(comp, linkedGuest || selectedGuest, extractedData)
+      applyTomadorPJ(comp, linkedGuest || selectedGuest, extractedData, linkedReservation)
       setMessages(prev => [
         ...prev,
         {
@@ -844,17 +1077,17 @@ export default function FiscalInvoicesPage() {
 
       if (linkedComp) {
         setLinkedCompany(linkedComp)
-        applyTomadorPJ(linkedComp, g, extractedData)
+        applyTomadorPJ(linkedComp, g, extractedData, linkedReservation)
         setMessages(prev => [
           ...prev,
           {
             role: "assistant",
-            content: `Hóspede corporativo selecionado: **${g.fullName || g.name}**! 🏢\n\nA empresa parceira **${linkedComp.corporateName || linkedComp.name}** (CNPJ: ${linkedComp.cnpj}) foi definida automaticamente como Tomadora.\n\n💡 Você pode alternar para Pessoa Física no banner acima.`
+            content: `Hóspede corporativo selecionado: **${g.fullName || g.name}**! 🏢\n\nA empresa parceira **${linkedComp.corporateName || linkedComp.name}** (CNPJ: ${linkedComp.cnpj}) foi definida automaticamente como Tomadora.\n\n💡 Você pode alternar para Pessoa Física ou Agência B2B no seletor acima.`
           }
         ])
       } else {
         setLinkedCompany(null)
-        applyTomadorPF(g, extractedData)
+        applyTomadorPF(g, extractedData, linkedReservation)
         setMessages(prev => [
           ...prev,
           {
@@ -869,6 +1102,7 @@ export default function FiscalInvoicesPage() {
         (r.guestName && (g.fullName || g.name || "").toLowerCase() === r.guestName.toLowerCase())
       )
       if (guestRes) {
+        setLinkedReservation(guestRes)
         populateStayFromReservation(guestRes)
       }
     } else if (item.type === "reservation") {
@@ -975,8 +1209,21 @@ export default function FiscalInvoicesPage() {
     setIsEmitting(true)
     setEmissionErrorData(null)
 
+    const deliveryEmailsList = formNfDeliveryEmails
+      .split(/[;,]/)
+      .map(s => s.trim())
+      .filter(Boolean)
+
     const payload = paramsOverride || {
       sistemaEmissor,
+      reservationId: linkedReservation?.id || undefined,
+      reservationCode: linkedReservation?.code || undefined,
+      invoiceRecipientType: tomadorMode === "agency" ? "agency" : tomadorMode === "pj" ? "company" : "guest",
+      agencyId: tomadorMode === "agency" ? (linkedAgency?.id || linkedReservation?.agencyId || undefined) : (linkedReservation?.agencyId || undefined),
+      companyId: tomadorMode === "pj" ? (linkedCompany?.id || linkedReservation?.companyId || undefined) : (linkedReservation?.companyId || undefined),
+      guestId: linkedGuest?.id || linkedReservation?.guestId || undefined,
+      nfHideFromGuest: formNfHideFromGuest,
+      nfDeliveryEmails: deliveryEmailsList.length > 0 ? deliveryEmailsList : undefined,
       tomadorNome: formTomadorNome || extractedData.tomadorNome,
       tomadorCpfCnpj: formTomadorDoc || extractedData.tomadorCpfCnpj,
       tomadorEmail: formTomadorEmail || extractedData.tomadorEmail,
@@ -1246,13 +1493,53 @@ export default function FiscalInvoicesPage() {
         (r.guestName && (g.fullName || g.name || "").toLowerCase() === String(r.guestName).toLowerCase())
       ) || (r.guestName ? { fullName: r.guestName, email: r.guestEmail, phone: r.guestPhone, documentNumber: r.guestDocument || r.document || r.cpf } : null)
 
-      const company = guest?.companyId 
+      const crmComp = (guest?.companyId
         ? companies.find(c => String(c.id) === String(guest.companyId))
-        : (r.companyId ? companies.find(c => String(c.id) === String(r.companyId)) : null)
+        : null) || (r.companyId ? companies.find(c => String(c.id) === String(r.companyId)) : null) || (
+          r.companyCnpj ? companies.find(c => (c.cnpj || "").replace(/\D/g, "") && (c.cnpj || "").replace(/\D/g, "") === String(r.companyCnpj).replace(/\D/g, "")) : null
+        )
+      const company = crmComp || (r.companyName || r.companyCnpj ? {
+        id: r.companyId || null,
+        corporateName: r.companyName,
+        tradeName: r.companyName,
+        name: r.companyName,
+        cnpj: r.companyCnpj || ""
+      } : null)
 
-      const doc = (company?.cnpj || r.guestDocument || r.document || r.cpf || guest?.documentNumber || guest?.document || guest?.cpf || "").replace(/\D/g, "")
+      const crmAgency = (r.agencyId
+        ? agencies.find(a => String(a.id) === String(r.agencyId))
+        : null) || (
+          r.agencyCnpj ? agencies.find(a => (a.cnpj || "").replace(/\D/g, "") && (a.cnpj || "").replace(/\D/g, "") === String(r.agencyCnpj).replace(/\D/g, "")) : null
+        ) || (
+          r.agencyName ? agencies.find(a => (a.corporateName || "").toLowerCase() === String(r.agencyName).toLowerCase() || (a.tradeName || "").toLowerCase() === String(r.agencyName).toLowerCase()) : null
+        )
+      const agency = crmAgency || (r.agencyName || r.agencyCnpj ? {
+        id: r.agencyId || null,
+        corporateName: r.agencyName || r.agencyTradeName,
+        tradeName: r.agencyTradeName || r.agencyName,
+        name: r.agencyName || r.agencyTradeName,
+        cnpj: r.agencyCnpj || "",
+        financialEmail: r.agencyAgentEmail || ""
+      } : null)
+
+      const resKey = String(r.id || r.code)
+      const defaultType: "guest" | "company" | "agency" =
+        r.invoiceRecipientType ||
+        (agency && r.channel === "b2b" ? "agency" : company ? "company" : "guest")
+      const activeTomadorType: "guest" | "company" | "agency" = pendingTomadorOverrides[resKey] || defaultType
+
+      const guestDoc = (r.guestDocument || r.document || r.cpf || guest?.documentNumber || guest?.document || guest?.cpf || "").replace(/\D/g, "")
+      const compDoc = (company?.cnpj || r.companyCnpj || "").replace(/\D/g, "")
+      const agencyDoc = (agency?.cnpj || r.agencyCnpj || "").replace(/\D/g, "")
+
+      const doc = activeTomadorType === "agency"
+        ? (agencyDoc || compDoc || guestDoc)
+        : activeTomadorType === "company"
+          ? (compDoc || agencyDoc || guestDoc)
+          : (guestDoc || compDoc || agencyDoc)
+
       const hasDoc = doc.length >= 11
-      const isPj = Boolean(company) || doc.length === 14
+      const isPj = activeTomadorType === "agency" || activeTomadorType === "company" || doc.length === 14
 
       let diarias = 1
       if (r.checkinDate && r.checkoutDate) {
@@ -1265,20 +1552,28 @@ export default function FiscalInvoicesPage() {
 
       const resolvedTotalAmount = Number(r.totalAmount || r.totalPrice || r.price || (Number(r.dailyRate || 0) * diarias) || 250)
 
+      const tomadorDefaultName = activeTomadorType === "agency"
+        ? (agency?.corporateName || agency?.tradeName || r.agencyName || r.guestName)
+        : activeTomadorType === "company"
+          ? (company?.corporateName || company?.tradeName || company?.name || r.companyName || r.guestName)
+          : (guest?.fullName || guest?.name || r.guestName)
+
       return {
         ...r,
         totalAmount: resolvedTotalAmount,
         diarias,
         guest,
         company,
+        agency,
+        activeTomadorType,
         doc,
         hasDoc,
         isPj,
-        tomadorDefaultName: isPj ? (company?.corporateName || company?.tradeName || company?.name || r.guestName) : (guest?.fullName || guest?.name || r.guestName),
+        tomadorDefaultName,
         tomadorDefaultDoc: doc
       }
     })
-  }, [reservations, invoices, guests, companies])
+  }, [reservations, invoices, guests, companies, agencies, pendingTomadorOverrides])
 
   // Filtro de Reservas Pendentes
   const filteredPendingReservations = useMemo(() => {
@@ -1289,26 +1584,34 @@ export default function FiscalInvoicesPage() {
         const nameMatch = (r.guestName || r.tomadorDefaultName || "").toLowerCase().includes(q)
         const flatMatch = String(r.flatNumber || "").toLowerCase().includes(q)
         const codeMatch = (r.code || "").toLowerCase().includes(q)
-        const compMatch = (r.company?.corporateName || r.company?.name || "").toLowerCase().includes(q)
-        if (!nameMatch && !flatMatch && !codeMatch && !compMatch) return false
+        const compMatch = (r.company?.corporateName || r.company?.name || r.companyName || "").toLowerCase().includes(q)
+        const agMatch = (r.agency?.corporateName || r.agency?.tradeName || r.agencyName || "").toLowerCase().includes(q)
+        const b2bMatch = String(r.b2bReservationNumber || r.b2bLocatorRloc || "").toLowerCase().includes(q)
+        if (!nameMatch && !flatMatch && !codeMatch && !compMatch && !agMatch && !b2bMatch) return false
       }
 
-      // 2. Filtro PF / PJ
+      // 2. Filtro PF / PJ / Agência
       if (pendingTypeFilter === "pf" && r.isPj) return false
       if (pendingTypeFilter === "pj" && !r.isPj) return false
+      if (pendingTypeFilter === "agency" && r.activeTomadorType !== "agency" && !r.agency) return false
 
       // 3. Filtro Empresa
       if (pendingCompanyFilter !== "all") {
         if (!r.company || String(r.company.id) !== pendingCompanyFilter) return false
       }
 
-      // 4. Filtro Cadastral
+      // 4. Filtro Agência
+      if (pendingAgencyFilter !== "all") {
+        if (!r.agency || String(r.agency.id) !== pendingAgencyFilter) return false
+      }
+
+      // 5. Filtro Cadastral
       if (pendingCadastralFilter === "ready" && !r.hasDoc) return false
       if (pendingCadastralFilter === "pending_doc" && r.hasDoc) return false
 
       return true
     })
-  }, [pendingReservationsList, pendingSearch, pendingTypeFilter, pendingCompanyFilter, pendingCadastralFilter])
+  }, [pendingReservationsList, pendingSearch, pendingTypeFilter, pendingCompanyFilter, pendingAgencyFilter, pendingCadastralFilter])
 
   // Ações em Lote: Seleção
   const handleToggleSelectPending = (id: string) => {
@@ -1327,7 +1630,9 @@ export default function FiscalInvoicesPage() {
 
   // Emissão 1-Clique de Reserva Pendente
   const handleEmitPendingSingle = async (res: any) => {
-    const isPj = Boolean(res.isPj && res.company)
+    const recipientType: "guest" | "company" | "agency" = res.activeTomadorType || (res.isPj ? "company" : "guest")
+    const isAgency = recipientType === "agency" && Boolean(res.agency)
+    const isComp = recipientType === "company" && Boolean(res.company)
     const valorNum = Number(res.totalAmount || res.price || res.totalPrice || 250)
     const stayInfo = {
       flatNumber: String(res.flatNumber || ""),
@@ -1337,30 +1642,51 @@ export default function FiscalInvoicesPage() {
       valorServico: String(valorNum)
     }
 
-    if (isPj) {
-      applyTomadorPJ(res.company, res.guest, stayInfo)
+    if (isAgency) {
+      applyTomadorAgency(res.agency, res.guest, stayInfo, res)
+    } else if (isComp) {
+      applyTomadorPJ(res.company, res.guest, stayInfo, res)
     } else {
-      applyTomadorPF(res.guest || { fullName: res.guestName, documentNumber: res.doc }, stayInfo)
+      applyTomadorPF(res.guest || { fullName: res.guestName, documentNumber: res.doc }, stayInfo, res)
     }
 
-    const desc = isPj
-      ? buildCorporateDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias)
-      : buildStandardDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias)
+    const extraIds = {
+      b2bNumber: res.b2bReservationNumber || res.externalReservationNumber || undefined,
+      rloc: res.b2bLocatorRloc || undefined,
+      costCenter: res.costCenter || undefined,
+      companyName: res.company?.corporateName || res.companyName || undefined,
+      agencyName: res.agency?.tradeName || res.agency?.corporateName || res.agencyName || undefined
+    }
 
-    const normAddr = isPj
-      ? extractNormalizedGuestAddress(res.company || res.guest || res, res.doc)
-      : extractNormalizedGuestAddress(res.guest || res, res.doc)
+    const desc = (isAgency || isComp)
+      ? buildCorporateDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias, extraIds)
+      : buildStandardDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias, extraIds)
+
+    const targetEntity = isAgency ? (res.agency || res) : isComp ? (res.company || res.guest || res) : (res.guest || res)
+    const normAddr = extractNormalizedGuestAddress(targetEntity, res.doc)
 
     const payload = {
       sistemaEmissor,
       reservationId: res.id,
       reservationCode: res.code,
-      companyId: res.company?.id || null,
+      invoiceRecipientType: recipientType,
+      agencyId: res.agency?.id || res.agencyId || null,
+      companyId: res.company?.id || res.companyId || null,
       guestId: res.guest?.id || res.guestId || null,
-      tomadorNome: isPj ? (res.company.corporateName || res.company.tradeName || res.company.name) : (res.guest?.fullName || res.guestName),
+      nfHideFromGuest: Boolean(res.nfHideFromGuest ?? (isAgency || res.channel === "b2b")),
+      nfDeliveryEmails: Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails : undefined,
+      tomadorNome: res.tomadorDefaultName,
       tomadorCpfCnpj: res.doc,
-      tomadorEmail: isPj ? (res.company.financialEmail || res.company.email || res.guest?.email || "") : (res.guestEmail || res.guest?.email || ""),
-      tomadorTelefone: isPj ? (res.company.phone || res.guest?.phone || "") : (res.guestPhone || res.guest?.phone || ""),
+      tomadorEmail: isAgency
+        ? (res.agency?.financialEmail || res.agency?.email || res.agencyAgentEmail || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "")
+        : isComp
+          ? (res.company?.financialEmail || res.company?.email || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || res.guest?.email || "")
+          : (res.guestEmail || res.guest?.email || ""),
+      tomadorTelefone: isAgency
+        ? (res.agency?.phone || res.agencyAgentPhone || "")
+        : isComp
+          ? (res.company?.phone || res.guest?.phone || "")
+          : (res.guestPhone || res.guest?.phone || ""),
       tomadorEndereco: normAddr.logradouro || "",
       tomadorNumero: normAddr.numero || "",
       tomadorComplemento: normAddr.complemento || "",
@@ -1384,6 +1710,7 @@ export default function FiscalInvoicesPage() {
 
   // Carregar Reserva Pendente no Studio
   const handleLoadToStudio = (res: any) => {
+    setLinkedReservation(res)
     populateStayFromReservation(res)
     setActiveTab("studio")
     toast({
@@ -1429,7 +1756,14 @@ export default function FiscalInvoicesPage() {
     // Fallback sequencial seguro caso endpoint não esteja disponível
     for (const item of selectedItems) {
       try {
-        const isPj = item.isPj && item.company
+        const isPj = item.isPj && (item.company || item.agency)
+        const extraIds = {
+          b2bNumber: item.b2bReservationNumber || item.externalReservationNumber || undefined,
+          rloc: item.b2bLocatorRloc || undefined,
+          costCenter: item.costCenter || undefined,
+          companyName: item.company?.corporateName || item.companyName || undefined,
+          agencyName: item.agency?.tradeName || item.agency?.corporateName || item.agencyName || undefined
+        }
         const emitRes = await fetch("/api/nfse/emit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1437,6 +1771,11 @@ export default function FiscalInvoicesPage() {
             sistemaEmissor,
             reservationId: item.id,
             reservationCode: item.code,
+            invoiceRecipientType: item.activeTomadorType,
+            agencyId: item.agency?.id || item.agencyId || null,
+            companyId: item.company?.id || item.companyId || null,
+            nfHideFromGuest: Boolean(item.nfHideFromGuest ?? (item.channel === "b2b")),
+            nfDeliveryEmails: Array.isArray(item.nfDeliveryEmails) ? item.nfDeliveryEmails : undefined,
             tomadorNome: item.tomadorDefaultName,
             tomadorCpfCnpj: item.tomadorDefaultDoc,
             flatNumber: String(item.flatNumber),
@@ -1445,8 +1784,8 @@ export default function FiscalInvoicesPage() {
             quantidadeDiarias: item.diarias,
             valorServico: item.totalAmount || "0",
             descricaoServico: isPj 
-              ? buildCorporateDescription(item.guestName, String(item.flatNumber), item.checkinDate, item.checkoutDate, item.diarias)
-              : buildStandardDescription(item.guestName, String(item.flatNumber), item.checkinDate, item.checkoutDate, item.diarias)
+              ? buildCorporateDescription(item.guestName, String(item.flatNumber), item.checkinDate, item.checkoutDate, item.diarias, extraIds)
+              : buildStandardDescription(item.guestName, String(item.flatNumber), item.checkinDate, item.checkoutDate, item.diarias, extraIds)
           }),
           credentials: "include"
         })
@@ -1485,20 +1824,29 @@ export default function FiscalInvoicesPage() {
       return
     }
 
-    // Auto-detecta empresa se todos forem da mesma
+    // Auto-detecta agência ou empresa se todos forem da mesma
+    const ags = Array.from(new Set(selectedB2BItems.map(i => i.agency?.id).filter(Boolean)))
     const comps = Array.from(new Set(selectedB2BItems.map(i => i.company?.id).filter(Boolean)))
-    if (comps.length === 1) {
+    if (ags.length === 1) {
+      setConsolidatedTargetType("agency")
+      setConsolidatedAgencyId(String(ags[0]))
+    } else if (comps.length === 1) {
+      setConsolidatedTargetType("company")
       setConsolidatedCompanyId(String(comps[0]))
     }
     setConsolidatedModalOpen(true)
   }
 
   const handleEmitConsolidatedB2B = async () => {
-    const comp = companies.find(c => String(c.id) === consolidatedCompanyId)
-    if (!comp) {
+    const isAgencyTarget = consolidatedTargetType === "agency"
+    const targetEntity = isAgencyTarget
+      ? agencies.find(a => String(a.id) === consolidatedAgencyId)
+      : companies.find(c => String(c.id) === consolidatedCompanyId)
+
+    if (!targetEntity) {
       toast({
-        title: "Empresa Não Selecionada",
-        description: "Selecione a empresa tomadora da NFS-e consolidada.",
+        title: isAgencyTarget ? "Agência Não Selecionada" : "Empresa Não Selecionada",
+        description: `Selecione a ${isAgencyTarget ? "agência B2B" : "empresa"} tomadora da NFS-e consolidada.`,
         variant: "destructive"
       })
       return
@@ -1507,11 +1855,20 @@ export default function FiscalInvoicesPage() {
     setConsolidatedEmitting(true)
     const totalVal = selectedB2BItems.reduce((acc, i) => acc + Number(i.totalAmount || 0), 0)
 
-    let corporateDesc = `Faturamento consolidado referente aos serviços de hospedagem corporativa para os seguintes colaboradores:\n`
+    let corporateDesc = `Faturamento consolidado referente aos serviços de hospedagem corporativa para os seguintes hóspedes/colaboradores:\n`
     selectedB2BItems.forEach(i => {
-      corporateDesc += `• ${i.guestName || 'Colaborador'} (Flat ${i.flatNumber}, ${i.checkinDate} a ${i.checkoutDate} - ${i.diarias} diárias): R$ ${Number(i.totalAmount || 0).toFixed(2)}\n`
+      const idTags = [
+        i.b2bReservationNumber ? `B2B #${i.b2bReservationNumber}` : "",
+        i.b2bLocatorRloc ? `RLOC ${i.b2bLocatorRloc}` : "",
+        i.costCenter ? `CC ${i.costCenter}` : ""
+      ].filter(Boolean).join(" | ")
+      corporateDesc += `• ${i.guestName || 'Colaborador'} (Flat ${i.flatNumber}, ${i.checkinDate} a ${i.checkoutDate} - ${i.diarias} diárias${idTags ? ` [${idTags}]` : ""}): R$ ${Number(i.totalAmount || 0).toFixed(2)}\n`
     })
     corporateDesc += `Valor Total: R$ ${totalVal.toFixed(2)}.\nLocal: CorpFlats - Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes/RJ.`
+
+    const tomadorNome = targetEntity.corporateName || targetEntity.tradeName || targetEntity.name
+    const tomadorCpfCnpj = (targetEntity.cnpj || "").replace(/\D/g, "")
+    const tomadorEmail = targetEntity.financialEmail || targetEntity.email
 
     try {
       const res = await fetch("/api/nfse/emit-consolidated", {
@@ -1519,12 +1876,14 @@ export default function FiscalInvoicesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sistemaEmissor,
-          companyId: comp.id,
+          invoiceRecipientType: isAgencyTarget ? "agency" : "company",
+          agencyId: isAgencyTarget ? targetEntity.id : undefined,
+          companyId: !isAgencyTarget ? targetEntity.id : undefined,
           reservationIds: selectedPendingIds,
-          tomadorNome: comp.corporateName || comp.tradeName || comp.name,
-          tomadorCpfCnpj: (comp.cnpj || "").replace(/\D/g, ""),
-          tomadorEmail: comp.financialEmail || comp.email,
-          tomadorTelefone: comp.phone,
+          tomadorNome,
+          tomadorCpfCnpj,
+          tomadorEmail,
+          tomadorTelefone: targetEntity.phone,
           valorServico: totalVal,
           descricaoServico: corporateDesc
         }),
@@ -1536,9 +1895,10 @@ export default function FiscalInvoicesPage() {
         setConsolidatedResults(data)
         fetchInvoices()
         setSelectedPendingIds([])
+        setConsolidatedModalOpen(false)
         toast({
-          title: "NFS-e Consolidada Emitida! 🏢",
-          description: `Nota autorizada para ${comp.corporateName} no valor de R$ ${totalVal.toFixed(2)}.`
+          title: `NFS-e Consolidada Emitida! ${isAgencyTarget ? "🟣" : "🏢"}`,
+          description: `Nota autorizada para ${tomadorNome} no valor de R$ ${totalVal.toFixed(2)}.`
         })
       } else {
         // Fallback para endpoint /api/nfse/emit comum com metadados consolidados
@@ -1548,12 +1908,14 @@ export default function FiscalInvoicesPage() {
           body: JSON.stringify({
             sistemaEmissor,
             isConsolidated: true,
-            companyId: comp.id,
+            invoiceRecipientType: isAgencyTarget ? "agency" : "company",
+            agencyId: isAgencyTarget ? targetEntity.id : undefined,
+            companyId: !isAgencyTarget ? targetEntity.id : undefined,
             reservationIds: selectedPendingIds,
-            tomadorNome: comp.corporateName || comp.tradeName || comp.name,
-            tomadorCpfCnpj: (comp.cnpj || "").replace(/\D/g, ""),
-            tomadorEmail: comp.financialEmail || comp.email,
-            tomadorTelefone: comp.phone,
+            tomadorNome,
+            tomadorCpfCnpj,
+            tomadorEmail,
+            tomadorTelefone: targetEntity.phone,
             valorServico: totalVal,
             descricaoServico: corporateDesc
           }),
@@ -1564,6 +1926,7 @@ export default function FiscalInvoicesPage() {
           setConsolidatedResults(fbData)
           fetchInvoices()
           setSelectedPendingIds([])
+          setConsolidatedModalOpen(false)
           toast({
             title: "NFS-e Consolidada Emitida!",
             description: `Nota emitida com sucesso.`
@@ -2350,14 +2713,14 @@ export default function FiscalInvoicesPage() {
               </div>
             )}
 
-            {/* Topo do Studio: CRM 360° Combobox & Alternador PJ/PF */}
+            {/* Topo do Studio: CRM 360° Combobox & Seletor de 3 Tomadores (PF / Empresa PJ / Agência B2B) */}
             <div className="bg-card border border-border p-4 rounded-3xl shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
               {/* Combobox Pesquisável Multi-Entidade */}
               <div className="relative flex-1" ref={guestComboboxRef}>
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input 
-                    placeholder="Pesquisar Hóspede (PF), Empresa (PJ) ou Reserva para carregar..."
+                    placeholder="Pesquisar Hóspede (PF), Empresa (PJ), Agência B2B ou Reserva para carregar..."
                     value={guestSearchQuery}
                     onChange={e => {
                       setGuestSearchQuery(e.target.value)
@@ -2373,6 +2736,7 @@ export default function FiscalInvoicesPage() {
                         setSelectedGuest(null)
                         setSelectedEntity(null)
                         setLinkedCompany(null)
+                        setLinkedAgency(null)
                         setLinkedGuest(null)
                         setLinkedReservation(null)
                         setExtractedData({})
@@ -2406,6 +2770,7 @@ export default function FiscalInvoicesPage() {
                           <Badge 
                             variant="outline" 
                             className={`text-[10px] shrink-0 ${
+                              item.type === "agency" ? "border-fuchsia-500/40 text-fuchsia-700 dark:text-fuchsia-300" :
                               item.type === "company" ? "border-indigo-500/40 text-indigo-700 dark:text-indigo-300" :
                               item.type === "guest" ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" :
                               "border-amber-500/40 text-amber-700 dark:text-amber-300"
@@ -2420,18 +2785,44 @@ export default function FiscalInvoicesPage() {
                 )}
               </div>
 
-              {/* Botão de Alternância PJ / PF se houver vínculo */}
-              {linkedCompany && (
-                <Button
+              {/* Seletores Rápidos dos 3 Tomadores: Hóspede (PF) | Empresa (PJ) | Agência B2B (PJ) */}
+              <div className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-2xl border border-border shrink-0 flex-wrap">
+                <button
                   type="button"
-                  variant="outline"
-                  onClick={handleToggleTomadorMode}
-                  className="h-10 px-4 rounded-2xl font-bold text-xs gap-2 border-indigo-500/40 hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 shrink-0"
+                  onClick={() => handleSelectTomadorMode("pf")}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                    tomadorMode === "pf"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>{tomadorMode === "pj" ? "Alternar para Hóspede (PF)" : "Alternar para Empresa (PJ)"}</span>
-                </Button>
-              )}
+                  <span>👤 Hóspede (PF)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectTomadorMode("pj")}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                    tomadorMode === "pj"
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>🏢 Empresa (PJ)</span>
+                  {linkedCompany && <span className="w-1.5 h-1.5 rounded-full bg-indigo-300" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectTomadorMode("agency")}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                    tomadorMode === "agency"
+                      ? "bg-fuchsia-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>🟣 Agência B2B (PJ)</span>
+                  {linkedAgency && <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-300" />}
+                </button>
+              </div>
             </div>
 
             {/* Grid de Duas Colunas Integradas: Studio de Emissão */}
@@ -2556,24 +2947,31 @@ export default function FiscalInvoicesPage() {
                       <div className="space-y-4">
                         {/* Seção Tomador */}
                         <div className="space-y-2.5">
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
                             <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                               <User className="w-3.5 h-3.5 text-primary" /> Dados do Tomador (Cliente)
                             </span>
-                            <div className="flex items-center gap-2 text-[11px]">
+                            <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
                               <button
                                 type="button"
-                                onClick={() => setTomadorMode("pf")}
+                                onClick={() => handleSelectTomadorMode("pf")}
                                 className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "pf" ? "bg-emerald-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
                               >
-                                Pessoa Física (PF)
+                                👤 Hóspede (PF)
                               </button>
                               <button
                                 type="button"
-                                onClick={() => setTomadorMode("pj")}
+                                onClick={() => handleSelectTomadorMode("pj")}
                                 className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "pj" ? "bg-indigo-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
                               >
-                                Pessoa Jurídica (PJ)
+                                🏢 Empresa (PJ)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectTomadorMode("agency")}
+                                className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "agency" ? "bg-fuchsia-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                              >
+                                🟣 Agência B2B (PJ)
                               </button>
                             </div>
                           </div>
@@ -2582,11 +2980,11 @@ export default function FiscalInvoicesPage() {
                             {/* Documento com Botão Buscar CPF/CNPJ */}
                             <div className="sm:col-span-5 space-y-1">
                               <Label className="text-[11px] font-bold">
-                                {tomadorMode === "pj" ? "CNPJ da Empresa" : "CPF do Hóspede"}
+                                {tomadorMode === "agency" ? "CNPJ da Agência B2B" : tomadorMode === "pj" ? "CNPJ da Empresa" : "CPF do Hóspede"}
                               </Label>
                               <div className="flex gap-1.5">
                                 <Input 
-                                  placeholder={tomadorMode === "pj" ? "00.000.000/0000-00" : "000.000.000-00"}
+                                  placeholder={tomadorMode === "pf" ? "000.000.000-00" : "00.000.000/0000-00"}
                                   value={formTomadorDoc}
                                   onChange={e => {
                                     const val = e.target.value
@@ -2605,7 +3003,7 @@ export default function FiscalInvoicesPage() {
                                   onClick={() => handleLookupDoc()}
                                   disabled={isLookingUpDoc}
                                   className="h-9 px-2.5 rounded-xl text-xs font-bold bg-muted hover:bg-muted/80 text-foreground border border-border shrink-0"
-                                  title={tomadorMode === "pj" ? "Buscar Razão Social e Endereço pelo CNPJ" : "Buscar Cadastro e Endereço do Check-in Digital pelo CPF"}
+                                  title={tomadorMode !== "pf" ? "Buscar Razão Social e Endereço pelo CNPJ" : "Buscar Cadastro e Endereço do Check-in Digital pelo CPF"}
                                 >
                                   <Search className={`w-3.5 h-3.5 ${isLookingUpDoc ? 'animate-spin' : ''}`} />
                                 </Button>
@@ -2615,7 +3013,7 @@ export default function FiscalInvoicesPage() {
                             {/* Nome / Razão Social */}
                             <div className="sm:col-span-7 space-y-1">
                               <Label className="text-[11px] font-bold">
-                                {tomadorMode === "pj" ? "Razão Social" : "Nome Completo"}
+                                {tomadorMode === "agency" ? "Razão Social da Agência" : tomadorMode === "pj" ? "Razão Social da Empresa" : "Nome Completo do Hóspede"}
                               </Label>
                               <Input 
                                 placeholder="Nome completo ou Razão Social..."
@@ -2630,7 +3028,7 @@ export default function FiscalInvoicesPage() {
 
                             {/* E-mail e Telefone */}
                             <div className="sm:col-span-6 space-y-1">
-                              <Label className="text-[11px] font-bold">E-mail para envio</Label>
+                              <Label className="text-[11px] font-bold">E-mail Principal do Tomador</Label>
                               <Input 
                                 placeholder="financeiro@empresa.com"
                                 value={formTomadorEmail}
@@ -2653,6 +3051,37 @@ export default function FiscalInvoicesPage() {
                                 }}
                                 className="h-9 text-xs rounded-xl"
                               />
+                            </div>
+
+                            {/* Controle de Envio de NFS-e B2B & Privacidade do Hóspede */}
+                            <div className="sm:col-span-12 p-2.5 rounded-xl bg-fuchsia-500/5 border border-fuchsia-500/20 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <label className="flex items-center gap-2 text-[11px] font-bold text-foreground cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={formNfHideFromGuest}
+                                    onChange={e => setFormNfHideFromGuest(e.target.checked)}
+                                    className="rounded border-fuchsia-500 text-fuchsia-600"
+                                  />
+                                  <span>🔒 Ocultar NFS-e e valores do Hóspede (Enviar apenas para Agência / Empresa)</span>
+                                </label>
+                                {tomadorMode === "agency" && (
+                                  <Badge className="bg-fuchsia-600 text-white text-[9px] h-4 px-1.5">
+                                    Cadastro no CRM de Agências
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-[10px] font-semibold text-muted-foreground">
+                                  E-mails de Faturamento / Conciliação B2B (separados por vírgula)
+                                </Label>
+                                <Input
+                                  placeholder="Ex: faturamento@agencia.com.br, conciliacao@empresa.com.br"
+                                  value={formNfDeliveryEmails}
+                                  onChange={e => setFormNfDeliveryEmails(e.target.value)}
+                                  className="h-8 text-[11px] rounded-lg bg-background"
+                                />
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -2844,14 +3273,21 @@ export default function FiscalInvoicesPage() {
                         {/* Seção Discriminação do Serviço com Tags Rápidas */}
                         <div className="space-y-2 pt-2 border-t border-border">
                           <div className="flex items-center justify-between">
-                            <Label className="text-[11px] font-bold">Discriminação dos Serviços</Label>
+                            <Label className="text-[11px] font-bold">Discriminação dos Serviços (Hóspede, Flat, IN/OUT, RLOC/B2B)</Label>
                             <button
                               type="button"
                               onClick={() => {
-                                const guest = formTomadorNome || "Hóspede"
-                                const desc = tomadorMode === "pj" 
-                                  ? buildCorporateDescription(guest, formFlatNumber, formCheckin, formCheckout, formDiarias)
-                                  : buildStandardDescription(guest, formFlatNumber, formCheckin, formCheckout, formDiarias)
+                                const guest = (linkedGuest || selectedGuest)?.fullName || (linkedGuest || selectedGuest)?.name || linkedReservation?.guestName || formTomadorNome || "Hóspede"
+                                const extraIds = linkedReservation ? {
+                                  b2bNumber: linkedReservation.b2bReservationNumber || linkedReservation.externalReservationNumber || undefined,
+                                  rloc: linkedReservation.b2bLocatorRloc || undefined,
+                                  costCenter: linkedReservation.costCenter || undefined,
+                                  companyName: linkedCompany?.corporateName || linkedReservation.companyName || undefined,
+                                  agencyName: linkedAgency?.tradeName || linkedAgency?.corporateName || linkedReservation.agencyName || undefined
+                                } : undefined
+                                const desc = (tomadorMode === "pj" || tomadorMode === "agency")
+                                  ? buildCorporateDescription(guest, formFlatNumber, formCheckin, formCheckout, formDiarias, extraIds)
+                                  : buildStandardDescription(guest, formFlatNumber, formCheckin, formCheckout, formDiarias, extraIds)
                                 setFormDescricao(desc)
                                 setExtractedData(prev => ({ ...prev, descricaoServico: desc }))
                               }}
@@ -2862,7 +3298,7 @@ export default function FiscalInvoicesPage() {
                           </div>
 
                           <Textarea 
-                            rows={3}
+                            rows={4}
                             value={formDescricao}
                             onChange={e => {
                               setFormDescricao(e.target.value)
@@ -3047,7 +3483,7 @@ export default function FiscalInvoicesPage() {
                 <div className="relative w-64">
                   <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input 
-                    placeholder="Buscar hóspede, flat, código..."
+                    placeholder="Buscar hóspede, flat, RLOC, código..."
                     value={pendingSearch}
                     onChange={e => setPendingSearch(e.target.value)}
                     className="pl-8 text-xs h-8.5 rounded-xl bg-background"
@@ -3055,7 +3491,7 @@ export default function FiscalInvoicesPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5 bg-muted/60 px-2.5 py-1 rounded-xl border border-border">
-                  <span className="text-muted-foreground font-bold">Tipo:</span>
+                  <span className="text-muted-foreground font-bold">Tomador:</span>
                   <select
                     value={pendingTypeFilter}
                     onChange={(e: any) => setPendingTypeFilter(e.target.value)}
@@ -3063,7 +3499,8 @@ export default function FiscalInvoicesPage() {
                   >
                     <option value="all">Todos</option>
                     <option value="pf">Pessoa Física (PF)</option>
-                    <option value="pj">Pessoa Jurídica (PJ)</option>
+                    <option value="pj">Empresa (PJ)</option>
+                    <option value="agency">Agência B2B (PJ)</option>
                   </select>
                 </div>
 
@@ -3072,11 +3509,25 @@ export default function FiscalInvoicesPage() {
                   <select
                     value={pendingCompanyFilter}
                     onChange={e => setPendingCompanyFilter(e.target.value)}
-                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden max-w-[180px] truncate"
+                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden max-w-[160px] truncate"
                   >
                     <option value="all">Todas as Empresas</option>
                     {companies.map(c => (
                       <option key={c.id} value={String(c.id)}>{c.corporateName || c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-violet-500/10 px-2.5 py-1 rounded-xl border border-violet-500/30">
+                  <span className="text-violet-700 dark:text-violet-300 font-bold">Agência B2B:</span>
+                  <select
+                    value={pendingAgencyFilter}
+                    onChange={e => setPendingAgencyFilter(e.target.value)}
+                    className="bg-transparent font-bold text-foreground cursor-pointer focus:outline-hidden max-w-[160px] truncate"
+                  >
+                    <option value="all">Todas as Agências</option>
+                    {agencies.map(a => (
+                      <option key={a.id} value={String(a.id)}>{a.tradeName || a.corporateName}</option>
                     ))}
                   </select>
                 </div>
@@ -3121,8 +3572,8 @@ export default function FiscalInvoicesPage() {
                             />
                           </th>
                           <th className="p-3">Código / Flat</th>
-                          <th className="p-3">Hóspede & Tomador Padrão</th>
-                          <th className="p-3">Empresa Parceira</th>
+                          <th className="p-3">Hóspede & Tomador Selecionado</th>
+                          <th className="p-3">Agência / Empresa (4-Pontas)</th>
                           <th className="p-3">Período / Diárias</th>
                           <th className="p-3">Valor (R$)</th>
                           <th className="p-3">Cadastro</th>
@@ -3131,42 +3582,114 @@ export default function FiscalInvoicesPage() {
                       </thead>
                       <tbody className="divide-y divide-border">
                         {filteredPendingReservations.map(res => {
-                          const isSelected = selectedPendingIds.includes(String(res.id || res.code))
+                          const rowKey = String(res.id || res.code)
+                          const isSelected = selectedPendingIds.includes(rowKey)
+                          const activeType: "guest" | "company" | "agency" = pendingTomadorOverrides[rowKey] || (res.invoiceRecipientType === "agency" ? "agency" : res.invoiceRecipientType === "company" ? "company" : res.isAgency ? "agency" : res.isPj ? "company" : "guest")
+                          const activeOpt = res.tomadorOptions?.[activeType]
+                          const displayTomadorName = activeOpt?.name || res.tomadorDefaultName
+                          const displayTomadorDoc = activeOpt?.doc || res.tomadorDefaultDoc
+                          const displayHasDoc = Boolean(displayTomadorDoc && String(displayTomadorDoc).replace(/\D/g, "").length >= 11)
                           return (
-                            <tr key={res.id || res.code} className={`hover:bg-muted/20 transition-colors ${isSelected ? 'bg-primary/5' : ''}`}>
+                            <tr key={rowKey} className={`hover:bg-muted/20 transition-colors ${isSelected ? 'bg-primary/5' : ''}`}>
                               <td className="p-3 text-center">
                                 <input 
                                   type="checkbox"
                                   checked={isSelected}
-                                  onChange={() => handleToggleSelectPending(String(res.id || res.code))}
+                                  onChange={() => handleToggleSelectPending(rowKey)}
                                   className="rounded cursor-pointer"
                                 />
                               </td>
 
                               <td className="p-3 font-mono">
                                 <div className="font-bold text-foreground">Flat {res.flatNumber}</div>
-                                <div className="text-[10px] text-muted-foreground">{res.code || `#${res.id}`} • {res.channel || 'direto'}</div>
+                                <div className="text-[10px] text-muted-foreground flex flex-wrap items-center gap-1">
+                                  <span>{res.code || `#${res.id}`}</span>
+                                  <span>•</span>
+                                  <span className={res.channel === "b2b" ? "text-violet-600 font-bold uppercase" : ""}>{res.channel || 'direto'}</span>
+                                </div>
+                                {(res.b2bReservationNumber || res.b2bLocatorRloc) && (
+                                  <div className="text-[9px] text-violet-600 dark:text-violet-400 font-bold mt-0.5">
+                                    {res.b2bReservationNumber ? `B2B #${res.b2bReservationNumber}` : ""} {res.b2bLocatorRloc ? `• RLOC ${res.b2bLocatorRloc}` : ""}
+                                  </div>
+                                )}
                               </td>
 
                               <td className="p-3">
+                                <div className="text-[10px] text-muted-foreground mb-0.5">
+                                  Hóspede: <strong className="text-foreground">{res.guestName}</strong>
+                                </div>
                                 <div className="font-bold text-foreground flex items-center gap-1.5">
-                                  <span>{res.tomadorDefaultName}</span>
-                                  <Badge variant="outline" className="text-[9px] h-4 px-1">
-                                    {res.isPj ? "🏢 PJ" : "👤 PF"}
+                                  <span>{displayTomadorName}</span>
+                                  <Badge variant="outline" className={`text-[9px] h-4 px-1 ${activeType === "agency" ? "border-violet-500/40 text-violet-600 bg-violet-500/10" : activeType === "company" ? "border-indigo-500/40 text-indigo-600 bg-indigo-500/10" : ""}`}>
+                                    {activeType === "agency" ? "🟣 Agência" : activeType === "company" ? "🏢 Empresa" : "👤 PF"}
                                   </Badge>
+                                  {res.nfHideFromGuest && (
+                                    <Badge variant="outline" className="text-[8px] h-4 px-1 border-amber-500/40 text-amber-600 bg-amber-500/10" title="Ocultar NF do hóspede">
+                                      🔒 Sigilo
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="text-[10px] text-muted-foreground font-mono">
-                                  {res.tomadorDefaultDoc || "Sem documento informado"}
+                                  {displayTomadorDoc || "Sem documento informado"}
+                                </div>
+                                {/* 3-Tomador Switcher Rápido */}
+                                <div className="flex items-center gap-1 mt-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "guest" }))}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                      activeType === "guest"
+                                        ? "bg-primary text-primary-foreground border-primary"
+                                        : "bg-background text-muted-foreground border-border hover:border-primary/40"
+                                    }`}
+                                  >
+                                    👤 PF
+                                  </button>
+                                  {(res.company || res.tomadorOptions?.company) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "company" }))}
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                        activeType === "company"
+                                          ? "bg-indigo-600 text-white border-indigo-600"
+                                          : "bg-background text-muted-foreground border-border hover:border-indigo-500/40"
+                                      }`}
+                                    >
+                                      🏢 Empresa
+                                    </button>
+                                  )}
+                                  {(res.agency || res.tomadorOptions?.agency) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPendingTomadorOverrides(prev => ({ ...prev, [rowKey]: "agency" }))}
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                        activeType === "agency"
+                                          ? "bg-violet-600 text-white border-violet-600"
+                                          : "bg-background text-muted-foreground border-border hover:border-violet-500/40"
+                                      }`}
+                                    >
+                                      🟣 Agência
+                                    </button>
+                                  )}
                                 </div>
                               </td>
 
-                              <td className="p-3">
-                                {res.company ? (
+                              <td className="p-3 space-y-1">
+                                {res.agency && (
                                   <div>
-                                    <div className="font-bold text-foreground">{res.company.corporateName || res.company.name}</div>
+                                    <div className="font-bold text-violet-700 dark:text-violet-300 flex items-center gap-1">
+                                      <span>🟣 {res.agency.tradeName || res.agency.corporateName || res.agency.name}</span>
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground font-mono">{res.agency.cnpj}</div>
+                                  </div>
+                                )}
+                                {res.company && (
+                                  <div>
+                                    <div className="font-bold text-foreground">🏢 {res.company.corporateName || res.company.name}</div>
                                     <div className="text-[10px] text-muted-foreground font-mono">{res.company.cnpj}</div>
                                   </div>
-                                ) : (
+                                )}
+                                {!res.agency && !res.company && (
                                   <span className="text-muted-foreground">—</span>
                                 )}
                               </td>
@@ -3181,7 +3704,7 @@ export default function FiscalInvoicesPage() {
                               </td>
 
                               <td className="p-3">
-                                {res.hasDoc ? (
+                                {displayHasDoc ? (
                                   <Badge className="bg-emerald-600 text-white text-[9px] h-4.5 px-1.5 gap-1">
                                     <Check className="w-2.5 h-2.5" /> Pronto
                                   </Badge>
@@ -3197,7 +3720,7 @@ export default function FiscalInvoicesPage() {
                                   <Button
                                     size="sm"
                                     onClick={() => handleEmitPendingSingle(res)}
-                                    disabled={!res.hasDoc || isEmitting}
+                                    disabled={!displayHasDoc || isEmitting}
                                     className="h-7 px-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-2xs"
                                     title="Emitir NFS-e com 1 clique"
                                   >
@@ -3722,6 +4245,7 @@ export default function FiscalInvoicesPage() {
                     { key: "whatsapp", title: "Reservas WhatsApp / Balcão", desc: "Auto-emissão ao registrar hóspede com CPF/CNPJ no chat" },
                     { key: "booking", title: "Reservas Booking.com", desc: "Auto-emissão com dados fiscais fornecidos pelo canal OTA" },
                     { key: "airbnb", title: "Reservas Airbnb", desc: "Auto-emissão com recibo de repasse e dados do hóspede" },
+                    { key: "b2b", title: "Reservas B2B Corporativo / Agências", desc: "Emissão conforme Tomador do voucher (Agência, Empresa ou Hóspede)" },
                     { key: "autoCheckout", title: "Auto-Emissão no Check-out", desc: "Dispara NFS-e no momento em que a governança ou recepção marca saída" }
                   ].map(rule => (
                     <div key={rule.key} className="p-4 rounded-2xl bg-muted/20 border border-border flex items-center justify-between gap-4">
@@ -4025,26 +4549,69 @@ export default function FiscalInvoicesPage() {
                 Faturamento Corporativo B2B Consolidado
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                Emissão de 1 única NFS-e consolidando múltiplas estadias de colaboradores para a empresa parceira
+                Emissão de 1 única NFS-e consolidando múltiplas estadias para uma Empresa Parceira ou Agência de Viagens B2B
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-3.5 py-2 text-xs">
-              <div className="space-y-1.5">
-                <Label className="font-bold">Empresa Parceira Tomadora da NFS-e</Label>
-                <select
-                  value={consolidatedCompanyId}
-                  onChange={e => setConsolidatedCompanyId(e.target.value)}
-                  className="w-full h-9.5 rounded-xl border border-border bg-background px-3 text-xs font-bold"
+              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-muted/50 border border-border">
+                <button
+                  type="button"
+                  onClick={() => setConsolidatedTargetType("company")}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                    consolidatedTargetType === "company"
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  <option value="">Selecione a Empresa...</option>
-                  {companies.map(c => (
-                    <option key={c.id} value={String(c.id)}>
-                      {c.corporateName || c.name} • CNPJ: {c.cnpj}
-                    </option>
-                  ))}
-                </select>
+                  🏢 Consolidar por Empresa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConsolidatedTargetType("agency")}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                    consolidatedTargetType === "agency"
+                      ? "bg-violet-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  🟣 Consolidar por Agência B2B
+                </button>
               </div>
+
+              {consolidatedTargetType === "agency" ? (
+                <div className="space-y-1.5">
+                  <Label className="font-bold text-violet-700 dark:text-violet-300">Agência de Viagens B2B Tomadora da NFS-e</Label>
+                  <select
+                    value={consolidatedAgencyId}
+                    onChange={e => setConsolidatedAgencyId(e.target.value)}
+                    className="w-full h-9.5 rounded-xl border border-violet-500/40 bg-background px-3 text-xs font-bold"
+                  >
+                    <option value="">Selecione a Agência B2B...</option>
+                    {agencies.map(a => (
+                      <option key={a.id} value={String(a.id)}>
+                        {a.tradeName || a.corporateName} • CNPJ: {a.cnpj}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label className="font-bold">Empresa Parceira Tomadora da NFS-e</Label>
+                  <select
+                    value={consolidatedCompanyId}
+                    onChange={e => setConsolidatedCompanyId(e.target.value)}
+                    className="w-full h-9.5 rounded-xl border border-border bg-background px-3 text-xs font-bold"
+                  >
+                    <option value="">Selecione a Empresa...</option>
+                    {companies.map(c => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.corporateName || c.name} • CNPJ: {c.cnpj}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="border border-border rounded-2xl p-3 bg-muted/20 space-y-2">
                 <div className="flex justify-between items-center">
@@ -4056,7 +4623,10 @@ export default function FiscalInvoicesPage() {
                     <div key={i.id || i.code} className="py-1.5 flex justify-between">
                       <div>
                         <strong className="text-foreground">{i.guestName}</strong>
-                        <div className="text-[10px] text-muted-foreground">Flat {i.flatNumber} • {i.checkinDate} a {i.checkoutDate} ({i.diarias}d)</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Flat {i.flatNumber} • {i.checkinDate} a {i.checkoutDate} ({i.diarias}d)
+                          {i.b2bLocatorRloc ? ` • RLOC ${i.b2bLocatorRloc}` : ""}
+                        </div>
                       </div>
                       <div className="font-mono font-bold text-emerald-600">
                         R$ {Number(i.totalAmount || 0).toFixed(2)}
@@ -4083,8 +4653,8 @@ export default function FiscalInvoicesPage() {
               </Button>
               <Button 
                 onClick={handleEmitConsolidatedB2B}
-                disabled={consolidatedEmitting || !consolidatedCompanyId}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl h-9.5 gap-1.5"
+                disabled={consolidatedEmitting || !(consolidatedTargetType === "agency" ? consolidatedAgencyId : consolidatedCompanyId)}
+                className={`${consolidatedTargetType === "agency" ? "bg-violet-600 hover:bg-violet-700" : "bg-indigo-600 hover:bg-indigo-700"} text-white font-bold text-xs rounded-xl h-9.5 gap-1.5`}
               >
                 {consolidatedEmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Building2 className="w-3.5 h-3.5" />}
                 <span>Emitir NFS-e Consolidada</span>

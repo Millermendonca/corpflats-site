@@ -35,6 +35,7 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
   direta: { label: "WhatsApp", bg: "bg-emerald-600", text: "text-white", border: "border-emerald-700" },
   booking: { label: "Booking", bg: "bg-sky-700", text: "text-white", border: "border-sky-800" },
   airbnb: { label: "Airbnb", bg: "bg-rose-600", text: "text-white", border: "border-rose-700" },
+  b2b: { label: "B2B Reservas", bg: "bg-violet-600", text: "text-white", border: "border-violet-700" },
 }
 
 import { AccessDenied } from "@/components/access-denied"
@@ -48,6 +49,8 @@ import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 13, active: true, isSystem: true },
   { id: "airbnb", name: "Airbnb", gatewayFeeRate: 0, commissionRate: 3, active: true, isSystem: true },
+  { id: "vcn_b2b", name: "Cartão Virtual B2B (VCN)", gatewayFeeRate: 3.49, commissionRate: 0, active: true, isSystem: true },
+  { id: "faturado_b2b", name: "Faturado B2B", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
   { id: "pix", name: "PIX", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
   { id: "cartao_credito", name: "Cartão de Crédito", gatewayFeeRate: 3.99, commissionRate: 0, active: true, isSystem: true },
   { id: "dinheiro", name: "Dinheiro", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
@@ -790,6 +793,7 @@ export default function PmsCalendar() {
     if (resModalOpen) {
       fetchCrmGuests()
       fetchCompanies()
+      fetchAgencies()
     }
     if (resModalOpen && formCheckin && formCheckout) {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
@@ -882,19 +886,55 @@ export default function PmsCalendar() {
 
   // Multi-Guest & Corporate Requester State
   const [formGuestCount, setFormGuestCount] = useState<"1" | "2" | "3">("1")
-  const [formRequesterType, setFormRequesterType] = useState<"guest" | "other_person" | "company">("guest")
+  const [formRequesterType, setFormRequesterType] = useState<"guest" | "other_person" | "company" | "agency_b2b">("guest")
   const [formRequesterName, setFormRequesterName] = useState("")
   const [formRequesterPhone, setFormRequesterPhone] = useState("")
   const [formRequesterEmail, setFormRequesterEmail] = useState("")
   const [formRequesterCpf, setFormRequesterCpf] = useState("")
   const [formCompanyId, setFormCompanyId] = useState("")
   const [formCompanyName, setFormCompanyName] = useState("")
+  const [formCostCenter, setFormCostCenter] = useState("")
   const [companies, setCompanies] = useState<any[]>([])
+  const [agencies, setAgencies] = useState<any[]>([])
   const [crmGuests, setCrmGuests] = useState<any[]>([])
   const [formGuestId, setFormGuestId] = useState("")
   const [guestSearchFilter, setGuestSearchFilter] = useState("")
   const [showGuestSuggestions, setShowGuestSuggestions] = useState(false)
   const guestSuggestionsRef = useRef<HTMLDivElement>(null)
+
+  // 4-Point B2B Reservation States (Agência + Empresa + Voucher B2B + Tomador NF)
+  const [formAgencyId, setFormAgencyId] = useState("")
+  const [formAgencyName, setFormAgencyName] = useState("")
+  const [formAgencyCnpj, setFormAgencyCnpj] = useState("")
+  const [formAgencyPosUnit, setFormAgencyPosUnit] = useState("")
+  const [formAgencyAgentName, setFormAgencyAgentName] = useState("")
+  const [formAgencyAgentEmail, setFormAgencyAgentEmail] = useState("")
+  const [formAgencyAgentPhone, setFormAgencyAgentPhone] = useState("")
+  const [formB2bReservationNumber, setFormB2bReservationNumber] = useState("")
+  const [formB2bLocatorRloc, setFormB2bLocatorRloc] = useState("")
+  const [formB2bOriginType, setFormB2bOriginType] = useState<"BOOKING_WS" | "OTA_WS">("BOOKING_WS")
+  const [formB2bRatePolicy, setFormB2bRatePolicy] = useState<"COMISSIONADA" | "NET">("COMISSIONADA")
+  const [formB2bCommissionPct, setFormB2bCommissionPct] = useState<number>(12)
+  const [formB2bPaymentType, setFormB2bPaymentType] = useState<"VIRTUAL_CARD" | "FATURADO">("VIRTUAL_CARD")
+  const [formB2bCardBrand, setFormB2bCardBrand] = useState("Mastercard")
+  const [formB2bCardMasked, setFormB2bCardMasked] = useState("")
+  const [formB2bVcnToken, setFormB2bVcnToken] = useState("")
+  const [formB2bConciliationUrl, setFormB2bConciliationUrl] = useState("https://conciliacao.b2breservas.com.br")
+  const [formB2bAuthorizedExpenses, setFormB2bAuthorizedExpenses] = useState("SOMENTE DIÁRIAS COM IMPOSTOS")
+  const [formInvoiceRecipientType, setFormInvoiceRecipientType] = useState<"company" | "agency" | "guest">("company")
+  const [formNfDeliveryEmails, setFormNfDeliveryEmails] = useState("")
+  const [formNfHideFromGuest, setFormNfHideFromGuest] = useState(false)
+  const [showVoucherParser, setShowVoucherParser] = useState(false)
+  const [voucherTextToParse, setVoucherTextToParse] = useState("")
+  const [parsingVoucher, setParsingVoucher] = useState(false)
+  const [sendingB2bCredentialEmail, setSendingB2bCredentialEmail] = useState(false)
+
+  // Quick Inline Agency Creation State
+  const [newAgencyInlineOpen, setNewAgencyInlineOpen] = useState(false)
+  const [newAgencyTradeName, setNewAgencyTradeName] = useState("")
+  const [newAgencyCnpj, setNewAgencyCnpj] = useState("")
+  const [newAgencyEmail, setNewAgencyEmail] = useState("")
+  const [savingNewAgencyInline, setSavingNewAgencyInline] = useState(false)
 
   // Third-Party Requester CRM States
   const [formRequesterId, setFormRequesterId] = useState("")
@@ -1750,6 +1790,14 @@ export default function PmsCalendar() {
     } catch {}
   }
 
+  const fetchAgencies = async () => {
+    try {
+      const res = await fetch("/api/agencies", { credentials: "include" })
+      const json = await res.json()
+      if (Array.isArray(json)) setAgencies(json)
+    } catch {}
+  }
+
   const fetchCrmGuests = async () => {
     try {
       const res = await fetch("/api/pms/guests", { credentials: "include" })
@@ -1780,6 +1828,8 @@ export default function PmsCalendar() {
       if (res.ok) {
         const json = await res.json();
         setData(json);
+        if (Array.isArray(json.agencies)) setAgencies(json.agencies);
+        if (Array.isArray(json.companies)) setCompanies(json.companies);
         if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime);
         if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime);
       }
@@ -1789,6 +1839,7 @@ export default function PmsCalendar() {
       if (showLoading || now - lastAuxFetchRef.current > 30000) {
         lastAuxFetchRef.current = now;
         fetchCompanies();
+        fetchAgencies();
         fetchCrmGuests();
         fetchPaymentMethods();
 
@@ -2069,7 +2120,7 @@ export default function PmsCalendar() {
     setFormCheckinTime(defaultCheckinTime || "14:00")
     setFormCheckoutTime(defaultCheckoutTime || "12:00")
     setFormGuestCount("1")
-    setFormRequesterType("guest")
+    setFormRequesterType(initialChannel === "b2b" ? "agency_b2b" : "guest")
     setFormRequesterName("")
     setFormRequesterPhone("")
     setFormRequesterEmail("")
@@ -2079,6 +2130,31 @@ export default function PmsCalendar() {
     setShowRequesterSuggestions(false)
     setFormCompanyId("")
     setFormCompanyName("")
+    setFormAgencyId("")
+    setFormAgencyName("")
+    setFormAgencyCnpj("")
+    setFormAgencyPosUnit("")
+    setFormAgencyAgentName("")
+    setFormAgencyAgentEmail("")
+    setFormAgencyAgentPhone("")
+    setFormCostCenter("")
+    setFormB2bReservationNumber("")
+    setFormB2bLocatorRloc("")
+    setFormB2bOriginType("BOOKING_WS")
+    setFormB2bRatePolicy("COMISSIONADA")
+    setFormB2bCommissionPct("12")
+    setFormB2bPaymentType("VIRTUAL_CARD")
+    setFormB2bCardBrand("MASTERCARD")
+    setFormB2bCardMasked("")
+    setFormB2bVcnToken("")
+    setFormB2bConciliationUrl("https://conciliacao.b2breservas.com.br")
+    setFormB2bAuthorizedExpenses("Apenas Diárias")
+    setFormInvoiceRecipientType("agency")
+    setFormNfDeliveryEmails("")
+    setFormNfHideFromGuest(true)
+    setShowVoucherParser(false)
+    setVoucherTextToParse("")
+    setNewAgencyInlineOpen(false)
     setFormGuestId("")
     setGuestSearchFilter("")
     setFormGuestName("")
@@ -2101,9 +2177,10 @@ export default function PmsCalendar() {
     setFormGuest3Email("")
     const isBooking = initialChannel === "booking"
     const isAirbnb = initialChannel === "airbnb"
+    const isB2b = initialChannel === "b2b"
     const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
-    setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"))
+    setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : (isB2b ? "vcn_b2b" : "pix")))
     const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
     const baseDailyRate = 250
     setFormDailyRate(String(baseDailyRate))
@@ -2123,18 +2200,24 @@ export default function PmsCalendar() {
     const subCharges = initialCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
     const initialTotal = subNights + subCharges
     setFormTotalAmount(String(initialTotal))
-    setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
-    setFormPayments([
-      {
-        id: `pay_${Date.now()}`,
-        amount: initialTotal,
-        method: isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"),
-        category: "quitacao",
-        date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-        notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
-      }
-    ])
-    setFormPaymentStatus("pago_total")
+    if (isB2b) {
+      setFormPaidAmount("0")
+      setFormPayments([])
+      setFormPaymentStatus("pendente")
+    } else {
+      setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
+      setFormPayments([
+        {
+          id: `pay_${Date.now()}`,
+          amount: initialTotal,
+          method: isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"),
+          category: "quitacao",
+          date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
+        }
+      ])
+      setFormPaymentStatus("pago_total")
+    }
     setFormStatus("confirmada")
     setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
@@ -2256,7 +2339,7 @@ export default function PmsCalendar() {
     setFormCheckinTime(defaultCheckinTime || "14:00")
     setFormCheckoutTime(defaultCheckoutTime || "12:00")
     setFormGuestCount("1")
-    setFormRequesterType("guest")
+    setFormRequesterType(initialChannel === "b2b" ? "agency_b2b" : "guest")
     setFormRequesterName("")
     setFormRequesterPhone("")
     setFormRequesterEmail("")
@@ -2266,6 +2349,31 @@ export default function PmsCalendar() {
     setShowRequesterSuggestions(false)
     setFormCompanyId("")
     setFormCompanyName("")
+    setFormAgencyId("")
+    setFormAgencyName("")
+    setFormAgencyCnpj("")
+    setFormAgencyPosUnit("")
+    setFormAgencyAgentName("")
+    setFormAgencyAgentEmail("")
+    setFormAgencyAgentPhone("")
+    setFormCostCenter("")
+    setFormB2bReservationNumber("")
+    setFormB2bLocatorRloc("")
+    setFormB2bOriginType("BOOKING_WS")
+    setFormB2bRatePolicy("COMISSIONADA")
+    setFormB2bCommissionPct("12")
+    setFormB2bPaymentType("VIRTUAL_CARD")
+    setFormB2bCardBrand("MASTERCARD")
+    setFormB2bCardMasked("")
+    setFormB2bVcnToken("")
+    setFormB2bConciliationUrl("https://conciliacao.b2breservas.com.br")
+    setFormB2bAuthorizedExpenses("Apenas Diárias")
+    setFormInvoiceRecipientType("agency")
+    setFormNfDeliveryEmails("")
+    setFormNfHideFromGuest(true)
+    setShowVoucherParser(false)
+    setVoucherTextToParse("")
+    setNewAgencyInlineOpen(false)
     setFormGuestId("")
     setGuestSearchFilter("")
     setFormGuestName("")
@@ -2288,9 +2396,10 @@ export default function PmsCalendar() {
     setFormGuest3Email("")
     const isBooking = initialChannel === "booking"
     const isAirbnb = initialChannel === "airbnb"
+    const isB2b = initialChannel === "b2b"
     const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
-    setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"))
+    setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : (isB2b ? "vcn_b2b" : "pix")))
     const initialNights = 1
     const baseDailyRate = 250
     setFormDailyRate(String(baseDailyRate))
@@ -2310,18 +2419,24 @@ export default function PmsCalendar() {
     const subCharges = initialCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
     const initialTotal = subNights + subCharges
     setFormTotalAmount(String(initialTotal))
-    setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
-    setFormPayments([
-      {
-        id: `pay_${Date.now()}`,
-        amount: initialTotal,
-        method: isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"),
-        category: "quitacao",
-        date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-        notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
-      }
-    ])
-    setFormPaymentStatus("pago_total")
+    if (isB2b) {
+      setFormPaidAmount("0")
+      setFormPayments([])
+      setFormPaymentStatus("pendente")
+    } else {
+      setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
+      setFormPayments([
+        {
+          id: `pay_${Date.now()}`,
+          amount: initialTotal,
+          method: isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"),
+          category: "quitacao",
+          date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
+        }
+      ])
+      setFormPaymentStatus("pago_total")
+    }
     setFormStatus("confirmada")
     setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
@@ -2362,7 +2477,10 @@ export default function PmsCalendar() {
     setFormCheckinTime(resItem.checkinTime || defaultCheckinTime || "14:00")
     setFormCheckoutTime(resItem.checkoutTime || defaultCheckoutTime || "12:00")
     setFormGuestCount(String(resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)) as any)
-    const resolvedReqType = (resItem.requesterType as any) || (resItem.companyId || resItem.companyName ? "company" : (resItem.requesterInfo?.name ? "other_person" : "guest"))
+    const isB2bRes = resItem.channel === "b2b" || Boolean(resItem.agencyId || resItem.agencyName || resItem.b2bReservationNumber || resItem.requesterType === "agency_b2b" || resItem.requesterType === "agency")
+    const resolvedReqType = isB2bRes
+      ? "agency_b2b"
+      : ((resItem.requesterType as any) || (resItem.companyId || resItem.companyName ? "company" : (resItem.requesterInfo?.name ? "other_person" : "guest")))
     setFormRequesterType(resolvedReqType)
     setFormRequesterId(resItem.requesterInfo?.guestId ? String(resItem.requesterInfo.guestId) : (resItem.requesterInfo?.name ? "manual" : ""))
     setRequesterSearchFilter("")
@@ -2373,6 +2491,39 @@ export default function PmsCalendar() {
     setFormRequesterCpf(resItem.requesterInfo?.cpf || "")
     setFormCompanyId(resItem.companyId ? String(resItem.companyId) : "")
     setFormCompanyName(resItem.companyName || "")
+    setFormAgencyId(resItem.agencyId ? String(resItem.agencyId) : "")
+    setFormAgencyName(resItem.agencyTradeName || resItem.agencyName || "")
+    setFormAgencyCnpj(resItem.agencyCnpj || "")
+    setFormAgencyPosUnit(resItem.agencyPosUnit || "")
+    setFormAgencyAgentName(resItem.agencyAgentName || "")
+    setFormAgencyAgentEmail(resItem.agencyAgentEmail || "")
+    setFormAgencyAgentPhone(resItem.agencyAgentPhone || "")
+    setFormCostCenter(resItem.costCenter || "")
+    setFormB2bReservationNumber(resItem.b2bReservationNumber || resItem.externalReservationNumber || "")
+    setFormB2bLocatorRloc(resItem.b2bLocatorRloc || "")
+    setFormB2bOriginType(resItem.b2bOriginType === "OTA_WS" ? "OTA_WS" : "BOOKING_WS")
+    setFormB2bRatePolicy(resItem.b2bRatePolicy === "NET" ? "NET" : "COMISSIONADA")
+    setFormB2bCommissionPct(resItem.b2bCommissionPct !== undefined && resItem.b2bCommissionPct !== null ? String(resItem.b2bCommissionPct) : (resItem.b2bRatePolicy === "NET" ? "0" : "12"))
+    setFormB2bPaymentType(resItem.b2bPaymentType === "FATURADO" ? "FATURADO" : "VIRTUAL_CARD")
+    setFormB2bCardBrand(resItem.b2bCardBrand || "MASTERCARD")
+    setFormB2bCardMasked(resItem.b2bCardMasked || "")
+    setFormB2bVcnToken(resItem.b2bVcnToken || "")
+    setFormB2bConciliationUrl(resItem.b2bConciliationUrl || "https://conciliacao.b2breservas.com.br")
+    setFormB2bAuthorizedExpenses(resItem.b2bAuthorizedExpenses || "Apenas Diárias")
+    setFormInvoiceRecipientType(
+      resItem.invoiceRecipientType === "company" || resItem.invoiceRecipientType === "guest" || resItem.invoiceRecipientType === "agency"
+        ? resItem.invoiceRecipientType
+        : (isB2bRes ? (resItem.b2bRatePolicy === "NET" && resItem.companyId ? "company" : "agency") : (resItem.companyId ? "company" : "guest"))
+    )
+    setFormNfDeliveryEmails(
+      Array.isArray(resItem.nfDeliveryEmails)
+        ? resItem.nfDeliveryEmails.join(", ")
+        : (resItem.nfDeliveryEmails || resItem.agencyAgentEmail || "conciliacao@b2breservas.com.br")
+    )
+    setFormNfHideFromGuest(resItem.nfHideFromGuest !== undefined ? Boolean(resItem.nfHideFromGuest) : isB2bRes)
+    setShowVoucherParser(false)
+    setVoucherTextToParse("")
+    setNewAgencyInlineOpen(false)
     setFormGuestId(resItem.guestId ? String(resItem.guestId) : "")
     setGuestSearchFilter("")
 
@@ -2427,6 +2578,7 @@ export default function PmsCalendar() {
     if (!resolvedMethod) {
       if (chan === "booking") resolvedMethod = "booking";
       else if (chan === "airbnb") resolvedMethod = "airbnb";
+      else if (chan === "b2b") resolvedMethod = resItem.b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b";
       else if (resItem.mpPaymentId && !resItem.pixEndToEndId) resolvedMethod = "cartao_credito";
       else if (resItem.pixTxId || resItem.pixEndToEndId || chan === "site") resolvedMethod = "pix";
       else if (resItem.mpPaymentId) resolvedMethod = "cartao_credito";
@@ -2500,7 +2652,7 @@ export default function PmsCalendar() {
     setPackageTotalInput(totCalculated > 0 ? String(totCalculated) : "");
 
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (isUnpaidPreReserva ? "pendente" : (resItem.paymentStatus || "pendente")))
-    setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
+    setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid || isB2bRes) ? "confirmada" : (resItem.status || "pre_reserva"))
     setFormNotes(resItem.notes || "")
     const resCleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "")
     const resCleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "")
@@ -2946,7 +3098,9 @@ export default function PmsCalendar() {
         fetchCompanies()
         setFormCompanyId(String(createdComp.id))
         setFormCompanyName(createdComp.tradeName || createdComp.corporateName)
-        setFormRequesterType("company")
+        if (formRequesterType !== "agency_b2b" && formChannel !== "b2b") {
+          setFormRequesterType("company")
+        }
         setNewCompanyModalOpen(false)
         toast({
           title: "Empresa Cadastrada com Sucesso!",
@@ -2960,6 +3114,207 @@ export default function PmsCalendar() {
       toast({ title: "Erro de comunicação", description: err.message, variant: "destructive" })
     } finally {
       setSavingNewCompany(false)
+    }
+  }
+
+  const handleSelectAgency = (val: string) => {
+    if (val === "__NEW_AGENCY__") {
+      setNewAgencyInlineOpen(true)
+      return
+    }
+    setFormAgencyId(val)
+    const ag = agencies.find((a: any) => String(a.id) === val)
+    if (ag) {
+      setFormAgencyName(ag.tradeName || ag.corporateName || "")
+      setFormAgencyCnpj(ag.cnpj || "")
+      if (ag.defaultRatePolicy) {
+        setFormB2bRatePolicy(ag.defaultRatePolicy === "NET" ? "NET" : "COMISSIONADA")
+        setFormB2bCommissionPct(ag.defaultRatePolicy === "NET" ? "0" : String(ag.defaultCommissionPct ?? 12))
+      }
+      if (ag.defaultInvoiceRecipient) {
+        setFormInvoiceRecipientType(ag.defaultInvoiceRecipient)
+      }
+      const firstPos = Array.isArray(ag.posUnits) && ag.posUnits[0] ? ag.posUnits[0] : ""
+      if (firstPos && !formAgencyPosUnit) setFormAgencyPosUnit(firstPos)
+      const firstAgent = Array.isArray(ag.agents) && ag.agents[0] ? ag.agents[0] : null
+      if (firstAgent) {
+        if (!formAgencyAgentName) setFormAgencyAgentName(firstAgent.name || "")
+        if (!formAgencyAgentEmail) setFormAgencyAgentEmail(firstAgent.email || ag.email || "")
+        if (!formAgencyAgentPhone) setFormAgencyAgentPhone(firstAgent.phone || ag.phone || "")
+      } else {
+        if (!formAgencyAgentEmail && ag.email) setFormAgencyAgentEmail(ag.email)
+        if (!formAgencyAgentPhone && ag.phone) setFormAgencyAgentPhone(ag.phone)
+      }
+      const deliveryList = new Set<string>(["conciliacao@b2breservas.com.br"])
+      if (ag.financialEmail) deliveryList.add(ag.financialEmail)
+      if (ag.email) deliveryList.add(ag.email)
+      if (firstAgent?.email) deliveryList.add(firstAgent.email)
+      setFormNfDeliveryEmails(Array.from(deliveryList).join(", "))
+      setFormNfHideFromGuest(true)
+    }
+  }
+
+  const handleSaveNewAgencyInline = async () => {
+    if (!newAgencyName.trim()) {
+      toast({ title: "Nome da Agência Obrigatório", description: "Informe o nome ou razão social da agência B2B.", variant: "destructive" })
+      return
+    }
+    setSavingNewAgency(true)
+    try {
+      const resp = await fetch("/api/agencies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          corporateName: newAgencyName.trim().toUpperCase(),
+          tradeName: newAgencyName.trim(),
+          cnpj: newAgencyCnpj.trim(),
+          email: newAgencyEmail.trim(),
+          financialEmail: newAgencyEmail.trim() || "conciliacao@b2breservas.com.br",
+          phone: newAgencyPhone.trim(),
+          defaultRatePolicy: formB2bRatePolicy,
+          defaultCommissionPct: Number(formB2bCommissionPct) || 0,
+          defaultInvoiceRecipient: formInvoiceRecipientType
+        })
+      })
+      if (resp.ok) {
+        const createdAg = await resp.json()
+        setAgencies(prev => [...prev.filter(a => a.id !== createdAg.id), createdAg])
+        fetchAgencies()
+        setFormAgencyId(String(createdAg.id))
+        setFormAgencyName(createdAg.tradeName || createdAg.corporateName)
+        setFormAgencyCnpj(createdAg.cnpj || "")
+        setNewAgencyInlineOpen(false)
+        setNewAgencyName("")
+        setNewAgencyCnpj("")
+        setNewAgencyEmail("")
+        setNewAgencyPhone("")
+        toast({ title: "Agência B2B Cadastrada!", description: `${createdAg.tradeName || createdAg.corporateName} vinculada à reserva.` })
+      } else {
+        const err = await resp.json().catch(() => ({}))
+        toast({ title: "Erro ao cadastrar agência", description: err.error || "Tente novamente.", variant: "destructive" })
+      }
+    } catch (e: any) {
+      toast({ title: "Erro de conexão", description: e.message, variant: "destructive" })
+    } finally {
+      setSavingNewAgency(false)
+    }
+  }
+
+  const handleParseVoucherText = async () => {
+    if (!voucherTextToParse.trim()) {
+      toast({ title: "Texto vazio", description: "Cole o texto do e-mail ou voucher da B2B Reservas.", variant: "destructive" })
+      return
+    }
+    setParsingVoucher(true)
+    try {
+      const resp = await fetch("/api/pms/b2b/parse-voucher", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ text: voucherTextToParse })
+      })
+      const json = await resp.json().catch(() => ({}))
+      if (!resp.ok || !json.parsed) {
+        toast({ title: "Não foi possível extrair dados", description: json.error || "Verifique o texto colado.", variant: "destructive" })
+        return
+      }
+      const p = json.parsed
+      setFormChannel("b2b")
+      setFormRequesterType("agency_b2b")
+      if (p.b2bReservationNumber) setFormB2bReservationNumber(p.b2bReservationNumber)
+      if (p.b2bLocatorRloc) setFormB2bLocatorRloc(p.b2bLocatorRloc)
+      if (p.b2bOriginType) setFormB2bOriginType(p.b2bOriginType === "OTA_WS" ? "OTA_WS" : "BOOKING_WS")
+      if (p.checkinDate) setFormCheckin(p.checkinDate)
+      if (p.checkoutDate) setFormCheckout(p.checkoutDate)
+      if (p.guestName) setFormGuestName(p.guestName)
+      if (p.agencyName) {
+        setFormAgencyName(p.agencyName)
+        const cleanAgCnpj = String(p.agencyCnpj || "").replace(/\D/g, "")
+        const matchedAg = agencies.find((a: any) =>
+          (cleanAgCnpj && String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj) ||
+          (a.tradeName || "").toLowerCase().includes(p.agencyName.toLowerCase()) ||
+          (a.corporateName || "").toLowerCase().includes(p.agencyName.toLowerCase())
+        )
+        if (matchedAg) setFormAgencyId(String(matchedAg.id))
+      }
+      if (p.agencyCnpj) setFormAgencyCnpj(p.agencyCnpj)
+      if (p.agencyPosUnit) setFormAgencyPosUnit(p.agencyPosUnit)
+      if (p.agencyAgentName) setFormAgencyAgentName(p.agencyAgentName)
+      if (p.agencyAgentEmail) setFormAgencyAgentEmail(p.agencyAgentEmail)
+      if (p.agencyAgentPhone) setFormAgencyAgentPhone(p.agencyAgentPhone)
+      if (p.companyName) {
+        setFormCompanyName(p.companyName)
+        const matchedComp = companies.find((c: any) =>
+          (c.tradeName || "").toLowerCase().includes(p.companyName.toLowerCase()) ||
+          (c.corporateName || "").toLowerCase().includes(p.companyName.toLowerCase())
+        )
+        if (matchedComp) setFormCompanyId(String(matchedComp.id))
+      }
+      if (p.b2bRatePolicy) setFormB2bRatePolicy(p.b2bRatePolicy === "NET" ? "NET" : "COMISSIONADA")
+      if (p.b2bCommissionPct !== undefined) setFormB2bCommissionPct(String(p.b2bCommissionPct))
+      if (p.b2bCardBrand) setFormB2bCardBrand(p.b2bCardBrand)
+      if (p.b2bCardMasked) setFormB2bCardMasked(p.b2bCardMasked)
+      if (p.b2bVcnToken) setFormB2bVcnToken(p.b2bVcnToken)
+      if (p.b2bAuthorizedExpenses) setFormB2bAuthorizedExpenses(p.b2bAuthorizedExpenses)
+      if (p.invoiceRecipientType) setFormInvoiceRecipientType(p.invoiceRecipientType)
+      if (Array.isArray(p.nfDeliveryEmails) && p.nfDeliveryEmails.length > 0) {
+        setFormNfDeliveryEmails(p.nfDeliveryEmails.join(", "))
+      }
+      setFormNfHideFromGuest(true)
+      if (p.dailyRate || p.totalAmount) {
+        const cin = p.checkinDate || formCheckin
+        const cout = p.checkoutDate || formCheckout
+        const rate = Number(p.dailyRate) || Number(p.totalAmount) || 250
+        setFormDailyRate(String(rate))
+        const builtRates = buildReservationDailyRates(cin, cout, rate, "b2b")
+        setFormDailyRates(builtRates)
+        const tot = Number(p.totalAmount) || builtRates.reduce((s, d) => s + Number(d.rate || 0), 0)
+        setFormTotalAmount(String(tot))
+        setPackageTotalInput(String(tot))
+      }
+      setShowVoucherParser(false)
+      toast({
+        title: "Voucher B2B Interpretado!",
+        description: `Reserva ${p.b2bReservationNumber || ""} (${p.guestName || "Hóspede"}) preenchida automaticamente.`
+      })
+    } catch (e: any) {
+      toast({ title: "Erro ao ler voucher", description: e.message, variant: "destructive" })
+    } finally {
+      setParsingVoucher(false)
+    }
+  }
+
+  const handleSendB2bCredentialEmail = async () => {
+    if (!selectedRes?.id) return
+    setSendingB2bCredentialEmail(true)
+    try {
+      const resp = await fetch(`/api/pms/reservations/${selectedRes.id}/send-b2b-credential-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          toEmail: formAgencyAgentEmail || selectedRes.agencyAgentEmail || ""
+        })
+      })
+      const json = await resp.json().catch(() => ({}))
+      if (resp.ok && json.ok) {
+        toast({
+          title: "E-mail Cordial Enviado à Agência!",
+          description: `Solicitação de credenciamento enviada para ${json.sentTo || formAgencyAgentEmail}.`
+        })
+        fetchCommunications(selectedRes.code || selectedRes.id)
+      } else {
+        toast({
+          title: "Falha ao enviar e-mail",
+          description: json.error || "Verifique o e-mail do agente B2B.",
+          variant: "destructive"
+        })
+      }
+    } catch (e: any) {
+      toast({ title: "Erro de conexão", description: e.message, variant: "destructive" })
+    } finally {
+      setSendingB2bCredentialEmail(false)
     }
   }
 
@@ -2996,7 +3351,8 @@ export default function PmsCalendar() {
     setPackageTotalInput(String(newTot));
 
     const isBooking = targetChannel === "booking";
-    const resolvedMethod = targetMethod || (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : formPaymentMethod));
+    const isB2b = targetChannel === "b2b";
+    const resolvedMethod = targetMethod || (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : (isB2b ? (formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b") : formPaymentMethod)));
 
     if (isBooking) {
       setFormPaymentMethod("booking");
@@ -3004,6 +3360,13 @@ export default function PmsCalendar() {
     } else if (targetChannel === "airbnb") {
       setFormPaymentMethod("airbnb");
       setFormPaymentStatus("pago_total");
+    } else if (isB2b) {
+      setFormPaymentMethod(resolvedMethod);
+      if (formPayments.length === 0) {
+        setFormPaidAmount("0");
+        setFormPaymentStatus("pendente");
+        return newTot;
+      }
     }
 
     // Pré-Reserva (canal direto) nunca tem valor pago: atualiza apenas o total
@@ -3322,6 +3685,7 @@ export default function PmsCalendar() {
       const calcTot = calculateTotal()
       const totalAmount = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calcTot
       const isOta = formChannel === "booking" || formChannel === "airbnb"
+      const isB2b = formChannel === "b2b" || formRequesterType === "agency_b2b"
       const sumPaidFromList = formPayments.length > 0
         ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
         : (Number(formPaidAmount) || 0)
@@ -3363,10 +3727,12 @@ export default function PmsCalendar() {
 
       // Regra oficial Pré-Reserva x Confirmada (canais diretos):
       // - Pré-Reserva: nenhum valor pago (pagamentos zerados, status pendente)
-      // - Qualquer valor pago > 0: reserva é Confirmada (sinal ou quitada)
+      // - Qualquer valor pago > 0 ou Reserva B2B: reserva é Confirmada
       let statusToSave: string = formStatus
       if (!isOta) {
-        if (formStatus === "pre_reserva") {
+        if (isB2b) {
+          statusToSave = "confirmada"
+        } else if (formStatus === "pre_reserva") {
           normalizedPayments = []
           resolvedPaidAmount = 0
           resolvedPaymentStatus = "pendente"
@@ -3408,10 +3774,16 @@ export default function PmsCalendar() {
       }
 
       const selectedComp = companies.find(c => String(c.id) === formCompanyId)
-      const resolvedReqType = formRequesterType || (formCompanyId || formCompanyName ? "company" : "guest")
+      const selectedAg = agencies.find((a: any) => String(a.id) === formAgencyId)
+      const resolvedReqType = formRequesterType || (isB2b ? "agency_b2b" : (formCompanyId || formCompanyName ? "company" : "guest"))
       const resolvedCompName = (selectedComp ? (selectedComp.tradeName || selectedComp.corporateName) : formCompanyName) || ""
+      const resolvedAgName = (selectedAg ? (selectedAg.tradeName || selectedAg.corporateName) : formAgencyName) || ""
+      const resolvedAgCnpj = (selectedAg ? selectedAg.cnpj : formAgencyCnpj) || ""
+      const commPct = formB2bRatePolicy === "NET" ? 0 : (Number(formB2bCommissionPct) || 0)
+      const commAmt = Number(((totalAmount * commPct) / 100).toFixed(2))
+      const netAmt = Number((totalAmount - commAmt).toFixed(2))
 
-      const payload = {
+      const payload: any = {
         flatId: Number(formFlatId),
         guestId: formGuestId && formGuestId !== "manual" ? Number(formGuestId) : (selectedRes?.guestId || null),
         guestName: formGuestName.trim(),
@@ -3427,15 +3799,48 @@ export default function PmsCalendar() {
           cpf: formRequesterCpf.trim(),
           phone: formRequesterPhone.trim(),
           email: formRequesterEmail.trim()
-        } : null,
-        companyId: resolvedReqType === "company" && formCompanyId ? Number(formCompanyId) : null,
-        companyName: resolvedReqType === "company" ? resolvedCompName : "",
+        } : (isB2b ? {
+          name: formAgencyAgentName.trim() || resolvedAgName,
+          phone: formAgencyAgentPhone.trim(),
+          email: formAgencyAgentEmail.trim()
+        } : null),
+        companyId: (resolvedReqType === "company" || isB2b) && formCompanyId ? Number(formCompanyId) : null,
+        companyName: (resolvedReqType === "company" || isB2b) ? resolvedCompName : "",
+        companyCnpj: (resolvedReqType === "company" || isB2b) && selectedComp?.cnpj ? selectedComp.cnpj : undefined,
+        costCenter: formCostCenter.trim() || undefined,
+        agencyId: isB2b && formAgencyId ? Number(formAgencyId) : (selectedRes?.agencyId || null),
+        agencyName: isB2b ? (selectedAg?.corporateName || resolvedAgName) : undefined,
+        agencyTradeName: isB2b ? resolvedAgName : undefined,
+        agencyCnpj: isB2b ? resolvedAgCnpj : undefined,
+        agencyPosUnit: isB2b ? formAgencyPosUnit.trim() : undefined,
+        agencyAgentName: isB2b ? formAgencyAgentName.trim() : undefined,
+        agencyAgentEmail: isB2b ? formAgencyAgentEmail.trim() : undefined,
+        agencyAgentPhone: isB2b ? formAgencyAgentPhone.trim() : undefined,
+        b2bReservationNumber: isB2b ? formB2bReservationNumber.trim() : undefined,
+        externalReservationNumber: isB2b && formB2bReservationNumber.trim() ? formB2bReservationNumber.trim() : undefined,
+        b2bLocatorRloc: isB2b ? formB2bLocatorRloc.trim().toUpperCase() : undefined,
+        b2bOriginType: isB2b ? formB2bOriginType : undefined,
+        b2bRatePolicy: isB2b ? formB2bRatePolicy : undefined,
+        b2bCommissionPct: isB2b ? commPct : undefined,
+        b2bCommissionAmount: isB2b ? commAmt : undefined,
+        b2bNetAmount: isB2b ? netAmt : undefined,
+        b2bPaymentType: isB2b ? formB2bPaymentType : undefined,
+        b2bCardBrand: isB2b ? formB2bCardBrand.trim() : undefined,
+        b2bCardMasked: isB2b ? formB2bCardMasked.trim() : undefined,
+        b2bVcnToken: isB2b ? formB2bVcnToken.trim() : undefined,
+        b2bConciliationUrl: isB2b ? formB2bConciliationUrl.trim() : undefined,
+        b2bAuthorizedExpenses: isB2b ? formB2bAuthorizedExpenses.trim() : undefined,
+        invoiceRecipientType: isB2b ? formInvoiceRecipientType : (resolvedReqType === "company" ? "company" : "guest"),
+        nfDeliveryEmails: isB2b
+          ? formNfDeliveryEmails.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean)
+          : undefined,
+        nfHideFromGuest: isB2b ? Boolean(formNfHideFromGuest) : false,
         checkinDate: formCheckin,
         checkoutDate: formCheckout,
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
         status: statusToSave,
-        channel: formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp",
+        channel: isB2b ? "b2b" : (formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp"),
         paymentMethod: resolvedMethod,
         dailyRate: formDailyRates.length > 0 
           ? Math.round(totalAmount / formDailyRates.length) 
@@ -5153,7 +5558,12 @@ export default function PmsCalendar() {
                           : formDailyRates;
                         setFormDailyRates(updatedDailyRates);
 
-                        if (val === "booking" || val === "airbnb") {
+                        if (val === "b2b") {
+                          setFormRequesterType("agency_b2b");
+                          setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
+                          setFormStatus("confirmada");
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
+                        } else if (val === "booking" || val === "airbnb") {
                           let updatedCharges = [...formCharges];
                           const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
                           if (cleanIdx === -1) {
@@ -5185,6 +5595,7 @@ export default function PmsCalendar() {
                         <SelectItem value="whatsapp">💬 WhatsApp / Reserva Direta</SelectItem>
                         <SelectItem value="booking">🔵 Booking.com</SelectItem>
                         <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                        <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -5657,12 +6068,28 @@ export default function PmsCalendar() {
                   </div>
                 </div>
 
-                {/* 2. Tipo de Solicitante da Reserva (Próprio Hóspede, Terceiro ou Empresa) */}
+                {/* 2. Tipo de Solicitante da Reserva (Próprio Hóspede, Terceiro, Empresa ou Agência B2B 4-Pontas) */}
                 <div className="p-3 bg-slate-100/80 dark:bg-slate-900/80 border rounded-xl space-y-2.5">
-                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                    Quem está solicitando a reserva?
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                      Quem está solicitando a reserva?
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setFormChannel("b2b")
+                        setFormRequesterType("agency_b2b")
+                        setShowVoucherParser(!showVoucherParser)
+                      }}
+                      className="h-7 px-2.5 text-[10.5px] font-bold bg-purple-600/10 hover:bg-purple-600/20 text-purple-700 dark:text-purple-300 border-purple-400/50 gap-1"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      {showVoucherParser ? "Fechar Leitor B2B" : "✨ Colar Voucher / E-mail B2B"}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
                       type="button"
                       onClick={() => setFormRequesterType("guest")}
@@ -5694,9 +6121,471 @@ export default function PmsCalendar() {
                           : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-primary/50"
                       }`}
                     >
-                      <span>🏢 Empresa (PJ / Faturamento)</span>
+                      <span>🏢 Empresa (PJ Direto)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormRequesterType("agency_b2b")
+                        setFormChannel("b2b")
+                        setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+                        setFormStatus("confirmada")
+                      }}
+                      className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
+                        formRequesterType === "agency_b2b" || formChannel === "b2b"
+                          ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                          : "bg-background border-border text-purple-700 dark:text-purple-300 hover:border-purple-500/50"
+                      }`}
+                    >
+                      <span>🟣 Agência B2B (4-Pontas)</span>
                     </button>
                   </div>
+
+                  {/* Leitor Inteligente de Voucher B2B */}
+                  {showVoucherParser && (
+                    <div className="p-3 bg-purple-950/90 text-white border border-purple-500/40 rounded-xl space-y-2 animate-in fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-purple-200 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                          Leitor Inteligente de Voucher / E-mail B2B Reservas
+                        </span>
+                        <Badge className="bg-purple-600 text-white text-[9px]">BOOKING_WS & OTA_WS</Badge>
+                      </div>
+                      <Textarea
+                        value={voucherTextToParse}
+                        onChange={e => setVoucherTextToParse(e.target.value)}
+                        rows={4}
+                        placeholder="Cole aqui o corpo do e-mail ou texto do PDF da B2B Reservas (Nº da Reserva, RLOC, Agência, CNPJ, Empresa, Hóspede, Cartão Virtual VCN, Tarifas)..."
+                        className="text-xs bg-slate-900/90 border-purple-500/40 text-slate-100 placeholder:text-slate-400"
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setShowVoucherParser(false)}
+                          className="h-7 text-xs text-purple-200 hover:text-white"
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={parsingVoucher}
+                          onClick={handleParseVoucherText}
+                          className="h-7 text-xs font-bold bg-purple-500 hover:bg-purple-400 text-white"
+                        >
+                          {parsingVoucher ? "Interpretando..." : "⚡ Extrair e Preencher Reserva 4-Pontas"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Detalhes da Reserva Corporativa 4-Pontas (B2B + Agência + Empresa + Hóspede) */}
+                  {(formRequesterType === "agency_b2b" || formChannel === "b2b") && (
+                    <div className="p-3 bg-purple-50/70 dark:bg-purple-950/30 border border-purple-300 dark:border-purple-800/70 rounded-xl space-y-3 mt-2 animate-in fade-in">
+                      <div className="flex items-center justify-between gap-2 flex-wrap border-b border-purple-200 dark:border-purple-800/60 pb-2">
+                        <div>
+                          <span className="text-xs font-black text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                            🟣 Arquitetura Corporativa 4-Pontas (B2B + Agência + Empresa + Hóspede)
+                          </span>
+                          <span className="text-[10.5px] text-purple-700/80 dark:text-purple-300/80 block">
+                            Pré-check-in e senha da fechadura liberados imediatamente • Valores ocultos do hóspede por padrão
+                          </span>
+                        </div>
+
+                        {selectedRes && (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={sendingB2bCredentialEmail}
+                              onClick={handleSendB2bCredentialEmail}
+                              className="h-7 px-2.5 text-[10.5px] font-bold bg-purple-600 hover:bg-purple-700 text-white gap-1 shadow-2xs"
+                              title="Envia e-mail cordial para o agente da agência com link seguro para informar WhatsApp e CPF do hóspede"
+                            >
+                              <Mail className="w-3 h-3" />
+                              {sendingB2bCredentialEmail ? "Enviando..." : "📧 Solicitar Contato à Agência"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                const code = selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id
+                                const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`
+                                navigator.clipboard.writeText(url)
+                                toast({ title: "Link de Credenciamento Copiado!", description: url })
+                              }}
+                              className="h-7 px-2 text-[10.5px] font-bold border-purple-300 dark:border-purple-700 text-purple-800 dark:text-purple-200 gap-1"
+                            >
+                              <Copy className="w-3 h-3" /> Link Agência
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Ponta 1: Canal B2B & Identificadores */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold uppercase text-purple-900 dark:text-purple-200">Nº Reserva B2B</Label>
+                          <Input
+                            value={formB2bReservationNumber}
+                            onChange={e => setFormB2bReservationNumber(e.target.value)}
+                            placeholder="Ex: 25055349"
+                            className="h-8 text-xs font-mono bg-background"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold uppercase text-purple-900 dark:text-purple-200">Localizador / RLOC</Label>
+                          <Input
+                            value={formB2bLocatorRloc}
+                            onChange={e => setFormB2bLocatorRloc(e.target.value.toUpperCase())}
+                            placeholder="Ex:JXNVWR"
+                            className="h-8 text-xs font-mono uppercase bg-background"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold uppercase text-purple-900 dark:text-purple-200">Origem do Voucher</Label>
+                          <Select value={formB2bOriginType} onValueChange={(v: any) => setFormB2bOriginType(v)}>
+                            <SelectTrigger className="h-8 text-xs bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="BOOKING_WS">BOOKING_WS (Agência Direta)</SelectItem>
+                              <SelectItem value="OTA_WS">OTA_WS (Consolidador / Trend)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {/* Ponta 2: Agência de Viagens Corporativa */}
+                      <div className="p-2.5 bg-background border border-purple-200 dark:border-purple-800/60 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-black text-purple-700 dark:text-purple-300">
+                            Ponta 2 • Agência de Viagens (Solicitante)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setNewAgencyInlineOpen(!newAgencyInlineOpen)}
+                            className="text-[11px] text-purple-600 dark:text-purple-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" /> {newAgencyInlineOpen ? "Fechar Cadastro" : "Nova Agência B2B"}
+                          </button>
+                        </div>
+
+                        {newAgencyInlineOpen && (
+                          <div className="p-2.5 bg-purple-50/70 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-700 rounded-lg space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <Input
+                                value={newAgencyName}
+                                onChange={e => setNewAgencyName(e.target.value)}
+                                placeholder="Nome / Razão Social da Agência *"
+                                className="h-7 text-xs bg-background"
+                              />
+                              <Input
+                                value={newAgencyCnpj}
+                                onChange={e => setNewAgencyCnpj(e.target.value)}
+                                placeholder="CNPJ da Agência"
+                                className="h-7 text-xs font-mono bg-background"
+                              />
+                              <Input
+                                value={newAgencyEmail}
+                                onChange={e => setNewAgencyEmail(e.target.value)}
+                                placeholder="E-mail da Agência"
+                                className="h-7 text-xs bg-background"
+                              />
+                              <Input
+                                value={newAgencyPhone}
+                                onChange={e => setNewAgencyPhone(e.target.value)}
+                                placeholder="Telefone da Agência"
+                                className="h-7 text-xs bg-background"
+                              />
+                            </div>
+                            <div className="flex justify-end">
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={savingNewAgency}
+                                onClick={handleSaveNewAgencyInline}
+                                className="h-7 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white"
+                              >
+                                {savingNewAgency ? "Salvando..." : "Salvar e Vincular Agência"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        <Select value={formAgencyId} onValueChange={handleSelectAgency}>
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Selecione a Agência B2B cadastrada..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-64">
+                            <SelectItem value="__NEW_AGENCY__" className="text-purple-600 font-bold">
+                              ➕ Cadastrar Nova Agência B2B...
+                            </SelectItem>
+                            {agencies.map((ag: any) => (
+                              <SelectItem key={ag.id} value={String(ag.id)}>
+                                <span className="font-semibold">{ag.tradeName || ag.corporateName}</span>
+                                {ag.cnpj ? ` • CNPJ: ${ag.cnpj}` : ""}
+                                {ag.defaultRatePolicy ? ` • [${ag.defaultRatePolicy}]` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <Input
+                            value={formAgencyPosUnit}
+                            onChange={e => setFormAgencyPosUnit(e.target.value)}
+                            placeholder="Unidade / POS (Ex: OPUS VIAGENS - MATRIZ)"
+                            className="h-8 text-xs"
+                          />
+                          <Input
+                            value={formAgencyCnpj}
+                            onChange={e => setFormAgencyCnpj(e.target.value)}
+                            placeholder="CNPJ da Agência"
+                            className="h-8 text-xs font-mono"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <Input
+                            value={formAgencyAgentName}
+                            onChange={e => setFormAgencyAgentName(e.target.value)}
+                            placeholder="Agente Emissor (Ex: Rosana)"
+                            className="h-8 text-xs"
+                          />
+                          <Input
+                            value={formAgencyAgentEmail}
+                            onChange={e => setFormAgencyAgentEmail(e.target.value)}
+                            placeholder="E-mail do Agente"
+                            className="h-8 text-xs"
+                          />
+                          <Input
+                            value={formAgencyAgentPhone}
+                            onChange={e => setFormAgencyAgentPhone(e.target.value)}
+                            placeholder="Telefone da Agência"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Ponta 3: Empresa Contratante (Cliente Corporativo) */}
+                      <div className="p-2.5 bg-background border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-black text-indigo-700 dark:text-indigo-300">
+                            Ponta 3 • Empresa Contratante (Empregador do Hóspede)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleOpenNewCompanyModal}
+                            className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" /> Cadastrar Empresa
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <Select
+                            value={formCompanyId}
+                            onValueChange={val => {
+                              if (val === "__NEW_COMPANY__") {
+                                handleOpenNewCompanyModal()
+                                return
+                              }
+                              setFormCompanyId(val)
+                              const c = companies.find(comp => String(comp.id) === val)
+                              if (c) setFormCompanyName(c.tradeName || c.corporateName)
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue placeholder="Selecione a Empresa Cliente..." />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-64">
+                              <SelectItem value="__NEW_COMPANY__" className="text-indigo-600 font-bold">
+                                ➕ Cadastrar Nova Empresa...
+                              </SelectItem>
+                              {companies.map((c: any) => (
+                                <SelectItem key={c.id} value={String(c.id)}>
+                                  <span className="font-semibold">{c.tradeName || c.corporateName}</span>
+                                  {c.cnpj && !String(c.cnpj).includes("Informado") ? ` • CNPJ: ${c.cnpj}` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          <Input
+                            value={formCostCenter}
+                            onChange={e => setFormCostCenter(e.target.value)}
+                            placeholder="Centro de Custo / Projeto / Ordem"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Política Tarifária, Cartão Virtual VCN & Tomador da NFS-e */}
+                      <div className="p-2.5 bg-background border border-emerald-200 dark:border-emerald-800/60 rounded-xl space-y-2.5">
+                        <span className="text-[10px] uppercase font-black text-emerald-700 dark:text-emerald-300 block">
+                          Política Tarifária, Cartão Virtual (VCN) & Tomador da NFS-e
+                        </span>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-bold">Política de Tarifa</Label>
+                            <Select
+                              value={formB2bRatePolicy}
+                              onValueChange={(v: "NET" | "COMISSIONADA") => {
+                                setFormB2bRatePolicy(v)
+                                if (v === "NET") {
+                                  setFormB2bCommissionPct("0")
+                                } else if (Number(formB2bCommissionPct) === 0) {
+                                  setFormB2bCommissionPct("12")
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="COMISSIONADA">COMISSIONADA (Com Comissão)</SelectItem>
+                                <SelectItem value="NET">NET (Tarifa Líquida 0%)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-bold">Comissão Agência (%)</Label>
+                            <Input
+                              type="number"
+                              value={formB2bRatePolicy === "NET" ? "0" : formB2bCommissionPct}
+                              disabled={formB2bRatePolicy === "NET"}
+                              onChange={e => setFormB2bCommissionPct(e.target.value)}
+                              className="h-8 text-xs font-bold"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-bold">Pagamento B2B</Label>
+                            <Select
+                              value={formB2bPaymentType}
+                              onValueChange={(v: "VIRTUAL_CARD" | "FATURADO") => {
+                                setFormB2bPaymentType(v)
+                                setFormPaymentMethod(v === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="VIRTUAL_CARD">💳 Cartão Virtual (VCN)</SelectItem>
+                                <SelectItem value="FATURADO">🏢 Faturado B2B / Boleto</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        {formB2bPaymentType === "VIRTUAL_CARD" && (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <Input
+                              value={formB2bCardBrand}
+                              onChange={e => setFormB2bCardBrand(e.target.value)}
+                              placeholder="Bandeira (MASTERCARD / VISA)"
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              value={formB2bCardMasked}
+                              onChange={e => setFormB2bCardMasked(e.target.value)}
+                              placeholder="Cartão Mascarado (553636******8926)"
+                              className="h-8 text-xs font-mono"
+                            />
+                            <Input
+                              value={formB2bAuthorizedExpenses}
+                              onChange={e => setFormB2bAuthorizedExpenses(e.target.value)}
+                              placeholder="Despesas Autorizadas (Apenas Diárias)"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        )}
+
+                        {/* Resumo Líquido x Comissão */}
+                        {(() => {
+                          const gross = Number(formTotalAmount) || calculateTotal()
+                          const pct = formB2bRatePolicy === "NET" ? 0 : (Number(formB2bCommissionPct) || 0)
+                          const comm = Number(((gross * pct) / 100).toFixed(2))
+                          const net = Number((gross - comm).toFixed(2))
+                          return (
+                            <div className="px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-between text-[11px] flex-wrap gap-2">
+                              <span>Bruto Voucher: <strong>R$ {gross.toFixed(2)}</strong></span>
+                              <span>Comissão ({pct}%): <strong className="text-amber-700 dark:text-amber-400">R$ {comm.toFixed(2)}</strong></span>
+                              <span>Líquido Hotel (NET): <strong className="text-emerald-700 dark:text-emerald-400">R$ {net.toFixed(2)}</strong></span>
+                            </div>
+                          )
+                        })()}
+
+                        {/* 3 Opções de Tomador da NFS-e */}
+                        <div className="space-y-1.5 pt-1 border-t border-border/50">
+                          <Label className="text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300 block">
+                            Tomador Padrão da NFS-e (Editável na Emissão Fiscal)
+                          </Label>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setFormInvoiceRecipientType("agency")}
+                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold transition-all ${
+                                formInvoiceRecipientType === "agency"
+                                  ? "bg-purple-600 text-white border-purple-600"
+                                  : "bg-background border-border text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              🟣 Agência PJ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFormInvoiceRecipientType("company")}
+                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold transition-all ${
+                                formInvoiceRecipientType === "company"
+                                  ? "bg-indigo-600 text-white border-indigo-600"
+                                  : "bg-background border-border text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              🏢 Empresa PJ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFormInvoiceRecipientType("guest")}
+                              className={`py-1.5 px-2 rounded-lg border text-[11px] font-bold transition-all ${
+                                formInvoiceRecipientType === "guest"
+                                  ? "bg-emerald-600 text-white border-emerald-600"
+                                  : "bg-background border-border text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              👤 Hóspede PF
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center pt-1">
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-bold">E-mails p/ Envio da NFS-e & Conciliação</Label>
+                            <Input
+                              value={formNfDeliveryEmails}
+                              onChange={e => setFormNfDeliveryEmails(e.target.value)}
+                              placeholder="conciliacao@b2breservas.com.br, agente@agencia.com.br"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-border mt-3 sm:mt-4">
+                            <div>
+                              <span className="text-[11px] font-bold block">Sigilo Tarifário p/ Hóspede</span>
+                              <span className="text-[9.5px] text-muted-foreground block">Ocultar diárias no Portal/WhatsApp e não enviar NFS-e ao hóspede</span>
+                            </div>
+                            <Switch checked={formNfHideFromGuest} onCheckedChange={setFormNfHideFromGuest} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Detalhes do Solicitante Próprio Hóspede */}
                   {formRequesterType === "guest" && (
@@ -7529,6 +8418,7 @@ export default function PmsCalendar() {
                                       <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
                                       <SelectItem value="booking">🔵 Booking.com</SelectItem>
                                       <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                      <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
                                       <SelectItem value="site">🌐 Site Próprio</SelectItem>
                                       <SelectItem value="balcao">🏨 Balcão</SelectItem>
                                       <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
@@ -7793,6 +8683,8 @@ export default function PmsCalendar() {
                                     <SelectItem value="pix">⚡ PIX</SelectItem>
                                     <SelectItem value="credit_card">💳 Cartão Crédito</SelectItem>
                                     <SelectItem value="debit_card">💳 Cartão Débito</SelectItem>
+                                    <SelectItem value="vcn_b2b">🟣 Cartão Virtual B2B (VCN)</SelectItem>
+                                    <SelectItem value="faturado_b2b">🟣 Faturado B2B / Agência</SelectItem>
                                     <SelectItem value="dinheiro">💵 Dinheiro</SelectItem>
                                     <SelectItem value="booking">🌐 Booking.com</SelectItem>
                                     <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
@@ -9794,6 +10686,7 @@ export default function PmsCalendar() {
                       <SelectItem value="whatsapp">WhatsApp / Direta</SelectItem>
                       <SelectItem value="airbnb">Airbnb</SelectItem>
                       <SelectItem value="booking">Booking.com</SelectItem>
+                      <SelectItem value="b2b">B2B Reservas / Agência</SelectItem>
                       <SelectItem value="site">Site Próprio</SelectItem>
                     </SelectContent>
                   </Select>

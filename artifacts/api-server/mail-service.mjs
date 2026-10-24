@@ -1151,6 +1151,132 @@ export function renderAccessInstructionsEmail({ reservation, flat, settings, bas
 export const renderAccessInstructionEmail = renderAccessInstructionsEmail;
 
 /**
+ * Gatilho G: Template de Confirmação de Reserva B2B e Solicitação Cordial de Credenciamento do Hóspede para a Agência
+ * Enviado ao agente emissor / agência de viagens com o link seguro de credenciamento (/credenciamento/:code)
+ * sem expor valores financeiros ao hóspede e explicando a obrigatoriedade do preenchimento prévio para liberação na portaria.
+ */
+export function renderB2bAgencyCredentialRequestEmail({
+  reservation,
+  flat,
+  agency = null,
+  company = null,
+  settings = null,
+  baseUrl = "",
+  credentialUrl = "",
+  db = null
+} = {}) {
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Designado";
+  const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
+  const guestName = reservation?.guestName || "Hóspede Titular";
+  const checkinDateBr = formatDateBr(reservation?.checkinDate);
+  const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
+  const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
+  const checkoutTime = settings?.checkoutTime || reservation?.checkoutTime || "12:00";
+  const resCode = reservation?.code || reservation?.id || "-";
+  const b2bNumber = reservation?.b2bReservationNumber || reservation?.externalReservationNumber || "";
+  const rloc = reservation?.b2bLocatorRloc || b2bNumber || "";
+  const agencyName = agency?.tradeName || agency?.corporateName || reservation?.agencyName || "Agência Parceira";
+  const agencyPosUnit = reservation?.agencyPosUnit || "";
+  const agentName = reservation?.agencyAgentName && reservation.agencyAgentName !== "WEBSERVICE" ? reservation.agencyAgentName : "";
+  const companyName = company?.tradeName || company?.corporateName || reservation?.companyName || "";
+
+  const hostBase = String(
+    baseUrl ||
+    settings?.baseUrl ||
+    (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) ||
+    "https://corpflats.com.br"
+  ).replace(/\/+$/, "");
+
+  const finalCredentialUrl =
+    credentialUrl ||
+    `${hostBase}/credenciamento/${encodeURIComponent(String(resCode))}`;
+
+  const refLabel = b2bNumber
+    ? `Reserva B2B #${b2bNumber}${rloc && rloc !== b2bNumber ? ` (RLOC: ${rloc})` : ""}`
+    : `Reserva #${resCode}`;
+
+  const subject = `[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] ${refLabel} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
+
+  const greetingName = agentName ? `Olá, <strong>${escapeHtml(agentName)}</strong> (${escapeHtml(agencyName)})` : `Prezada equipe da <strong>${escapeHtml(agencyName)}</strong>`;
+
+  const contentHtml = `
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;">
+        Reserva Confirmada • Credenciamento do Hóspede para Liberação na Portaria
+      </h1>
+      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
+        ${greetingName}, tudo bem? Agradecemos pela parceria e confirmamos com muita satisfação a reserva do(a) hóspede <strong>${escapeHtml(guestName)}</strong>${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}), para o período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>.
+      </p>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Como a reserva foi recebida via canal corporativo B2B sem os dados diretos de contato e documentação do hóspede, disponibilizamos abaixo o nosso <strong>Link Seguro de Credenciamento e Liberação de Acesso</strong>.
+      </p>
+    </div>
+
+    <!-- Alerta de Obrigatoriedade de Credenciamento Prévio -->
+    <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 4px solid #D97706; border-radius: 6px; padding: 16px; margin-bottom: 20px;">
+      <div style="color: #92400E; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
+        ⚠️ IMPORTANTE: LIBERAÇÃO ANTECIPADA OBRIGATÓRIA NA RECEPÇÃO / PORTARIA 24H
+      </div>
+      <p style="color: #78350F; font-size: 13.5px; margin: 0; line-height: 1.55;">
+        O preenchimento antecipado pelo link abaixo (informando <strong>CPF, WhatsApp, Telefone, E-mail e anexando o Documento de Identificação do hóspede</strong>) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício</strong>.<br/><br/>
+        Ressaltamos gentilmente que <strong>esses dados não podem ser informados apenas na hora no balcão</strong>, pois nossa operação é digital e, sem o credenciamento prévio pelo link, o sistema da recepção/portaria não conseguirá localizar a reserva nem autorizar a entrada do hóspede no condomínio.
+      </p>
+    </div>
+
+    <!-- Call to Action Principal: Link de Credenciamento -->
+    <div style="background-color: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 20px; margin-bottom: 24px; text-align: center;">
+      <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: #15803D; margin-bottom: 6px;">
+        Ambiente Seguro • Sem Exibição de Valores Financeiros
+      </div>
+      <div style="font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 8px;">
+        Credenciar Hóspede e Liberar Entrada na Portaria
+      </div>
+      <p style="font-size: 13.5px; color: #374151; margin: 0 0 16px 0; line-height: 1.5;">
+        A própria agência pode preencher os dados diretamente pelo botão abaixo (ou encaminhar este link ao hóspede, pois a página <strong>não exibe tarifas nem valores financeiros</strong>). Assim que concluído, enviaremos automaticamente pelo WhatsApp do hóspede todas as instruções de chegada, Wi-Fi e acesso ao flat:
+      </p>
+      <a href="${escapeHtml(finalCredentialUrl)}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 14px 28px; border-radius: 6px; text-decoration: none;">
+        🔐 Preencher Credenciamento do Hóspede
+      </a>
+      <div style="font-size: 12px; color: #4B5563; margin-top: 12px; word-break: break-all;">
+        Link direto: <a href="${escapeHtml(finalCredentialUrl)}" style="color: #111827; font-weight: 600; text-decoration: underline;">${escapeHtml(finalCredentialUrl)}</a>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Resumo da Reserva Confirmada</div>
+    <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+      <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        ${b2bNumber ? `<tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Nº Reserva B2B:</td><td class="val" style="padding: 5px 0; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 700; width: 62%;">${escapeHtml(b2bNumber)}${rloc && rloc !== b2bNumber ? ` (RLOC: ${escapeHtml(rloc)})` : ""}</td></tr>` : ""}
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código Interno CorpFlats:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${escapeHtml(resCode)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Hóspede Titular:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${escapeHtml(guestName)}</td></tr>
+        ${companyName ? `<tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Empresa Solicitante:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${escapeHtml(companyName)}</td></tr>` : ""}
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Agência / Unidade:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${escapeHtml(agencyName)}${agencyPosUnit ? ` • ${escapeHtml(agencyPosUnit)}` : ""}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício / Acomodação:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${escapeHtml(flatDisplay)} — ${escapeHtml(buildingName)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
+      </table>
+    </div>
+
+    <p style="font-size: 13.5px; color: #4B5563; margin: 16px 0 0 0; line-height: 1.5;">
+      Permanecemos à inteira disposição por este e-mail ou pelo nosso WhatsApp de Atendimento para qualquer suporte adicional. Muito obrigado pela atenção e parceria!
+    </p>
+  `;
+
+  const badge = `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;">Reserva B2B • Credenciamento</span>`;
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  const bodyText = [
+    `Olá, ${agentName || agencyName}!`,
+    `Confirmamos a reserva ${refLabel} para o(a) hóspede ${guestName} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr}.`,
+    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (CPF, WhatsApp, Telefone, E-mail e Documento de Identificação) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o credenciamento prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
+    `Link Seguro de Credenciamento (sem exibição de valores financeiros): ${finalCredentialUrl}`,
+    `Muito obrigado pela parceria! Equipe CorpFlats`
+  ].join("\n\n");
+
+  return { subject, bodyHtml, html: bodyHtml, bodyText, credentialUrl: finalCredentialUrl };
+}
+
+/**
  * Retorna a data atual no fuso horário oficial de Brasília (America/Sao_Paulo) no formato YYYY-MM-DD.
  */
 export function getBrasiliaTodayStr() {
