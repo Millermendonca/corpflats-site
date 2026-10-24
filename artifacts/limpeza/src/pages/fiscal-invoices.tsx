@@ -1533,12 +1533,12 @@ export default function FiscalInvoicesPage() {
       const agencyDoc = (agency?.cnpj || r.agencyCnpj || "").replace(/\D/g, "")
 
       const doc = activeTomadorType === "agency"
-        ? (agencyDoc || compDoc || guestDoc)
+        ? agencyDoc
         : activeTomadorType === "company"
-          ? (compDoc || agencyDoc || guestDoc)
-          : (guestDoc || compDoc || agencyDoc)
+          ? compDoc
+          : guestDoc
 
-      const hasDoc = doc.length >= 11
+      const hasDoc = activeTomadorType === "guest" ? doc.length >= 11 : doc.length === 14
       const isPj = activeTomadorType === "agency" || activeTomadorType === "company" || doc.length === 14
 
       let diarias = 1
@@ -1553,9 +1553,9 @@ export default function FiscalInvoicesPage() {
       const resolvedTotalAmount = Number(r.totalAmount || r.totalPrice || r.price || (Number(r.dailyRate || 0) * diarias) || 250)
 
       const tomadorDefaultName = activeTomadorType === "agency"
-        ? (agency?.corporateName || agency?.tradeName || r.agencyName || r.guestName)
+        ? (agency?.corporateName || agency?.tradeName || r.agencyName || "Agência sem razão social")
         : activeTomadorType === "company"
-          ? (company?.corporateName || company?.tradeName || company?.name || r.companyName || r.guestName)
+          ? (company?.corporateName || company?.tradeName || company?.name || r.companyName || "Empresa sem razão social")
           : (guest?.fullName || guest?.name || r.guestName)
 
       return {
@@ -3584,11 +3584,12 @@ export default function FiscalInvoicesPage() {
                         {filteredPendingReservations.map(res => {
                           const rowKey = String(res.id || res.code)
                           const isSelected = selectedPendingIds.includes(rowKey)
-                          const activeType: "guest" | "company" | "agency" = pendingTomadorOverrides[rowKey] || (res.invoiceRecipientType === "agency" ? "agency" : res.invoiceRecipientType === "company" ? "company" : res.isAgency ? "agency" : res.isPj ? "company" : "guest")
+                          const activeType: "guest" | "company" | "agency" = res.activeTomadorType || pendingTomadorOverrides[rowKey] || (res.invoiceRecipientType === "agency" ? "agency" : res.invoiceRecipientType === "company" ? "company" : res.isAgency ? "agency" : res.isPj ? "company" : "guest")
                           const activeOpt = res.tomadorOptions?.[activeType]
-                          const displayTomadorName = activeOpt?.name || res.tomadorDefaultName
-                          const displayTomadorDoc = activeOpt?.doc || res.tomadorDefaultDoc
-                          const displayHasDoc = Boolean(displayTomadorDoc && String(displayTomadorDoc).replace(/\D/g, "").length >= 11)
+                          const displayTomadorName = activeOpt?.name || activeOpt?.tomadorNome || res.tomadorDefaultName
+                          const displayTomadorDoc = activeOpt ? (activeOpt.doc ?? activeOpt.tomadorCpfCnpj ?? "") : res.tomadorDefaultDoc
+                          const cleanDisplayDoc = String(displayTomadorDoc || "").replace(/\D/g, "")
+                          const displayHasDoc = activeType === "guest" ? cleanDisplayDoc.length >= 11 : cleanDisplayDoc.length === 14
                           return (
                             <tr key={rowKey} className={`hover:bg-muted/20 transition-colors ${isSelected ? 'bg-primary/5' : ''}`}>
                               <td className="p-3 text-center">
@@ -4588,12 +4589,20 @@ export default function FiscalInvoicesPage() {
                     className="w-full h-9.5 rounded-xl border border-violet-500/40 bg-background px-3 text-xs font-bold"
                   >
                     <option value="">Selecione a Agência B2B...</option>
-                    {agencies.map(a => (
-                      <option key={a.id} value={String(a.id)}>
-                        {a.tradeName || a.corporateName} • CNPJ: {a.cnpj}
-                      </option>
-                    ))}
+                    {agencies.map(a => {
+                      const cleanAgCnpj = String(a.cnpj || "").replace(/\D/g, "")
+                      return (
+                        <option key={a.id} value={String(a.id)}>
+                          {a.tradeName || a.corporateName} • {cleanAgCnpj.length === 14 ? `CNPJ: ${a.cnpj}` : "⚠️ SEM CNPJ (Falta Doc)"}
+                        </option>
+                      )
+                    })}
                   </select>
+                  {consolidatedAgencyId && String(agencies.find(a => String(a.id) === String(consolidatedAgencyId))?.cnpj || "").replace(/\D/g, "").length !== 14 && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                      ⚠️ Falta Doc: A agência selecionada ainda não possui CNPJ de 14 dígitos cadastrado no CRM de Agências B2B. Cadastre o CNPJ antes de emitir a NFS-e.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-1.5">
@@ -4604,12 +4613,20 @@ export default function FiscalInvoicesPage() {
                     className="w-full h-9.5 rounded-xl border border-border bg-background px-3 text-xs font-bold"
                   >
                     <option value="">Selecione a Empresa...</option>
-                    {companies.map(c => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.corporateName || c.name} • CNPJ: {c.cnpj}
-                      </option>
-                    ))}
+                    {companies.map(c => {
+                      const cleanCompCnpj = String(c.cnpj || "").replace(/\D/g, "")
+                      return (
+                        <option key={c.id} value={String(c.id)}>
+                          {c.corporateName || c.name} • {cleanCompCnpj.length === 14 ? `CNPJ: ${c.cnpj}` : "⚠️ SEM CNPJ (Falta Doc)"}
+                        </option>
+                      )
+                    })}
                   </select>
+                  {consolidatedCompanyId && String(companies.find(c => String(c.id) === String(consolidatedCompanyId))?.cnpj || "").replace(/\D/g, "").length !== 14 && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                      ⚠️ Falta Doc: A empresa selecionada ainda não possui CNPJ de 14 dígitos cadastrado no CRM.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -4653,7 +4670,12 @@ export default function FiscalInvoicesPage() {
               </Button>
               <Button 
                 onClick={handleEmitConsolidatedB2B}
-                disabled={consolidatedEmitting || !(consolidatedTargetType === "agency" ? consolidatedAgencyId : consolidatedCompanyId)}
+                disabled={
+                  consolidatedEmitting ||
+                  (consolidatedTargetType === "agency"
+                    ? !consolidatedAgencyId || String(agencies.find(a => String(a.id) === String(consolidatedAgencyId))?.cnpj || "").replace(/\D/g, "").length !== 14
+                    : !consolidatedCompanyId || String(companies.find(c => String(c.id) === String(consolidatedCompanyId))?.cnpj || "").replace(/\D/g, "").length !== 14)
+                }
                 className={`${consolidatedTargetType === "agency" ? "bg-violet-600 hover:bg-violet-700" : "bg-indigo-600 hover:bg-indigo-700"} text-white font-bold text-xs rounded-xl h-9.5 gap-1.5`}
               >
                 {consolidatedEmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Building2 className="w-3.5 h-3.5" />}

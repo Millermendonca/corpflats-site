@@ -1101,6 +1101,35 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         created_at: isoDate,
         source: "zoho_api"
       };
+      const isB2bConfirmationEmail =
+        mapped.direction === "inbound" &&
+        (String(mapped.fromEmail || "").toLowerCase().includes("b2breservas") ||
+          /Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(mapped.subject || ""));
+
+      if (isB2bConfirmationEmail) {
+        if (!mapped.bodyHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+          try {
+            const contentRes = await callZohoMailApi(
+              db,
+              `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
+            );
+            if (contentRes.ok && contentRes.data?.content) {
+              mapped.bodyHtml = contentRes.data.content;
+            }
+          } catch {
+            // Ignora falha pontual de conteúdo na sincronização
+          }
+        }
+        const parsedB2b = await fetchAndParseB2bVoucher({
+          rawText: mapped.snippet || "",
+          htmlText: mapped.bodyHtml || "",
+          subject: mapped.subject || ""
+        });
+        if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+          ingestB2bVoucherIntoDb(db, parsedB2b, { autoSendCredentialEmail: existingIdx < 0 });
+        }
+      }
+
       const matchedRes = matchEmailWithReservation(db, mapped);
       mapped.labels = inferZohoSmartLabels(
         mapped,
@@ -1665,6 +1694,25 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
           contentType: a.contentType || "application/octet-stream",
           downloadUrl: `/api/webmail/attachments/${target.zohoFolderId}/${target.zohoMessageId}/${a.attachmentId}?name=${encodeURIComponent(a.attachmentName || "anexo")}`
         }));
+      }
+    }
+  }
+
+  // Se for confirmação de reserva B2B, extrai dados do voucher e garante vínculo das 4 pontas no banco
+  if (
+    target.direction === "inbound" &&
+    (String(target.fromEmail || "").toLowerCase().includes("b2breservas") ||
+      /Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(target.subject || ""))
+  ) {
+    const parsedB2b = await fetchAndParseB2bVoucher({
+      rawText: target.bodyText || target.snippet || "",
+      htmlText: target.bodyHtml || "",
+      subject: target.subject || ""
+    });
+    if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+      ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase });
+      if (!target.matchedReservation) {
+        target.matchedReservation = matchEmailWithReservation(db, target);
       }
     }
   }
@@ -2347,19 +2395,60 @@ export function buildComposerReservationTemplate(db, { templateKey, reservationI
 }
 
 /**
+ * Converte HTML em texto estruturado preservando quebras de linha de blocos e tabelas
+ */
+function htmlToStructuredLines(html = "") {
+  if (!html) return "";
+  return String(html)
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+    .replace(/<head\b[^<]*(?:(?!<\/head>)<[^<]*)*<\/head>/gi, " ")
+    .replace(/<\/(?:td|th)\s*>\s*<(?:td|th)\b[^>]*>/gi, " : ")
+    .replace(/<(?:br|hr)\b[^>]*>/gi, "\n")
+    .replace(/<\/(?:tr|p|div|li|h[1-6]|table|section|article)\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/:\s*:/g, ":")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+}
+
+/**
+ * Limpa valor extraído de um campo de voucher B2B removendo rótulos adjacentes na mesma linha
+ */
+function cleanB2bFieldValue(val = "") {
+  return String(val || "")
+    .split(/\s*(?:\||;\s+|\s+-\s+(?=(?:Unidade|Filial|Emissor|Agente|Solicitante|Empresa|Centro\s+de\s+Custo|Check-?in|Check-?out|Entrada|Sa[ií]da|Tarifa|Di[aá]ria|Cart[aã]o|Token|RLOC|Localizador)\b))/i)[0]
+    .replace(/\s+(?:Unidade(?:\s*[\/\-]?\s*POS)?|Filial|Ponto\s+de\s+Venda|Emissor|Agente|Solicitante|Empresa(?:\s+Cliente)?|Centro\s+de\s+Custo|Check-?in|Check-?out|Entrada|Sa[ií]da|Tarifa|Di[aá]ria|Cart[aã]o|Token(?:\s+VCN)?|RLOC|Localizador)\s*[:\-].*$/i, "")
+    .replace(/^[:\-\s]+|[:\-\s]+$/g, "")
+    .trim();
+}
+
+/**
  * Faz o parse de um e-mail ou voucher PDF/HTML da B2B Reservas (BOOKING_WS e OTA_WS)
  * extraindo os dados das 4 pontas (B2B + Agência + Empresa + Hóspede), Cartão Virtual VCN,
  * Comissão, Centro de Custo e Regra de Nota Fiscal.
+ * Aceita objeto `{ rawText, text, htmlText, html, subject }` ou argumentos posicionais `(rawText, htmlText, subject)`.
  */
-export function parseB2bVoucherText(input = {}) {
-  const opts = typeof input === "string" ? { rawText: input } : (input || {});
+export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
+  const opts =
+    typeof input === "string"
+      ? { rawText: input, htmlText: htmlArg || "", subject: subjectArg || "" }
+      : (input || {});
   const rawText = opts.rawText || opts.text || "";
-  const htmlText = opts.htmlText || opts.html || "";
-  const subject = opts.subject || "";
+  const htmlText = opts.htmlText || opts.html || htmlArg || "";
+  const subject = opts.subject || subjectArg || "";
   const combinedHtml = String(htmlText || "");
-  const cleanText = String(rawText || "")
-    .concat("\n", extractTextSnippet(combinedHtml, 25000))
-    .replace(/\r/g, "\n");
+  const cleanText = [String(rawText || "").replace(/\r/g, "\n"), htmlToStructuredLines(combinedHtml)]
+    .filter(Boolean)
+    .join("\n");
   const fullScan = `${subject || ""}\n${cleanText}`;
 
   const dmyToIso = (dmy) => {
@@ -2369,14 +2458,15 @@ export function parseB2bVoucherText(input = {}) {
 
   // 1. Número da Reserva B2B e RLOC
   const resNumMatch =
-    fullScan.match(/Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*(\d{7,10})/i) ||
-    fullScan.match(/N[uú°º]?(?:mero)?\s+da\s+Reserva\s*[:#-]?\s*(\d{7,10})/i) ||
-    fullScan.match(/Reserva\s+B2B\s*[:#-]?\s*(\d{7,10})/i) ||
+    fullScan.match(/Confirmac[aã]o\s+(?:d[ae]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{7,10})/i) ||
+    fullScan.match(/N[uú°º]?(?:mero)?\s+d[ae]\s+(?:Reserva|Confirmac[aã]o)\s*[\s:\-#]*(\d{7,10})/i) ||
+    fullScan.match(/Reserva\s+B2B\s*[\s:\-#]*(\d{7,10})/i) ||
+    fullScan.match(/C[oó]d(?:igo)?\.?\s+Reserva\s*[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/\b(25\d{6})\b/);
   const b2bReservationNumber = resNumMatch ? resNumMatch[1].trim() : "";
 
   const rlocMatch =
-    fullScan.match(/(?:RLOC|Localizador(?:\s+da\s+Reserva)?)\s*[:#-]?\s*([A-Z0-9]{5,12})/i);
+    fullScan.match(/(?:RLOC|Localizador(?:\s+da\s+Reserva)?)\s*[\s:\-#]+([A-Z0-9]{5,12})/i);
   const b2bLocatorRloc = rlocMatch ? rlocMatch[1].trim().toUpperCase() : b2bReservationNumber;
 
   // 2. Link do Voucher OTA_WS e Link de Conciliação
@@ -2404,11 +2494,11 @@ export function parseB2bVoucherText(input = {}) {
     guestName = `${first} ${last}`.replace(/\s+/g, " ").trim();
   }
   const bodyGuestMatch =
-    fullScan.match(/H[oóô\ufffd?]?spede(?:\(s\))?\s*[:\-]\s*([^\n|]+)/i) ||
-    fullScan.match(/Passageiro(?:\(s\))?\s*[:\-]\s*([^\n|]+)/i) ||
-    fullScan.match(/Pax\s*[:\-]\s*([^\n|]+)/i);
+    fullScan.match(/(?:H[oóô\ufffd?]?spede|Hospede)(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
+    fullScan.match(/Passageiro(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
+    fullScan.match(/Pax\s*[:\-]+\s*([^\n|]+)/i);
   if (bodyGuestMatch) {
-    const rawPax = bodyGuestMatch[1].trim().replace(/\s*\(ADT\).*$/i, "").trim();
+    const rawPax = cleanB2bFieldValue(bodyGuestMatch[1]).replace(/\s*\(ADT\).*$/i, "").trim();
     if (rawPax.includes("/")) {
       const [last, first] = rawPax.split("/").map(s => s.trim());
       if (first && last) guestName = `${first} ${last}`;
@@ -2420,14 +2510,14 @@ export function parseB2bVoucherText(input = {}) {
   // 4. Datas Check-in / Check-out
   let checkinDate = "";
   let checkoutDate = "";
-  const checkinMatch = fullScan.match(/Check-?in\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Entrada\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
-  const checkoutMatch = fullScan.match(/Check-?out\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Sa[ií\ufffd?]?da\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const checkinMatch = fullScan.match(/Check-?in[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Entrada[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i);
+  const checkoutMatch = fullScan.match(/Check-?out[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Sa[ií\ufffd?]?da[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i);
   if (checkinMatch) checkinDate = dmyToIso(checkinMatch[1]);
   if (checkoutMatch) checkoutDate = dmyToIso(checkoutMatch[1]);
 
   // 5. Tarifa, Comissão e Café da Manhã
   const hasBreakfast = !/\bSEM\s+CAF[EÉ\ufffd?]/i.test(fullScan);
-  const commPctMatch = fullScan.match(/(?:Comiss[aã\ufffd?]?o|COMISSIONAD[AO])\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i);
+  const commPctMatch = fullScan.match(/(?:Comiss[aã\ufffd?]?o|COMISSIONAD[AO])[\s:\-(]*(\d+(?:[.,]\d+)?)\s*%/i);
   let b2bCommissionPct = commPctMatch ? Number(String(commPctMatch[1]).replace(",", ".")) : 0;
   if (!commPctMatch && /\bCOMISSIONAD[AO]\b/i.test(fullScan)) {
     b2bCommissionPct = 12;
@@ -2435,24 +2525,39 @@ export function parseB2bVoucherText(input = {}) {
   const b2bRatePolicy = b2bCommissionPct > 0 || /\bCOMISSIONAD[AO]\b/i.test(fullScan) ? "COMISSIONADA" : "NET";
 
   const rateMatch =
-    fullScan.match(/(?:Di[aá\ufffd?]?ria\s+M[eé\ufffd?]?dia|Valor\s+da\s+Di[aá\ufffd?]?ria|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)\s*[:\-]?\s*R\$\s*([\d.,]+)/i) ||
+    fullScan.match(/(?:Di[aá\ufffd?]?ria(?:\s+M[eé\ufffd?]?dia)?|Valor\s+da\s+Di[aá\ufffd?]?ria|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)[\s:\-]*R\$\s*([\d.,]+)/i) ||
     fullScan.match(/R\$\s*(280[.,]00|300[.,]00|313[.,]00|400[.,]00)/i);
   let dailyRate = 0;
   if (rateMatch) {
     dailyRate = Number(String(rateMatch[1]).replace(/\./g, "").replace(",", ".")) || 0;
+  } else {
+    const totalMatch = fullScan.match(/(?:Valor\s+Total|Total(?:\s+da\s+Reserva|\s+Geral)?)[\s:\-]*R\$\s*([\d.,]+)/i);
+    if (totalMatch) {
+      const totalVal = Number(String(totalMatch[1]).replace(/\./g, "").replace(",", ".")) || 0;
+      const nightsCount =
+        checkinDate && checkoutDate
+          ? Math.max(1, Math.round((new Date(`${checkoutDate}T12:00:00Z`) - new Date(`${checkinDate}T12:00:00Z`)) / 86400000))
+          : 1;
+      dailyRate = +(totalVal / nightsCount).toFixed(2);
+    }
   }
 
   // 6. Agência, Unidade POS, Emissor, Empresa e Centro de Custo
-  const agencyMatch = fullScan.match(/Ag[eê\ufffd?]?ncia\s*[:\-]\s*([^\n]+)/i);
-  const posMatch = fullScan.match(/(?:Unidade(?:\s+POS)?|Filial|Ponto\s+de\s+Venda)\s*[:\-]\s*([^\n]+)/i);
-  const agentMatch = fullScan.match(/(?:Emissor|Agente|Solicitante)\s*[:\-]\s*([^\n]+)/i);
-  const companyMatch = fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]\s*([^\n]+)/i);
-  const costCenterMatch = fullScan.match(/Centro\s+de\s+Custo\s*[:\-]\s*([A-Za-z0-9._-]+)/i);
+  const agencyMatch = fullScan.match(/(?:Ag[eê\ufffd?]?ncia|Agencia)\s*[:\-]+\s*([^\n]+)/i);
+  const posMatch = fullScan.match(/(?:Unidade(?:\s*[\/\-]?\s*POS)?|Filial|Ponto\s+de\s+Venda)\s*[:\-]+\s*([^\n]+)/i);
+  const agentMatch = fullScan.match(/(?:Emissor|Agente|Solicitante)\s*[:\-]+\s*([^\n]+)/i);
+  const companyMatch = fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]+\s*([^\n]+)/i);
+  const costCenterMatch = fullScan.match(/Centro\s+de\s+Custo\s*[:\-]+\s*([A-Za-z0-9._-]+)/i);
 
   // 7. Cartão Virtual VCN & Token
   const cardMatch = fullScan.match(/\b((?:5\d{3,5}|4\d{3,5}|37\d{2,4})[xX*]{4,8}\d{4})\b/);
-  const vcnTokenMatch = fullScan.match(/(?:Token(?:\s+VCN)?|C[oó\ufffd?]?digo\s+VCN)\s*[:\-]?\s*([A-Z0-9]{6,10})\b/i);
-  const b2bCardMasked = cardMatch ? cardMatch[1] : "";
+  const cardFinalMatch = fullScan.match(/Final\s*[:\-]?\s*(\d{4})\b/i);
+  const vcnTokenMatch = fullScan.match(/(?:Token(?:\s+VCN)?|C[oó\ufffd?]?digo\s+VCN)\s*[:\-]?\s*([A-Z0-9]{5,12})\b/i);
+  const b2bCardMasked = cardMatch
+    ? cardMatch[1]
+    : cardFinalMatch
+      ? `**** **** **** ${cardFinalMatch[1]}`
+      : "";
   const b2bCardBrand = b2bCardMasked.startsWith("37")
     ? "American Express"
     : b2bCardMasked.startsWith("4")
@@ -2468,15 +2573,30 @@ export function parseB2bVoucherText(input = {}) {
     new Set(
       (fullScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])
         .map(e => e.trim().toLowerCase())
-        .filter(e => !e.includes("corpflats.com.br") && !e.includes("promenade.com.br"))
+        .filter(
+          e =>
+            !e.includes("corpflats.com.br") &&
+            !e.includes("promenade.com.br") &&
+            !e.includes("b2breservas.com.br")
+        )
     )
   );
 
-  const nfHideFromGuest = /N[AÃ\ufffd?]?O\s+ENTREGAR\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF)\s+(?:AO|PARA\s+O)\s+H[OÓ\ufffd?]?SPEDE/i.test(fullScan);
+  const nfHideFromGuest =
+    /N[AÃ\ufffd?]?O\s+(?:ENTREGAR|EXIBIR)\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF|VALORES)\s+(?:AO|PARA\s+O)\s+(?:H[OÓ\ufffd?]?SPEDE|HOSPEDE)/i.test(fullScan) ||
+    /Ocultar\s+(?:valores|nota|nf)\s+do\s+(?:h[oó\ufffd?]?spede|hospede)\s*[:\-]?\s*(?:sim|true|1)/i.test(fullScan);
   let invoiceRecipientType = "guest";
-  if (/EMITIR\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF)\s+EM\s+NOME\s+DA\s+AG[EÊ\ufffd?]?NCIA/i.test(fullScan)) {
+  if (
+    /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+(?:EM\s+NOME\s+DA|PARA\s+A)\s+(?:AG[EÊ\ufffd?]?NCIA|AGENCIA)/i.test(fullScan) ||
+    /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?(?:Ag[eê\ufffd?]?ncia|Agencia)/i.test(fullScan)
+  ) {
     invoiceRecipientType = "agency";
-  } else if (nfHideFromGuest || /EMITIR\s+(?:A\s+)?(?:NOTA\s+FISCAL|NF)\s+PARA\s*:/i.test(fullScan)) {
+  } else if (
+    nfHideFromGuest ||
+    /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+PARA\s*[:\-]?\s*(?:A\s+)?EMPRESA/i.test(fullScan) ||
+    /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+PARA\s*:/i.test(fullScan) ||
+    /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?Empresa/i.test(fullScan)
+  ) {
     invoiceRecipientType = "company";
   }
 
@@ -2493,10 +2613,10 @@ export function parseB2bVoucherText(input = {}) {
     b2bRatePolicy,
     b2bCommissionPct,
     dailyRate,
-    agencyName: agencyMatch ? agencyMatch[1].trim() : "",
-    agencyPosUnit: posMatch ? posMatch[1].trim() : "",
-    agencyAgentName: agentMatch ? agentMatch[1].trim() : "",
-    companyName: companyMatch ? companyMatch[1].trim() : "",
+    agencyName: agencyMatch ? cleanB2bFieldValue(agencyMatch[1]) : "",
+    agencyPosUnit: posMatch ? cleanB2bFieldValue(posMatch[1]) : "",
+    agencyAgentName: agentMatch ? cleanB2bFieldValue(agentMatch[1]) : "",
+    companyName: companyMatch ? cleanB2bFieldValue(companyMatch[1]) : "",
     costCenter: costCenterMatch ? costCenterMatch[1].trim() : "",
     b2bPaymentType,
     b2bCardBrand,
@@ -2508,4 +2628,351 @@ export function parseB2bVoucherText(input = {}) {
     nfHideFromGuest
   };
 }
+
+/**
+ * Faz o download opcional do link `conf_reserva.php` (OTA_WS) quando presente no e-mail/texto
+ * e retorna os dados consolidados do voucher B2B.
+ */
+export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectArg = "") {
+  let parsed = parseB2bVoucherText(input, htmlArg, subjectArg);
+  if (
+    parsed.voucherUrl &&
+    (!parsed.checkoutDate || !parsed.agencyName || !parsed.companyName || !parsed.dailyRate)
+  ) {
+    try {
+      const resp = await fetch(parsed.voucherUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 CorpFlats-PMS/1.0" },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (resp.ok) {
+        const fetchedHtml = await resp.text();
+        const opts =
+          typeof input === "string"
+            ? { rawText: input, htmlText: `${htmlArg || ""}\n${fetchedHtml}`, subject: subjectArg || "" }
+            : {
+                ...(input || {}),
+                htmlText: `${input?.htmlText || input?.html || ""}\n${fetchedHtml}`
+              };
+        parsed = parseB2bVoucherText(opts);
+      }
+    } catch {
+      // Mantém dados extraídos localmente se o portal externo estiver inacessível
+    }
+  }
+  return parsed;
+}
+
+/**
+ * Registra/vincula automaticamente as 4 pontas (B2B + Agência + Empresa + Hóspede) no banco
+ * a partir de um voucher B2B parseado.
+ */
+export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCredentialEmail = false } = {}) {
+  if (!db || !parsed) return { ok: false, skipped: true };
+  const resNum = String(parsed.b2bReservationNumber || parsed.b2bLocatorRloc || "").trim();
+  if (!resNum || !parsed.guestName || !parsed.checkinDate) {
+    return { ok: false, skipped: true };
+  }
+
+  if (!Array.isArray(db.agencies)) db.agencies = [];
+  if (!Array.isArray(db.companies)) db.companies = [];
+  if (!Array.isArray(db.guests)) db.guests = [];
+  if (!Array.isArray(db.reservations)) db.reservations = [];
+
+  const normStr = (s = "") =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .trim();
+
+  // 1. Agência B2B
+  let agency = null;
+  if (parsed.agencyName) {
+    const targetAgNorm = normStr(parsed.agencyName);
+    agency = db.agencies.find(a => {
+      const tNorm = normStr(a.tradeName);
+      const cNorm = normStr(a.corporateName);
+      return (
+        (tNorm && (tNorm === targetAgNorm || tNorm.includes(targetAgNorm) || targetAgNorm.includes(tNorm))) ||
+        (cNorm && (cNorm === targetAgNorm || cNorm.includes(targetAgNorm) || targetAgNorm.includes(cNorm)))
+      );
+    });
+    if (!agency) {
+      const nextAgId = db.agencies.reduce((m, a) => Math.max(m, Number(a.id) || 0), 0) + 1;
+      agency = {
+        id: nextAgId,
+        name: parsed.agencyName,
+        corporateName: parsed.agencyName,
+        tradeName: parsed.agencyName,
+        cnpj: "",
+        email: parsed.nfDeliveryEmails?.[0] || "",
+        financialEmail: parsed.nfDeliveryEmails?.[0] || "",
+        phone: "",
+        city: "São Paulo",
+        state: "SP",
+        ratePolicy: parsed.b2bRatePolicy || "COMISSIONADA",
+        commissionPct: parsed.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12),
+        defaultPaymentType: parsed.b2bPaymentType || "VIRTUAL_CARD",
+        defaultRecipientType: parsed.invoiceRecipientType || "company",
+        posUnits: parsed.agencyPosUnit ? [{ name: parsed.agencyPosUnit, city: "", state: "" }] : [],
+        agents: parsed.agencyAgentName
+          ? [{ name: parsed.agencyAgentName, email: parsed.nfDeliveryEmails?.[0] || "", phone: "", posUnit: parsed.agencyPosUnit || "" }]
+          : [],
+        clientCompanies: parsed.companyName ? [parsed.companyName] : [],
+        notes: "Agência cadastrada automaticamente via leitura de voucher B2B.",
+        status: "active",
+        createdAt: new Date().toISOString()
+      };
+      db.agencies.push(agency);
+    } else {
+      if (parsed.agencyPosUnit) {
+        if (!Array.isArray(agency.posUnits)) agency.posUnits = [];
+        const hasPos = agency.posUnits.some(u => normStr(typeof u === "string" ? u : u.name) === normStr(parsed.agencyPosUnit));
+        if (!hasPos) agency.posUnits.push({ name: parsed.agencyPosUnit, city: "", state: "" });
+      }
+      if (parsed.agencyAgentName) {
+        if (!Array.isArray(agency.agents)) agency.agents = [];
+        const hasAgent = agency.agents.some(ag => normStr(typeof ag === "string" ? ag : ag.name) === normStr(parsed.agencyAgentName));
+        if (!hasAgent) {
+          agency.agents.push({
+            name: parsed.agencyAgentName,
+            email: parsed.nfDeliveryEmails?.[0] || "",
+            phone: "",
+            posUnit: parsed.agencyPosUnit || ""
+          });
+        }
+      }
+      if (parsed.companyName) {
+        if (!Array.isArray(agency.clientCompanies)) agency.clientCompanies = [];
+        const hasComp = agency.clientCompanies.some(cc => normStr(typeof cc === "string" ? cc : cc.name) === normStr(parsed.companyName));
+        if (!hasComp) agency.clientCompanies.push(parsed.companyName);
+      }
+    }
+  }
+
+  // 2. Empresa Cliente
+  let company = null;
+  if (parsed.companyName) {
+    const targetCompNorm = normStr(parsed.companyName);
+    company = db.companies.find(c => {
+      const tNorm = normStr(c.tradeName);
+      const cNorm = normStr(c.corporateName);
+      return (
+        (tNorm && (tNorm === targetCompNorm || tNorm.includes(targetCompNorm) || targetCompNorm.includes(tNorm))) ||
+        (cNorm && (cNorm === targetCompNorm || cNorm.includes(targetCompNorm) || targetCompNorm.includes(cNorm)))
+      );
+    });
+    if (!company) {
+      const nextCompId = db.companies.reduce((m, c) => Math.max(m, Number(c.id) || 0), 0) + 1;
+      company = {
+        id: nextCompId,
+        name: parsed.companyName,
+        corporateName: parsed.companyName,
+        tradeName: parsed.companyName,
+        cnpj: "",
+        email: parsed.nfDeliveryEmails?.[0] || "",
+        phone: "",
+        city: "",
+        state: "",
+        billingType: "faturado_b2b",
+        notes: "Empresa vinculada automaticamente via voucher B2B.",
+        createdAt: new Date().toISOString()
+      };
+      db.companies.push(company);
+    }
+  }
+
+  // 3. Hóspede Corporativo
+  const targetGuestNorm = normStr(parsed.guestName);
+  let guest = db.guests.find(g => normStr(g.fullName || g.name) === targetGuestNorm);
+  if (!guest) {
+    const nextGuestId = db.guests.reduce((m, g) => Math.max(m, Number(g.id) || 0), 0) + 1;
+    guest = {
+      id: nextGuestId,
+      name: parsed.guestName,
+      fullName: parsed.guestName,
+      cpf: "",
+      documentType: "CPF",
+      documentNumber: "",
+      phone: "",
+      whatsapp: "",
+      email: "",
+      companyId: company?.id || null,
+      companyName: company?.tradeName || parsed.companyName || "",
+      agencyId: agency?.id || null,
+      agencyName: agency?.tradeName || parsed.agencyName || "",
+      category: "Corporativo B2B",
+      notes: `Hóspede B2B Reserva #${resNum}`,
+      createdAt: new Date().toISOString()
+    };
+    db.guests.push(guest);
+  } else {
+    if (company?.id && !guest.companyId) {
+      guest.companyId = company.id;
+      guest.companyName = company.tradeName || parsed.companyName;
+    }
+    if (agency?.id && !guest.agencyId) {
+      guest.agencyId = agency.id;
+      guest.agencyName = agency.tradeName || parsed.agencyName;
+    }
+  }
+
+  // 4. Reserva B2B (Cria ou enriquece se já existir)
+  let reservation = db.reservations.find(
+    r =>
+      r &&
+      r.status !== "cancelada" &&
+      (String(r.b2bReservationNumber || "") === resNum ||
+        String(r.externalReservationNumber || "") === resNum ||
+        String(r.b2bLocatorRloc || "") === resNum)
+  );
+
+  let created = false;
+  if (!reservation) {
+    const flat = (db.flats || []).find(f => String(f.number) === "113") || (db.flats || [])[0] || { id: 1, number: "113" };
+    const checkinDate = parsed.checkinDate;
+    const checkoutDate =
+      parsed.checkoutDate ||
+      new Date(new Date(`${checkinDate}T12:00:00Z`).getTime() + 86400000).toISOString().slice(0, 10);
+    const nights = Math.max(
+      1,
+      Math.round((new Date(`${checkoutDate}T12:00:00Z`) - new Date(`${checkinDate}T12:00:00Z`)) / 86400000)
+    );
+    const dailyRate = Number(parsed.dailyRate) || 280;
+    const totalAmount = +(dailyRate * nights).toFixed(2);
+    const commPct = Number(parsed.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12)) || 0;
+    const b2bCommissionAmount = +((totalAmount * commPct) / 100).toFixed(2);
+    const b2bNetRate = +(dailyRate * (1 - commPct / 100)).toFixed(2);
+    const nextResId = db.reservations.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1;
+    const resolvedRecipientType = parsed.invoiceRecipientType || agency?.defaultRecipientType || "company";
+
+    reservation = {
+      id: nextResId,
+      code: `RES-${flat.number}-B2B-${resNum}`,
+      flatId: flat.id,
+      flatNumber: String(flat.number),
+      guestId: guest.id,
+      guestName: guest.fullName,
+      guestEmail: guest.email || "",
+      guestPhone: guest.phone || "",
+      guestDocument: guest.cpf || "",
+      companyId: company?.id || null,
+      companyName: company?.tradeName || parsed.companyName || "",
+      companyCnpj: company?.cnpj || "",
+      agencyId: agency?.id || null,
+      agencyName: agency?.tradeName || parsed.agencyName || "",
+      agencyCnpj: agency?.cnpj || "",
+      agencyPosUnit: parsed.agencyPosUnit || "",
+      agencyAgentName: parsed.agencyAgentName || "",
+      agencyAgentEmail: parsed.nfDeliveryEmails?.[0] || agency?.financialEmail || "",
+      checkinDate,
+      checkoutDate,
+      nights,
+      dailyRate,
+      totalAmount,
+      status: "confirmada",
+      channel: "b2b",
+      paymentStatus: "pendente",
+      paymentMethod: parsed.b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b",
+      hasBreakfast: parsed.hasBreakfast !== false,
+      b2bReservationNumber: resNum,
+      externalReservationNumber: resNum,
+      b2bLocatorRloc: parsed.b2bLocatorRloc || resNum,
+      b2bOriginType: parsed.b2bOriginType || "BOOKING_WS",
+      b2bRatePolicy: parsed.b2bRatePolicy || "COMISSIONADA",
+      b2bCommissionPct: commPct,
+      b2bCommissionAmount,
+      b2bNetRate,
+      b2bPaymentType: parsed.b2bPaymentType || "VIRTUAL_CARD",
+      b2bCardBrand: parsed.b2bCardBrand || "",
+      b2bCardMasked: parsed.b2bCardMasked || "",
+      b2bVcnToken: parsed.b2bVcnToken || "",
+      b2bAuthorizedExpenses: parsed.b2bAuthorizedExpenses || "DEBITAR SOMENTE DIARIAS",
+      b2bConciliationUrl: parsed.b2bConciliationUrl || "",
+      b2bVoucherUrl: parsed.voucherUrl || "",
+      costCenter: parsed.costCenter || "",
+      invoiceRecipientType: resolvedRecipientType,
+      nfRecipientType: resolvedRecipientType,
+      nfDeliveryEmails: Array.isArray(parsed.nfDeliveryEmails) ? parsed.nfDeliveryEmails : [],
+      nfHideFromGuest: Boolean(parsed.nfHideFromGuest),
+      preCheckinUnlocked: true,
+      accessUnlocked: true,
+      credentialToken: `B2B-${resNum}`,
+      credentialStatus: guest.phone && guest.cpf ? "completed" : "pending_agency",
+      createdAt: new Date().toISOString()
+    };
+    db.reservations.push(reservation);
+    created = true;
+  } else {
+    if (!reservation.b2bConciliationUrl && parsed.b2bConciliationUrl) {
+      reservation.b2bConciliationUrl = parsed.b2bConciliationUrl;
+    }
+    if (!reservation.b2bVoucherUrl && parsed.voucherUrl) {
+      reservation.b2bVoucherUrl = parsed.voucherUrl;
+    }
+    if (!reservation.b2bVcnToken && parsed.b2bVcnToken) {
+      reservation.b2bVcnToken = parsed.b2bVcnToken;
+    }
+    if (!reservation.b2bCardMasked && parsed.b2bCardMasked) {
+      reservation.b2bCardMasked = parsed.b2bCardMasked;
+      reservation.b2bCardBrand = parsed.b2bCardBrand || reservation.b2bCardBrand;
+    }
+    if (!reservation.agencyId && agency?.id) {
+      reservation.agencyId = agency.id;
+      reservation.agencyName = agency.tradeName;
+    }
+    if (!reservation.companyId && company?.id) {
+      reservation.companyId = company.id;
+      reservation.companyName = company.tradeName;
+    }
+  }
+
+  // Disparo cordial opcional se recém-criada sem telefone/CPF do hóspede
+  if (
+    created &&
+    autoSendCredentialEmail &&
+    (!reservation.guestPhone || !reservation.guestDocument) &&
+    !reservation.b2bCredentialEmailSentAt
+  ) {
+    const targetEmail =
+      reservation.agencyAgentEmail ||
+      agency?.financialEmail ||
+      agency?.email ||
+      reservation.nfDeliveryEmails?.[0] ||
+      "";
+    if (targetEmail) {
+      const flatObj = (db.flats || []).find(f => Number(f.id) === Number(reservation.flatId));
+      const rendered = renderB2bAgencyCredentialRequestEmail({
+        reservation,
+        flat: flatObj,
+        agency,
+        company,
+        settings: db.settings,
+        db
+      });
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: reservation.code || reservation.id,
+        recipient: targetEmail,
+        subject: rendered.subject,
+        bodyHtml: rendered.bodyHtml,
+        bodyText: rendered.bodyText,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "b2b_auto_credential_request",
+          reservationCode: reservation.code,
+          b2bReservationNumber: reservation.b2bReservationNumber
+        }
+      });
+      reservation.b2bCredentialEmailSentAt = new Date().toISOString();
+      reservation.b2bCredentialEmailRecipient = targetEmail;
+    }
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+  return { ok: true, created, reservation, agency, company, guest };
+}
+
 

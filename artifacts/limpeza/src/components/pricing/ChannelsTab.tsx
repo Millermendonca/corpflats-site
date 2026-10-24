@@ -13,6 +13,7 @@ const DEFAULT_CHANNELS: ChannelPricingConfig[] = [
   { id: "direct", name: "Site Direto (CorpFlats)", markupPct: 0.0, commissionPct: 0.0, cardFeePct: 0.025, active: true },
   { id: "booking", name: "Booking.com", markupPct: 0.0, commissionPct: 0.15, cardFeePct: 0.015, active: true },
   { id: "airbnb", name: "Airbnb", markupPct: 0.03, commissionPct: 0.15, cardFeePct: 0.0, active: true },
+  { id: "b2b", name: "B2B / Agência Corporativa", markupPct: 0.0, commissionPct: 0.12, cardFeePct: 0.0299, active: true },
 ];
 
 export const ChannelsTab: React.FC<ChannelsTabProps> = ({ baseRate }) => {
@@ -24,7 +25,7 @@ export const ChannelsTab: React.FC<ChannelsTabProps> = ({ baseRate }) => {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {channels.map((c) => {
           const grossRate = baseRate * (1 + c.markupPct);
           const commissionVal = grossRate * c.commissionPct;
@@ -42,11 +43,15 @@ export const ChannelsTab: React.FC<ChannelsTabProps> = ({ baseRate }) => {
                     </CardTitle>
                   </div>
                   <Badge variant={c.id === "direct" ? "default" : "outline"} className="text-[10px]">
-                    {c.id === "direct" ? "Direto" : "OTA XML"}
+                    {c.id === "direct" ? "Direto" : c.id === "b2b" ? "B2B / VCN" : "OTA XML"}
                   </Badge>
                 </div>
                 <CardDescription className="text-xs">
-                  {c.id === "direct" ? "Motor de reservas próprio" : "Conectado via WebBookingPro"}
+                  {c.id === "direct"
+                    ? "Motor de reservas próprio"
+                    : c.id === "b2b"
+                      ? "Portal B2B Reservas (Agência + Empresa)"
+                      : "Conectado via WebBookingPro"}
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-4 space-y-3 text-xs">

@@ -1764,9 +1764,9 @@ export default function CrmGuests() {
                               {(ag.clientCompanies || []).length === 0 ? (
                                 <span className="text-[10px] text-muted-foreground">Sem empresas vinculadas</span>
                               ) : (
-                                (ag.clientCompanies || []).slice(0, 3).map((cc: any) => (
-                                  <Badge key={cc.id} variant="outline" className="text-[9px] text-indigo-600 border-indigo-200">
-                                    🏢 {cc.name}
+                                (ag.clientCompanies || []).slice(0, 3).map((cc: any, idx: number) => (
+                                  <Badge key={cc?.id || idx} variant="outline" className="text-[9px] text-indigo-600 border-indigo-200">
+                                    🏢 {typeof cc === "string" ? cc : (cc.name || cc.tradeName || cc.corporateName)}
                                   </Badge>
                                 ))
                               )}
@@ -1778,7 +1778,7 @@ export default function CrmGuests() {
                               R$ {(ag.totalRevenue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                             </div>
                             <div className="text-[10px] text-muted-foreground">
-                              <strong>{ag.totalReservations || 0}</strong> reservas • Comissão: R$ {(ag.totalCommission || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                              <strong>{ag.totalReservations ?? ag.reservationsCount ?? 0}</strong> reservas • Comissão: R$ {(ag.totalCommission || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                             </div>
                           </td>
 
@@ -3530,19 +3530,37 @@ export default function CrmGuests() {
                   </div>
                 </div>
 
-                {/* Empresas Clientes Vinculadas */}
-                <div className="space-y-2">
-                  <div className="font-black text-foreground">🏢 Empresas Clientes Atendidas por esta Agência</div>
-                  <div className="flex flex-wrap gap-2">
-                    {(activeAgencyDetail.companiesServed || []).map((comp: any) => (
-                      <div key={comp.id} className="px-3 py-2 rounded-xl bg-indigo-500/5 border border-indigo-500/20 flex items-center gap-2">
-                        <Building2 className="w-4 h-4 text-indigo-600" />
-                        <div>
-                          <div className="font-bold text-foreground">{comp.tradeName || comp.corporateName}</div>
-                          <div className="text-[10px] font-mono text-muted-foreground">{comp.cnpj}</div>
+                {/* Empresas Clientes Vinculadas & Hóspedes Atendidos */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="font-black text-foreground">🏢 Empresas Clientes Atendidas ({(activeAgencyDetail.companiesServed || activeAgencyDetail.companies || []).length})</div>
+                    <div className="flex flex-wrap gap-2">
+                      {(activeAgencyDetail.companiesServed || activeAgencyDetail.companies || []).map((comp: any) => (
+                        <div key={comp.id} className="px-3 py-2 rounded-xl bg-indigo-500/5 border border-indigo-500/20 flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-indigo-600" />
+                          <div>
+                            <div className="font-bold text-foreground">{comp.tradeName || comp.corporateName || comp.name}</div>
+                            <div className="text-[10px] font-mono text-muted-foreground">{comp.cnpj || "CNPJ pendente"}</div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="font-black text-foreground">👤 Hóspedes Corporativos Atendidos ({(activeAgencyDetail.guestsServed || activeAgencyDetail.guests || []).length})</div>
+                    <div className="flex flex-wrap gap-2">
+                      {(activeAgencyDetail.guestsServed || activeAgencyDetail.guests || []).map((g: any) => (
+                        <div key={g.id} className="px-3 py-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center gap-2">
+                          <div>
+                            <div className="font-bold text-foreground">{g.fullName || g.name}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {g.companyName ? `${g.companyName} • ` : ""}{g.phone || g.cpf || "Aguardando credenciamento"}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -3565,7 +3583,7 @@ export default function CrmGuests() {
                         {(activeAgencyDetail.reservations || []).map((r: any) => (
                           <tr key={r.id} className="hover:bg-muted/20">
                             <td className="p-2.5 font-mono">
-                              <div className="font-bold text-violet-600">{r.b2bReservationNumber || r.reservationCode}</div>
+                              <div className="font-bold text-violet-600">{r.b2bReservationNumber || r.code || r.reservationCode}</div>
                               {r.b2bLocatorRloc && <div className="text-[10px] text-muted-foreground">RLOC: {r.b2bLocatorRloc}</div>}
                             </td>
                             <td className="p-2.5">
@@ -3577,7 +3595,7 @@ export default function CrmGuests() {
                               {r.costCenter && <div className="text-[10px] text-muted-foreground">CC: {r.costCenter}</div>}
                             </td>
                             <td className="p-2.5 font-mono text-[11px]">
-                              {r.checkInDate} → {r.checkOutDate} ({r.nights}n)
+                              {r.checkInDate || r.checkinDate} → {r.checkOutDate || r.checkoutDate} ({r.nights || 1}n)
                             </td>
                             <td className="p-2.5">
                               <div className="font-bold text-emerald-600">R$ {Number(r.totalAmount || 0).toFixed(2)}</div>
@@ -3598,6 +3616,48 @@ export default function CrmGuests() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+
+                {/* Notas Fiscais Emitidas / Vinculadas */}
+                <div className="space-y-2">
+                  <div className="font-black text-foreground flex items-center justify-between">
+                    <span>🧾 Notas Fiscais de Serviço (NFS-e) Vinculadas ({(activeAgencyDetail.invoices || []).length})</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setAgency360Open(false)
+                        setLocation(`/notas?doc=${encodeURIComponent(activeAgencyDetail.cnpj || "")}&nome=${encodeURIComponent(activeAgencyDetail.corporateName || activeAgencyDetail.tradeName || "")}&agencyId=${activeAgencyDetail.id}&recipientType=agency`)
+                      }}
+                      className="h-7 px-2.5 text-[10px] font-bold rounded-xl gap-1 text-violet-600 border-violet-300"
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>Ir para Notas Fiscais</span>
+                    </Button>
+                  </div>
+                  {(activeAgencyDetail.invoices || []).length === 0 ? (
+                    <div className="p-3 rounded-xl border border-dashed border-border text-xs text-muted-foreground text-center">
+                      Nenhuma NFS-e emitida ainda para as reservas desta agência.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(activeAgencyDetail.invoices || []).map((inv: any) => (
+                        <div key={inv.id} className="p-2.5 rounded-xl bg-muted/20 border border-border flex items-center justify-between text-xs">
+                          <div>
+                            <div className="font-bold text-foreground">
+                              NFS-e #{inv.numeroNfse || inv.number || inv.id} • {inv.tomadorNome}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground font-mono">
+                              Doc: {inv.tomadorCpfCnpj} • Reserva: {inv.reservationCode || `#${inv.reservationId}`}
+                            </div>
+                          </div>
+                          <div className="font-mono font-bold text-emerald-600">
+                            R$ {Number(inv.valorServicos || inv.amount || 0).toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -352,6 +352,8 @@ export function PaymentMethodsModal({
               methods.map(m => {
                 const isBooking = m.id === "booking"
                 const isAirbnb = m.id === "airbnb"
+                const isB2bVcn = m.id === "vcn_b2b" || m.id.includes("vcn")
+                const isB2bFaturado = m.id === "faturado_b2b" || m.id.includes("faturado")
                 const isPix = m.id.includes("pix")
                 const isCard = m.id.includes("cartao") || m.id.includes("card") || m.id.includes("mercadopago")
 
@@ -363,7 +365,7 @@ export function PaymentMethodsModal({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-base shrink-0">
-                          {isBooking ? "🔵" : (isAirbnb ? "🔴" : (isPix ? "⚡" : (isCard ? "💳" : "💵")))}
+                          {isBooking ? "🔵" : isAirbnb ? "🔴" : isB2bVcn ? "🟣" : isB2bFaturado ? "🏢" : isPix ? "⚡" : isCard ? "💳" : "💵"}
                         </span>
                         <div className="min-w-0">
                           <div className="font-bold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
@@ -374,8 +376,8 @@ export function PaymentMethodsModal({
                               </Badge>
                             )}
                             {m.channelDefault && (
-                              <Badge className="text-[9px] py-0 px-1 font-semibold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">
-                                Padrão Canal {m.channelDefault}
+                              <Badge className={`text-[9px] py-0 px-1 font-semibold ${m.channelDefault === "b2b" ? "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" : "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300"}`}>
+                                Padrão Canal {m.channelDefault === "b2b" ? "B2B / Agência" : m.channelDefault}
                               </Badge>
                             )}
                           </div>

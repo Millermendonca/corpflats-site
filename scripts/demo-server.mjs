@@ -144,7 +144,9 @@ import {
   createWebmailCustomFolder,
   createWebmailLabel,
   buildComposerReservationTemplate,
-  parseB2bVoucherText
+  parseB2bVoucherText,
+  fetchAndParseB2bVoucher,
+  ingestB2bVoucherIntoDb
 } from "./zoho-mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR, rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 import {
@@ -18888,6 +18890,12 @@ export function getPaymentMethodsList() {
   if (!db.settings) db.settings = {};
   if (!Array.isArray(db.settings.paymentMethods) || db.settings.paymentMethods.length === 0) {
     db.settings.paymentMethods = JSON.parse(JSON.stringify(DEFAULT_PAYMENT_METHODS));
+  } else {
+    for (const defPm of DEFAULT_PAYMENT_METHODS) {
+      if (!db.settings.paymentMethods.some(m => m && m.id === defPm.id)) {
+        db.settings.paymentMethods.push(JSON.parse(JSON.stringify(defPm)));
+      }
+    }
   }
   return db.settings.paymentMethods;
 }
@@ -23895,12 +23903,18 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
     const linkedAgency = reservation.agencyId
       ? (db.agencies || []).find(a => String(a.id) === String(reservation.agencyId))
       : null;
+    const linkedCompany = reservation.companyId
+      ? (db.companies || []).find(c => String(c.id) === String(reservation.companyId))
+      : null;
+    const flat = (db.flats || []).find(f => Number(f.id) === Number(reservation.flatId) || String(f.number) === String(reservation.flatNumber));
 
     const targetEmail = String(
+      req.body?.toEmail ||
       req.body?.email ||
       reservation.agencyAgentEmail ||
       reservation.requesterInfo?.email ||
       linkedAgency?.financialEmail ||
+      linkedAgency?.email ||
       (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails[0] : "") ||
       ""
     ).trim();
@@ -23911,28 +23925,33 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const credentialUrl = `${baseUrl}/credenciamento/${encodeURIComponent(reservation.code)}`;
-    const htmlBody = renderB2bAgencyCredentialRequestEmail({
-      agencyName: reservation.agencyTradeName || reservation.agencyName || linkedAgency?.tradeName || "Agência Parceira",
-      agentName: reservation.agencyAgentName || reservation.requesterInfo?.name || "",
-      guestName: reservation.guestName || "Hóspede",
-      companyName: reservation.companyName || "",
-      reservationCode: reservation.code,
-      b2bReservationNumber: reservation.b2bReservationNumber || reservation.externalReservationNumber || "",
-      b2bLocatorRloc: reservation.b2bLocatorRloc || "",
-      checkinDate: reservation.checkinDate,
-      checkoutDate: reservation.checkoutDate,
-      checkinTime: reservation.checkinTime || "14:00",
-      checkoutTime: reservation.checkoutTime || "12:00",
-      flatNumber: reservation.flatNumber,
-      includeBreakfast: reservation.includeBreakfast !== false,
-      credentialUrl
+    const rendered = renderB2bAgencyCredentialRequestEmail({
+      reservation,
+      flat,
+      agency: linkedAgency,
+      company: linkedCompany,
+      settings: db.settings,
+      baseUrl,
+      credentialUrl,
+      db
     });
 
-    const subject = `Confirmação de Reserva #${reservation.b2bReservationNumber || reservation.code} e Credenciamento de Acesso na Portaria — ${reservation.guestName} | CorpFlats`;
-    const sendRes = await sendNotificationEmail(db.settings, {
-      to: targetEmail,
-      subject,
-      html: htmlBody
+    const commLog = sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: reservation.code || reservation.id,
+      recipient: targetEmail,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: rendered.bodyText,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "b2b_agency_credential_request_manual",
+        credentialUrl: rendered.credentialUrl || credentialUrl,
+        agencyName: reservation.agencyName || linkedAgency?.tradeName || "",
+        b2bReservationNumber: reservation.b2bReservationNumber || ""
+      }
     });
 
     reservation.b2bCredentialEmailSentAt = new Date().toISOString();
@@ -23940,10 +23959,13 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
     saveDatabase("b2b_credential_email_sent");
 
     return res.json({
-      success: Boolean(sendRes?.success !== false),
+      ok: true,
+      success: true,
+      sentTo: targetEmail,
       recipient: targetEmail,
-      credentialUrl,
+      credentialUrl: rendered.credentialUrl || credentialUrl,
       sentAt: reservation.b2bCredentialEmailSentAt,
+      communicationId: commLog?.id || null,
       message: `E-mail cordial de confirmação e credenciamento enviado para ${targetEmail}.`
     });
   } catch (err) {
@@ -23977,14 +23999,14 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
       checkinTime: r.checkinTime || "14:00",
       checkoutTime: r.checkoutTime || "12:00",
       flatNumber: r.flatNumber,
-      includeBreakfast: r.includeBreakfast !== false,
+      includeBreakfast: r.includeBreakfast !== false && r.hasBreakfast !== false,
       agencyName: r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || linkedAgency?.corporateName || null,
       agencyPosUnit: r.agencyPosUnit || null,
       agencyAgentName: r.agencyAgentName || null,
       companyName: r.companyName || null,
-      guestName: r.guestName || linkedGuest?.name || "",
-      guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || "",
-      guestPhone: r.guestPhone || linkedGuest?.phone || "",
+      guestName: r.guestName || linkedGuest?.fullName || linkedGuest?.name || "",
+      guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || linkedGuest?.documentNumber || "",
+      guestPhone: r.guestPhone || linkedGuest?.phone || linkedGuest?.whatsapp || "",
       guestSecondaryPhone: r.guestSecondaryPhone || linkedGuest?.secondaryPhone || "",
       guestEmail: r.guestEmail || linkedGuest?.email || "",
       hasDocPhoto: Boolean(r.docPhotoUrl || linkedGuest?.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl)),
@@ -24034,7 +24056,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
 
     let finalDocUrl = docPhotoUrl || r.docPhotoUrl || null;
     if (docPhotoBase64 && String(docPhotoBase64).startsWith("data:")) {
-      finalDocUrl = await uploadImageToStorage(docPhotoBase64, `b2b_cred_${r.code}_${Date.now()}.jpg`);
+      finalDocUrl = await uploadImageToStorage(docPhotoBase64, `b2b_cred_${r.code}`, db, "guests");
     }
 
     r.guestName = cleanName;
@@ -24048,6 +24070,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         ? `${r.receptionNotes} | Credenciamento Agência: ${String(notes).trim()}`
         : `Credenciamento Agência: ${String(notes).trim()}`;
     }
+    r.credentialStatus = "completed";
     r.b2bCredentialCompletedAt = new Date().toISOString();
     r.updatedAt = r.b2bCredentialCompletedAt;
 
@@ -24083,12 +24106,15 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     if (!db.guests) db.guests = [];
     let guestRecord = r.guestId
       ? db.guests.find(g => String(g.id) === String(r.guestId))
-      : db.guests.find(g => (cleanDoc && String(g.cpf || g.document || "").replace(/\D/g, "") === cleanDoc));
+      : db.guests.find(g => (cleanDoc && String(g.cpf || g.document || g.documentNumber || "").replace(/\D/g, "") === cleanDoc));
     if (guestRecord) {
       guestRecord.name = cleanName;
+      guestRecord.fullName = cleanName;
       guestRecord.cpf = cleanDoc;
       guestRecord.document = cleanDoc;
+      guestRecord.documentNumber = cleanDoc;
       guestRecord.phone = cleanPhone;
+      guestRecord.whatsapp = cleanPhone;
       if (cleanSecPhone) guestRecord.secondaryPhone = cleanSecPhone;
       if (cleanEmail) guestRecord.email = cleanEmail;
       if (finalDocUrl) guestRecord.docPhotoUrl = finalDocUrl;
@@ -24099,9 +24125,12 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       guestRecord = {
         id: nextGId,
         name: cleanName,
+        fullName: cleanName,
         cpf: cleanDoc,
         document: cleanDoc,
+        documentNumber: cleanDoc,
         phone: cleanPhone,
+        whatsapp: cleanPhone,
         secondaryPhone: cleanSecPhone,
         email: cleanEmail,
         docPhotoUrl: finalDocUrl,
@@ -24127,6 +24156,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     }
 
     return res.json({
+      ok: true,
       success: true,
       message: "Credenciamento concluído com sucesso! Os dados do hóspede foram liberados para a portaria 24h e as orientações de acesso foram enviadas ao WhatsApp do hóspede.",
       reservation: {
@@ -24145,14 +24175,29 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
 });
 
 // Endpoint: Parser de Voucher B2B (BOOKING_WS / OTA_WS) a partir de Texto ou E-mail
-app.post(["/api/pms/b2b/parse-voucher", "/api/b2b/parse-voucher"], (req, res) => {
+app.post(["/api/pms/b2b/parse-voucher", "/api/b2b/parse-voucher"], async (req, res) => {
   try {
-    const { rawText, htmlText, subject } = req.body || {};
-    const parsed = parseB2bVoucherText(rawText || "", htmlText || "", subject || "");
-    if (!parsed) {
+    const { text, rawText, htmlText, html, subject } = req.body || {};
+    const parsed = await fetchAndParseB2bVoucher({
+      rawText: text || rawText || "",
+      htmlText: htmlText || html || "",
+      subject: subject || ""
+    });
+    const hasValidField = Boolean(
+      parsed &&
+      (parsed.b2bReservationNumber ||
+        parsed.guestName ||
+        parsed.checkinDate ||
+        parsed.agencyName ||
+        parsed.companyName ||
+        parsed.b2bVcnToken ||
+        parsed.b2bCardMasked ||
+        parsed.voucherUrl)
+    );
+    if (!hasValidField) {
       return res.status(400).json({ error: "Não foi possível identificar um voucher B2B válido no texto informado." });
     }
-    return res.json({ success: true, parsed });
+    return res.json({ ok: true, success: true, parsed });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -36172,6 +36217,8 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       type: "guest",
       tomadorType: "pf",
       tomadorPadrao: "PF",
+      name: toTitleCase(r.guestName || guest?.fullName || guest?.name || "Hóspede"),
+      doc: onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""),
       tomadorNome: toTitleCase(r.guestName || guest?.fullName || guest?.name || "Hóspede"),
       tomadorCpfCnpj: onlyDigits(r.guestDocument || guest?.documentNumber || guest?.document || guest?.cpf || ""),
       tomadorEmail: (r.guestEmail || guest?.email || "").trim().toLowerCase(),
@@ -36191,6 +36238,8 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorType: "pj",
       tomadorPadrao: "PJ",
       companyId: Number(company.id),
+      name: toTitleCase(company.corporateName || company.tradeName || r.companyName || ""),
+      doc: onlyDigits(company.cnpj || r.companyCnpj || ""),
       tomadorNome: toTitleCase(company.corporateName || company.tradeName || r.companyName || ""),
       tomadorCpfCnpj: onlyDigits(company.cnpj || r.companyCnpj || ""),
       tomadorEmail: (company.financialEmail || r.agencyAgentEmail || guest?.email || "").trim().toLowerCase(),
@@ -36210,6 +36259,8 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorType: "agency",
       tomadorPadrao: "AGÊNCIA PJ",
       agencyId: Number(agency.id),
+      name: toTitleCase(agency.corporateName || agency.razaoSocial || agency.tradeName || r.agencyName || ""),
+      doc: onlyDigits(agency.cnpj || r.agencyCnpj || ""),
       tomadorNome: toTitleCase(agency.corporateName || agency.razaoSocial || agency.tradeName || r.agencyName || ""),
       tomadorCpfCnpj: onlyDigits(agency.cnpj || r.agencyCnpj || ""),
       tomadorEmail: (r.agencyAgentEmail || agency.financialEmail || (Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
@@ -36322,7 +36373,10 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorOptions: {
         guest: guestOption,
         company: companyOption,
-        agency: agencyOption
+        agency: agencyOption,
+        guestOption,
+        companyOption,
+        agencyOption
       },
       hasPendingDoc,
       hasPendingCadastral: pendingReasons.length > 0,
@@ -39361,9 +39415,36 @@ app.get(["/api/agencies", "/api/pms/agencies"], (req, res) => {
     const totalRevenue = reservations.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
     const totalCommission = reservations.reduce((acc, r) => acc + (Number(r.b2bCommissionAmount) || 0), 0);
     const totalNet = reservations.reduce((acc, r) => acc + (Number(r.b2bNetAmount) || (Number(r.totalAmount) || 0) - (Number(r.b2bCommissionAmount) || 0)), 0);
+
+    // Normaliza clientCompanies para sempre expor objetos { id, name, tradeName, corporateName, cnpj }
+    const rawClientCompanies = Array.isArray(ag.clientCompanies) ? ag.clientCompanies : [];
+    const normalizedClientCompanies = rawClientCompanies.map((cc, idx) => {
+      if (cc && typeof cc === "object") {
+        const compName = cc.name || cc.tradeName || cc.corporateName || "";
+        return { ...cc, name: compName };
+      }
+      const nameStr = String(cc || "").trim();
+      const matchedComp = (db.companies || []).find(
+        c =>
+          String(c.tradeName || "").toLowerCase() === nameStr.toLowerCase() ||
+          String(c.corporateName || "").toLowerCase().includes(nameStr.toLowerCase())
+      );
+      return {
+        id: matchedComp?.id || idx + 1,
+        name: matchedComp?.tradeName || nameStr,
+        tradeName: matchedComp?.tradeName || nameStr,
+        corporateName: matchedComp?.corporateName || nameStr,
+        cnpj: matchedComp?.cnpj || ""
+      };
+    });
+
     return {
       ...ag,
+      defaultRatePolicy: ag.defaultRatePolicy || ag.ratePolicy || "COMISSIONADA",
+      defaultCommissionPct: ag.defaultCommissionPct ?? ag.commissionPct ?? 12,
+      clientCompanies: normalizedClientCompanies,
       reservationsCount: reservations.length,
+      totalReservations: reservations.length,
       totalRevenue: Number(totalRevenue.toFixed(2)),
       totalCommission: Number(totalCommission.toFixed(2)),
       totalNet: Number(totalNet.toFixed(2))
@@ -39379,51 +39460,111 @@ app.get(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
   if (!agency) return res.status(404).json({ error: "Agência não encontrada" });
 
   const agCnpj = onlyDigits(agency.cnpj || "");
-  const reservations = (db.reservations || []).filter(r =>
+  const reservationsRaw = (db.reservations || []).filter(r =>
     (r.agencyId && Number(r.agencyId) === id) ||
     (agCnpj && onlyDigits(r.agencyCnpj || "") === agCnpj) ||
     (agency.tradeName && r.agencyName && String(r.agencyName).toLowerCase().includes(String(agency.tradeName).toLowerCase()))
   );
 
+  const reservations = reservationsRaw.map(r => {
+    const cin = r.checkinDate || r.checkInDate || "";
+    const cout = r.checkoutDate || r.checkOutDate || "";
+    const nights =
+      r.nights ||
+      (cin && cout
+        ? Math.max(1, Math.round((new Date(`${cout}T12:00:00Z`) - new Date(`${cin}T12:00:00Z`)) / 86400000))
+        : 1);
+    return {
+      ...r,
+      checkinDate: cin,
+      checkoutDate: cout,
+      checkInDate: cin,
+      checkOutDate: cout,
+      nights
+    };
+  });
+
   const companyIdsSet = new Set(Array.isArray(agency.clientCompanyIds) ? agency.clientCompanyIds.map(Number) : []);
   reservations.forEach(r => {
     if (r.companyId) companyIdsSet.add(Number(r.companyId));
   });
-  const companies = (db.companies || []).filter(c => companyIdsSet.has(Number(c.id)));
+  if (Array.isArray(agency.clientCompanies)) {
+    agency.clientCompanies.forEach(cc => {
+      const nameStr = typeof cc === "string" ? cc : (cc?.name || cc?.tradeName || "");
+      if (!nameStr) return;
+      const matched = (db.companies || []).find(
+        c =>
+          String(c.tradeName || "").toLowerCase() === nameStr.toLowerCase() ||
+          String(c.corporateName || "").toLowerCase().includes(nameStr.toLowerCase())
+      );
+      if (matched) companyIdsSet.add(Number(matched.id));
+    });
+  }
+  const companies = (db.companies || [])
+    .filter(c => companyIdsSet.has(Number(c.id)))
+    .map(c => ({
+      ...c,
+      name: c.tradeName || c.corporateName || "",
+      reservationsCount: reservations.filter(r => Number(r.companyId) === Number(c.id)).length
+    }));
 
   const guestIdsSet = new Set();
   reservations.forEach(r => {
     if (r.guestId) guestIdsSet.add(Number(r.guestId));
   });
-  const guests = (db.guests || []).filter(g => guestIdsSet.has(Number(g.id)) || Number(g.agencyId) === id);
+  const guests = (db.guests || [])
+    .filter(g => guestIdsSet.has(Number(g.id)) || Number(g.agencyId) === id)
+    .map(g => ({
+      ...g,
+      name: g.fullName || g.name || "",
+      fullName: g.fullName || g.name || "",
+      cpf: g.cpf || g.document || g.documentNumber || "",
+      reservationsCount: reservations.filter(r => Number(r.guestId) === Number(g.id)).length
+    }));
 
   const invoices = (db.invoices || []).filter(inv =>
     (inv.agencyId && Number(inv.agencyId) === id) ||
     (agCnpj && onlyDigits(inv.tomadorCpfCnpj || "") === agCnpj) ||
-    reservations.some(r => Number(r.id) === Number(inv.reservationId))
+    reservations.some(r => Number(r.id) === Number(inv.reservationId) || (r.code && r.code === inv.reservationCode))
   );
 
   const activeRes = reservations.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
+  const totalNights = activeRes.reduce((acc, r) => acc + (Number(r.nights) || 1), 0);
   const totalRevenue = activeRes.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
   const totalCommission = activeRes.reduce((acc, r) => acc + (Number(r.b2bCommissionAmount) || 0), 0);
   const totalNet = activeRes.reduce((acc, r) => acc + (Number(r.b2bNetAmount) || (Number(r.totalAmount) || 0) - (Number(r.b2bCommissionAmount) || 0)), 0);
 
+  const metrics = {
+    totalReservations: reservations.length,
+    reservationsCount: reservations.length,
+    activeReservations: activeRes.length,
+    activeReservationsCount: activeRes.length,
+    totalNights,
+    companiesCount: companies.length,
+    companiesServedCount: companies.length,
+    guestsCount: guests.length,
+    guestsServedCount: guests.length,
+    invoicesCount: invoices.length,
+    invoicesIssuedCount: invoices.length,
+    totalRevenue: Number(totalRevenue.toFixed(2)),
+    totalCommission: Number(totalCommission.toFixed(2)),
+    totalNet: Number(totalNet.toFixed(2)),
+    totalNetRevenue: Number(totalNet.toFixed(2))
+  };
+
   res.json({
+    ...agency,
+    defaultRatePolicy: agency.defaultRatePolicy || agency.ratePolicy || "COMISSIONADA",
+    defaultCommissionPct: agency.defaultCommissionPct ?? agency.commissionPct ?? 12,
     agency,
     reservations,
     companies,
+    companiesServed: companies,
     guests,
+    guestsServed: guests,
     invoices,
-    stats: {
-      reservationsCount: reservations.length,
-      activeReservationsCount: activeRes.length,
-      companiesCount: companies.length,
-      guestsCount: guests.length,
-      invoicesCount: invoices.length,
-      totalRevenue: Number(totalRevenue.toFixed(2)),
-      totalCommission: Number(totalCommission.toFixed(2)),
-      totalNet: Number(totalNet.toFixed(2))
-    }
+    metrics,
+    stats: metrics
   });
 });
 
@@ -46212,6 +46353,9 @@ app.get("/api/finance/payments", (req, res) => {
       if (!paymentMethod || (paymentMethod === "pix" && r.mpPaymentId && !r.pixEndToEndId)) {
         if (r.mpPaymentId && !r.pixEndToEndId) paymentMethod = "cartao_credito";
         else if (r.pixEndToEndId || r.pixTxId) paymentMethod = "pix";
+        else if (r.channel === "b2b" || r.b2bReservationNumber) {
+          paymentMethod = r.b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b";
+        }
         else if (r.channel === "booking") paymentMethod = "booking";
         else if (r.channel === "airbnb") paymentMethod = "airbnb";
         else if (r.channel === "site") paymentMethod = "pix";
@@ -46219,12 +46363,14 @@ app.get("/api/finance/payments", (req, res) => {
       }
       const isCardSettled = Boolean(
         !r.pixEndToEndId &&
-        (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(paymentMethod || "")))
+        (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite|vcn/i.test(String(paymentMethod || "")))
       );
 
       // Buscar configuração da forma de pagamento
       const pmConfig = paymentMethodsList.find(m =>
         m.id === paymentMethod ||
+        (paymentMethod.includes("vcn") && m.id === "vcn_b2b") ||
+        (paymentMethod.includes("faturado") && m.id === "faturado_b2b") ||
         (paymentMethod.includes("booking") && m.id === "booking") ||
         (paymentMethod.includes("airbnb") && m.id === "airbnb") ||
         (paymentMethod.includes("pix") && m.id === "pix") ||
@@ -46237,9 +46383,26 @@ app.get("/api/finance/payments", (req, res) => {
       let gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
       let channelCommissionPct = pmConfig ? Number(pmConfig.commissionRate || 0) : 0;
 
-      // Se não houver comissão explícita no método mas o canal for OTA:
-      const resChannel = r.channel || (paymentMethod.includes("booking") ? "booking" : (paymentMethod.includes("airbnb") ? "airbnb" : "site"));
-      if (channelCommissionPct === 0) {
+      // Se for reserva B2B, respeita a política tarifária individual (NET 0% vs COMISSIONADA %)
+      const resChannel =
+        r.channel ||
+        (paymentMethod.includes("vcn") || paymentMethod.includes("faturado") || r.b2bReservationNumber
+          ? "b2b"
+          : paymentMethod.includes("booking")
+            ? "booking"
+            : paymentMethod.includes("airbnb")
+              ? "airbnb"
+              : "site");
+
+      if (resChannel === "b2b" || r.b2bRatePolicy) {
+        if (String(r.b2bRatePolicy || "").toUpperCase() === "NET") {
+          channelCommissionPct = 0;
+        } else if (r.b2bCommissionPct !== undefined && r.b2bCommissionPct !== null) {
+          channelCommissionPct = Number(r.b2bCommissionPct) || 0;
+        } else if (channelCommissionPct === 0) {
+          channelCommissionPct = 12.0;
+        }
+      } else if (channelCommissionPct === 0) {
         if (resChannel === "booking") {
           channelCommissionPct = Number(feeConfig.bookingCommissionRate ?? 15.0);
         } else if (resChannel === "airbnb") {
@@ -46262,6 +46425,12 @@ app.get("/api/finance/payments", (req, res) => {
         guestName: r.guestName,
         guestPhone: r.guestPhone,
         guestEmail: r.guestEmail,
+        agencyName: r.agencyName || "",
+        companyName: r.companyName || "",
+        b2bReservationNumber: r.b2bReservationNumber || "",
+        b2bVcnToken: r.b2bVcnToken || "",
+        b2bCardMasked: r.b2bCardMasked || "",
+        b2bRatePolicy: r.b2bRatePolicy || "",
         flatId: flat.id,
         flatNumber: flat.number,
         checkinDate: r.checkinDate,
@@ -46275,6 +46444,8 @@ app.get("/api/finance/payments", (req, res) => {
         gatewayFeeAmount,
         channelCommissionPct,
         channelCommissionAmount,
+        commissionPct: channelCommissionPct,
+        commission: channelCommissionAmount,
         totalDeductions,
         netAmount,
         paidAt: r.paidAt || (isPaid ? r.createdAt : null),
@@ -46349,6 +46520,8 @@ app.get("/api/finance/payments", (req, res) => {
         if (method === "cartao" && (p.paymentMethod.includes("cartao") || p.paymentMethod.includes("card"))) return true;
         if (method === "booking" && p.paymentMethod.includes("booking")) return true;
         if (method === "airbnb" && p.paymentMethod.includes("airbnb")) return true;
+        if (method === "vcn_b2b" && p.paymentMethod.includes("vcn")) return true;
+        if (method === "faturado_b2b" && p.paymentMethod.includes("faturado")) return true;
         return false;
       });
     }
@@ -46368,6 +46541,10 @@ app.get("/api/finance/payments", (req, res) => {
         p.guestName?.toLowerCase().includes(q) ||
         p.code?.toLowerCase().includes(q) ||
         String(p.flatNumber)?.toLowerCase().includes(q) ||
+        p.agencyName?.toLowerCase().includes(q) ||
+        p.companyName?.toLowerCase().includes(q) ||
+        p.b2bReservationNumber?.toLowerCase().includes(q) ||
+        p.b2bVcnToken?.toLowerCase().includes(q) ||
         p.pixTxId?.toLowerCase().includes(q) ||
         p.pixEndToEndId?.toLowerCase().includes(q)
       );

@@ -3242,6 +3242,7 @@ export default function PmsCalendar() {
       if (p.agencyPosUnit) setFormAgencyPosUnit(p.agencyPosUnit)
       if (p.agencyAgentName) setFormAgencyAgentName(p.agencyAgentName)
       if (p.agencyAgentEmail) setFormAgencyAgentEmail(p.agencyAgentEmail)
+      else if (Array.isArray(p.nfDeliveryEmails) && p.nfDeliveryEmails[0]) setFormAgencyAgentEmail(p.nfDeliveryEmails[0])
       if (p.agencyAgentPhone) setFormAgencyAgentPhone(p.agencyAgentPhone)
       if (p.companyName) {
         setFormCompanyName(p.companyName)
@@ -3251,17 +3252,21 @@ export default function PmsCalendar() {
         )
         if (matchedComp) setFormCompanyId(String(matchedComp.id))
       }
+      if (p.costCenter) setFormCostCenter(p.costCenter)
+      if (p.hasBreakfast !== undefined) setFormIncludeBreakfast(Boolean(p.hasBreakfast))
       if (p.b2bRatePolicy) setFormB2bRatePolicy(p.b2bRatePolicy === "NET" ? "NET" : "COMISSIONADA")
       if (p.b2bCommissionPct !== undefined) setFormB2bCommissionPct(String(p.b2bCommissionPct))
+      if (p.b2bPaymentType) setFormB2bPaymentType(p.b2bPaymentType === "FATURADO" ? "FATURADO" : "VIRTUAL_CARD")
       if (p.b2bCardBrand) setFormB2bCardBrand(p.b2bCardBrand)
       if (p.b2bCardMasked) setFormB2bCardMasked(p.b2bCardMasked)
       if (p.b2bVcnToken) setFormB2bVcnToken(p.b2bVcnToken)
+      if (p.b2bConciliationUrl) setFormB2bConciliationUrl(p.b2bConciliationUrl)
       if (p.b2bAuthorizedExpenses) setFormB2bAuthorizedExpenses(p.b2bAuthorizedExpenses)
       if (p.invoiceRecipientType) setFormInvoiceRecipientType(p.invoiceRecipientType)
       if (Array.isArray(p.nfDeliveryEmails) && p.nfDeliveryEmails.length > 0) {
         setFormNfDeliveryEmails(p.nfDeliveryEmails.join(", "))
       }
-      setFormNfHideFromGuest(true)
+      setFormNfHideFromGuest(Boolean(p.nfHideFromGuest))
       if (p.dailyRate || p.totalAmount) {
         const cin = p.checkinDate || formCheckin
         const cout = p.checkoutDate || formCheckout
@@ -3298,10 +3303,10 @@ export default function PmsCalendar() {
         })
       })
       const json = await resp.json().catch(() => ({}))
-      if (resp.ok && json.ok) {
+      if (resp.ok && (json.ok || json.success)) {
         toast({
           title: "E-mail Cordial Enviado à Agência!",
-          description: `Solicitação de credenciamento enviada para ${json.sentTo || formAgencyAgentEmail}.`
+          description: `Solicitação de credenciamento enviada para ${json.sentTo || json.recipient || formAgencyAgentEmail}.`
         })
         fetchCommunications(selectedRes.code || selectedRes.id)
       } else {
