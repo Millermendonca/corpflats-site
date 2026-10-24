@@ -240,6 +240,7 @@ const TAG_GROUPS = [
       { tag: "{{num_hospedes}}", label: "Qtd. Hóspedes", example: "2" },
       { tag: "{{num_diarias}}", label: "Qtd. Diárias", example: "2" },
       { tag: "{{status_cafe}}", label: "Café da Manhã", example: "Incluso" },
+      { tag: "{{aviso_cafe_exclusivo_flat}}", label: "Aviso Café no Flat (Condicional)", example: "☕ *Sobre o seu Café da Manhã:* informamos que em nossas hospedagens o café da manhã é servido *exclusivamente no flat* (no conforto da sua acomodação)." },
       { tag: "{{valor_total}}", label: "Valor Total", example: "R$ 450,00" },
       { tag: "{{status_pagamento}}", label: "Status Pagto.", example: "Confirmado / Pago" },
       { tag: "{{canal_reserva}}", label: "Canal de Venda", example: "Site Oficial" },
@@ -1911,6 +1912,7 @@ export default function WhatsappAutomation() {
       "{{link_checkout}}": `https://corpflats.com.br/checkout/${code}`,
       "{{link_avaliacao_google}}": config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2",
       "{{status_cafe}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "Incluso" : "Não incluso",
+      "{{aviso_cafe_exclusivo_flat}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "☕ *Sobre o seu Café da Manhã:* informamos que em nossas hospedagens o café da manhã é servido *exclusivamente no flat* (entregue diretamente na sua acomodação no horário agendado por você)." : "",
       "{{resumo_alteracoes}}": "• *Acomodação / Quarto:* Flat 101 ➔ *Flat 113*\n• *Data de Entrada (Check-in):* 03/09/2026 ➔ *05/09/2026*\n• *Valor Total:* R$ 450,00 ➔ *R$ 600,00*"
     }
 

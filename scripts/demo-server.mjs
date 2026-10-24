@@ -21971,6 +21971,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldFlatNumber = r.flatNumber;
   const oldStatus = r.status;
   const oldGuestName = r.guestName;
+  const oldGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
   const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
   const oldFlatLockReason = r.flatLockReason || "";
 
@@ -22912,6 +22913,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
+  const newGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
+  const wasGuestPhoneJustAdded = !oldGuestPhone && newGuestPhone.length >= 10;
+  if (wasGuestPhoneJustAdded) {
+    r.guestPhoneUpdatedAt = new Date().toISOString();
+  }
+
   saveDatabase();
 
   // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
@@ -22950,17 +22957,45 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   } else {
     // Verifica se houve extensão de estadia ou acréscimo de saldo pendente (additional_daily_pending)
+    const isB2bChannel = String(r.channel || "").toLowerCase().includes("b2b");
     const totalAmt = Number(r.totalAmount) || 0;
     const paidAmt = Number(r.paidAmount) || 0;
     const pendingAmt = Math.max(0, totalAmt - paidAmt);
     const hadCheckoutExtension = (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
-    const hadPendingIncrease = pendingAmt > 0 && (r.paymentStatus === "pendente" || r.paymentStatus === "parcial" || (req.body.totalAmount && Number(req.body.totalAmount) > totalAmt));
+    const hadPendingIncrease = !isB2bChannel && pendingAmt > 0 && (r.paymentStatus === "pendente" || r.paymentStatus === "parcial" || (req.body.totalAmount && Number(req.body.totalAmount) > totalAmt));
 
     // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
     const guestFacingDiffs = filterGuestFacingDiffs(diffs);
     const hasNonFinChanges = hasNonFinancialChanges(guestFacingDiffs);
 
-    if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0 && !isPreReservationBlocked(r)) {
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+    const isSameDay = r.checkinDate === todayStr;
+    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+    // Se a reserva ainda não recebeu nenhuma confirmação ou instrução inicial
+    const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
+      (h.reservationCode === r.code || h.reservationId === r.id) &&
+      (
+        h.triggerEvent === "sameday_reservation" ||
+        h.triggerEvent === "checkin_day_instructions" ||
+        h.triggerEvent === "room_ready" ||
+        h.triggerEvent === "reservation_created" ||
+        h.triggerEvent === "payment_confirmed" ||
+        h.triggerEvent === "corpflats_intro"
+      ) &&
+      (h.status === "sent" || h.status === "delivered")
+    );
+
+    if (wasGuestPhoneJustAdded && !hasReceivedTodayInstructions && !isPreReservationBlocked(r)) {
+      const initialEvent = isAfter0701 ? "sameday_reservation" : "reservation_created";
+      console.log(`[WhatsApp Trigger] WhatsApp do hóspede recém-cadastrado na reserva ${r.code} (${r.guestName}). Disparando boas-vindas CorpFlats + ${initialEvent}.`);
+      triggerImmediateWhatsApp(db, saveDatabase, initialEvent, { ...r, _forceInitialWelcome: true }).catch(err => {
+        console.warn(`[WhatsApp Trigger] Erro ao disparar ${initialEvent} após cadastro do WhatsApp do hóspede:`, err.message);
+      });
+    } else if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0 && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
       triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", r).catch(err => {
         console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
@@ -22992,26 +23027,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         });
       }
     } else if (!isPreReservationBlocked(r)) {
-      const now = new Date();
-      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      const brDate = new Date(nowUtc - (3 * 3600000));
-      const todayStr = brDate.toISOString().substring(0, 10);
-      const isSameDay = r.checkinDate === todayStr;
-      const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
-
-      // Se a reserva tem check-in HOJE e ainda não recebeu nenhuma confirmação ou instrução do dia
-      const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
-        (h.reservationCode === r.code || h.reservationId === r.id) &&
-        (
-          h.triggerEvent === "sameday_reservation" ||
-          h.triggerEvent === "checkin_day_instructions" ||
-          h.triggerEvent === "room_ready" ||
-          h.triggerEvent === "reservation_created" ||
-          h.triggerEvent === "payment_confirmed"
-        ) &&
-        (h.status === "sent" || h.status === "delivered")
-      );
-
       if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
         if (guestFacingDiffs.length > 0) {
           console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
@@ -24145,12 +24160,27 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       r.guestId = guestRecord.id;
     }
 
+    r.guestPhoneUpdatedAt = new Date().toISOString();
     saveDatabase("b2b_agency_guest_credential_completed");
 
-    // Dispara imediatamente as instruções operacionais de estadia para o WhatsApp do hóspede (sem valores financeiros)
+    try {
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+      ensureReservationScheduledEmails(db, saveDatabase, r);
+    } catch (schedErr) {
+      console.warn("[B2B Credential] Aviso ao agendar régua da reserva após credenciamento:", schedErr.message);
+    }
+
+    // Dispara imediatamente a apresentação da CorpFlats + instruções operacionais de estadia para o WhatsApp do hóspede (sem valores financeiros)
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     try {
-      await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r, baseUrl);
+      const now = new Date();
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDate = new Date(nowUtc - (3 * 3600000));
+      const todayStr = brDate.toISOString().substring(0, 10);
+      const isSameDay = r.checkinDate === todayStr;
+      const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+      const initialEvent = isAfter0701 ? "sameday_reservation" : "reservation_created";
+      await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, { ...r, _forceInitialWelcome: true }, baseUrl);
     } catch (errWa) {
       console.warn("[B2B Credential] Aviso ao disparar WhatsApp para o hóspede:", errWa.message);
     }

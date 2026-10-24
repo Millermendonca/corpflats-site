@@ -285,6 +285,29 @@ export function getBrasiliaDateParts(d = new Date()) {
 // ── Templates Padrão de Alta Conversão & Boas Práticas Hoteleiras ──────────────
 export const DEFAULT_WHATSAPP_TEMPLATES = [
   {
+    id: "tpl_corpflats_intro",
+    triggerEvent: "corpflats_intro",
+    title: "1ª Mensagem • Apresentação CorpFlats & Soho Residence (Antes de Todas)",
+    description: "Enviada antes de todas as mensagens (para todos os canais) assim que o WhatsApp do hóspede é informado na reserva ou preenchido pela agência no link de credenciamento. Explica sobre a CorpFlats no Soho Residence, retirada da chave na recepção após check-in online e café servido exclusivamente no flat (quando incluso).",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    hasAttachment: false,
+    sendEmail: false,
+    message: `Olá, *{{primeiro_nome}}*! Tudo bem? 👋
+
+Somos a *CorpFlats*, uma empresa com foco em locação de flats corporativos.
+Nossos flats ficam no *Soho Residence Service*, um edifício onde também funciona um hotel além de nossa empresa.
+
+Na recepção do prédio, você apenas se identifica para pegar a chave do flat (após efetuar seu check-in online). Qualquer dúvida sobre sua reserva ou com o flat, fale diretamente conosco por aqui!{{aviso_cafe_exclusivo_flat}}`,
+    footer: "CorpFlats • Locação de Flats Corporativos",
+    buttons: []
+  },
+  {
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
     title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
@@ -2661,6 +2684,7 @@ export const REQUESTER_AND_GUEST_TEMPLATE_IDS = new Set([
 
 // ── Eventos exclusivos de estadia interna, café, saída, frigobar, achados e avaliação (NUNCA vão ao solicitante não-hóspede) ──
 export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
+  "corpflats_intro",
   "checkin_completed",
   "breakfast_reminder",
   "checkout_reminder",
@@ -2681,6 +2705,7 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
 ]);
 
 export const GUEST_ONLY_TEMPLATE_IDS = new Set([
+  "tpl_corpflats_intro",
   "tpl_checkin_completed",
   "tpl_breakfast_reminder",
   "tpl_checkout_reminder",
@@ -3184,10 +3209,13 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag de link de autodeclaração de checkin ("Já cheguei / Estou no Flat")
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
-  // Tag: {{status_cafe}} e {{mensagem_cafe_incluso}}
+  // Tag: {{status_cafe}}, {{mensagem_cafe_incluso}} e {{aviso_cafe_exclusivo_flat}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
   const mensagemCafeIncluso = (hasBreakfast && !isCancelled)
     ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo botão abaixo.`
+    : "";
+  const avisoCafeExclusivoFlat = (hasBreakfast && !isCancelled)
+    ? `\n\n🥐 *Sobre o seu Café da Manhã:* Como sua reserva inclui café da manhã, informamos também que ele é servido *exclusivamente no flat* (diretamente na sua acomodação).`
     : "";
 
   const titularGuest = (reservation.guests || []).find(g => Number(g.index) === 1) || reservation.guests?.[0];
@@ -3302,6 +3330,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_autocheckin}}": linkAutocheckin,
     "{{status_cafe}}": statusCafe,
     "{{mensagem_cafe_incluso}}": mensagemCafeIncluso,
+    "{{aviso_cafe_exclusivo_flat}}": avisoCafeExclusivoFlat,
     "{{instrucao_checkin_ou_chegada}}": instrucaoCheckinOuChegada,
     "{{mensagem_pendencia_hospedes}}": mensagemPendenciaHospedes,
     "{{aviso_checkin_pendente}}": avisoCheckinPendente,
@@ -6325,12 +6354,22 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     getWhatsAppAiConfig(db);
 
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
-      db.whatsappTemplates = DEFAULT_WHATSAPP_TEMPLATES;
+      db.whatsappTemplates = JSON.parse(JSON.stringify(DEFAULT_WHATSAPP_TEMPLATES));
     } else {
       for (const defTpl of DEFAULT_WHATSAPP_TEMPLATES) {
         if (!db.whatsappTemplates.some(t => t.id === defTpl.id)) {
-          db.whatsappTemplates.push(defTpl);
+          if (defTpl.id === "tpl_corpflats_intro") {
+            db.whatsappTemplates.unshift(JSON.parse(JSON.stringify(defTpl)));
+          } else {
+            db.whatsappTemplates.push(JSON.parse(JSON.stringify(defTpl)));
+          }
         }
+      }
+      // Garante que tpl_corpflats_intro fique sempre na 1ª posição (topo da régua de envios)
+      const introIdx = db.whatsappTemplates.findIndex(t => t && t.id === "tpl_corpflats_intro");
+      if (introIdx > 0) {
+        const [introTpl] = db.whatsappTemplates.splice(introIdx, 1);
+        db.whatsappTemplates.unshift(introTpl);
       }
             // Garante que templates existentes possuam a propriedade channels, recipientTarget e documentName inicializadas
       for (const tpl of db.whatsappTemplates) {
@@ -9673,6 +9712,7 @@ const CHECKOUT_GROUP_EVENTS = new Set([
 ]);
 
 const SINGLE_DISPATCH_EVENTS = new Set([
+  "corpflats_intro",
   "reservation_created",
   "payment_confirmed",
   "sameday_reservation",
@@ -10660,8 +10700,14 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       return;
     }
 
-    // NUNCA disparar mensagem de "Nova Reserva Criada" para reservas criadas há mais de 48h (reservas feitas no passado)
-    if ((eventName === "reservation_created" || eventName === "pre_reservation_created") && reservation.createdAt) {
+    // NUNCA disparar mensagem de "Nova Reserva Criada" para reservas criadas há mais de 48h (reservas feitas no passado),
+    // EXCETO quando os dados/WhatsApp do hóspede acabaram de ser preenchidos pela agência no link de credenciamento ou na reserva (_forceInitialWelcome).
+    const credentialedRecently = Boolean(
+      reservation._forceInitialWelcome ||
+      (reservation.b2bCredentialCompletedAt && (now.getTime() - new Date(reservation.b2bCredentialCompletedAt).getTime()) <= 48 * 3600 * 1000) ||
+      (reservation.guestPhoneUpdatedAt && (now.getTime() - new Date(reservation.guestPhoneUpdatedAt).getTime()) <= 48 * 3600 * 1000)
+    );
+    if ((eventName === "corpflats_intro" || eventName === "reservation_created" || eventName === "pre_reservation_created") && reservation.createdAt && !credentialedRecently) {
       const createdDate = new Date(reservation.createdAt);
       if ((now.getTime() - createdDate.getTime()) > 48 * 3600 * 1000) {
         console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation.code} foi criada há mais de 48h (${reservation.createdAt}). Mensagens da régua de estadia continuam ativas.`);
@@ -10670,6 +10716,30 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     }
 
     const resvChannel = reservation.channel || reservation.source || "site";
+
+    // REGRA 1ª MENSAGEM (Antes de Todas):
+    // Antes de disparar qualquer confirmação inicial ao hóspede (reservation_created, payment_confirmed, sameday_reservation),
+    // dispara primeiro a mensagem de apresentação institucional da CorpFlats & Soho Residence (tpl_corpflats_intro)
+    // como texto acolhedor, aguardando alguns segundos antes de enviar o Resumo da Reserva + Manual em PDF + Botões.
+    if (
+      !reservation._skipAutoIntro &&
+      (eventName === "reservation_created" || eventName === "payment_confirmed" || eventName === "sameday_reservation")
+    ) {
+      const historyBeforeIntro = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
+      await triggerImmediateWhatsApp(
+        db,
+        saveDatabase,
+        "corpflats_intro",
+        { ...reservation, _skipAutoIntro: true },
+        baseUrl
+      );
+      const historyAfterIntro = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
+      if (historyAfterIntro > historyBeforeIntro) {
+        const isLiveZapi = Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim());
+        const introDelayMs = reservation._fastIntroDelay ? 25 : (isLiveZapi ? 2500 : 40);
+        await new Promise(r => setTimeout(r, introDelayMs));
+      }
+    }
 
     // Trava estrita para 'checkin_cleaning_delay': nunca disparar se o hóspede já realizou check-in/entrada
     // ou se o flat já está limpo/pronto.
@@ -10702,7 +10772,16 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       templates = templates.filter(t => t.id !== "tpl_post_checkout_review");
     }
 
-    if (templates.length === 0 && eventName === "pre_reservation_created") {
+    if (templates.length === 0 && eventName === "corpflats_intro") {
+      const hasExplicitlyDisabled = (db.whatsappTemplates || []).some(
+        t => (t.id === "tpl_corpflats_intro" || t.triggerEvent === "corpflats_intro") &&
+             (t.enabled === false || !isTemplateAllowedForChannel(t, resvChannel))
+      );
+      if (!hasExplicitlyDisabled) {
+        const defIntro = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_corpflats_intro");
+        if (defIntro && isTemplateAllowedForChannel(defIntro, resvChannel)) templates = [defIntro];
+      }
+    } else if (templates.length === 0 && eventName === "pre_reservation_created") {
       const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
       if (defPre) templates = [defPre];
     } else if (templates.length === 0 && eventName === "payment_confirmed") {
