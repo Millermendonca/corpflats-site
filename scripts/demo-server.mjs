@@ -233,7 +233,7 @@ import {
 } from "./wbp/provisional.mjs";
 import { createHrRouter, ensureHrCollections, initHrWhatsAppAutomation } from "./hr/index.mjs";
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -376,26 +376,87 @@ if (!fs.existsSync(LOST_ITEMS_DIR)) {
 
 let pgPool = null;
 let pgHydratedSuccessfully = false;
+let pgDdlInitialized = false;
+let activeLoadDatabasePromise = null;
+let hydrationRetryTimer = null;
+let lastHydrationError = null;
 let lastPersistInfo = { status: "pending", timestamp: null, error: null };
+
+function getMaskedPgHost() {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    const u = new URL(process.env.DATABASE_URL);
+    return `${u.hostname}${u.port ? ":" + u.port : ""}${u.pathname || ""}`;
+  } catch {
+    return "configured_unparseable";
+  }
+}
+
+function createPgPoolInstance() {
+  if (!process.env.DATABASE_URL) return null;
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+    max: 12,
+    idleTimeoutMillis: 20000,
+    connectionTimeoutMillis: 15000,
+    query_timeout: 30000,
+    statement_timeout: 30000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5000,
+  });
+
+  // CRÍTICO: Em nuvem (Render/Supabase/Neon), conexões inativas sofrem timeout/reset da rede.
+  // Sem esse listener de 'error', o EventEmitter do pg lança exceção não tratada e encerra com Status 1.
+  pool.on("error", (err) => {
+    console.error("[PostgreSQL Pool] Erro recuperável em conexão inativa:", err?.message || err);
+  });
+
+  return pool;
+}
+
+function resetPgPool(reason = "manual_reset") {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    const oldPool = pgPool;
+    pgPool = createPgPoolInstance();
+    if (typeof wbpStorage !== "undefined" && wbpStorage) {
+      wbpStorage.pgPool = pgPool;
+    }
+    console.log(`[PostgreSQL Pool] Pool recriado (${reason}).`);
+    if (oldPool) {
+      oldPool.end().catch(() => {});
+    }
+  } catch (err) {
+    console.error("[PostgreSQL Pool] Falha ao recriar pool:", err.message);
+  }
+  return pgPool;
+}
+
+async function queryDirectPgClient(sql, params = [], timeoutMs = 45000) {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL não configurada");
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+    connectionTimeoutMillis: Math.min(20000, timeoutMs),
+    query_timeout: timeoutMs,
+    statement_timeout: timeoutMs,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5000,
+  });
+  client.on("error", () => {});
+  try {
+    await client.connect();
+    return await client.query(sql, params);
+  } finally {
+    try { await client.end(); } catch (_) {}
+  }
+}
+
 if (process.env.DATABASE_URL) {
   try {
-    pgPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 10000,
-    });
-
-    // CRÍTICO: Em nuvem (Render/Supabase/Neon), conexões inativas sofrem timeout/reset da rede.
-    // Sem esse listener de 'error', o EventEmitter do pg lança exceção não tratada e encerra com Status 1.
-    pgPool.on("error", (err, client) => {
-      console.error("[PostgreSQL Pool] Erro recuperável em conexão inativa:", err?.message || err);
-    });
-
-    console.log("[PostgreSQL] Conexão com banco em nuvem inicializada com guard de conexões inativas e keepAlive.");
+    pgPool = createPgPoolInstance();
+    console.log("[PostgreSQL] Conexão com banco em nuvem inicializada com guard de conexões inativas, query_timeout e keepAlive.");
   } catch (err) {
     console.error("[PostgreSQL] Falha ao configurar pool:", err.message);
   }
@@ -511,25 +572,67 @@ app.get("/api/system/db-status", async (req, res) => {
   let pgStatus = "disconnected";
   let pgError = null;
   let lastSaved = null;
+  let directProbe = null;
+
+  const poolStats = pgPool
+    ? {
+        totalCount: pgPool.totalCount,
+        idleCount: pgPool.idleCount,
+        waitingCount: pgPool.waitingCount
+      }
+    : null;
 
   if (pgPool) {
     try {
-      const q = await pgPool.query("SELECT key, updated_at FROM system_store WHERE key = 'db_state'");
+      const isPoolCongested = pgPool.waitingCount > 0 && pgPool.idleCount === 0;
+      const q = isPoolCongested
+        ? await queryDirectPgClient("SELECT key, updated_at FROM system_store WHERE key = 'db_state'", [], 8000)
+        : await pgPool.query("SELECT key, updated_at FROM system_store WHERE key = 'db_state'");
       pgStatus = "connected";
       if (q.rows && q.rows[0]) {
         lastSaved = q.rows[0].updated_at;
       }
+      if (isPoolCongested) {
+        resetPgPool("db_status_detected_congested_pool");
+      }
+      if (!pgHydratedSuccessfully && !activeLoadDatabasePromise) {
+        loadDatabase().catch(() => {});
+      }
     } catch (err) {
       pgStatus = "error";
       pgError = err.message;
+      try {
+        const t0 = Date.now();
+        const dq = await queryDirectPgClient("SELECT key, updated_at FROM system_store WHERE key = 'db_state'", [], 8000);
+        directProbe = { ok: true, durationMs: Date.now() - t0 };
+        pgStatus = "connected_via_direct_client";
+        if (dq.rows && dq.rows[0]) {
+          lastSaved = dq.rows[0].updated_at;
+        }
+        resetPgPool("db_status_direct_ok_pool_failed");
+        if (!pgHydratedSuccessfully && !activeLoadDatabasePromise) {
+          loadDatabase().catch(() => {});
+        }
+      } catch (dErr) {
+        directProbe = {
+          ok: false,
+          code: dErr.code || null,
+          error: dErr.message
+        };
+      }
     }
   }
 
   res.json({
     databaseType: pgPool ? "PostgreSQL Cloud (Blindado)" : "Local JSON (Efêmero)",
+    pgHost: getMaskedPgHost(),
     pgStatus,
     pgError,
+    directProbe,
+    poolStats,
     pgHydratedSuccessfully,
+    isHydrating: Boolean(activeLoadDatabasePromise),
+    lastHydrationError,
     lastPersistInfo,
     lastSaved,
     dbStats: {
@@ -540,6 +643,27 @@ app.get("/api/system/db-status", async (req, res) => {
       notificationsCount: db.notifications?.length || 0
     }
   });
+});
+
+app.post("/api/system/db-reconnect", async (req, res) => {
+  try {
+    resetPgPool("manual_api_reconnect");
+    await loadDatabase();
+    try { await bootstrapShoppingTables(); } catch (_) {}
+    res.json({
+      success: pgHydratedSuccessfully,
+      pgHydratedSuccessfully,
+      lastHydrationError,
+      dbStats: {
+        reservationsCount: db.reservations?.length || 0,
+        cleaningRequestsCount: db.cleaningRequests?.length || 0,
+        flatsCount: db.flats?.length || 0,
+        usersCount: db.users?.length || 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message, lastHydrationError });
+  }
 });
 
 app.get("/api/system/postgres-tables", async (req, res) => {
@@ -7387,12 +7511,120 @@ function getInterCertificates() {
   return { cert, key };
 }
 
-async function loadDatabase() {
+function scheduleHydrationRetry(delayMs = 8000) {
+  if (pgHydratedSuccessfully || !pgPool) return;
+  if (hydrationRetryTimer) {
+    clearTimeout(hydrationRetryTimer);
+    hydrationRetryTimer = null;
+  }
+  hydrationRetryTimer = setTimeout(() => {
+    hydrationRetryTimer = null;
+    if (!pgHydratedSuccessfully) {
+      loadDatabase().catch(() => {});
+    }
+  }, delayMs);
+}
+
+async function runPgDdlBootstrap() {
+  if (!pgPool || pgDdlInitialized) return;
+  pgDdlInitialized = true;
   try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS system_store (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS system_store_backups (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reason TEXT NOT NULL,
+        reservations_count INT NOT NULL,
+        value JSONB NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON system_store_backups (timestamp DESC);
+      CREATE TABLE IF NOT EXISTS system_audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        level TEXT NOT NULL,
+        category TEXT NOT NULL,
+        action TEXT NOT NULL,
+        actor JSONB NOT NULL DEFAULT '{}'::jsonb,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        source TEXT NOT NULL DEFAULT 'server'
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
+      CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
+      CREATE TABLE IF NOT EXISTS reservation_communications (
+        id TEXT PRIMARY KEY,
+        reservation_id TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'email',
+        direction TEXT NOT NULL DEFAULT 'outbound',
+        recipient TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        metadata JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
+      CREATE TABLE IF NOT EXISTS fnrh_internal_audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        action TEXT NOT NULL,
+        auth_context TEXT NOT NULL,
+        user_id INT,
+        username TEXT,
+        client_ip TEXT NOT NULL,
+        hostname TEXT,
+        user_agent TEXT NOT NULL,
+        record_id TEXT,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
+      CREATE TABLE IF NOT EXISTS media_blobs (
+        id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        field_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+        data_url TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_media_blobs_entity ON media_blobs (entity_type, entity_id);
+    `);
+  } catch (ddlErr) {
+    pgDdlInitialized = false;
+    console.warn("[PostgreSQL] Aviso ao verificar tabelas DDL:", ddlErr.message);
+  }
+  try {
+    wbpStorage.pgPool = pgPool;
+    await wbpStorage.init();
+  } catch (_) {}
+}
+
+async function loadDatabase() {
+  if (activeLoadDatabasePromise) {
+    return activeLoadDatabasePromise;
+  }
+  activeLoadDatabasePromise = _loadDatabaseImpl().finally(() => {
+    activeLoadDatabasePromise = null;
+  });
+  return activeLoadDatabasePromise;
+}
+
+async function _loadDatabaseImpl() {
+  try {
+    if (!Array.isArray(db.flats) || db.flats.length === 0) {
+      db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
+    }
     if (fs.existsSync(DB_FILE)) {
       const content = await fs.promises.readFile(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       Object.assign(db, loaded);
+      if (!Array.isArray(db.flats) || db.flats.length === 0) db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
       if (!Array.isArray(db.faqItems)) db.faqItems = [];
@@ -7426,96 +7658,34 @@ async function loadDatabase() {
     }
     if (pgPool) {
       try {
-        try {
-          await pgPool.query(`
-            CREATE TABLE IF NOT EXISTS system_store (
-              key TEXT PRIMARY KEY,
-              value JSONB NOT NULL,
-              updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-            CREATE TABLE IF NOT EXISTS system_store_backups (
-              id BIGSERIAL PRIMARY KEY,
-              timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-              reason TEXT NOT NULL,
-              reservations_count INT NOT NULL,
-              value JSONB NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON system_store_backups (timestamp DESC);
-            CREATE TABLE IF NOT EXISTS system_audit_logs (
-              id BIGSERIAL PRIMARY KEY,
-              timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-              level TEXT NOT NULL,
-              category TEXT NOT NULL,
-              action TEXT NOT NULL,
-              actor JSONB NOT NULL DEFAULT '{}'::jsonb,
-              details JSONB NOT NULL DEFAULT '{}'::jsonb,
-              source TEXT NOT NULL DEFAULT 'server'
-            );
-            CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
-            CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
-            CREATE TABLE IF NOT EXISTS reservation_communications (
-              id TEXT PRIMARY KEY,
-              reservation_id TEXT NOT NULL,
-              type TEXT NOT NULL DEFAULT 'email',
-              direction TEXT NOT NULL DEFAULT 'outbound',
-              recipient TEXT NOT NULL,
-              subject TEXT NOT NULL,
-              body TEXT NOT NULL,
-              status TEXT NOT NULL DEFAULT 'pending',
-              metadata JSONB DEFAULT '{}'::jsonb,
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
-            CREATE TABLE IF NOT EXISTS fnrh_internal_audit_logs (
-              id BIGSERIAL PRIMARY KEY,
-              timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-              action TEXT NOT NULL,
-              auth_context TEXT NOT NULL,
-              user_id INT,
-              username TEXT,
-              client_ip TEXT NOT NULL,
-              hostname TEXT,
-              user_agent TEXT NOT NULL,
-              record_id TEXT,
-              details JSONB NOT NULL DEFAULT '{}'::jsonb
-            );
-            CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
-            CREATE TABLE IF NOT EXISTS media_blobs (
-              id TEXT PRIMARY KEY,
-              entity_type TEXT NOT NULL,
-              entity_id TEXT NOT NULL,
-              field_name TEXT NOT NULL,
-              mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
-              data_url TEXT NOT NULL,
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS idx_media_blobs_entity ON media_blobs (entity_type, entity_id);
-          `);
-        } catch (ddlErr) {
-          console.warn("[PostgreSQL] Aviso ao verificar tabelas DDL:", ddlErr.message);
-        }
-
-        try {
-          wbpStorage.pgPool = pgPool;
-          await wbpStorage.init();
-        } catch (_) {}
-
         let res = null;
         let querySucceeded = false;
         let attempts = 0;
-        const maxAttempts = 5;
+        const maxAttempts = 2;
         while (attempts < maxAttempts) {
           try {
-            res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+            // Prioriza conexão dedicada direta para leitura de db_state (imune a fila de pool cheio e sem bloqueio por DDL)
+            try {
+              res = await queryDirectPgClient("SELECT value FROM system_store WHERE key = 'db_state'", [], 45000);
+            } catch (directErr) {
+              if (directErr.code === "42P01") {
+                await runPgDdlBootstrap();
+              }
+              res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+            }
             querySucceeded = true;
+            lastHydrationError = null;
             break;
           } catch (qErr) {
             attempts++;
+            lastHydrationError = {
+              message: qErr.message,
+              code: qErr.code || null,
+              timestamp: new Date().toISOString()
+            };
             console.warn(`[PostgreSQL] Tentativa ${attempts}/${maxAttempts} de carregar db_state falhou: ${qErr.message}`);
             if (attempts < maxAttempts) {
-              await new Promise(r => setTimeout(r, 2000));
+              await new Promise(r => setTimeout(r, 1500));
             }
           }
         }
@@ -7585,6 +7755,9 @@ async function loadDatabase() {
             : ((localZohoOAuth?.clientId && localZohoOAuth?.refreshToken) ? localZohoOAuth : (pgZohoOAuth || localZohoOAuth || null));
 
           Object.assign(db, pgLoaded);
+          if (!Array.isArray(db.flats) || db.flats.length === 0) {
+            db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
+          }
 
           if ((!Array.isArray(db.faqItems) || db.faqItems.length === 0) && localFaqItems.length > 0) {
             db.faqItems = localFaqItems;
@@ -7637,27 +7810,43 @@ async function loadDatabase() {
             syncMaidCredits(3);
           } catch (_) {}
           pgHydratedSuccessfully = true;
+          if (hydrationRetryTimer) {
+            clearTimeout(hydrationRetryTimer);
+            hydrationRetryTimer = null;
+          }
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
           if (didChange || didMigrateEmails) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
           }
+          // Executa DDL complementar e tabelas auxiliares em background sem bloquear a hidratação
+          runPgDdlBootstrap().catch(() => {});
+          if (typeof bootstrapShoppingTables === "function") {
+            bootstrapShoppingTables().then(() => {
+              if (typeof migrateShoppingCategories === "function") migrateShoppingCategories().catch(() => {});
+            }).catch(() => {});
+          }
         } else if (querySucceeded) {
           pgHydratedSuccessfully = true;
+          if (hydrationRetryTimer) {
+            clearTimeout(hydrationRetryTimer);
+            hydrationRetryTimer = null;
+          }
           console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
+          runPgDdlBootstrap().catch(() => {});
         } else {
           pgHydratedSuccessfully = false;
-          console.error("[PostgreSQL] CRÍTICO: Todas as tentativas de leitura inicial de db_state falharam. Escrita em nuvem bloqueada preventivamente e nova tentativa agendada em 8s...");
-          setTimeout(() => {
-            if (!pgHydratedSuccessfully) loadDatabase().catch(() => {});
-          }, 8000);
+          console.error("[PostgreSQL] CRÍTICO: Tentativas de leitura inicial de db_state falharam. Escrita em nuvem bloqueada preventivamente e nova tentativa única agendada em 8s...");
+          scheduleHydrationRetry(8000);
         }
       } catch (err) {
+        lastHydrationError = {
+          message: err.message,
+          code: err.code || null,
+          timestamp: new Date().toISOString()
+        };
         console.warn("[PostgreSQL] Falha crítica ao sincronizar estado inicial:", err.message);
-        // Não marcar pgHydratedSuccessfully = true em caso de erro para não sobrescrever dados na nuvem, mas agendar auto-recuperação!
-        setTimeout(() => {
-          if (!pgHydratedSuccessfully) loadDatabase().catch(() => {});
-        }, 8000);
+        scheduleHydrationRetry(8000);
       }
     }
 
@@ -10200,9 +10389,18 @@ function saveDatabase(reason = "auto_save") {
 // ── Tratamento Graceful de Shutdown (Persistência Imediata em Rediploys do Render) ──
 function handleGracefulShutdown(signal) {
   try {
+    if (hydrationRetryTimer) {
+      clearTimeout(hydrationRetryTimer);
+      hydrationRetryTimer = null;
+    }
     if (pendingLocalDirty || pendingPgDirty) {
       console.log(`[Database] Sinal ${signal} recebido. Forçando gravação de estado pendente antes do encerramento...`);
       saveDatabase("shutdown");
+    }
+    if (pgPool) {
+      const poolToClose = pgPool;
+      pgPool = null;
+      poolToClose.end().catch(() => {});
     }
   } catch (err) {
     console.error(`[Database] Erro ao gravar dados no shutdown (${signal}):`, err.message);
@@ -30090,7 +30288,12 @@ app.post("/api/emails/send-manual", async (req, res) => {
 // W1. Status consolidado do Webmail (Zoho OAuth2 + Motor SMTP + Pastas + Reservas Ativas)
 app.get("/api/webmail/status", async (req, res) => {
   if (pgPool && !pgHydratedSuccessfully) {
-    try { await loadDatabase(); } catch (_) {}
+    try {
+      await Promise.race([
+        loadDatabase(),
+        new Promise(r => setTimeout(r, 2500))
+      ]);
+    } catch (_) {}
   }
   ensureWebmailCollections(db);
   const status = getZohoStatusSummary(db);
@@ -30191,7 +30394,12 @@ app.post("/api/webmail/oauth-config", async (req, res) => {
 // W3. Listagem, Busca Instantânea e Filtros Rápidos de Mensagens (Coluna 2)
 app.get("/api/webmail/messages", async (req, res) => {
   if (pgPool && !pgHydratedSuccessfully) {
-    try { await loadDatabase(); } catch (_) {}
+    try {
+      await Promise.race([
+        loadDatabase(),
+        new Promise(r => setTimeout(r, 2500))
+      ]);
+    } catch (_) {}
   }
   const {
     folder = "inbox",
@@ -47558,9 +47766,11 @@ if (fs.existsSync(distPath)) {
 // MÓDULO LISTA DE COMPRAS — PostgreSQL persistente + fallback JSON
 // ════════════════════════════════════════════════════════════════════════════
 
-// Bootstrap das tabelas de shopping list no PostgreSQL (roda na inicialização)
+// Bootstrap das tabelas de shopping list no PostgreSQL (roda após hidratação para não disputar pool no boot)
+let shoppingTablesBootstrapped = false;
 async function bootstrapShoppingTables() {
-  if (!pgPool) return;
+  if (!pgPool || shoppingTablesBootstrapped) return;
+  if (!pgHydratedSuccessfully) return;
   try {
     await pgPool.query(`
       CREATE TABLE IF NOT EXISTS shopping_list (
@@ -47588,25 +47798,25 @@ async function bootstrapShoppingTables() {
         updated_at timestamptz NOT NULL DEFAULT now()
       );
     `);
-    // Pré-popula catálogo com itens iniciais
+    // Pré-popula catálogo com itens iniciais em uma única query batch
     const initialItems = [
       "Papel higiênico","Cif","X14","Saco Lixo","Vassoura","Pá",
       "Esponja","Bombril","Limpa inox","Detergente","Cloro","Alcool",
       "Cheirinho","Pano de chão","Lâmpada Banheiro Pequena",
       "Lâmpada banheiro grande","Lâmpada teto","Lâmpada abajur"
     ];
-    for (const name of initialItems) {
-      await pgPool.query(
-        `INSERT INTO shopping_catalog (name, use_count) VALUES ($1, 0) ON CONFLICT (name) DO NOTHING`,
-        [name]
-      );
-    }
+    await pgPool.query(
+      `INSERT INTO shopping_catalog (name, use_count)
+       SELECT unnest($1::text[]), 0
+       ON CONFLICT (name) DO NOTHING`,
+      [initialItems]
+    );
+    shoppingTablesBootstrapped = true;
     console.log("[ShoppingList] Tabelas PostgreSQL prontas.");
   } catch (err) {
     console.warn("[ShoppingList] Erro ao criar tabelas:", err.message);
   }
 }
-bootstrapShoppingTables();
 
 // ── Auto-categorização inteligente (IA por regras de palavras-chave) ──────────
 const FOOD_SUBCATEGORIES = new Set(["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã"]);
@@ -47736,8 +47946,9 @@ Regras:
 }
 
 // Migração retroativa: recategoriza itens que ainda têm categorias antigas (não-JSON)
+let shoppingCategoriesMigrated = false;
 async function migrateShoppingCategories() {
-  if (!pgPool) return;
+  if (!pgPool || !pgHydratedSuccessfully || shoppingCategoriesMigrated) return;
   try {
     const { rows } = await pgPool.query(`SELECT id, title, category FROM shopping_list`);
     let updated = 0;
@@ -47753,12 +47964,12 @@ async function migrateShoppingCategories() {
         updated++;
       }
     }
+    shoppingCategoriesMigrated = true;
     if (updated > 0) console.log(`[ShoppingList] ${updated} itens recategorizados automaticamente.`);
   } catch (e) {
     console.warn("[ShoppingList] Erro na migração de categorias:", e.message);
   }
 }
-migrateShoppingCategories();
 
 function parseCategories(category) {
   if (!category) return ["Geral"];
@@ -47932,9 +48143,18 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
 app.get("/api/shopping-list", async (req, res) => {
   if (pgPool) {
     try {
-      const result = await pgPool.query(
-        `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
-      );
+      let result;
+      try {
+        result = await pgPool.query(
+          `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
+        );
+      } catch (poolErr) {
+        result = await queryDirectPgClient(
+          `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`,
+          [],
+          15000
+        );
+      }
       return res.json(result.rows.map(mapShoppingRow));
     } catch (err) {
       console.error("[ShoppingList] GET error:", err.message);
