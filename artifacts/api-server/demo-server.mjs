@@ -28000,6 +28000,54 @@ async function getValidGoogleContactsAccessToken(database) {
   return cfg.accessToken || null;
 }
 
+function buildGooglePersonPayload(contactData, guestId) {
+  const personPayload = {
+    names: [
+      {
+        givenName: contactData.displayName,
+        familyName: "",
+        unstructuredName: contactData.displayName
+      }
+    ],
+    phoneNumbers: [
+      {
+        value: contactData.e164Phone,
+        type: "mobile"
+      }
+    ],
+    organizations: [
+      {
+        name: contactData.organizationName,
+        title: contactData.jobTitle,
+        department: `CRM ${contactData.guestCode}`,
+        type: "work",
+        current: true
+      }
+    ],
+    biographies: [
+      {
+        value: contactData.notesText,
+        contentType: "TEXT_PLAIN"
+      }
+    ],
+    userDefined: [
+      { key: "CRM_ID", value: String(guestId || "") },
+      { key: "Codigo_CRM", value: contactData.guestCode },
+      ...(contactData.document ? [{ key: "Documento", value: `${contactData.docType} ${contactData.document}` }] : []),
+      ...(contactData.vehiclePlate ? [{ key: "Placa_Veiculo", value: contactData.vehiclePlate }] : []),
+      ...(contactData.unitLabel ? [{ key: "Unidade_UH", value: contactData.unitLabel }] : [])
+    ]
+  };
+
+  if (contactData.email) {
+    personPayload.emailAddresses = [{ value: contactData.email, type: "home" }];
+  }
+  if (contactData.birthDateObj) {
+    personPayload.birthdays = [{ date: contactData.birthDateObj }];
+  }
+  return personPayload;
+}
+
 export async function syncSingleGuestToGoogleContacts(database, guest, options = {}) {
   const targetDb = database || db;
   const cfg = ensureGoogleContactsConfig(targetDb);
@@ -28027,51 +28075,7 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
     };
   }
 
-  const personPayload = {
-    names: [
-      {
-        givenName: contactData.displayName,
-        familyName: "",
-        unstructuredName: contactData.displayName
-      }
-    ],
-    phoneNumbers: [
-      {
-        value: contactData.e164Phone,
-        type: "mobile",
-        label: "Celular / WhatsApp"
-      }
-    ],
-    organizations: [
-      {
-        name: contactData.organizationName,
-        title: contactData.jobTitle,
-        department: `CRM ${contactData.guestCode}`,
-        type: "work",
-        current: true
-      }
-    ],
-    biographies: [
-      {
-        value: contactData.notesText,
-        contentType: "TEXT_PLAIN"
-      }
-    ],
-    userDefined: [
-      { key: "CRM_ID", value: String(guest.id || "") },
-      { key: "Codigo_CRM", value: contactData.guestCode },
-      ...(contactData.document ? [{ key: "Documento", value: `${contactData.docType} ${contactData.document}` }] : []),
-      ...(contactData.vehiclePlate ? [{ key: "Placa_Veiculo", value: contactData.vehiclePlate }] : []),
-      ...(contactData.unitLabel ? [{ key: "Unidade_UH", value: contactData.unitLabel }] : [])
-    ]
-  };
-
-  if (contactData.email) {
-    personPayload.emailAddresses = [{ value: contactData.email, type: "home", label: "E-mail CRM" }];
-  }
-  if (contactData.birthDateObj) {
-    personPayload.birthdays = [{ date: contactData.birthDateObj }];
-  }
+  const personPayload = buildGooglePersonPayload(contactData, guest.id);
 
   const updateFields = "names,phoneNumbers,emailAddresses,organizations,biographies,birthdays,userDefined";
   let resourceName = guest.googleContactResourceName || "";
@@ -28461,7 +28465,7 @@ app.post("/api/pms/guests/google-contacts/disconnect", (req, res) => {
   res.json({ success: true });
 });
 
-// Sincronizar TODOS os hóspedes do CRM com o Google Contatos
+// Sincronizar TODOS os hóspedes do CRM com o Google Contatos (via Batch API de Alta Velocidade)
 app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
@@ -28471,26 +28475,223 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
   const cfg = ensureGoogleContactsConfig(db);
   const allGuests = Array.isArray(db.guests) ? db.guests : [];
 
+  const accessToken = await getValidGoogleContactsAccessToken(db);
+  if (!accessToken) {
+    for (const g of allGuests) {
+      const c = buildGuestCallerIdContactData(db, g);
+      g.googleContactDisplayName = c.displayName;
+    }
+    saveDatabase();
+    return res.json({
+      success: false,
+      totalProcessed: allGuests.length,
+      syncedCount: 0,
+      createdCount: 0,
+      updatedCount: 0,
+      skippedCount: allGuests.length,
+      errorCount: 0,
+      firstError: "Conta Google Contatos ainda não conectada via OAuth2."
+    });
+  }
+
+  // 1. Faz UMA ÚNICA leitura da agenda Google (evitando limite de quota de searchContacts)
+  const existingByResource = new Map();
+  const existingByCrmId = new Map();
+  const existingByPhoneSuffix = new Map();
+
+  try {
+    let pageToken = "";
+    for (let page = 0; page < 3; page++) {
+      const connUrl = `https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers,userDefined,metadata&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+      const connRes = await fetch(connUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (!connRes.ok) break;
+      const connData = await connRes.json();
+      for (const p of (connData.connections || [])) {
+        if (!p?.resourceName) continue;
+        const entry = { resourceName: p.resourceName, etag: p.etag || "" };
+        existingByResource.set(p.resourceName, entry);
+        for (const ud of (p.userDefined || [])) {
+          if (ud.key === "CRM_ID" && ud.value) {
+            existingByCrmId.set(String(ud.value), entry);
+          }
+        }
+        for (const pn of (p.phoneNumbers || [])) {
+          const digits = String(pn.value || pn.canonicalForm || "").replace(/\D/g, "");
+          if (digits.length >= 8) {
+            existingByPhoneSuffix.set(digits.slice(-9), entry);
+          }
+        }
+      }
+      if (!connData.nextPageToken) break;
+      pageToken = connData.nextPageToken;
+    }
+  } catch (err) {
+    console.warn("[GoogleContacts Batch] Falha ao listar conexões existentes:", err?.message || err);
+  }
+
   let createdCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
   let firstError = "";
 
+  const toCreate = [];
+  const toUpdate = [];
+  const seenPhonesInBatch = new Set();
+
   for (const g of allGuests) {
-    const result = await syncSingleGuestToGoogleContacts(db, g, { skipSave: true });
-    if (result.success) {
-      if (result.action === "updated") updatedCount++;
-      else createdCount++;
-    } else if (result.skipped) {
+    const contactData = buildGuestCallerIdContactData(db, g);
+    g.googleContactDisplayName = contactData.displayName;
+
+    if (!contactData.e164Phone || contactData.phoneDigits.length < 8) {
       skippedCount++;
+      continue;
+    }
+
+    const phoneKey = contactData.phoneDigits.slice(-9);
+    const personPayload = buildGooglePersonPayload(contactData, g.id);
+
+    const matchedExisting =
+      (g.googleContactResourceName && existingByResource.get(g.googleContactResourceName)) ||
+      existingByCrmId.get(String(g.id)) ||
+      existingByPhoneSuffix.get(phoneKey) ||
+      null;
+
+    if (matchedExisting && matchedExisting.resourceName && matchedExisting.etag) {
+      if (!toUpdate.some(u => u.resourceName === matchedExisting.resourceName)) {
+        toUpdate.push({
+          guest: g,
+          contactData,
+          personPayload,
+          resourceName: matchedExisting.resourceName,
+          etag: matchedExisting.etag
+        });
+      } else {
+        g.googleContactResourceName = matchedExisting.resourceName;
+        g.googleContactSyncedAt = new Date().toISOString();
+      }
+    } else if (!seenPhonesInBatch.has(phoneKey)) {
+      seenPhonesInBatch.add(phoneKey);
+      toCreate.push({
+        guest: g,
+        contactData,
+        personPayload
+      });
     } else {
-      errorCount++;
-      if (!firstError && result.error) firstError = result.error;
+      skippedCount++;
     }
   }
 
-  cfg.lastSyncAt = new Date().toISOString();
+  const nowIso = new Date().toISOString();
+  const updateMask = "names,phoneNumbers,emailAddresses,organizations,biographies,birthdays,userDefined";
+
+  // 2. Executa criação em lote via people:batchCreateContacts (até 180 contatos por requisição)
+  const chunkSize = 180;
+  for (let i = 0; i < toCreate.length; i += chunkSize) {
+    const chunk = toCreate.slice(i, i + chunkSize);
+    try {
+      const batchRes = await fetch("https://people.googleapis.com/v1/people:batchCreateContacts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contacts: chunk.map(item => ({ contactPerson: item.personPayload })),
+          readMask: "names,phoneNumbers,metadata"
+        })
+      });
+
+      if (batchRes.ok) {
+        const batchData = await batchRes.json();
+        const createdPeople = batchData.createdPeople || [];
+        chunk.forEach((item, idx) => {
+          const createdPerson = createdPeople[idx]?.person;
+          item.guest.googleContactResourceName = createdPerson?.resourceName || item.guest.googleContactResourceName || "people/synced";
+          item.guest.googleContactEtag = createdPerson?.etag || "";
+          item.guest.googleContactSyncedAt = nowIso;
+          createdCount++;
+          cfg.syncLogs.unshift({
+            timestamp: nowIso,
+            guestId: item.guest.id,
+            guestName: item.contactData.fullName,
+            displayName: item.contactData.displayName,
+            phone: item.contactData.e164Phone,
+            action: "created",
+            status: "success"
+          });
+        });
+      } else {
+        const errText = await batchRes.text();
+        errorCount += chunk.length;
+        if (!firstError) firstError = `BatchCreate (${batchRes.status}): ${errText.slice(0, 200)}`;
+      }
+    } catch (err) {
+      errorCount += chunk.length;
+      if (!firstError) firstError = err?.message || String(err);
+    }
+  }
+
+  // 3. Executa atualização em lote via people:batchUpdateContacts (até 180 contatos por requisição)
+  for (let i = 0; i < toUpdate.length; i += chunkSize) {
+    const chunk = toUpdate.slice(i, i + chunkSize);
+    try {
+      const contactsMap = {};
+      for (const item of chunk) {
+        contactsMap[item.resourceName] = {
+          ...item.personPayload,
+          resourceName: item.resourceName,
+          etag: item.etag
+        };
+      }
+      const batchUpdRes = await fetch("https://people.googleapis.com/v1/people:batchUpdateContacts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contacts: contactsMap,
+          updateMask,
+          readMask: "names,phoneNumbers,metadata"
+        })
+      });
+
+      if (batchUpdRes.ok) {
+        const updData = await batchUpdRes.json();
+        const results = updData.updateResult || {};
+        for (const item of chunk) {
+          const resPerson = results[item.resourceName]?.person;
+          item.guest.googleContactResourceName = resPerson?.resourceName || item.resourceName;
+          item.guest.googleContactEtag = resPerson?.etag || item.etag;
+          item.guest.googleContactSyncedAt = nowIso;
+          updatedCount++;
+          cfg.syncLogs.unshift({
+            timestamp: nowIso,
+            guestId: item.guest.id,
+            guestName: item.contactData.fullName,
+            displayName: item.contactData.displayName,
+            phone: item.contactData.e164Phone,
+            action: "updated",
+            status: "success"
+          });
+        }
+      } else {
+        const errText = await batchUpdRes.text();
+        errorCount += chunk.length;
+        if (!firstError) firstError = `BatchUpdate (${batchUpdRes.status}): ${errText.slice(0, 200)}`;
+      }
+    } catch (err) {
+      errorCount += chunk.length;
+      if (!firstError) firstError = err?.message || String(err);
+    }
+  }
+
+  if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
+  cfg.lastSyncAt = nowIso;
+  cfg.totalSyncedCount = (Number(cfg.totalSyncedCount) || 0) + createdCount;
   saveDatabase();
 
   res.json({
