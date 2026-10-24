@@ -1101,20 +1101,23 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         created_at: isoDate,
         source: "zoho_api"
       };
+      const existingMsg = existingIdx >= 0 ? db.zohoMessagesCache[existingIdx] : null;
       const isB2bConfirmationEmail =
         mapped.direction === "inbound" &&
+        !existingMsg?.b2bParsed &&
         (String(mapped.fromEmail || "").toLowerCase().includes("b2breservas") ||
           /Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(mapped.subject || ""));
 
       if (isB2bConfirmationEmail) {
-        if (!mapped.bodyHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+        let fetchedHtml = mapped.bodyHtml || "";
+        if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
           try {
             const contentRes = await callZohoMailApi(
               db,
               `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
             );
             if (contentRes.ok && contentRes.data?.content) {
-              mapped.bodyHtml = contentRes.data.content;
+              fetchedHtml = contentRes.data.content;
             }
           } catch {
             // Ignora falha pontual de conteúdo na sincronização
@@ -1122,27 +1125,36 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         }
         const parsedB2b = await fetchAndParseB2bVoucher({
           rawText: mapped.snippet || "",
-          htmlText: mapped.bodyHtml || "",
+          htmlText: fetchedHtml || "",
           subject: mapped.subject || ""
         });
         if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
           ingestB2bVoucherIntoDb(db, parsedB2b, { autoSendCredentialEmail: existingIdx < 0 });
         }
+        mapped.b2bParsed = true;
+      } else if (existingMsg?.b2bParsed) {
+        mapped.b2bParsed = true;
       }
 
       const matchedRes = matchEmailWithReservation(db, mapped);
       mapped.labels = inferZohoSmartLabels(
         mapped,
-        existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].labels : [],
+        existingMsg ? existingMsg.labels : [],
         matchedRes
       );
 
       if (existingIdx >= 0) {
-        db.zohoMessagesCache[existingIdx] = { ...db.zohoMessagesCache[existingIdx], ...mapped };
+        const changed =
+          existingMsg.isRead !== mapped.isRead ||
+          existingMsg.isStarred !== mapped.isStarred ||
+          existingMsg.folder !== mapped.folder ||
+          !existingMsg.b2bParsed && mapped.b2bParsed;
+        db.zohoMessagesCache[existingIdx] = { ...existingMsg, ...mapped };
+        if (changed) addedOrUpdated++;
       } else {
         db.zohoMessagesCache.unshift(mapped);
+        addedOrUpdated++;
       }
-      addedOrUpdated++;
     }
 
     zohoTokenCache.lastFolderSyncAt[folder] = Date.now();

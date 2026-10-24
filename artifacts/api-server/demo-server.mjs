@@ -397,13 +397,19 @@ function createPgPoolInstance() {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-    max: 12,
-    idleTimeoutMillis: 20000,
+    // Limite enxuto (max: 3) para proteger instâncias PostgreSQL de 256MB RAM (0.1c-256mb no Render) contra OOM
+    max: 3,
+    idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 15000,
     query_timeout: 30000,
     statement_timeout: 30000,
     keepAlive: true,
     keepAliveInitialDelayMillis: 5000,
+  });
+
+  // Desativa log de parâmetros gigantes ($1 JSONB) e limita work_mem por sessão para evitar pico de RAM / OOM no PostgreSQL 18
+  pool.on("connect", (client) => {
+    client.query("SET log_min_duration_statement = -1; SET log_statement = 'none'; SET work_mem = '4MB';").catch(() => {});
   });
 
   // CRÍTICO: Em nuvem (Render/Supabase/Neon), conexões inativas sofrem timeout/reset da rede.
@@ -447,6 +453,7 @@ async function queryDirectPgClient(sql, params = [], timeoutMs = 45000) {
   client.on("error", () => {});
   try {
     await client.connect();
+    await client.query("SET log_min_duration_statement = -1; SET log_statement = 'none'; SET work_mem = '4MB';").catch(() => {});
     return await client.query(sql, params);
   } finally {
     try { await client.end(); } catch (_) {}
@@ -8099,8 +8106,15 @@ async function _loadDatabaseImpl() {
 
     reconcileAndMergeGuests(db);
     seedInitialFaqItems(db);
-    saveDatabase();
     sanitizeAndRecoverCleanings();
+    // Persiste apenas no disco local após hidratação para evitar escrita JSONB redundante de boot no PostgreSQL (evita OOM em instâncias de 256MB)
+    pendingLocalDirty = true;
+    if (!localSaveTimeout && !isLocalSaving) {
+      localSaveTimeout = setTimeout(() => {
+        localSaveTimeout = null;
+        flushLocalDiskState();
+      }, 500);
+    }
   } catch (err) {
     console.error("[Database] Erro ao ler database:", err);
   }
@@ -9770,24 +9784,24 @@ async function ensureBackupsTable() {
     `);
     backupsTableReady = true;
 
-    // Limpeza mandatória de inicialização: remove snapshots legados excedentes
+    // Limpeza de snapshots legados excedentes (mantém os 3 mais recentes para proteger RAM/disco de 256MB)
     const oldSnapshots = await pgPool.query(
-      "SELECT id FROM system_store_backups ORDER BY id DESC OFFSET 25 LIMIT 1"
+      "SELECT id FROM system_store_backups ORDER BY id DESC OFFSET 3 LIMIT 1"
     );
     if (oldSnapshots.rows.length > 0) {
       const cutoffId = oldSnapshots.rows[0].id;
       const delRes = await pgPool.query("DELETE FROM system_store_backups WHERE id < $1", [cutoffId]);
-      console.log(`[PostgreSQL] Snapshots legados podados com sucesso (${delRes.rowCount || 0} removidos, mantidos os 25 mais recentes).`);
+      console.log(`[PostgreSQL] Snapshots legados podados com sucesso (${delRes.rowCount || 0} removidos, mantidos os 3 mais recentes).`);
     }
 
-    // Prune audit logs older than 90 days to keep system_audit_logs light
-    await pgPool.query("DELETE FROM system_audit_logs WHERE timestamp < NOW() - INTERVAL '90 days'").catch(() => {});
+    // Prune audit logs older than 60 days to keep system_audit_logs light
+    await pgPool.query("DELETE FROM system_audit_logs WHERE timestamp < NOW() - INTERVAL '60 days'").catch(() => {});
   } catch (err) {
     console.warn("[PostgreSQL] Erro ao assegurar tabela system_store_backups:", err.message);
   }
 }
 
-let lastBackupSnapshotTime = 0;
+let lastBackupSnapshotTime = Date.now();
 let isPgSaving = false;
 let pendingPgStateJson = null;
 let pendingPgDirty = false;
@@ -9875,19 +9889,19 @@ async function offloadSingleBase64Field(entityType, entityId, fieldName, rawVal)
 async function offloadHistoricalBase64Media() {
   if (!pgPool || !pgHydratedSuccessfully || process.env.NODE_ENV === "test") return 0;
   const nowMs = Date.now();
-  // Executa offload no máximo a cada 10 minutos para não onerar o loop de persistência
-  if (nowMs - lastMediaOffloadTime < 10 * 60 * 1000) return 0;
+  // Executa offload a cada 3 minutos (lote máximo de 15 mídias por ciclo para não sobrecarregar o pool)
+  if (nowMs - lastMediaOffloadTime < 3 * 60 * 1000) return 0;
   lastMediaOffloadTime = nowMs;
 
   let offloadedCount = 0;
-  const cutoffDate14d = getOffsetDateStr(-14);
+  const MAX_OFFLOAD_PER_CYCLE = 15;
   const mediaFields = ["selfieUrl", "docPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
 
   try {
-    // 1. Reservas encerradas há mais de 14 dias: preserva 100% dos metadados para SEBRAE/Fiscal e externaliza Base64 pesado
+    // 1. Externaliza Base64 pesado de todas as reservas para media_blobs (servido transparentemente por /api/media/blob/:id e hydrateReservationMediaBlobsForPdf)
     if (Array.isArray(db.reservations)) {
       for (const r of db.reservations) {
-        if (!r || !r.checkoutDate || r.checkoutDate >= cutoffDate14d) continue;
+        if (!r || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
         const rId = r.code || r.id;
         for (const f of mediaFields) {
           if (typeof r[f] === "string" && r[f].startsWith("data:image/") && r[f].length >= 2048) {
@@ -9910,10 +9924,10 @@ async function offloadHistoricalBase64Media() {
       }
     }
 
-    // 2. Limpezas concluídas há mais de 14 dias: externaliza fotos de vistoria em Base64
-    if (Array.isArray(db.cleaningRequests)) {
+    // 2. Externaliza fotos de vistoria em Base64 de limpezas
+    if (Array.isArray(db.cleaningRequests) && offloadedCount < MAX_OFFLOAD_PER_CYCLE) {
       for (const c of db.cleaningRequests) {
-        if (!c || !c.requestDate || c.requestDate >= cutoffDate14d) continue;
+        if (!c || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
         for (const arrField of ["inspectionPhotos", "checkoutPhotos", "photos"]) {
           if (Array.isArray(c[arrField])) {
             for (let i = 0; i < c[arrField].length; i++) {
@@ -9932,10 +9946,10 @@ async function offloadHistoricalBase64Media() {
     }
 
     if (offloadedCount > 0) {
-      console.log(`[Media Offload] ${offloadedCount} mídia(s) Base64 histórica(s) externalizada(s) para media_blobs no PostgreSQL.`);
+      console.log(`[Media Offload] ${offloadedCount} mídia(s) Base64 externalizada(s) para media_blobs no PostgreSQL.`);
     }
   } catch (err) {
-    console.warn("[Media Offload] Aviso durante externalização de mídias históricas:", err.message);
+    console.warn("[Media Offload] Aviso durante externalização de mídias:", err.message);
   }
   return offloadedCount;
 }
@@ -9956,9 +9970,10 @@ async function flushPgState() {
   const reasonToSave = pendingPgReason;
   pendingPgStateJson = null;
 
+  let hadError = false;
   try {
     await pgPool.query(
-      "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()",
+      "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
       [stateToSave]
     );
     lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
@@ -9966,26 +9981,30 @@ async function flushPgState() {
     const resCount = db.reservations ? db.reservations.length : 0;
     if (resCount > 0) {
       const nowMs = Date.now();
-      // Snapshots históricos em system_store_backups a cada 15 minutos (900.000 ms) ou operações manuais
-      const SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000;
-      if (nowMs - lastBackupSnapshotTime > SNAPSHOT_INTERVAL_MS || reasonToSave.startsWith("manual_") || reasonToSave.startsWith("repair_")) {
+      // Snapshots históricos em system_store_backups a cada 6 horas (copia internamente do system_store sem retransmitir JSONB pela rede)
+      const SNAPSHOT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+      if (nowMs - lastBackupSnapshotTime > SNAPSHOT_INTERVAL_MS || reasonToSave.startsWith("repair_")) {
         lastBackupSnapshotTime = nowMs;
-        await ensureBackupsTable();
-        await pgPool.query(
-          "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3::jsonb)",
-          [reasonToSave, resCount, stateToSave]
-        );
-        // Limpeza ágil usando index scan (mantém últimos 25 snapshots para não estourar RAM/disco do Render)
-        const thresholdRes = await pgPool.query(
-          "SELECT id FROM system_store_backups ORDER BY id DESC OFFSET 25 LIMIT 1"
-        );
-        if (thresholdRes.rows.length > 0) {
-          const cutoffId = thresholdRes.rows[0].id;
-          await pgPool.query("DELETE FROM system_store_backups WHERE id < $1", [cutoffId]);
-        }
+        setTimeout(async () => {
+          try {
+            await ensureBackupsTable();
+            await pgPool.query(
+              "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) SELECT NOW(), $1, $2, value FROM system_store WHERE key = 'db_state'",
+              [reasonToSave, resCount]
+            );
+            const thresholdRes = await pgPool.query(
+              "SELECT id FROM system_store_backups ORDER BY id DESC OFFSET 3 LIMIT 1"
+            );
+            if (thresholdRes.rows.length > 0) {
+              const cutoffId = thresholdRes.rows[0].id;
+              await pgPool.query("DELETE FROM system_store_backups WHERE id < $1", [cutoffId]);
+            }
+          } catch (_) {}
+        }, 10000);
       }
     }
   } catch (e) {
+    hadError = true;
     lastPersistInfo = { status: "error", timestamp: new Date().toISOString(), error: e.message };
     console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
     if (!pendingPgStateJson) {
@@ -9995,27 +10014,29 @@ async function flushPgState() {
   } finally {
     isPgSaving = false;
     if (pendingPgDirty || pendingPgStateJson) {
-      setTimeout(flushPgState, 1500);
+      // Se houve falha de conexão, aguarda 15s para não bombardear o PostgreSQL durante recovery de WAL
+      setTimeout(flushPgState, hadError ? 15000 : 3500);
     }
   }
 }
 
-// ── Pruning Engine — Limita coleções em memória para evitar OOM (2GB Render Container) ──
+// ── Pruning Engine — Limita coleções em memória e compacta db_state para proteger PostgreSQL (256MB RAM) ──
 function pruneDatabase() {
   const LIMITS = {
-    whatsappHistory: 500,
-    whatsappConversations: 200,
+    whatsappHistory: 400,
+    whatsappConversations: 150,
     whatsappQueue: 100,
-    breakfastOrders: 500,
+    breakfastOrders: 400,
     maidPayments: 500,
     maidStatementEntries: 500,
     lostAndFound: 300,
-    garageAuthorizations: 500,
-    reservationCommunications: 500,
+    garageAuthorizations: 300,
+    reservationCommunications: 250,
+    zohoMessagesCache: 150,
     serviceOrders: 500,
-    flatDiaryEntries: 1500,
-    auditLogs: 150,
-    notifications: 200,
+    flatDiaryEntries: 1000,
+    auditLogs: 100,
+    notifications: 150,
     nfseRetryQueue: 100,
     periodicExecutions: 100,
     zapiRawWebhookLogs: 15
@@ -10096,6 +10117,27 @@ function pruneDatabase() {
     for (const conv of db.whatsappConversations) {
       if (Array.isArray(conv.messages) && conv.messages.length > 50) {
         conv.messages = conv.messages.slice(-50);
+      }
+    }
+  }
+
+  // Compacta bodyHtml pesado do zohoMessagesCache no db_state (o HTML completo é carregado sob demanda via Zoho API ao abrir o e-mail)
+  if (Array.isArray(db.zohoMessagesCache)) {
+    for (const zm of db.zohoMessagesCache) {
+      if (zm && typeof zm.bodyHtml === "string" && zm.bodyHtml.length > 8000 && zm.zohoMessageId && zm.zohoFolderId) {
+        zm.bodyHtml = "";
+      }
+    }
+  }
+
+  // Compacta HTML muito grande (> 24KB) em comunicações de e-mail antigas (> 14 dias)
+  if (Array.isArray(db.reservationCommunications)) {
+    const cutoffComm = getOffsetDateStr(-14);
+    for (const rc of db.reservationCommunications) {
+      if (!rc) continue;
+      const rcDate = String(rc.created_at || rc.sentAt || "").split("T")[0];
+      if (rcDate && rcDate < cutoffComm && typeof rc.body === "string" && rc.body.length > 24000) {
+        rc.body = rc.body.slice(0, 24000);
       }
     }
   }
