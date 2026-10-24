@@ -815,10 +815,10 @@ Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito i
 
 Fico muito feliz que sua estadia no *{{nome_hotel}}* tenha sido nota máxima! 💙
 
-Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda muito a continuar melhorando:`,
-    buttons: [
-      { label: "⭐ Avaliar no Google (5 Estrelas)", type: "URL", url: "{{link_avaliacao_google}}" }
-    ],
+Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda a receber mais hóspedes incríveis como você e continuar melhorando nossos serviços! 🙏
+
+{{link_avaliacao_google}}`,
+    buttons: [],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_post_checkout_review",
     category: "pos_estadia"
   },

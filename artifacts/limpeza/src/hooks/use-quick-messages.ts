@@ -377,14 +377,11 @@ Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente vi
     message: `Olá, *{{primeiro_nome}}*! ⭐
 Esperamos que sua experiência no *{{nome_hotel}}* tenha sido fantástica!
 
-Poderia nos dedicar 30 segundos deixando sua avaliação 5 estrelas no Google?
-{{link_avaliacao_google}}
+Poderia nos dedicar 30 segundos deixando sua avaliação 5 estrelas no Google? Muito obrigado e até a próxima! 🙏
 
-Muito obrigado e até a próxima!`,
-    footer: "CorpFlats • Sua opinião vale muito",
-    buttons: [
-      { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: "{{link_avaliacao_google}}" }
-    ]
+{{link_avaliacao_google}}`,
+    footer: "",
+    buttons: []
   },
   {
     id: "qm_guest_manual",
@@ -515,7 +512,7 @@ export function renderQuickMessage(
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
   const linkCheckout = `${origin}/checkout/${resCode}`
   const linkMaps = "https://share.google/LHu3541d5lhkdvbL2"
-  const linkAvaliacao = "https://share.google/LHu3541d5lhkdvbL2"
+  const linkAvaliacao = "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA"
 
   const tagMap: Record<string, string> = {
     "{{nome_hospede}}": guestName,
@@ -654,6 +651,17 @@ function normalizeQuickMessagesList(list: any[]): WhatsAppQuickMessage[] {
           { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" },
           { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
         ]
+      }
+    }
+    if (next.id === "qm_review_request") {
+      const defRev = DEFAULT_QUICK_MESSAGES.find(q => q.id === "qm_review_request")
+      if (defRev && (!next.message?.trim().endsWith("{{link_avaliacao_google}}") || next.footer || (next.buttons && next.buttons.length > 0))) {
+        next = {
+          ...next,
+          message: defRev.message,
+          footer: "",
+          buttons: []
+        }
       }
     }
     return next

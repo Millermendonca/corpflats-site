@@ -1021,7 +1021,7 @@ export default function CrmGuests() {
         label = "Flat Liberado"
         break
       case "review":
-        msg = `Olá, ${firstName}! Agradecemos imensamente pela sua estadia no CorpFlats. Sua opinião é muito importante para nós. Poderia nos avaliar no Google com 5 estrelas? Leva apenas 30 segundos: https://g.page/r/corpflats/review`
+        msg = `Olá, *${firstName}*! ⭐\nAgradecemos imensamente pela sua estadia no *CorpFlats*. Sua opinião é muito importante para nós!\n\nPoderia nos avaliar no Google com 5 estrelas? Leva apenas 30 segundos. Muito obrigado e até a próxima! 🙏\n\nhttps://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA`
         label = "Avaliação Google"
         break
       case "pix":

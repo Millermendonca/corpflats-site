@@ -296,7 +296,7 @@ const TAG_GROUPS = [
       { tag: "{{link_portal_hospede}}", label: "🏨 Portal do Hóspede", example: "https://.../portal-hospede/RES-..." },
       { tag: "{{link_cafe_manha}}", label: "🥐 Link do Café da Manhã", example: "https://.../cafe/RES-..." },
       { tag: "{{link_checkout}}", label: "🚪 Check-out Expresso", example: "https://.../checkout/RES-..." },
-      { tag: "{{link_avaliacao_google}}", label: "⭐ Avaliação Google Maps", example: "https://g.page/r/.../review" },
+      { tag: "{{link_avaliacao_google}}", label: "⭐ Avaliação Google Maps", example: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA" },
       { tag: "{{link_guia_hospede}}", label: "📖 Manual do Hóspede (PDF)", example: "https://.../Manual_do_Hospede.pdf" },
       { tag: "{{aviso_acompanhante_pendente_pos_checkin}}", label: "👥 Link 2º Hóspede Pendente (Pós Check-in)", example: "👥 Acompanhante Pendente (2º Hóspede): envie o link..." },
     ]
@@ -453,7 +453,7 @@ export default function WhatsappAutomation() {
     testAllowedPhones: "22998505276",
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2"
+    googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA"
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
@@ -1863,7 +1863,7 @@ export default function WhatsappAutomation() {
 
     const firstName = (targetRes.guestName || "Hóspede").split(" ")[0]
     const code = targetRes.code || `RES-${targetRes.flatNumber || "113"}-0001`
-    const mapsUrl = config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2"
+    const mapsUrl = "https://share.google/LHu3541d5lhkdvbL2"
 
     const totalAmount = Number(targetRes.totalAmount) || 450
     const isPaidInFull = targetRes.paymentStatus === "pago" || targetRes.paymentStatus === "pago_total" || (Number(targetRes.paidAmount) >= totalAmount && totalAmount > 0)
@@ -1916,7 +1916,7 @@ export default function WhatsappAutomation() {
       "{{numero_reserva_b2b}}": targetRes.b2bReservationNumber || targetRes.externalReservationNumber || code,
       "{{link_cafe_manha}}": `https://corpflats.com.br/cafe/${code}`,
       "{{link_checkout}}": `https://corpflats.com.br/checkout/${code}`,
-      "{{link_avaliacao_google}}": config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2",
+      "{{link_avaliacao_google}}": config.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
       "{{status_cafe}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "Incluso" : "Não incluso",
       "{{aviso_cafe_exclusivo_flat}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "☕ *Sobre o seu Café da Manhã:* informamos que em nossas hospedagens o café da manhã é servido *exclusivamente no flat* (entregue diretamente na sua acomodação no horário agendado por você)." : "",
       "{{resumo_alteracoes}}": "• *Acomodação / Quarto:* Flat 101 ➔ *Flat 113*\n• *Data de Entrada (Check-in):* 03/09/2026 ➔ *05/09/2026*\n• *Valor Total:* R$ 450,00 ➔ *R$ 600,00*"

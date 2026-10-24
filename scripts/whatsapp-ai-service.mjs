@@ -10510,6 +10510,7 @@ export async function generateSofiaRealtimeAssistance({
   const wifiNet = flatNumber ? `apto ${flatNumber}` : "apto {número do flat}";
   const wifiPass = aiConfig.knowledgeBase?.wifiPassword || "1234567890123";
   const mapsUrl = "https://share.google/LHu3541d5lhkdvbL2";
+  const googleReviewUrl = db?.zapiConfig?.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
   const manualPdfUrl = `${hostBase}/Manual_do_Hospede_CorpFlats.pdf`;
 
   const allQuickButtons = [
@@ -10640,8 +10641,8 @@ export async function generateSofiaRealtimeAssistance({
       stages: ["checkout_concluido", "checkout_hoje"],
       priorityScore: stayStage === "checkout_concluido" ? 92 : 38,
       highlighted: stayStage === "checkout_concluido",
-      messageText: `Olá, *${firstName}*! ⭐ Foi um prazer recebê-lo no *CorpFlats*!\n\nSua opinião é muito importante para nós. Poderia nos avaliar com 5 estrelas no Google? Leva menos de 30 segundos:\n⭐ ${mapsUrl}\n\nMuito obrigado e até a próxima estadia! 🙏🏨`,
-      buttons: [{ id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: mapsUrl }]
+      messageText: `Olá, *${firstName}*! ⭐ Foi um prazer recebê-lo no *CorpFlats*!\n\nSua opinião é muito importante para nós. Poderia nos avaliar com 5 estrelas no Google? Leva menos de 30 segundos. Muito obrigado e até a próxima estadia! 🙏🏨\n\n${googleReviewUrl}`,
+      buttons: []
     }
   ];
 

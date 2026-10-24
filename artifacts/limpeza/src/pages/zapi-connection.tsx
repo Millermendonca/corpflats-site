@@ -97,7 +97,7 @@ export default function ZapiConnection() {
     allowMaidsInTestMode: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
+    googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
     alertEmail: "millerpessanha@gmail.com",
     alertEmailEnabled: true,
     alertOnReconnect: true,

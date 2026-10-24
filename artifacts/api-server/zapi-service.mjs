@@ -897,11 +897,11 @@ Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito i
 
 Fico muito feliz que sua estadia no *{{nome_hotel}}* tenha sido nota máxima! 💙
 
-Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda a receber mais hóspedes incríveis como você e continuar melhorando nossos serviços:`,
-    footer: "CorpFlats • Obrigado pela preferência!",
-    buttons: [
-      { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google (5 Estrelas)", url: "{{link_avaliacao_google}}" }
-    ]
+Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda a receber mais hóspedes incríveis como você e continuar melhorando nossos serviços! 🙏
+
+{{link_avaliacao_google}}`,
+    footer: "",
+    buttons: []
   },
   {
     id: "tpl_nps_score_4",
@@ -1363,14 +1363,11 @@ Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente vi
     message: `Olá, *{{primeiro_nome}}*! ⭐
 Esperamos que sua experiência no *{{nome_hotel}}* tenha sido fantástica!
 
-Poderia nos dedicar 30 segundos deixando sua avaliação 5 estrelas no Google?
-{{link_avaliacao_google}}
+Poderia nos dedicar 30 segundos deixando sua avaliação 5 estrelas no Google? Muito obrigado e até a próxima! 🙏
 
-Muito obrigado e até a próxima!`,
-    footer: "CorpFlats • Sua opinião vale muito",
-    buttons: [
-      { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: "{{link_avaliacao_google}}" }
-    ]
+{{link_avaliacao_google}}`,
+    footer: "",
+    buttons: []
   },
   {
     id: "qm_guest_manual",
@@ -3229,7 +3226,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const wifiNetwork = flatNumber ? `apto ${flatNumber}` : (zapiCfg.wifiNetwork || "apto {quarto}");
   const wifiPassword = zapiCfg.wifiPassword || "1234567890123";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
-  const googleReviewUrl = zapiCfg.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
+  const googleReviewUrl = zapiCfg.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
 
   let totalNights = 1;
   if (reservation.checkinDate && reservation.checkoutDate) {
@@ -3532,6 +3529,8 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     templateId === "tpl_checkout_reminder" ||
     templateId === "tpl_late_checkout_approved" ||
     templateId === "tpl_post_checkout_review" ||
+    templateId === "qm_review_request" ||
+    templateId === "qm_review" ||
     templateId === "tpl_nps_satisfaction_check" ||
     templateId === "tpl_nps_score_4" ||
     templateId === "tpl_nps_score_3" ||
@@ -6313,7 +6312,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         fallbackToText: true,
         wifiNetwork: "apto {quarto}",
         wifiPassword: "1234567890123",
-        googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
+        googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
         alertEmail: "millerpessanha@gmail.com",
@@ -6339,8 +6338,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         channels: JSON.parse(JSON.stringify(DEFAULT_ZAPI_CHANNELS))
       };
     } else {
-      if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl")) {
-        db.zapiConfig.googleReviewUrl = "https://share.google/LHu3541d5lhkdvbL2";
+      if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl") || db.zapiConfig.googleReviewUrl.includes("share.google/LHu3541d5lhkdvbL2")) {
+        db.zapiConfig.googleReviewUrl = "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
       }
       if (!db.zapiConfig.deliveryMode || db.zapiConfig.deliveryMode === "text_links") {
         db.zapiConfig.deliveryMode = "buttons";
@@ -6633,6 +6632,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.triggerEvent = "nps_approved";
           tpl.triggerTiming = "immediate";
           tpl.title = "Pós Check-out • Link Google Review (apenas nota 5) ⭐";
+          const defRev = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_post_checkout_review");
+          if (defRev && (!tpl.message?.trim().endsWith("{{link_avaliacao_google}}") || tpl.footer || (tpl.buttons && tpl.buttons.length > 0))) {
+            tpl.message = defRev.message;
+            tpl.footer = "";
+            tpl.buttons = [];
+          }
         }
         if (tpl.id === "tpl_payment_confirmed") {
           tpl.channels = ["site", "whatsapp"];
@@ -6717,6 +6722,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               qm.footer = defBreakfast.footer;
               qm.buttons = [];
             }
+          }
+        }
+        if (qm.id === "qm_review_request") {
+          const defRevQm = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_review_request");
+          if (defRevQm && (!qm.message?.trim().endsWith("{{link_avaliacao_google}}") || qm.footer || (qm.buttons && qm.buttons.length > 0))) {
+            qm.message = defRevQm.message;
+            qm.footer = "";
+            qm.buttons = [];
           }
         }
       }
@@ -12558,11 +12571,11 @@ export async function handleInboundNpsScoreOrComment({
     if (tpl) {
       renderedReply = resolveWhatsAppTags(tpl.message, reservationForTags, db, "", "guest", tpl);
       renderedButtons = renderTemplateButtons(tpl.buttons, reservationForTags, db, "", "guest", tpl);
-      // Para nota 5, garante que o link do Google conste na mensagem caso o usuário não tenha suporte a botões URL ou o template não inclua a tag no corpo
+      // Para nota 5, garante que o link do Google conste isolado na última linha da mensagem
       if (score === 5) {
-        const googleLink = db.zapiConfig?.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
+        const googleLink = db.zapiConfig?.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
         if (!renderedReply.includes(googleLink) && !renderedReply.includes("http")) {
-          renderedReply = `${renderedReply}\n\n${googleLink}`;
+          renderedReply = `${renderedReply.trim()}\n\n${googleLink}`;
         }
       }
     }

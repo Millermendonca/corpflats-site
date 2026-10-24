@@ -155,6 +155,12 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
   assert.equal(db.npsResponses[0].googleLinkSent, true);
   assert.equal(db.npsResponses[0].awaitingFeedbackComment, false);
   assert.equal(sentMessages.at(-1).triggerEvent, "nps_approved");
+  const score5Lines = sentMessages.at(-1).message.trim().split("\n");
+  assert.equal(
+    score5Lines.at(-1).trim(),
+    "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
+    "Google Review link must be isolated on the last line of the message"
+  );
 
   // 3. Guest 2 replies "4" (only the number) -> receives tpl_nps_score_4 inviting comment & awaits reply
   const resScore4 = await processInboundNpsAndSentiment({

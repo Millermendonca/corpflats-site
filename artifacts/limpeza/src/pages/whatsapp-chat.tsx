@@ -1398,7 +1398,7 @@ export default function WhatsappChat() {
         id: 'qb_review',
         icon: '⭐',
         label: 'Avaliação Google',
-        text: `Olá, *${guestFirstName}*! Poderia nos avaliar com 5 estrelas no Google? Leva 30 segundos:\n⭐ https://share.google/LHu3541d5lhkdvbL2`
+        text: `Olá, *${guestFirstName}*! ⭐\nEsperamos que sua experiência no *CorpFlats* tenha sido fantástica!\n\nPoderia nos avaliar com 5 estrelas no Google? Leva apenas 30 segundos e nos ajuda muito! 🙏\n\nhttps://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA`
       }
     ]
   }, [sofiaAssist, activeConversation])
