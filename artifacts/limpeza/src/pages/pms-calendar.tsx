@@ -2528,7 +2528,12 @@ export default function PmsCalendar() {
     setGuestSearchFilter("")
 
     const g1 = resItem.guests?.[0]
-    setFormGuestName(g1?.name || resItem.guestName || "")
+    const rawLoadedG1Name = (g1?.name || resItem.guestName || "").trim()
+    const isPendingLoadedG1 = Boolean(
+      (resItem as any).guestPending ||
+      /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(rawLoadedG1Name)
+    )
+    setFormGuestName(isPendingLoadedG1 ? "" : rawLoadedG1Name)
     setFormGuest1Cpf(g1?.cpf || resItem.guestDocument || "")
     setFormGuestPhone(g1?.phone || resItem.guestPhone || "")
     setFormGuestEmail(g1?.email || resItem.guestEmail || "")
@@ -3626,13 +3631,40 @@ export default function PmsCalendar() {
       })
       return
     }
-    if (!formGuestName.trim()) {
+    const hasSeparateRequester = formRequesterType !== "guest" || formChannel === "b2b"
+    if (!formGuestName.trim() && !hasSeparateRequester) {
       toast({
         title: "Nome do Hóspede obrigatório",
-        description: "Por favor, preencha o nome do hóspede titular.",
+        description: "Por favor, preencha o nome do hóspede titular (ou selecione um Solicitante para preencher depois via link).",
         variant: "destructive"
       })
       return
+    }
+    if (!formGuestName.trim() && hasSeparateRequester) {
+      if (formRequesterType === "other_person" && !formRequesterName.trim()) {
+        toast({
+          title: "Solicitante obrigatório",
+          description: "Informe o nome do Solicitante (ou preencha o nome do hóspede).",
+          variant: "destructive"
+        })
+        return
+      }
+      if (formRequesterType === "company" && !formCompanyId && !formCompanyName.trim()) {
+        toast({
+          title: "Empresa obrigatória",
+          description: "Selecione a Empresa Solicitante (ou preencha o nome do hóspede).",
+          variant: "destructive"
+        })
+        return
+      }
+      if ((formRequesterType === "agency_b2b" || formChannel === "b2b") && !formAgencyId && !formAgencyName.trim() && !formCompanyId && !formCompanyName.trim()) {
+        toast({
+          title: "Agência / Empresa B2B obrigatória",
+          description: "Selecione a Agência ou Empresa B2B (ou preencha o nome do hóspede).",
+          variant: "destructive"
+        })
+        return
+      }
     }
     if (!formCheckin || !formCheckout) {
       toast({
@@ -3798,12 +3830,12 @@ export default function PmsCalendar() {
         guestCount: numG,
         guests: guestsPayload,
         requesterType: resolvedReqType,
-        requesterInfo: resolvedReqType === "other_person" ? {
+        requesterInfo: (resolvedReqType === "other_person" || resolvedReqType === "company") ? {
           guestId: formRequesterId && formRequesterId !== "manual" ? Number(formRequesterId) : (selectedRes?.requesterInfo?.guestId || null),
-          name: formRequesterName.trim(),
+          name: formRequesterName.trim() || (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : ""),
           cpf: formRequesterCpf.trim(),
-          phone: formRequesterPhone.trim(),
-          email: formRequesterEmail.trim()
+          phone: formRequesterPhone.trim() || (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || "") : ""),
+          email: formRequesterEmail.trim() || (resolvedReqType === "company" ? ((selectedComp as any)?.email || selectedComp?.financialEmail || (selectedComp as any)?.emailFinanceiro || "") : "")
         } : (isB2b ? {
           name: formAgencyAgentName.trim() || resolvedAgName,
           phone: formAgencyAgentPhone.trim(),
@@ -6974,8 +7006,19 @@ export default function PmsCalendar() {
                             return;
                           }
                           setFormCompanyId(val);
-                          const c = companies.find(comp => String(comp.id) === val);
-                          if (c) setFormCompanyName(c.tradeName || c.corporateName);
+                          const c = companies.find(comp => String(comp.id) === val) as any;
+                          if (c) {
+                            setFormCompanyName(c.tradeName || c.corporateName);
+                            if (!formRequesterName.trim() && (c.contactPerson || c.tradeName || c.corporateName)) {
+                              setFormRequesterName(c.contactPerson || c.tradeName || c.corporateName);
+                            }
+                            if (!formRequesterPhone.trim() && (c.phone || c.telefone)) {
+                              setFormRequesterPhone(c.phone || c.telefone);
+                            }
+                            if (!formRequesterEmail.trim() && (c.email || c.financialEmail || c.emailFinanceiro)) {
+                              setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro);
+                            }
+                          }
                         }}
                       >
                         <SelectTrigger className="text-xs h-8">
@@ -6999,6 +7042,33 @@ export default function PmsCalendar() {
                           <CheckCircle2 className="w-3 h-3" /> Empresa vinculada para faturamento corporativo ({formCompanyName}).
                         </div>
                       )}
+
+                      <div className="pt-2 border-t border-border/40 space-y-1.5">
+                        <span className="text-[10px] uppercase font-black text-slate-700 dark:text-slate-300 block">
+                          Contato Solicitante da Empresa (Receberá o Link de Credenciamento do Hóspede)
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <Input
+                            value={formRequesterName}
+                            onChange={e => setFormRequesterName(e.target.value)}
+                            placeholder="Nome do Solicitante na Empresa"
+                            className="text-xs h-8"
+                          />
+                          <Input
+                            value={formRequesterPhone}
+                            onChange={e => setFormRequesterPhone(formatBrazilPhone(e.target.value))}
+                            placeholder="WhatsApp (Ex: 22999999999)"
+                            className="text-xs h-8"
+                          />
+                          <Input
+                            type="email"
+                            value={formRequesterEmail}
+                            onChange={e => setFormRequesterEmail(e.target.value)}
+                            placeholder="E-mail do Solicitante"
+                            className="text-xs h-8"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -7011,6 +7081,11 @@ export default function PmsCalendar() {
                       <span className="flex items-center gap-1.5">
                         <User className="w-3.5 h-3.5 text-primary" />
                         <span>Hóspede 1 (Titular)</span>
+                        {formRequesterType !== "guest" && !formGuestName.trim() && (
+                          <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/60">
+                            Opcional agora — Solicitante receberá link de preenchimento
+                          </Badge>
+                        )}
                       </span>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {formRequesterType !== "guest" && (
@@ -7047,8 +7122,8 @@ export default function PmsCalendar() {
                           onFocus={() => {
                             if (formGuestName.trim().length > 0) setShowGuestSuggestions(true)
                           }}
-                          placeholder="Nome Completo *" 
-                          required 
+                          placeholder={formRequesterType !== "guest" ? "Nome Completo (Opcional agora)" : "Nome Completo *"} 
+                          required={formRequesterType === "guest"} 
                           className="text-xs h-8" 
                         />
 

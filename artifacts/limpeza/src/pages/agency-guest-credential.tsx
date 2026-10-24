@@ -92,19 +92,41 @@ export default function AgencyGuestCredential() {
     e.preventDefault();
     if (!reservation) return;
 
+    const nameParts = guestName.trim().split(/\s+/).filter(Boolean);
     const cleanDoc = guestDocument.replace(/\D/g, "");
+    const rawDoc = guestDocument.trim().replace(/[^0-9A-Za-z]/g, "");
     const cleanPhone = guestPhone.replace(/\D/g, "");
 
-    if (!guestName.trim()) {
-      toast({ title: "Nome obrigatório", description: "Informe o nome completo do hóspede.", variant: "destructive" });
+    if (nameParts.length < 2) {
+      toast({
+        title: "Nome Completo obrigatório",
+        description: "Informe o nome completo (nome e sobrenome) do hóspede conforme o documento oficial.",
+        variant: "destructive"
+      });
       return;
     }
-    if (cleanDoc.length < 5) {
-      toast({ title: "CPF / Documento obrigatório", description: "Informe um CPF ou documento válido para liberação na portaria.", variant: "destructive" });
+    if (cleanDoc.length < 11 && rawDoc.length < 6) {
+      toast({
+        title: "CPF obrigatório",
+        description: "Informe o CPF completo (11 dígitos) do hóspede para liberação na portaria.",
+        variant: "destructive"
+      });
       return;
     }
     if (cleanPhone.length < 10) {
-      toast({ title: "WhatsApp obrigatório", description: "Informe o WhatsApp do hóspede com DDD para o envio das instruções de acesso.", variant: "destructive" });
+      toast({
+        title: "Telefone / WhatsApp obrigatório",
+        description: "Informe o telefone / WhatsApp do hóspede com DDD para o envio da confirmação e instruções da estadia.",
+        variant: "destructive"
+      });
+      return;
+    }
+    if (!docPhotoBase64 && !reservation.hasDocPhoto) {
+      toast({
+        title: "Documento de Identificação obrigatório",
+        description: "Anexe a foto ou PDF do documento oficial com foto (RG, CNH ou Passaporte) do hóspede para liberação na recepção.",
+        variant: "destructive"
+      });
       return;
     }
 
@@ -154,7 +176,7 @@ export default function AgencyGuestCredential() {
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-teal-400 bg-teal-500/10 border border-teal-500/20 px-2.5 py-1 rounded-full">
-                <ShieldCheck className="w-3.5 h-3.5" /> Portal de Credenciamento Corporativo B2B
+                <ShieldCheck className="w-3.5 h-3.5" /> Portal de Credenciamento do Hóspede
               </span>
               <h1 className="text-2xl font-extrabold tracking-tight text-white mt-2">
                 CorpFlats • Edifício Soho
@@ -169,13 +191,13 @@ export default function AgencyGuestCredential() {
         {!reservation && !loading && (
           <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4">
             <Label className="text-sm font-semibold text-slate-200">
-              Localizar Reserva Corporativa / B2B (Código, Nº Reserva B2B ou RLOC)
+              Localizar Reserva (Código da Reserva, Nº B2B ou RLOC)
             </Label>
             <div className="flex gap-2">
               <Input
                 value={lookupCode}
                 onChange={(e) => setLookupCode(e.target.value)}
-                placeholder="Ex: B2B-25055349 ou 25055349 ou RLOC"
+                placeholder="Ex: RES-101 ou B2B-25055349 ou RLOC"
                 className="bg-slate-950 border-slate-700 text-white"
               />
               <Button onClick={() => fetchReservation(lookupCode)} className="bg-teal-600 hover:bg-teal-500 text-white font-bold">
@@ -194,7 +216,7 @@ export default function AgencyGuestCredential() {
         {loading && (
           <div className="rounded-2xl bg-slate-900 border border-slate-800 p-12 flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
-            <span className="text-sm text-slate-300 font-medium">Carregando dados da reserva corporativa...</span>
+            <span className="text-sm text-slate-300 font-medium">Carregando dados da reserva...</span>
           </div>
         )}
 
@@ -241,6 +263,15 @@ export default function AgencyGuestCredential() {
                     </div>
                   </div>
                 )}
+                {reservation.requesterName && !reservation.agencyName && !reservation.companyName && (
+                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-start gap-2.5">
+                    <User className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-slate-400 font-medium">Solicitante da Reserva</div>
+                      <div className="text-white font-semibold">{reservation.requesterName}</div>
+                    </div>
+                  </div>
+                )}
                 <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-start gap-2.5">
                   <Calendar className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
                   <div>
@@ -274,20 +305,25 @@ export default function AgencyGuestCredential() {
                   Por que este preenchimento antecipado é indispensável?
                 </div>
                 O <strong>CorpFlats (Edifício Soho)</strong> opera com controle eletrônico de acesso e liberação prévia na recepção/portaria 24h.{" "}
-                <strong>Não é possível realizar o cadastro presencialmente na hora da chegada no balcão</strong>, pois sem o registro prévio neste link a portaria não conseguirá localizar a reserva no sistema de acesso nem autorizar a entrada do hóspede. Assim que você concluir os dados abaixo, enviaremos automaticamente as instruções de acesso ao WhatsApp do hóspede (sem exibir tarifas ou valores financeiros).
+                <strong>Não é possível realizar o cadastro presencialmente na hora da chegada no balcão</strong>, pois sem o registro prévio neste link a portaria não conseguirá localizar a reserva no sistema de acesso nem autorizar a entrada do hóspede. Assim que você concluir os dados obrigatórios abaixo, enviaremos automaticamente a confirmação da reserva e as instruções de acesso ao WhatsApp do hóspede (sem exibir tarifas ou valores financeiros).
               </div>
             </div>
 
             {/* Formulário de Credenciamento do Hóspede */}
             <form onSubmit={handleSubmit} className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <User className="w-4 h-4 text-teal-400" />
-                Dados Obrigatórios do Hóspede para a Portaria
-              </h3>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <User className="w-4 h-4 text-teal-400" />
+                  Dados Obrigatórios do Hóspede para a Portaria
+                </h3>
+                <span className="text-[11px] text-amber-300 font-semibold">
+                  * Campos obrigatórios para liberação
+                </span>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2 space-y-1.5">
-                  <Label className="text-xs text-slate-300">Nome Completo do Hóspede *</Label>
+                  <Label className="text-xs text-slate-300">Nome Completo do Hóspede (Nome e Sobrenome) *</Label>
                   <Input
                     value={guestName}
                     onChange={(e) => setGuestName(e.target.value)}
@@ -298,7 +334,7 @@ export default function AgencyGuestCredential() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-300">CPF ou Documento de Identificação *</Label>
+                  <Label className="text-xs text-slate-300">CPF do Hóspede *</Label>
                   <Input
                     value={guestDocument}
                     onChange={(e) => setGuestDocument(e.target.value)}
@@ -310,7 +346,7 @@ export default function AgencyGuestCredential() {
 
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-300 flex items-center gap-1">
-                    <Phone className="w-3.5 h-3.5 text-emerald-400" /> WhatsApp do Hóspede (com DDD) *
+                    <Phone className="w-3.5 h-3.5 text-emerald-400" /> Telefone / WhatsApp do Hóspede (com DDD) *
                   </Label>
                   <Input
                     value={guestPhone}
@@ -333,7 +369,7 @@ export default function AgencyGuestCredential() {
 
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-300 flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5 text-teal-400" /> E-mail do Hóspede
+                    <Mail className="w-3.5 h-3.5 text-teal-400" /> E-mail do Hóspede (Opcional)
                   </Label>
                   <Input
                     type="email"
@@ -347,16 +383,22 @@ export default function AgencyGuestCredential() {
                 <div className="sm:col-span-2 space-y-1.5">
                   <Label className="text-xs text-slate-300 flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5 text-teal-400" />
-                    Documento Oficial de Identificação com Foto (RG, CNH ou Passaporte — Imagem ou PDF)
+                    Documento Oficial de Identificação com Foto (RG, CNH ou Passaporte — Imagem ou PDF) *
                   </Label>
-                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-teal-500/60 rounded-xl p-4 cursor-pointer bg-slate-950/60 transition-colors">
-                    <Upload className="w-6 h-6 text-teal-400 mb-1.5" />
+                  <label
+                    className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-4 cursor-pointer transition-colors ${
+                      docFileName || reservation.hasDocPhoto
+                        ? "border-emerald-500/60 bg-emerald-950/20"
+                        : "border-slate-700 hover:border-teal-500/60 bg-slate-950/60"
+                    }`}
+                  >
+                    <Upload className={`w-6 h-6 mb-1.5 ${docFileName || reservation.hasDocPhoto ? "text-emerald-400" : "text-teal-400"}`} />
                     <span className="text-xs font-semibold text-slate-200">
                       {docFileName
-                        ? `Arquivo selecionado: ${docFileName}`
+                        ? `Arquivo anexado: ${docFileName}`
                         : reservation.hasDocPhoto
                           ? "Documento já anexado • Clique caso deseje substituir"
-                          : "Clique para anexar foto ou PDF do RG / CNH do hóspede"}
+                          : "Clique para anexar foto ou PDF do RG / CNH do hóspede (Obrigatório *)"}
                     </span>
                     <span className="text-[11px] text-slate-400 mt-0.5">
                       Formatos aceitos: JPG, PNG, WEBP ou PDF

@@ -96,7 +96,12 @@ import {
   sanitizeAndDispatchTodaySub5Nps,
   resolveBestNpsGuestName,
   getReservationRecipients,
-  hasNonFinancialChanges
+  hasNonFinancialChanges,
+  isPendingGuestName,
+  isMissingGuestDataForCredential,
+  dispatchRequesterGuestCredentialRequest,
+  dispatchCatchUpGuestRulerMessages,
+  reservationHasAnyContact
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -20481,8 +20486,22 @@ app.post("/api/pms/reservations", async (req, res) => {
     autoEmitInvoice = false
   } = req.body;
 
-  if (!flatId || !checkinDate || !checkoutDate || (!guestName && (!guests || guests.length === 0))) {
-    return res.status(400).json({ error: "Apartamento, Hóspede e Datas são obrigatórios." });
+  const hasSeparateRequester = Boolean(
+    (requesterType && requesterType !== "guest") ||
+    (requesterInfo && (requesterInfo.name || requesterInfo.phone || requesterInfo.email)) ||
+    companyId ||
+    companyName ||
+    agencyId ||
+    agencyName ||
+    String(channel || "").toLowerCase().includes("b2b") ||
+    b2bReservationNumber
+  );
+  const hasGuestProvided = Boolean(
+    (guestName && String(guestName).trim()) ||
+    (Array.isArray(guests) && guests.some(g => g && g.name && String(g.name).trim()))
+  );
+  if (!flatId || !checkinDate || !checkoutDate || (!hasGuestProvided && !hasSeparateRequester)) {
+    return res.status(400).json({ error: "Apartamento, Datas e Hóspede (ou Solicitante) são obrigatórios." });
   }
 
   // Normalização de diárias individuais (dailyRates)
@@ -20751,65 +20770,70 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   const numGuests = Math.min(Math.max(Number(guestCount) || (Array.isArray(guests) && guests.length > 0 ? guests.length : 1), 1), 3);
-  const primaryName = (guestName || guests?.[0]?.name || "Hóspede").trim();
+  const rawInputGuestName = String(guestName || guests?.[0]?.name || "").trim();
+  const isGuestPending = isPendingGuestName(rawInputGuestName);
+  const primaryName = isGuestPending ? "A Definir (Aguardando Solicitante)" : rawInputGuestName;
   let primaryPhone = (guestPhone || guests?.[0]?.phone || "").trim();
   let primaryEmail = (guestEmail || guests?.[0]?.email || "").trim();
   let primaryDoc = (guestDocument || guests?.[0]?.cpf || guests?.[0]?.document || "").trim();
 
-  if (!primaryPhone && (primaryName.toLowerCase().includes("miller") || primaryDoc.replace(/\D/g, "") === "12585736792")) {
+  if (!primaryPhone && (!isGuestPending && (primaryName.toLowerCase().includes("miller") || primaryDoc.replace(/\D/g, "") === "12585736792"))) {
     primaryPhone = "22998505276";
     if (!primaryDoc) primaryDoc = "12585736792";
     if (!primaryEmail) primaryEmail = "millerpessanha@gmail.com";
   }
 
-  // Guest Upsert no CRM
+  // Guest Upsert no CRM (somente quando o hóspede já foi informado — não cria hóspede fantasma "A Definir")
   if (!db.guests) db.guests = [];
-  let guest = db.guests.find(g =>
-    (req.body.guestId && g.id === Number(req.body.guestId)) ||
-    (primaryPhone && g.phone === primaryPhone) ||
-    (primaryDoc && g.document === primaryDoc) ||
-    (g.name.toLowerCase() === primaryName.toLowerCase())
-  );
+  let guest = null;
+  if (req.body.guestId || !isGuestPending) {
+    guest = db.guests.find(g =>
+      (req.body.guestId && g.id === Number(req.body.guestId)) ||
+      (primaryPhone && g.phone === primaryPhone) ||
+      (primaryDoc && g.document === primaryDoc) ||
+      (!isGuestPending && g.name && g.name.toLowerCase() === primaryName.toLowerCase())
+    );
 
-  if (!guest) {
-    const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
-    guest = {
-      id: nextGId,
-      guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
-      name: primaryName,
-      fullName: primaryName,
-      phone: primaryPhone,
-      email: primaryEmail,
-      document: primaryDoc,
-      companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
-      companyName: resolvedCompany?.corporateName || companyName || "",
-      agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
-      agencyName: resolvedAgency?.tradeName || agencyName || "",
-      costCenter: costCenter ? String(costCenter).trim() : "",
-      city: "",
-      notes: "",
-      tags: isB2b ? ["Corporativo B2B"] : [],
-      isMonthlyGuest: isMonthly,
-      clientType: isMonthly ? "mensalista" : (isB2b ? "corporativo" : "avulso"),
-      autoEmitInvoice: autoInvoice,
-      createdAt: new Date().toISOString()
-    };
-    db.guests.push(guest);
-  } else {
-    if (primaryPhone) guest.phone = primaryPhone;
-    if (primaryEmail) guest.email = primaryEmail;
-    if (primaryDoc) guest.document = primaryDoc;
-    if (resolvedCompany?.corporateName || companyName) guest.companyName = resolvedCompany?.corporateName || companyName;
-    if (resolvedCompany?.id) guest.companyId = resolvedCompany.id;
-    if (resolvedAgency?.id) guest.agencyId = resolvedAgency.id;
-    if (resolvedAgency?.tradeName || agencyName) guest.agencyName = resolvedAgency?.tradeName || agencyName;
-    if (costCenter) guest.costCenter = String(costCenter).trim();
-    if (isMonthly) {
-      guest.isMonthlyGuest = true;
-      guest.clientType = "mensalista";
-    }
-    if (autoInvoice) {
-      guest.autoEmitInvoice = true;
+    if (!guest && !isGuestPending) {
+      const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+      guest = {
+        id: nextGId,
+        guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
+        name: primaryName,
+        fullName: primaryName,
+        phone: primaryPhone,
+        email: primaryEmail,
+        document: primaryDoc,
+        companyId: resolvedCompany?.id || (companyId ? Number(companyId) : null),
+        companyName: resolvedCompany?.corporateName || companyName || "",
+        agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
+        agencyName: resolvedAgency?.tradeName || agencyName || "",
+        costCenter: costCenter ? String(costCenter).trim() : "",
+        city: "",
+        notes: "",
+        tags: isB2b ? ["Corporativo B2B"] : [],
+        isMonthlyGuest: isMonthly,
+        clientType: isMonthly ? "mensalista" : (isB2b ? "corporativo" : "avulso"),
+        autoEmitInvoice: autoInvoice,
+        createdAt: new Date().toISOString()
+      };
+      db.guests.push(guest);
+    } else if (guest) {
+      if (primaryPhone) guest.phone = primaryPhone;
+      if (primaryEmail) guest.email = primaryEmail;
+      if (primaryDoc) guest.document = primaryDoc;
+      if (resolvedCompany?.corporateName || companyName) guest.companyName = resolvedCompany?.corporateName || companyName;
+      if (resolvedCompany?.id) guest.companyId = resolvedCompany.id;
+      if (resolvedAgency?.id) guest.agencyId = resolvedAgency.id;
+      if (resolvedAgency?.tradeName || agencyName) guest.agencyName = resolvedAgency?.tradeName || agencyName;
+      if (costCenter) guest.costCenter = String(costCenter).trim();
+      if (isMonthly) {
+        guest.isMonthlyGuest = true;
+        guest.clientType = "mensalista";
+      }
+      if (autoInvoice) {
+        guest.autoEmitInvoice = true;
+      }
     }
   }
 
@@ -20820,8 +20844,8 @@ app.post("/api/pms/reservations", async (req, res) => {
     if (i === 1) {
       preparedGuests.push({
         index: 1,
-        guestId: guest.id,
-        name: primaryName,
+        guestId: guest ? guest.id : null,
+        name: isGuestPending ? "" : primaryName,
         cpf: primaryDoc,
         phone: primaryPhone,
         email: primaryEmail,
@@ -20910,10 +20934,12 @@ app.post("/api/pms/reservations", async (req, res) => {
         db.companies.push(existingComp);
       }
 
-      guest.companyId = existingComp.id;
-      guest.companyName = existingComp.corporateName;
-      guest.autoEmitInvoice = true;
-    } else if (invoiceDetails.type === "pf") {
+      if (guest) {
+        guest.companyId = existingComp.id;
+        guest.companyName = existingComp.corporateName;
+        guest.autoEmitInvoice = true;
+      }
+    } else if (invoiceDetails.type === "pf" && guest) {
       guest.autoEmitInvoice = true;
     }
   }
@@ -21024,15 +21050,16 @@ app.post("/api/pms/reservations", async (req, res) => {
     reservationCode: resolvedCode,
     flatId: flat.id,
     flatNumber: flat.number,
-    guestId: guest.id,
-    guestCode: guest.guestCode,
+    guestId: guest?.id || null,
+    guestCode: guest?.guestCode || null,
     guestName: primaryName,
+    guestPending: Boolean(isGuestPending),
     guestPhone: primaryPhone,
     guestEmail: primaryEmail,
     guestDocument: primaryDoc,
     guestCount: numGuests,
     guests: preparedGuests,
-    requesterType: isB2b ? "agency" : requesterType,
+    requesterType: isB2b ? "agency" : (requesterType === "agency_b2b" ? "agency" : requesterType),
     requesterInfo: finalRequesterInfo || null,
     // 4-Pontas: Agência + Empresa + Hóspede + B2B
     agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
@@ -21043,8 +21070,8 @@ app.post("/api/pms/reservations", async (req, res) => {
     agencyAgentName: String(agencyAgentName || "").trim(),
     agencyAgentEmail: String(agencyAgentEmail || "").trim(),
     agencyAgentPhone: String(agencyAgentPhone || "").trim(),
-    companyId: resolvedCompany?.id || (companyId ? Number(companyId) : (guest.companyId || null)),
-    companyName: resolvedCompany?.corporateName || companyName || guest.companyName || "",
+    companyId: resolvedCompany?.id || (companyId ? Number(companyId) : (guest?.companyId || null)),
+    companyName: resolvedCompany?.corporateName || companyName || guest?.companyName || "",
     companyCnpj: resolvedCompany?.cnpj || req.body.companyCnpj || "",
     costCenter: String(costCenter || resolvedCompany?.defaultCostCenter || "").trim(),
     // Dados B2B / VCN / Comissão / Conciliação
@@ -21106,12 +21133,12 @@ app.post("/api/pms/reservations", async (req, res) => {
     isMonthlyGuest: isMonthly,
     clientType: isMonthly ? "mensalista" : (isB2b ? "corporativo" : "avulso"),
     autoEmitInvoice: autoInvoice,
-    docPhotoUrl: req.body.docPhotoUrl || guest.docPhotoUrl || null,
-    hasMinor: Boolean(req.body.hasMinor || guest.isMinor),
-    minorAge: req.body.minorAge || guest.minorAge || null,
-    isCamposResident: Boolean(req.body.isCamposResident || guest.isCamposResident),
-    riskAttentionAlert: Boolean(req.body.riskAttentionAlert || req.body.isCamposResident || guest.riskAttentionAlert || guest.isCamposResident),
-    riskAttentionReason: req.body.riskAttentionReason || (req.body.isCamposResident || guest.isCamposResident ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : (guest.riskAttentionReason || "")),
+    docPhotoUrl: req.body.docPhotoUrl || guest?.docPhotoUrl || null,
+    hasMinor: Boolean(req.body.hasMinor || guest?.isMinor),
+    minorAge: req.body.minorAge || guest?.minorAge || null,
+    isCamposResident: Boolean(req.body.isCamposResident || guest?.isCamposResident),
+    riskAttentionAlert: Boolean(req.body.riskAttentionAlert || req.body.isCamposResident || guest?.riskAttentionAlert || guest?.isCamposResident),
+    riskAttentionReason: req.body.riskAttentionReason || (req.body.isCamposResident || guest?.isCamposResident ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : (guest?.riskAttentionReason || "")),
     isFlatLocked: Boolean(req.body.isFlatLocked || req.body.flatLocked),
     flatLocked: Boolean(req.body.isFlatLocked || req.body.flatLocked),
     flatLockReason: req.body.flatLockReason ? String(req.body.flatLockReason).trim() : (req.body.isFlatLocked || req.body.flatLocked ? "Quarto preferencial bloqueado" : ""),
@@ -21256,29 +21283,21 @@ app.post("/api/pms/reservations", async (req, res) => {
   db.reservations.unshift(newReservation);
   saveDatabase();
 
-  // ── Gatilho Automático B2B: E-mail cordial para a agência se faltar WhatsApp ou CPF do hóspede ──
-  if (isB2b && (!primaryPhone || !primaryDoc) && req.body.sendAgencyCredentialEmail !== false) {
-    try {
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      dispatchB2bAgencyCredentialEmail(db, saveDatabase, newReservation, {
-        baseUrl,
-        trigger: "b2b_agency_credential_request"
-      }).catch(b2bEmailErr => {
-        console.warn("[B2B Credential Email] Aviso ao enviar solicitação automática de credenciamento à agência:", b2bEmailErr.message);
-      });
-    } catch (b2bEmailErr) {
-      console.warn("[B2B Credential Email] Aviso ao enviar solicitação automática de credenciamento à agência:", b2bEmailErr.message);
-    }
-  }
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
 
   if (resolvedStatus === "pre_reserva") {
     if (!newReservation.pixCopiaECola && Number(newReservation.totalAmount) > 0) {
+      const recipsForPix = getReservationRecipients(newReservation, db);
+      const pixDebtorName = isGuestPending
+        ? (recipsForPix.requester?.name || newReservation.companyName || "Solicitante CorpFlats")
+        : newReservation.guestName;
+      const pixDebtorDoc = newReservation.guestDocument || newReservation.document || newReservation.requesterInfo?.cpf || newReservation.companyCnpj || "";
       try {
         const pixResult = await createInterPixCob({
           amount: newReservation.totalAmount,
           description: `Reserva CorpFlats ${newReservation.code}`,
-          debtorName: newReservation.guestName,
-          debtorDocument: newReservation.guestDocument || newReservation.document,
+          debtorName: pixDebtorName,
+          debtorDocument: pixDebtorDoc,
           reservationCode: newReservation.code
         });
         newReservation.pixTxId = pixResult.txid;
@@ -21298,27 +21317,49 @@ app.post("/api/pms/reservations", async (req, res) => {
       }
       saveDatabase();
     }
-    triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation);
+    triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation, baseUrl);
   } else {
-    // Verifica se é no próprio dia do check-in após as 07:01
-    const now = new Date();
-    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const brDate = new Date(nowUtc - (3 * 3600000));
-    const todayStr = brDate.toISOString().substring(0, 10);
-    const isSameDay = newReservation.checkinDate === todayStr;
-    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
-
-    if (isAfter0701) {
-      console.log(`[Reservation] Reserva no dia do check-in criada após as 07:01: disparando sameday_reservation.`);
-      triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", newReservation);
+    // Reserva Confirmada: se houver Solicitante e faltarem dados obrigatórios do hóspede (Nome, CPF, Telefone),
+    // envia o link /credenciamento/:code para o Solicitante via WhatsApp e E-mail.
+    if (hasSeparateRequester && isMissingGuestDataForCredential(newReservation)) {
+      dispatchRequesterGuestCredentialRequest(db, saveDatabase, newReservation, { baseUrl }).catch(credWaErr => {
+        console.warn("[Requester Credential WhatsApp] Aviso ao enviar link de credenciamento ao solicitante:", credWaErr.message);
+      });
+      if (req.body.sendAgencyCredentialEmail !== false) {
+        dispatchB2bAgencyCredentialEmail(db, saveDatabase, newReservation, {
+          baseUrl,
+          trigger: "b2b_agency_credential_request"
+        }).catch(b2bEmailErr => {
+          console.warn("[Requester Credential Email] Aviso ao enviar solicitação de credenciamento:", b2bEmailErr.message);
+        });
+      }
+      // Caso o telefone do hóspede já tenha sido informado (faltando apenas CPF/documento), dispara também a régua do hóspede
+      if (String(primaryPhone || "").replace(/\D/g, "").length >= 10) {
+        dispatchCatchUpGuestRulerMessages(db, saveDatabase, newReservation, { baseUrl }).catch(catchErr => {
+          console.warn("[Catch-Up Guest Ruler] Aviso ao disparar régua inicial do hóspede:", catchErr.message);
+        });
+      }
     } else {
-      triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
+      // Verifica se é no próprio dia do check-in após as 07:01
+      const now = new Date();
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDate = new Date(nowUtc - (3 * 3600000));
+      const todayStr = brDate.toISOString().substring(0, 10);
+      const isSameDay = newReservation.checkinDate === todayStr;
+      const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+      if (isAfter0701) {
+        console.log(`[Reservation] Reserva no dia do check-in criada após as 07:01: disparando sameday_reservation.`);
+        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", newReservation, baseUrl);
+      } else {
+        triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation, baseUrl);
+      }
     }
   }
 
-  // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in).
+  // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in) e já tiver o hóspede definido.
   // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
-  if (resolvedStatus !== "pre_reserva" && isReservationForToday(newReservation)) {
+  if (resolvedStatus !== "pre_reserva" && !newReservation.guestPending && isReservationForToday(newReservation)) {
     try {
       const flat = (db.flats || []).find(f => f.id === newReservation.flatId || String(f.number) === String(newReservation.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
@@ -22630,14 +22671,25 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const flat = db.flats.find(f => f.id === Number(req.body.flatId));
     if (flat) r.flatNumber = flat.number;
   }
-  if (req.body.guestName) r.guestName = req.body.guestName;
+  if (req.body.guestName !== undefined) {
+    const cleanInputName = String(req.body.guestName || "").trim();
+    if (!cleanInputName || isPendingGuestName(cleanInputName)) {
+      r.guestName = "A Definir (Aguardando Solicitante)";
+      r.guestPending = true;
+    } else {
+      r.guestName = cleanInputName;
+      r.guestPending = false;
+    }
+  } else if (!isPendingGuestName(r.guestName)) {
+    r.guestPending = false;
+  }
   if (req.body.guestPhone !== undefined && String(req.body.guestPhone).trim()) {
     r.guestPhone = String(req.body.guestPhone).trim();
   } else if (!r.guestPhone && req.body.guests?.[0]?.phone && String(req.body.guests[0].phone).trim()) {
     r.guestPhone = String(req.body.guests[0].phone).trim();
   } else if (!r.guestPhone && matchedGuest?.phone && String(matchedGuest.phone).trim()) {
     r.guestPhone = String(matchedGuest.phone).trim();
-  } else if (!r.guestPhone && (r.guestName?.toLowerCase().includes("miller") || r.guestDocument?.replace(/\D/g, "") === "12585736792")) {
+  } else if (!r.guestPhone && !r.guestPending && (r.guestName?.toLowerCase().includes("miller") || r.guestDocument?.replace(/\D/g, "") === "12585736792")) {
     r.guestPhone = "22998505276";
   }
 
@@ -22661,17 +22713,20 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (r.guestEmail && !r.guests[0].email) r.guests[0].email = r.guestEmail;
   }
 
-  if (matchedGuest) {
+  if (matchedGuest && !isPendingGuestName(r.guestName)) {
+    matchedGuest.name = r.guestName;
+    matchedGuest.fullName = r.guestName;
     if (r.guestPhone) matchedGuest.phone = r.guestPhone;
     if (r.guestEmail) matchedGuest.email = r.guestEmail;
     if (r.guestDocument) matchedGuest.document = r.guestDocument;
     if (r.companyName) matchedGuest.companyName = r.companyName;
     if (r.companyId) matchedGuest.companyId = r.companyId;
-  } else if (r.guestName) {
+  } else if (r.guestName && !isPendingGuestName(r.guestName)) {
     if (!db.guests) db.guests = [];
-    db.guests.push({
-      id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
-      guestCode: `HOSP-${String(db.guests.length + 1).padStart(5, "0")}`,
+    const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+    const newGuestObj = {
+      id: nextGId,
+      guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
       name: r.guestName,
       fullName: r.guestName,
       phone: r.guestPhone || "",
@@ -22685,7 +22740,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       isMonthlyGuest: Boolean(r.isMonthlyGuest),
       clientType: r.clientType || "avulso",
       createdAt: new Date().toISOString()
-    });
+    };
+    db.guests.push(newGuestObj);
+    r.guestId = newGuestObj.id;
+    r.guestCode = newGuestObj.guestCode;
   }
 
   // RFC 5546: Incrementa SEQUENCE ao remarcar datas ou alterar flat/status
@@ -23131,12 +23189,14 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   const newGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
-  const wasGuestPhoneJustAdded = !oldGuestPhone && newGuestPhone.length >= 10;
+  const wasGuestPhoneJustAdded = newGuestPhone.length >= 10 && newGuestPhone !== oldGuestPhone;
   if (wasGuestPhoneJustAdded) {
     r.guestPhoneUpdatedAt = new Date().toISOString();
   }
 
   saveDatabase();
+
+  const editBaseUrl = `${req.protocol}://${req.get("host")}`;
 
   // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
   // (Apenas dispara e-mail se for para hoje; para datas futuras a liberação é retida até o dia do check-in)
@@ -23153,23 +23213,44 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
-    dispatchConfirmedReservationToReceptionAndGarage(r, "pms_pre_reservation_confirmed").catch(() => {});
-    const now = new Date();
-    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const brDate = new Date(nowUtc - (3 * 3600000));
-    const todayStr = brDate.toISOString().substring(0, 10);
-    const isSameDay = r.checkinDate === todayStr;
-    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+    if (!r.guestPending) {
+      dispatchConfirmedReservationToReceptionAndGarage(r, "pms_pre_reservation_confirmed").catch(() => {});
+    }
+    const recipsOnConfirm = getReservationRecipients(r, db);
+    const hasSepReqOnConfirm = Boolean(recipsOnConfirm.requester?.isDifferentFromGuest);
 
-    if (isAfter0701) {
-      triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r).catch(() => {});
-    } else {
-      const chan = String(r.channel || "").toLowerCase();
-      const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
-      if (isDirect) {
-        triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r).catch(() => {});
+    if (hasSepReqOnConfirm && isMissingGuestDataForCredential(r)) {
+      dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
+        console.warn("[Requester Credential WhatsApp] Erro ao enviar credenciamento na confirmação:", err.message);
+      });
+      dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+        baseUrl: editBaseUrl,
+        trigger: "b2b_agency_credential_request"
+      }).catch(err => {
+        console.warn("[Requester Credential Email] Erro ao enviar credenciamento na confirmação:", err.message);
+      });
+    }
+
+    if (newGuestPhone.length >= 10) {
+      dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(() => {});
+    } else if (!hasSepReqOnConfirm || !isMissingGuestDataForCredential(r)) {
+      const now = new Date();
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDate = new Date(nowUtc - (3 * 3600000));
+      const todayStr = brDate.toISOString().substring(0, 10);
+      const isSameDay = r.checkinDate === todayStr;
+      const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+      if (isAfter0701) {
+        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r, editBaseUrl).catch(() => {});
       } else {
-        triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r).catch(() => {});
+        const chan = String(r.channel || "").toLowerCase();
+        const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
+        if (isDirect) {
+          triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r, editBaseUrl).catch(() => {});
+        } else {
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r, editBaseUrl).catch(() => {});
+        }
       }
     }
   } else {
@@ -23185,32 +23266,20 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const guestFacingDiffs = filterGuestFacingDiffs(diffs);
     const hasNonFinChanges = hasNonFinancialChanges(guestFacingDiffs);
 
-    const now = new Date();
-    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const brDate = new Date(nowUtc - (3 * 3600000));
-    const todayStr = brDate.toISOString().substring(0, 10);
-    const isSameDay = r.checkinDate === todayStr;
-    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
-
-    // Se a reserva ainda não recebeu nenhuma confirmação ou instrução inicial
-    const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
+    // Se o telefone do hóspede foi inserido na reserva agora (ou alterado para um novo telefone que ainda não recebeu a régua),
+    // dispara o motor Catch-Up com a Apresentação CorpFlats + Confirmação + etapas cujo horário já tenha passado
+    const hasGuestPhoneReceivedConfirmation = (db.whatsappHistory || []).some(h =>
       (h.reservationCode === r.code || h.reservationId === r.id) &&
-      (
-        h.triggerEvent === "sameday_reservation" ||
-        h.triggerEvent === "checkin_day_instructions" ||
-        h.triggerEvent === "room_ready" ||
-        h.triggerEvent === "reservation_created" ||
-        h.triggerEvent === "payment_confirmed" ||
-        h.triggerEvent === "corpflats_intro"
-      ) &&
-      (h.status === "sent" || h.status === "delivered")
+      (h.recipientType || "guest") === "guest" &&
+      (h.triggerEvent === "reservation_created" || h.triggerEvent === "payment_confirmed" || h.triggerEvent === "sameday_reservation") &&
+      (h.status === "sent" || h.status === "delivered") &&
+      (!newGuestPhone || String(h.guestPhone || "").replace(/\D/g, "").slice(-8) === newGuestPhone.slice(-8))
     );
 
-    if (wasGuestPhoneJustAdded && !hasReceivedTodayInstructions && !isPreReservationBlocked(r)) {
-      const initialEvent = isAfter0701 ? "sameday_reservation" : "reservation_created";
-      console.log(`[WhatsApp Trigger] WhatsApp do hóspede recém-cadastrado na reserva ${r.code} (${r.guestName}). Disparando boas-vindas CorpFlats + ${initialEvent}.`);
-      triggerImmediateWhatsApp(db, saveDatabase, initialEvent, { ...r, _forceInitialWelcome: true }).catch(err => {
-        console.warn(`[WhatsApp Trigger] Erro ao disparar ${initialEvent} após cadastro do WhatsApp do hóspede:`, err.message);
+    if (wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation && !isPreReservationBlocked(r)) {
+      console.log(`[WhatsApp Catch-Up] Telefone do hóspede inserido na reserva ${r.code} (${r.guestName}). Disparando recuperação da régua de envios.`);
+      dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
+        console.warn(`[WhatsApp Catch-Up] Erro ao disparar recuperação da régua para ${r.code}:`, err.message);
       });
     } else if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0 && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
@@ -24160,12 +24229,12 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
   }
 });
 
-// Endpoint Público: Consulta da Reserva para Credenciamento do Hóspede pela Agência (Sem Valores Financeiros)
+// Endpoint Público: Consulta da Reserva para Credenciamento do Hóspede pelo Solicitante / Agência (Sem Valores Financeiros)
 app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential/:code"], (req, res) => {
   const code = String(req.params.code || "").trim();
   const r = findReservationByLocatorOrContact(code);
   if (!r) {
-    return res.status(404).json({ error: "Reserva não localizada com este código. Verifique o link enviado no e-mail." });
+    return res.status(404).json({ error: "Reserva não localizada com este código. Verifique o link enviado." });
   }
   const linkedGuest = r.guestId
     ? (db.guests || []).find(g => String(g.id) === String(r.guestId))
@@ -24173,12 +24242,20 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
   const linkedAgency = r.agencyId
     ? (db.agencies || []).find(a => String(a.id) === String(r.agencyId))
     : null;
+  const linkedCompany = r.companyId
+    ? (db.companies || []).find(c => String(c.id) === String(r.companyId))
+    : null;
+
+  const rawGuestName = r.guestName || linkedGuest?.fullName || linkedGuest?.name || "";
+  const pendingName = Boolean(r.guestPending || isPendingGuestName(rawGuestName));
 
   return res.json({
     reservation: {
       id: r.id,
       code: r.code,
       status: r.status || "confirmada",
+      requesterType: r.requesterType || (r.agencyId || r.agencyName ? "agency" : (r.companyId || r.companyName ? "company" : "other_person")),
+      requesterName: r.requesterInfo?.name || r.agencyAgentName || r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || r.companyName || linkedCompany?.tradeName || null,
       b2bReservationNumber: r.b2bReservationNumber || r.externalReservationNumber || null,
       b2bLocatorRloc: r.b2bLocatorRloc || null,
       checkinDate: r.checkinDate,
@@ -24190,8 +24267,9 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
       agencyName: r.agencyTradeName || r.agencyName || linkedAgency?.tradeName || linkedAgency?.corporateName || null,
       agencyPosUnit: r.agencyPosUnit || null,
       agencyAgentName: r.agencyAgentName || null,
-      companyName: r.companyName || null,
-      guestName: r.guestName || linkedGuest?.fullName || linkedGuest?.name || "",
+      companyName: r.companyName || linkedCompany?.tradeName || linkedCompany?.corporateName || null,
+      guestPending: pendingName,
+      guestName: pendingName ? "" : rawGuestName,
       guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || linkedGuest?.documentNumber || "",
       guestPhone: r.guestPhone || linkedGuest?.phone || linkedGuest?.whatsapp || "",
       guestSecondaryPhone: r.guestSecondaryPhone || linkedGuest?.secondaryPhone || "",
@@ -24203,7 +24281,7 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
   });
 });
 
-// Endpoint Público: Salvar Credenciamento do Hóspede pela Agência + Disparar WhatsApp Operacional ao Hóspede
+// Endpoint Público: Salvar Credenciamento do Hóspede pelo Solicitante / Agência + Disparar Régua ao Hóspede
 app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential/:code"], async (req, res) => {
   try {
     const code = String(req.params.code || "").trim();
@@ -24225,37 +24303,44 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       notes
     } = req.body || {};
 
-    const cleanName = String(guestName || r.guestName || "").trim();
-    const cleanDoc = String(guestDocument || cpf || r.guestDocument || "").replace(/\D/g, "");
+    const fallbackExistingName = !isPendingGuestName(r.guestName) ? r.guestName : "";
+    const cleanName = String(guestName !== undefined ? guestName : fallbackExistingName).trim();
+    const rawDocInput = String(guestDocument || cpf || r.guestDocument || "").trim();
+    const cleanDoc = rawDocInput.replace(/\D/g, "");
     const cleanPhone = String(guestPhone || whatsapp || r.guestPhone || "").replace(/\D/g, "");
     const cleanSecPhone = String(guestSecondaryPhone || r.guestSecondaryPhone || "").replace(/\D/g, "");
     const cleanEmail = String(guestEmail || r.guestEmail || "").trim();
 
-    if (!cleanName) {
-      return res.status(400).json({ error: "O nome completo do hóspede é obrigatório." });
+    if (!cleanName || isPendingGuestName(cleanName) || cleanName.split(/\s+/).filter(Boolean).length < 2) {
+      return res.status(400).json({ error: "O nome completo (nome e sobrenome) do hóspede é obrigatório." });
     }
-    if (!cleanDoc || cleanDoc.length < 5) {
-      return res.status(400).json({ error: "O CPF ou documento de identificação do hóspede é obrigatório para liberação na portaria." });
+    if (!cleanDoc || (cleanDoc.length < 11 && rawDocInput.replace(/[^a-zA-Z0-9]/g, "").length < 6)) {
+      return res.status(400).json({ error: "O CPF válido (11 dígitos) do hóspede é obrigatório para liberação na portaria." });
     }
     if (!cleanPhone || cleanPhone.length < 10) {
-      return res.status(400).json({ error: "O WhatsApp do hóspede com DDD é obrigatório para o envio das instruções de acesso." });
+      return res.status(400).json({ error: "O telefone / WhatsApp do hóspede com DDD é obrigatório." });
     }
 
-    let finalDocUrl = docPhotoUrl || r.docPhotoUrl || null;
+    let finalDocUrl = docPhotoUrl || r.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl) || null;
     if (docPhotoBase64 && String(docPhotoBase64).startsWith("data:")) {
       finalDocUrl = await uploadImageToStorage(docPhotoBase64, `b2b_cred_${r.code}`, db, "guests");
     }
 
+    if (!finalDocUrl) {
+      return res.status(400).json({ error: "O envio do documento de identificação do hóspede (RG, CNH ou Passaporte) é obrigatório." });
+    }
+
     r.guestName = cleanName;
-    r.guestDocument = cleanDoc;
+    r.guestPending = false;
+    r.guestDocument = cleanDoc || rawDocInput;
     r.guestPhone = cleanPhone;
     if (cleanSecPhone) r.guestSecondaryPhone = cleanSecPhone;
     if (cleanEmail) r.guestEmail = cleanEmail;
-    if (finalDocUrl) r.docPhotoUrl = finalDocUrl;
+    r.docPhotoUrl = finalDocUrl;
     if (notes) {
       r.receptionNotes = r.receptionNotes
-        ? `${r.receptionNotes} | Credenciamento Agência: ${String(notes).trim()}`
-        : `Credenciamento Agência: ${String(notes).trim()}`;
+        ? `${r.receptionNotes} | Credenciamento Solicitante: ${String(notes).trim()}`
+        : `Credenciamento Solicitante: ${String(notes).trim()}`;
     }
     r.credentialStatus = "completed";
     r.b2bCredentialCompletedAt = new Date().toISOString();
@@ -24266,25 +24351,25 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         index: 1,
         isMain: true,
         name: cleanName,
-        cpf: cleanDoc,
+        cpf: r.guestDocument,
         phone: cleanPhone,
         email: cleanEmail,
         docPhotoUrl: finalDocUrl,
-        hasCompletedCheckin: Boolean(cleanDoc && cleanPhone && finalDocUrl)
+        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone && finalDocUrl)
       }];
     } else {
       r.guests[0] = {
         ...r.guests[0],
         name: cleanName,
-        cpf: cleanDoc,
+        cpf: r.guestDocument,
         phone: cleanPhone,
         email: cleanEmail || r.guests[0].email || "",
         docPhotoUrl: finalDocUrl || r.guests[0].docPhotoUrl || null,
-        hasCompletedCheckin: Boolean(cleanDoc && cleanPhone && (finalDocUrl || r.guests[0].docPhotoUrl))
+        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone && (finalDocUrl || r.guests[0].docPhotoUrl))
       };
     }
 
-    if (finalDocUrl && cleanDoc && cleanPhone) {
+    if (finalDocUrl && r.guestDocument && cleanPhone) {
       r.preCheckinCompleted = true;
       r.hasPreCheckin = true;
     }
@@ -24297,9 +24382,9 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     if (guestRecord) {
       guestRecord.name = cleanName;
       guestRecord.fullName = cleanName;
-      guestRecord.cpf = cleanDoc;
-      guestRecord.document = cleanDoc;
-      guestRecord.documentNumber = cleanDoc;
+      guestRecord.cpf = r.guestDocument;
+      guestRecord.document = r.guestDocument;
+      guestRecord.documentNumber = r.guestDocument;
       guestRecord.phone = cleanPhone;
       guestRecord.whatsapp = cleanPhone;
       if (cleanSecPhone) guestRecord.secondaryPhone = cleanSecPhone;
@@ -24307,15 +24392,18 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       if (finalDocUrl) guestRecord.docPhotoUrl = finalDocUrl;
       guestRecord.updatedAt = new Date().toISOString();
       r.guestId = guestRecord.id;
+      r.guestCode = guestRecord.guestCode || `HOSP-${String(guestRecord.id).padStart(5, "0")}`;
+      if (r.guests?.[0]) r.guests[0].guestId = guestRecord.id;
     } else {
       const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
       guestRecord = {
         id: nextGId,
+        guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
         name: cleanName,
         fullName: cleanName,
-        cpf: cleanDoc,
-        document: cleanDoc,
-        documentNumber: cleanDoc,
+        cpf: r.guestDocument,
+        document: r.guestDocument,
+        documentNumber: r.guestDocument,
         phone: cleanPhone,
         whatsapp: cleanPhone,
         secondaryPhone: cleanSecPhone,
@@ -24330,37 +24418,38 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       };
       db.guests.push(guestRecord);
       r.guestId = guestRecord.id;
+      r.guestCode = guestRecord.guestCode;
+      if (r.guests?.[0]) r.guests[0].guestId = guestRecord.id;
     }
 
     r.guestPhoneUpdatedAt = new Date().toISOString();
     saveDatabase("b2b_agency_guest_credential_completed");
 
     try {
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
       ensureReservationScheduledEmails(db, saveDatabase, r);
     } catch (schedErr) {
-      console.warn("[B2B Credential] Aviso ao agendar régua da reserva após credenciamento:", schedErr.message);
+      console.warn("[B2B Credential] Aviso ao agendar e-mails da reserva após credenciamento:", schedErr.message);
     }
 
-    // Dispara imediatamente a apresentação da CorpFlats + instruções operacionais de estadia para o WhatsApp do hóspede (sem valores financeiros)
+    // Se a reserva for para hoje, libera na portaria/garagem agora que os dados do hóspede foram preenchidos
+    if (isReservationForToday(r) && r.status !== "pre_reserva" && r.status !== "cancelada") {
+      dispatchConfirmedReservationToReceptionAndGarage(r, "guest_credential_completed").catch(() => {});
+    }
+
+    // Motor Catch-Up: dispara Apresentação CorpFlats + Confirmação de Reserva + etapas vencidas da régua para o WhatsApp do hóspede
     const baseUrl = `${req.protocol}://${req.get("host")}`;
+    let catchUpResult = { dispatchedStages: [] };
     try {
-      const now = new Date();
-      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      const brDate = new Date(nowUtc - (3 * 3600000));
-      const todayStr = brDate.toISOString().substring(0, 10);
-      const isSameDay = r.checkinDate === todayStr;
-      const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
-      const initialEvent = isAfter0701 ? "sameday_reservation" : "reservation_created";
-      await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, { ...r, _forceInitialWelcome: true }, baseUrl);
+      catchUpResult = await dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl });
     } catch (errWa) {
-      console.warn("[B2B Credential] Aviso ao disparar WhatsApp para o hóspede:", errWa.message);
+      console.warn("[B2B Credential] Aviso ao disparar régua de WhatsApp para o hóspede:", errWa.message);
     }
 
     return res.json({
       ok: true,
       success: true,
-      message: "Credenciamento concluído com sucesso! Os dados do hóspede foram liberados para a portaria 24h e as orientações de acesso foram enviadas ao WhatsApp do hóspede.",
+      dispatchedStages: catchUpResult.dispatchedStages || [],
+      message: "Credenciamento concluído com sucesso! Os dados do hóspede foram liberados para a portaria 24h e as mensagens da régua (incluindo a confirmação de reserva) foram enviadas ao WhatsApp do hóspede.",
       reservation: {
         code: r.code,
         guestName: r.guestName,
@@ -46721,7 +46810,7 @@ async function dispatchConfirmedReservationToReceptionAndGarage(r, triggerSource
 }
 
 async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
-  if (!r || !r.guestPhone) return;
+  if (!r || (!r.guestPhone && !reservationHasAnyContact(r, db))) return;
   // Nunca confirma nem dispara confirmação para pré-reserva sem pagamento real comprovado
   const isPreStatus = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
   if (isPreStatus && !hasRealPaymentEvidence(r)) return;
@@ -46738,8 +46827,19 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     saveDatabase();
   }
 
-  // 0. Assim que confirmada pelo pagamento, libera agendamentos e notifica recepção/portaria e garagem (se for para hoje)
-  await dispatchConfirmedReservationToReceptionAndGarage(r, "payment_confirmed");
+  // Se houver Solicitante e ainda faltarem os dados obrigatórios do hóspede, envia o link /credenciamento/:code ao Solicitante
+  const recipsPay = getReservationRecipients(r, db);
+  if (recipsPay.requester?.isDifferentFromGuest && isMissingGuestDataForCredential(r)) {
+    dispatchRequesterGuestCredentialRequest(db, saveDatabase, r).catch(() => {});
+    dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+      trigger: "b2b_agency_credential_request"
+    }).catch(() => {});
+  }
+
+  // 0. Assim que confirmada pelo pagamento, libera agendamentos e notifica recepção/portaria e garagem (se for para hoje e já tiver hóspede)
+  if (!r.guestPending) {
+    await dispatchConfirmedReservationToReceptionAndGarage(r, "payment_confirmed");
+  }
 
   // 1. Dispara o comprovante financeiro / confirmação se ainda não foi disparado
   if (!isConfirmationAlreadyDispatched(r)) {

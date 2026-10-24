@@ -310,10 +310,10 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
   {
     id: "tpl_b2b_agency_credential",
     triggerEvent: "b2b_agency_credential_request",
-    title: "Agência B2B • Solicitação de Dados do Hóspede (Link de Credenciamento)",
-    description: "Enviada para a agência/emissor (por E-mail e WhatsApp quando houver celular da agência) assim que uma reserva B2B é criada sem o WhatsApp/CPF do hóspede. Contém o link seguro (/credenciamento/:code) para preenchimento antecipado obrigatório para liberação na recepção.",
+    title: "Solicitante / Agência • Solicitação de Dados do Hóspede (Link de Credenciamento)",
+    description: "Enviada para o solicitante (Agência B2B, Empresa ou Terceiro, por E-mail e WhatsApp) assim que uma reserva está Confirmada sem os dados obrigatórios do hóspede (Nome Completo, CPF, Telefone e Documento). Contém o link seguro (/credenciamento/:code) para preenchimento obrigatório.",
     enabled: true,
-    channels: ["b2b"],
+    channels: ["site", "whatsapp", "b2b", "booking", "airbnb", "outros"],
     recipientTarget: "requester",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -321,12 +321,12 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
     fixedTime: "",
     hasAttachment: false,
     sendEmail: true,
-    message: `Olá, equipe da *{{nome_agencia}}*! Tudo bem? 🤝
+    message: `Olá, *{{nome_agencia}}*! Tudo bem? 🤝
 
-Confirmamos com muita satisfação a reserva *B2B #{{numero_reserva_b2b}}* do(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
+Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* do(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
 
-⚠️ *Importante — Liberação Antecipada na Recepção:*
-Para gerarmos a liberação de entrada na recepção do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados do hóspede (WhatsApp, CPF, telefone, e-mail e documento) através do nosso link seguro no sistema:
+⚠️ *Importante — Preenchimento dos Dados do Hóspede para Liberação na Recepção:*
+Para gerarmos a liberação de entrada na recepção do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados obrigatórios do hóspede (*Nome Completo, CPF, Telefone/WhatsApp e Documento de Identificação*) através do nosso link seguro no sistema:
 
 👉 {{link_credenciamento_agencia}}
 
@@ -2480,9 +2480,30 @@ function normalizeEmailAddress(raw) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }
 
+export function isPendingGuestName(name) {
+  const s = String(name || "").trim();
+  if (!s) return true;
+  return /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(s);
+}
+
+export function isMissingGuestDataForCredential(reservation = {}) {
+  if (!reservation) return false;
+  if (reservation.b2bCredentialCompletedAt) return false;
+  const gName = reservation.guestName || reservation.guests?.[0]?.name || "";
+  const cleanPhone = String(reservation.guestPhone || reservation.guests?.[0]?.phone || "").replace(/\D/g, "");
+  const cleanDoc = String(reservation.guestDocument || reservation.guests?.[0]?.cpf || reservation.guests?.[0]?.document || "").replace(/\D/g, "");
+  return Boolean(
+    reservation.guestPending ||
+    isPendingGuestName(gName) ||
+    cleanPhone.length < 10 ||
+    cleanDoc.length < 5
+  );
+}
+
 export function getReservationRecipients(reservation = {}, db = {}) {
-  const guestName = (reservation.guestName || reservation.guests?.[0]?.name || "Hóspede").trim();
-  const guestFirstName = guestName.split(" ")[0] || guestName;
+  const rawName = (reservation.guestName || reservation.guests?.[0]?.name || "").trim();
+  const guestName = rawName || "Hóspede";
+  const guestFirstName = isPendingGuestName(rawName) ? "Hóspede" : (guestName.split(" ")[0] || guestName);
   const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || "";
   const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "");
   const guestEmail = normalizeEmailAddress(reservation.guestEmail || reservation.guests?.[0]?.email);
@@ -2494,14 +2515,18 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   let requesterPhone = "";
   let requesterEmail = "";
   let requesterType = reservation.requesterType || "guest";
+  if (requesterType === "agency_b2b") requesterType = "agency";
+  if (requesterType === "third_party") requesterType = "other_person";
   if (requesterType === "guest") {
     if (reservation.agencyId || reservation.agencyName || isB2bChannel) {
       requesterType = "agency";
     } else if (reservation.companyId || reservation.companyName) {
       requesterType = "company";
     } else if (
-      reservation.requesterInfo &&
-      (reservation.requesterInfo.name || reservation.requesterInfo.phone || reservation.requesterInfo.email)
+      (reservation.requesterInfo && (reservation.requesterInfo.name || reservation.requesterInfo.phone || reservation.requesterInfo.email)) ||
+      reservation.requesterName ||
+      reservation.requesterPhone ||
+      reservation.requesterEmail
     ) {
       requesterType = "other_person";
     }
@@ -2531,11 +2556,13 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       agencyLabel ||
       companyLabel ||
       reservation.requesterInfo?.name ||
+      reservation.requesterName ||
       "Central B2B / Agência"
     ).trim();
     const rawAgencyPhone = (
       reservation.agencyAgentPhone ||
       reservation.requesterInfo?.phone ||
+      reservation.requesterPhone ||
       agencyObj?.phone ||
       companyObj?.phone ||
       ""
@@ -2549,6 +2576,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     requesterEmail = normalizeEmailAddress(
       reservation.agencyAgentEmail ||
       reservation.requesterInfo?.email ||
+      reservation.requesterEmail ||
       agencyObj?.financialEmail ||
       agencyObj?.email ||
       (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails[0] : "") ||
@@ -2556,10 +2584,10 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       companyObj?.email ||
       ""
     );
-  } else if (requesterType === "other_person" && reservation.requesterInfo) {
-    requesterName = (reservation.requesterInfo.name || "").trim();
-    requesterPhone = (reservation.requesterInfo.phone || "").trim();
-    requesterEmail = normalizeEmailAddress(reservation.requesterInfo.email);
+  } else if (requesterType === "other_person") {
+    requesterName = (reservation.requesterInfo?.name || reservation.requesterName || "").trim();
+    requesterPhone = (reservation.requesterInfo?.phone || reservation.requesterPhone || "").trim();
+    requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail);
   } else if (requesterType === "company") {
     requesterCompany = reservation.companyName || "";
     let companyObj = null;
@@ -2573,12 +2601,14 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       );
     }
     if (companyObj) {
-      requesterName = (companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
-      requesterPhone = (companyObj.phone || "").trim();
-      requesterEmail = normalizeEmailAddress(companyObj.email || companyObj.financialEmail);
+      requesterName = (reservation.requesterInfo?.name || reservation.requesterName || companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
+      requesterPhone = (reservation.requesterInfo?.phone || reservation.requesterPhone || companyObj.phone || companyObj.telefone || "").trim();
+      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail || companyObj.email || companyObj.financialEmail || companyObj.emailFinanceiro);
       requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany;
     } else {
-      requesterName = reservation.companyName || "Solicitante Corporativo";
+      requesterName = (reservation.requesterInfo?.name || reservation.requesterName || reservation.companyName || "Solicitante Corporativo").trim();
+      requesterPhone = (reservation.requesterInfo?.phone || reservation.requesterPhone || "").trim();
+      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail);
     }
   }
 
@@ -3321,8 +3351,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     avisoAcompanhantePendentePosCheckin = `👥 *Acompanhante Pendente (${nextPendingIdx}º Hóspede):*\nNotamos que sua reserva possui acompanhante que ainda não preencheu a ficha individual. Para que a entrada dele(a) também já fique liberada na recepção, envie o link abaixo para preenchimento:\n👉 ${linkCheckinDigitalNextPending}\n\n💡 _Caso vá se hospedar sozinho(a), você pode atualizar para 1 hóspede diretamente no Portal do Hóspede._`;
   }
 
+  const displayGuestName = isPendingGuestName(guestName) ? "A Definir (Aguardando Credenciamento)" : guestName;
   const tagsMap = {
-    "{{nome_hospede}}": guestName,
+    "{{nome_hospede}}": displayGuestName,
     "{{primeiro_nome}}": firstName,
     "{{telefone_hospede}}": guest.phone || "",
     "{{nome_solicitante}}": requester.name,
@@ -6441,6 +6472,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.id !== "tpl_new_reservation_direct"
         ) {
           tpl.channels.push("b2b");
+        }
+        if (tpl.id === "tpl_b2b_agency_credential") {
+          tpl.recipientTarget = "requester";
+          tpl.channels = ["site", "whatsapp", "b2b", "booking", "airbnb", "outros"];
         }
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
@@ -10802,10 +10837,19 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       }
     }
 
+    const allowScheduledAsImmediate = Boolean(
+      reservation._allowScheduledTemplateImmediate ||
+      eventName === "checkin_cleaning_delay" ||
+      eventName === "checkin_day_instructions" ||
+      eventName === "pre_checkin_reminder" ||
+      eventName === "breakfast_reminder" ||
+      eventName === "b2b_agency_credential_request"
+    );
+
     let templates = (db.whatsappTemplates || []).filter(t => 
       t.enabled && 
       t.triggerEvent === eventName && 
-      (t.triggerTiming === "immediate" || eventName === "checkin_cleaning_delay") &&
+      (t.triggerTiming === "immediate" || allowScheduledAsImmediate) &&
       isTemplateAllowedForChannel(t, resvChannel)
     );
 
@@ -10829,6 +10873,14 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         const defIntro = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_corpflats_intro");
         if (defIntro && isTemplateAllowedForChannel(defIntro, resvChannel)) templates = [defIntro];
       }
+    } else if (templates.length === 0 && eventName === "b2b_agency_credential_request") {
+      const defCred = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_b2b_agency_credential");
+      if (defCred) templates = [defCred];
+    } else if (templates.length === 0 && eventName === "reservation_created") {
+      const normChan = normalizeReservationChannel(resvChannel);
+      const isOtaOrB2b = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
+      const defNewRes = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === (isOtaOrB2b ? "tpl_new_reservation_ota" : "tpl_new_reservation_direct"));
+      if (defNewRes) templates = [defNewRes];
     } else if (templates.length === 0 && eventName === "pre_reservation_created") {
       const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
       if (defPre) templates = [defPre];
@@ -10847,6 +10899,24 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "sameday_reservation") {
       const defSameday = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions" || t.triggerEvent === "sameday_reservation");
       if (defSameday) templates = [defSameday];
+    } else if (templates.length === 0 && eventName === "checkin_day_instructions") {
+      const defCheckinDay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_day_instructions" || t.triggerEvent === "checkin_day_instructions");
+      if (defCheckinDay) templates = [defCheckinDay];
+    } else if (templates.length === 0 && eventName === "pre_checkin_reminder") {
+      const defPreChkRem = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_reminder" || t.triggerEvent === "pre_checkin_reminder");
+      if (defPreChkRem) templates = [defPreChkRem];
+    } else if (templates.length === 0 && eventName === "breakfast_reminder") {
+      const defBreakfast = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_breakfast_reminder" || t.triggerEvent === "breakfast_reminder");
+      if (defBreakfast) templates = [defBreakfast];
+    } else if (templates.length === 0 && eventName === "room_ready") {
+      const defRoomDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct" || t.triggerEvent === "room_ready");
+      if (defRoomDir) templates = [defRoomDir];
+    } else if (templates.length === 0 && eventName === "room_ready_ota") {
+      const defRoomOta = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota" || t.triggerEvent === "room_ready_ota");
+      if (defRoomOta) templates = [defRoomOta];
+    } else if (templates.length === 0 && eventName === "room_ready_regular") {
+      const defRoomReg = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_regular" || t.triggerEvent === "room_ready_regular");
+      if (defRoomReg) templates = [defRoomReg];
     } else if (templates.length === 0 && eventName === "pre_checkin_completed") {
       const defPreChkDone = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_completed" || t.triggerEvent === "pre_checkin_completed");
       if (defPreChkDone) templates = [defPreChkDone];
@@ -11214,6 +11284,280 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
     }
   } catch (err) {
     console.error("[Room Ready WhatsApp Error]:", err.message);
+  }
+}
+
+/**
+ * Dispara a solicitação de credenciamento do hóspede (/credenciamento/:code) para o Solicitante
+ * (Agência B2B, Empresa ou Terceiro PF) via WhatsApp quando a reserva está Confirmada
+ * e ainda não possui todos os dados obrigatórios do hóspede (Nome completo, CPF, Telefone).
+ */
+export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDatabase, reservation, options = {}) {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !reservation) return { dispatched: false, reason: "no_reservation" };
+
+    const st = String(reservation.status || "").toLowerCase().trim();
+    if (st === "pre_reserva" || st === "pendente" || st === "cancelada" || st === "cancelled") {
+      return { dispatched: false, reason: `status_${st}` };
+    }
+
+    if (!isMissingGuestDataForCredential(reservation)) {
+      return { dispatched: false, reason: "guest_data_already_complete" };
+    }
+
+    const recipients = getReservationRecipients(reservation, db);
+    const hasRequester = Boolean(
+      recipients.requester?.isDifferentFromGuest &&
+      (recipients.requester?.phone || recipients.requester?.email)
+    );
+    if (!hasRequester) {
+      return { dispatched: false, reason: "no_separate_requester_contact" };
+    }
+
+    const baseUrl = options.baseUrl || "https://corpflats.com.br";
+    await triggerImmediateWhatsApp(
+      db,
+      saveDatabase,
+      "b2b_agency_credential_request",
+      { ...reservation, _forceInitialWelcome: true, _allowScheduledTemplateImmediate: true },
+      baseUrl
+    );
+
+    return {
+      dispatched: true,
+      requesterName: recipients.requester.name,
+      requesterPhone: recipients.requester.phone || "",
+      requesterEmail: recipients.requester.email || ""
+    };
+  } catch (err) {
+    console.warn("[Requester Credential Dispatch Error]:", err.message);
+    return { dispatched: false, error: err.message };
+  }
+}
+
+/**
+ * Motor de Recuperação ("Catch-Up") da Régua de Envios do Hóspede:
+ * Executado assim que:
+ *  (A) O Solicitante preenche os dados obrigatórios do hóspede no link /credenciamento/:code; ou
+ *  (B) O administrador insere/atualiza manualmente o telefone do hóspede na Reserva no PMS.
+ *
+ * Envia exclusivamente para o hóspede (_excludeRequesterTarget: true) tudo o que deixou de ser
+ * enviado anteriormente por falta de telefone:
+ *  1. Apresentação CorpFlats (tpl_corpflats_intro) + Confirmação de Reserva (reservation_created)
+ *  2. Lembrete de Pré-Check-in 24h (pre_checkin_reminder) se faltar <= 24h (antes das 07h do check-in) e pré-check-in pendente
+ *  3. Instruções do Dia do Check-in (checkin_day_instructions) se hoje >= checkinDate e horário >= 07:00
+ *  4. Quarto Liberado (room_ready / room_ready_ota / room_ready_regular) se hoje === checkinDate e flat já limpo (ou >= 14:00)
+ *  5. Lembrete de Café da Manhã (breakfast_reminder) se tiver café incluso, estadia ativa para amanhã e horário >= 18:00
+ *  6. Agendamento das próximas etapas futuras na fila (scheduleUpcomingReservationTriggers)
+ */
+export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase, reservation, options = {}) {
+  const dispatchedStages = [];
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !reservation) return { dispatchedStages };
+
+    const st = String(reservation.status || "").toLowerCase().trim();
+    if (st === "pre_reserva" || st === "pendente" || st === "cancelada" || st === "cancelled") {
+      return { dispatchedStages, skippedReason: `status_${st}` };
+    }
+
+    const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || "";
+    const cleanGuestPhone = String(rawGuestPhone).replace(/\D/g, "");
+    if (cleanGuestPhone.length < 10) {
+      return { dispatchedStages, skippedReason: "no_valid_guest_phone" };
+    }
+
+    const baseUrl = options.baseUrl || "https://corpflats.com.br";
+    const now = new Date();
+    const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
+
+    if (reservation.checkoutDate && reservation.checkoutDate < todayStr) {
+      return { dispatchedStages, skippedReason: "past_checkout" };
+    }
+
+    const normGuestPhone = normalizePhoneForDedup(cleanGuestPhone);
+    const rCodeUpper = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+    const rIdStr = reservation.id ? String(reservation.id) : "";
+
+    const hasGuestReceivedEvent = (eventsList) => {
+      const evSet = new Set(Array.isArray(eventsList) ? eventsList : [eventsList]);
+      return (db.whatsappHistory || []).some(h => {
+        if (!h || (h.status !== "sent" && h.status !== "delivered")) return false;
+        const hCode = String(h.reservationCode || "").trim().toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+        if (!isSameRes) return false;
+        if ((h.recipientType || "guest") !== "guest") return false;
+        if (normGuestPhone && normalizePhoneForDedup(h.guestPhone) !== normGuestPhone) return false;
+        return evSet.has(h.triggerEvent);
+      });
+    };
+
+    const markQueuedStageCancelledForGuest = (eventsList, reason) => {
+      if (!Array.isArray(db.whatsappQueue)) return;
+      const evSet = new Set(Array.isArray(eventsList) ? eventsList : [eventsList]);
+      const nowIso = new Date().toISOString();
+      for (const q of db.whatsappQueue) {
+        if (!q || (q.status !== "scheduled" && q.status !== "pending")) continue;
+        const qCode = String(q.reservationCode || "").trim().toUpperCase();
+        const qId = q.reservationId ? String(q.reservationId) : "";
+        const isSameRes = (rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr));
+        if (!isSameRes) continue;
+        if ((q.recipientType || "guest") !== "guest") continue;
+        if (evSet.has(q.triggerEvent)) {
+          q.status = "cancelled";
+          q.error = reason;
+          q.updatedAt = nowIso;
+        }
+      }
+    };
+
+    const guestOnlyRes = {
+      ...reservation,
+      _excludeRequesterTarget: true,
+      _forceInitialWelcome: true,
+      _allowScheduledTemplateImmediate: true,
+      _fastIntroDelay: Boolean(options.fastDelay)
+    };
+    const pauseBetweenStages = async () => {
+      const isLiveZapi = Boolean(db?.zapiConfig?.instanceId?.trim() && db?.zapiConfig?.token?.trim());
+      const ms = options.fastDelay ? 25 : (isLiveZapi ? 1800 : 30);
+      await new Promise(r => setTimeout(r, ms));
+    };
+
+    // 1. APRESENTAÇÃO CORPFLATS (tpl_corpflats_intro) + CONFIRMAÇÃO DE RESERVA (reservation_created)
+    if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed"])) {
+      await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", guestOnlyRes, baseUrl);
+      dispatchedStages.push("corpflats_intro", "reservation_created");
+      await pauseBetweenStages();
+    }
+
+    // 2. LEMBRETE DE PRÉ-CHECK-IN 24H (se faltar <= 24h antes do check-in, antes do dia do check-in, e pré-check-in pendente)
+    const isPreCheckinDone = Boolean(
+      reservation.fnhrCompleted ||
+      reservation.preCheckinCompleted ||
+      reservation.checkedInAt ||
+      (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests[0]?.hasCompletedCheckin)
+    );
+    if (!isPreCheckinDone && reservation.checkinDate && todayStr < reservation.checkinDate) {
+      const preChkTpl = (db.whatsappTemplates || []).find(t => t.triggerEvent === "pre_checkin_reminder") ||
+                        DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === "pre_checkin_reminder");
+      if (preChkTpl) {
+        const schedIso = calculateScheduledTime(preChkTpl, reservation, db);
+        if (schedIso && new Date(schedIso) <= now && !hasGuestReceivedEvent(["pre_checkin_reminder"])) {
+          await triggerImmediateWhatsApp(
+            db,
+            saveDatabase,
+            "pre_checkin_reminder",
+            { ...guestOnlyRes, _skipAutoIntro: true },
+            baseUrl
+          );
+          markQueuedStageCancelledForGuest(["pre_checkin_reminder"], "Enviado via recuperação imediata (Catch-Up)");
+          dispatchedStages.push("pre_checkin_reminder");
+          await pauseBetweenStages();
+        }
+      }
+    }
+
+    // 3. INSTRUÇÕES DO DIA DO CHECK-IN (07:00) — se hoje já for o dia do check-in (e >= 07:00) ou estadia em andamento
+    const isCheckinDayOrAfter = Boolean(
+      reservation.checkinDate &&
+      todayStr >= reservation.checkinDate &&
+      (!reservation.checkoutDate || todayStr <= reservation.checkoutDate)
+    );
+    const isPast0700OnCheckin = todayStr > reservation.checkinDate || (todayStr === reservation.checkinDate && brHour >= 7);
+    if (isCheckinDayOrAfter && isPast0700OnCheckin && !hasGuestReceivedEvent(["checkin_day_instructions", "sameday_reservation"])) {
+      await triggerImmediateWhatsApp(
+        db,
+        saveDatabase,
+        "checkin_day_instructions",
+        { ...guestOnlyRes, _skipAutoIntro: true },
+        baseUrl
+      );
+      markQueuedStageCancelledForGuest(["checkin_day_instructions"], "Enviado via recuperação imediata (Catch-Up)");
+      dispatchedStages.push("checkin_day_instructions");
+      await pauseBetweenStages();
+    }
+
+    // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate e o flat já estiver limpo (ou >= 14:00)
+    if (todayStr === reservation.checkinDate && !hasGuestReceivedEvent(["room_ready", "room_ready_ota", "room_ready_regular"])) {
+      const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+      const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
+      const earliestReleaseHour = isOtaOrB2b ? 12 : 10;
+      const checkinTime = db.settings?.checkinTime || "14:00";
+      const [checkHour, checkMin] = checkinTime.split(":").map(Number);
+      const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
+      const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr) || reservation.roomReadySentDate === todayStr;
+
+      if (isFlatClean && brHour >= earliestReleaseHour) {
+        let roomReadyEvent = isOtaOrB2b ? "room_ready_ota" : "room_ready";
+        if (isAtOrAfterCheckin && !isOtaOrB2b) {
+          roomReadyEvent = "room_ready_regular";
+        }
+        reservation.roomReadySentDate = todayStr;
+        reservation.roomReadySentAt = now.toISOString();
+        await triggerImmediateWhatsApp(
+          db,
+          saveDatabase,
+          roomReadyEvent,
+          { ...guestOnlyRes, _skipAutoIntro: true },
+          baseUrl
+        );
+        markQueuedStageCancelledForGuest(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata (Catch-Up)");
+        dispatchedStages.push(roomReadyEvent);
+        await pauseBetweenStages();
+      } else if (isFlatClean && brHour < earliestReleaseHour) {
+        await triggerRoomReadyWhatsApp(db, saveDatabase, reservation.flatId, reservation.flatNumber, baseUrl);
+      }
+    }
+
+    // 5. LEMBRETE DE CAFÉ DA MANHÃ (18:00) — se tiver café incluso, estadia ativa para amanhã e já passou das 18:00
+    const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast");
+    if (hasBreakfast && reservation.checkinDate && reservation.checkoutDate && todayStr >= reservation.checkinDate && todayStr < reservation.checkoutDate && brHour >= 18) {
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDateObj = new Date(nowUtc - (3 * 3600000));
+      const tomorrowDate = new Date(brDateObj);
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+
+      const alreadyOrderedTomorrow = (db.breakfastOrders || []).some(o =>
+        (o.reservationId === reservation.id || o.reservationCode === reservation.code) &&
+        o.date === tomorrowStr &&
+        o.status !== "cancelled"
+      );
+      const alreadySentBreakfastToday = (db.whatsappHistory || []).some(h => {
+        if (!h || (h.status !== "sent" && h.status !== "delivered")) return false;
+        const hCode = String(h.reservationCode || "").trim().toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+        if (!isSameRes) return false;
+        if (h.triggerEvent !== "breakfast_reminder") return false;
+        if (normGuestPhone && normalizePhoneForDedup(h.guestPhone) !== normGuestPhone) return false;
+        return String(h.sentAt || "").startsWith(todayStr);
+      });
+
+      if (!alreadyOrderedTomorrow && !alreadySentBreakfastToday) {
+        await triggerImmediateWhatsApp(
+          db,
+          saveDatabase,
+          "breakfast_reminder",
+          { ...guestOnlyRes, _skipAutoIntro: true },
+          baseUrl
+        );
+        markQueuedStageCancelledForGuest(["breakfast_reminder"], "Enviado via recuperação imediata (Catch-Up)");
+        dispatchedStages.push("breakfast_reminder");
+      }
+    }
+
+    // 6. Agenda todas as próximas etapas futuras da régua para o hóspede
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+    if (typeof saveDatabase === "function") saveDatabase();
+
+    return { dispatchedStages };
+  } catch (err) {
+    console.error("[Catch-Up Guest Ruler Error]:", err.message);
+    return { dispatchedStages, error: err.message };
   }
 }
 

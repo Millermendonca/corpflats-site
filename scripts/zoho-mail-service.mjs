@@ -2998,15 +2998,19 @@ export async function dispatchB2bAgencyCredentialEmail(
     toEmail ||
       reservation.agencyAgentEmail ||
       reservation.requesterInfo?.email ||
+      reservation.requesterEmail ||
       linkedAgency?.financialEmail ||
       linkedAgency?.email ||
+      linkedCompany?.email ||
+      linkedCompany?.financialEmail ||
+      linkedCompany?.emailFinanceiro ||
       agencyNfEmails[0] ||
       nfEmails[0] ||
       ""
   ).trim();
 
   if (!targetEmail || !targetEmail.includes("@")) {
-    return { ok: false, error: "E-mail da agência ou emissor não informado na reserva." };
+    return { ok: false, error: "E-mail do solicitante ou agência não informado na reserva." };
   }
 
   const ccList = agencyNfEmails.filter(

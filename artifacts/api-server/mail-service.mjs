@@ -1177,10 +1177,13 @@ export function renderB2bAgencyCredentialRequestEmail({
   const resCode = reservation?.code || reservation?.id || "-";
   const b2bNumber = reservation?.b2bReservationNumber || reservation?.externalReservationNumber || "";
   const rloc = reservation?.b2bLocatorRloc || b2bNumber || "";
-  const agencyName = agency?.tradeName || agency?.corporateName || reservation?.agencyName || "Agência Parceira";
-  const agencyPosUnit = reservation?.agencyPosUnit || "";
-  const agentName = reservation?.agencyAgentName && reservation.agencyAgentName !== "WEBSERVICE" ? reservation.agencyAgentName : "";
   const companyName = company?.tradeName || company?.corporateName || reservation?.companyName || "";
+  const reqContactName = reservation?.requesterInfo?.name || reservation?.requesterName || "";
+  const agencyName = agency?.tradeName || agency?.corporateName || reservation?.agencyName || companyName || reqContactName || "Solicitante";
+  const agencyPosUnit = reservation?.agencyPosUnit || "";
+  const agentName = (reservation?.agencyAgentName && reservation.agencyAgentName !== "WEBSERVICE")
+    ? reservation.agencyAgentName
+    : (reqContactName && reqContactName !== agencyName ? reqContactName : "");
 
   const hostBase = String(
     baseUrl ||
