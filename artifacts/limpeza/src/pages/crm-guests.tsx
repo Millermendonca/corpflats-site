@@ -32,9 +32,17 @@ export default function CrmGuests() {
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { toast } = useToast()
 
-  const [activeTab, setActiveTab] = useState<"guests" | "companies" | "analytics">("guests")
+  const [activeTab, setActiveTab] = useState<"guests" | "companies" | "agencies" | "analytics">(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      const t = sp.get("tab")
+      if (t === "agencies" || t === "companies" || t === "analytics") return t
+    }
+    return "guests"
+  })
   const [guests, setGuests] = useState<any[]>([])
   const [companies, setCompanies] = useState<any[]>([])
+  const [agencies, setAgencies] = useState<any[]>([])
   const [analyticsData, setAnalyticsData] = useState<any | null>(null)
   const [loadingAnalytics, setLoadingAnalytics] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -202,6 +210,232 @@ export default function CrmGuests() {
   const [loadingCompanyCep, setLoadingCompanyCep] = useState(false)
   const [savingCompany, setSavingCompany] = useState(false)
 
+  // Modal Create / Edit Agency (B2B)
+  const [agencyModalOpen, setAgencyModalOpen] = useState(false)
+  const [editingAgency, setEditingAgency] = useState<any | null>(null)
+  const [agencyCnpj, setAgencyCnpj] = useState("")
+  const [agencyCorporateName, setAgencyCorporateName] = useState("")
+  const [agencyTradeName, setAgencyTradeName] = useState("")
+  const [agencyStateReg, setAgencyStateReg] = useState("")
+  const [agencyMunReg, setAgencyMunReg] = useState("")
+  const [agencyFinancialEmail, setAgencyFinancialEmail] = useState("")
+  const [agencyPhone, setAgencyPhone] = useState("")
+  const [agencyContactPerson, setAgencyContactPerson] = useState("")
+  const [agencyBillingTerms, setAgencyBillingTerms] = useState("Cartão Virtual VCN / 15 dias")
+  const [agencyDefaultRatePolicy, setAgencyDefaultRatePolicy] = useState<"COMISSIONADA" | "NET">("COMISSIONADA")
+  const [agencyDefaultCommissionPct, setAgencyDefaultCommissionPct] = useState<number>(12)
+  const [agencyDefaultInvoiceRecipient, setAgencyDefaultInvoiceRecipient] = useState<"agency" | "company" | "guest">("company")
+  const [agencyCep, setAgencyCep] = useState("")
+  const [agencyAddress, setAgencyAddress] = useState("")
+  const [agencyNumber, setAgencyNumber] = useState("")
+  const [agencyComplement, setAgencyComplement] = useState("")
+  const [agencyNeighborhood, setAgencyNeighborhood] = useState("")
+  const [agencyCity, setAgencyCity] = useState("São Paulo")
+  const [agencyState, setAgencyState] = useState("SP")
+  const [agencyIbgeCode, setAgencyIbgeCode] = useState("3550308")
+  const [agencyNotes, setAgencyNotes] = useState("")
+  const [agencyPosUnits, setAgencyPosUnits] = useState<Array<{ name: string; email: string; phone: string }>>([])
+  const [agencyAgents, setAgencyAgents] = useState<Array<{ name: string; email: string; phone: string; posUnit: string }>>([])
+  const [loadingAgencyCnpj, setLoadingAgencyCnpj] = useState(false)
+  const [loadingAgencyCep, setLoadingAgencyCep] = useState(false)
+  const [savingAgency, setSavingAgency] = useState(false)
+
+  // Modal 360º Agência B2B
+  const [agencyDetailModalOpen, setAgencyDetailModalOpen] = useState(false)
+  const [activeAgencyDetail, setActiveAgencyDetail] = useState<any | null>(null)
+  const [loadingAgencyDetail, setLoadingAgencyDetail] = useState(false)
+
+  // ── Integração Google Contatos (Caller ID & WhatsApp) ──
+  const [googleContactsModalOpen, setGoogleContactsModalOpen] = useState(false)
+  const [googleStatus, setGoogleStatus] = useState<any | null>(null)
+  const [loadingGoogleStatus, setLoadingGoogleStatus] = useState(false)
+  const [syncingAllGoogle, setSyncingAllGoogle] = useState(false)
+  const [syncingGuestId, setSyncingGuestId] = useState<number | null>(null)
+  const [showAdvancedGoogleConfig, setShowAdvancedGoogleConfig] = useState(false)
+  const [googleClientIdInput, setGoogleClientIdInput] = useState("")
+  const [googleClientSecretInput, setGoogleClientSecretInput] = useState("")
+  const [googleManualTokenInput, setGoogleManualTokenInput] = useState("")
+  const [savingGoogleConfig, setSavingGoogleConfig] = useState(false)
+
+  const fetchGoogleContactsStatus = async () => {
+    setLoadingGoogleStatus(true)
+    try {
+      const res = await fetch("/api/pms/guests/google-contacts/status", { credentials: "include" })
+      if (res.ok) {
+        const data = await res.json()
+        setGoogleStatus(data)
+        if (data.clientId && !googleClientIdInput) {
+          setGoogleClientIdInput(data.clientId)
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao consultar status do Google Contatos:", err)
+    } finally {
+      setLoadingGoogleStatus(false)
+    }
+  }
+
+  const handleToggleGoogleAutoSync = async (checked: boolean) => {
+    try {
+      const res = await fetch("/api/pms/guests/google-contacts/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: checked }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        setGoogleStatus((prev: any) => (prev ? { ...prev, enabled: checked } : prev))
+        toast({
+          title: checked ? "Sincronização Automática Ativada" : "Sincronização Automática Pausada",
+          description: checked
+            ? "Todo hóspede cadastrado ou editado no CRM será enviado automaticamente ao Google Contatos."
+            : "A sincronização automática em segundo plano foi pausada."
+        })
+      }
+    } catch {}
+  }
+
+  const handleConnectGoogleOAuthPopup = async () => {
+    try {
+      const qs = googleClientIdInput.trim() ? `?clientId=${encodeURIComponent(googleClientIdInput.trim())}` : ""
+      const res = await fetch(`/api/pms/guests/google-contacts/oauth-url${qs}`, { credentials: "include" })
+      const data = await res.json()
+      if (data.authUrl) {
+        const w = 540
+        const h = 660
+        const left = window.screenX + (window.outerWidth - w) / 2
+        const top = window.screenY + (window.outerHeight - h) / 2
+        window.open(
+          data.authUrl,
+          "GoogleContactsOAuthPopup",
+          `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+        )
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro ao iniciar conexão com Google",
+        description: err.message || "Tente novamente.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleSaveGoogleAdvancedConfig = async () => {
+    setSavingGoogleConfig(true)
+    try {
+      const res = await fetch("/api/pms/guests/google-contacts/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: googleClientIdInput.trim() || undefined,
+          clientSecret: googleClientSecretInput.trim() || undefined,
+          accessToken: googleManualTokenInput.trim() || undefined,
+          enabled: true
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        setGoogleManualTokenInput("")
+        await fetchGoogleContactsStatus()
+        toast({
+          title: "Configuração Google Contatos salva!",
+          description: "Credenciais atualizadas com sucesso."
+        })
+      }
+    } finally {
+      setSavingGoogleConfig(false)
+    }
+  }
+
+  const handleDisconnectGoogle = async () => {
+    try {
+      await fetch("/api/pms/guests/google-contacts/disconnect", {
+        method: "POST",
+        credentials: "include"
+      })
+      await fetchGoogleContactsStatus()
+      toast({
+        title: "Conta Google desconectada",
+        description: "A conexão OAuth2 com o Google Contatos foi removida."
+      })
+    } catch {}
+  }
+
+  const handleSyncAllGoogleContacts = async () => {
+    setSyncingAllGoogle(true)
+    try {
+      const res = await fetch("/api/pms/guests/google-contacts/sync-all", {
+        method: "POST",
+        credentials: "include"
+      })
+      const data = await res.json()
+      await fetchGoogleContactsStatus()
+      fetchGuests()
+      if (data.syncedCount > 0) {
+        toast({
+          title: `✅ ${data.syncedCount} contatos sincronizados no Google!`,
+          description: `Criados: ${data.createdCount} • Atualizados: ${data.updatedCount}${data.skippedCount ? ` • Sem telefone: ${data.skippedCount}` : ""}`
+        })
+      } else if (!googleStatus?.connected) {
+        toast({
+          title: "Nomes de Identificador (Caller ID) Atualizados!",
+          description: "Para envio automático direto à nuvem Google, conecte sua conta Google ou clique em 'Baixar Arquivo vCard (.vcf)' para importar em 1 clique."
+        })
+      } else {
+        toast({
+          title: "Sincronização concluída",
+          description: data.firstError || `Processados: ${data.totalProcessed} hóspedes.`
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro na sincronização em lote",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setSyncingAllGoogle(false)
+    }
+  }
+
+  const handleSyncSingleGuestGoogle = async (guest: any) => {
+    if (!guest?.id) return
+    setSyncingGuestId(guest.id)
+    try {
+      const res = await fetch(`/api/pms/guests/${guest.id}/google-contacts/sync`, {
+        method: "POST",
+        credentials: "include"
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast({
+          title: "✅ Sincronizado com Google Contatos!",
+          description: `Salvo como: ${data.displayName}`
+        })
+        fetchGuests()
+        fetchGoogleContactsStatus()
+      } else {
+        window.open(`/api/pms/guests/${guest.id}/google-contacts/export.vcf`, "_blank")
+        toast({
+          title: `📱 Cartão de Contato (.vcf) gerado!`,
+          description: `Identificador: ${data.contactData?.displayName || guest.fullName || guest.name}`
+        })
+      }
+    } catch {
+      window.open(`/api/pms/guests/${guest.id}/google-contacts/export.vcf`, "_blank")
+    } finally {
+      setSyncingGuestId(null)
+    }
+  }
+
+  const handleExportAllVCard = () => {
+    window.open("/api/pms/guests/google-contacts/export.vcf", "_blank")
+    toast({
+      title: "📱 Arquivo vCard (.vcf) gerado com sucesso!",
+      description: "Abra o arquivo no celular ou importe em contacts.google.com/import para identificar todas as ligações."
+    })
+  }
+
   const fetchGuests = async () => {
     setLoading(true)
     try {
@@ -218,6 +452,14 @@ export default function CrmGuests() {
       const res = await fetch("/api/companies", { credentials: "include" })
       const data = await res.json()
       setCompanies(Array.isArray(data) ? data : [])
+    } catch {}
+  }
+
+  const fetchAgencies = async () => {
+    try {
+      const res = await fetch("/api/agencies", { credentials: "include" })
+      const data = await res.json()
+      setAgencies(Array.isArray(data) ? data : [])
     } catch {}
   }
 
@@ -239,7 +481,21 @@ export default function CrmGuests() {
   useEffect(() => {
     fetchGuests()
     fetchCompanies()
+    fetchAgencies()
     fetchAnalytics()
+    fetchGoogleContactsStatus()
+
+    const handlePopupMsg = (ev: MessageEvent) => {
+      if (ev.data?.type === "GOOGLE_CONTACTS_CONNECTED") {
+        fetchGoogleContactsStatus()
+        toast({
+          title: "✅ Conta Google Conectada!",
+          description: "A agenda Google Contatos agora está vinculada ao CRM CorpFlats."
+        })
+      }
+    }
+    window.addEventListener("message", handlePopupMsg)
+    return () => window.removeEventListener("message", handlePopupMsg)
   }, [])
 
   const calculateGuestAge = (birthDate?: string) => {
@@ -562,6 +818,190 @@ export default function CrmGuests() {
     }
   }
 
+  // ── Agências de Viagens (B2B): Busca CNPJ/CEP, CRUD e Visão 360º ──────────
+  const handleLookupAgencyCep = async (cepVal: string) => {
+    const clean = cepVal.replace(/\D/g, "")
+    if (clean.length === 8) {
+      setLoadingAgencyCep(true)
+      try {
+        const res = await fetch(`/api/invoices/lookup-cep/${clean}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.logradouro) setAgencyAddress(data.logradouro)
+          if (data.bairro) setAgencyNeighborhood(data.bairro)
+          if (data.cidade || data.localidade || data.municipio) setAgencyCity(data.cidade || data.localidade || data.municipio)
+          if (data.uf) setAgencyState(data.uf)
+          if (data.ibge || data.ibgeCode || data.codigoMunicipio) setAgencyIbgeCode(data.ibge || data.ibgeCode || data.codigoMunicipio)
+        }
+      } catch {}
+      finally {
+        setLoadingAgencyCep(false)
+      }
+    }
+  }
+
+  const handleLookupAgencyCnpj = async (val: string) => {
+    const clean = val.replace(/\D/g, "")
+    if (clean.length === 14) {
+      setLoadingAgencyCnpj(true)
+      try {
+        const res = await fetch(`/api/nfse/lookup-cnpj/${clean}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.razaoSocial) setAgencyCorporateName(data.razaoSocial)
+          if (data.nomeFantasia) setAgencyTradeName(data.nomeFantasia)
+          if (data.email) setAgencyFinancialEmail(data.email)
+          if (data.telefone) setAgencyPhone(data.telefone)
+          if (data.cep) setAgencyCep(data.cep)
+          if (data.logradouro) setAgencyAddress(data.logradouro)
+          if (data.numero) setAgencyNumber(data.numero)
+          if (data.complemento) setAgencyComplement(data.complemento)
+          if (data.bairro) setAgencyNeighborhood(data.bairro)
+          if (data.cidade || data.municipio) setAgencyCity(data.cidade || data.municipio)
+          if (data.uf) setAgencyState(data.uf)
+          if (data.ibgeCode || data.codigoMunicipio || data.codigoIbge) setAgencyIbgeCode(data.ibgeCode || data.codigoMunicipio || data.codigoIbge)
+        }
+      } catch {}
+      finally {
+        setLoadingAgencyCnpj(false)
+      }
+    }
+  }
+
+  const handleOpenNewAgency = () => {
+    setEditingAgency(null)
+    setAgencyCorporateName("")
+    setAgencyTradeName("")
+    setAgencyCnpj("")
+    setAgencyStateReg("")
+    setAgencyMunReg("")
+    setAgencyFinancialEmail("")
+    setAgencyPhone("")
+    setAgencyContactPerson("")
+    setAgencyBillingTerms("Cartão Virtual VCN / 15 dias")
+    setAgencyDefaultRatePolicy("COMISSIONADA")
+    setAgencyDefaultCommissionPct(12)
+    setAgencyDefaultInvoiceRecipient("company")
+    setAgencyCep("")
+    setAgencyAddress("")
+    setAgencyNumber("")
+    setAgencyComplement("")
+    setAgencyNeighborhood("")
+    setAgencyCity("São Paulo")
+    setAgencyState("SP")
+    setAgencyIbgeCode("3550308")
+    setAgencyNotes("")
+    setAgencyPosUnits([{ name: "Corporativo Nacional", email: "", phone: "" }])
+    setAgencyAgents([])
+    setAgencyModalOpen(true)
+  }
+
+  const handleEditAgency = (ag: any) => {
+    setEditingAgency(ag)
+    setAgencyCorporateName(ag.corporateName || ag.razaoSocial || "")
+    setAgencyTradeName(ag.tradeName || ag.nomeFantasia || "")
+    setAgencyCnpj(ag.cnpj || "")
+    setAgencyStateReg(ag.stateRegistration || "")
+    setAgencyMunReg(ag.municipalRegistration || "")
+    setAgencyFinancialEmail(ag.financialEmail || "")
+    setAgencyPhone(ag.phone || "")
+    setAgencyContactPerson(ag.contactPerson || "")
+    setAgencyBillingTerms(ag.billingTerms || "Cartão Virtual VCN / 15 dias")
+    setAgencyDefaultRatePolicy(ag.defaultRatePolicy === "NET" ? "NET" : "COMISSIONADA")
+    setAgencyDefaultCommissionPct(ag.defaultRatePolicy === "NET" ? 0 : Number(ag.defaultCommissionPct ?? 12))
+    setAgencyDefaultInvoiceRecipient(ag.defaultInvoiceRecipient || "company")
+    setAgencyCep(ag.cep || "")
+    setAgencyAddress(ag.address || ag.logradouro || "")
+    setAgencyNumber(ag.number || ag.numero || "")
+    setAgencyComplement(ag.complement || ag.complemento || "")
+    setAgencyNeighborhood(ag.neighborhood || ag.bairro || "")
+    setAgencyCity(ag.city || ag.cidade || "São Paulo")
+    setAgencyState(ag.state || ag.uf || "SP")
+    setAgencyIbgeCode(ag.ibgeCode || ag.codigoMunicipio || "3550308")
+    setAgencyNotes(ag.notes || "")
+    setAgencyPosUnits(Array.isArray(ag.posUnits) ? ag.posUnits.map((u: any) => ({ name: u.name || "", email: u.email || "", phone: u.phone || "" })) : [])
+    setAgencyAgents(Array.isArray(ag.agents) ? ag.agents.map((a: any) => ({ name: a.name || "", email: a.email || "", phone: a.phone || "", posUnit: a.posUnit || "" })) : [])
+    setAgencyModalOpen(true)
+  }
+
+  const handleSaveAgency = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!agencyCorporateName.trim() || !agencyCnpj.trim()) return
+
+    setSavingAgency(true)
+    try {
+      const payload = {
+        corporateName: agencyCorporateName.trim(),
+        razaoSocial: agencyCorporateName.trim(),
+        tradeName: agencyTradeName.trim() || agencyCorporateName.trim(),
+        nomeFantasia: agencyTradeName.trim() || agencyCorporateName.trim(),
+        cnpj: agencyCnpj.trim(),
+        stateRegistration: agencyStateReg.trim(),
+        municipalRegistration: agencyMunReg.trim(),
+        financialEmail: agencyFinancialEmail.trim(),
+        phone: agencyPhone.trim(),
+        contactPerson: agencyContactPerson.trim(),
+        billingTerms: agencyBillingTerms.trim(),
+        defaultRatePolicy: agencyDefaultRatePolicy,
+        defaultCommissionPct: agencyDefaultRatePolicy === "NET" ? 0 : Number(agencyDefaultCommissionPct || 12),
+        defaultInvoiceRecipient: agencyDefaultInvoiceRecipient,
+        cep: agencyCep.trim().replace(/\D/g, ""),
+        address: agencyAddress.trim(),
+        logradouro: agencyAddress.trim(),
+        number: agencyNumber.trim(),
+        numero: agencyNumber.trim(),
+        complement: agencyComplement.trim(),
+        complemento: agencyComplement.trim(),
+        neighborhood: agencyNeighborhood.trim(),
+        bairro: agencyNeighborhood.trim(),
+        city: agencyCity.trim(),
+        cidade: agencyCity.trim(),
+        state: agencyState.trim().toUpperCase(),
+        uf: agencyState.trim().toUpperCase(),
+        ibgeCode: agencyIbgeCode.trim() || "3550308",
+        codigoMunicipio: agencyIbgeCode.trim() || "3550308",
+        notes: agencyNotes.trim(),
+        posUnits: agencyPosUnits.filter(u => u.name.trim()),
+        agents: agencyAgents.filter(a => a.name.trim() || a.email.trim())
+      }
+
+      if (editingAgency) {
+        await fetch(`/api/agencies/${editingAgency.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          credentials: "include"
+        })
+      } else {
+        await fetch("/api/agencies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          credentials: "include"
+        })
+      }
+      setAgencyModalOpen(false)
+      fetchAgencies()
+      if (editingAgency && activeAgencyDetail?.id === editingAgency.id) {
+        handleOpenAgencyDetail(editingAgency)
+      }
+    } finally {
+      setSavingAgency(false)
+    }
+  }
+
+  const handleOpenAgencyDetail = async (ag: any) => {
+    setLoadingAgencyDetail(true)
+    setAgencyDetailModalOpen(true)
+    try {
+      const res = await fetch(`/api/agencies/${ag.id}`, { credentials: "include" })
+      const data = await res.json()
+      setActiveAgencyDetail(data)
+    } finally {
+      setLoadingAgencyDetail(false)
+    }
+  }
+
   // ── Central de WhatsApp com Templates Prontos ──────────────────────────────
   const buildCrmTemplateData = (type: "welcome" | "room_ready" | "review" | "pix" | "invoice", guest: any) => {
     const cleanPhone = (guest?.phone || "").replace(/\D/g, "")
@@ -660,11 +1100,28 @@ export default function CrmGuests() {
     )
   })
 
+  // Filtragem de Agências B2B
+  const filteredAgencies = agencies.filter(a => {
+    const term = search.toLowerCase()
+    const posStr = (a.posUnits || []).map((u: any) => `${u.name || ""} ${u.email || ""}`).join(" ").toLowerCase()
+    const agentsStr = (a.agents || []).map((ag: any) => `${ag.name || ""} ${ag.email || ""}`).join(" ").toLowerCase()
+    return (
+      (a.corporateName || "").toLowerCase().includes(term) ||
+      (a.tradeName || "").toLowerCase().includes(term) ||
+      (a.cnpj || "").includes(term) ||
+      (a.financialEmail || "").toLowerCase().includes(term) ||
+      (a.contactPerson || "").toLowerCase().includes(term) ||
+      posStr.includes(term) ||
+      agentsStr.includes(term)
+    )
+  })
+
   // Estatísticas do CRM
   const totalGuests = guests.length
   const totalLtv = guests.reduce((acc, g) => acc + (g.totalSpent || 0), 0)
   const vipCount = guests.filter(g => (g.tags || []).includes("VIP")).length
   const totalCompanies = companies.length
+  const totalAgencies = agencies.length
 
   if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <Shell><AccessDenied /></Shell>
@@ -681,18 +1138,34 @@ export default function CrmGuests() {
             </div>
             <div>
               <h1 className="text-xl font-black text-foreground flex items-center gap-2">
-                <span>CRM 360º • Hóspedes & Empresas PJ</span>
+                <span>CRM 360º • Hóspedes, Empresas & Agências B2B</span>
                 <Badge className="bg-primary/20 text-primary hover:bg-primary/30 border-0 text-[10px]">
                   LTV & Histórico Unificado
                 </Badge>
               </h1>
               <p className="text-xs text-muted-foreground">
-                Gestão de relacionamento, métricas de fidelidade, preferências e faturamento corporativo
+                Gestão de relacionamento PF, empresas clientes PJ e agências corporativas B2B (unidades POS, emissores e comissões)
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setGoogleContactsModalOpen(true)
+                fetchGoogleContactsStatus()
+              }}
+              className="h-10 px-3.5 rounded-2xl text-xs font-bold gap-1.5 border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+            >
+              <Phone className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Google Contatos (Caller ID)</span>
+              {googleStatus?.connected && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              )}
+            </Button>
+
             <Button 
               variant="outline"
               size="sm" 
@@ -721,6 +1194,15 @@ export default function CrmGuests() {
                 <Building2 className="w-4 h-4" />
                 <span>Nova Empresa (PJ)</span>
               </Button>
+            ) : activeTab === "agencies" ? (
+              <Button 
+                onClick={handleOpenNewAgency} 
+                size="sm" 
+                className="h-10 px-4 rounded-2xl font-black text-xs gap-1.5 bg-violet-600 hover:bg-violet-700 text-white shadow-sm"
+              >
+                <Building className="w-4 h-4" />
+                <span>Nova Agência B2B</span>
+              </Button>
             ) : (
               <Button 
                 onClick={fetchAnalytics} 
@@ -736,14 +1218,14 @@ export default function CrmGuests() {
         </div>
 
         {/* ── CARDS DE MÉTRICAS CRM & LTV ── */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
           <Card className="rounded-2xl border border-border p-4 shadow-xs">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
                 <Users className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Hóspedes Cadastrados</div>
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Hóspedes PF</div>
                 <div className="text-xl font-black text-foreground">{totalGuests}</div>
               </div>
             </div>
@@ -767,7 +1249,7 @@ export default function CrmGuests() {
                 <Star className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Hóspedes VIPs & Frequentes</div>
+                <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">VIPs & Frequentes</div>
                 <div className="text-xl font-black text-amber-600">{vipCount}</div>
               </div>
             </div>
@@ -779,15 +1261,27 @@ export default function CrmGuests() {
                 <Building2 className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Empresas Parceiras (PJ)</div>
+                <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Empresas (PJ)</div>
                 <div className="text-xl font-black text-indigo-600">{totalCompanies}</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="rounded-2xl border border-border p-4 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-violet-500/10 text-violet-600 flex items-center justify-center shrink-0">
+                <Building className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-violet-600 uppercase tracking-wider">Agências (B2B)</div>
+                <div className="text-xl font-black text-violet-600">{totalAgencies}</div>
               </div>
             </div>
           </Card>
         </div>
 
-        {/* ── NAVEGAÇÃO PF vs PJ vs ANALYTICS ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-1.5 bg-muted/60 rounded-2xl border border-border">
+        {/* ── NAVEGAÇÃO PF vs PJ vs AGÊNCIAS vs ANALYTICS ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-1.5 bg-muted/60 rounded-2xl border border-border">
           <button
             type="button"
             onClick={() => { setActiveTab("guests"); setSearch(""); }}
@@ -814,6 +1308,18 @@ export default function CrmGuests() {
           </button>
           <button
             type="button"
+            onClick={() => { setActiveTab("agencies"); setSearch(""); fetchAgencies(); }}
+            className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
+              activeTab === "agencies"
+                ? "bg-card text-foreground shadow-xs ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Building className="w-4 h-4 text-violet-600" />
+            <span>Agências B2B ({totalAgencies})</span>
+          </button>
+          <button
+            type="button"
             onClick={() => { setActiveTab("analytics"); setSearch(""); fetchAnalytics(); }}
             className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
               activeTab === "analytics"
@@ -822,7 +1328,7 @@ export default function CrmGuests() {
             }`}
           >
             <BarChart3 className="w-4 h-4 text-amber-500" />
-            <span>Analytics Demográfico & Frigobar</span>
+            <span>Analytics & Frigobar</span>
           </button>
         </div>
 
@@ -834,7 +1340,13 @@ export default function CrmGuests() {
               <Input 
                 value={search} 
                 onChange={e => setSearch(e.target.value)} 
-                placeholder={activeTab === "guests" ? "Buscar por nome, CPF, celular, e-mail, cidade ou empresa..." : "Buscar por Razão Social, Nome Fantasia, CNPJ ou Gestor..."} 
+                placeholder={
+                  activeTab === "guests"
+                    ? "Buscar por nome, CPF, celular, e-mail, cidade ou empresa..."
+                    : activeTab === "companies"
+                    ? "Buscar por Razão Social, Nome Fantasia, CNPJ ou Gestor..."
+                    : "Buscar por Agência (Opus, Copastur, Avipam, Tripservice), CNPJ, Unidade POS ou Emissor..."
+                } 
                 className="pl-9.5 text-xs h-10 rounded-xl bg-background"
               />
             </div>
@@ -946,6 +1458,22 @@ export default function CrmGuests() {
                             <div className="font-mono text-muted-foreground">{g.documentNumber || g.document || "Sem CPF"}</div>
                             {g.phone && <div className="text-[11px] text-foreground font-semibold">{g.phone}</div>}
                             {g.email && <div className="text-[10px] text-muted-foreground truncate max-w-[180px]">{g.email}</div>}
+                            {g.phone && g.callerIdPreview && (
+                              <div className="mt-1 flex items-center gap-1 flex-wrap">
+                                <span
+                                  title="Como o nome aparece no identificador de chamadas (Google Contatos)"
+                                  className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20 max-w-[220px] truncate"
+                                >
+                                  <Phone className="w-2.5 h-2.5 shrink-0" />
+                                  <span className="truncate">{g.callerIdPreview}</span>
+                                </span>
+                                {g.googleContactSyncedAt && (
+                                  <Badge className="text-[8px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 px-1 py-0">
+                                    ✓ Google
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
                           </td>
 
                           <td className="p-3.5">
@@ -1003,6 +1531,23 @@ export default function CrmGuests() {
 
                           <td className="p-3.5 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {g.phone && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => handleSyncSingleGuestGoogle(g)}
+                                  disabled={syncingGuestId === g.id}
+                                  title={`Salvar no Google Contatos (${g.callerIdPreview || g.fullName})`}
+                                  className="h-8 w-8 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-xl"
+                                >
+                                  {syncingGuestId === g.id ? (
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Phone className="w-3.5 h-3.5" />
+                                  )}
+                                </Button>
+                              )}
+
                               {g.phone && (
                                 <Button
                                   size="icon"
@@ -1118,6 +1663,153 @@ export default function CrmGuests() {
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                                 <span>Editar</span>
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── LISTAGEM DE AGÊNCIAS CORPORATIVAS (B2B) ── */}
+        {activeTab === "agencies" && (
+          <Card className="rounded-3xl border border-border shadow-sm overflow-hidden">
+            <CardContent className="p-0">
+              {filteredAgencies.length === 0 ? (
+                <div className="p-16 text-center text-xs text-muted-foreground">Nenhuma agência corporativa B2B cadastrada.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold">
+                      <tr>
+                        <th className="p-3.5">Agência B2B / CNPJ</th>
+                        <th className="p-3.5">Política Tarifária & Tomador NF</th>
+                        <th className="p-3.5">Unidades POS & Emissores</th>
+                        <th className="p-3.5">Empresas Clientes Atendidas</th>
+                        <th className="p-3.5">Performance B2B</th>
+                        <th className="p-3.5 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {filteredAgencies.map(ag => (
+                        <tr key={ag.id} className="hover:bg-muted/20 transition-colors">
+                          <td className="p-3.5">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-violet-500/10 text-violet-600 flex items-center justify-center font-black text-xs shrink-0">
+                                {(ag.tradeName || ag.corporateName || "AG").substring(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="font-bold text-foreground flex items-center gap-1.5">
+                                  <span>{ag.tradeName || ag.corporateName}</span>
+                                  <Badge className="text-[9px] bg-violet-500/15 text-violet-700 dark:text-violet-300 border-0 px-1.5 py-0">
+                                    AG-{String(ag.id).padStart(3, "0")}
+                                  </Badge>
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">{ag.corporateName}</div>
+                                <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{ag.cnpj}</div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="p-3.5">
+                            <div className="flex flex-col gap-1">
+                              <Badge
+                                className={`w-fit text-[10px] font-bold px-2 py-0.5 ${
+                                  ag.defaultRatePolicy === "NET"
+                                    ? "bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30"
+                                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                }`}
+                              >
+                                {ag.defaultRatePolicy === "NET"
+                                  ? "Tarifa NET (0% Comissão)"
+                                  : `Comissionada (${ag.defaultCommissionPct ?? 12}%)`}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground">
+                                Tomador NF Padrão:{" "}
+                                <strong className="text-foreground">
+                                  {ag.defaultInvoiceRecipient === "agency"
+                                    ? "Agência (PJ)"
+                                    : ag.defaultInvoiceRecipient === "guest"
+                                    ? "Hóspede (PF)"
+                                    : "Empresa Cliente (PJ)"}
+                                </strong>
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="p-3.5">
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {(ag.posUnits || []).slice(0, 3).map((u: any, idx: number) => (
+                                <Badge key={idx} variant="outline" className="text-[9px] border-violet-300 text-violet-700 dark:text-violet-300">
+                                  📍 {u.name}
+                                </Badge>
+                              ))}
+                              {(ag.posUnits || []).length > 3 && (
+                                <Badge variant="outline" className="text-[9px]">+{(ag.posUnits || []).length - 3}</Badge>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {(ag.agents || []).length} {(ag.agents || []).length === 1 ? "emissor cadastrado" : "emissores cadastrados"}
+                              {ag.financialEmail ? ` • ${ag.financialEmail}` : ""}
+                            </div>
+                          </td>
+
+                          <td className="p-3.5">
+                            <div className="flex flex-wrap gap-1">
+                              {(ag.clientCompanies || []).length === 0 ? (
+                                <span className="text-[10px] text-muted-foreground">Sem empresas vinculadas</span>
+                              ) : (
+                                (ag.clientCompanies || []).slice(0, 3).map((cc: any) => (
+                                  <Badge key={cc.id} variant="outline" className="text-[9px] text-indigo-600 border-indigo-200">
+                                    🏢 {cc.name}
+                                  </Badge>
+                                ))
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="p-3.5">
+                            <div className="font-black text-emerald-600 text-sm">
+                              R$ {(ag.totalRevenue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              <strong>{ag.totalReservations || 0}</strong> reservas • Comissão: R$ {(ag.totalCommission || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </div>
+                          </td>
+
+                          <td className="p-3.5 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setLocation(`/notas?doc=${encodeURIComponent(ag.cnpj || "")}&nome=${encodeURIComponent(ag.corporateName || ag.tradeName || "")}&agencyId=${ag.id}&recipientType=agency`)}
+                                title="Emitir Nota Fiscal (NFS-e) para esta Agência"
+                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Emitir NFS-e</span>
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleEditAgency(ag)}
+                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 text-muted-foreground hover:text-foreground"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                <span>Editar</span>
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => handleOpenAgencyDetail(ag)}
+                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 bg-violet-600/10 text-violet-700 dark:text-violet-300 hover:bg-violet-600/20"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Ver 360º</span>
                               </Button>
                             </div>
                           </td>
@@ -2390,6 +3082,528 @@ export default function CrmGuests() {
           </DialogContent>
         </Dialog>
 
+        {/* ── MODAL CADASTRO/EDIÇÃO DE AGÊNCIA B2B ── */}
+        <Dialog open={agencyModalOpen} onOpenChange={setAgencyModalOpen}>
+          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[92vh] overflow-y-auto p-6">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Building className="w-5 h-5 text-violet-600" />
+                <span>{editingAgency ? "Editar Agência Corporativa B2B" : "Nova Agência Corporativa B2B"}</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Cadastro único por CNPJ com Unidades POS, Agentes Emissores, Política Tarifária (NET / Comissionada) e Tomador NF padrão
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveAgency} className="space-y-4 pt-2 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="space-y-1">
+                  <Label className="font-bold">CNPJ da Agência *</Label>
+                  <div className="flex gap-1.5">
+                    <Input
+                      value={agencyCnpj}
+                      onChange={e => {
+                        setAgencyCnpj(e.target.value)
+                        handleLookupAgencyCnpj(e.target.value)
+                      }}
+                      required
+                      placeholder="00.000.000/0000-00"
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                    {loadingAgencyCnpj && <RefreshCw className="w-4 h-4 animate-spin text-violet-600 self-center" />}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Telefone Geral / Plantão</Label>
+                  <Input value={agencyPhone} onChange={e => setAgencyPhone(e.target.value)} placeholder="(11) 0000-0000" className="h-9 text-xs rounded-xl" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="space-y-1">
+                  <Label className="font-bold">Razão Social *</Label>
+                  <Input value={agencyCorporateName} onChange={e => setAgencyCorporateName(e.target.value)} required className="h-9 text-xs rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Nome Fantasia (Ex: Copastur, Avipam)</Label>
+                  <Input value={agencyTradeName} onChange={e => setAgencyTradeName(e.target.value)} className="h-9 text-xs rounded-xl" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="space-y-1">
+                  <Label className="font-bold">E-mail Faturamento / Conciliação</Label>
+                  <Input value={agencyFinancialEmail} onChange={e => setAgencyFinancialEmail(e.target.value)} placeholder="faturamento@agencia.com.br" className="h-9 text-xs rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Responsável / Gestor</Label>
+                  <Input value={agencyContactPerson} onChange={e => setAgencyContactPerson(e.target.value)} placeholder="Ex: Mesa Corporativa" className="h-9 text-xs rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Condição de Pagamento</Label>
+                  <Input value={agencyBillingTerms} onChange={e => setAgencyBillingTerms(e.target.value)} placeholder="Cartão Virtual VCN / 15 dias" className="h-9 text-xs rounded-xl" />
+                </div>
+              </div>
+
+              {/* Política Tarifária & Regra de Tomador NF Padrão */}
+              <div className="p-3.5 bg-violet-500/5 border border-violet-500/20 rounded-2xl space-y-2.5">
+                <Label className="font-black text-violet-700 dark:text-violet-300 flex items-center gap-1.5 text-xs">
+                  <DollarSign className="w-3.5 h-3.5" />
+                  <span>Política Comercial B2B & Tomador Padrão da NFS-e</span>
+                </Label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Política Tarifária Padrão</Label>
+                    <select
+                      value={agencyDefaultRatePolicy}
+                      onChange={e => {
+                        const pol = e.target.value === "NET" ? "NET" : "COMISSIONADA"
+                        setAgencyDefaultRatePolicy(pol)
+                        if (pol === "NET") setAgencyDefaultCommissionPct(0)
+                        else if (agencyDefaultCommissionPct === 0) setAgencyDefaultCommissionPct(12)
+                      }}
+                      className="w-full h-9 px-2.5 text-xs rounded-xl border border-border bg-background font-semibold"
+                    >
+                      <option value="COMISSIONADA">Comissionada (Comissão %)</option>
+                      <option value="NET">Tarifa NET (0% Comissão)</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Comissão Padrão (%)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={50}
+                      step={0.5}
+                      disabled={agencyDefaultRatePolicy === "NET"}
+                      value={agencyDefaultRatePolicy === "NET" ? 0 : agencyDefaultCommissionPct}
+                      onChange={e => setAgencyDefaultCommissionPct(Number(e.target.value) || 0)}
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Tomador Padrão da NFS-e</Label>
+                    <select
+                      value={agencyDefaultInvoiceRecipient}
+                      onChange={e => setAgencyDefaultInvoiceRecipient(e.target.value as any)}
+                      className="w-full h-9 px-2.5 text-xs rounded-xl border border-border bg-background font-semibold"
+                    >
+                      <option value="company">Empresa Cliente (PJ)</option>
+                      <option value="agency">Agência de Viagens (PJ)</option>
+                      <option value="guest">Hóspede (PF)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Unidades POS / Células de Atendimento */}
+              <div className="p-3.5 bg-muted/20 border border-border rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold text-xs text-foreground">
+                    📍 Unidades POS / Células de Atendimento (Ex: Curitiba, Rio de Janeiro, São Paulo)
+                  </Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAgencyPosUnits(prev => [...prev, { name: "", email: "", phone: "" }])}
+                    className="h-7 px-2.5 text-[11px] font-bold rounded-xl gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Adicionar POS</span>
+                  </Button>
+                </div>
+                {agencyPosUnits.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">Nenhuma unidade POS cadastrada.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {agencyPosUnits.map((pos, idx) => (
+                      <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
+                        <Input
+                          value={pos.name}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyPosUnits(prev => prev.map((item, i) => i === idx ? { ...item, name: val } : item))
+                          }}
+                          placeholder="Nome da Unidade (Ex: Rio de Janeiro)"
+                          className="col-span-4 h-8 text-xs rounded-xl"
+                        />
+                        <Input
+                          value={pos.email}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyPosUnits(prev => prev.map((item, i) => i === idx ? { ...item, email: val } : item))
+                          }}
+                          placeholder="E-mail da Unidade POS"
+                          className="col-span-4 h-8 text-xs rounded-xl"
+                        />
+                        <Input
+                          value={pos.phone}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyPosUnits(prev => prev.map((item, i) => i === idx ? { ...item, phone: val } : item))
+                          }}
+                          placeholder="Telefone"
+                          className="col-span-3 h-8 text-xs rounded-xl"
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => setAgencyPosUnits(prev => prev.filter((_, i) => i !== idx))}
+                          className="col-span-1 h-8 w-8 text-rose-500 hover:bg-rose-500/10 rounded-xl"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Agentes Emissores */}
+              <div className="p-3.5 bg-muted/20 border border-border rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold text-xs text-foreground">
+                    👤 Agentes Emissores Vinculados
+                  </Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAgencyAgents(prev => [...prev, { name: "", email: "", phone: "", posUnit: agencyPosUnits[0]?.name || "" }])}
+                    className="h-7 px-2.5 text-[11px] font-bold rounded-xl gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Adicionar Emissor</span>
+                  </Button>
+                </div>
+                {agencyAgents.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">Nenhum agente emissor cadastrado.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {agencyAgents.map((agent, idx) => (
+                      <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
+                        <Input
+                          value={agent.name}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyAgents(prev => prev.map((item, i) => i === idx ? { ...item, name: val } : item))
+                          }}
+                          placeholder="Nome do Emissor"
+                          className="col-span-3 h-8 text-xs rounded-xl"
+                        />
+                        <Input
+                          value={agent.email}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyAgents(prev => prev.map((item, i) => i === idx ? { ...item, email: val } : item))
+                          }}
+                          placeholder="E-mail do Emissor"
+                          className="col-span-4 h-8 text-xs rounded-xl"
+                        />
+                        <Input
+                          value={agent.phone}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyAgents(prev => prev.map((item, i) => i === idx ? { ...item, phone: val } : item))
+                          }}
+                          placeholder="Telefone"
+                          className="col-span-2 h-8 text-xs rounded-xl"
+                        />
+                        <Input
+                          value={agent.posUnit}
+                          onChange={e => {
+                            const val = e.target.value
+                            setAgencyAgents(prev => prev.map((item, i) => i === idx ? { ...item, posUnit: val } : item))
+                          }}
+                          placeholder="Unidade POS"
+                          className="col-span-2 h-8 text-xs rounded-xl"
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => setAgencyAgents(prev => prev.filter((_, i) => i !== idx))}
+                          className="col-span-1 h-8 w-8 text-rose-500 hover:bg-rose-500/10 rounded-xl"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Endereço Fiscal da Agência */}
+              <div className="p-3 bg-muted/20 border border-border rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold flex items-center gap-1.5 text-xs text-foreground">
+                    <MapPin className="w-3.5 h-3.5 text-violet-600" />
+                    <span>Endereço Fiscal da Agência (para Emissão de NFS-e)</span>
+                  </Label>
+                  {loadingAgencyCep && <RefreshCw className="w-3.5 h-3.5 animate-spin text-violet-600" />}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">CEP</Label>
+                    <Input
+                      value={agencyCep}
+                      onChange={e => {
+                        setAgencyCep(e.target.value)
+                        handleLookupAgencyCep(e.target.value)
+                      }}
+                      placeholder="00000-000"
+                      className="h-8.5 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Logradouro</Label>
+                    <Input value={agencyAddress} onChange={e => setAgencyAddress(e.target.value)} placeholder="Av. / Rua..." className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Número</Label>
+                    <Input value={agencyNumber} onChange={e => setAgencyNumber(e.target.value)} placeholder="Nº" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Complemento</Label>
+                    <Input value={agencyComplement} onChange={e => setAgencyComplement(e.target.value)} placeholder="Andar / Sala" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Bairro</Label>
+                    <Input value={agencyNeighborhood} onChange={e => setAgencyNeighborhood(e.target.value)} placeholder="Bairro" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Cidade</Label>
+                    <Input value={agencyCity} onChange={e => setAgencyCity(e.target.value)} placeholder="Cidade" className="h-8.5 text-xs rounded-xl" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">UF</Label>
+                    <Input value={agencyState} onChange={e => setAgencyState(e.target.value.toUpperCase())} maxLength={2} className="h-8.5 text-xs rounded-xl uppercase font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-muted-foreground">Cód. IBGE</Label>
+                    <Input value={agencyIbgeCode} onChange={e => setAgencyIbgeCode(e.target.value)} placeholder="3550308" className="h-8.5 text-xs rounded-xl font-mono" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="font-bold">Observações & Acordos B2B</Label>
+                <Textarea value={agencyNotes} onChange={e => setAgencyNotes(e.target.value)} rows={2} className="text-xs rounded-xl" placeholder="Acordos de comissão, portal B2B Reservas, regras de faturamento..." />
+              </div>
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => setAgencyModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">Cancelar</Button>
+                <Button type="submit" disabled={savingAgency} className="rounded-xl h-9 text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white">
+                  {savingAgency ? "Salvando..." : "Salvar Agência B2B"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL VISÃO 360º DA AGÊNCIA B2B ── */}
+        <Dialog open={agencyDetailModalOpen} onOpenChange={setAgencyDetailModalOpen}>
+          <DialogContent className="sm:max-w-4xl bg-card border border-border rounded-3xl max-h-[92vh] overflow-y-auto p-6">
+            {loadingAgencyDetail || !activeAgencyDetail ? (
+              <div className="p-12 text-center text-xs text-muted-foreground">Carregando visão 360º da Agência B2B...</div>
+            ) : (
+              <div className="space-y-5 text-xs">
+                <DialogHeader className="border-b border-border pb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-violet-500/15 text-violet-600 flex items-center justify-center font-black text-base">
+                        {(activeAgencyDetail.tradeName || activeAgencyDetail.corporateName || "AG").substring(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <DialogTitle className="text-lg font-black text-foreground flex items-center gap-2">
+                          <span>{activeAgencyDetail.tradeName || activeAgencyDetail.corporateName}</span>
+                          <Badge className="bg-violet-500/15 text-violet-700 dark:text-violet-300 border-0 text-[10px]">
+                            CNPJ: {activeAgencyDetail.cnpj}
+                          </Badge>
+                        </DialogTitle>
+                        <DialogDescription className="text-xs">
+                          {activeAgencyDetail.corporateName} • {activeAgencyDetail.city}/{activeAgencyDetail.state}
+                        </DialogDescription>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setAgencyDetailModalOpen(false)
+                          handleEditAgency(activeAgencyDetail)
+                        }}
+                        className="h-8 px-3 text-xs font-bold rounded-xl gap-1.5"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Editar Agência</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => setLocation(`/notas?doc=${encodeURIComponent(activeAgencyDetail.cnpj || "")}&nome=${encodeURIComponent(activeAgencyDetail.corporateName || "")}&agencyId=${activeAgencyDetail.id}&recipientType=agency`)}
+                        className="h-8 px-3 text-xs font-bold rounded-xl gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Emitir NFS-e para Agência</span>
+                      </Button>
+                    </div>
+                  </div>
+                </DialogHeader>
+
+                {/* KPIs 360º */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Card className="p-3.5 rounded-2xl border border-border">
+                    <div className="text-[10px] font-bold text-muted-foreground uppercase">Reservas Intermediadas</div>
+                    <div className="text-xl font-black text-foreground mt-0.5">{activeAgencyDetail.metrics?.totalReservations || 0}</div>
+                    <div className="text-[10px] text-muted-foreground">{activeAgencyDetail.metrics?.totalNights || 0} diárias geradas</div>
+                  </Card>
+                  <Card className="p-3.5 rounded-2xl border border-border">
+                    <div className="text-[10px] font-bold text-emerald-600 uppercase">Receita Bruta</div>
+                    <div className="text-xl font-black text-emerald-600 mt-0.5">
+                      R$ {(activeAgencyDetail.metrics?.totalRevenue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      Líquido NET: R$ {(activeAgencyDetail.metrics?.totalNetRevenue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </div>
+                  </Card>
+                  <Card className="p-3.5 rounded-2xl border border-border">
+                    <div className="text-[10px] font-bold text-amber-600 uppercase">Comissão B2B</div>
+                    <div className="text-xl font-black text-amber-600 mt-0.5">
+                      R$ {(activeAgencyDetail.metrics?.totalCommission || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      Política padrão: {activeAgencyDetail.defaultRatePolicy} ({activeAgencyDetail.defaultCommissionPct ?? 0}%)
+                    </div>
+                  </Card>
+                  <Card className="p-3.5 rounded-2xl border border-border">
+                    <div className="text-[10px] font-bold text-indigo-600 uppercase">Empresas & Hóspedes</div>
+                    <div className="text-xl font-black text-indigo-600 mt-0.5">
+                      {activeAgencyDetail.metrics?.companiesServedCount || 0} empresas
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {activeAgencyDetail.metrics?.guestsServedCount || 0} hóspedes • {activeAgencyDetail.metrics?.invoicesIssuedCount || 0} NFS-e
+                    </div>
+                  </Card>
+                </div>
+
+                {/* Unidades POS & Emissores */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3.5 rounded-2xl border border-border bg-muted/20 space-y-2">
+                    <div className="font-black text-foreground flex items-center justify-between">
+                      <span>📍 Unidades POS Cadastradas ({(activeAgencyDetail.posUnits || []).length})</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {(activeAgencyDetail.posUnits || []).map((u: any, idx: number) => (
+                        <div key={idx} className="p-2 rounded-xl bg-card border border-border flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-foreground">{u.name}</div>
+                            {u.email && <div className="text-[10px] text-muted-foreground">{u.email}</div>}
+                          </div>
+                          {u.phone && <span className="text-[10px] font-mono text-muted-foreground">{u.phone}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-border bg-muted/20 space-y-2">
+                    <div className="font-black text-foreground flex items-center justify-between">
+                      <span>👤 Emissores / Agentes ({(activeAgencyDetail.agents || []).length})</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {(activeAgencyDetail.agents || []).map((a: any, idx: number) => (
+                        <div key={idx} className="p-2 rounded-xl bg-card border border-border flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-foreground">{a.name}</div>
+                            <div className="text-[10px] text-muted-foreground">{a.email} {a.posUnit ? `• POS: ${a.posUnit}` : ""}</div>
+                          </div>
+                          {a.phone && <span className="text-[10px] font-mono text-muted-foreground">{a.phone}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Empresas Clientes Vinculadas */}
+                <div className="space-y-2">
+                  <div className="font-black text-foreground">🏢 Empresas Clientes Atendidas por esta Agência</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(activeAgencyDetail.companiesServed || []).map((comp: any) => (
+                      <div key={comp.id} className="px-3 py-2 rounded-xl bg-indigo-500/5 border border-indigo-500/20 flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-indigo-600" />
+                        <div>
+                          <div className="font-bold text-foreground">{comp.tradeName || comp.corporateName}</div>
+                          <div className="text-[10px] font-mono text-muted-foreground">{comp.cnpj}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Histórico de Reservas B2B Intermediadas */}
+                <div className="space-y-2">
+                  <div className="font-black text-foreground">📅 Reservas Corporativas Intermediadas ({(activeAgencyDetail.reservations || []).length})</div>
+                  <div className="overflow-x-auto rounded-2xl border border-border">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold">
+                        <tr>
+                          <th className="p-2.5">Nº B2B / RLOC</th>
+                          <th className="p-2.5">Hóspede / Flat</th>
+                          <th className="p-2.5">Empresa Cliente</th>
+                          <th className="p-2.5">Check-in / Out</th>
+                          <th className="p-2.5">Tarifa & Comissão</th>
+                          <th className="p-2.5">Tomador NF</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {(activeAgencyDetail.reservations || []).map((r: any) => (
+                          <tr key={r.id} className="hover:bg-muted/20">
+                            <td className="p-2.5 font-mono">
+                              <div className="font-bold text-violet-600">{r.b2bReservationNumber || r.reservationCode}</div>
+                              {r.b2bLocatorRloc && <div className="text-[10px] text-muted-foreground">RLOC: {r.b2bLocatorRloc}</div>}
+                            </td>
+                            <td className="p-2.5">
+                              <div className="font-bold text-foreground">{r.guestName}</div>
+                              <div className="text-[10px] text-muted-foreground">Flat {r.flatNumber} • POS: {r.agencyPosUnit || "—"}</div>
+                            </td>
+                            <td className="p-2.5">
+                              <div className="font-semibold text-indigo-600">{r.companyName || "—"}</div>
+                              {r.costCenter && <div className="text-[10px] text-muted-foreground">CC: {r.costCenter}</div>}
+                            </td>
+                            <td className="p-2.5 font-mono text-[11px]">
+                              {r.checkInDate} → {r.checkOutDate} ({r.nights}n)
+                            </td>
+                            <td className="p-2.5">
+                              <div className="font-bold text-emerald-600">R$ {Number(r.totalAmount || 0).toFixed(2)}</div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {r.b2bRatePolicy === "NET" ? "NET (0%)" : `Comiss. ${r.b2bCommissionPct || 12}% (R$ ${Number(r.b2bCommissionAmount || 0).toFixed(2)})`}
+                              </div>
+                            </td>
+                            <td className="p-2.5">
+                              <Badge variant="outline" className="text-[10px]">
+                                {r.invoiceRecipientType === "agency" ? "Agência PJ" : r.invoiceRecipientType === "guest" ? "Hóspede PF" : "Empresa PJ"}
+                              </Badge>
+                              {r.nfHideFromGuest && (
+                                <div className="text-[9px] text-amber-600 font-bold mt-0.5">🔒 Ocultar NF no Balcão</div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         {/* ── VISUALIZADOR DE PDF (PDF.js, funciona no celular) ── */}
         {pdfViewer && (
           <PdfViewerDialog
@@ -2531,6 +3745,268 @@ export default function CrmGuests() {
                     <span>Sim, Excluir Todos os Dados</span>
                   </>
                 )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL CENTRAL DE INTEGRAÇÃO GOOGLE CONTATOS (CALLER ID & WHATSAPP) ── */}
+        <Dialog open={googleContactsModalOpen} onOpenChange={setGoogleContactsModalOpen}>
+          <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto bg-card border border-border rounded-3xl p-6 shadow-2xl">
+            <DialogHeader className="border-b border-border pb-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 flex items-center justify-center shrink-0">
+                    <Phone className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <DialogTitle className="text-lg font-black text-foreground flex items-center gap-2 flex-wrap">
+                      <span>Integração Google Contatos • Identificador de Chamadas</span>
+                      {googleStatus?.connected ? (
+                        <Badge className="bg-emerald-600 text-white text-[10px]">
+                          ✓ Conta Google Conectada
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-600">
+                          Pronto para Sincronizar
+                        </Badge>
+                      )}
+                    </DialogTitle>
+                    <DialogDescription className="text-xs text-muted-foreground mt-1">
+                      Salva automaticamente todos os hóspedes do CRM na sua agenda do Google Contatos para identificar quem está ligando no celular e no WhatsApp.
+                    </DialogDescription>
+                  </div>
+                </div>
+              </div>
+            </DialogHeader>
+
+            <div className="space-y-5 py-2">
+              {/* Resumo de Métricas */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3.5 rounded-2xl bg-muted/40 border border-border">
+                  <div className="text-[10px] font-bold uppercase text-muted-foreground">Hóspedes com Telefone</div>
+                  <div className="text-xl font-black text-foreground mt-0.5">
+                    {googleStatus?.guestsWithPhoneCount ?? guests.filter(g => g.phone).length}
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-300">Sincronizados Google API</div>
+                  <div className="text-xl font-black text-emerald-600 mt-0.5">
+                    {googleStatus?.syncedGuestsCount ?? 0}
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20">
+                  <div className="text-[10px] font-bold uppercase text-blue-700 dark:text-blue-300">Padrão no Visor</div>
+                  <div className="text-xs font-black text-blue-600 mt-1 truncate">
+                    Nome • Empresa [UH]
+                  </div>
+                </div>
+              </div>
+
+              {/* Simulação do Visor do Celular quando o hóspede ligar */}
+              {(() => {
+                const sample = googleStatus?.previewContacts?.[0] || {
+                  displayName: "João Silva • Petrobras [UH 204]",
+                  organizationName: "Petrobras • CorpFlats",
+                  jobTitle: "Mensalista • UH 204 • RES-605",
+                  e164Phone: "+5522999887766",
+                  email: "joao.silva@empresa.com.br",
+                  notesText: "📋 Código CRM: HOSP-00001 | Perfil: Mensalista\n🏢 Empresa: Petrobras\n🏨 Unidade/Reserva: UH 204 • Reserva RES-605\n🪪 CPF: 123.456.789-00\n📍 Cidade/UF: Campos dos Goytacazes/RJ\n🚗 Veículo: ABC1D23\n🏷️ Tags: VIP, Corporativo"
+                }
+                return (
+                  <div className="p-4 rounded-2xl bg-slate-900 text-slate-100 border border-slate-800 shadow-inner space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                        Prévia Real: Como aparece no Celular quando o Hóspede Ligar
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">{sample.e164Phone || "+55 22 99999-9999"}</span>
+                    </div>
+                    <div className="text-base sm:text-lg font-black text-white tracking-tight">
+                      {sample.displayName}
+                    </div>
+                    <div className="text-xs text-emerald-300 font-semibold">
+                      {sample.organizationName} — {sample.jobTitle}
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-800/90 border border-slate-700 text-[11px] text-slate-300 font-mono whitespace-pre-line leading-relaxed">
+                      {sample.notesText}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* OPÇÃO 1: Sincronização Automática em Tempo Real via API do Google */}
+              <div className="p-4 rounded-2xl border border-border bg-card space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black text-foreground flex items-center gap-2">
+                      <span>1. Sincronização Automática em Tempo Real (Google People API)</span>
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Todo hóspede novo ou editado no CRM é salvo automaticamente na nuvem do seu Google Contatos.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs font-bold">Auto-Sync CRM</Label>
+                    <Switch
+                      checked={Boolean(googleStatus?.enabled ?? true)}
+                      onCheckedChange={handleToggleGoogleAutoSync}
+                    />
+                  </div>
+                </div>
+
+                {googleStatus?.connected ? (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <div className="text-xs font-black text-foreground">
+                          Conectado: {googleStatus.connectedEmail || "Conta Google Ativa"}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {googleStatus.lastSyncAt
+                            ? `Última sincronização: ${new Date(googleStatus.lastSyncAt).toLocaleString("pt-BR")}`
+                            : "Pronto para sincronizar todos os hóspedes."}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleSyncAllGoogleContacts}
+                        disabled={syncingAllGoogle}
+                        className="rounded-xl text-xs font-black gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${syncingAllGoogle ? "animate-spin" : ""}`} />
+                        <span>{syncingAllGoogle ? "Sincronizando..." : "Sincronizar Todos Agora"}</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleDisconnectGoogle}
+                        className="rounded-xl text-xs font-bold text-rose-600 border-rose-200"
+                      >
+                        Desconectar
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-muted/40 border border-border">
+                    <div className="text-xs text-muted-foreground">
+                      Conecte sua conta Google para enviar automaticamente os contatos para o seu celular.
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleConnectGoogleOAuthPopup}
+                        className="rounded-xl text-xs font-black gap-1.5 bg-primary text-primary-foreground"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Conectar Conta Google (OAuth2)</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowAdvancedGoogleConfig(v => !v)}
+                        className="rounded-xl text-xs font-bold"
+                      >
+                        {showAdvancedGoogleConfig ? "Ocultar Credenciais" : "Configurar Token / Client ID"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {showAdvancedGoogleConfig && (
+                  <div className="p-3.5 rounded-xl bg-muted/30 border border-border space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Google OAuth Client ID</Label>
+                        <Input
+                          value={googleClientIdInput}
+                          onChange={e => setGoogleClientIdInput(e.target.value)}
+                          placeholder="xxx.apps.googleusercontent.com"
+                          className="h-9 text-xs rounded-xl"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Google OAuth Client Secret (Opcional p/ Refresh Automático)</Label>
+                        <Input
+                          type="password"
+                          value={googleClientSecretInput}
+                          onChange={e => setGoogleClientSecretInput(e.target.value)}
+                          placeholder="GOCSPX-..."
+                          className="h-9 text-xs rounded-xl"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold">
+                        Access Token Direto Google People API (Opcional — escopo: https://www.googleapis.com/auth/contacts)
+                      </Label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={googleManualTokenInput}
+                          onChange={e => setGoogleManualTokenInput(e.target.value)}
+                          placeholder="ya29.a0..."
+                          className="h-9 text-xs rounded-xl flex-1 font-mono"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={handleSaveGoogleAdvancedConfig}
+                          disabled={savingGoogleConfig}
+                          className="h-9 rounded-xl text-xs font-bold"
+                        >
+                          {savingGoogleConfig ? "Salvando..." : "Salvar e Conectar"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* OPÇÃO 2: Importação Instantânea em 1 Clique via vCard (.vcf) Universal */}
+              <div className="p-4 rounded-2xl border border-blue-500/30 bg-blue-500/5 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black text-foreground flex items-center gap-2">
+                      <span>2. Sincronização Instantânea via Arquivo vCard (.vcf) p/ Google Contatos</span>
+                      <Badge className="bg-blue-600 text-white text-[9px]">Funciona na Hora (Sem OAuth)</Badge>
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Gera o arquivo oficial <code className="font-mono">.vcf</code> com todos os hóspedes já formatados (Nome + Empresa + UH + CPF + Placa + Notas). Basta abrir no celular ou importar em <strong>contacts.google.com</strong>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <Button
+                    size="sm"
+                    onClick={handleExportAllVCard}
+                    className="rounded-xl text-xs font-black gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>1º Baixar Todos os Hóspedes (.vcf)</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => window.open("https://contacts.google.com/import", "_blank")}
+                    className="rounded-xl text-xs font-bold gap-1.5 border-blue-500/40 text-blue-700 dark:text-blue-300"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>2º Abrir Google Contatos (Importar .vcf)</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="border-t border-border pt-3 flex items-center justify-between">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setGoogleContactsModalOpen(false)}
+                className="rounded-xl text-xs font-bold"
+              >
+                Fechar
               </Button>
             </DialogFooter>
           </DialogContent>
