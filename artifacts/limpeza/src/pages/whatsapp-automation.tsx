@@ -1780,15 +1780,14 @@ export default function WhatsappAutomation() {
         sendMode: testSendMode
       }
 
-      if (testSendMode === "buttons") {
+      const isGoogleRevTest = /writereview\?placeid=|g\.page\/r\/|link_avaliacao_google/i.test(String(payload.message || ""))
+      if (isGoogleRevTest) {
+        payload.sendMode = "text"
+        payload.footer = ""
+        payload.buttons = []
+      } else if (testSendMode === "buttons") {
         if (testIncludeButtons && editingButtons.length > 0) {
           payload.buttons = editingButtons
-        } else {
-          payload.buttons = [
-            { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.com.br/pre-checkin/RES-113-0034" },
-            { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.com.br/minha-reserva/RES-113-0034" },
-            { id: "btn_test_call", type: "CALL", label: "📞 Falar na Administração", phone: "5522997124021" }
-          ]
         }
       }
 
@@ -1936,13 +1935,16 @@ export default function WhatsappAutomation() {
     return rendered
       .split("\n")
       .map((line, lineIdx) => {
-        // Simple bold parser
-        const parts = line.split(/(\*[^*]+\*)/g)
+        // Simple bold + URL parser
+        const parts = line.split(/(\*[^*]+\*|https?:\/\/[^\s]+)/g)
         return (
           <span key={lineIdx} className="block leading-relaxed min-h-[1.2em]">
             {parts.map((p, pIdx) => {
               if (p.startsWith("*") && p.endsWith("*") && p.length > 2) {
                 return <strong key={pIdx} className="font-bold text-neutral-900 dark:text-neutral-50">{p.slice(1, -1)}</strong>
+              }
+              if (/^https?:\/\//i.test(p)) {
+                return <a key={pIdx} href={p} target="_blank" rel="noopener noreferrer" className="text-sky-600 dark:text-sky-400 underline break-all">{p}</a>
               }
               return <span key={pIdx}>{p}</span>
             })}
@@ -4760,6 +4762,28 @@ export default function WhatsappAutomation() {
                         {/* Balão de Mensagem Estilo WhatsApp */}
                         <div className="relative self-end max-w-[92%] bg-[#D9FDD3] dark:bg-[#005C4B] rounded-2xl rounded-tr-xs shadow-xs p-2.5 pb-1 text-xs border border-emerald-300/30">
                           
+                          {/* Card de Pré-Visualização de Link (Link Preview WhatsApp) */}
+                          {/writereview\?placeid=|link_avaliacao_google|g\.page\/r\//i.test(editingMessage || "") && (
+                            <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
+                              <img
+                                src="/flat-preview.jpg"
+                                alt="CorpFlats Preview"
+                                className="w-full h-28 object-cover"
+                              />
+                              <div className="p-2 space-y-0.5">
+                                <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
+                                  ⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)
+                                </p>
+                                <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
+                                  Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!
+                                </p>
+                                <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
+                                  search.google.com
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Conteúdo formatado */}
                           <div className="text-[12px] whitespace-pre-wrap break-words text-neutral-900 dark:text-neutral-100">
                             {formatWhatsappMarkdown(editingMessage)}

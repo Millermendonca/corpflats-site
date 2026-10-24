@@ -97,11 +97,13 @@ import {
   resolveBestNpsGuestName,
   getReservationRecipients,
   hasNonFinancialChanges,
+  isValidBrazilianCpf,
   isPendingGuestName,
   isMissingGuestDataForCredential,
   dispatchRequesterGuestCredentialRequest,
   dispatchCatchUpGuestRulerMessages,
-  reservationHasAnyContact
+  reservationHasAnyContact,
+  checkZapiPhoneExists
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -23583,9 +23585,10 @@ function findReservationByLocatorOrContact(query) {
 
   // 2. Código normalizado (sem caracteres especiais/hífens)
   const norm = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-  if (norm.length >= 3) {
+  if (norm.length >= 2) {
     r = db.reservations.find(resItem =>
       (resItem.code || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm ||
+      (resItem.code || "").toUpperCase() === `RES-${norm}` ||
       String(resItem.b2bReservationNumber || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm ||
       String(resItem.externalReservationNumber || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm ||
       String(resItem.b2bLocatorRloc || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm
@@ -24300,49 +24303,79 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       guestEmail,
       docPhotoBase64,
       docPhotoUrl,
-      notes
+      notes,
+      sourceMode
     } = req.body || {};
 
     const fallbackExistingName = !isPendingGuestName(r.guestName) ? r.guestName : "";
     const cleanName = String(guestName !== undefined ? guestName : fallbackExistingName).trim();
     const rawDocInput = String(guestDocument || cpf || r.guestDocument || "").trim();
     const cleanDoc = rawDocInput.replace(/\D/g, "");
-    const cleanPhone = String(guestPhone || whatsapp || r.guestPhone || "").replace(/\D/g, "");
+    let cleanPhone = String(guestPhone || whatsapp || r.guestPhone || "").replace(/\D/g, "");
     const cleanSecPhone = String(guestSecondaryPhone || r.guestSecondaryPhone || "").replace(/\D/g, "");
     const cleanEmail = String(guestEmail || r.guestEmail || "").trim();
 
     if (!cleanName || isPendingGuestName(cleanName) || cleanName.split(/\s+/).filter(Boolean).length < 2) {
       return res.status(400).json({ error: "O nome completo (nome e sobrenome) do hóspede é obrigatório." });
     }
-    if (!cleanDoc || (cleanDoc.length < 11 && rawDocInput.replace(/[^a-zA-Z0-9]/g, "").length < 6)) {
-      return res.status(400).json({ error: "O CPF válido (11 dígitos) do hóspede é obrigatório para liberação na portaria." });
+    if (!cleanDoc || !isValidBrazilianCpf(cleanDoc)) {
+      return res.status(400).json({
+        error: "O CPF informado é inválido. Por favor, verifique os 11 dígitos do CPF do hóspede.",
+        invalidCpf: true
+      });
     }
     if (!cleanPhone || cleanPhone.length < 10) {
       return res.status(400).json({ error: "O telefone / WhatsApp do hóspede com DDD é obrigatório." });
     }
 
+    // Verifica se o telefone possui conta ativa no WhatsApp via Z-API
+    try {
+      const waCheck = await checkZapiPhoneExists(cleanPhone, db?.zapiConfig);
+      if (waCheck && waCheck.checked && waCheck.exists === false) {
+        return res.status(400).json({
+          error: "O telefone informado não possui conta ativa no WhatsApp. Por favor, informe um número que possua WhatsApp para receber as informações de acesso ao flat.",
+          invalidWhatsApp: true
+        });
+      }
+    } catch (waErr) {
+      console.warn("[AgencyGuestCredential] Falha ao consultar phone-exists na Z-API (prosseguindo):", waErr?.message);
+    }
+
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({
+        error: "O e-mail válido do hóspede é obrigatório.",
+        invalidEmail: true
+      });
+    }
+
     let finalDocUrl = docPhotoUrl || r.docPhotoUrl || (r.guests && r.guests[0]?.docPhotoUrl) || null;
     if (docPhotoBase64 && String(docPhotoBase64).startsWith("data:")) {
-      finalDocUrl = await uploadImageToStorage(docPhotoBase64, `b2b_cred_${r.code}`, db, "guests");
+      let normalizedDocBase64 = String(docPhotoBase64);
+      if (normalizedDocBase64.startsWith("data:application/octet-stream;base64,")) {
+        normalizedDocBase64 = normalizedDocBase64.replace("data:application/octet-stream;base64,", "data:application/pdf;base64,");
+      }
+      finalDocUrl = await uploadImageToStorage(normalizedDocBase64, `b2b_cred_${r.code}`, db, "guests");
     }
 
     if (!finalDocUrl) {
-      return res.status(400).json({ error: "O envio do documento de identificação do hóspede (RG, CNH ou Passaporte) é obrigatório." });
+      return res.status(400).json({ error: "O envio do documento de identificação do hóspede (foto ou PDF) é obrigatório." });
     }
 
     r.guestName = cleanName;
     r.guestPending = false;
-    r.guestDocument = cleanDoc || rawDocInput;
+    r.guestDocument = cleanDoc;
     r.guestPhone = cleanPhone;
     if (cleanSecPhone) r.guestSecondaryPhone = cleanSecPhone;
-    if (cleanEmail) r.guestEmail = cleanEmail;
+    r.guestEmail = cleanEmail;
     r.docPhotoUrl = finalDocUrl;
     if (notes) {
+      const labelPrefix = sourceMode === "guest" ? "Identificação Hóspede" : "Credenciamento Solicitante";
       r.receptionNotes = r.receptionNotes
-        ? `${r.receptionNotes} | Credenciamento Solicitante: ${String(notes).trim()}`
-        : `Credenciamento Solicitante: ${String(notes).trim()}`;
+        ? `${r.receptionNotes} | ${labelPrefix}: ${String(notes).trim()}`
+        : `${labelPrefix}: ${String(notes).trim()}`;
     }
     r.credentialStatus = "completed";
+    r.credentialSourceMode = sourceMode === "guest" ? "guest" : "agency";
     r.b2bCredentialCompletedAt = new Date().toISOString();
     r.updatedAt = r.b2bCredentialCompletedAt;
 
@@ -48513,6 +48546,15 @@ function serveSpaWithMetadata(distFolder, req, res) {
       imageAlt = "CorpFlats • Pagamento PIX";
       imageWidth = "1200";
       imageHeight = "630";
+    } else if (rawPath.startsWith("/avaliar") || rawPath.startsWith("/google-review")) {
+      const targetGoogleReview = "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
+      const reviewTitle = "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)";
+      const reviewDesc = "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!";
+      const reviewImg = "https://corpflats.com.br/flat-preview.jpg";
+      const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path}`;
+      const redirectHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${reviewTitle}</title><meta name="description" content="${reviewDesc}" /><meta property="og:type" content="website" /><meta property="og:title" content="${reviewTitle}" /><meta property="og:description" content="${reviewDesc}" /><meta property="og:url" content="${pageUrl}" /><meta property="og:image" content="${reviewImg}" /><meta property="og:image:secure_url" content="${reviewImg}" /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="630" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${reviewTitle}" /><meta name="twitter:description" content="${reviewDesc}" /><meta name="twitter:image" content="${reviewImg}" /><meta http-equiv="refresh" content="0;url=${targetGoogleReview}" /><script>window.location.replace(${JSON.stringify(targetGoogleReview)});</script></head><body style="font-family:sans-serif;text-align:center;padding:40px;"><p>Redirecionando para Avaliação 5 Estrelas no Google...</p><p><a href="${targetGoogleReview}">Clique aqui se não for redirecionado automaticamente</a></p></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(redirectHtml);
     }
 
     if (rawPath.startsWith("/whatsapp-chat") || rawPath.startsWith("/chat-whatsapp") || rawPath.startsWith("/whatsapp-web") || rawPath === "/chat") { title = "CF WhatsApp • Chat & Sofia IA"; desc = "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real."; }

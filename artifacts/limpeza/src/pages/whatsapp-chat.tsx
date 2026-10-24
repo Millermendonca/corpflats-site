@@ -1347,14 +1347,27 @@ export default function WhatsappChat() {
 
   // Fallback quick buttons if Sofia Assist hasn't loaded yet
   const quickButtonsToRender: SofiaDynamicQuickButton[] = useMemo(() => {
-    if (sofiaAssist?.dynamicQuickButtons && sofiaAssist.dynamicQuickButtons.length > 0) {
-      return sofiaAssist.dynamicQuickButtons
-    }
     const res = activeConversation?.reservation || {}
     const guestFirstName = (activeConversation?.name || 'Hóspede').split(' ')[0]
     const flatNum = activeConversation?.flatNumber || res.flatNumber || '101'
     const code = activeConversation?.reservationCode || res.code || 'RES-101'
+    const hasLinkedRes = Boolean(activeConversation?.reservationCode || res.code)
+    const staticIdentifyBtn = {
+      id: 'qb_identificar_reserva',
+      icon: '🔍',
+      label: 'Identificar Reserva (Localizador)',
+      highlighted: !hasLinkedRes,
+      text: `Olá, *${guestFirstName}*! Para localizarmos sua reserva e liberarmos sua entrada na recepção 24h do Edifício Soho, acesse o link abaixo, digite o localizador da sua reserva e preencha seus dados:\n🔍 https://corpflats.com.br/identificar-reserva`
+    }
+
+    if (sofiaAssist?.dynamicQuickButtons && sofiaAssist.dynamicQuickButtons.length > 0) {
+      const hasIdentify = sofiaAssist.dynamicQuickButtons.some((b: any) => b.id === 'qb_identificar_reserva')
+      return hasIdentify
+        ? sofiaAssist.dynamicQuickButtons
+        : (!hasLinkedRes ? [staticIdentifyBtn, ...sofiaAssist.dynamicQuickButtons] : [...sofiaAssist.dynamicQuickButtons, staticIdentifyBtn])
+    }
     return [
+      staticIdentifyBtn,
       {
         id: 'qb_checkin',
         icon: '📝',

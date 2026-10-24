@@ -6258,6 +6258,23 @@ export default function PmsCalendar() {
                             >
                               <Copy className="w-3 h-3" /> Link Agência
                             </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                const url = `${window.location.origin}/identificar-reserva`
+                                navigator.clipboard.writeText(url)
+                                toast({
+                                  title: "Link Estático do Hóspede Copiado!",
+                                  description: `${url} — O hóspede digita o localizador para se identificar.`
+                                })
+                              }}
+                              className="h-7 px-2 text-[10.5px] font-bold border-teal-400 dark:border-teal-700 text-teal-800 dark:text-teal-200 gap-1"
+                              title="Copia o link estático (/identificar-reserva) para o próprio hóspede localizar a reserva pelo RLOC/código e preencher seus dados"
+                            >
+                              <Copy className="w-3 h-3" /> Link Hóspede (Localizador)
+                            </Button>
                           </div>
                         )}
                       </div>
@@ -7108,6 +7125,23 @@ export default function PmsCalendar() {
                             </Select>
                           </div>
                         )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const url = `${window.location.origin}/identificar-reserva`
+                            navigator.clipboard.writeText(url)
+                            toast({
+                              title: "Link Estático (/identificar-reserva) Copiado!",
+                              description: `${url} — Envie ao hóspede para ele digitar o localizador e preencher os dados.`
+                            })
+                          }}
+                          className="h-6 px-2 text-[10px] font-bold border-teal-400/70 text-teal-700 dark:text-teal-300 gap-1"
+                          title="Copia o link estático (/identificar-reserva) para o hóspede digitar o localizador e preencher nome, CPF, WhatsApp, e-mail e documento"
+                        >
+                          <Copy className="w-2.5 h-2.5" /> Link Identificar Reserva
+                        </Button>
                         <Badge variant="outline" className="text-[9px] shrink-0">Check-in Principal</Badge>
                       </div>
                     </div>

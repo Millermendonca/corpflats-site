@@ -337,6 +337,11 @@ function Router() {
         <Route path="/credenciamento" component={AgencyGuestCredential} />
         <Route path="/credenciamento-hospede/:code" component={AgencyGuestCredential} />
         <Route path="/credenciamento-hospede" component={AgencyGuestCredential} />
+        <Route path="/identificar-reserva/:code" component={AgencyGuestCredential} />
+        <Route path="/identificar-reserva" component={AgencyGuestCredential} />
+        <Route path="/identificar" component={AgencyGuestCredential} />
+        <Route path="/cadastro-hospede/:code" component={AgencyGuestCredential} />
+        <Route path="/cadastro-hospede" component={AgencyGuestCredential} />
         <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />
         <Route path="/verificar-ficha" component={VerifyFnrh} />
 

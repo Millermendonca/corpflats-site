@@ -2477,6 +2477,30 @@ function normalizeEmailAddress(raw) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }
 
+export function isValidBrazilianCpf(rawCpf) {
+  const digits = String(rawCpf || "").replace(/\D/g, "");
+  if (digits.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(digits)) return false;
+
+  let sum1 = 0;
+  for (let i = 0; i < 9; i++) {
+    sum1 += Number(digits[i]) * (10 - i);
+  }
+  let rem1 = (sum1 * 10) % 11;
+  if (rem1 === 10 || rem1 === 11) rem1 = 0;
+  if (rem1 !== Number(digits[9])) return false;
+
+  let sum2 = 0;
+  for (let i = 0; i < 10; i++) {
+    sum2 += Number(digits[i]) * (11 - i);
+  }
+  let rem2 = (sum2 * 10) % 11;
+  if (rem2 === 10 || rem2 === 11) rem2 = 0;
+  if (rem2 !== Number(digits[10])) return false;
+
+  return true;
+}
+
 export function isPendingGuestName(name) {
   const s = String(name || "").trim();
   if (!s) return true;
@@ -4144,49 +4168,109 @@ export async function sendZapiMessage(config, {
 
   const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
 
+  const reviewUrlRegex = /https?:\/\/[^\s]*(?:writereview\?placeid=[^\s]+|g\.page\/r\/[^\s]+|corpflats\.com\.br\/avaliar[^\s]*)/i;
+  const isGoogleReviewMsg =
+    reviewUrlRegex.test(finalMessage || "") ||
+    validButtons.some(b => b && b.url && reviewUrlRegex.test(String(b.url)));
+
   // Determina se deve enviar direto por texto com links (garantido) ou tentar botões
-  const shouldSendText = sendMode === "text" || 
+  const shouldSendText = isGoogleReviewMsg ||
+                         sendMode === "text" || 
                          (sendMode !== "buttons" && configuredDeliveryMode === "text_links") || 
                          validButtons.length === 0;
 
   let primaryResult = null;
 
-  // 1. Envio Direto via Texto Formatado com Links (/send-text)
+  // 1. Envio Direto via Texto Formatado com Links (/send-link para pré-visualização rica ou /send-text)
   if (shouldSendText) {
-    const textWithLinks = formatMessageWithLinks(finalMessage, footer, validButtons);
-    const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+    let textWithLinks = formatMessageWithLinks(
+      finalMessage,
+      isGoogleReviewMsg ? "" : footer,
+      isGoogleReviewMsg ? [] : validButtons
+    );
+    if (isGoogleReviewMsg && !reviewUrlRegex.test(textWithLinks)) {
+      const btnReviewUrl = validButtons.find(b => b && b.url && reviewUrlRegex.test(String(b.url)))?.url ||
+        "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
+      textWithLinks = `${textWithLinks.trim()}\n\n${btnReviewUrl}`;
+    }
 
-    try {
-      console.log(`[Z-API] Enviando mensagem em texto formatado para ${targetPhone}...`);
-      const res = await fetch(textUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ phone: targetPhone, message: textWithLinks })
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && (data.zaapId || data.id || data.messageId)) {
-        console.log(`[Z-API ✓] Texto entregue para ${targetPhone}. ID: ${data.zaapId || data.id}`);
-        primaryResult = {
-          success: true,
-          method: "text_links",
-          messageId: data.zaapId || data.id,
-          phone: targetPhone,
-          originalPhone: cleanPhone,
-          redirected: Boolean(policy.redirected),
-          channelId: policy.channelId,
-          data
-        };
-        recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
-      } else {
-        primaryResult = {
-          success: false,
-          error: data.message || data.error || `Erro HTTP ${res.status} ao enviar texto via Z-API`
-        };
+    const reviewUrlMatch = textWithLinks.match(reviewUrlRegex);
+    if (reviewUrlMatch) {
+      const linkEndpoint = `${baseUrl}/instances/${instanceId}/token/${token}/send-link`;
+      const targetLinkUrl = reviewUrlMatch[0].trim();
+      const linkPayload = {
+        phone: targetPhone,
+        message: textWithLinks,
+        image: "https://corpflats.com.br/flat-preview.jpg",
+        linkUrl: targetLinkUrl,
+        title: "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
+        linkDescription: "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!",
+        linkType: "LARGE"
+      };
+      try {
+        console.log(`[Z-API] Enviando mensagem com pré-visualização rica (/send-link) para ${targetPhone}...`);
+        const linkRes = await fetch(linkEndpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(linkPayload)
+        });
+        const linkData = await linkRes.json().catch(() => ({}));
+        if (linkRes.ok && (linkData.zaapId || linkData.id || linkData.messageId)) {
+          console.log(`[Z-API ✓] Link com pré-visualização entregue para ${targetPhone}. ID: ${linkData.zaapId || linkData.id || linkData.messageId}`);
+          primaryResult = {
+            success: true,
+            method: "link_preview",
+            messageId: linkData.zaapId || linkData.id || linkData.messageId,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId,
+            data: linkData
+          };
+          recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+        } else {
+          console.warn(`[Z-API] /send-link retornou status ${linkRes.status}, usando fallback /send-text:`, linkData);
+        }
+      } catch (linkErr) {
+        console.warn(`[Z-API] Exceção no /send-link, usando fallback /send-text:`, linkErr.message);
       }
-    } catch (err) {
-      console.error(`[Z-API] Exceção ao enviar texto:`, err.message);
-      primaryResult = { success: false, error: err.message };
+    }
+
+    if (!primaryResult) {
+      const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+
+      try {
+        console.log(`[Z-API] Enviando mensagem em texto formatado para ${targetPhone}...`);
+        const res = await fetch(textUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ phone: targetPhone, message: textWithLinks })
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && (data.zaapId || data.id || data.messageId)) {
+          console.log(`[Z-API ✓] Texto entregue para ${targetPhone}. ID: ${data.zaapId || data.id}`);
+          primaryResult = {
+            success: true,
+            method: "text_links",
+            messageId: data.zaapId || data.id,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId,
+            data
+          };
+          recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
+        } else {
+          primaryResult = {
+            success: false,
+            error: data.message || data.error || `Erro HTTP ${res.status} ao enviar texto via Z-API`
+          };
+        }
+      } catch (err) {
+        console.error(`[Z-API] Exceção ao enviar texto:`, err.message);
+        primaryResult = { success: false, error: err.message };
+      }
     }
   } else {
     // 2. Tentativa com Botões Interativos (/send-button-actions)

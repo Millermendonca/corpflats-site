@@ -9,12 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { PdfPreview } from "@/components/pdf-preview"
 import { 
-  Building2, User, Phone, Mail, Camera, FileText, CheckCircle2, 
+  Building2, User, Phone, Mail, Camera, Upload, FileText, CheckCircle2, 
   MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, AlertCircle, AlertTriangle, Zap, Car,
   Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound, Search, RefreshCw, Copy
 } from "lucide-react"
 import { getCurrentSession, saveSessionLocally } from "@/lib/auth-client"
 import { compressImage } from "@/lib/image-compression"
+import { isValidBrazilianCpf } from "./agency-guest-credential"
 
 const toDisplayDate = (val?: string | null): string => {
   if (!val) return ""
@@ -1156,10 +1157,14 @@ export default function GuestPreCheckin() {
     setCompressing(true)
     let payloadBase64 = ""
     try {
-      if (file.type === "application/pdf") {
+      const isPdfFile = file.type === "application/pdf" || file.name?.toLowerCase().endsWith(".pdf")
+      if (isPdfFile) {
         const reader = new FileReader()
         reader.onload = async () => {
-          const b64 = reader.result as string
+          let b64 = reader.result as string
+          if (b64.startsWith("data:application/octet-stream;base64,")) {
+            b64 = b64.replace("data:application/octet-stream;base64,", "data:application/pdf;base64,")
+          }
           setter(b64)
           setCompressing(false)
           if (type === "doc") {
@@ -2963,18 +2968,31 @@ export default function GuestPreCheckin() {
                             </Button>
                           </div>
                         ) : (
-                          <label className="cursor-pointer flex items-center justify-center gap-2 p-3.5 border-2 border-dashed border-rose-300 hover:border-rose-500 rounded-xl bg-rose-50/50 text-rose-800 text-xs font-bold transition-colors">
-                            <Camera className="w-4 h-4" />
-                            <span>Tirar Foto ou Anexar Autorização</span>
-                            <input
-                              type="file"
-                              accept="image/*,application/pdf"
-                              capture="environment"
-                              onChange={e => handleFileUpload(e, setMinorAuthDocPhoto, "auth")}
-                              className="hidden"
-                              disabled={compressing}
-                            />
-                          </label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <label className="cursor-pointer flex items-center justify-center gap-2 p-3 border-2 border-dashed border-rose-300 hover:border-rose-500 rounded-xl bg-rose-50/70 text-rose-900 text-xs font-bold transition-colors">
+                              <Upload className="w-4 h-4 shrink-0" />
+                              <span>📁 Escolher da Galeria ou PDF</span>
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf,.pdf"
+                                onChange={e => handleFileUpload(e, setMinorAuthDocPhoto, "auth")}
+                                className="hidden"
+                                disabled={compressing}
+                              />
+                            </label>
+                            <label className="cursor-pointer flex items-center justify-center gap-2 p-3 border-2 border-dashed border-rose-300 hover:border-rose-500 rounded-xl bg-white hover:bg-rose-50/50 text-rose-800 text-xs font-bold transition-colors">
+                              <Camera className="w-4 h-4 shrink-0" />
+                              <span>📷 Tirar Foto Agora</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                onChange={e => handleFileUpload(e, setMinorAuthDocPhoto, "auth")}
+                                className="hidden"
+                                disabled={compressing}
+                              />
+                            </label>
+                          </div>
                         )}
                       </div>
                     )}
@@ -3320,11 +3338,29 @@ export default function GuestPreCheckin() {
                 )}
 
                 <Button 
-                  onClick={() => {
+                  onClick={async () => {
                     if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim()) {
                       alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone e E-mail.")
                       return
                     }
+                    const cleanDocDigits = document.replace(/\D/g, "")
+                    if ((originCountry === "Brasil" || cleanDocDigits.length === 11) && !isValidBrazilianCpf(cleanDocDigits)) {
+                      alert("O CPF informado é inválido. Por favor, verifique os 11 dígitos do seu CPF.")
+                      return
+                    }
+                    const cleanPhoneDigits = phone.replace(/\D/g, "")
+                    if (cleanPhoneDigits.length < 10) {
+                      alert("Por favor, informe um telefone / WhatsApp válido com DDD.")
+                      return
+                    }
+                    try {
+                      const waRes = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(cleanPhoneDigits)}`)
+                      const waData = await waRes.json()
+                      if (waData && waData.checked && waData.exists === false) {
+                        alert("O telefone informado não possui conta ativa no WhatsApp. Por favor, informe um número que tenha WhatsApp para receber o código e a senha da porta.")
+                        return
+                      }
+                    } catch {}
                     if (!isGovTriagemMode && (!address.trim() && !street.trim())) {
                       alert("Por favor, preencha seu Endereço Residencial.")
                       return
@@ -3633,23 +3669,53 @@ export default function GuestPreCheckin() {
                     )}
                   </div>
                 ) : (
-                  <label className="cursor-pointer flex flex-col items-center gap-2 py-4">
-                    <div className="w-14 h-14 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-2xs">
-                      {compressing ? <RefreshCw className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
+                  <div className="py-3 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto">
+                      {/* Opção 1: Galeria ou PDF (Sem capture para liberar seletor de arquivos/PDF e Galeria no celular) */}
+                      <label className="cursor-pointer flex flex-col items-center justify-center gap-1.5 p-4 rounded-2xl border-2 border-dashed border-sky-300 bg-sky-50/70 hover:bg-sky-100/70 transition-colors">
+                        <div className="w-11 h-11 rounded-xl bg-white border border-sky-200 flex items-center justify-center text-sky-600 shadow-2xs">
+                          {compressing ? <RefreshCw className="w-5 h-5 animate-spin text-sky-600" /> : <Upload className="w-5 h-5" />}
+                        </div>
+                        <span className="font-bold text-xs sm:text-sm text-slate-900">
+                          📁 Escolher da Galeria ou PDF
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Anexar foto salva ou arquivo PDF
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf,.pdf"
+                          onChange={e => handleFileUpload(e, setDocPhoto, "doc")}
+                          className="hidden"
+                          disabled={compressing}
+                        />
+                      </label>
+
+                      {/* Opção 2: Tirar Foto com a Câmera */}
+                      <label className="cursor-pointer flex flex-col items-center justify-center gap-1.5 p-4 rounded-2xl border-2 border-dashed border-slate-300 bg-white hover:bg-slate-50 transition-colors">
+                        <div className="w-11 h-11 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 shadow-2xs">
+                          {compressing ? <RefreshCw className="w-5 h-5 animate-spin text-slate-700" /> : <Camera className="w-5 h-5" />}
+                        </div>
+                        <span className="font-bold text-xs sm:text-sm text-slate-900">
+                          📷 Tirar Foto Agora
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Usar a câmera para fotografar
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={e => handleFileUpload(e, setDocPhoto, "doc")}
+                          className="hidden"
+                          disabled={compressing}
+                        />
+                      </label>
                     </div>
-                    <span className="font-bold text-sm text-slate-900 mt-1">
-                      {compressing ? "Processando imagem..." : "Tirar Foto ou Enviar Arquivo"}
+                    <span className="text-xs text-slate-400 block">
+                      Formatos aceitos: Fotos da Galeria (JPG, PNG, WEBP), PDF Digital (CNH/RG Digital) ou Câmera
                     </span>
-                    <span className="text-xs text-slate-400">Foto nítida ou PDF do documento oficial do hóspede</span>
-                    <input 
-                      type="file" 
-                      accept="image/*,application/pdf" 
-                      capture="environment"
-                      onChange={e => handleFileUpload(e, setDocPhoto, "doc")} 
-                      className="hidden" 
-                      disabled={compressing}
-                    />
-                  </label>
+                  </div>
                 )}
               </div>
 
