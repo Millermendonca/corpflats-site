@@ -244,6 +244,9 @@ const TAG_GROUPS = [
       { tag: "{{valor_total}}", label: "Valor Total", example: "R$ 450,00" },
       { tag: "{{status_pagamento}}", label: "Status Pagto.", example: "Confirmado / Pago" },
       { tag: "{{canal_reserva}}", label: "Canal de Venda", example: "Site Oficial" },
+      { tag: "{{nome_agencia}}", label: "Nome da Agência B2B", example: "Copastur Viagens" },
+      { tag: "{{numero_reserva_b2b}}", label: "Nº Reserva B2B", example: "25057926" },
+      { tag: "{{link_credenciamento_agencia}}", label: "Link Credenciamento Agência B2B", example: "https://corpflats.com.br/credenciamento/B2B-25057926" },
     ]
   },
   {
@@ -1908,6 +1911,9 @@ export default function WhatsappAutomation() {
       "{{telefone_hotel}}": "5522997124021",
       "{{link_checkin_digital}}": `https://corpflats.com.br/pre-checkin/${code}`,
       "{{link_portal_hospede}}": `https://corpflats.com.br/portal-hospede/${code}`,
+      "{{link_credenciamento_agencia}}": `https://corpflats.com.br/credenciamento/${code}`,
+      "{{nome_agencia}}": targetRes.agencyTradeName || targetRes.agencyName || "Copastur Viagens",
+      "{{numero_reserva_b2b}}": targetRes.b2bReservationNumber || targetRes.externalReservationNumber || code,
       "{{link_cafe_manha}}": `https://corpflats.com.br/cafe/${code}`,
       "{{link_checkout}}": `https://corpflats.com.br/checkout/${code}`,
       "{{link_avaliacao_google}}": config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2",

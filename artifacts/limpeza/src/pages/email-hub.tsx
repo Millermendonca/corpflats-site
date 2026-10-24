@@ -3519,6 +3519,7 @@ export default function EmailHub() {
                       { key: "hospede_welcome", label: "👋 Confirmação Hóspede" },
                       { key: "acesso_wifi", label: "🔑 Acesso & Wi-Fi" },
                       { key: "lembrete_checkin", label: "⏰ Lembrete Check-in" },
+                      { key: "b2b_credenciamento", label: "🟣 Agência B2B (Link Hóspede)" },
                       { key: "custom", label: "✍️ Livre" }
                     ].map(t => (
                       <button

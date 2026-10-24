@@ -9102,6 +9102,113 @@ export default function PmsCalendar() {
                     </Button>
                   </div>
 
+                  {/* CARD B2B: ENVIO PARA A AGÊNCIA COM MENSAGEM + LINK DE CREDENCIAMENTO DO HÓSPEDE */}
+                  {selectedRes && (selectedRes.channel === "b2b" || formChannel === "b2b" || Boolean(selectedRes.b2bReservationNumber)) && (
+                    <div className="p-3.5 rounded-2xl border-2 border-purple-300 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-950/25 space-y-2.5 mb-3">
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-black text-purple-900 dark:text-purple-200">
+                              🟣 Envio para a Agência • Mensagem e Link para Preencher Dados do Hóspede
+                            </span>
+                            {selectedRes.b2bCredentialCompletedAt || (selectedRes.guestPhone && selectedRes.guestDocument) ? (
+                              <Badge className="bg-emerald-600 text-white text-[9.5px] h-4 px-1.5 font-bold">
+                                ✅ Dados do Hóspede Preenchidos
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-amber-500 text-white text-[9.5px] h-4 px-1.5 font-bold">
+                                ⏳ Aguardando Agência Preencher Link
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80">
+                            Agência: <strong>{selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Agência B2B"}</strong>
+                            {(selectedRes.agencyAgentEmail || formAgencyAgentEmail) ? ` • E-mail: ${selectedRes.agencyAgentEmail || formAgencyAgentEmail}` : ""}
+                            {(selectedRes.agencyAgentPhone || formAgencyAgentPhone) ? ` • Tel: ${selectedRes.agencyAgentPhone || formAgencyAgentPhone}` : ""}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={sendingB2bCredentialEmail}
+                            onClick={handleSendB2bCredentialEmail}
+                            className="h-7 px-2.5 text-[10.5px] font-bold bg-purple-600 hover:bg-purple-700 text-white gap-1"
+                          >
+                            <Mail className="w-3 h-3" />
+                            {sendingB2bCredentialEmail ? "Enviando..." : "📧 Reenviar E-mail p/ Agência"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const code = selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id;
+                              const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`;
+                              const agName = selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Agência Parceira";
+                              const b2bNum = selectedRes.b2bReservationNumber || formB2bReservationNumber || code;
+                              const msg = `Olá, equipe da *${agName}*! Tudo bem? 🤝\n\nConfirmamos com muita satisfação a reserva *B2B #${b2bNum}* do(a) hóspede *${selectedRes.guestName}* no *Edifício Soho Residence Service* (*Flat ${selectedRes.flatNumber}*).\n\n⚠️ *Importante — Liberação Antecipada na Recepção:*\nPara gerarmos a liberação de entrada na recepção do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados do hóspede (WhatsApp, CPF, telefone, e-mail e documento) através do nosso link seguro no sistema:\n\n👉 ${url}\n\nRessaltamos gentilmente que não é possível informar esses dados apenas na hora no balcão, pois sem o credenciamento prévio pelo link a recepção não conseguirá localizar a reserva.\n\nMuito obrigado pela parceria!`;
+                              const rawPhone = String(selectedRes.agencyAgentPhone || formAgencyAgentPhone || "");
+                              const parts = rawPhone.split(/[\/;|,]+/).map(s => s.trim()).filter(Boolean);
+                              const mobile = parts.find(p => p.replace(/\D/g, "").replace(/^55/, "").length === 11) || parts[0] || "";
+                              const cleanDigits = mobile.replace(/\D/g, "");
+                              const waPhone = cleanDigits ? (cleanDigits.startsWith("55") ? cleanDigits : `55${cleanDigits}`) : "";
+                              const waUrl = waPhone ? `https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}` : `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
+                              window.open(waUrl, "_blank", "noopener,noreferrer");
+                            }}
+                            className="h-7 px-2.5 text-[10.5px] font-bold border-emerald-400 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 gap-1"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            WhatsApp Agência
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const code = selectedRes.code || selectedRes.b2bReservationNumber || selectedRes.id;
+                              const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`;
+                              const agName = selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Agência Parceira";
+                              const b2bNum = selectedRes.b2bReservationNumber || formB2bReservationNumber || code;
+                              const msg = `Olá, equipe da *${agName}*! Tudo bem? 🤝\n\nConfirmamos com muita satisfação a reserva *B2B #${b2bNum}* do(a) hóspede *${selectedRes.guestName}* no *Edifício Soho Residence Service* (*Flat ${selectedRes.flatNumber}*).\n\n⚠️ *Importante — Liberação Antecipada na Recepção:*\nPara gerarmos a liberação de entrada na recepção do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados do hóspede (WhatsApp, CPF, telefone, e-mail e documento) através do nosso link seguro no sistema:\n\n👉 ${url}\n\nRessaltamos gentilmente que não é possível informar esses dados apenas na hora no balcão, pois sem o credenciamento prévio pelo link a recepção não conseguirá localizar a reserva.\n\nMuito obrigado pela parceria!`;
+                              navigator.clipboard.writeText(msg);
+                              toast({ title: "Mensagem + Link Copiados!", description: url });
+                            }}
+                            className="h-7 px-2.5 text-[10.5px] font-bold border-purple-300 text-purple-800 dark:text-purple-200 gap-1"
+                          >
+                            <Copy className="w-3 h-3" />
+                            Copiar Msg + Link
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-background/90 border border-purple-200 dark:border-purple-800/60 text-[11px] text-muted-foreground space-y-1.5">
+                        <div className="font-semibold text-foreground flex items-center justify-between gap-2 flex-wrap">
+                          <span>Mensagem & Link enviados para a Agência ({selectedRes.b2bCredentialEmailRecipient || selectedRes.agencyAgentEmail || "E-mail da Agência"}):</span>
+                          <a
+                            href={`/credenciamento/${encodeURIComponent(String(selectedRes.code || selectedRes.id))}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-purple-700 dark:text-purple-300 underline font-mono text-[10.5px]"
+                          >
+                            Abrir Link de Credenciamento ↗
+                          </a>
+                        </div>
+                        <div className="whitespace-pre-wrap leading-relaxed font-sans text-[11px] text-foreground/90 bg-muted/30 p-2 rounded-lg border">
+{`Olá, equipe da ${selectedRes.agencyTradeName || selectedRes.agencyName || "Agência"}! Tudo bem? 🤝
+Confirmamos com muita satisfação a reserva B2B #${selectedRes.b2bReservationNumber || selectedRes.code} do(a) hóspede ${selectedRes.guestName} no Edifício Soho Residence Service (Flat ${selectedRes.flatNumber}).
+
+⚠️ IMPORTANTE — LIBERAÇÃO ANTECIPADA NA RECEPÇÃO:
+Para gerarmos a liberação de entrada na recepção/portaria do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados do hóspede (WhatsApp, CPF, telefone, e-mail e documento) através do nosso link seguro no sistema:
+👉 ${window.location.origin}/credenciamento/${encodeURIComponent(String(selectedRes.code || selectedRes.id))}
+
+Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora no balcão, pois sem o credenciamento prévio pelo link a recepção não conseguirá localizar a reserva nem autorizar a entrada.`}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* SUB-ABA: WHATSAPP */}
                   {commSubTab === "whatsapp" && (
                     <div className="space-y-4">
@@ -9366,6 +9473,15 @@ export default function PmsCalendar() {
                                 >
                                   🏢 Portaria ({portariaEmail})
                                 </button>
+                                {(selectedRes?.agencyAgentEmail || formAgencyAgentEmail) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setManualRecipient(selectedRes?.agencyAgentEmail || formAgencyAgentEmail)}
+                                    className="text-[10px] px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 hover:bg-purple-200 font-bold transition-colors"
+                                  >
+                                    🟣 Agência B2B ({selectedRes?.agencyAgentEmail || formAgencyAgentEmail})
+                                  </button>
+                                )}
                                 {selectedRes?.guestEmail && (
                                   <button
                                     type="button"

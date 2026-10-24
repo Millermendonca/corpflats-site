@@ -308,6 +308,37 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
     buttons: []
   },
   {
+    id: "tpl_b2b_agency_credential",
+    triggerEvent: "b2b_agency_credential_request",
+    title: "Agência B2B • Solicitação de Dados do Hóspede (Link de Credenciamento)",
+    description: "Enviada para a agência/emissor (por E-mail e WhatsApp quando houver celular da agência) assim que uma reserva B2B é criada sem o WhatsApp/CPF do hóspede. Contém o link seguro (/credenciamento/:code) para preenchimento antecipado obrigatório para liberação na recepção.",
+    enabled: true,
+    channels: ["b2b"],
+    recipientTarget: "requester",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    hasAttachment: false,
+    sendEmail: true,
+    message: `Olá, equipe da *{{nome_agencia}}*! Tudo bem? 🤝
+
+Confirmamos com muita satisfação a reserva *B2B #{{numero_reserva_b2b}}* do(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
+
+⚠️ *Importante — Liberação Antecipada na Recepção:*
+Para gerarmos a liberação de entrada na recepção do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados do hóspede (WhatsApp, CPF, telefone, e-mail e documento) através do nosso link seguro no sistema:
+
+👉 {{link_credenciamento_agencia}}
+
+Ressaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o credenciamento prévio pelo link a recepção não conseguirá localizar a reserva nem liberar o acesso.
+
+Muito obrigado pela parceria!`,
+    footer: "CorpFlats • Central Corporativa B2B",
+    buttons: [
+      { id: "btn_b2b_cred", type: "URL", label: "🔐 Preencher Dados do Hóspede", url: "{{link_credenciamento_agencia}}" }
+    ]
+  },
+  {
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
     title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
@@ -2502,13 +2533,19 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       reservation.requesterInfo?.name ||
       "Central B2B / Agência"
     ).trim();
-    requesterPhone = (
+    const rawAgencyPhone = (
       reservation.agencyAgentPhone ||
       reservation.requesterInfo?.phone ||
       agencyObj?.phone ||
       companyObj?.phone ||
       ""
     ).trim();
+    const phoneParts = String(rawAgencyPhone).split(/[\/;|,]+/).map(s => s.trim()).filter(Boolean);
+    const mobilePart = phoneParts.find(p => {
+      const d = p.replace(/\D/g, "").replace(/^55/, "");
+      return d.length === 11 && d[2] === "9";
+    });
+    requesterPhone = mobilePart || phoneParts[0] || rawAgencyPhone;
     requesterEmail = normalizeEmailAddress(
       reservation.agencyAgentEmail ||
       reservation.requesterInfo?.email ||
@@ -2632,12 +2669,14 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
 
 // ── Cobrança / PIX puro: quando há solicitante distinto, vai EXCLUSIVAMENTE ao solicitante ──
 export const PURE_BILLING_EVENTS = new Set([
+  "b2b_agency_credential_request",
   "pre_reservation_created",
   "payment_pending",
   "additional_daily_pending"
 ]);
 
 export const PURE_BILLING_TEMPLATE_IDS = new Set([
+  "tpl_b2b_agency_credential",
   "tpl_pre_reserva",
   "tpl_payment_pending",
   "tpl_additional_daily_pending",
@@ -3321,6 +3360,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{telefone_hotel}}": adminWhatsApp,
     "{{link_checkin_digital}}": linkCheckinDigital,
     "{{link_portal_hospede}}": linkPortalHospede,
+    "{{link_credenciamento_agencia}}": `${appOrigin}/credenciamento/${encodeURIComponent(String(resCode))}`,
+    "{{nome_agencia}}": reservation.agencyTradeName || reservation.agencyName || requester.company || requester.name || "Agência Parceira",
+    "{{numero_reserva_b2b}}": reservation.b2bReservationNumber || reservation.externalReservationNumber || resCode,
     "{{link_pagamento}}": hideFinancialForGuest ? "" : linkPagamento,
     "{{link_copiar_pix}}": hideFinancialForGuest ? "" : linkCopiarPix,
     "{{link_pix}}": hideFinancialForGuest ? "" : linkCopiarPix,
@@ -6365,7 +6407,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
       }
-      // Garante que tpl_corpflats_intro fique sempre na 1ª posição (topo da régua de envios)
+      // Garante que tpl_corpflats_intro e tpl_b2b_agency_credential fiquem sempre no topo da régua de envios
+      const b2bCredIdx = db.whatsappTemplates.findIndex(t => t && t.id === "tpl_b2b_agency_credential");
+      if (b2bCredIdx > 0) {
+        const [b2bCredTpl] = db.whatsappTemplates.splice(b2bCredIdx, 1);
+        db.whatsappTemplates.unshift(b2bCredTpl);
+      }
       const introIdx = db.whatsappTemplates.findIndex(t => t && t.id === "tpl_corpflats_intro");
       if (introIdx > 0) {
         const [introTpl] = db.whatsappTemplates.splice(introIdx, 1);
@@ -9713,6 +9760,7 @@ const CHECKOUT_GROUP_EVENTS = new Set([
 
 const SINGLE_DISPATCH_EVENTS = new Set([
   "corpflats_intro",
+  "b2b_agency_credential_request",
   "reservation_created",
   "payment_confirmed",
   "sameday_reservation",

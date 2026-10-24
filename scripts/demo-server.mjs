@@ -146,7 +146,9 @@ import {
   buildComposerReservationTemplate,
   parseB2bVoucherText,
   fetchAndParseB2bVoucher,
-  ingestB2bVoucherIntoDb
+  ingestB2bVoucherIntoDb,
+  dispatchB2bAgencyCredentialEmail,
+  ensurePendingB2bAgencyCredentialDispatches
 } from "./zoho-mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR, rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 import {
@@ -21257,38 +21259,13 @@ app.post("/api/pms/reservations", async (req, res) => {
   // ── Gatilho Automático B2B: E-mail cordial para a agência se faltar WhatsApp ou CPF do hóspede ──
   if (isB2b && (!primaryPhone || !primaryDoc) && req.body.sendAgencyCredentialEmail !== false) {
     try {
-      const targetAgencyEmail = newReservation.agencyAgentEmail || resolvedAgency?.financialEmail || resolvedNfEmails[0] || "";
-      if (targetAgencyEmail && typeof renderB2bAgencyCredentialRequestEmail === "function") {
-        const baseUrl = `${req.protocol}://${req.get("host")}`;
-        const { subject, bodyHtml, credentialUrl } = renderB2bAgencyCredentialRequestEmail({
-          reservation: newReservation,
-          flat,
-          agency: resolvedAgency,
-          company: resolvedCompany,
-          settings: db.settings,
-          baseUrl,
-          db
-        });
-        sendEmailAsync({
-          db,
-          saveDatabase,
-          reservationId: newReservation.code || newReservation.id,
-          recipient: targetAgencyEmail,
-          subject,
-          bodyHtml,
-          type: "email",
-          direction: "outbound",
-          metadata: {
-            trigger: "b2b_agency_credential_request",
-            credentialUrl,
-            agencyName: newReservation.agencyName,
-            b2bReservationNumber: newReservation.b2bReservationNumber
-          }
-        });
-        newReservation.b2bCredentialEmailSentAt = new Date().toISOString();
-        newReservation.b2bCredentialEmailRecipient = targetAgencyEmail;
-        saveDatabase();
-      }
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      dispatchB2bAgencyCredentialEmail(db, saveDatabase, newReservation, {
+        baseUrl,
+        trigger: "b2b_agency_credential_request"
+      }).catch(b2bEmailErr => {
+        console.warn("[B2B Credential Email] Aviso ao enviar solicitação automática de credenciamento à agência:", b2bEmailErr.message);
+      });
     } catch (b2bEmailErr) {
       console.warn("[B2B Credential Email] Aviso ao enviar solicitação automática de credenciamento à agência:", b2bEmailErr.message);
     }
@@ -24155,73 +24132,28 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
       return res.status(404).json({ error: "Reserva não encontrada." });
     }
 
-    const linkedAgency = reservation.agencyId
-      ? (db.agencies || []).find(a => String(a.id) === String(reservation.agencyId))
-      : null;
-    const linkedCompany = reservation.companyId
-      ? (db.companies || []).find(c => String(c.id) === String(reservation.companyId))
-      : null;
-    const flat = (db.flats || []).find(f => Number(f.id) === Number(reservation.flatId) || String(f.number) === String(reservation.flatNumber));
-
-    const targetEmail = String(
-      req.body?.toEmail ||
-      req.body?.email ||
-      reservation.agencyAgentEmail ||
-      reservation.requesterInfo?.email ||
-      linkedAgency?.financialEmail ||
-      linkedAgency?.email ||
-      (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails[0] : "") ||
-      ""
-    ).trim();
-
-    if (!targetEmail || !targetEmail.includes("@")) {
-      return res.status(400).json({ error: "E-mail da agência ou emissor não informado na reserva." });
-    }
-
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const credentialUrl = `${baseUrl}/credenciamento/${encodeURIComponent(reservation.code)}`;
-    const rendered = renderB2bAgencyCredentialRequestEmail({
-      reservation,
-      flat,
-      agency: linkedAgency,
-      company: linkedCompany,
-      settings: db.settings,
+    const dispatchRes = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
+      toEmail: req.body?.toEmail || req.body?.email || "",
       baseUrl,
-      credentialUrl,
-      db
+      trigger: "b2b_agency_credential_request_manual"
     });
 
-    const commLog = sendEmailAsync({
-      db,
-      saveDatabase,
-      reservationId: reservation.code || reservation.id,
-      recipient: targetEmail,
-      subject: rendered.subject,
-      bodyHtml: rendered.bodyHtml,
-      bodyText: rendered.bodyText,
-      type: "email",
-      direction: "outbound",
-      metadata: {
-        trigger: "b2b_agency_credential_request_manual",
-        credentialUrl: rendered.credentialUrl || credentialUrl,
-        agencyName: reservation.agencyName || linkedAgency?.tradeName || "",
-        b2bReservationNumber: reservation.b2bReservationNumber || ""
-      }
-    });
-
-    reservation.b2bCredentialEmailSentAt = new Date().toISOString();
-    reservation.b2bCredentialEmailRecipient = targetEmail;
-    saveDatabase("b2b_credential_email_sent");
+    if (!dispatchRes?.ok) {
+      return res.status(400).json({ error: dispatchRes?.error || "Falha ao enviar e-mail de credenciamento à agência." });
+    }
 
     return res.json({
       ok: true,
       success: true,
-      sentTo: targetEmail,
-      recipient: targetEmail,
-      credentialUrl: rendered.credentialUrl || credentialUrl,
-      sentAt: reservation.b2bCredentialEmailSentAt,
-      communicationId: commLog?.id || null,
-      message: `E-mail cordial de confirmação e credenciamento enviado para ${targetEmail}.`
+      sentTo: dispatchRes.sentTo,
+      recipient: dispatchRes.recipient,
+      cc: dispatchRes.cc,
+      credentialUrl: dispatchRes.credentialUrl,
+      sentAt: dispatchRes.sentAt,
+      method: dispatchRes.method,
+      communicationId: dispatchRes.communicationId,
+      message: `E-mail cordial de confirmação e credenciamento enviado para ${dispatchRes.sentTo}.`
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -27753,12 +27685,879 @@ app.get("/api/pms/guests", (req, res) => {
       invoicesCount: guestInvoices.length,
       reservationsCount: guestReservations.length,
       minibarSpent: Number(minibarSpent.toFixed(2)),
-      minibarOrdersCount: guestMinibarOrders.length
+      minibarOrdersCount: guestMinibarOrders.length,
+      callerIdPreview: buildGuestCallerIdContactData(db, { ...g, companyName, favoriteFlat, tags }).displayName,
+      googleContactResourceName: g.googleContactResourceName || null,
+      googleContactSyncedAt: g.googleContactSyncedAt || null,
+      googleContactDisplayName: g.googleContactDisplayName || null
     };
   });
 
   enrichedGuests.sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0));
   res.json(enrichedGuests);
+});
+
+// ── INTEGRAÇÃO GOOGLE CONTATOS (GOOGLE PEOPLE API v1 + vCARD CALLER ID) ─────
+function ensureGoogleContactsConfig(database) {
+  const targetDb = database || db;
+  const defaultClientId = process.env.GOOGLE_CLIENT_ID || targetDb.siteConfig?.authConfig?.googleClientId || "";
+  const defaultClientSecret = process.env.GOOGLE_CLIENT_SECRET || "";
+  if (!targetDb.googleContactsConfig || typeof targetDb.googleContactsConfig !== "object") {
+    targetDb.googleContactsConfig = {
+      enabled: true,
+      clientId: defaultClientId,
+      clientSecret: defaultClientSecret,
+      accessToken: process.env.GOOGLE_CONTACTS_ACCESS_TOKEN || "",
+      refreshToken: process.env.GOOGLE_CONTACTS_REFRESH_TOKEN || "",
+      tokenExpiresAt: 0,
+      connectedEmail: "",
+      connectedName: "",
+      connectedPicture: "",
+      lastSyncAt: null,
+      totalSyncedCount: 0,
+      syncLogs: []
+    };
+  }
+  if (!targetDb.googleContactsConfig.clientId && defaultClientId) {
+    targetDb.googleContactsConfig.clientId = defaultClientId;
+  }
+  if (!targetDb.googleContactsConfig.clientSecret && defaultClientSecret) {
+    targetDb.googleContactsConfig.clientSecret = defaultClientSecret;
+  }
+  if (!Array.isArray(targetDb.googleContactsConfig.syncLogs)) {
+    targetDb.googleContactsConfig.syncLogs = [];
+  }
+  return targetDb.googleContactsConfig;
+}
+
+export function buildGuestCallerIdContactData(database, guest) {
+  const targetDb = database || db;
+  const g = guest || {};
+  const fullName = String(g.fullName || g.name || "Hóspede").trim();
+  const cleanDoc = String(g.documentNumber || g.document || "").replace(/\D/g, "");
+  const docType = String(g.docType || (cleanDoc.length > 11 ? "CNPJ" : "CPF")).toUpperCase();
+  const rawPhone = String(g.phone || g.phoneNumber || "").trim();
+  const phoneDigits = rawPhone.replace(/\D/g, "");
+
+  let e164Phone = "";
+  if (phoneDigits.length >= 10) {
+    if (phoneDigits.startsWith("55") && phoneDigits.length >= 12) {
+      e164Phone = `+${phoneDigits}`;
+    } else {
+      e164Phone = `+55${phoneDigits}`;
+    }
+  } else if (phoneDigits.length >= 8) {
+    e164Phone = `+5522${phoneDigits}`;
+  }
+
+  const cleanEmail = String(g.email || "").trim().toLowerCase();
+  const guestNameNorm = normalizeName(fullName);
+
+  // Busca reservas vinculadas para descobrir UH ativa ou mais recente
+  const allReservations = Array.isArray(targetDb?.reservations) ? targetDb.reservations : [];
+  const guestReservations = allReservations.filter(r => {
+    if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+    const resDoc = String(r.guestDocument || r.document || "").replace(/\D/g, "");
+    const resPhone = normalizePhone(r.guestPhone || r.phone || "");
+    const gPhoneNorm = normalizePhone(rawPhone);
+    const resEmail = String(r.guestEmail || r.email || "").trim().toLowerCase();
+    const resName = normalizeName(r.guestName || "");
+    return (r.guestId && g.id && Number(r.guestId) === Number(g.id)) ||
+           (cleanDoc && cleanDoc.length >= 8 && resDoc === cleanDoc) ||
+           (gPhoneNorm && gPhoneNorm.length >= 8 && resPhone === gPhoneNorm) ||
+           (cleanEmail && cleanEmail.includes("@") && resEmail === cleanEmail) ||
+           (guestNameNorm && guestNameNorm.length >= 5 && resName === guestNameNorm);
+  });
+
+  // Prioriza reserva ativa (hospedado / checked_in / confirmada) ou a mais recente
+  const statusPriority = (st) => {
+    const s = String(st || "").toLowerCase();
+    if (s === "hospedado" || s === "checked_in" || s === "in_house") return 100;
+    if (s === "confirmada" || s === "confirmed") return 80;
+    if (s === "pre_reserva" || s === "pendente" || s === "pending") return 50;
+    return 10;
+  };
+  const sortedRes = [...guestReservations].sort((a, b) => {
+    const pDiff = statusPriority(b.status) - statusPriority(a.status);
+    if (pDiff !== 0) return pDiff;
+    const dB = new Date(b.checkinDate || b.createdAt || 0).getTime();
+    const dA = new Date(a.checkinDate || a.createdAt || 0).getTime();
+    return dB - dA;
+  });
+
+  const activeRes = sortedRes[0] || null;
+  const rawFlat = String(
+    activeRes?.flatNumber ||
+    activeRes?.unitNumber ||
+    g.activeFlat ||
+    g.favoriteFlat ||
+    ""
+  ).trim();
+  const cleanFlatNum = rawFlat.replace(/^(uh|flat|apt|apto)\s*/i, "").trim();
+  const unitLabel = cleanFlatNum ? `UH ${cleanFlatNum}` : "";
+  const activeResCode = activeRes?.code || "";
+
+  // Empresa e Tipo (Mensalista / Avulso)
+  let companyName = String(g.companyName || g.companyData?.companyName || activeRes?.companyData?.companyName || "").trim();
+  let companyCnpj = String(g.companyData?.cnpj || activeRes?.companyData?.cnpj || "").trim();
+  if (!companyName && g.companyId && Array.isArray(targetDb?.companies)) {
+    const comp = targetDb.companies.find(c => Number(c.id) === Number(g.companyId));
+    if (comp) {
+      companyName = String(comp.tradeName || comp.corporateName || "").trim();
+      if (!companyCnpj && comp.cnpj) companyCnpj = String(comp.cnpj).trim();
+    }
+  }
+
+  const isMonthly = Boolean(g.isMonthlyGuest || g.clientType === "mensalista" || activeRes?.isMonthlyGuest);
+  const clientTypeLabel = isMonthly ? "Mensalista" : "Hóspede Avulso";
+
+  // Formato escolhido para o visor do celular (Caller ID):
+  // "Nome + Empresa/Tipo + UH ativa (ex: João Silva • Petrobras [UH 204])"
+  let middleBadge = "CorpFlats";
+  if (companyName && isMonthly) {
+    middleBadge = `${companyName} (Mensalista)`;
+  } else if (companyName) {
+    middleBadge = companyName;
+  } else if (isMonthly) {
+    middleBadge = "Mensalista";
+  }
+
+  const displayName = `${fullName} • ${middleBadge}${unitLabel ? ` [${unitLabel}]` : ""}`;
+
+  // Campo Organização / Cargo do Google Contatos
+  const organizationName = companyName ? `${companyName} • CorpFlats` : "CorpFlats";
+  const jobTitleParts = [clientTypeLabel];
+  if (unitLabel) jobTitleParts.push(unitLabel);
+  if (activeResCode) jobTitleParts.push(activeResCode);
+  const jobTitle = jobTitleParts.join(" • ");
+
+  // Data de nascimento nativa
+  let birthDateIso = "";
+  let birthDateObj = null;
+  if (g.birthDate) {
+    const bStr = String(g.birthDate).trim();
+    const isoMatch = bStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const brMatch = bStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (isoMatch) {
+      birthDateIso = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+      birthDateObj = { year: Number(isoMatch[1]), month: Number(isoMatch[2]), day: Number(isoMatch[3]) };
+    } else if (brMatch) {
+      birthDateIso = `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+      birthDateObj = { year: Number(brMatch[3]), month: Number(brMatch[2]), day: Number(brMatch[1]) };
+    }
+  }
+
+  // Cidade/UF, Veículo, Tags e Observações/Alertas nas Notas do contato
+  const city = String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+  const state = String(g.state || g.uf || "").trim().toUpperCase();
+  const cityState = city ? `${city}${state ? `/${state}` : ""}` : "";
+
+  const vehiclePlate = String(g.vehicle?.plate || g.vehiclePlate || g.preferences?.vehiclePlate || activeRes?.vehiclePlate || "").toUpperCase().trim();
+  const vehicleBrand = String(g.vehicle?.brand || g.vehicleBrand || "").trim();
+  const vehicleModel = String(g.vehicle?.model || g.vehicleModel || "").trim();
+  const vehicleColor = String(g.vehicle?.color || g.vehicleColor || "").trim();
+  const vehicleDetails = [vehicleBrand, vehicleModel, vehicleColor].filter(Boolean).join(" ");
+
+  const tags = Array.isArray(g.tags) ? g.tags.filter(Boolean) : [];
+  const guestCode = g.guestCode || (g.id ? `HOSP-${String(g.id).padStart(5, "0")}` : "CRM");
+
+  const notesLines = [
+    `📋 Código CRM: ${guestCode} | Perfil: ${clientTypeLabel}`
+  ];
+  if (companyName) {
+    notesLines.push(`🏢 Empresa: ${companyName}${companyCnpj ? ` (CNPJ: ${companyCnpj})` : ""}`);
+  }
+  if (unitLabel || activeResCode) {
+    notesLines.push(`🏨 Unidade/Reserva: ${[unitLabel, activeResCode ? `Reserva ${activeResCode}` : ""].filter(Boolean).join(" • ")}`);
+  }
+  if (cleanDoc) {
+    notesLines.push(`🪪 ${docType}: ${cleanDoc}`);
+  }
+  if (cityState) {
+    notesLines.push(`📍 Cidade/UF: ${cityState}`);
+  }
+  if (vehiclePlate) {
+    notesLines.push(`🚗 Veículo: ${vehiclePlate}${vehicleDetails ? ` (${vehicleDetails})` : ""}`);
+  }
+  if (tags.length > 0) {
+    notesLines.push(`🏷️ Tags: ${tags.join(", ")}`);
+  }
+  const alertsAndNotes = [
+    g.riskAttentionAlert && g.riskAttentionReason ? `ALERTA: ${g.riskAttentionReason}` : "",
+    g.notes ? String(g.notes).trim() : "",
+    g.preferences?.breakfastNotes ? `Café: ${g.preferences.breakfastNotes}` : ""
+  ].filter(Boolean).join(" | ");
+  if (alertsAndNotes) {
+    notesLines.push(`⚠️ Observações CRM: ${alertsAndNotes}`);
+  }
+
+  const notesText = notesLines.join("\n");
+
+  return {
+    guestId: g.id,
+    guestCode,
+    fullName,
+    displayName,
+    organizationName,
+    jobTitle,
+    companyName,
+    clientTypeLabel,
+    unitLabel,
+    activeResCode,
+    rawPhone,
+    phoneDigits,
+    e164Phone,
+    email: cleanEmail,
+    docType,
+    document: cleanDoc,
+    cityState,
+    vehiclePlate,
+    vehicleDetails,
+    tags,
+    alertsAndNotes,
+    birthDateIso,
+    birthDateObj,
+    notesText
+  };
+}
+
+function escapeVCardValue(val) {
+  return String(val || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\r?\n/g, "\\n")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,");
+}
+
+function generateGuestVCard(database, guest) {
+  const c = buildGuestCallerIdContactData(database, guest);
+  if (!c.e164Phone && !c.rawPhone && !c.email) return "";
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `FN:${escapeVCardValue(c.displayName)}`,
+    `N:;${escapeVCardValue(c.displayName)};;;`,
+    `ORG:${escapeVCardValue(c.organizationName)}`,
+    `TITLE:${escapeVCardValue(c.jobTitle)}`
+  ];
+  if (c.e164Phone) {
+    lines.push(`TEL;TYPE=CELL,VOICE,MSG:${c.e164Phone}`);
+  } else if (c.rawPhone) {
+    lines.push(`TEL;TYPE=CELL,VOICE:${c.rawPhone}`);
+  }
+  if (c.email) {
+    lines.push(`EMAIL;TYPE=INTERNET:${c.email}`);
+  }
+  if (c.birthDateIso) {
+    lines.push(`BDAY:${c.birthDateIso}`);
+  }
+  if (c.tags.length > 0) {
+    lines.push(`CATEGORIES:${c.tags.map(t => escapeVCardValue(t)).join(",")},CorpFlats`);
+  } else {
+    lines.push("CATEGORIES:CorpFlats");
+  }
+  lines.push(`NOTE:${escapeVCardValue(c.notesText)}`);
+  lines.push("END:VCARD");
+  return lines.join("\r\n");
+}
+
+async function getValidGoogleContactsAccessToken(database) {
+  const cfg = ensureGoogleContactsConfig(database);
+  if (!cfg.accessToken && !cfg.refreshToken) return null;
+
+  const isExpired = cfg.tokenExpiresAt && Date.now() > (cfg.tokenExpiresAt - 60000);
+  if (cfg.accessToken && !isExpired) {
+    return cfg.accessToken;
+  }
+
+  // Se houver refreshToken + clientId + clientSecret, renova automaticamente junto ao Google OAuth2
+  if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
+    try {
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: cfg.clientId,
+          client_secret: cfg.clientSecret,
+          refresh_token: cfg.refreshToken,
+          grant_type: "refresh_token"
+        }).toString()
+      });
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        if (tokenData.access_token) {
+          cfg.accessToken = tokenData.access_token;
+          cfg.tokenExpiresAt = Date.now() + (Number(tokenData.expires_in || 3599) * 1000);
+          saveDatabase();
+          return cfg.accessToken;
+        }
+      }
+    } catch (err) {
+      console.error("[GoogleContacts] Erro ao renovar access_token:", err?.message || err);
+    }
+  }
+
+  return cfg.accessToken || null;
+}
+
+export async function syncSingleGuestToGoogleContacts(database, guest, options = {}) {
+  const targetDb = database || db;
+  const cfg = ensureGoogleContactsConfig(targetDb);
+  if (!guest) return { success: false, error: "Hóspede inválido." };
+
+  const contactData = buildGuestCallerIdContactData(targetDb, guest);
+  guest.googleContactDisplayName = contactData.displayName;
+
+  if (!contactData.e164Phone) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "Sem telefone válido cadastrado",
+      contactData
+    };
+  }
+
+  const accessToken = await getValidGoogleContactsAccessToken(targetDb);
+  if (!accessToken) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "Conta Google Contatos ainda não conectada via OAuth2",
+      contactData
+    };
+  }
+
+  const personPayload = {
+    names: [
+      {
+        givenName: contactData.displayName,
+        familyName: "",
+        unstructuredName: contactData.displayName
+      }
+    ],
+    phoneNumbers: [
+      {
+        value: contactData.e164Phone,
+        type: "mobile",
+        label: "Celular / WhatsApp"
+      }
+    ],
+    organizations: [
+      {
+        name: contactData.organizationName,
+        title: contactData.jobTitle,
+        department: `CRM ${contactData.guestCode}`,
+        type: "work",
+        current: true
+      }
+    ],
+    biographies: [
+      {
+        value: contactData.notesText,
+        contentType: "TEXT_PLAIN"
+      }
+    ],
+    userDefined: [
+      { key: "CRM_ID", value: String(guest.id || "") },
+      { key: "Codigo_CRM", value: contactData.guestCode },
+      ...(contactData.document ? [{ key: "Documento", value: `${contactData.docType} ${contactData.document}` }] : []),
+      ...(contactData.vehiclePlate ? [{ key: "Placa_Veiculo", value: contactData.vehiclePlate }] : []),
+      ...(contactData.unitLabel ? [{ key: "Unidade_UH", value: contactData.unitLabel }] : [])
+    ]
+  };
+
+  if (contactData.email) {
+    personPayload.emailAddresses = [{ value: contactData.email, type: "home", label: "E-mail CRM" }];
+  }
+  if (contactData.birthDateObj) {
+    personPayload.birthdays = [{ date: contactData.birthDateObj }];
+  }
+
+  const updateFields = "names,phoneNumbers,emailAddresses,organizations,biographies,birthdays,userDefined";
+  let resourceName = guest.googleContactResourceName || "";
+  let etag = guest.googleContactEtag || "";
+  let action = "created";
+
+  try {
+    if (!resourceName && contactData.phoneDigits.length >= 8) {
+      try {
+        const searchUrl = `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(contactData.phoneDigits.slice(-9))}&readMask=names,phoneNumbers,metadata`;
+        const searchRes = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const found = (searchData.results || []).find(item => {
+            const p = item?.person;
+            if (!p) return false;
+            return (p.phoneNumbers || []).some(pn => {
+              const pDigits = String(pn.value || pn.canonicalForm || "").replace(/\D/g, "");
+              return pDigits && contactData.phoneDigits && pDigits.slice(-9) === contactData.phoneDigits.slice(-9);
+            });
+          });
+          if (found?.person?.resourceName) {
+            resourceName = found.person.resourceName;
+            etag = found.person.etag || "";
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (resourceName) {
+      const getRes = await fetch(`https://people.googleapis.com/v1/${resourceName}?personFields=names,metadata`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (getRes.ok) {
+        const existingPerson = await getRes.json();
+        etag = existingPerson.etag || etag;
+        const updateRes = await fetch(
+          `https://people.googleapis.com/v1/${resourceName}:updateContact?updatePersonFields=${updateFields}`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              ...personPayload,
+              etag
+            })
+          }
+        );
+        if (updateRes.ok) {
+          const updatedPerson = await updateRes.json();
+          guest.googleContactResourceName = updatedPerson.resourceName || resourceName;
+          guest.googleContactEtag = updatedPerson.etag || etag;
+          guest.googleContactSyncedAt = new Date().toISOString();
+          guest.googleContactDisplayName = contactData.displayName;
+          action = "updated";
+
+          cfg.lastSyncAt = guest.googleContactSyncedAt;
+          cfg.syncLogs.unshift({
+            timestamp: guest.googleContactSyncedAt,
+            guestId: guest.id,
+            guestName: contactData.fullName,
+            displayName: contactData.displayName,
+            phone: contactData.e164Phone,
+            action: "updated",
+            status: "success"
+          });
+          if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
+          if (!options.skipSave) saveDatabase();
+          return {
+            success: true,
+            action,
+            resourceName: guest.googleContactResourceName,
+            displayName: contactData.displayName,
+            contactData
+          };
+        }
+      } else if (getRes.status === 404) {
+        resourceName = "";
+        etag = "";
+      } else if (getRes.status === 401 || getRes.status === 403) {
+        const errBody = await getRes.text();
+        throw new Error(`Permissão ou token Google expirado (${getRes.status}): ${errBody.slice(0, 140)}`);
+      }
+    }
+
+    const createRes = await fetch(
+      `https://people.googleapis.com/v1/people:createContact?personFields=${updateFields}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(personPayload)
+      }
+    );
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      throw new Error(`Google People API (${createRes.status}): ${errText.slice(0, 180)}`);
+    }
+
+    const createdPerson = await createRes.json();
+    guest.googleContactResourceName = createdPerson.resourceName || "";
+    guest.googleContactEtag = createdPerson.etag || "";
+    guest.googleContactSyncedAt = new Date().toISOString();
+    guest.googleContactDisplayName = contactData.displayName;
+
+    cfg.lastSyncAt = guest.googleContactSyncedAt;
+    cfg.totalSyncedCount = (Number(cfg.totalSyncedCount) || 0) + 1;
+    cfg.syncLogs.unshift({
+      timestamp: guest.googleContactSyncedAt,
+      guestId: guest.id,
+      guestName: contactData.fullName,
+      displayName: contactData.displayName,
+      phone: contactData.e164Phone,
+      action: "created",
+      status: "success"
+    });
+    if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
+    if (!options.skipSave) saveDatabase();
+
+    return {
+      success: true,
+      action: "created",
+      resourceName: guest.googleContactResourceName,
+      displayName: contactData.displayName,
+      contactData
+    };
+  } catch (err) {
+    const errMsg = err?.message || String(err);
+    cfg.syncLogs.unshift({
+      timestamp: new Date().toISOString(),
+      guestId: guest.id,
+      guestName: contactData.fullName,
+      displayName: contactData.displayName,
+      phone: contactData.e164Phone,
+      action: "error",
+      status: "error",
+      error: errMsg
+    });
+    if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
+    return {
+      success: false,
+      error: errMsg,
+      contactData
+    };
+  }
+}
+
+function triggerAutoGoogleContactSync(database, guest) {
+  try {
+    const targetDb = database || db;
+    if (!guest) return;
+    const contactData = buildGuestCallerIdContactData(targetDb, guest);
+    guest.googleContactDisplayName = contactData.displayName;
+
+    const cfg = ensureGoogleContactsConfig(targetDb);
+    if (!cfg.enabled || (!cfg.accessToken && !cfg.refreshToken)) return;
+
+    setImmediate(() => {
+      syncSingleGuestToGoogleContacts(targetDb, guest).catch(err => {
+        console.error("[GoogleContacts AutoSync] Falha ao sincronizar hóspede:", err?.message || err);
+      });
+    });
+  } catch (_) {}
+}
+
+// Status e Pré-visualização da Integração Google Contatos
+app.get("/api/pms/guests/google-contacts/status", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  reconcileAndMergeGuests(db);
+  const cfg = ensureGoogleContactsConfig(db);
+  const allGuests = Array.isArray(db.guests) ? db.guests : [];
+  const guestsWithPhone = allGuests.filter(g => String(g.phone || g.phoneNumber || "").replace(/\D/g, "").length >= 8);
+  const syncedGuests = guestsWithPhone.filter(g => Boolean(g.googleContactSyncedAt || g.googleContactResourceName));
+
+  const previewContacts = guestsWithPhone.slice(0, 6).map(g => buildGuestCallerIdContactData(db, g));
+  const defaultClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId || "";
+
+  res.json({
+    enabled: Boolean(cfg.enabled),
+    connected: Boolean(cfg.accessToken || cfg.refreshToken),
+    connectedEmail: cfg.connectedEmail || "",
+    connectedName: cfg.connectedName || "",
+    connectedPicture: cfg.connectedPicture || "",
+    clientId: cfg.clientId || defaultClientId,
+    hasClientSecret: Boolean(cfg.clientSecret),
+    lastSyncAt: cfg.lastSyncAt || null,
+    totalGuests: allGuests.length,
+    guestsWithPhoneCount: guestsWithPhone.length,
+    syncedGuestsCount: syncedGuests.length,
+    pendingSyncCount: Math.max(0, guestsWithPhone.length - syncedGuests.length),
+    previewContacts,
+    syncLogs: (cfg.syncLogs || []).slice(0, 20)
+  });
+});
+
+// Salvar configuração ou conectar Access Token / Credenciais Google Contatos
+app.post("/api/pms/guests/google-contacts/config", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  const cfg = ensureGoogleContactsConfig(db);
+  const { enabled, clientId, clientSecret, accessToken, refreshToken, expiresIn } = req.body || {};
+
+  if (enabled !== undefined) cfg.enabled = Boolean(enabled);
+  if (clientId !== undefined && String(clientId).trim()) cfg.clientId = String(clientId).trim();
+  if (clientSecret !== undefined && String(clientSecret).trim()) cfg.clientSecret = String(clientSecret).trim();
+  if (refreshToken !== undefined && String(refreshToken).trim()) cfg.refreshToken = String(refreshToken).trim();
+
+  if (accessToken && typeof accessToken === "string" && accessToken.trim()) {
+    const cleanToken = accessToken.trim();
+    cfg.accessToken = cleanToken;
+    cfg.tokenExpiresAt = Date.now() + (Number(expiresIn || 3599) * 1000);
+
+    try {
+      const uRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${cleanToken}` }
+      });
+      if (uRes.ok) {
+        const uInfo = await uRes.json();
+        if (uInfo.email) cfg.connectedEmail = uInfo.email;
+        if (uInfo.name) cfg.connectedName = uInfo.name;
+        if (uInfo.picture) cfg.connectedPicture = uInfo.picture;
+      } else {
+        const meRes = await fetch("https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses,photos", {
+          headers: { Authorization: `Bearer ${cleanToken}` }
+        });
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          cfg.connectedEmail = meData.emailAddresses?.[0]?.value || cfg.connectedEmail || "Conta Google Conectada";
+          cfg.connectedName = meData.names?.[0]?.displayName || cfg.connectedName || "Google Contatos";
+          cfg.connectedPicture = meData.photos?.[0]?.url || cfg.connectedPicture || "";
+        }
+      }
+    } catch (_) {}
+
+    if (!cfg.connectedEmail) {
+      cfg.connectedEmail = "Conta Google Conectada (People API)";
+    }
+  }
+
+  saveDatabase();
+  res.json({
+    success: true,
+    enabled: cfg.enabled,
+    connected: Boolean(cfg.accessToken || cfg.refreshToken),
+    connectedEmail: cfg.connectedEmail,
+    connectedName: cfg.connectedName
+  });
+});
+
+// Gera URL de autorização OAuth2 do Google Contatos
+app.get("/api/pms/guests/google-contacts/oauth-url", (req, res) => {
+  const cfg = ensureGoogleContactsConfig(db);
+  const clientId = String(req.query.clientId || cfg.clientId || process.env.GOOGLE_CLIENT_ID || "").trim();
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const redirectUri = `${protocol}://${host}/api/pms/guests/google-contacts/oauth-callback`;
+
+  const responseType = cfg.clientSecret ? "code" : "token";
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: responseType,
+    scope: "https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+    include_granted_scopes: "true",
+    prompt: "consent"
+  });
+  if (responseType === "code") {
+    params.set("access_type", "offline");
+  }
+
+  res.json({
+    authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+    redirectUri,
+    clientId,
+    responseType
+  });
+});
+
+// Callback OAuth2 (suporta tanto Authorization Code quanto Implicit Fragment no popup)
+app.get("/api/pms/guests/google-contacts/oauth-callback", async (req, res) => {
+  const cfg = ensureGoogleContactsConfig(db);
+  const { code, error } = req.query;
+
+  if (error) {
+    return res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px;text-align:center;">
+      <h3>Autorização Google cancelada: ${String(error)}</h3>
+      <script>setTimeout(() => window.close(), 2000);</script>
+    </body></html>`);
+  }
+
+  if (code && cfg.clientId && cfg.clientSecret) {
+    try {
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+      const host = req.headers["x-forwarded-host"] || req.get("host");
+      const redirectUri = `${protocol}://${host}/api/pms/guests/google-contacts/oauth-callback`;
+
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code: String(code),
+          client_id: cfg.clientId,
+          client_secret: cfg.clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code"
+        }).toString()
+      });
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        if (tokenData.access_token) cfg.accessToken = tokenData.access_token;
+        if (tokenData.refresh_token) cfg.refreshToken = tokenData.refresh_token;
+        cfg.tokenExpiresAt = Date.now() + (Number(tokenData.expires_in || 3599) * 1000);
+        cfg.enabled = true;
+
+        try {
+          const uRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+            headers: { Authorization: `Bearer ${cfg.accessToken}` }
+          });
+          if (uRes.ok) {
+            const uInfo = await uRes.json();
+            cfg.connectedEmail = uInfo.email || cfg.connectedEmail;
+            cfg.connectedName = uInfo.name || cfg.connectedName;
+            cfg.connectedPicture = uInfo.picture || cfg.connectedPicture;
+          }
+        } catch (_) {}
+        saveDatabase();
+      }
+    } catch (err) {
+      console.error("[GoogleContacts OAuth Callback] Erro:", err);
+    }
+  }
+
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Conectando Google Contatos...</title></head>
+  <body style="font-family:system-ui,sans-serif;padding:32px;text-align:center;background:#0f172a;color:#f8fafc;">
+    <h2>Conectando Google Contatos ao CRM CorpFlats...</h2>
+    <p id="msg">Processando credencial de acesso...</p>
+    <script>
+      (async function() {
+        const hash = window.location.hash ? window.location.hash.substring(1) : "";
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get("access_token");
+        const expiresIn = params.get("expires_in");
+        if (accessToken) {
+          await fetch("/api/pms/guests/google-contacts/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken, expiresIn, enabled: true }),
+            credentials: "include"
+          });
+        }
+        if (window.opener) {
+          window.opener.postMessage({ type: "GOOGLE_CONTACTS_CONNECTED" }, "*");
+        }
+        document.getElementById("msg").innerText = "Conta Google conectada com sucesso! Esta janela será fechada.";
+        setTimeout(() => window.close(), 800);
+      })();
+    </script>
+  </body></html>`);
+});
+
+// Desconectar Conta Google Contatos
+app.post("/api/pms/guests/google-contacts/disconnect", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  const cfg = ensureGoogleContactsConfig(db);
+  cfg.accessToken = "";
+  cfg.refreshToken = "";
+  cfg.tokenExpiresAt = 0;
+  cfg.connectedEmail = "";
+  cfg.connectedName = "";
+  cfg.connectedPicture = "";
+  saveDatabase();
+  res.json({ success: true });
+});
+
+// Sincronizar TODOS os hóspedes do CRM com o Google Contatos
+app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  reconcileAndMergeGuests(db);
+  const cfg = ensureGoogleContactsConfig(db);
+  const allGuests = Array.isArray(db.guests) ? db.guests : [];
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+  let firstError = "";
+
+  for (const g of allGuests) {
+    const result = await syncSingleGuestToGoogleContacts(db, g, { skipSave: true });
+    if (result.success) {
+      if (result.action === "updated") updatedCount++;
+      else createdCount++;
+    } else if (result.skipped) {
+      skippedCount++;
+    } else {
+      errorCount++;
+      if (!firstError && result.error) firstError = result.error;
+    }
+  }
+
+  cfg.lastSyncAt = new Date().toISOString();
+  saveDatabase();
+
+  res.json({
+    success: errorCount === 0 || (createdCount + updatedCount) > 0,
+    totalProcessed: allGuests.length,
+    syncedCount: createdCount + updatedCount,
+    createdCount,
+    updatedCount,
+    skippedCount,
+    errorCount,
+    firstError: firstError || null,
+    lastSyncAt: cfg.lastSyncAt
+  });
+});
+
+// Sincronizar UM hóspede específico com o Google Contatos
+app.post("/api/pms/guests/:id/google-contacts/sync", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  const id = Number(req.params.id);
+  const guest = (db.guests || []).find(g => Number(g.id) === id);
+  if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
+
+  const result = await syncSingleGuestToGoogleContacts(db, guest);
+  saveDatabase();
+  res.json(result);
+});
+
+// Exportar TODOS os hóspedes em formato vCard 3.0 (.vcf) para importação direta no Google Contatos / Celular
+app.get("/api/pms/guests/google-contacts/export.vcf", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  if (!db.guests) db.guests = [];
+  reconcileAndMergeGuests(db);
+
+  const vcards = db.guests
+    .map(g => generateGuestVCard(db, g))
+    .filter(Boolean);
+
+  const vcfContent = vcards.join("\r\n");
+  res.setHeader("Content-Type", "text/vcard; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=google_contatos_hospedes_corpflats_${new Date().toISOString().substring(0, 10)}.vcf`
+  );
+  res.send(vcfContent);
+});
+
+// Exportar UM hóspede específico em vCard 3.0 (.vcf)
+app.get("/api/pms/guests/:id/google-contacts/export.vcf", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "recepcao" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito." });
+  }
+  const id = Number(req.params.id);
+  const guest = (db.guests || []).find(g => Number(g.id) === id);
+  if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
+
+  const vcf = generateGuestVCard(db, guest);
+  const safeSlug = normalizeName(guest.fullName || guest.name || "hospede").replace(/\s+/g, "_");
+  res.setHeader("Content-Type", "text/vcard; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename=contato_${safeSlug}.vcf`);
+  res.send(vcf);
 });
 
 // Detalhe 360º completo de um Hóspede (Ficha cadastral, mídias, FNHR e histórico unificado)
@@ -28047,7 +28846,11 @@ app.get("/api/pms/guests/:id", async (req, res) => {
     invoices: guestInvoices,
     breakfastOrders: guestBreakfastOrders,
     minibarOrders: guestMinibarOrders,
-    documents: guest.documents || []
+    documents: guest.documents || [],
+    callerIdDetails: buildGuestCallerIdContactData(db, guest),
+    callerIdPreview: buildGuestCallerIdContactData(db, guest).displayName,
+    googleContactResourceName: guest.googleContactResourceName || null,
+    googleContactSyncedAt: guest.googleContactSyncedAt || null
   });
 });
 
@@ -29790,7 +30593,7 @@ function formatTriggerTitle(trigger) {
 }
 
 // 1. Obter histórico de comunicações vinculado à reserva (E-mails e WhatsApp: Enviados e Agendados)
-app.get("/api/pms/reservations/:id/communications", (req, res) => {
+app.get("/api/pms/reservations/:id/communications", async (req, res) => {
   const paramId = String(req.params.id || "").trim();
   const r = (db.reservations || []).find(x =>
     String(x.id) === paramId ||
@@ -29798,10 +30601,15 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
     (x.code && x.code.toUpperCase() === paramId.toUpperCase())
   );
   const resIdStr = r ? String(r.id) : paramId;
-  const resCode = r?.code || (paramId.startsWith("RES-") || paramId.startsWith("CORP-") ? paramId : null);
+  const resCode = r?.code || (paramId.startsWith("RES-") || paramId.startsWith("CORP-") || paramId.startsWith("B2B-") ? paramId : null);
 
   if (r) {
     ensureReservationScheduledEmails(db, saveDatabase, r);
+    const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (isB2b && (!r.guestPhone || !r.guestDocument) && !r.b2bCredentialCompletedAt) {
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, { baseUrl });
+    }
   }
 
   // 1. E-mails Enviados
@@ -31141,6 +31949,10 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
       if (guest.originCity) g0.originCity = guest.originCity;
       if (guest.originState) g0.originState = guest.originState;
     }
+  }
+
+  if (guest) {
+    triggerAutoGoogleContactSync(db, guest);
   }
 
   return { guest, account };
@@ -53691,6 +54503,13 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
       wbpAlertsManager.startDailySummaryScheduler(db);
       startCardAutoPurgeScheduler(db, wbpVault);
     }
+    setTimeout(() => {
+      ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+        baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+      }).catch(err => {
+        console.warn("[B2B Boot Credential Sync] Aviso:", err.message);
+      });
+    }, 3000);
   }
 });
 httpServer.on("error", (err) => {
