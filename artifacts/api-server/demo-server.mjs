@@ -48488,9 +48488,12 @@ function serveSpaWithMetadata(distFolder, req, res) {
     const isPortal = rawPath.startsWith("/minha-reserva") || rawPath.startsWith("/portal-hospede") || rawPath.startsWith("/guest-portal");
     const isCheckout = rawPath.startsWith("/checkout") || rawPath.startsWith("/check-out") || rawPath.startsWith("/saida") || rawPath.endsWith("/checkout");
 
+    const customFlatImg = db.zapiConfig?.flatPreviewImage || "https://corpflats.com.br/flat-preview.jpg";
+    const customBreakfastImg = db.zapiConfig?.breakfastPreviewImage || "https://corpflats.com.br/breakfast-preview.jpg";
+
     let title = "CorpFlats • Hospedagem Executiva & Serviços Exclusivos";
     let desc = "Flats mobiliados completos com estacionamento rotativo gratuito, portaria 24h e café da manhã servido no flat.";
-    let image = "https://corpflats.com.br/flat-preview.jpg";
+    let image = customFlatImg;
     let imageAlt = "CorpFlats • Hospedagem Executiva";
     let imageWidth = "1200";
     let imageHeight = "630";
@@ -48502,7 +48505,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Confirme sua saída do Flat ${flatNumber} com 1 clique e lembre-se de devolver o cartão na recepção.`
         : "Confirme sua saída de forma rápida e prática pelo Check-out Expresso CorpFlats.";
-      image = "https://corpflats.com.br/flat-preview.jpg";
+      image = customFlatImg;
       imageAlt = "CorpFlats • Check-out Expresso";
     } else if (isBreakfast) {
       title = flatNumber
@@ -48511,7 +48514,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Personalize o seu café da manhã e escolha o horário de entrega no seu flat.`
         : "Personalize o seu cardápio de café da manhã servido com todo o carinho diretamente no seu flat.";
-      image = "https://corpflats.com.br/breakfast-preview.jpg";
+      image = customBreakfastImg;
       imageAlt = "Café da Manhã CorpFlats";
       imageWidth = "800";
       imageHeight = "533";
@@ -48522,7 +48525,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Agilize sua chegada preenchendo os dados do pré-check-in para liberação na portaria 24h.`
         : "Agilize sua chegada confirmando os dados de identificação para liberação rápida na portaria 24h.";
-      image = "https://corpflats.com.br/flat-preview.jpg";
+      image = customFlatImg;
       imageAlt = "CorpFlats • Pré-Check-in Digital";
       imageWidth = "1200";
       imageHeight = "630";
@@ -48533,7 +48536,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, senha da fechadura, Wi-Fi e horários do flat.`
         : "Acesse os detalhes da sua acomodação, senha da fechadura, conexão Wi-Fi, regras do flat e serviços.";
-      image = "https://corpflats.com.br/flat-preview.jpg";
+      image = customFlatImg;
       imageAlt = "CorpFlats • Área do Hóspede";
       imageWidth = "1200";
       imageHeight = "630";
@@ -48542,15 +48545,15 @@ function serveSpaWithMetadata(distFolder, req, res) {
       desc = guestFirstName
         ? `Olá ${guestFirstName}! Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.`
         : "Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.";
-      image = "https://corpflats.com.br/flat-preview.jpg";
+      image = customFlatImg;
       imageAlt = "CorpFlats • Pagamento PIX";
       imageWidth = "1200";
       imageHeight = "630";
     } else if (rawPath.startsWith("/avaliar") || rawPath.startsWith("/google-review")) {
-      const targetGoogleReview = "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
-      const reviewTitle = "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)";
-      const reviewDesc = "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!";
-      const reviewImg = "https://corpflats.com.br/flat-preview.jpg";
+      const targetGoogleReview = db.zapiConfig?.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
+      const reviewTitle = db.zapiConfig?.reviewPreviewTitle || "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)";
+      const reviewDesc = db.zapiConfig?.reviewPreviewDescription || "Toque aqui para avaliar no Google";
+      const reviewImg = db.zapiConfig?.reviewPreviewImage || customFlatImg;
       const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path}`;
       const redirectHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${reviewTitle}</title><meta name="description" content="${reviewDesc}" /><meta property="og:type" content="website" /><meta property="og:title" content="${reviewTitle}" /><meta property="og:description" content="${reviewDesc}" /><meta property="og:url" content="${pageUrl}" /><meta property="og:image" content="${reviewImg}" /><meta property="og:image:secure_url" content="${reviewImg}" /><meta property="og:image:width" content="1200" /><meta property="og:image:height" content="630" /><meta name="twitter:card" content="summary_large_image" /><meta name="twitter:title" content="${reviewTitle}" /><meta name="twitter:description" content="${reviewDesc}" /><meta name="twitter:image" content="${reviewImg}" /><meta http-equiv="refresh" content="0;url=${targetGoogleReview}" /><script>window.location.replace(${JSON.stringify(targetGoogleReview)});</script></head><body style="font-family:sans-serif;text-align:center;padding:40px;"><p>Redirecionando para Avaliação 5 Estrelas no Google...</p><p><a href="${targetGoogleReview}">Clique aqui se não for redirecionado automaticamente</a></p></body></html>`;
       res.setHeader("Content-Type", "text/html; charset=utf-8");

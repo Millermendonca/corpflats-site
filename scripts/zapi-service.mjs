@@ -4198,13 +4198,15 @@ export async function sendZapiMessage(config, {
     if (reviewUrlMatch) {
       const linkEndpoint = `${baseUrl}/instances/${instanceId}/token/${token}/send-link`;
       const targetLinkUrl = reviewUrlMatch[0].trim();
+      const rawPreviewImg = config.reviewPreviewImage || config.flatPreviewImage || "https://corpflats.com.br/flat-preview.jpg";
+      const absPreviewImg = rawPreviewImg.startsWith("/") ? `https://corpflats.com.br${rawPreviewImg}` : rawPreviewImg;
       const linkPayload = {
         phone: targetPhone,
         message: textWithLinks,
-        image: "https://corpflats.com.br/flat-preview.jpg",
+        image: absPreviewImg,
         linkUrl: targetLinkUrl,
-        title: "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
-        linkDescription: "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!",
+        title: config.reviewPreviewTitle || "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
+        linkDescription: config.reviewPreviewDescription || "Toque aqui para avaliar no Google",
         linkType: "LARGE"
       };
       try {
@@ -6397,6 +6399,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         wifiNetwork: "apto {quarto}",
         wifiPassword: "1234567890123",
         googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
+        reviewPreviewTitle: "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
+        reviewPreviewDescription: "Toque aqui para avaliar no Google",
+        reviewPreviewImage: "https://corpflats.com.br/flat-preview.jpg",
+        breakfastPreviewImage: "https://corpflats.com.br/breakfast-preview.jpg",
+        flatPreviewImage: "https://corpflats.com.br/flat-preview.jpg",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
         alertEmail: "millerpessanha@gmail.com",
@@ -6424,6 +6431,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     } else {
       if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl") || db.zapiConfig.googleReviewUrl.includes("share.google/LHu3541d5lhkdvbL2")) {
         db.zapiConfig.googleReviewUrl = "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
+      }
+      if (!db.zapiConfig.reviewPreviewTitle) {
+        db.zapiConfig.reviewPreviewTitle = "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)";
+      }
+      if (!db.zapiConfig.reviewPreviewDescription || db.zapiConfig.reviewPreviewDescription === "Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!") {
+        db.zapiConfig.reviewPreviewDescription = "Toque aqui para avaliar no Google";
+      }
+      if (!db.zapiConfig.reviewPreviewImage) {
+        db.zapiConfig.reviewPreviewImage = "https://corpflats.com.br/flat-preview.jpg";
+      }
+      if (!db.zapiConfig.breakfastPreviewImage) {
+        db.zapiConfig.breakfastPreviewImage = "https://corpflats.com.br/breakfast-preview.jpg";
+      }
+      if (!db.zapiConfig.flatPreviewImage) {
+        db.zapiConfig.flatPreviewImage = "https://corpflats.com.br/flat-preview.jpg";
       }
       if (!db.zapiConfig.deliveryMode || db.zapiConfig.deliveryMode === "text_links") {
         db.zapiConfig.deliveryMode = "buttons";
@@ -7174,6 +7196,86 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     } catch (err) {
       console.error("[WhatsApp] Erro no upload de documento:", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.6. Upload e Servir Fotos de Pré-Visualização dos Links no WhatsApp (Link Preview: Avaliação Google, Café da Manhã e Flat)
+  app.post("/api/whatsapp/upload-preview-image", async (req, res) => {
+    try {
+      const { slot = "review", fileBase64, fileName = "preview.jpg" } = req.body || {};
+      if (!fileBase64) {
+        return res.status(400).json({ error: "Imagem em Base64 é obrigatória." });
+      }
+      const validSlots = ["review", "breakfast", "flat"];
+      const targetSlot = validSlots.includes(String(slot)) ? String(slot) : "review";
+
+      const db = getDb();
+      ensureDbDefaults();
+
+      const matches = String(fileBase64).match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const mimeType = matches ? matches[1] : "image/jpeg";
+      const rawBase64 = matches ? matches[2] : String(fileBase64);
+      const buffer = Buffer.from(rawBase64, "base64");
+
+      const ext = mimeType.includes("png") ? ".png" : mimeType.includes("webp") ? ".webp" : ".jpg";
+      const uniqueFileName = `preview_${targetSlot}_${Date.now()}${ext}`;
+      const filePath = path.join(DOCUMENTS_DIR, uniqueFileName);
+      fs.writeFileSync(filePath, buffer);
+
+      // Persiste também em db.zapiConfig para sobreviver a reinicializações do container
+      db.zapiConfig[`${targetSlot}PreviewImageBase64`] = String(fileBase64);
+      db.zapiConfig[`${targetSlot}PreviewImageMime`] = mimeType;
+
+      const publicUrl = `https://corpflats.com.br/api/whatsapp/preview-image/${targetSlot}.jpg?v=${Date.now()}`;
+      db.zapiConfig[`${targetSlot}PreviewImage`] = publicUrl;
+
+      saveDatabase();
+
+      res.json({
+        success: true,
+        slot: targetSlot,
+        url: publicUrl,
+        fileName,
+        config: db.zapiConfig
+      });
+    } catch (err) {
+      console.error("[WhatsApp] Erro no upload de foto de preview:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/whatsapp/preview-image/:slotFile", (req, res) => {
+    try {
+      const rawParam = String(req.params.slotFile || "review").toLowerCase();
+      const slot = rawParam.startsWith("breakfast") ? "breakfast" : rawParam.startsWith("flat") ? "flat" : "review";
+      const db = getDb();
+      const b64 = db?.zapiConfig?.[`${slot}PreviewImageBase64`];
+      if (b64) {
+        const matches = String(b64).match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        const mime = matches ? matches[1] : (db?.zapiConfig?.[`${slot}PreviewImageMime`] || "image/jpeg");
+        const raw = matches ? matches[2] : String(b64);
+        const buf = Buffer.from(raw, "base64");
+        res.setHeader("Content-Type", mime);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.send(buf);
+      }
+
+      const defaultFile = slot === "breakfast" ? "breakfast-preview.jpg" : "flat-preview.jpg";
+      const candidates = [
+        path.resolve(process.cwd(), "artifacts/limpeza/dist/public", defaultFile),
+        path.resolve(process.cwd(), "artifacts/limpeza/public", defaultFile),
+        path.resolve(__dirname, "../limpeza/dist/public", defaultFile),
+        path.resolve(__dirname, "../limpeza/public", defaultFile)
+      ];
+      const foundPath = candidates.find(p => fs.existsSync(p));
+      if (foundPath) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.sendFile(foundPath);
+      }
+      return res.status(404).send("Preview image not found");
+    } catch (err) {
+      return res.status(500).send(err.message);
     }
   });
 

@@ -53,7 +53,10 @@ import {
   Workflow,
   Bot,
   Lightbulb,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Image as ImageIcon,
+  Upload,
+  Building
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
@@ -213,6 +216,11 @@ interface ZapiConfig {
   wifiNetwork: string
   wifiPassword: string
   googleReviewUrl: string
+  reviewPreviewTitle?: string
+  reviewPreviewDescription?: string
+  reviewPreviewImage?: string
+  breakfastPreviewImage?: string
+  flatPreviewImage?: string
   guestGuidePdfUrl?: string
   guestGuidePdfName?: string
   testModeOnly?: boolean
@@ -453,8 +461,119 @@ export default function WhatsappAutomation() {
     testAllowedPhones: "22998505276",
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA"
+    googleReviewUrl: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
+    reviewPreviewTitle: "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
+    reviewPreviewDescription: "Toque aqui para avaliar no Google",
+    reviewPreviewImage: "https://corpflats.com.br/flat-preview.jpg",
+    breakfastPreviewImage: "https://corpflats.com.br/breakfast-preview.jpg",
+    flatPreviewImage: "https://corpflats.com.br/flat-preview.jpg"
   })
+  const [uploadingPreviewSlot, setUploadingPreviewSlot] = useState<"review" | "breakfast" | "flat" | null>(null)
+  const [savingPreviewTexts, setSavingPreviewTexts] = useState<boolean>(false)
+
+  const handleUploadPreviewImage = async (slot: "review" | "breakfast" | "flat", file: File) => {
+    if (!file) return
+    setUploadingPreviewSlot(slot)
+    try {
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const rawDataUrl = reader.result as string
+          const img = new Image()
+          img.onload = () => {
+            try {
+              const canvas = document.createElement("canvas")
+              const maxW = 1200
+              const maxH = 800
+              let w = img.width
+              let h = img.height
+              if (w > maxW) {
+                h = Math.round((h * maxW) / w)
+                w = maxW
+              }
+              if (h > maxH) {
+                w = Math.round((w * maxH) / h)
+                h = maxH
+              }
+              canvas.width = w
+              canvas.height = h
+              const ctx = canvas.getContext("2d")
+              if (ctx) {
+                ctx.fillStyle = "#ffffff"
+                ctx.fillRect(0, 0, w, h)
+                ctx.drawImage(img, 0, 0, w, h)
+                resolve(canvas.toDataURL("image/jpeg", 0.85))
+              } else {
+                resolve(rawDataUrl)
+              }
+            } catch {
+              resolve(rawDataUrl)
+            }
+          }
+          img.onerror = () => resolve(rawDataUrl)
+          img.src = rawDataUrl
+        }
+        reader.onerror = () => reject(new Error("Falha ao ler arquivo"))
+        reader.readAsDataURL(file)
+      })
+
+      const res = await fetch("/api/whatsapp/upload-preview-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slot, dataUrl })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        const propName = slot === "review" ? "reviewPreviewImage" : slot === "breakfast" ? "breakfastPreviewImage" : "flatPreviewImage"
+        setConfig(prev => ({ ...prev, [propName]: data.imageUrl }))
+        toast({
+          title: "🖼️ Foto de Pré-Visualização Atualizada!",
+          description: "A nova imagem já foi salva e será usada nos próximos links enviados no WhatsApp."
+        })
+      } else {
+        toast({
+          title: "Erro ao enviar foto",
+          description: data.error || "Não foi possível processar a imagem.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro no upload",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setUploadingPreviewSlot(null)
+    }
+  }
+
+  const handleSavePreviewConfig = async () => {
+    setSavingPreviewTexts(true)
+    try {
+      const res = await fetch("/api/whatsapp/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reviewPreviewTitle: config.reviewPreviewTitle,
+          reviewPreviewDescription: config.reviewPreviewDescription,
+          reviewPreviewImage: config.reviewPreviewImage,
+          breakfastPreviewImage: config.breakfastPreviewImage,
+          flatPreviewImage: config.flatPreviewImage
+        })
+      })
+      if (res.ok) {
+        toast({
+          title: "✓ Pré-visualização salva!",
+          description: "Fotos e textos do card de pré-visualização no WhatsApp atualizados."
+        })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingPreviewTexts(false)
+    }
+  }
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
   const [purgingRealGuests, setPurgingRealGuests] = useState<boolean>(false)
@@ -4766,19 +4885,62 @@ export default function WhatsappAutomation() {
                           {/writereview\?placeid=|link_avaliacao_google|g\.page\/r\//i.test(editingMessage || "") && (
                             <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
                               <img
-                                src="/flat-preview.jpg"
+                                src={config.reviewPreviewImage || "/flat-preview.jpg"}
                                 alt="CorpFlats Preview"
                                 className="w-full h-28 object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
                               />
                               <div className="p-2 space-y-0.5">
                                 <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
-                                  ⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)
+                                  {config.reviewPreviewTitle || "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)"}
                                 </p>
                                 <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
-                                  Toque aqui para abrir direto a caixinha de 5 estrelas no Google. Leva apenas 30 segundos!
+                                  {config.reviewPreviewDescription || "Toque aqui para avaliar no Google"}
                                 </p>
                                 <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
                                   search.google.com
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                          {!/writereview\?placeid=|link_avaliacao_google|g\.page\/r\//i.test(editingMessage || "") && /link_cafe_manha|\/cafe\//i.test(editingMessage || "") && (
+                            <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
+                              <img
+                                src={config.breakfastPreviewImage || "/breakfast-preview.jpg"}
+                                alt="Café da Manhã Preview"
+                                className="w-full h-28 object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).src = "/breakfast-preview.jpg" }}
+                              />
+                              <div className="p-2 space-y-0.5">
+                                <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
+                                  ☕ Café da Manhã no Flat • CorpFlats
+                                </p>
+                                <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
+                                  Escolha seus itens favoritos e o horário de entrega na porta do seu flat!
+                                </p>
+                                <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
+                                  corpflats.com.br
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                          {!/writereview\?placeid=|link_avaliacao_google|g\.page\/r\/|link_cafe_manha|\/cafe\//i.test(editingMessage || "") && /link_precheckin|link_portal_reserva|link_checkout|\/pre-checkin\/|\/minha-reserva\/|\/checkout\//i.test(editingMessage || "") && (
+                            <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
+                              <img
+                                src={config.flatPreviewImage || "/flat-preview.jpg"}
+                                alt="Flat Preview"
+                                className="w-full h-28 object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
+                              />
+                              <div className="p-2 space-y-0.5">
+                                <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
+                                  🏨 Portal da Reserva • CorpFlats Soho Residence
+                                </p>
+                                <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
+                                  Acesse as informações do seu flat, Wi-Fi, senhas e serviços exclusivos.
+                                </p>
+                                <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
+                                  corpflats.com.br
                                 </p>
                               </div>
                             </div>
@@ -4849,6 +5011,130 @@ export default function WhatsappAutomation() {
                           </div>
                         )}
 
+                      </div>
+
+                      {/* Painel Rápido para Trocar Fotos e Textos de Pré-Visualização dos Links */}
+                      <div className="mt-4 p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold flex items-center gap-1.5 text-foreground">
+                            <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
+                            Fotos & Frase de Pré-Visualização (Link Preview)
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          {/* Avaliação Google */}
+                          <div className="p-2 rounded-xl border bg-background space-y-1.5 text-center">
+                            <span className="text-[10px] font-bold block truncate">⭐ Avaliação</span>
+                            <img
+                              src={config.reviewPreviewImage || "/flat-preview.jpg"}
+                              alt="Avaliação"
+                              className="w-full h-14 object-cover rounded-lg border"
+                              onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
+                            />
+                            <label className="cursor-pointer block">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0]
+                                  if (f) handleUploadPreviewImage("review", f)
+                                  e.target.value = ""
+                                }}
+                              />
+                              <span className="w-full inline-flex items-center justify-center gap-1 text-[10px] font-semibold py-1 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                                <Upload className="w-2.5 h-2.5" />
+                                {uploadingPreviewSlot === "review" ? "..." : "Trocar"}
+                              </span>
+                            </label>
+                          </div>
+
+                          {/* Café da Manhã */}
+                          <div className="p-2 rounded-xl border bg-background space-y-1.5 text-center">
+                            <span className="text-[10px] font-bold block truncate">☕ Café</span>
+                            <img
+                              src={config.breakfastPreviewImage || "/breakfast-preview.jpg"}
+                              alt="Café"
+                              className="w-full h-14 object-cover rounded-lg border"
+                              onError={(e) => { (e.target as HTMLImageElement).src = "/breakfast-preview.jpg" }}
+                            />
+                            <label className="cursor-pointer block">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0]
+                                  if (f) handleUploadPreviewImage("breakfast", f)
+                                  e.target.value = ""
+                                }}
+                              />
+                              <span className="w-full inline-flex items-center justify-center gap-1 text-[10px] font-semibold py-1 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                                <Upload className="w-2.5 h-2.5" />
+                                {uploadingPreviewSlot === "breakfast" ? "..." : "Trocar"}
+                              </span>
+                            </label>
+                          </div>
+
+                          {/* Flat / Check-in */}
+                          <div className="p-2 rounded-xl border bg-background space-y-1.5 text-center">
+                            <span className="text-[10px] font-bold block truncate">🏨 Flat / Links</span>
+                            <img
+                              src={config.flatPreviewImage || "/flat-preview.jpg"}
+                              alt="Flat"
+                              className="w-full h-14 object-cover rounded-lg border"
+                              onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
+                            />
+                            <label className="cursor-pointer block">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0]
+                                  if (f) handleUploadPreviewImage("flat", f)
+                                  e.target.value = ""
+                                }}
+                              />
+                              <span className="w-full inline-flex items-center justify-center gap-1 text-[10px] font-semibold py-1 px-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                                <Upload className="w-2.5 h-2.5" />
+                                {uploadingPreviewSlot === "flat" ? "..." : "Trocar"}
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 pt-1">
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-semibold">Título do Card (Avaliação Google):</Label>
+                            <Input
+                              value={config.reviewPreviewTitle || ""}
+                              onChange={(e) => setConfig({ ...config, reviewPreviewTitle: e.target.value })}
+                              placeholder="⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)"
+                              className="text-[11px] h-7.5 rounded-lg bg-background"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-semibold">Frase abaixo do título (Avaliação Google):</Label>
+                            <Input
+                              value={config.reviewPreviewDescription || ""}
+                              onChange={(e) => setConfig({ ...config, reviewPreviewDescription: e.target.value })}
+                              placeholder="Toque aqui para avaliar no Google"
+                              className="text-[11px] h-7.5 rounded-lg bg-background"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleSavePreviewConfig}
+                            disabled={savingPreviewTexts}
+                            className="w-full h-7.5 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                          >
+                            <Check className="w-3.5 h-3.5 mr-1" />
+                            {savingPreviewTexts ? "Salvando..." : "Salvar Textos do Card"}
+                          </Button>
+                        </div>
                       </div>
 
                     </div>
