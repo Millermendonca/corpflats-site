@@ -347,9 +347,11 @@ export const ROUTE_ALIASES: Record<string, string> = {
   "/site-editor": "/editor-site",
   "/cms": "/editor-site",
 
-  // Caixa de Entrada OTA
+  // Caixa de Entrada OTA & Manual Channex
   "/ota-inbox": "/caixa-entrada-ota",
   "/quarentena": "/caixa-entrada-ota",
+  "/ajuda-wbp": "/caixa-entrada-ota",
+  "/ajuda-channex": "/caixa-entrada-ota",
 
   // Reservar
   "/booking": "/reservar",

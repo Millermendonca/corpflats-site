@@ -1,13 +1,13 @@
 /**
  * artifacts/api-server/wbp/inbox.mjs
  *
- * Milestone 4: OTA Inbox, Fair-Share Flat Allocation, Quarantine & Mutations.
+ * Milestone 4: OTA Inbox, Fair-Share Flat Allocation, Quarantine & Mutations (Channex.io v1 + WBP).
  * Features 19, 20, 21, 23.
  *
  * Responsibilities:
- * - Feature 19: Payload normalization, inclusive EndDate resolution, Fair-Share allocation across 19 Soho flats,
- *   strict PaymentCollect handling (Channel vs Property, preventing legacy pago_total overwrite).
- * - Feature 20: Quarantine Management Engine (7 anomaly trigger conditions, resolve, reject, link).
+ * - Feature 19: Payload normalization (Channex booking_revision & WBP), Fair-Share allocation across 19 Soho flats,
+ *   multi-room Channex booking allocation, Virtual Card metadata extraction, and strict PaymentCollect handling.
+ * - Feature 20: Quarantine Management Engine (including UNMAPPED_ROOM_OR_RATE for Channex Test #10).
  * - Feature 21: OTA Mutations (Cancellations with in-house/check-in safety guard, Modifications with 3-tier reallocation).
  * - Feature 23: Automations & Strict PIX Suppression (zero PIX for OTAs, WhatsApp welcome, SERPRO, Housekeeping, Reception email).
  *
@@ -26,7 +26,7 @@ import {
 import { notifyPmsMutation } from "./ari-sync.mjs";
 import { findBestManualMatch, applySafeReconciliationLink } from "./reconciler.mjs";
 import { getAlertsManager } from "./alerts.mjs";
-import { isWbpAutoMode, isWbpEnabled, WBP_MODES, getIntegrationMode } from "./config.mjs";
+import { isWbpAutoMode, isWbpEnabled, WBP_MODES, getIntegrationMode, getChannexConfig } from "./config.mjs";
 import { getCardVault } from "./vault.mjs";
 
 /**
@@ -55,7 +55,7 @@ export function stripCvvDeep(obj) {
   const clean = {};
   for (const [key, value] of Object.entries(obj)) {
     if (/^(card_?)?(cv[vc2]|security_code|securitycode)$/i.test(key)) {
-      continue; // stripped immediately in memory
+      continue;
     }
     clean[key] = stripCvvDeep(value);
   }
@@ -63,13 +63,22 @@ export function stripCvvDeep(obj) {
 }
 
 /**
- * Detects card brand from PAN digits.
- * @param {string} pan
+ * Detects card brand from PAN digits or Channex card_type code.
+ * @param {string} panOrType
  * @returns {string}
  */
-export function detectCardBrand(pan) {
-  if (!pan) return "Desconhecida";
-  const clean = String(pan).replace(/\D/g, "");
+export function detectCardBrand(panOrType) {
+  if (!panOrType) return "Desconhecida";
+  const upper = String(panOrType).trim().toUpperCase();
+  if (upper === "VI" || upper === "VISA") return "Visa";
+  if (upper === "MC" || upper === "MASTERCARD") return "Mastercard";
+  if (upper === "AX" || upper === "AMEX") return "Amex";
+  if (upper === "DS" || upper === "DISCOVER") return "Discover";
+  if (upper === "JC" || upper === "JCB") return "JCB";
+  if (upper === "DN" || upper === "DINERS") return "Diners";
+  if (upper === "ELO") return "Elo";
+
+  const clean = String(panOrType).replace(/\D/g, "");
   if (/^4/.test(clean)) return "Visa";
   if (/^(5[1-5]|2[2-7])/.test(clean)) return "Mastercard";
   if (/^3[47]/.test(clean)) return "Amex";
@@ -115,14 +124,248 @@ export function maskPanDeep(obj) {
 }
 
 /**
- * Normalizes inbound WBP reservation payloads into a clean canonical data structure.
+ * Checks whether a raw payload is a Channex v1 booking_revision or booking object.
+ * @param {object} rawPayload
+ * @returns {boolean}
+ */
+export function isChannexPayload(rawPayload) {
+  if (!rawPayload || typeof rawPayload !== "object") return false;
+  const candidate = rawPayload.data || rawPayload;
+  const attrs = candidate.attributes || candidate;
+  return Boolean(
+    candidate.type === "booking_revision" ||
+    candidate.type === "booking" ||
+    attrs.ota_reservation_code ||
+    attrs.ota_name ||
+    (attrs.arrival_date && attrs.departure_date && Array.isArray(attrs.rooms))
+  );
+}
+
+/**
+ * Normalizes a Channex.io v1 `booking_revision` or `booking` payload into the canonical Guest-Flow-Manager format.
  *
  * @param {object} rawPayload
+ * @param {object} [db]
  * @returns {object}
  */
-export function normalizeOtaBooking(rawPayload) {
+export function normalizeChannexBookingRevision(rawPayload, db = null) {
+  if (!rawPayload || typeof rawPayload !== "object") {
+    throw new Error("Payload Channex inválido ou ausente.");
+  }
+
+  const sanitized = stripCvvDeep(rawPayload);
+  const resource = sanitized.data || sanitized;
+  const attrs = resource.attributes || resource;
+
+  const revisionId = String(resource.id || attrs.id || attrs.revision_id || "").trim();
+  const bookingId = String(attrs.booking_id || resource.booking_id || revisionId || "").trim();
+  const uniqueId = String(attrs.unique_id || attrs.ota_reservation_code || bookingId || "").trim();
+  const orderId = String(attrs.ota_reservation_code || uniqueId || bookingId || "").trim();
+
+  const statusRaw = String(attrs.status || "new").toLowerCase();
+  const isCancellation = statusRaw === "cancelled" || statusRaw === "canceled";
+  const isModification = statusRaw === "modified";
+
+  const otaNameRaw = String(attrs.ota_name || attrs.channel || "BookingCom").toLowerCase();
+  let channel = "booking";
+  if (otaNameRaw.includes("airbnb")) channel = "airbnb";
+  else if (otaNameRaw.includes("expedia")) channel = "expedia";
+
+  const customer = attrs.customer || {};
+  const firstName = customer.name || customer.first_name || "";
+  const lastName = customer.surname || customer.last_name || "";
+  const fullName = `${firstName} ${lastName}`.trim() || "Hóspede Channex";
+
+  const rooms = Array.isArray(attrs.rooms) ? attrs.rooms : [];
+  const primaryRoom = rooms[0] || {};
+
+  const checkinDate = normalizeDateStr(primaryRoom.checkin_date || attrs.arrival_date || "");
+  // In Channex v1, departure_date / checkout_date is ALREADY the morning of check-out!
+  const checkoutDate = normalizeDateStr(primaryRoom.checkout_date || attrs.departure_date || "");
+  const nights = checkinDate && checkoutDate ? getNightsBetween(checkinDate, checkoutDate).length : 1;
+
+  // Detect unmapped room_type_id or rate_plan_id (Certification Test #10)
+  const hasUnmappedRoomOrRate = rooms.length > 0 && rooms.some(
+    (r) =>
+      r.room_type_id === null ||
+      r.rate_plan_id === null ||
+      r.unmapped === true ||
+      String(r.room_type_id || "").toLowerCase() === "unmapped" ||
+      String(r.rate_plan_id || "").toLowerCase() === "unmapped"
+  );
+
+  const chxCfg = getChannexConfig(db);
+  const rawRatePlanId = String(primaryRoom.rate_plan_id || "").toLowerCase();
+  const services = [
+    ...(Array.isArray(attrs.services) ? attrs.services : []),
+    ...(Array.isArray(primaryRoom.services) ? primaryRoom.services : [])
+  ];
+  const hasBreakfastService = services.some((s) =>
+    String(s?.name || s?.type || "").toLowerCase().includes("breakfast") ||
+    String(s?.name || s?.type || "").toLowerCase().includes("café") ||
+    String(s?.name || s?.type || "").toLowerCase().includes("cafe")
+  );
+  const includeBreakfast =
+    (chxCfg.ratePlanComCafeId && primaryRoom.rate_plan_id === chxCfg.ratePlanComCafeId) ||
+    rawRatePlanId.includes("com_cafe") ||
+    rawRatePlanId.includes("com-cafe") ||
+    hasBreakfastService;
+  const ratePlanId = includeBreakfast ? "com_cafe" : "sem_cafe";
+
+  // Payment Collect: "ota" -> "Channel", "property" -> "Property"
+  const rawCollect = String(attrs.payment_collect || "ota").toLowerCase();
+  const paymentCollect = rawCollect === "property" ? "Property" : "Channel";
+
+  // Total price across all rooms in booking or attrs.amount
+  const roomsSum = rooms.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const totalPrice = Number(attrs.amount || roomsSum || 0);
+  const currency = attrs.currency || "BRL";
+  const commissionAmount =
+    attrs.ota_commission != null
+      ? Number(attrs.ota_commission)
+      : Number((totalPrice * 0.15).toFixed(2));
+  const netAmount = Number((totalPrice - commissionAmount).toFixed(2));
+
+  // Total adults & children across rooms (or primary room)
+  const totalAdults =
+    rooms.reduce((sum, r) => sum + Number(r.occupancy?.adults || 0), 0) ||
+    Number(primaryRoom.occupancy?.adults || attrs.occupancy?.adults || 2);
+  const totalChildren =
+    rooms.reduce((sum, r) => sum + Number(r.occupancy?.children || 0), 0) ||
+    Number(primaryRoom.occupancy?.children || attrs.occupancy?.children || 0);
+
+  // Guarantee & Virtual Card extraction
+  const guarantee = attrs.guarantee || {};
+  const rawPan = String(guarantee.card_number || "").replace(/\s/g, "");
+  const cleanDigits = rawPan.replace(/\D/g, "");
+  const cardLast4 = cleanDigits.length >= 4 ? cleanDigits.slice(-4) : "";
+  const cardBrand = detectCardBrand(guarantee.card_type || rawPan);
+  const expParts = String(guarantee.expiration_date || "").split("/");
+  const cardExpMonth = (expParts[0] || "").trim();
+  const cardExpYear = (expParts[1] || "").trim();
+  const isVirtualCard = Boolean(guarantee.is_virtual);
+  const virtualCardMeta = guarantee.meta || null;
+
+  if (rawPan && rawPan.length >= 12 && !rawPan.includes("*") && !rawPan.includes("•")) {
+    try {
+      const vault = getCardVault();
+      vault.storeCard({
+        orderId,
+        cardData: {
+          cardNumber: rawPan,
+          holderName: guarantee.cardholder_name || fullName,
+          expireMonth: cardExpMonth,
+          expireYear: cardExpYear,
+          brand: cardBrand
+        },
+        checkoutDate
+      });
+    } catch (_) {}
+  }
+
+  // Normalize dayRates from primaryRoom.days map { "YYYY-MM-DD": "280.00" }
+  const daysObj = primaryRoom.days && typeof primaryRoom.days === "object" ? primaryRoom.days : {};
+  const dayRates = Object.entries(daysObj).map(([date, price]) => ({
+    Date: date,
+    Rate: Number(price)
+  }));
+
+  // Normalize individual rooms for Multi-Room bookings (Certification Test #9)
+  const channexRooms = rooms.map((r, idx) => {
+    const rCheckin = normalizeDateStr(r.checkin_date || checkinDate);
+    const rCheckout = normalizeDateStr(r.checkout_date || checkoutDate);
+    const rNights = rCheckin && rCheckout ? getNightsBetween(rCheckin, rCheckout).length : nights;
+    const rAmount = Number(r.amount || (rooms.length > 0 ? totalPrice / rooms.length : totalPrice));
+    const rPlanRaw = String(r.rate_plan_id || "").toLowerCase();
+    const rBreakfast =
+      (chxCfg.ratePlanComCafeId && r.rate_plan_id === chxCfg.ratePlanComCafeId) ||
+      rPlanRaw.includes("com_cafe") ||
+      rPlanRaw.includes("com-cafe") ||
+      includeBreakfast;
+    return {
+      index: idx,
+      roomTypeId: r.room_type_id ?? null,
+      ratePlanId: rBreakfast ? "com_cafe" : "sem_cafe",
+      channexRatePlanId: r.rate_plan_id ?? null,
+      includeBreakfast: rBreakfast,
+      checkinDate: rCheckin,
+      checkoutDate: rCheckout,
+      nights: rNights,
+      amount: rAmount,
+      adults: Number(r.occupancy?.adults || 2),
+      children: Number(r.occupancy?.children || 0),
+      days: r.days || {}
+    };
+  });
+
+  const maskedPayload = maskPanDeep(sanitized);
+
+  return {
+    provider: "channex",
+    rawPayload: maskedPayload,
+    externalOrderId: orderId,
+    wbpBookingId: bookingId || orderId,
+    channexBookingId: bookingId,
+    channexRevisionId: revisionId,
+    channexUniqueId: uniqueId,
+    orderDate: attrs.inserted_at || new Date().toISOString(),
+    isCancellation,
+    isModification,
+    hasUnmappedRoomOrRate,
+    roomsCount: rooms.length || 1,
+    channexRooms,
+    channel,
+    guest: {
+      name: fullName,
+      firstName,
+      lastName,
+      email: customer.mail || customer.email || "",
+      phone: customer.phone || "",
+      country: customer.country || "BR"
+    },
+    guestName: fullName,
+    guestEmail: customer.mail || customer.email || "",
+    guestPhone: customer.phone || "",
+    guestCountry: customer.country || "BR",
+    checkinDate,
+    checkoutDate,
+    nights,
+    adults: totalAdults,
+    children: totalChildren,
+    ratePlanId,
+    includeBreakfast,
+    paymentCollect,
+    paymentType: attrs.payment_type || "credit_card",
+    totalPrice,
+    currency,
+    netAmount,
+    commissionAmount,
+    hasCard: Boolean(rawPan || cardLast4),
+    cardLast4,
+    cardBrand,
+    cardExpMonth,
+    cardExpYear,
+    isVirtualCard,
+    virtualCardMeta,
+    notes: attrs.notes || "",
+    dayRates
+  };
+}
+
+/**
+ * Normalizes inbound OTA reservation payloads (Channex v1 or WBP) into a clean canonical data structure.
+ *
+ * @param {object} rawPayload
+ * @param {object} [db]
+ * @returns {object}
+ */
+export function normalizeOtaBooking(rawPayload, db = null) {
   if (!rawPayload || typeof rawPayload !== "object") {
     throw new Error("Payload de reserva inválido ou ausente.");
+  }
+
+  if (isChannexPayload(rawPayload)) {
+    return normalizeChannexBookingRevision(rawPayload, db);
   }
 
   // Deep strip CVV before anything else
@@ -187,7 +430,6 @@ export function normalizeOtaBooking(rawPayload) {
   const currency = resObj.TotalCurrency || resObj.currency || "BRL";
 
   // Commission & Net Amount
-  // Booking.com default commission ~15%, Airbnb ~15%
   const defaultCommissionRate = 0.15;
   const commissionAmount = Number(resObj.CommissionAmount || totalPrice * defaultCommissionRate);
   const netAmount = Number((totalPrice - commissionAmount).toFixed(2));
@@ -199,7 +441,7 @@ export function normalizeOtaBooking(rawPayload) {
   const cardLast4 = pan ? pan.slice(-4) : (rawCard.cardLast4 || "");
   const cardBrand = pan ? detectCardBrand(pan) : (rawCard.cardBrand || "");
   const cardExpMonth = String(rawCard.CardExpireMonth || rawCard.expMonth || rawCard.expireMonth || "").trim();
-  const cardExpYear = String(rawCard.CardExpireYear || rawCard.expYear || rawCard.expireYear || "").trim();
+  const cardExpYear = String(rawCard.CardExpireYear || rawCard.expireYear || rawCard.expYear || "").trim();
 
   // Feature 25: Store card in encrypted vault BEFORE masking PAN
   if (pan && pan.length >= 12 && !pan.includes("*") && !pan.includes("•")) {
@@ -223,12 +465,16 @@ export function normalizeOtaBooking(rawPayload) {
   const maskedPayload = maskPanDeep(sanitized);
 
   return {
+    provider: "wbp",
     rawPayload: maskedPayload,
     externalOrderId: orderId,
     wbpBookingId: orderId,
     orderDate: resObj.OrderDate || new Date().toISOString(),
     isCancellation,
     isModification,
+    hasUnmappedRoomOrRate: false,
+    roomsCount: 1,
+    channexRooms: [],
     channel,
     guest: {
       name: fullName,
@@ -259,15 +505,14 @@ export function normalizeOtaBooking(rawPayload) {
     cardBrand,
     cardExpMonth: rawCard.CardExpireMonth || rawCard.expMonth || "",
     cardExpYear: rawCard.CardExpireYear || rawCard.expYear || "",
+    isVirtualCard: false,
+    virtualCardMeta: null,
     dayRates
   };
 }
 
 /**
  * Calculates turnover, wear-and-tear, and rest metrics for all 19 Soho flats.
- *
- * @param {object} db
- * @returns {Record<string, { flatId: number, flatNumber: string, checkoutCount: number, occupiedNights: number, lastCheckoutDate: string }>}
  */
 export function calculateFairShareStats(db) {
   const flats = getCanonicalFlats(db);
@@ -304,32 +549,25 @@ export function calculateFairShareStats(db) {
 
 /**
  * Allocates optimal flat across 19 Soho flats using Canonical Availability and Fair-Share Ranking.
- *
- * @param {string} checkinDate - YYYY-MM-DD
- * @param {string} checkoutDate - YYYY-MM-DD
- * @param {object} [options]
- * @param {object} [options.db]
- * @param {string|number} [options.excludeReservationId]
- * @returns {{
- *   allocated: boolean,
- *   flat: { id: number, number: string, colName?: string } | null,
- *   availableCount: number,
- *   reason?: string
- * }}
  */
 export function allocateFairShareFlat(checkinDate, checkoutDate, options = {}) {
   const db = options.db || (typeof global !== "undefined" && global.db ? global.db : {});
   const flats = getCanonicalFlats(db);
   const nights = getNightsBetween(checkinDate, checkoutDate);
+  const excludeFlatNumbers = new Set(
+    Array.isArray(options.excludeFlatNumbers) ? options.excludeFlatNumbers.map(String) : []
+  );
 
   if (nights.length === 0) {
     return { allocated: false, flat: null, availableCount: 0, reason: "INVALID_DATES" };
   }
 
-  // 1. Filter candidates where checkFlatBlockedOnNight returns false for every single night of stay
   const candidateFlats = [];
   const blockedByFlat = [];
   for (const flat of flats) {
+    if (excludeFlatNumbers.has(String(flat.number))) {
+      continue;
+    }
     let unblocked = true;
     let firstBlock = null;
     for (const night of nights) {
@@ -349,9 +587,8 @@ export function allocateFairShareFlat(checkinDate, checkoutDate, options = {}) {
     }
   }
 
-  // Zero available -> check whether capacity was lost to maintenance or general overbooking
   if (candidateFlats.length === 0) {
-    const maintenanceBlock = blockedByFlat.find(b =>
+    const maintenanceBlock = blockedByFlat.find((b) =>
       b.block && (
         b.block.reason === "flat_maintenance" ||
         b.block.reason === "room_block" ||
@@ -368,26 +605,21 @@ export function allocateFairShareFlat(checkinDate, checkoutDate, options = {}) {
     };
   }
 
-  // 2. Multi-criterion Fair-Share Sorting
   const stats = calculateFairShareStats(db);
 
   candidateFlats.sort((a, b) => {
     const sA = stats[String(a.number)] || { checkoutCount: 0, occupiedNights: 0, lastCheckoutDate: "1970-01-01" };
     const sB = stats[String(b.number)] || { checkoutCount: 0, occupiedNights: 0, lastCheckoutDate: "1970-01-01" };
 
-    // Primary: Ascending checkout count (least cleanings)
     if (sA.checkoutCount !== sB.checkoutCount) {
       return sA.checkoutCount - sB.checkoutCount;
     }
-    // Secondary: Ascending occupied nights (least runtime wear)
     if (sA.occupiedNights !== sB.occupiedNights) {
       return sA.occupiedNights - sB.occupiedNights;
     }
-    // Tertiary: Ascending last checkout date (longest resting period)
     if (sA.lastCheckoutDate !== sB.lastCheckoutDate) {
       return sA.lastCheckoutDate.localeCompare(sB.lastCheckoutDate);
     }
-    // Deterministic tie-breaker by id
     return a.id - b.id;
   });
 
@@ -401,14 +633,6 @@ export function allocateFairShareFlat(checkinDate, checkoutDate, options = {}) {
 
 /**
  * Routes an unaccommodated, conflicting, or ambiguous OTA booking to db.wbpQuarantine.
- *
- * @param {object} params
- * @param {object} params.db
- * @param {object} params.booking - Normalized booking
- * @param {string} params.reason - One of 7 trigger codes
- * @param {object} [params.reasonDetails]
- * @param {object} [params.alertsManager]
- * @returns {object} quarantineRecord
  */
 export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, alertsManager = null }) {
   if (!db) throw new Error("Database state required for quarantine routing.");
@@ -423,6 +647,8 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
     id: quarantineId,
     bookingId: b.externalOrderId || b.wbpBookingId || "N/A",
     externalOrderId: b.externalOrderId || "N/A",
+    channexBookingId: b.channexBookingId || null,
+    channexRevisionId: b.channexRevisionId || null,
     rawPayloadId: b.rawPayloadId || null,
     source: b.source || "webhook",
     channel: b.channel || "booking",
@@ -442,15 +668,17 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
     paymentCollect: b.paymentCollect || "Channel",
     isModification: Boolean(b.isModification),
     isCancellation: Boolean(b.isCancellation),
-    reason, // OVERBOOKING | CONFLICT | MAINTENANCE_BLOCKED | CHECKED_IN_CANCELLATION | MODIFICATION_CONFLICT | AMBIGUOUS_MATCH | MALFORMED_PAYLOAD
+    reason, // OVERBOOKING | CONFLICT | MAINTENANCE_BLOCKED | CHECKED_IN_CANCELLATION | MODIFICATION_CONFLICT | AMBIGUOUS_MATCH | MALFORMED_PAYLOAD | UNMAPPED_ROOM_OR_RATE
     reasonDetails,
     cardReference: {
       maskedPan: b.cardLast4 ? `**** **** **** ${b.cardLast4}` : "",
       cardBrand: b.cardBrand || "",
       cardExpMonth: b.cardExpMonth || "",
-      cardExpYear: b.cardExpYear || ""
+      cardExpYear: b.cardExpYear || "",
+      isVirtualCard: Boolean(b.isVirtualCard),
+      virtualCardMeta: b.virtualCardMeta || null
     },
-    status: "pending", // pending | resolved | rejected
+    status: "pending",
     createdAt: new Date().toISOString(),
     resolvedAt: null,
     resolvedBy: null,
@@ -464,7 +692,6 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
 
   db.wbpQuarantine.unshift(record);
 
-  // Trigger immediate manager alert
   const mgr = alertsManager || getAlertsManager();
   if (mgr && typeof mgr.sendImmediateQuarantineAlert === "function") {
     try {
@@ -478,24 +705,20 @@ export function routeToQuarantine({ db, booking, reason, reasonDetails = {}, ale
 }
 
 /**
- * Handles OTA cancellation requests (IsCancellation === 1).
+ * Handles OTA cancellation requests.
  * Enforces check-in safety guard to protect active in-house guests.
- *
- * @param {object} params
- * @param {object} params.db
- * @param {object} params.normalized
- * @param {object} [params.alertsManager]
- * @returns {object}
  */
 export function handleOtaCancellation({ db, normalized, alertsManager = null, vault = null }) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
-  const existing = reservations.find(r =>
+  const matching = reservations.filter((r) =>
     (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
+    (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
+    (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
     (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId)) ||
     (r.code && String(r.code) === String(normalized.externalOrderId))
   );
 
-  if (!existing) {
+  if (matching.length === 0) {
     return routeToQuarantine({
       db,
       booking: normalized,
@@ -505,15 +728,17 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null, va
     });
   }
 
-  // Safety Guard: Block cancellation and route to Quarantine STRICTLY when check-in has actually been completed (R5)
-  const isCheckedIn = existing.status === "checked_in" ||
-    existing.status === "hospedado" ||
-    existing.status === "checkin_realizado" ||
-    existing.checkedIn === true ||
-    Boolean(existing.checkedInAt);
+  const existing = matching[0];
+
+  const isCheckedIn = matching.some((r) =>
+    r.status === "checked_in" ||
+    r.status === "hospedado" ||
+    r.status === "checkin_realizado" ||
+    r.checkedIn === true ||
+    Boolean(r.checkedInAt)
+  );
 
   if (isCheckedIn) {
-    // DO NOT auto-cancel! Route to quarantine with urgent alert.
     return routeToQuarantine({
       db,
       booking: normalized,
@@ -528,29 +753,28 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null, va
     });
   }
 
-  // Safe to cancel automatically
-  existing.status = "cancelada";
-  existing.cancelledAt = new Date().toISOString();
-  existing.cancelReason = "Cancelamento automático via OTA (WebBookingPro)";
+  for (const resItem of matching) {
+    resItem.status = "cancelada";
+    resItem.cancelledAt = new Date().toISOString();
+    resItem.cancelReason = `Cancelamento automático via OTA (${normalized.provider === "channex" ? "Channex.io" : "WebBookingPro"})`;
 
-  // Feature 26 (Rule 2): Auto-purge card immediately on cancellation without penalty
-  try {
-    const v = vault || getCardVault();
-    v.purgeCard(existing.id, "cancelled_without_penalty", db);
-    if (normalized.externalOrderId) {
-      v.purgeCard(normalized.externalOrderId, "cancelled_without_penalty", db);
-    }
-    existing.vaultStatus = "purged";
-  } catch (_) {}
+    try {
+      const v = vault || getCardVault();
+      v.purgeCard(resItem.id, "cancelled_without_penalty", db);
+      if (normalized.externalOrderId) {
+        v.purgeCard(normalized.externalOrderId, "cancelled_without_penalty", db);
+      }
+      resItem.vaultStatus = "purged";
+    } catch (_) {}
 
-  if (!Array.isArray(existing.auditLogs)) existing.auditLogs = [];
-  existing.auditLogs.push({
-    timestamp: new Date().toISOString(),
-    action: "OTA_CANCELLATION_APPLIED",
-    details: `Reserva cancelada via WebBookingPro. Flat ${existing.flatNumber} liberado.`
-  });
+    if (!Array.isArray(resItem.auditLogs)) resItem.auditLogs = [];
+    resItem.auditLogs.push({
+      timestamp: new Date().toISOString(),
+      action: "OTA_CANCELLATION_APPLIED",
+      details: `Reserva cancelada via OTA. Flat ${resItem.flatNumber} liberado.`
+    });
+  }
 
-  // Release flat in channel manager via debounced ARI incremental sync
   try {
     notifyPmsMutation(db, {
       type: "reservation_cancelled",
@@ -563,24 +787,21 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null, va
     success: true,
     action: "cancelled",
     reservationId: existing.id,
-    code: existing.code
+    code: existing.code,
+    cancelledCount: matching.length
   };
 }
 
 /**
- * Handles OTA modification requests (IsModification === 1).
+ * Handles OTA modification requests.
  * Evaluates 3-tier reallocation logic: same flat -> alternate flat -> quarantine on conflict.
- *
- * @param {object} params
- * @param {object} params.db
- * @param {object} params.normalized
- * @param {object} [params.alertsManager]
- * @returns {object}
  */
 export function handleOtaModification({ db, normalized, alertsManager = null }) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
-  const existing = reservations.find(r =>
+  const existing = reservations.find((r) =>
     (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
+    (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
+    (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
     (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId))
   );
 
@@ -599,7 +820,6 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
   const newCheckin = normalized.checkinDate;
   const newCheckout = normalized.checkoutDate;
 
-  // Mandatory Directive 4 / R5: Capture structured before state
   const before = {
     flatId: existing.flatId,
     flatNumber: existing.flatNumber,
@@ -625,7 +845,6 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
   }
 
   if (sameFlatFree) {
-    // Keep on same flat
     existing.checkinDate = newCheckin;
     existing.checkoutDate = newCheckout;
     existing.totalAmount = normalized.totalPrice;
@@ -660,7 +879,6 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
     });
     existing.history = existing.modificationHistory;
 
-    // Notify ARI refresh for union interval
     const minDate = oldCheckin < newCheckin ? oldCheckin : newCheckin;
     const maxDate = oldCheckout > newCheckout ? oldCheckout : newCheckout;
     try {
@@ -762,13 +980,6 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
 
 /**
  * Master Ingestion Coordinator: Processes incoming OTA bookings from both webhooks and background polling.
- *
- * @param {object} rawPayload
- * @param {object} [options]
- * @param {object} [options.db]
- * @param {object} [options.storage]
- * @param {object} [options.alertsManager]
- * @returns {Promise<object>}
  */
 export async function processIncomingOTA(rawPayload, options = {}) {
   const db = options.db || (typeof global !== "undefined" && global.db ? global.db : {});
@@ -782,7 +993,7 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   // 1. Normalization & Card Hygiene
   let normalized;
   try {
-    normalized = normalizeOtaBooking(rawPayload);
+    normalized = normalizeOtaBooking(rawPayload, db);
   } catch (err) {
     return routeToQuarantine({
       db,
@@ -811,6 +1022,19 @@ export async function processIncomingOTA(rawPayload, options = {}) {
         alertsManager
       });
     }
+
+    // Channex Certification Test #10: Booking with Unmapped Room or Rate
+    if (normalized.hasUnmappedRoomOrRate) {
+      return routeToQuarantine({
+        db,
+        booking: normalized,
+        reason: "UNMAPPED_ROOM_OR_RATE",
+        reasonDetails: {
+          message: `Reserva OTA #${normalized.externalOrderId} recebida com Room Type ou Rate Plan não mapeado (room_type_id/rate_plan_id nulo). Alocação manual necessária.`
+        },
+        alertsManager
+      });
+    }
   }
 
   // 2. Mutations: Check Cancellation
@@ -825,8 +1049,10 @@ export async function processIncomingOTA(rawPayload, options = {}) {
 
   // 4. Check if this electronic reservation is ALREADY imported
   const reservations = Array.isArray(db.reservations) ? db.reservations : [];
-  const existingElectronic = reservations.find(r =>
+  const existingElectronic = reservations.find((r) =>
     (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
+    (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
+    (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
     (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId))
   );
 
@@ -844,7 +1070,6 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   if (manualMatch) {
     const { bestMatch, scoreResult } = manualMatch;
     if (scoreResult.isSafeMatch) {
-      // Safe Match: LINK external identifiers without duplicating or altering flat/price!
       applySafeReconciliationLink(bestMatch, normalized, { db });
       return {
         success: true,
@@ -854,7 +1079,6 @@ export async function processIncomingOTA(rawPayload, options = {}) {
         matchScore: scoreResult.score
       };
     } else if (scoreResult.isAmbiguous) {
-      // Ambiguous Match: Route to Quarantine
       return routeToQuarantine({
         db,
         booking: normalized,
@@ -870,50 +1094,79 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     }
   }
 
-  // 6. Fair-Share Flat Allocation
-  const alloc = allocateFairShareFlat(normalized.checkinDate, normalized.checkoutDate, { db });
-  if (!alloc.allocated || !alloc.flat) {
-    if (alloc.reason === "INVALID_DATES") {
-      return routeToQuarantine({
-        db,
-        booking: normalized,
-        reason: "MALFORMED_PAYLOAD",
-        reasonDetails: {
-          message: `Datas de estadia inválidas para alocação: checkin=${normalized.checkinDate}, checkout=${normalized.checkoutDate}`,
-          checkinDate: normalized.checkinDate,
-          checkoutDate: normalized.checkoutDate
-        },
-        alertsManager
-      });
-    }
+  // 6. Fair-Share Flat Allocation (supports single-room and multi-room Channex bookings)
+  const roomsToAllocate =
+    Array.isArray(normalized.channexRooms) && normalized.channexRooms.length > 1
+      ? normalized.channexRooms
+      : [
+          {
+            index: 0,
+            checkinDate: normalized.checkinDate,
+            checkoutDate: normalized.checkoutDate,
+            nights: normalized.nights,
+            amount: normalized.totalPrice,
+            adults: normalized.adults,
+            children: normalized.children,
+            ratePlanId: normalized.ratePlanId,
+            includeBreakfast: normalized.includeBreakfast
+          }
+        ];
 
-    if (alloc.reason === "MAINTENANCE_BLOCKED") {
+  const allocatedFlats = [];
+  const usedFlatNumbers = [];
+
+  for (const roomSpec of roomsToAllocate) {
+    const alloc = allocateFairShareFlat(roomSpec.checkinDate, roomSpec.checkoutDate, {
+      db,
+      excludeFlatNumbers: usedFlatNumbers
+    });
+
+    if (!alloc.allocated || !alloc.flat) {
+      if (alloc.reason === "INVALID_DATES") {
+        return routeToQuarantine({
+          db,
+          booking: normalized,
+          reason: "MALFORMED_PAYLOAD",
+          reasonDetails: {
+            message: `Datas de estadia inválidas para alocação: checkin=${roomSpec.checkinDate}, checkout=${roomSpec.checkoutDate}`,
+            checkinDate: roomSpec.checkinDate,
+            checkoutDate: roomSpec.checkoutDate
+          },
+          alertsManager
+        });
+      }
+
+      if (alloc.reason === "MAINTENANCE_BLOCKED") {
+        return routeToQuarantine({
+          db,
+          booking: normalized,
+          reason: "MAINTENANCE_BLOCKED",
+          reasonDetails: {
+            message: `Nenhum flat disponível devido a bloqueio de manutenção no período (${roomSpec.checkinDate} a ${roomSpec.checkoutDate}).`,
+            details: alloc.blockedDetails,
+            availableCount: 0
+          },
+          alertsManager
+        });
+      }
+
       return routeToQuarantine({
         db,
         booking: normalized,
-        reason: "MAINTENANCE_BLOCKED",
+        reason: "OVERBOOKING",
         reasonDetails: {
-          message: `Nenhum flat disponível devido a bloqueio de manutenção no período (${normalized.checkinDate} a ${normalized.checkoutDate}).`,
-          details: alloc.blockedDetails,
+          message: `Nenhum flat disponível para o período solicitado (${roomSpec.checkinDate} a ${roomSpec.checkoutDate}).`,
           availableCount: 0
         },
         alertsManager
       });
     }
 
-    return routeToQuarantine({
-      db,
-      booking: normalized,
-      reason: "OVERBOOKING",
-      reasonDetails: {
-        message: `Nenhum flat disponível para o período solicitado (${normalized.checkinDate} a ${normalized.checkoutDate}).`,
-        availableCount: 0
-      },
-      alertsManager
-    });
+    allocatedFlats.push({ roomSpec, flat: alloc.flat });
+    usedFlatNumbers.push(String(alloc.flat.number));
   }
 
-  const assignedFlat = alloc.flat;
+  const assignedFlat = allocatedFlats[0].flat;
   const flatNumber = String(assignedFlat.number);
 
   // 7. Mode OBSERVE: Record intent in db.wbpInbox without creating active reservation and without automations
@@ -925,6 +1178,7 @@ export async function processIncomingOTA(rawPayload, options = {}) {
       receivedAt: new Date().toISOString(),
       normalized,
       simulatedFlat: assignedFlat,
+      simulatedFlats: allocatedFlats.map((af) => String(af.flat.number)),
       status: "observed_only"
     };
     db.wbpInbox.unshift(intentRecord);
@@ -936,84 +1190,100 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     };
   }
 
-  // 8. Mode AUTO: Create genuine reservation in db.reservations
-  // Payment status & PaymentCollect semantics (Directive 2 / R5):
-  // - Channel: pago_total, paidAmount = total, netAmount = total - commission
-  // - Property: pendente, paidAmount = 0, collectAtCheckin = true, front desk alert
+  // 8. Mode AUTO: Create genuine reservation(s) in db.reservations
+  if (!Array.isArray(db.reservations)) db.reservations = [];
   const isPropertyCollect = normalized.paymentCollect === "Property";
   const paymentStatus = isPropertyCollect ? "pendente" : "pago_total";
-  const paidAmount = isPropertyCollect ? 0 : normalized.totalPrice;
 
-  // Generate unique reservation ID and code
-  const nextId = reservations.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
-  const randSuffix = Math.floor(1000 + Math.random() * 9000);
-  const code = `RES-${flatNumber}-${randSuffix}`;
+  const createdReservations = [];
 
-  const newReservation = {
-    id: nextId,
-    code,
-    flatId: assignedFlat.id,
-    flatNumber,
-    guestName: normalized.guestName,
-    guestEmail: normalized.guestEmail,
-    guestPhone: normalized.guestPhone,
-    checkinDate: normalized.checkinDate,
-    checkoutDate: normalized.checkoutDate,
-    guestCount: normalized.adults + normalized.children,
-    adults: normalized.adults,
-    children: normalized.children,
-    totalAmount: normalized.totalPrice,
-    dailyRate: normalized.nights > 0 ? Number((normalized.totalPrice / normalized.nights).toFixed(2)) : normalized.totalPrice,
-    paidAmount,
-    netAmount: normalized.netAmount,
-    commissionAmount: normalized.commissionAmount,
-    cardLast4: normalized.cardLast4,
-    cardBrand: normalized.cardBrand,
-    cardExpMonth: normalized.cardExpMonth,
-    cardExpYear: normalized.cardExpYear,
-    hasCard: Boolean(normalized.hasCard),
-    vaultStatus: normalized.hasCard ? "active" : undefined,
-    paymentStatus,
-    paymentMethod: normalized.channel,
-    paymentCollect: normalized.paymentCollect,
-    collectAtCheckin: isPropertyCollect,
-    channel: normalized.channel,
-    externalOrderId: normalized.externalOrderId,
-    wbpBookingId: normalized.wbpBookingId,
-    breakfastIncluded: normalized.includeBreakfast,
-    ratePlanId: normalized.ratePlanId,
-    status: "ativa",
-    createdAt: new Date().toISOString(),
-    // Strict PIX Suppression (Directive 1 / AGENTS.md):
-    pixTxId: null,
-    pixCopiaECola: null,
-    wbpSynced: true,
-    auditLogs: [
-      {
-        timestamp: new Date().toISOString(),
-        action: "OTA_BOOKING_IMPORTED",
-        details: `Reserva importada via WebBookingPro (${normalized.channel.toUpperCase()}). Flat ${flatNumber} alocado via Fair-Share. PaymentCollect=${normalized.paymentCollect}.`
+  for (let i = 0; i < allocatedFlats.length; i++) {
+    const { roomSpec, flat } = allocatedFlats[i];
+    const rFlatNumber = String(flat.number);
+    const isMultiRoom = allocatedFlats.length > 1;
+    const roomOrderId = isMultiRoom
+      ? `${normalized.externalOrderId}-R${i + 1}`
+      : normalized.externalOrderId;
+
+    const rTotal = Number(roomSpec.amount || normalized.totalPrice);
+    const rCommission = Number((rTotal * 0.15).toFixed(2));
+    const rNet = Number((rTotal - rCommission).toFixed(2));
+    const rPaid = isPropertyCollect ? 0 : rTotal;
+
+    const nextId = db.reservations.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
+    const randSuffix = Math.floor(1000 + Math.random() * 9000);
+    const code = `RES-${rFlatNumber}-${randSuffix}`;
+
+    const newReservation = {
+      id: nextId,
+      code,
+      flatId: flat.id,
+      flatNumber: rFlatNumber,
+      guestName: normalized.guestName,
+      guestEmail: normalized.guestEmail,
+      guestPhone: normalized.guestPhone,
+      checkinDate: roomSpec.checkinDate,
+      checkoutDate: roomSpec.checkoutDate,
+      guestCount: Number(roomSpec.adults || 1) + Number(roomSpec.children || 0),
+      adults: Number(roomSpec.adults || 1),
+      children: Number(roomSpec.children || 0),
+      totalAmount: rTotal,
+      dailyRate: roomSpec.nights > 0 ? Number((rTotal / roomSpec.nights).toFixed(2)) : rTotal,
+      paidAmount: rPaid,
+      netAmount: isMultiRoom ? rNet : normalized.netAmount,
+      commissionAmount: isMultiRoom ? rCommission : normalized.commissionAmount,
+      cardLast4: normalized.cardLast4,
+      cardBrand: normalized.cardBrand,
+      cardExpMonth: normalized.cardExpMonth,
+      cardExpYear: normalized.cardExpYear,
+      hasCard: Boolean(normalized.hasCard),
+      isVirtualCard: Boolean(normalized.isVirtualCard),
+      virtualCardMeta: normalized.virtualCardMeta || null,
+      vaultStatus: normalized.hasCard ? "active" : undefined,
+      paymentStatus,
+      paymentMethod: normalized.channel,
+      paymentCollect: normalized.paymentCollect,
+      collectAtCheckin: isPropertyCollect,
+      channel: normalized.channel,
+      externalOrderId: roomOrderId,
+      parentExternalOrderId: normalized.externalOrderId,
+      wbpBookingId: normalized.wbpBookingId,
+      channexBookingId: normalized.channexBookingId || null,
+      channexRevisionId: normalized.channexRevisionId || null,
+      breakfastIncluded: Boolean(roomSpec.includeBreakfast),
+      ratePlanId: roomSpec.ratePlanId || normalized.ratePlanId,
+      status: "ativa",
+      createdAt: new Date().toISOString(),
+      pixTxId: null,
+      pixCopiaECola: null,
+      wbpSynced: true,
+      auditLogs: [
+        {
+          timestamp: new Date().toISOString(),
+          action: "OTA_BOOKING_IMPORTED",
+          details: `Reserva importada via ${normalized.provider === "channex" ? "Channex.io" : "WebBookingPro"} (${normalized.channel.toUpperCase()}). Flat ${rFlatNumber} alocado via Fair-Share. PaymentCollect=${normalized.paymentCollect}.`
+        }
+      ]
+    };
+
+    if (isPropertyCollect) {
+      newReservation.receptionAlert = `COBRAR NO CHECK-IN: R$ ${rTotal.toFixed(2)}`;
+      if (alertsManager && typeof alertsManager.sendPropertyPaymentAlert === "function") {
+        alertsManager.sendPropertyPaymentAlert(newReservation, db);
       }
-    ]
-  };
-
-  if (isPropertyCollect) {
-    newReservation.receptionAlert = `COBRAR NO CHECK-IN: R$ ${normalized.totalPrice.toFixed(2)}`;
-    // Dispatch reception warning
-    if (alertsManager && typeof alertsManager.sendPropertyPaymentAlert === "function") {
-      alertsManager.sendPropertyPaymentAlert(newReservation, db);
     }
+
+    db.reservations.push(newReservation);
+    createdReservations.push(newReservation);
   }
 
-  // Persist reservation in PMS
-  if (!Array.isArray(db.reservations)) db.reservations = [];
-  db.reservations.push(newReservation);
+  const primaryReservation = createdReservations[0];
 
-  // Feature 25: Link vault record to reservation ID
+  // Feature 25: Link vault record to primary reservation ID
   if (normalized.hasCard) {
     try {
       const vault = getCardVault();
-      vault.linkReservation(normalized.externalOrderId, newReservation.id, normalized.checkoutDate);
+      vault.linkReservation(normalized.externalOrderId, primaryReservation.id, normalized.checkoutDate);
     } catch (_) {}
   }
 
@@ -1023,64 +1293,67 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     id: `inbox_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     mode: "auto",
     receivedAt: new Date().toISOString(),
-    reservationId: newReservation.id,
-    code: newReservation.code,
+    reservationId: primaryReservation.id,
+    code: primaryReservation.code,
     normalized,
     assignedFlatNumber: flatNumber,
+    assignedFlatNumbers: createdReservations.map((r) => r.flatNumber),
     status: "created"
   });
 
-  // 9. Automations in AUTO mode (Housekeeping task, Reception notification, WhatsApp Welcome without PIX, SERPRO/FNRH)
+  // 9. Automations in AUTO mode
   try {
-    // A. Housekeeping task
     if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
-    db.cleaningRequests.push({
-      id: `clean_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      flatId: assignedFlat.id,
-      flatNumber,
-      scheduledDate: normalized.checkinDate,
-      type: "checkin_preparacao",
-      status: "pendente",
-      notes: `Preparação para check-in OTA (${normalized.guestName}, ${normalized.adults} adultos, café: ${normalized.includeBreakfast ? "Sim" : "Não"})`
-    });
+    for (const resItem of createdReservations) {
+      db.cleaningRequests.push({
+        id: `clean_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        flatId: resItem.flatId,
+        flatNumber: resItem.flatNumber,
+        scheduledDate: resItem.checkinDate,
+        type: "checkin_preparacao",
+        status: "pendente",
+        notes: `Preparação para check-in OTA (${resItem.guestName}, ${resItem.adults} adultos, café: ${resItem.breakfastIncluded ? "Sim" : "Não"})`
+      });
+    }
 
-    // B. Reception / Front-desk email (regardless of checkinDate === todayStr)
     if (alertsManager && typeof alertsManager.sendEmail === "function") {
       const receptionEmail = db.settings?.receptionEmail || "soho@promenade.com.br";
-      const emailSubject = `[RESERVA OTA] Flat ${flatNumber} - ${normalized.guestName} (${normalized.channel.toUpperCase()})`;
+      const flatsStr = createdReservations.map((r) => r.flatNumber).join(", ");
+      const emailSubject = `[RESERVA OTA] Flat ${flatsStr} - ${normalized.guestName} (${normalized.channel.toUpperCase()})`;
       const emailBody = `Nova reserva OTA importada com sucesso:
 - Hóspede: ${normalized.guestName}
 - Canal: ${normalized.channel.toUpperCase()}
-- Flat Alocado: ${flatNumber}
+- Flat(s) Alocado(s): ${flatsStr}
 - Período: ${normalized.checkinDate} a ${normalized.checkoutDate} (${normalized.nights} noites)
 - Pagamento: ${normalized.paymentCollect === "Property" ? "COBRAR NO CHECK-IN (R$ " + normalized.totalPrice.toFixed(2) + ")" : "PAGO NO CANAL (R$ " + normalized.totalPrice.toFixed(2) + ")"}
 - Café da Manhã: ${normalized.includeBreakfast ? "Incluso" : "Sem café"}`;
       alertsManager.sendEmail(receptionEmail, emailSubject, emailBody);
     }
 
-    // C. Welcome WhatsApp via alertsManager.sendWhatsApp(normalized.guestPhone) WITHOUT PIX
     if (normalized.guestPhone && alertsManager && typeof alertsManager.sendWhatsApp === "function") {
-      const welcomeMsg = `Olá, ${normalized.guestName}! Confirmamos sua reserva no Flat ${flatNumber} (Soho Residence) para o período de ${normalized.checkinDate} a ${normalized.checkoutDate}. Caso precise de alguma informação adicional, estamos à disposição!`;
+      const flatsStr = createdReservations.map((r) => r.flatNumber).join(", ");
+      const welcomeMsg = `Olá, ${normalized.guestName}! Confirmamos sua reserva no Flat ${flatsStr} (Soho Residence) para o período de ${normalized.checkinDate} a ${normalized.checkoutDate}. Caso precise de alguma informação adicional, estamos à disposição!`;
       alertsManager.sendWhatsApp(normalized.guestPhone, welcomeMsg);
     }
 
-    // D. SERPRO / FNRH queue record (keeping pixTxId: null and pixCopiaECola: null)
     if (!Array.isArray(db.serproQueue)) db.serproQueue = [];
-    db.serproQueue.push({
-      id: `serpro_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      reservationId: newReservation.id,
-      reservationCode: newReservation.code,
-      guestName: normalized.guestName,
-      guestEmail: normalized.guestEmail,
-      guestPhone: normalized.guestPhone,
-      guestCountry: normalized.guestCountry || "BR",
-      checkinDate: normalized.checkinDate,
-      checkoutDate: normalized.checkoutDate,
-      flatNumber,
-      status: "queued",
-      createdAt: new Date().toISOString()
-    });
-    newReservation.fnrhStatus = "enviado";
+    for (const resItem of createdReservations) {
+      db.serproQueue.push({
+        id: `serpro_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        reservationId: resItem.id,
+        reservationCode: resItem.code,
+        guestName: resItem.guestName,
+        guestEmail: resItem.guestEmail,
+        guestPhone: resItem.guestPhone,
+        guestCountry: normalized.guestCountry || "BR",
+        checkinDate: resItem.checkinDate,
+        checkoutDate: resItem.checkoutDate,
+        flatNumber: resItem.flatNumber,
+        status: "queued",
+        createdAt: new Date().toISOString()
+      });
+      resItem.fnrhStatus = "enviado";
+    }
   } catch (err) {
     console.warn("[Automations] Falha ao disparar tarefas secundárias:", err.message);
   }
@@ -1089,16 +1362,18 @@ export async function processIncomingOTA(rawPayload, options = {}) {
   try {
     notifyPmsMutation(db, {
       type: "reservation_created",
-      checkinDate: newReservation.checkinDate,
-      checkoutDate: newReservation.checkoutDate
+      checkinDate: primaryReservation.checkinDate,
+      checkoutDate: primaryReservation.checkoutDate
     });
   } catch (_) {}
 
   return {
     success: true,
     action: "created",
-    reservationId: newReservation.id,
-    code: newReservation.code,
-    flatNumber
+    reservationId: primaryReservation.id,
+    code: primaryReservation.code,
+    flatNumber,
+    createdReservationsCount: createdReservations.length,
+    createdFlatNumbers: createdReservations.map((r) => r.flatNumber)
   };
 }

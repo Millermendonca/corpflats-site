@@ -1,19 +1,14 @@
 import React, { useState } from "react";
 import { 
-  Globe, 
-  Activity, 
   RefreshCw, 
-  Send, 
-  Radio, 
-  CheckCircle2, 
   Eye, 
   PowerOff,
   Sparkles,
   Zap,
-  Settings
+  Settings,
+  ExternalLink
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { 
   Dialog, 
   DialogContent, 
@@ -31,8 +26,11 @@ interface OtaInboxHeaderProps {
   onChangeMode: (newMode: WbpIntegrationMode) => Promise<void>;
   onPollNow: () => Promise<void>;
   onSyncAriNow: () => Promise<void>;
+  onAutoSetupChannex?: () => Promise<void>;
+  onOpenChannexIframe?: () => Promise<void>;
   isPolling: boolean;
   isSyncingAri: boolean;
+  isSettingUpChannex?: boolean;
 }
 
 export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
@@ -40,8 +38,11 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
   onChangeMode,
   onPollNow,
   onSyncAriNow,
+  onAutoSetupChannex,
+  onOpenChannexIframe,
   isPolling,
   isSyncingAri,
+  isSettingUpChannex = false,
 }) => {
   const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
   const [selectedMode, setSelectedMode] = useState<WbpIntegrationMode>(telemetry.mode);
@@ -66,7 +67,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
           title="Clique para alterar o modo de operação"
         >
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>WebBookingPro • Modo: Automático</span>
+          <span>Channex.io • Modo: Automático</span>
           <Settings className="w-3 h-3 opacity-60 ml-0.5" />
         </button>
       );
@@ -79,7 +80,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
           title="Clique para alterar o modo de operação"
         >
           <Eye className="w-3 h-3 text-amber-600" />
-          <span>WebBookingPro • Modo: Somente observar</span>
+          <span>Channex.io • Modo: Somente observar</span>
           <Settings className="w-3 h-3 opacity-60 ml-0.5" />
         </button>
       );
@@ -91,7 +92,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
         title="Clique para alterar o modo de operação"
       >
         <PowerOff className="w-3 h-3" />
-        <span>WebBookingPro • Modo: Desligado</span>
+        <span>Channex.io • Modo: Desligado</span>
         <Settings className="w-3 h-3 opacity-60 ml-0.5" />
       </button>
     );
@@ -104,29 +105,54 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
         <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl sm:text-3xl font-black text-foreground tracking-tight">
-              Caixa de Entrada OTA
+              Caixa de Entrada OTA (Channex.io)
             </h1>
             {getModePill()}
           </div>
           <p className="text-xs sm:text-sm text-muted-foreground">
-            Ingestão automática, conciliação e quarentena de reservas Booking.com e Airbnb
+            Ingestão via Feed & Webhook HMAC-SHA256, conciliação e quarentena de reservas Booking.com, Airbnb e Expedia
           </p>
         </div>
 
         {/* Telemetry Status & Actions */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Polling & ARI Telemetry pills */}
           <div className="flex items-center gap-2 text-xs bg-muted/30 px-3 py-1.5 rounded-xl border border-border/60">
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              Último polling: <strong className="text-foreground">há {telemetry.lastPollingMinutesAgo} min</strong>
+              Feed: <strong className="text-foreground">há {telemetry.lastPollingMinutesAgo} min</strong>
             </span>
             <span className="text-border">|</span>
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              Último ARI: <strong className="text-foreground">há {telemetry.lastAriSyncSecondsAgo} s</strong>
+              ARI: <strong className="text-foreground">há {telemetry.lastAriSyncSecondsAgo} s</strong>
             </span>
           </div>
+
+          {onAutoSetupChannex && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onAutoSetupChannex}
+              disabled={isSettingUpChannex}
+              className="h-8 text-xs gap-1.5 shadow-2xs"
+            >
+              <Sparkles className={`w-3.5 h-3.5 text-indigo-600 ${isSettingUpChannex ? "animate-spin" : ""}`} />
+              {isSettingUpChannex ? "Configurando..." : "Auto-Setup 19 Flats"}
+            </Button>
+          )}
+
+          {onOpenChannexIframe && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenChannexIframe}
+              className="h-8 text-xs gap-1.5 shadow-2xs"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-sky-600" />
+              Conectar Canais (IFrame)
+            </Button>
+          )}
 
           {/* Action: Poll now */}
           <Button
@@ -137,7 +163,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
             className="h-8 text-xs gap-1.5 shadow-2xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isPolling ? "animate-spin" : ""}`} />
-            {isPolling ? "Consultando..." : "Consultar OTAs"}
+            {isPolling ? "Consultando..." : "Consultar Feed"}
           </Button>
 
           {/* Action: Sync ARI */}
@@ -148,7 +174,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
             className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-xs"
           >
             <Zap className={`w-3.5 h-3.5 ${isSyncingAri ? "animate-spin" : ""}`} />
-            {isSyncingAri ? "Sincronizando..." : "Sincronizar ARI"}
+            {isSyncingAri ? "Sincronizando..." : "Full Sync 500d (2 Calls)"}
           </Button>
         </div>
       </div>
@@ -158,10 +184,10 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base font-bold">
-              Modo Operacional da WebBookingPro
+              Modo Operacional do Channel Manager (Channex.io)
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Alterne o comportamento de processamento das reservas recebidas das OTAs.
+              Alterne o comportamento de processamento das reservas recebidas das OTAs e o envio de ARI.
             </DialogDescription>
           </DialogHeader>
 
@@ -177,7 +203,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
                 <Label htmlFor="mode-off" className="cursor-pointer text-xs space-y-0.5">
                   <span className="font-bold text-foreground block">Desligado (off)</span>
                   <span className="text-muted-foreground block text-[11px]">
-                    Nenhuma chamada de saída, nenhum envio de ARI e callbacks respondem como não habilitado. Zero impacto.
+                    Nenhuma chamada de saída para a Channex.io, nenhum envio de ARI e webhooks respondem como desativado. Zero impacto na operação atual.
                   </span>
                 </Label>
               </div>
@@ -188,7 +214,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
                 <Label htmlFor="mode-observe" className="cursor-pointer text-xs space-y-0.5">
                   <span className="font-bold text-amber-950 dark:text-amber-200 block">Somente Observar (observe)</span>
                   <span className="text-amber-800/80 dark:text-amber-300/80 block text-[11px]">
-                    Recebe e grava payloads de forma durável e exibe na Caixa de Entrada, mas NÃO cria reservas reais e NÃO dispara WhatsApp/e-mail.
+                    Recebe e grava payloads de forma durável e simula alocação nos 19 flats sem criar reservas reais, sem confirmar ACK e sem disparar WhatsApp/e-mail.
                   </span>
                 </Label>
               </div>
@@ -199,7 +225,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
                 <Label htmlFor="mode-auto" className="cursor-pointer text-xs space-y-0.5">
                   <span className="font-bold text-emerald-950 dark:text-emerald-200 block">Automático (auto)</span>
                   <span className="text-emerald-800/80 dark:text-emerald-300/80 block text-[11px]">
-                    Processamento total: aloca flat livre nos 19 flats, importa reserva, envia ARI em segundos e dispara automações (sem PIX).
+                    Processamento total: aloca flat livre nos 19 flats via Fair-Share, confirma ACK na revisão da Channex, envia ARI em lote e dispara automações (sem PIX).
                   </span>
                 </Label>
               </div>

@@ -1,5 +1,21 @@
 import crypto from "node:crypto";
-import { getWbpConfig, getIntegrationMode, WBP_MODES } from "./config.mjs";
+import { getWbpConfig, getChannexConfig, updateChannexConfig, getIntegrationMode, WBP_MODES } from "./config.mjs";
+
+/**
+ * Custom Error class for Channex.io REST API v1 errors.
+ */
+export class ChannexApiError extends Error {
+  constructor(message, { status = 500, code = "internal_error", path = "", method = "GET", details = null, retryable = false } = {}) {
+    super(message);
+    this.name = "ChannexApiError";
+    this.status = status;
+    this.code = code;
+    this.path = path;
+    this.method = method;
+    this.details = details;
+    this.retryable = retryable;
+  }
+}
 
 /**
  * Custom Error class for WebBookingPro API errors.
@@ -13,6 +29,627 @@ export class WbpApiError extends Error {
     this.guid = guid;
     this.details = details;
     this.retryable = retryable;
+  }
+}
+
+/**
+ * Channex.io REST API v1 Client.
+ *
+ * Implements outbound communication from Guest-Flow-Manager PMS to Channex.io Channel Manager.
+ * Compliant with Channex REST API v1 and all 14 PMS Certification Tests.
+ */
+export class ChannexClient {
+  /**
+   * @param {object} [options]
+   * @param {string} [options.baseUrl]
+   * @param {string} [options.appOrigin]
+   * @param {string} [options.apiKey]
+   * @param {string} [options.propertyId]
+   * @param {string} [options.groupId]
+   * @param {string} [options.roomTypeId]
+   * @param {string} [options.ratePlanSemCafeId]
+   * @param {string} [options.ratePlanComCafeId]
+   * @param {string} [options.currency]
+   * @param {string} [options.timezone]
+   * @param {number} [options.timeoutMs]
+   * @param {number} [options.maxRetries]
+   * @param {number} [options.backoffBaseMs]
+   * @param {number} [options.rateLimitPauseMs]
+   * @param {object} [options.db]
+   */
+  constructor(options = {}) {
+    const config = getChannexConfig(options.db);
+    this.baseUrl = options.baseUrl || config.baseUrl;
+    this.appOrigin = options.appOrigin || config.appOrigin;
+    this.apiKey = options.apiKey !== undefined ? options.apiKey : config.apiKey;
+    this.propertyId = options.propertyId || config.propertyId;
+    this.groupId = options.groupId || config.groupId;
+    this.roomTypeId = options.roomTypeId || config.roomTypeId;
+    this.ratePlanSemCafeId = options.ratePlanSemCafeId || config.ratePlanSemCafeId;
+    this.ratePlanComCafeId = options.ratePlanComCafeId || config.ratePlanComCafeId;
+    this.currency = options.currency || config.currency;
+    this.timezone = options.timezone || config.timezone;
+    this.timeoutMs = options.timeoutMs || config.timeoutMs;
+    this.maxRetries = options.maxRetries !== undefined ? options.maxRetries : config.maxRetries;
+    this.backoffBaseMs = options.backoffBaseMs || 100;
+    this.rateLimitPauseMs = options.rateLimitPauseMs !== undefined ? options.rateLimitPauseMs : config.rateLimitPauseMs;
+    this.db = options.db || null;
+  }
+
+  /**
+   * Sends a REST request to Channex API v1 with `user-api-key` authentication,
+   * master switch guard, HTTP 429 rate-limit pause, and transient retry.
+   *
+   * @param {"GET" | "POST" | "PUT" | "DELETE"} method
+   * @param {string} path - e.g. "/properties" or "/availability"
+   * @param {object|null} [body]
+   * @param {object} [options]
+   * @param {boolean} [options.bypassSwitch]
+   * @param {number} [options.rateLimitPauseMs]
+   * @returns {Promise<any>}
+   */
+  async request(method, path, body = null, options = {}) {
+    const mode = getIntegrationMode(this.db);
+
+    if (mode === WBP_MODES.OFF && !options.bypassSwitch) {
+      throw new ChannexApiError(
+        "Integração Channex.io desativada (wbp_integration_mode = 'off'). Nenhuma chamada de saída permitida.",
+        {
+          status: 403,
+          code: "integration_disabled",
+          path,
+          method,
+          retryable: false
+        }
+      );
+    }
+
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    const url = `${this.baseUrl.replace(/\/+$/, "")}${normalizedPath}`;
+    let attempt = 0;
+    const maxAttempts = 1 + (options.maxRetries ?? this.maxRetries);
+
+    while (attempt < maxAttempts) {
+      attempt++;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs ?? this.timeoutMs);
+
+      try {
+        const headers = {
+          "Accept": "application/json",
+          "user-api-key": options.apiKey !== undefined ? options.apiKey : this.apiKey
+        };
+        if (body !== null && method !== "GET") {
+          headers["Content-Type"] = "application/json; charset=utf-8";
+        }
+
+        const response = await fetch(url, {
+          method,
+          headers,
+          body: body !== null && method !== "GET" ? JSON.stringify(body) : undefined,
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        const text = await response.text();
+        let data = null;
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch (_) {
+            throw new ChannexApiError(
+              `Resposta Channex não é JSON válido (HTTP ${response.status}): ${text.slice(0, 200)}`,
+              {
+                status: response.status,
+                code: "invalid_json",
+                path: normalizedPath,
+                method,
+                retryable: attempt < maxAttempts
+              }
+            );
+          }
+        }
+
+        if (!response.ok || (data && data.errors)) {
+          const errObj = data?.errors || {};
+          const errCode = errObj.code || (response.status === 429 ? "http_too_many_requests" : "api_error");
+          const errTitle = errObj.title || response.statusText || "Erro retornado pela Channex API";
+          const isRateLimit = response.status === 429 || errCode === "http_too_many_requests";
+          const isServerError = response.status >= 500;
+          const isRetryable = isRateLimit || isServerError;
+
+          if (isRetryable && attempt < maxAttempts) {
+            const waitMs = isRateLimit
+              ? (options.rateLimitPauseMs ?? this.rateLimitPauseMs)
+              : this.backoffBaseMs * Math.pow(2, attempt - 1);
+            await new Promise((r) => setTimeout(r, waitMs));
+            continue;
+          }
+
+          throw new ChannexApiError(`Channex Erro [${response.status} ${errCode}]: ${errTitle}`, {
+            status: response.status,
+            code: errCode,
+            path: normalizedPath,
+            method,
+            details: data,
+            retryable: isRetryable
+          });
+        }
+
+        return data;
+      } catch (err) {
+        clearTimeout(timeoutId);
+
+        if (err instanceof ChannexApiError && !err.retryable) {
+          throw err;
+        }
+
+        if (attempt < maxAttempts) {
+          const delay = this.backoffBaseMs * Math.pow(2, attempt - 1);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+
+        const isTimeout = err.name === "AbortError";
+        throw new ChannexApiError(
+          `Falha na requisição Channex [${method} ${normalizedPath}] após ${attempt} tentativas: ${err.message}`,
+          {
+            status: isTimeout ? 504 : 503,
+            code: isTimeout ? "timeout" : "network_error",
+            path: normalizedPath,
+            method,
+            details: err,
+            retryable: false
+          }
+        );
+      }
+    }
+  }
+
+  // ── Properties API ───────────────────────────────────────────────────────
+
+  async listProperties(options = {}) {
+    return this.request("GET", "/properties", null, options);
+  }
+
+  async getPropertyOptions(options = {}) {
+    return this.request("GET", "/properties/options", null, options);
+  }
+
+  async getProperty(propertyId = this.propertyId, options = {}) {
+    if (!propertyId) throw new Error("propertyId é obrigatório para getProperty.");
+    return this.request("GET", `/properties/${propertyId}`, null, options);
+  }
+
+  async createProperty(property = {}, options = {}) {
+    return this.request("POST", "/properties", { property }, options);
+  }
+
+  async updateProperty(propertyId, property = {}, options = {}) {
+    if (!propertyId) throw new Error("propertyId é obrigatório para updateProperty.");
+    return this.request("PUT", `/properties/${propertyId}`, { property }, options);
+  }
+
+  // ── Room Types API ───────────────────────────────────────────────────────
+
+  async listRoomTypes(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/room_types${query}`, null, options);
+  }
+
+  async getRoomTypeOptions(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/room_types/options${query}`, null, options);
+  }
+
+  async createRoomType(roomType = {}, options = {}) {
+    return this.request("POST", "/room_types", { room_type: roomType }, options);
+  }
+
+  async updateRoomType(roomTypeId, roomType = {}, options = {}) {
+    if (!roomTypeId) throw new Error("roomTypeId é obrigatório para updateRoomType.");
+    return this.request("PUT", `/room_types/${roomTypeId}`, { room_type: roomType }, options);
+  }
+
+  // ── Rate Plans API ───────────────────────────────────────────────────────
+
+  async listRatePlans(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/rate_plans${query}`, null, options);
+  }
+
+  async getRatePlanOptions(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/rate_plans/options${query}`, null, options);
+  }
+
+  async createRatePlan(ratePlan = {}, options = {}) {
+    return this.request("POST", "/rate_plans", { rate_plan: ratePlan }, options);
+  }
+
+  async updateRatePlan(ratePlanId, ratePlan = {}, options = {}) {
+    if (!ratePlanId) throw new Error("ratePlanId é obrigatório para updateRatePlan.");
+    return this.request("PUT", `/rate_plans/${ratePlanId}`, { rate_plan: ratePlan }, options);
+  }
+
+  // ── 1-Click CorpFlats Inventory Auto-Setup ───────────────────────────────
+
+  /**
+   * Automatically discovers or creates the CorpFlats Soho Residence inventory on Channex:
+   * - Property: "CorpFlats Soho Residence" (BRL, America/Sao_Paulo, state_length: 500)
+   * - Room Type: "Flat" (count_of_rooms: 19, occ_adults: 3, default_occupancy: 2)
+   * - Rate Plan 1: "Sem Café" (sell_mode: per_person, occupancies 1, 2 [primary], 3)
+   * - Rate Plan 2: "Com Café" (sell_mode: per_person, occupancies 1, 2 [primary], 3)
+   *
+   * @param {object} [options]
+   * @returns {Promise<object>}
+   */
+  async autoSetupCorpFlats(options = {}) {
+    const reqOpts = { ...options };
+
+    // 1. Property
+    let propertyId = this.propertyId;
+    if (!propertyId) {
+      const existingProps = await this.getPropertyOptions(reqOpts);
+      const foundProp = (existingProps?.data || []).find(
+        (p) => (p.attributes?.title || "").toLowerCase().includes("corpflats")
+      );
+      if (foundProp) {
+        propertyId = foundProp.id;
+      }
+    }
+
+    if (!propertyId) {
+      const createdProp = await this.createProperty(
+        {
+          title: "CorpFlats Soho Residence",
+          currency: this.currency || "BRL",
+          country: "BR",
+          state: "RJ",
+          city: "Campos dos Goytacazes",
+          address: "Soho Residence",
+          zip_code: "28035-000",
+          timezone: this.timezone || "America/Sao_Paulo",
+          property_type: "aparthotel",
+          settings: {
+            allow_availability_autoupdate_on_confirmation: true,
+            allow_availability_autoupdate_on_modification: false,
+            allow_availability_autoupdate_on_cancellation: false,
+            min_stay_type: "both",
+            state_length: 500
+          }
+        },
+        reqOpts
+      );
+      propertyId = createdProp?.data?.id;
+    }
+
+    // 2. Room Type "Flat" (19 flats)
+    let roomTypeId = this.roomTypeId;
+    const existingRooms = await this.getRoomTypeOptions(propertyId, reqOpts);
+    const foundRoom = (existingRooms?.data || []).find(
+      (r) =>
+        r.id === roomTypeId ||
+        (r.attributes?.title || "").toLowerCase() === "flat"
+    );
+    if (foundRoom) {
+      roomTypeId = foundRoom.id;
+    } else {
+      const createdRoom = await this.createRoomType(
+        {
+          property_id: propertyId,
+          title: "Flat",
+          count_of_rooms: 19,
+          occ_adults: 3,
+          occ_children: 1,
+          occ_infants: 1,
+          default_occupancy: 2,
+          room_kind: "room"
+        },
+        reqOpts
+      );
+      roomTypeId = createdRoom?.data?.id;
+    }
+
+    // 3. Rate Plans: "Sem Café" and "Com Café"
+    const existingRates = await this.getRatePlanOptions(propertyId, reqOpts);
+    const rateList = existingRates?.data || [];
+
+    let ratePlanSemCafeId = this.ratePlanSemCafeId;
+    const foundSemCafe = rateList.find(
+      (rp) =>
+        rp.id === ratePlanSemCafeId ||
+        (rp.attributes?.title || "").toLowerCase().includes("sem café") ||
+        (rp.attributes?.title || "").toLowerCase().includes("sem cafe")
+    );
+    if (foundSemCafe) {
+      ratePlanSemCafeId = foundSemCafe.id;
+    } else {
+      const createdSemCafe = await this.createRatePlan(
+        {
+          property_id: propertyId,
+          room_type_id: roomTypeId,
+          title: "Sem Café",
+          sell_mode: "per_person",
+          rate_mode: "manual",
+          currency: this.currency || "BRL",
+          meal_type: "none",
+          options: [
+            { occupancy: 1, is_primary: false, rate: "250.00" },
+            { occupancy: 2, is_primary: true, rate: "280.00" },
+            { occupancy: 3, is_primary: false, rate: "350.00" }
+          ]
+        },
+        reqOpts
+      );
+      ratePlanSemCafeId = createdSemCafe?.data?.id;
+    }
+
+    let ratePlanComCafeId = this.ratePlanComCafeId;
+    const foundComCafe = rateList.find(
+      (rp) =>
+        rp.id === ratePlanComCafeId ||
+        (rp.attributes?.title || "").toLowerCase().includes("com café") ||
+        (rp.attributes?.title || "").toLowerCase().includes("com cafe")
+    );
+    if (foundComCafe) {
+      ratePlanComCafeId = foundComCafe.id;
+    } else {
+      const createdComCafe = await this.createRatePlan(
+        {
+          property_id: propertyId,
+          room_type_id: roomTypeId,
+          title: "Com Café",
+          sell_mode: "per_person",
+          rate_mode: "manual",
+          currency: this.currency || "BRL",
+          meal_type: "breakfast",
+          options: [
+            { occupancy: 1, is_primary: false, rate: "285.00" },
+            { occupancy: 2, is_primary: true, rate: "350.00" },
+            { occupancy: 3, is_primary: false, rate: "455.00" }
+          ]
+        },
+        reqOpts
+      );
+      ratePlanComCafeId = createdComCafe?.data?.id;
+    }
+
+    this.propertyId = propertyId;
+    this.roomTypeId = roomTypeId;
+    this.ratePlanSemCafeId = ratePlanSemCafeId;
+    this.ratePlanComCafeId = ratePlanComCafeId;
+
+    if (this.db) {
+      updateChannexConfig(
+        {
+          propertyId,
+          roomTypeId,
+          ratePlanSemCafeId,
+          ratePlanComCafeId
+        },
+        this.db
+      );
+    }
+
+    return {
+      propertyId,
+      roomTypeId,
+      ratePlanSemCafeId,
+      ratePlanComCafeId
+    };
+  }
+
+  // ── ARI (Availability & Restrictions) API ────────────────────────────────
+
+  /**
+   * GET /api/v1/availability
+   */
+  async getAvailability({ propertyId = this.propertyId, dateFrom, dateTo } = {}, options = {}) {
+    if (!propertyId) throw new Error("propertyId é obrigatório para getAvailability.");
+    const params = new URLSearchParams();
+    params.set("filter[property_id]", propertyId);
+    if (dateFrom) params.set("filter[date][gte]", dateFrom);
+    if (dateTo) params.set("filter[date][lte]", dateTo);
+    return this.request("GET", `/availability?${params.toString()}`, null, options);
+  }
+
+  /**
+   * POST /api/v1/availability
+   * Updates availability per room type and returns the Channex task IDs.
+   *
+   * @param {Array<object>} values
+   * @param {object} [options]
+   * @returns {Promise<{ data: Array, meta: object, taskIds: Array<string> }>}
+   */
+  async updateAvailability(values = [], options = {}) {
+    const res = await this.request("POST", "/availability", { values }, options);
+    const taskIds = Array.isArray(res?.data)
+      ? res.data.map((item) => item?.id).filter(Boolean)
+      : [];
+    return {
+      data: res?.data || [],
+      meta: res?.meta || { message: "Success" },
+      taskIds
+    };
+  }
+
+  /**
+   * GET /api/v1/restrictions
+   */
+  async getRestrictions(
+    {
+      propertyId = this.propertyId,
+      dateFrom,
+      dateTo,
+      restrictions = "rate,stop_sell,closed_to_arrival,closed_to_departure,min_stay_arrival,min_stay_through,max_stay"
+    } = {},
+    options = {}
+  ) {
+    if (!propertyId) throw new Error("propertyId é obrigatório para getRestrictions.");
+    const params = new URLSearchParams();
+    params.set("filter[property_id]", propertyId);
+    if (dateFrom) params.set("filter[date][gte]", dateFrom);
+    if (dateTo) params.set("filter[date][lte]", dateTo);
+    if (restrictions) params.set("filter[restrictions]", restrictions);
+    return this.request("GET", `/restrictions?${params.toString()}`, null, options);
+  }
+
+  /**
+   * POST /api/v1/restrictions
+   * Updates rates and restrictions per rate plan and returns Channex task IDs and any warnings.
+   *
+   * @param {Array<object>} values
+   * @param {object} [options]
+   * @returns {Promise<{ data: Array, meta: object, warnings: Array, taskIds: Array<string> }>}
+   */
+  async updateRestrictions(values = [], options = {}) {
+    const res = await this.request("POST", "/restrictions", { values }, options);
+    const taskIds = Array.isArray(res?.data)
+      ? res.data.map((item) => item?.id).filter(Boolean)
+      : [];
+    return {
+      data: res?.data || [],
+      meta: res?.meta || { message: "Success" },
+      warnings: res?.warnings || [],
+      taskIds
+    };
+  }
+
+  // ── Booking Revisions Feed & Acknowledge API ─────────────────────────────
+
+  /**
+   * GET /api/v1/booking_revisions/feed
+   * Primary Channex endpoint to fetch unacknowledged booking revisions.
+   */
+  async getBookingRevisionsFeed({ propertyId = this.propertyId, page = 1, limit = 100 } = {}, options = {}) {
+    const params = new URLSearchParams();
+    if (propertyId) params.set("filter[property_id]", propertyId);
+    params.set("pagination[page]", String(page));
+    params.set("pagination[limit]", String(limit));
+    params.set("order[inserted_at]", "asc");
+    return this.request("GET", `/booking_revisions/feed?${params.toString()}`, null, options);
+  }
+
+  /**
+   * GET /api/v1/booking_revisions/:id
+   */
+  async getBookingRevisionById(revisionId, options = {}) {
+    if (!revisionId) throw new Error("revisionId é obrigatório para getBookingRevisionById.");
+    return this.request("GET", `/booking_revisions/${revisionId}`, null, options);
+  }
+
+  /**
+   * POST /api/v1/booking_revisions/:id/ack
+   * Mandatory acknowledgement after a booking revision is durably persisted and processed.
+   */
+  async ackBookingRevision(revisionId, options = {}) {
+    if (!revisionId) throw new Error("revisionId é obrigatório para ackBookingRevision.");
+    return this.request("POST", `/booking_revisions/${revisionId}/ack`, {}, options);
+  }
+
+  /**
+   * GET /api/v1/bookings/:id
+   */
+  async getBookingById(bookingId, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para getBookingById.");
+    return this.request("GET", `/bookings/${bookingId}`, null, options);
+  }
+
+  // ── White-Label Headless IFrame One-Time Token API ───────────────────────
+
+  /**
+   * POST /api/v1/auth/one_time_token
+   * Generates a 15-minute single-use token to open the Channex Channels IFrame inside CorpFlats PMS.
+   */
+  async createOneTimeToken(
+    { propertyId = this.propertyId, groupId = this.groupId, username = "CorpFlats PMS Admin" } = {},
+    options = {}
+  ) {
+    if (!propertyId) throw new Error("propertyId é obrigatório para createOneTimeToken.");
+    const payload = {
+      one_time_token: {
+        property_id: propertyId,
+        username
+      }
+    };
+    if (groupId) payload.one_time_token.group_id = groupId;
+    const res = await this.request("POST", "/auth/one_time_token", payload, options);
+    const token = res?.data?.token || "";
+    const iframeUrl = token
+      ? this.buildIframeUrl({ token, propertyId, groupId, language: "pt" })
+      : "";
+    return {
+      token,
+      iframeUrl,
+      raw: res
+    };
+  }
+
+  /**
+   * Builds the Channex Headless IFrame URL in Portuguese.
+   */
+  buildIframeUrl({
+    token,
+    propertyId = this.propertyId,
+    groupId = this.groupId,
+    redirectTo = "/channels",
+    language = "pt",
+    channels = "",
+    allowNotificationsEdit = false
+  } = {}) {
+    const params = new URLSearchParams();
+    params.set("oauth_session_key", token || "");
+    params.set("app_mode", "headless");
+    params.set("redirect_to", redirectTo);
+    if (propertyId) params.set("property_id", propertyId);
+    if (groupId) params.set("group_id", groupId);
+    if (language) params.set("lng", language);
+    if (channels) params.set("channels", channels);
+    params.set("allow_notifications_edit", allowNotificationsEdit ? "true" : "false");
+    return `${this.appOrigin.replace(/\/+$/, "")}/auth/exchange?${params.toString()}`;
+  }
+
+  // ── Webhooks, Messages & Reviews API ─────────────────────────────────────
+
+  async listWebhooks(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/webhooks${query}`, null, options);
+  }
+
+  async createWebhook(webhook = {}, options = {}) {
+    return this.request("POST", "/webhooks", { webhook }, options);
+  }
+
+  async getBookingMessages(bookingId, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para getBookingMessages.");
+    return this.request("GET", `/bookings/${bookingId}/messages`, null, options);
+  }
+
+  async sendBookingMessage(bookingId, messageText, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para sendBookingMessage.");
+    return this.request(
+      "POST",
+      `/bookings/${bookingId}/messages`,
+      { message: { message: String(messageText || "") } },
+      options
+    );
+  }
+
+  async listReviews(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/reviews${query}`, null, options);
+  }
+
+  async replyToReview(reviewId, replyText, options = {}) {
+    if (!reviewId) throw new Error("reviewId é obrigatório para replyToReview.");
+    return this.request(
+      "POST",
+      `/reviews/${reviewId}/reply`,
+      { reply: { reply: String(replyText || "") } },
+      options
+    );
   }
 }
 
@@ -226,57 +863,22 @@ export class WBPClient {
 
   // ── Mandatory Outbound Endpoints ─────────────────────────────────────────
 
-  /**
-   * HealthCheck: Verifies operational connectivity with WBP.
-   *
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean }>}
-   */
   async healthCheck(options = {}) {
     return this.request("HealthCheck", {}, options);
   }
 
-  /**
-   * SetupProperty: Validates property credentials and channel management status.
-   *
-   * @param {object} [params]
-   * @param {Array} [params.RoomInfo]
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean }>}
-   */
   async setupProperty(params = {}, options = {}) {
     return this.request("SetupProperty", { RoomInfo: params.RoomInfo || [] }, options);
   }
 
-  /**
-   * GetRoomTypes: Retrieves configured room types from WBP.
-   *
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean, Rooms: Array<object> }>}
-   */
   async getRoomTypes(options = {}) {
     return this.request("GetRoomTypes", {}, options);
   }
 
-  /**
-   * GetRatePlans: Retrieves rate plans configured on WBP.
-   *
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean, RatePlans: Array<object> }>}
-   */
   async getRatePlans(options = {}) {
     return this.request("GetRatePlans", {}, options);
   }
 
-  /**
-   * ARIUpdate: Pushes inventory availability, pricing, and restrictions.
-   *
-   * @param {object} params
-   * @param {string} [params.currency]
-   * @param {Array<object>} params.Inventory
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean, guid: string }>}
-   */
   async sendARIUpdate(params = {}, options = {}) {
     const currency = params.currency || this.currency;
     const inventory = params.Inventory || [];
@@ -296,28 +898,11 @@ export class WBPClient {
     };
   }
 
-  /**
-   * GetBookingList: Retrieves bookings modified or created since wbp_booking_version.
-   * Subtracts 5 minutes from version timestamp per spec rules to prevent race conditions.
-   *
-   * @param {object} [params]
-   * @param {string|null} [params.wbp_booking_version]
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean, Bookings: Array<object> }>}
-   */
   async getBookingList(params = {}, options = {}) {
     const adjustedVersion = this.adjustBookingVersion(params.wbp_booking_version ?? null);
     return this.request("GetBookingList", { wbp_booking_version: adjustedVersion }, options);
   }
 
-  /**
-   * GetBookingId: Downloads full reservation details by booking_id.
-   *
-   * @param {object} params
-   * @param {string} params.booking_id
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean, reservation: object }>}
-   */
   async getBookingId(params = {}, options = {}) {
     if (!params.booking_id) {
       throw new Error("booking_id é obrigatório para GetBookingId.");
@@ -325,14 +910,6 @@ export class WBPClient {
     return this.request("GetBookingId", { booking_id: String(params.booking_id) }, options);
   }
 
-  /**
-   * AckBooking: Acknowledges receipt and import of booking.
-   *
-   * @param {object} params
-   * @param {string} params.booking_id
-   * @param {object} [options]
-   * @returns {Promise<{ success: boolean }>}
-   */
   async ackBooking(params = {}, options = {}) {
     if (!params.booking_id) {
       throw new Error("booking_id é obrigatório para AckBooking.");

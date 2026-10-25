@@ -184,8 +184,8 @@ import {
   querySystemData,
   callGeminiAi
 } from "./whatsapp-ai-service.mjs";
-import { createWbpCallbackRouter, WbpBackgroundWorker } from "./wbp/callbacks.mjs";
-import { getIntegrationMode, isWbpEnabled, setIntegrationMode, WBP_MODES } from "./wbp/config.mjs";
+import { createWbpCallbackRouter, WbpBackgroundWorker, verifyChannexHmacSignature } from "./wbp/callbacks.mjs";
+import { getIntegrationMode, isWbpEnabled, setIntegrationMode, getChannexConfig, updateChannexConfig, WBP_MODES } from "./wbp/config.mjs";
 import { defaultStorage as wbpStorage } from "./wbp/storage.mjs";
 import {
   calculateCanonicalAvailability,
@@ -207,13 +207,16 @@ import {
   getAriSynchronizer,
   notifyPmsMutation,
   getWbpRestrictionsState,
-  resolveRestrictions
+  resolveRestrictions,
+  buildChannexAvailabilityValues,
+  buildChannexRestrictionsValues
 } from "./wbp/ari-sync.mjs";
 import {
   processIncomingOTA,
   allocateFairShareFlat,
   routeToQuarantine,
-  normalizeOtaBooking
+  normalizeOtaBooking,
+  normalizeChannexBookingRevision
 } from "./wbp/inbox.mjs";
 import {
   generateReconciliationReport,
@@ -225,7 +228,7 @@ import {
   getWbpAlertSettings,
   updateWbpAlertSettings
 } from "./wbp/alerts.mjs";
-import { WBPClient } from "./wbp/client.mjs";
+import { WBPClient, ChannexClient } from "./wbp/client.mjs";
 import {
   CreditCardVault,
   getCardVault,
@@ -1617,18 +1620,19 @@ let db = {
 // Inicialização segura de coleções do módulo de RH
 ensureHrCollections(db);
 
-// ── WebBookingPro (WBP) Channel Manager Callbacks, Mode, Availability & Pricing ───────────
+// ── Channel Manager (Channex.io v1 & WebBookingPro) Callbacks, Mode, Availability & Pricing ───────────
 if (pgPool) {
   wbpStorage.pgPool = pgPool;
 }
 const wbpAlertsManager = getAlertsManager();
 const wbpClient = new WBPClient({ db });
-const wbpWorker = new WbpBackgroundWorker({ db, storage: wbpStorage, client: wbpClient, alertsManager: wbpAlertsManager });
+const channexClient = new ChannexClient({ db });
+const wbpWorker = new WbpBackgroundWorker({ db, storage: wbpStorage, client: wbpClient, channexClient, alertsManager: wbpAlertsManager });
 const wbpVault = getCardVault();
 const wbpProvisional = getProvisionalAdapter(wbpClient, db);
 
 // Wire persistent failure alerts from ARI Synchronizer to Alerts Manager
-const wbpAriSync = getAriSynchronizer(db, wbpClient, wbpStorage);
+const wbpAriSync = getAriSynchronizer(db, { client: wbpClient, channexClient, storage: wbpStorage });
 wbpAriSync.onAlert = (payload) => {
   if (payload.type === "persistent_failure") {
     wbpAlertsManager.sendPersistentSyncFailureAlert(payload, db);
@@ -1637,7 +1641,9 @@ wbpAriSync.onAlert = (payload) => {
   }
 };
 
-app.use("/api/callback/wbp", createWbpCallbackRouter({ db, storage: wbpStorage, client: wbpClient, worker: wbpWorker, alertsManager: wbpAlertsManager, saveDatabase }));
+const wbpCallbackRouter = createWbpCallbackRouter({ db, storage: wbpStorage, client: wbpClient, channexClient, worker: wbpWorker, alertsManager: wbpAlertsManager, saveDatabase });
+app.use("/api/callback/wbp", wbpCallbackRouter);
+app.use("/api/callback", wbpCallbackRouter);
 
 // ── Módulo de Gestão de Funcionários CLT & RH Corporativo ─────────────────
 app.use("/api/hr", createHrRouter({ db, saveDatabase }));
@@ -2272,6 +2278,15 @@ app.post("/api/wbp/restrictions", (req, res) => {
       }
     }
     saveDatabase("wbp_restrictions_update");
+    try {
+      const minD = body.dateStart || getTodayStr();
+      const maxD = body.dateEnd || minD;
+      notifyPmsMutation(db, {
+        type: "restrictions_updated",
+        minDate: minD,
+        maxDate: maxD
+      });
+    } catch (_) {}
     res.json({ success: true, restrictions: state });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2907,6 +2922,171 @@ app.post("/api/wbp/provisional/settings", (req, res) => {
     provisionalMessagesEnabled: isProvisionalMessagesEnabled(db),
     provisionalReviewsEnabled: isProvisionalReviewsEnabled(db)
   });
+});
+
+// ── Channex.io REST API v1 Endpoints (Config, Auto-Setup, 500-Day Full Sync, IFrame Token & Certification Task Logs) ──
+app.get("/api/wbp/channex/config", (req, res) => {
+  try {
+    const cfg = getChannexConfig(db);
+    const sync = getAriSynchronizer(db);
+    const status = sync.getStatus();
+    res.json({
+      success: true,
+      config: {
+        provider: cfg.provider,
+        mode: cfg.mode,
+        environment: cfg.environment,
+        baseUrl: cfg.baseUrl,
+        appOrigin: cfg.appOrigin,
+        hasApiKey: Boolean(cfg.apiKey),
+        apiKeyMasked: cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}••••${cfg.apiKey.slice(-4)}` : "",
+        hasWebhookSecret: Boolean(cfg.webhookSecret),
+        propertyId: cfg.propertyId,
+        groupId: cfg.groupId,
+        roomTypeId: cfg.roomTypeId,
+        ratePlanSemCafeId: cfg.ratePlanSemCafeId,
+        ratePlanComCafeId: cfg.ratePlanComCafeId,
+        currency: cfg.currency,
+        timezone: cfg.timezone,
+        stateLengthDays: cfg.stateLengthDays
+      },
+      rateLimits: status.channexRateLimits,
+      taskLogs: Array.isArray(db.channexTaskLogs) ? db.channexTaskLogs.slice(0, 50) : []
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/channex/config", (req, res) => {
+  try {
+    const body = req.body || {};
+    const updated = updateChannexConfig(body, db);
+    // Sync runtime instances
+    if (updated.baseUrl) channexClient.baseUrl = updated.baseUrl;
+    if (updated.appOrigin) channexClient.appOrigin = updated.appOrigin;
+    if (updated.propertyId) channexClient.propertyId = updated.propertyId;
+    if (updated.groupId) channexClient.groupId = updated.groupId;
+    if (updated.roomTypeId) channexClient.roomTypeId = updated.roomTypeId;
+    if (updated.ratePlanSemCafeId) channexClient.ratePlanSemCafeId = updated.ratePlanSemCafeId;
+    if (updated.ratePlanComCafeId) channexClient.ratePlanComCafeId = updated.ratePlanComCafeId;
+    saveDatabase("channex_config_updated");
+    res.json({ success: true, config: updated });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/channex/auto-setup", async (req, res) => {
+  try {
+    const { bypassSwitch, apiKey, baseUrl } = req.body || {};
+    if (baseUrl) channexClient.baseUrl = baseUrl;
+    if (apiKey) channexClient.apiKey = apiKey;
+    const setupResult = await channexClient.autoSetupCorpFlats({
+      bypassSwitch: Boolean(bypassSwitch),
+      apiKey: apiKey || channexClient.apiKey
+    });
+    saveDatabase("channex_auto_setup");
+    res.json({
+      success: true,
+      ...setupResult,
+      config: getChannexConfig(db)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/channex/full-sync", async (req, res) => {
+  try {
+    const { startDate, endDate, days = 500, bypassSwitch } = req.body || {};
+    const sync = getAriSynchronizer(db);
+    sync.channexClient = channexClient;
+    const result = await sync.performChannexFullSync({
+      startDate,
+      endDate,
+      days: Number(days || 500),
+      bypassSwitch: Boolean(bypassSwitch),
+      trigger: "manual_ui_full_sync"
+    });
+    saveDatabase("channex_full_sync_500d");
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/channex/delta-sync", async (req, res) => {
+  try {
+    const {
+      startDate = getTodayStr(),
+      endDate = getTodayStr(),
+      includeAvailability = true,
+      includeRestrictions = true,
+      bypassSwitch
+    } = req.body || {};
+    const sync = getAriSynchronizer(db);
+    sync.channexClient = channexClient;
+    const result = await sync.performChannexDeltaSync(startDate, endDate, {
+      includeAvailability,
+      includeRestrictions,
+      bypassSwitch: Boolean(bypassSwitch),
+      trigger: "manual_ui_delta_sync"
+    });
+    saveDatabase("channex_delta_sync");
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/wbp/channex/task-logs", (req, res) => {
+  try {
+    const logs = Array.isArray(db.channexTaskLogs) ? db.channexTaskLogs : [];
+    res.json({
+      success: true,
+      count: logs.length,
+      logs
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/channex/iframe-token", async (req, res) => {
+  try {
+    const { propertyId, groupId, username = "CorpFlats PMS Admin", bypassSwitch } = req.body || {};
+    const result = await channexClient.createOneTimeToken(
+      {
+        propertyId: propertyId || channexClient.propertyId,
+        groupId: groupId || channexClient.groupId,
+        username
+      },
+      { bypassSwitch: Boolean(bypassSwitch) }
+    );
+    res.json({
+      success: true,
+      token: result.token,
+      iframeUrl: result.iframeUrl
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/wbp/channex/poll-feed", async (req, res) => {
+  try {
+    const { propertyId, bypassSwitch } = req.body || {};
+    wbpWorker.channexClient = channexClient;
+    const result = await wbpWorker.pollChannexFeed({
+      propertyId: propertyId || channexClient.propertyId,
+      bypassSwitch: Boolean(bypassSwitch)
+    });
+    saveDatabase("channex_poll_feed");
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 const DEFAULT_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
@@ -54880,5 +55060,13 @@ export {
   getWbpRestrictionsState,
   resolveRestrictions,
   wbpVault,
-  wbpProvisional
+  wbpProvisional,
+  channexClient,
+  ChannexClient,
+  getChannexConfig,
+  updateChannexConfig,
+  verifyChannexHmacSignature,
+  buildChannexAvailabilityValues,
+  buildChannexRestrictionsValues,
+  normalizeChannexBookingRevision
 };

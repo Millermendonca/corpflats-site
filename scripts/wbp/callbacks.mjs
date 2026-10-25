@@ -1,29 +1,18 @@
 /**
  * artifacts/api-server/wbp/callbacks.mjs
  *
- * Features 17 (Inbound Webhooks & Form Parsing) & 18 (Background Polling Backup).
- *
- * Responsibilities:
- * - Middleware: Express router supporting both application/json and application/x-www-form-urlencoded.
- * - Security: Constant-time crypto.timingSafeEqual comparison of shared_secret.
- * - Card Hygiene: Immediate in-memory purging of CVV/CVC fields before storage or logs.
- * - Durable Storage & Idempotency: Pre-processing insert-only recording via storage.recordRawPayload.
- * - Endpoints:
- *   - POST /BookingCreate: Processes full reservation JSON, calls processIncomingOTA.
- *   - POST /NotifyBooking: Receives booking_id in form-urlencoded, downloads booking via client.getBookingId, imports and acks.
- *   - POST /ARIFullRefresh: Returns { UpdateId }, enqueues full push in auto mode.
- *   - GET & POST /RoomInfo: Returns 19-flat room list metadata.
- * - Background Polling: WbpBackgroundWorker polling every 30 minutes with 5-minute version margin,
- *   startup crash recovery of unprocessed payloads, and ackBooking strictly after durable storage and PMS processing.
+ * Features 17 (Inbound Webhooks & Form Parsing) & 18 (Background Polling Backup)
+ * for Channex.io v1 (`POST /channex`, HMAC-SHA256, `GET /api/v1/booking_revisions/feed` + `ack`)
+ * and WebBookingPro (`POST /BookingCreate`, `POST /NotifyBooking`, `POST /ARIFullRefresh`, `GET/POST /RoomInfo`).
  *
  * Mirrors byte-for-byte in scripts/wbp/callbacks.mjs.
  */
 
 import crypto from "node:crypto";
 import express from "express";
-import { getIntegrationMode, isWbpEnabled, isWbpAutoMode, WBP_MODES } from "./config.mjs";
+import { getIntegrationMode, getChannexConfig, isWbpEnabled, isWbpAutoMode, WBP_MODES } from "./config.mjs";
 import { defaultStorage } from "./storage.mjs";
-import { WBPClient } from "./client.mjs";
+import { WBPClient, ChannexClient } from "./client.mjs";
 import { getAriSynchronizer } from "./ari-sync.mjs";
 import { processIncomingOTA, stripCvvDeep, maskPan, detectCardBrand } from "./inbox.mjs";
 import { getAlertsManager } from "./alerts.mjs";
@@ -67,23 +56,33 @@ export function sanitizeCardDataInMemory(payload) {
   }
   scrubCvv(clone);
 
-  // 2. Extract card and store into vault BEFORE masking PAN
+  // 2. Extract card and store into vault BEFORE masking PAN (supports both WBP and Channex guarantee)
   try {
-    const resObj = clone.reservation || clone.booking || clone.Booking || clone;
+    const resObj = clone.data?.attributes || clone.attributes || clone.reservation || clone.booking || clone.Booking || clone;
     const cards = Array.isArray(resObj.Cards) ? resObj.Cards : (Array.isArray(resObj.Payments) ? resObj.Payments : []);
-    const rawCard = cards[0] || (resObj.cardNumber || resObj.pan || resObj.CardNumber ? resObj : null);
+    const guarantee = resObj.guarantee || null;
+    const rawCard = cards[0] || guarantee || (resObj.cardNumber || resObj.pan || resObj.CardNumber ? resObj : null);
     const orderId = String(
-      resObj.OrderId || resObj.orderId || clone.orderId || clone.OrderId || clone.booking_id || ""
+      resObj.ota_reservation_code ||
+      resObj.unique_id ||
+      resObj.OrderId ||
+      resObj.orderId ||
+      clone.orderId ||
+      clone.OrderId ||
+      clone.booking_id ||
+      resObj.booking_id ||
+      ""
     ).trim();
 
     if (rawCard) {
-      const pan = String(rawCard.CardNumber || rawCard.cardNumber || rawCard.pan || "").replace(/\s/g, "");
+      const pan = String(rawCard.CardNumber || rawCard.cardNumber || rawCard.card_number || rawCard.pan || "").replace(/\s/g, "");
       if (pan && pan.length >= 12 && !pan.includes("*") && !pan.includes("•")) {
-        const checkoutDate = resObj.checkoutDate || resObj.checkout || resObj.EndDate || null;
-        const holderName = rawCard.CardHolderName || rawCard.holderName || resObj.guestName || "Hóspede OTA";
-        const expireMonth = String(rawCard.CardExpireMonth || rawCard.expMonth || rawCard.expireMonth || "").trim();
-        const expireYear = String(rawCard.CardExpireYear || rawCard.expYear || rawCard.expireYear || "").trim();
-        const brand = detectCardBrand(pan);
+        const checkoutDate = resObj.departure_date || resObj.checkoutDate || resObj.checkout || resObj.EndDate || null;
+        const holderName = rawCard.CardHolderName || rawCard.cardholder_name || rawCard.holderName || resObj.guestName || "Hóspede OTA";
+        const expParts = String(rawCard.expiration_date || "").split("/");
+        const expireMonth = String(rawCard.CardExpireMonth || rawCard.expMonth || rawCard.expireMonth || expParts[0] || "").trim();
+        const expireYear = String(rawCard.CardExpireYear || rawCard.expYear || rawCard.expireYear || expParts[1] || "").trim();
+        const brand = detectCardBrand(rawCard.card_type || pan);
 
         const vault = getCardVault();
         vault.storeCard({
@@ -114,7 +113,7 @@ export function sanitizeCardDataInMemory(payload) {
         const val = String(obj[key]);
         if (val.length >= 8) {
           obj.cardBrand = detectCardBrand(val);
-          obj.cardLast4 = val.slice(-4);
+          obj.cardLast4 = val.replace(/\D/g, "").slice(-4);
           obj[key] = maskPan(val);
         }
       } else if (typeof obj[key] === "object") {
@@ -128,12 +127,8 @@ export function sanitizeCardDataInMemory(payload) {
 }
 
 /**
- * Validates the shared_secret received in callback payload against process.env.WBP_SHARED_SECRET
+ * Validates the shared_secret received in WBP callback payload against process.env.WBP_SHARED_SECRET
  * using timing-safe comparison to prevent timing attacks.
- *
- * @param {string} reqSharedSecret
- * @param {string} [configuredSecret]
- * @returns {boolean}
  */
 export function verifyWbpCallbackAuth(reqSharedSecret, configuredSecret = null) {
   const secret = configuredSecret || process.env.WBP_SHARED_SECRET || "";
@@ -147,39 +142,98 @@ export function verifyWbpCallbackAuth(reqSharedSecret, configuredSecret = null) 
 }
 
 /**
- * Creates Express Router for WebBookingPro inbound callbacks:
+ * Verifies Channex.io Webhook HMAC-SHA256 signature over raw request bytes:
+ * Signed message: `${timestampHeader}.${rawBody}`
+ * Supports 1 or 2 comma-separated hex signatures in `x-hmac-signature-256` during key rotation,
+ * and enforces a 300-second timestamp skew window.
+ *
+ * @param {string|Buffer} rawBody
+ * @param {string|number} timestampHeader - x-hmac-timestamp
+ * @param {string} signatureHeader - x-hmac-signature-256
+ * @param {string} secret
+ * @param {number} [maxSkewSeconds=300]
+ * @returns {{ valid: boolean, reason?: string }}
+ */
+export function verifyChannexHmacSignature(
+  rawBody,
+  timestampHeader,
+  signatureHeader,
+  secret,
+  maxSkewSeconds = 300
+) {
+  if (!secret) {
+    return { valid: true, reason: "no_secret_configured" };
+  }
+  if (!timestampHeader || !signatureHeader) {
+    return { valid: false, reason: "missing_hmac_headers" };
+  }
+
+  const tsNum = Number(timestampHeader);
+  if (!Number.isFinite(tsNum)) {
+    return { valid: false, reason: "invalid_timestamp" };
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - tsNum) > maxSkewSeconds) {
+    return { valid: false, reason: "timestamp_skew_exceeded" };
+  }
+
+  const rawStr = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : String(rawBody ?? "");
+  const expectedHex = crypto
+    .createHmac("sha256", String(secret))
+    .update(`${tsNum}.${rawStr}`)
+    .digest("hex")
+    .toLowerCase();
+  const expectedBuf = Buffer.from(expectedHex, "utf8");
+
+  const candidateSignatures = String(signatureHeader)
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const sig of candidateSignatures) {
+    const sigBuf = Buffer.from(sig, "utf8");
+    if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return { valid: true };
+    }
+  }
+
+  return { valid: false, reason: "signature_mismatch" };
+}
+
+/**
+ * Creates Express Router for inbound callbacks (Channex.io v1 & WebBookingPro):
+ * - POST /channex (Channex.io v1 Webhook with HMAC-SHA256 verification)
  * - POST /BookingCreate (JSON)
  * - POST /NotifyBooking (application/x-www-form-urlencoded)
  * - POST /ARIFullRefresh (JSON)
- * - GET / RoomInfo (JSON)
- * - POST /RoomInfo (JSON)
- *
- * @param {object} [options]
- * @param {object} [options.db] - PMS in-memory database
- * @param {object} [options.storage] - WbpStorage instance
- * @param {object} [options.client] - WBPClient instance
- * @param {object} [options.alertsManager] - WbpAlertsManager instance
- * @param {string} [options.sharedSecret] - Optional explicit shared secret
- * @returns {express.Router}
+ * - GET & POST /RoomInfo (JSON)
  */
 export function createWbpCallbackRouter(options = {}) {
   const router = express.Router();
   const db = options.db || (typeof global !== "undefined" && global.db ? global.db : null);
   const storage = options.storage || defaultStorage;
   const client = options.client || null;
+  const channexClient = options.channexClient || new ChannexClient({ db, ...options });
   const alertsManager = options.alertsManager || getAlertsManager();
   const configuredSecret = options.sharedSecret || process.env.WBP_SHARED_SECRET || "";
   const saveDatabase = options.saveDatabase || (typeof global !== "undefined" && typeof global.saveDatabase === "function" ? global.saveDatabase : null);
 
-  // Middleware: Support dual JSON and urlencoded payloads in callback requests
-  router.use(express.json({ limit: "10mb" }));
+  // Middleware: Support dual JSON (capturing rawBody for HMAC-SHA256) and urlencoded payloads
+  router.use(
+    express.json({
+      limit: "10mb",
+      verify: (req, _res, buf) => {
+        req.rawBody = buf.toString("utf8");
+      }
+    })
+  );
   router.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
   // Middleware: Check Operational General Switch
   router.use((req, res, next) => {
     const mode = getIntegrationMode(db);
     if (mode === WBP_MODES.OFF) {
-      // Acceptance Criterion: "callbacks respondem 'não habilitado' sem gravar reservas."
       return res.status(200).json({
         ErrorCode: 1031,
         Error: "Integration disabled"
@@ -188,14 +242,150 @@ export function createWbpCallbackRouter(options = {}) {
     next();
   });
 
+  // 0. POST /channex (Channex.io v1 Webhook Receiver)
+  router.post("/channex", async (req, res) => {
+    try {
+      const body = req.body || {};
+      const chxCfg = getChannexConfig(db);
+      const webhookSecret = options.webhookSecret || chxCfg.webhookSecret || configuredSecret || "";
+
+      const tsHeader = req.headers["x-hmac-timestamp"];
+      const sigHeader = req.headers["x-hmac-signature-256"];
+
+      // If webhook secret is configured OR HMAC headers are sent, verify HMAC-SHA256 over raw bytes
+      if (webhookSecret || sigHeader || tsHeader) {
+        const rawBody = req.rawBody !== undefined ? req.rawBody : JSON.stringify(body);
+        const hmacCheck = verifyChannexHmacSignature(
+          rawBody,
+          tsHeader,
+          sigHeader,
+          webhookSecret || "default-secret"
+        );
+        if (!hmacCheck.valid) {
+          return res.status(401).json({
+            errors: {
+              code: "unauthorized",
+              title: `Invalid webhook HMAC signature (${hmacCheck.reason})`
+            }
+          });
+        }
+      }
+
+      const eventType = String(body.event || "booking").toLowerCase();
+      const rawInner = body.payload || body.data || body;
+      const sanitizedPayload = sanitizeCardDataInMemory(body);
+
+      const revisionId = String(
+        rawInner?.revision_id ||
+        rawInner?.id ||
+        body.revision_id ||
+        ""
+      ).trim();
+      const bookingId = String(
+        rawInner?.booking_id ||
+        rawInner?.attributes?.booking_id ||
+        body.booking_id ||
+        revisionId ||
+        crypto.randomUUID()
+      ).trim();
+
+      const idempotencyKey = revisionId ? `chx_rev_${revisionId}` : `chx_evt_${bookingId}_${Date.now()}`;
+
+      // Record raw payload durably BEFORE processing
+      const payloadId = await storage.recordRawPayload({
+        source: "webhook",
+        endpoint: `channex_${eventType}`,
+        payload: sanitizedPayload,
+        idempotencyKey,
+        orderId: bookingId
+      });
+
+      const mode = getIntegrationMode(db);
+      if (mode === WBP_MODES.OBSERVE) {
+        return res.status(200).json({ status: "observed", payloadId });
+      }
+
+      // If the webhook is a lightweight notification (only revision_id/booking_id without full rooms/customer)
+      // and channexClient has an API key, fetch the revision or feed from Channex API
+      let revisionPayload = rawInner;
+      const hasFullDetails = Boolean(
+        rawInner?.attributes?.rooms ||
+        rawInner?.rooms ||
+        rawInner?.data?.attributes?.rooms
+      );
+
+      if (!hasFullDetails && revisionId && (channexClient?.apiKey || chxCfg.apiKey)) {
+        try {
+          const revRes = await channexClient.getBookingRevisionById(revisionId);
+          if (revRes?.data) {
+            revisionPayload = sanitizeCardDataInMemory(revRes.data);
+          }
+        } catch (fetchErr) {
+          console.warn("[Channex Webhook] Falha ao buscar revision completa:", fetchErr.message);
+        }
+      }
+
+      // Handle unmapped room/rate explicit webhook events
+      if (eventType === "booking_unmapped_room" || eventType === "booking_unmapped_rate") {
+        if (revisionPayload && typeof revisionPayload === "object") {
+          const targetAttrs = revisionPayload.attributes || revisionPayload;
+          if (!Array.isArray(targetAttrs.rooms) || targetAttrs.rooms.length === 0) {
+            targetAttrs.rooms = [{ room_type_id: null, rate_plan_id: null, unmapped: true }];
+          } else {
+            targetAttrs.rooms[0].unmapped = true;
+          }
+        }
+      }
+
+      const claim = await storage.claimForProcessing(idempotencyKey, payloadId, bookingId);
+      if (!claim.shouldProcess) {
+        return res.status(200).json({ status: "already_processed" });
+      }
+
+      let result = null;
+      try {
+        result = await processIncomingOTA(revisionPayload, {
+          db,
+          storage,
+          alertsManager,
+          saveDatabase
+        });
+
+        if (typeof saveDatabase === "function") {
+          try {
+            saveDatabase("manual_channex_webhook");
+          } catch (_) {}
+        }
+
+        await claim.release({ status: "processed", payloadId, result });
+
+        // Acknowledge revision on Channex ONLY after durable storage and PMS processing
+        const ackRevId = revisionId || result?.channexRevisionId;
+        if (ackRevId && (channexClient?.apiKey || chxCfg.apiKey)) {
+          try {
+            await channexClient.ackBookingRevision(ackRevId);
+          } catch (ackErr) {
+            console.warn("[Channex Webhook] Aviso ao confirmar ACK da revisão:", ackErr.message);
+          }
+        }
+      } catch (procErr) {
+        await claim.release({ status: "error", error: procErr.message });
+      }
+
+      return res.status(200).json({ status: "ok", result });
+    } catch (err) {
+      console.error("[Channex Webhook] Erro interno:", err);
+      return res.status(200).json({ status: "error", message: err.message });
+    }
+  });
+
   // 1. POST /BookingCreate
   router.post("/BookingCreate", async (req, res) => {
     try {
       const body = req.body || {};
-      const { shared_secret, reservation, booking, pms_property_id } = body;
+      const { shared_secret, reservation, booking } = body;
       const rawBookingData = reservation || booking;
 
-      // Verify Shared Secret
       if (!verifyWbpCallbackAuth(shared_secret, configuredSecret)) {
         return res.status(200).json({
           ErrorCode: 1001,
@@ -210,10 +400,7 @@ export function createWbpCallbackRouter(options = {}) {
         });
       }
 
-      // Mandatory R6: Sanitize Card Data in memory BEFORE recording or logging!
       const sanitizedPayload = sanitizeCardDataInMemory(body);
-
-      // Mandatory R1: Record raw payload durably BEFORE processing!
       const keys = storage.deriveKeys(sanitizedPayload);
       const payloadId = await storage.recordRawPayload({
         source: "webhook",
@@ -225,20 +412,15 @@ export function createWbpCallbackRouter(options = {}) {
 
       const mode = getIntegrationMode(db);
       if (mode === WBP_MODES.OBSERVE) {
-        // Observe mode: records raw payload, no reservations created, no automations fired
         return res.status(200).json({});
       }
 
-      // Auto mode: Claim for processing with idempotency guard
       const claim = await storage.claimForProcessing(keys.idempotencyKey, payloadId, keys.orderId);
-
       if (!claim.shouldProcess) {
-        // Duplicate delivery already processed or in-flight: return success immediately
         return res.status(200).json({});
       }
 
       try {
-        // Process reservation into PMS
         const result = await processIncomingOTA(sanitizedPayload, {
           db,
           storage,
@@ -254,7 +436,6 @@ export function createWbpCallbackRouter(options = {}) {
           }
         }
 
-        // Release claim and mark processed
         await claim.release({ status: "processed", payloadId, result });
       } catch (procErr) {
         console.error("[WBP Callback] Erro ao processar reserva:", procErr);
@@ -271,13 +452,12 @@ export function createWbpCallbackRouter(options = {}) {
     }
   });
 
-  // 2. POST /NotifyBooking (form-urlencoded or json)
+  // 2. POST /NotifyBooking
   router.post("/NotifyBooking", async (req, res) => {
     try {
       const body = req.body || {};
-      const { shared_secret, booking_id, wbp_property_id } = body;
+      const { shared_secret, booking_id } = body;
 
-      // Verify Shared Secret
       if (!verifyWbpCallbackAuth(shared_secret, configuredSecret)) {
         return res.status(200).json({
           ErrorCode: 1001,
@@ -293,8 +473,6 @@ export function createWbpCallbackRouter(options = {}) {
       }
 
       const sanitizedPayload = sanitizeCardDataInMemory(body);
-
-      // Mandatory R1: Record raw payload durably
       const payloadId = await storage.recordRawPayload({
         source: "webhook",
         endpoint: "NotifyBooking",
@@ -308,10 +486,8 @@ export function createWbpCallbackRouter(options = {}) {
         return res.status(200).json({});
       }
 
-      // In auto mode, fetch booking via client if available
       const activeClient = client || (options.worker ? options.worker.client : null);
       if (activeClient) {
-        // Run fetch and process asynchronously so callback responds immediately
         (async () => {
           try {
             const bookingRes = await activeClient.getBookingId({ booking_id });
@@ -354,7 +530,7 @@ export function createWbpCallbackRouter(options = {}) {
   // 3. POST /ARIFullRefresh
   router.post("/ARIFullRefresh", async (req, res) => {
     try {
-      const { shared_secret, pms_property_id } = req.body || {};
+      const { shared_secret } = req.body || {};
 
       if (!verifyWbpCallbackAuth(shared_secret, configuredSecret)) {
         return res.status(200).json({
@@ -369,15 +545,12 @@ export function createWbpCallbackRouter(options = {}) {
         payload: sanitizeCardDataInMemory(req.body || {})
       });
 
-      // Returns update token immediately
       const updateId = Date.now();
-
       const mode = getIntegrationMode(db);
       if (mode === WBP_MODES.AUTO) {
-        // Trigger asynchronous full push
         try {
           const sync = getAriSynchronizer(db);
-          sync.performFullPush().catch(err => {
+          sync.performFullPush().catch((err) => {
             console.warn("[ARIFullRefresh] Erro no full push assíncrono:", err.message);
           });
         } catch (_) {}
@@ -392,7 +565,7 @@ export function createWbpCallbackRouter(options = {}) {
     }
   });
 
-  // 4. RoomInfo handler (Supports both GET and POST)
+  // 4. RoomInfo handler
   const roomInfoHandler = (req, res) => {
     try {
       const sharedSecret = req.body?.shared_secret || req.query?.shared_secret || req.headers?.["x-shared-secret"] || "";
@@ -432,7 +605,7 @@ export function createWbpCallbackRouter(options = {}) {
 }
 
 /**
- * Background Polling & Recovery Worker.
+ * Background Polling & Recovery Worker (supports Channex `GET /booking_revisions/feed` + `ack` and WBP `GetBookingList`).
  * When integration mode is 'off', no timers are active and poll skips.
  */
 export class WbpBackgroundWorker {
@@ -440,17 +613,17 @@ export class WbpBackgroundWorker {
     this.db = options.db || (typeof global !== "undefined" && global.db ? global.db : null);
     this.storage = options.storage || defaultStorage;
     this.client = options.client || null;
+    this.channexClient = options.channexClient || new ChannexClient({ db: this.db, ...options });
     this.alertsManager = options.alertsManager || getAlertsManager();
     this.intervalId = null;
     this.isPolling = false;
-    this.intervalMs = options.intervalMs || 30 * 60 * 1000;
+    this.intervalMs = options.intervalMs || 15 * 60 * 1000;
   }
 
   start(intervalMs = null) {
     if (this.intervalId) return;
     const ms = intervalMs || this.intervalMs;
 
-    // Only start timer if integration is enabled
     if (!isWbpEnabled(this.db)) {
       return;
     }
@@ -471,21 +644,90 @@ export class WbpBackgroundWorker {
     }
   }
 
-  /**
-   * Alias for poll to support explicit test runners.
-   */
   async runPollCycle() {
     return this.poll();
   }
 
+  /**
+   * Polls Channex `GET /api/v1/booking_revisions/feed` (never `GET /bookings`),
+   * records raw payloads durably, processes into PMS in `auto` mode, and acknowledges via `POST /booking_revisions/:id/ack`.
+   */
+  async pollChannexFeed(options = {}) {
+    const mode = getIntegrationMode(this.db);
+    if (mode === WBP_MODES.OFF && !options.bypassSwitch) {
+      return { skipped: true, reason: "integration_off" };
+    }
+
+    const reqOpts = { bypassSwitch: Boolean(options.bypassSwitch) };
+    const feedRes = await this.channexClient.getBookingRevisionsFeed(
+      { propertyId: options.propertyId || this.channexClient.propertyId },
+      reqOpts
+    );
+
+    const items = Array.isArray(feedRes?.data) ? feedRes.data : [];
+    const processedRevisions = [];
+
+    for (const revItem of items) {
+      const revisionId = String(revItem.id || revItem.attributes?.id || "").trim();
+      const bookingId = String(revItem.attributes?.booking_id || revisionId).trim();
+      const orderId = String(revItem.attributes?.ota_reservation_code || revItem.attributes?.unique_id || bookingId).trim();
+      const idempotencyKey = `chx_rev_${revisionId}`;
+
+      const sanitized = sanitizeCardDataInMemory(revItem);
+      const payloadId = await this.storage.recordRawPayload({
+        source: "polling_channex_feed",
+        endpoint: "booking_revisions/feed",
+        payload: sanitized,
+        idempotencyKey,
+        orderId
+      });
+
+      if (mode === WBP_MODES.OBSERVE && !options.bypassSwitch) {
+        processedRevisions.push({ revisionId, bookingId, orderId, mode: "observe", payloadId, acknowledged: false });
+        continue;
+      }
+
+      const claim = await this.storage.claimForProcessing(idempotencyKey, payloadId, orderId);
+      if (claim.shouldProcess) {
+        const processResult = await processIncomingOTA(sanitized, {
+          db: this.db,
+          storage: this.storage,
+          alertsManager: this.alertsManager
+        });
+
+        await claim.release({ processedFromChannexFeed: true, result: processResult });
+
+        // Mandatory Channex rule: Acknowledge revision ONLY after durable storage and processing!
+        await this.channexClient.ackBookingRevision(revisionId, reqOpts);
+        processedRevisions.push({
+          revisionId,
+          bookingId,
+          orderId,
+          mode: "auto",
+          payloadId,
+          acknowledged: true,
+          result: processResult
+        });
+      }
+    }
+
+    return {
+      success: true,
+      provider: "channex",
+      processedCount: processedRevisions.length,
+      processedRevisions
+    };
+  }
+
   async poll() {
-    if (this.isPolling || !isWbpEnabled(this.db) || !this.client) {
+    if (this.isPolling || !isWbpEnabled(this.db)) {
       return { skipped: true, isPolling: this.isPolling, enabled: isWbpEnabled(this.db) };
     }
     this.isPolling = true;
 
     try {
       const mode = getIntegrationMode(this.db);
+      const chxCfg = getChannexConfig(this.db);
 
       // 1. Startup Recovery: Recover any unprocessed raw payloads from prior crashes
       const unprocessed = await this.storage.getUnprocessedPayloads();
@@ -500,7 +742,10 @@ export class WbpBackgroundWorker {
                 alertsManager: this.alertsManager
               });
               await claim.release({ recovered: true, result });
-              if (item.orderId) {
+              if (item.idempotencyKey?.startsWith("chx_rev_") && (this.channexClient?.apiKey || chxCfg.apiKey)) {
+                const revId = item.idempotencyKey.replace(/^chx_rev_/, "");
+                await this.channexClient.ackBookingRevision(revId);
+              } else if (item.orderId && this.client) {
                 await this.client.ackBooking({ booking_id: item.orderId });
               }
             } catch (recErr) {
@@ -512,7 +757,21 @@ export class WbpBackgroundWorker {
         }
       }
 
-      // 2. Poll WBP GetBookingList with 5-minute version margin
+      // 2. If Channex API Key is configured and no legacy WBP client is forced, poll Channex Feed
+      let channexFeedResult = null;
+      if (this.channexClient?.apiKey || chxCfg.apiKey) {
+        try {
+          channexFeedResult = await this.pollChannexFeed();
+        } catch (chxErr) {
+          console.warn("[Channex Background Worker] Erro ao consultar feed:", chxErr.message);
+        }
+      }
+
+      if (!this.client) {
+        return channexFeedResult || { skipped: true, reason: "no_legacy_client" };
+      }
+
+      // 3. Poll WBP GetBookingList with 5-minute version margin
       const lastVersion = this.db?.settings?.wbp_last_booking_version || null;
       const adjustedVersion = this.client.adjustBookingVersion(lastVersion, 5);
       const res = await this.client.getBookingList({ wbp_booking_version: adjustedVersion });
@@ -528,7 +787,6 @@ export class WbpBackgroundWorker {
           const isProcessed = await this.storage.isAlreadyProcessed(idempotencyKey);
           if (isProcessed) continue;
 
-          // Fetch full reservation details
           const bookingRes = await this.client.getBookingId({ booking_id: bookingId });
           if (bookingRes?.success && (bookingRes.reservation || bookingRes.booking)) {
             const rawReservation = bookingRes.reservation || bookingRes.booking;
@@ -543,7 +801,6 @@ export class WbpBackgroundWorker {
             });
 
             if (mode === WBP_MODES.OBSERVE) {
-              // Observe mode: records raw payload for audit without mutating PMS and does NOT ackBooking
               processedBookings.push({ bookingId, mode: "observe", payloadId });
               continue;
             }
@@ -558,8 +815,6 @@ export class WbpBackgroundWorker {
                 });
 
                 await claim.release({ processedFromPolling: true, result: processResult });
-
-                // Call client.ackBooking ONLY after successful persistent storage and processing!
                 await this.client.ackBooking({ booking_id: bookingId });
                 processedBookings.push({ bookingId, mode: "auto", payloadId, result: processResult });
               }
@@ -568,7 +823,6 @@ export class WbpBackgroundWorker {
         }
       }
 
-      // Persist cursor timestamp
       const newVersion = res?.wbp_booking_version || new Date().toISOString().replace("T", " ").substring(0, 19);
       if (this.db) {
         if (!this.db.settings) this.db.settings = {};
@@ -579,6 +833,7 @@ export class WbpBackgroundWorker {
         success: true,
         processedCount: processedBookings.length,
         processedBookings,
+        channexFeedResult,
         version: newVersion
       };
     } catch (err) {
