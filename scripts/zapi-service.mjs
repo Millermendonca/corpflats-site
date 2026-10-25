@@ -3484,14 +3484,18 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
           if (phoneStr && text.includes(phoneStr)) return null;
           return `📞 *${b.label}:* ${b.phone}`;
         }
-        if (b.type === "COPY" || b.copyCode) {
+        if (b.type === "COPY" || b.copyCode || b.code) {
           const code = b.copyCode || b.code || (b.url && b.url.startsWith("000201") ? b.url : "");
           if (code) {
             if (text.includes(code)) return null;
-            return `📋 *${b.label} (PIX Copia e Cola):*\n\`${code}\``;
+            const isPix = String(code).startsWith("000201") || /pix/i.test(String(b.label || ""));
+            return isPix
+              ? `📋 *${b.label} (PIX Copia e Cola):*\n\`${code}\``
+              : `📋 *${b.label}:* \`${code}\``;
           }
         }
         const urlStr = String(b.url || "").trim();
+        if (urlStr.includes("whatsapp.com/otp")) return null;
         const normUrl = urlStr.replace(/\/+$/, "");
         if (urlStr && (text.includes(urlStr) || (normUrl && text.includes(normUrl)))) {
           return null;
@@ -3866,15 +3870,19 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
 
   return list.map(b => {
     let finalUrl = b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
-    // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
-    if ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || (!finalUrl && (b.type === "COPY" || b.id === "btn_pix"))) {
+    const resolvedCopyCode = b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
+    const isPixBtn = b.id === "btn_pix" || /pix/i.test(String(b.label || "")) || (resolvedCopyCode && String(resolvedCopyCode).startsWith("000201")) || (finalUrl && finalUrl.includes("000201"));
+    // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ em botão PIX ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
+    if (isPixBtn && ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || !finalUrl)) {
       finalUrl = `${appOrigin}/copiar-pix/${resCode}`;
+    } else if (!isPixBtn && !finalUrl && (b.type === "COPY" || resolvedCopyCode)) {
+      finalUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(resolvedCopyCode || "").trim())}`;
     }
     return {
       ...b,
       url: finalUrl,
       phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
-      copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined
+      copyCode: resolvedCopyCode
     };
   });
 }
@@ -4166,7 +4174,7 @@ export async function sendZapiMessage(config, {
     headers["Client-Token"] = clientToken;
   }
 
-  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
+  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.code || b.type === "COPY" || b.type === "REPLY"));
 
   const reviewUrlRegex = /https?:\/\/[^\s]*(?:writereview\?placeid=[^\s]+|g\.page\/r\/[^\s]+|corpflats\.com\.br\/avaliar[^\s]*)/i;
   const isGoogleReviewMsg =
@@ -4297,10 +4305,21 @@ export async function sendZapiMessage(config, {
 
       if (type === "URL") {
         let rawUrl = String(b.url || "").trim();
-        const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl.startsWith("000201") ? rawUrl : "");
-        // Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia/código puro, redireciona para a página oficial do portal para copiar o PIX
-        if (!rawUrl || rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")) {
-          const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/+$/, "");
+        const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl && !rawUrl.startsWith("http") ? rawUrl : "");
+        const isPixBtn =
+          b.id === "btn_pix" ||
+          /pix/i.test(String(b.label || "")) ||
+          (codeToCopy && String(codeToCopy).startsWith("000201")) ||
+          rawUrl.startsWith("000201") ||
+          rawUrl.includes("code=000201");
+
+        // Se for um código OTP de verificação (não-PIX), usa o link nativo de cópia em 1 toque do WhatsApp (otp_type=COPY_CODE)
+        if (!isPixBtn && (codeToCopy || rawUrl.includes("whatsapp.com/otp"))) {
+          rawUrl = rawUrl.includes("whatsapp.com/otp")
+            ? rawUrl
+            : `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(codeToCopy).trim())}`;
+        } else if (!rawUrl || (isPixBtn && (rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")))) {
+          const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
           rawUrl = `${hostBase}/copiar-pix`;
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
@@ -4510,13 +4529,13 @@ export async function sendZapiLocation(config, { phone, title, address, latitude
 }
 
 /**
- * Enviar Botão OTP de Cópia com 1 Toque (/send-button-otp)
+ * Enviar Botão OTP de Cópia com 1 Toque (/send-button-actions com COPY_CODE + fallback /send-button-otp)
  */
 export async function sendZapiOtpButton(config, {
   phone,
   message,
   code,
-  buttonText = "Copiar código",
+  buttonText = "📋 Copiar Código",
   channelId = "transactional_chat",
   recipientRole = "guest",
   triggerEvent = "pre_checkin_otp",
@@ -4570,22 +4589,76 @@ export async function sendZapiOtpButton(config, {
   }
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
-  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`;
   const headers = { "Content-Type": "application/json" };
   if (clientToken) headers["Client-Token"] = clientToken;
 
+  const cleanCode = String(code || "").trim();
+  const cleanLabel = String(buttonText || "📋 Copiar Código").trim().substring(0, 25);
+
+  // 1. Tenta via /send-button-actions com parâmetro nativo COPY_CODE do WhatsApp (suporta texto rico multi-linha e renderiza botão nativo de cópia)
+  const isPixCode = cleanCode.startsWith("000201");
+  if (!isPixCode && cleanCode) {
+    const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
+    const buttonActionsPayload = {
+      phone: targetPhone,
+      message: finalMessage,
+      buttonActions: [
+        {
+          id: "btn_otp_copy",
+          type: "URL",
+          label: cleanLabel,
+          url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(cleanCode)}`
+        }
+      ]
+    };
+
+    try {
+      const resActions = await fetch(buttonActionsUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buttonActionsPayload)
+      });
+      const dataActions = await resActions.json().catch(() => ({}));
+      if (resActions.ok && !dataActions.error && (dataActions.zaapId || dataActions.id || dataActions.messageId || dataActions.value)) {
+        const msgId = dataActions.zaapId || dataActions.id || dataActions.messageId || "ok";
+        recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalMessage });
+        return {
+          success: true,
+          method: "button_actions_otp",
+          messageId: msgId,
+          data: dataActions,
+          phone: targetPhone,
+          originalPhone: cleanPhone,
+          redirected: Boolean(policy.redirected),
+          channelId: policy.channelId
+        };
+      }
+      console.warn(`[Z-API OTP] /send-button-actions retornou HTTP ${resActions.status}, tentando /send-button-otp...`, dataActions);
+    } catch (actErr) {
+      console.warn(`[Z-API OTP] Exceção em /send-button-actions:`, actErr.message);
+    }
+  }
+
+  // 2. Fallback via endpoint dedicado /send-button-otp da Z-API
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`;
   const payload = {
     phone: targetPhone,
     message: finalMessage,
-    code,
-    buttonText
+    code: cleanCode,
+    buttonText: cleanLabel
   };
 
   try {
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
+    const ok = res.ok && !data.error && Boolean(data.zaapId || data.id || data.messageId || data.value);
+    if (ok) {
+      const msgId = data.zaapId || data.id || data.messageId || "ok";
+      recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalMessage });
+    }
     return {
-      success: res.ok,
+      success: ok,
+      method: "button_otp",
       data,
       phone: targetPhone,
       originalPhone: cleanPhone,
@@ -9679,11 +9752,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
   });
 
-  // Auto-sincronização de webhooks e notifySentByMe na inicialização + higienização NPS / disparo de hoje < 5
+  // Auto-sincronização de webhooks e notifySentByMe na inicialização + higienização NPS / disparo de hoje < 5 + flats já prontos hoje
   const syncTimeout = setTimeout(async () => {
     try {
       const db = getDb();
       if (db) {
+        await checkAndScheduleReadyFlatsOnCheckinDay(db, saveDatabase, process.env.APP_BASE_URL || "https://corpflats.com.br");
         await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
       }
       if (db?.zapiConfig?.instanceId && db?.zapiConfig?.token && db?.zapiConfig?.enabled !== false) {
@@ -9954,6 +10028,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
       // 2. Garante que reservas confirmadas tenham suas réguas agendadas
       scheduleUpcomingReservationTriggers(db, saveDatabase);
+
+      // 2.5. Verifica reservas de check-in hoje cujo flat já está limpo/pronto desde a véspera (agenda 10:00/12:00 ou dispara se já passou do horário)
+      await checkAndScheduleReadyFlatsOnCheckinDay(db, saveDatabase, process.env.APP_BASE_URL || "https://corpflats.com.br");
 
       // 3. Verifica flats de check-in hoje ainda não limpos após as 13:45 e dispara solicitação de previsão
       await checkAndTriggerCleaningDelayAlerts(db, saveDatabase, createNotification, process.env.APP_BASE_URL || "https://corpflats.com.br");
@@ -10417,6 +10494,29 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
     }
   }
 
+  // Trava final em tempo real para itens agendados de "Quarto Liberado" (10:00 Diretas / 12:00 OTAs):
+  // garante que o flat ainda está limpo e que o hóspede ainda não entrou fisicamente antes de entregar
+  if (ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
+    const { todayStr } = getBrasiliaDateParts(new Date());
+    if (resv && isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr)) {
+      console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: flat ${resv.flatNumber} está em processo de limpeza hoje (aguarda conclusão da governança).`);
+      item.status = "cancelled";
+      item.error = "Cancelado: flat está em processo de limpeza hoje; aguarda conclusão da governança";
+      item.updatedAt = new Date().toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+      return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+    const isCompanionItem = Boolean(item.recipientType && item.recipientType !== "guest");
+    if (resv && !isCompanionItem && (hasGuestPhysicallyCheckedIn(db, resv) || hasRoomReadyBeenSentOrScheduled(db, resv, todayStr, { includeScheduled: false }))) {
+      console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: hóspede já realizou check-in físico ou já recebeu aviso de quarto pronto.`);
+      item.status = "cancelled";
+      item.error = "Cancelado: hóspede já realizou check-in ou já recebeu aviso de quarto liberado";
+      item.updatedAt = new Date().toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+      return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+  }
+
   let waResult = null;
   let emailLog = null;
 
@@ -10530,6 +10630,11 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
 
   const waSuccess = Boolean(waResult?.success);
   const anySuccess = waSuccess || Boolean(emailLog);
+  if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
+    const { todayStr } = getBrasiliaDateParts(new Date());
+    resv.roomReadySentDate = todayStr;
+    resv.roomReadySentAt = new Date().toISOString();
+  }
   item.whatsappStatus = waResult ? (waSuccess ? "sent" : "failed") : (item.guestPhone ? "skipped" : "no_phone");
   if (item.guestEmail) item.emailStatus = emailLog ? "sent" : "skipped";
   item.status = anySuccess ? "sent" : "failed";
@@ -11357,12 +11462,12 @@ export async function triggerCheckoutWhatsApp(dbOrGetter, saveDatabase, reservat
  *      - `room_ready_regular` → para canais diretos (sem texto de early check-in ou de 14:00)
  *      - `room_ready_ota`     → para OTAs (revelação do flat e instruções de chegada)
  */
-export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId, flatNumber, baseUrl = "") {
+export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId, flatNumber, baseUrl = "", nowOverride = null) {
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db || !db.zapiConfig?.enabled) return;
 
-    const now = new Date();
+    const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
     const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
 
     // Busca reservas com check-in hoje neste flat
@@ -11386,6 +11491,10 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
     const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
 
     for (const resv of arrivingToday) {
+      if (hasReservationEnteredOrCompletedCheckin(db, resv, todayStr)) {
+        continue;
+      }
+
       // Trava de Segurança: Modo de Teste / Sandbox (só ignora se nenhum destinatário for alcançável)
       if (db?.zapiConfig?.testModeOnly !== false) {
         const rr = getReservationRecipients(resv, db);
@@ -11434,14 +11543,13 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
         if (added && typeof saveDatabase === "function") saveDatabase();
       };
 
-      // 1. Regra para OTAs (Booking / Airbnb): Liberação a partir das 12:00
+      // 1. Regra para OTAs (Booking / Airbnb / B2B): Liberação a partir das 12:00 (Horário de Brasília -03:00)
       if (isOtaChannel) {
         if (!isAtOrAfterCheckin) {
-          const otaEarliest = new Date();
-          otaEarliest.setHours(12, 0, 0, 0);
+          const otaEarliest = new Date(`${todayStr}T12:00:00-03:00`);
 
           if (now < otaEarliest) {
-            console.log(`[Room Ready OTA] Flat ${flatNumber} limpo antes das 12:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo para as 12:00 pontualmente.`);
+            console.log(`[Room Ready OTA] Flat ${flatNumber} limpo antes das 12:00 (${brHour}:${String(brMinute).padStart(2, "0")}). Agendando disparo para as 12:00 pontualmente.`);
             const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_ota") ||
                            DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota");
             enqueueRoomReadyForTargets(defTpl, "room_ready_ota", otaEarliest.toISOString(), "q_ota");
@@ -11449,13 +11557,12 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
           }
         }
       } else {
-        // 2. Regra para Diretas (Site / WhatsApp): Early Check-in a partir das 10:00 (apenas se for antes das 14:00)
+        // 2. Regra para Diretas (Site / WhatsApp): Early Check-in a partir das 10:00 (Horário de Brasília -03:00)
         if (!isAtOrAfterCheckin) {
-          const directEarliest = new Date();
-          directEarliest.setHours(10, 0, 0, 0);
+          const directEarliest = new Date(`${todayStr}T10:00:00-03:00`);
 
           if (now < directEarliest) {
-            console.log(`[Room Ready Direct] Flat ${flatNumber} limpo antes das 10:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo de early check-in para as 10:00 pontualmente.`);
+            console.log(`[Room Ready Direct] Flat ${flatNumber} limpo antes das 10:00 (${brHour}:${String(brMinute).padStart(2, "0")}). Agendando disparo de early check-in para as 10:00 pontualmente.`);
             const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_direct") ||
                            DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
             enqueueRoomReadyForTargets(defTpl, "room_ready", directEarliest.toISOString(), "q_direct");
@@ -11760,13 +11867,12 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
   }
 }
 
-// ── Verificadores Estritos de Entrada e Limpeza em Andamento (13:45) ──────────
+// ── Verificadores Estritos de Entrada, Quarto Pronto e Limpeza em Andamento ───
 /**
- * Verifica se o hóspede da reserva já entrou no flat / marcou check-in como feito
- * ou se já recebeu o aviso de "Quarto Liberado / Pronto" hoje.
+ * Verifica exclusivamente se o hóspede já deu entrada física / check-in concluído no flat.
  * Obs.: Assinatura antecipada da FNRH (r.checkedInAt / r.fnhrCompleted) sozinha NÃO representa entrada física no flat.
  */
-export function hasReservationEnteredOrCompletedCheckin(db, resv, todayStr = "") {
+export function hasGuestPhysicallyCheckedIn(db, resv) {
   if (!resv) return false;
 
   const statusLower = String(resv.status || "").toLowerCase().trim();
@@ -11799,10 +11905,6 @@ export function hasReservationEnteredOrCompletedCheckin(db, resv, todayStr = "")
     return true;
   }
 
-  if (todayStr && resv.roomReadySentDate === todayStr) {
-    return true;
-  }
-
   const rCode = String(resv.code || resv.reservationCode || "").trim().toUpperCase();
   const rId = resv.id !== undefined && resv.id !== null ? String(resv.id) : "";
 
@@ -11814,19 +11916,12 @@ export function hasReservationEnteredOrCompletedCheckin(db, resv, todayStr = "")
       return (rCode && iCode === rCode) || (rId && (iId === rId || iCode === rId));
     };
 
-    const sentOrQueuedRoomReadyOrCheckin = (db.whatsappHistory || []).some(h =>
+    const sentCheckinCompleted = (db.whatsappHistory || []).some(h =>
       matchesRes(h) &&
       (h.status === "sent" || h.status === "delivered") &&
-      (h.triggerEvent === "checkin_completed" || ROOM_READY_GROUP_EVENTS.has(h.triggerEvent))
-    ) || (db.whatsappQueue || []).some(q =>
-      matchesRes(q) &&
-      (q.status === "scheduled" || q.status === "pending" || q.status === "sent") &&
-      (q.triggerEvent === "checkin_completed" || ROOM_READY_GROUP_EVENTS.has(q.triggerEvent))
+      h.triggerEvent === "checkin_completed"
     );
-
-    if (sentOrQueuedRoomReadyOrCheckin) {
-      return true;
-    }
+    if (sentCheckinCompleted) return true;
   }
 
   if (db?.smartFlats && typeof db.smartFlats === "object") {
@@ -11844,6 +11939,53 @@ export function hasReservationEnteredOrCompletedCheckin(db, resv, todayStr = "")
   }
 
   return false;
+}
+
+/**
+ * Verifica se a reserva já recebeu (ou já está agendada para receber) aviso de "Quarto Liberado / Pronto" hoje.
+ */
+export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { includeScheduled = true } = {}) {
+  if (!resv) return false;
+  if (todayStr && resv.roomReadySentDate === todayStr) return true;
+
+  const rCode = String(resv.code || resv.reservationCode || "").trim().toUpperCase();
+  const rId = resv.id !== undefined && resv.id !== null ? String(resv.id) : "";
+  if (!db || (!rCode && !rId)) return false;
+
+  const matchesRes = (item) => {
+    if (!item) return false;
+    const iCode = String(item.reservationCode || "").trim().toUpperCase();
+    const iId = item.reservationId !== undefined && item.reservationId !== null ? String(item.reservationId) : "";
+    return (rCode && iCode === rCode) || (rId && (iId === rId || iCode === rId));
+  };
+
+  const sentRoomReady = (db.whatsappHistory || []).some(h =>
+    matchesRes(h) &&
+    (h.status === "sent" || h.status === "delivered") &&
+    ROOM_READY_GROUP_EVENTS.has(h.triggerEvent)
+  );
+  if (sentRoomReady) return true;
+
+  if (includeScheduled) {
+    const queuedRoomReady = (db.whatsappQueue || []).some(q =>
+      matchesRes(q) &&
+      (q.status === "scheduled" || q.status === "pending" || q.status === "sent") &&
+      ROOM_READY_GROUP_EVENTS.has(q.triggerEvent)
+    );
+    if (queuedRoomReady) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Verifica se o hóspede da reserva já entrou no flat / marcou check-in como feito
+ * ou se já recebeu (ou tem agendado) o aviso de "Quarto Liberado / Pronto" hoje.
+ * Obs.: Assinatura antecipada da FNRH (r.checkedInAt / r.fnhrCompleted) sozinha NÃO representa entrada física no flat.
+ */
+export function hasReservationEnteredOrCompletedCheckin(db, resv, todayStr = "") {
+  if (!resv) return false;
+  return hasGuestPhysicallyCheckedIn(db, resv) || hasRoomReadyBeenSentOrScheduled(db, resv, todayStr, { includeScheduled: true });
 }
 
 /**
@@ -11918,11 +12060,12 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
     if (hasCheckoutToday) return true;
   }
 
-  // 4. Verifica se há limpeza em andamento agora ("cleaning_now" / "in_progress" / "will_clean") ou pendência de dia anterior ainda não limpa
+  // 4. Verifica se há pendência ou limpeza de dia anterior (< todayStr) que ainda não tenha sido resolvida
+  // IMPORTANTE: Ignora cards futuros (> todayStr) e SEMPRE verifica se o flat já foi limpo em data igual ou posterior,
+  // mesmo que um registro antigo tenha ficado com status 'cleaning_now' / 'in_progress' / 'will_clean' no passado.
   const hasUnresolvedPreviousCleaning = flatActiveCleanings.some(c => {
     const st = String(c.status || "").toLowerCase();
     if (!pendingStatuses.has(st)) return false;
-    if (st === "cleaning_now" || st === "in_progress" || st === "will_clean") return true;
     if (!c.requestDate || c.requestDate >= todayStr || c.requestDate < "2026-09-01") return false;
     // Verifica se já houve limpeza concluída ou exclusão em data igual ou posterior a esta solicitação antiga
     const resolvedOnOrAfter = flatAllCleanings.some(other => {
@@ -11931,7 +12074,11 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
       if (other.status === "clean" || other.status === "completed") return true;
       if ((other.isDeleted || other.status === "deleted") && (!c.createdAt || !other.deletedAt || other.deletedAt >= c.createdAt)) return true;
       return false;
-    });
+    }) || (db.auditLogs || []).some(l =>
+      (l?.action === "CLEANING_STATUS_CLEAN" || l?.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
+      String(l?.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
+      String(l?.timestamp || "").substring(0, 10) >= c.requestDate
+    );
     return !resolvedOnOrAfter;
   });
 
@@ -11939,6 +12086,49 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
 
   // Se não há solicitação pendente hoje, não houve check-out hoje e não há limpeza em aberto, o flat já estava limpo e pronto!
   return false;
+}
+
+/**
+ * Verifica todas as reservas com check-in hoje cujo flat JÁ está limpo/pronto (ex.: pronto desde a véspera sem check-out hoje)
+ * e garante o agendamento na fila conforme o canal (10:00 para Diretas / 12:00 para OTAs/B2B) ou o disparo imediato caso
+ * o horário de liberação já tenha sido atingido.
+ */
+export async function checkAndScheduleReadyFlatsOnCheckinDay(dbOrGetter, saveDatabase, baseUrl = "", nowOverride = null) {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !db.zapiConfig?.enabled) return;
+
+    const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+    const { todayStr, hour: brHour } = getBrasiliaDateParts(now);
+    if (brHour >= 22) return;
+
+    const arrivingInCleanFlats = (db.reservations || []).filter(r =>
+      r &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "no_show" &&
+      r.status !== "checkout" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "expirada" &&
+      r.checkinDate === todayStr &&
+      reservationHasAnyContact(r, db) &&
+      !hasReservationEnteredOrCompletedCheckin(db, r, todayStr) &&
+      !isFlatStillBeingCleanedOnCheckinDay(db, r, todayStr)
+    );
+
+    if (arrivingInCleanFlats.length === 0) return;
+
+    const processedFlats = new Set();
+    for (const resv of arrivingInCleanFlats) {
+      const flatKey = `${resv.flatId || ""}:${resv.flatNumber || ""}`;
+      if (processedFlats.has(flatKey)) continue;
+      processedFlats.add(flatKey);
+      await triggerRoomReadyWhatsApp(db, saveDatabase, resv.flatId, resv.flatNumber, baseUrl, now);
+    }
+  } catch (err) {
+    console.error("[Ready Flats Checkin Day Error]:", err.message);
+  }
 }
 
 // ── Alerta Proativo das 13:45: Flat Pendente de Limpeza & Previsão de Chegada ──

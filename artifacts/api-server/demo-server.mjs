@@ -103,6 +103,7 @@ import {
   dispatchRequesterGuestCredentialRequest,
   dispatchCatchUpGuestRulerMessages,
   reservationHasAnyContact,
+  isFlatStillBeingCleanedOnCheckinDay,
   checkZapiPhoneExists
 } from "./zapi-service.mjs";
 import {
@@ -24115,16 +24116,13 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   if (hasPendingCheckoutToday) {
     isFlatClean = false;
   } else if (cleanReq) {
+    const reqStatus = cleanReq.status || cleanReq.cleaningRequest?.status;
     // O flat só é considerado limpo se o status for estritamente 'clean' ou 'completed'
-    isFlatClean = cleanReq.status === "clean" || cleanReq.status === "completed";
+    isFlatClean = reqStatus === "clean" || reqStatus === "completed";
   } else {
-    // Se não há solicitação hoje e não há checkout pendente, verifica histórico anterior
-    const lastCleaning = (db.cleaningRequests || [])
-      .filter(c => (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)))
-      .sort((a, b) => (b.requestDate || "").localeCompare(a.requestDate || ""))[0];
-    if (lastCleaning && lastCleaning.status !== "clean" && lastCleaning.status !== "completed") {
-      isFlatClean = false;
-    }
+    // Se não há solicitação hoje e não há checkout pendente hoje, verifica pela regra consolidada da governança
+    // (ignorando cards futuros pré-gerados e registros antigos já superados por limpezas posteriores)
+    isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, r, todayStr);
   }
 
   // 2. Verificação de Benefício de Early Check-in (mediante disponibilidade de flat limpo)

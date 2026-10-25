@@ -4,6 +4,7 @@ import {
   DEFAULT_WHATSAPP_TEMPLATES,
   scheduleUpcomingReservationTriggers,
   checkAndTriggerCleaningDelayAlerts,
+  checkAndScheduleReadyFlatsOnCheckinDay,
   deliverQueueItem,
   hasReservationEnteredOrCompletedCheckin,
   isFlatStillBeingCleanedOnCheckinDay
@@ -242,4 +243,118 @@ test("checkAndTriggerCleaningDelayAlerts dispara pontualmente às 13:45 APENAS p
   await checkAndTriggerCleaningDelayAlerts(db, () => {}, createNotification, "https://corpflats.onrender.com", at1400);
   const delaySentAfter1400 = db.whatsappHistory.filter(h => h.triggerEvent === "checkin_cleaning_delay");
   assert.equal(delaySentAfter1400.length, 1, "Não deve duplicar o envio às 14:00");
+});
+
+test("Flat 715 já pronto desde a véspera (mesmo com registro antigo cleaning_now superado e card futuro dirty): não envia 13:45 e segue regra de liberação por canal (10:00 Direta / 12:00 OTA)", async () => {
+  const db = createTestDb();
+  db.flats.push(
+    { id: 15, number: "715", isOccupied: false },
+    { id: 16, number: "716", isOccupied: false }
+  );
+
+  // Reserva OTA (Booking) no Flat 715 — caso real José Geraldo Dos Santos
+  const res715Ota = {
+    id: 515,
+    code: "RES-715-0515",
+    flatId: 15,
+    flatNumber: "715",
+    guestName: "José Geraldo Dos Santos",
+    guestPhone: "5521998011455",
+    channel: "booking",
+    checkinDate: TODAY_STR,
+    checkoutDate: "2026-10-30",
+    status: "confirmada",
+    paymentStatus: "pago_total"
+  };
+
+  // Reserva Direta (Site) no Flat 716 — também já pronto desde ontem
+  const res716Direct = {
+    id: 516,
+    code: "RES-716-0516",
+    flatId: 16,
+    flatNumber: "716",
+    guestName: "Maria Reserva Direta",
+    guestPhone: "5521998011456",
+    channel: "site",
+    checkinDate: TODAY_STR,
+    checkoutDate: "2026-10-28",
+    status: "confirmada",
+    paymentStatus: "pago_total"
+  };
+
+  db.reservations = [res715Ota, res716Direct];
+
+  // Histórico do Flat 715:
+  // - Registro antigo de 2026-10-05 com status 'cleaning_now' (órfão)
+  // - Limpeza concluída na véspera (2026-10-19) com status 'clean'
+  // - Card pré-gerado para o check-out futuro (2026-10-30) com status 'dirty'
+  db.cleaningRequests = [
+    {
+      id: 1440,
+      flatId: 15,
+      flatNumber: "715",
+      requestDate: "2026-10-05",
+      status: "cleaning_now"
+    },
+    {
+      id: 1637,
+      flatId: 15,
+      flatNumber: "715",
+      requestDate: "2026-10-19",
+      status: "clean",
+      completedAt: "2026-10-19T16:52:20.065Z"
+    },
+    {
+      id: 1660,
+      flatId: 15,
+      flatNumber: "715",
+      requestDate: "2026-10-30",
+      status: "dirty"
+    },
+    {
+      id: 1638,
+      flatId: 16,
+      flatNumber: "716",
+      requestDate: "2026-10-19",
+      status: "clean",
+      completedAt: "2026-10-19T15:00:00.000Z"
+    }
+  ];
+  db.whatsappQueue = [];
+  db.whatsappHistory = [];
+
+  // 1. Ambos os flats devem ser reconhecidos como JÁ LIMPOS/PRONTOS hoje
+  assert.equal(isFlatStillBeingCleanedOnCheckinDay(db, res715Ota, TODAY_STR), false, "Flat 715 já está limpo desde ontem (ignora cleaning_now antigo já resolvido e dirty futuro)");
+  assert.equal(isFlatStillBeingCleanedOnCheckinDay(db, res716Direct, TODAY_STR), false, "Flat 716 já está limpo desde ontem");
+
+  // 2. Às 08:30 da manhã: checkAndScheduleReadyFlatsOnCheckinDay agenda 10:00 para Direta (site) e 12:00 para OTA (booking)
+  const at0830 = new Date(`${TODAY_STR}T08:30:00-03:00`);
+  await checkAndScheduleReadyFlatsOnCheckinDay(db, () => {}, "https://corpflats.com.br", at0830);
+
+  const qDirect = db.whatsappQueue.find(q => q.reservationCode === "RES-716-0516" && q.status === "scheduled");
+  const qOta = db.whatsappQueue.find(q => q.reservationCode === "RES-715-0515" && q.status === "scheduled");
+  assert.ok(qDirect, "Reserva direta em flat já limpo deve ser agendada na fila");
+  assert.equal(qDirect.triggerEvent, "room_ready");
+  assert.equal(qDirect.scheduledFor, new Date(`${TODAY_STR}T10:00:00-03:00`).toISOString());
+
+  assert.ok(qOta, "Reserva OTA em flat já limpo deve ser agendada na fila");
+  assert.equal(qOta.triggerEvent, "room_ready_ota");
+  assert.equal(qOta.scheduledFor, new Date(`${TODAY_STR}T12:00:00-03:00`).toISOString());
+
+  // 3. Às 13:45: NUNCA envia checkin_cleaning_delay para nenhum dos dois
+  const at1345 = new Date(`${TODAY_STR}T13:45:00-03:00`);
+  await checkAndTriggerCleaningDelayAlerts(db, () => {}, () => {}, "https://corpflats.com.br", at1345);
+  assert.equal(db.whatsappHistory.filter(h => h.triggerEvent === "checkin_cleaning_delay").length, 0);
+
+  // 4. Caso o servidor rode após as 12:00/14:00 sem agendamento prévio (ex.: caso Flat 715 hoje às 14:02): dispara imediatamente room_ready_ota
+  db.whatsappQueue = [];
+  db.whatsappHistory = [];
+  delete res715Ota.roomReadySentDate;
+  const at1402 = new Date(`${TODAY_STR}T14:02:00-03:00`);
+  await checkAndScheduleReadyFlatsOnCheckinDay(db, () => {}, "https://corpflats.com.br", at1402);
+
+  const sent715 = db.whatsappHistory.find(h => h.reservationCode === "RES-715-0515");
+  assert.ok(sent715, "Deve disparar imediatamente room_ready_ota para o Flat 715 após as 12:00");
+  assert.equal(sent715.triggerEvent, "room_ready_ota");
+  assert.equal(res715Ota.roomReadySentDate, TODAY_STR);
 });
