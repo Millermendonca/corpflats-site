@@ -26,7 +26,7 @@ import {
 import { notifyPmsMutation } from "./ari-sync.mjs";
 import { findBestManualMatch, applySafeReconciliationLink } from "./reconciler.mjs";
 import { getAlertsManager } from "./alerts.mjs";
-import { isWbpAutoMode, isWbpEnabled, WBP_MODES, getIntegrationMode, getChannexConfig } from "./config.mjs";
+import { isWbpAutoMode, isWbpEnabled, WBP_MODES, getIntegrationMode, getChannexConfig, DEFAULT_CHANNEX_CONFIG } from "./config.mjs";
 import { getCardVault } from "./vault.mjs";
 
 /**
@@ -191,7 +191,16 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
   );
 
   const validRoomIds = new Set(
-    [chxCfg.roomTypeId, "rt-corpflats-flat", "flat"]
+    [chxCfg.roomTypeId, DEFAULT_CHANNEX_CONFIG.roomTypeId, "rt-corpflats-flat", "flat"]
+      .filter(Boolean)
+      .map((v) => String(v).toLowerCase())
+  );
+  const comCafeOptionIds = new Set(
+    [
+      chxCfg.ratePlanComCafeId,
+      DEFAULT_CHANNEX_CONFIG.ratePlanComCafeId,
+      ...(DEFAULT_CHANNEX_CONFIG.ratePlanComCafeOptionIds || [])
+    ]
       .filter(Boolean)
       .map((v) => String(v).toLowerCase())
   );
@@ -199,6 +208,10 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     [
       chxCfg.ratePlanSemCafeId,
       chxCfg.ratePlanComCafeId,
+      DEFAULT_CHANNEX_CONFIG.ratePlanSemCafeId,
+      DEFAULT_CHANNEX_CONFIG.ratePlanComCafeId,
+      ...(DEFAULT_CHANNEX_CONFIG.ratePlanSemCafeOptionIds || []),
+      ...(DEFAULT_CHANNEX_CONFIG.ratePlanComCafeOptionIds || []),
       "rp-corpflats-sem-cafe",
       "rp-corpflats-com-cafe",
       "sem_cafe",
@@ -272,9 +285,8 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     String(s?.name || s?.type || "").toLowerCase().includes("cafe")
   );
   const includeBreakfast =
-    (chxCfg.ratePlanComCafeId &&
-      (primaryRoom.rate_plan_id === chxCfg.ratePlanComCafeId ||
-        primaryParentRatePlanId === chxCfg.ratePlanComCafeId)) ||
+    comCafeOptionIds.has(rawRatePlanId) ||
+    comCafeOptionIds.has(rawParentRatePlanId) ||
     rawRatePlanId.includes("com_cafe") ||
     rawRatePlanId.includes("com-cafe") ||
     rawParentRatePlanId.includes("com_cafe") ||
@@ -350,9 +362,8 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     const rParentPlanId = String(r.meta?.parent_rate_plan_id || "").trim();
     const rParentPlanRaw = rParentPlanId.toLowerCase();
     const rBreakfast =
-      (chxCfg.ratePlanComCafeId &&
-        (r.rate_plan_id === chxCfg.ratePlanComCafeId ||
-          rParentPlanId === chxCfg.ratePlanComCafeId)) ||
+      comCafeOptionIds.has(rPlanRaw) ||
+      comCafeOptionIds.has(rParentPlanRaw) ||
       rPlanRaw.includes("com_cafe") ||
       rPlanRaw.includes("com-cafe") ||
       rParentPlanRaw.includes("com_cafe") ||

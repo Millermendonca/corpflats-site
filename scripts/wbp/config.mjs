@@ -11,6 +11,62 @@
  * - 'auto': Full automatic synchronization.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let _wbpEnvLoaded = false;
+
+/**
+ * Loads .env variables once if not already present in process.env (skipped in test environments for strict isolation).
+ */
+export function loadWbpEnvFiles(force = false) {
+  if (
+    process.env.NODE_ENV === "test" ||
+    process.execArgv.includes("--test") ||
+    process.argv.includes("--test")
+  ) {
+    return;
+  }
+  if (_wbpEnvLoaded && !force) {
+    return;
+  }
+  _wbpEnvLoaded = true;
+  const potentialPaths = [
+    "/etc/secrets/.env",
+    "/etc/secrets/env",
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(__dirname, "../../../.env"),
+    path.resolve(__dirname, "../../.env"),
+    path.resolve(__dirname, "../.env")
+  ];
+  for (const p of potentialPaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, "utf-8");
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const idx = trimmed.indexOf("=");
+          if (idx > 0) {
+            const key = trimmed.slice(0, idx).trim();
+            let val = trimmed.slice(idx + 1).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            if (!process.env[key] || process.env[key] === "") {
+              process.env[key] = val;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+}
+
 export const WBP_MODES = {
   OFF: "off",
   OBSERVE: "observe",
@@ -20,6 +76,35 @@ export const WBP_MODES = {
 export const CHANNEX_ENVIRONMENTS = {
   STAGING: "staging",
   PRODUCTION: "production"
+};
+
+/**
+ * Default non-secret Channex Staging configuration for CorpFlats Soho Residence (19 flats).
+ * Secrets (apiKey, webhookSecret) are strictly loaded from environment variables (.env).
+ */
+export const DEFAULT_CHANNEX_CONFIG = {
+  provider: "channex",
+  environment: CHANNEX_ENVIRONMENTS.STAGING,
+  baseUrl: "https://staging.channex.io/api/v1",
+  appOrigin: "https://staging.channex.io",
+  propertyId: "0f29f1e1-b970-456c-9950-6f11f7a535b8",
+  groupId: "d565df25-5a14-405b-89e0-85315b087f19",
+  roomTypeId: "888b5a90-09cd-40e9-81fb-087127663233",
+  ratePlanSemCafeId: "4269b8b7-d443-4522-a8ed-0c9f0153ae51",
+  ratePlanComCafeId: "2c43ec3b-0cdc-45ed-8dde-210af7d6aa26",
+  ratePlanSemCafeOptionIds: [
+    "b8903d19-a83a-483c-a059-56ffbf9bef28",
+    "4269b8b7-d443-4522-a8ed-0c9f0153ae51",
+    "e2125b21-3a24-40f7-a9a5-2c708b8dd055"
+  ],
+  ratePlanComCafeOptionIds: [
+    "983e62d5-b4ec-45b7-b228-8503fed545fd",
+    "2c43ec3b-0cdc-45ed-8dde-210af7d6aa26",
+    "173b49a8-ea9a-41b5-990b-44e3e1ccf6ce"
+  ],
+  currency: "BRL",
+  timezone: "America/Sao_Paulo",
+  stateLengthDays: 500
 };
 
 /**
@@ -90,33 +175,33 @@ export function isWbpAutoMode(db = null) {
  * @returns {object}
  */
 export function getChannexConfig(db = null) {
+  loadWbpEnvFiles();
   const saved = db?.settings?.channex_config || {};
-  const environment = process.env.CHANNEX_ENVIRONMENT || saved.environment || CHANNEX_ENVIRONMENTS.STAGING;
-  const defaultBaseUrl =
-    environment === CHANNEX_ENVIRONMENTS.PRODUCTION
-      ? "https://app.channex.io/api/v1"
-      : "https://staging.channex.io/api/v1";
-  const defaultAppOrigin =
-    environment === CHANNEX_ENVIRONMENTS.PRODUCTION
-      ? "https://app.channex.io"
-      : "https://staging.channex.io";
+  const environment = saved.environment || process.env.CHANNEX_ENVIRONMENT || DEFAULT_CHANNEX_CONFIG.environment;
+  const isProduction = environment === CHANNEX_ENVIRONMENTS.PRODUCTION;
+  const defaultBaseUrl = isProduction
+    ? "https://app.channex.io/api/v1"
+    : DEFAULT_CHANNEX_CONFIG.baseUrl;
+  const defaultAppOrigin = isProduction
+    ? "https://app.channex.io"
+    : DEFAULT_CHANNEX_CONFIG.appOrigin;
 
   return {
-    provider: process.env.OTA_PROVIDER || saved.provider || "channex",
+    provider: process.env.OTA_PROVIDER || saved.provider || DEFAULT_CHANNEX_CONFIG.provider,
     mode: getIntegrationMode(db),
     environment,
     baseUrl: process.env.CHANNEX_BASE_URL || saved.baseUrl || defaultBaseUrl,
     appOrigin: process.env.CHANNEX_APP_ORIGIN || saved.appOrigin || defaultAppOrigin,
     apiKey: process.env.CHANNEX_API_KEY || saved.apiKey || "",
     webhookSecret: process.env.CHANNEX_WEBHOOK_SECRET || process.env.WBP_SHARED_SECRET || saved.webhookSecret || "",
-    propertyId: process.env.CHANNEX_PROPERTY_ID || saved.propertyId || "",
-    groupId: process.env.CHANNEX_GROUP_ID || saved.groupId || "",
-    roomTypeId: process.env.CHANNEX_ROOM_TYPE_ID || saved.roomTypeId || "",
-    ratePlanSemCafeId: process.env.CHANNEX_RATE_PLAN_SEM_CAFE_ID || saved.ratePlanSemCafeId || "",
-    ratePlanComCafeId: process.env.CHANNEX_RATE_PLAN_COM_CAFE_ID || saved.ratePlanComCafeId || "",
-    currency: process.env.CHANNEX_CURRENCY || saved.currency || "BRL",
-    timezone: process.env.CHANNEX_TIMEZONE || saved.timezone || "America/Sao_Paulo",
-    stateLengthDays: parseInt(process.env.CHANNEX_STATE_LENGTH_DAYS || String(saved.stateLengthDays || 500), 10),
+    propertyId: saved.propertyId || process.env.CHANNEX_PROPERTY_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.propertyId),
+    groupId: saved.groupId || process.env.CHANNEX_GROUP_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.groupId),
+    roomTypeId: saved.roomTypeId || process.env.CHANNEX_ROOM_TYPE_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.roomTypeId),
+    ratePlanSemCafeId: saved.ratePlanSemCafeId || process.env.CHANNEX_RATE_PLAN_SEM_CAFE_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.ratePlanSemCafeId),
+    ratePlanComCafeId: saved.ratePlanComCafeId || process.env.CHANNEX_RATE_PLAN_COM_CAFE_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.ratePlanComCafeId),
+    currency: process.env.CHANNEX_CURRENCY || saved.currency || DEFAULT_CHANNEX_CONFIG.currency,
+    timezone: process.env.CHANNEX_TIMEZONE || saved.timezone || DEFAULT_CHANNEX_CONFIG.timezone,
+    stateLengthDays: parseInt(process.env.CHANNEX_STATE_LENGTH_DAYS || String(saved.stateLengthDays || DEFAULT_CHANNEX_CONFIG.stateLengthDays), 10),
     availabilityRateLimitPerMin: parseInt(process.env.CHANNEX_AVAIL_LIMIT_PER_MIN || "10", 10),
     restrictionsRateLimitPerMin: parseInt(process.env.CHANNEX_RESTRICTIONS_LIMIT_PER_MIN || "10", 10),
     rateLimitPauseMs: parseInt(process.env.CHANNEX_RATE_LIMIT_PAUSE_MS || "60000", 10),

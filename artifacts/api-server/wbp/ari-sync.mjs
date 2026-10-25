@@ -34,7 +34,7 @@ export const DEFAULT_WBP_MAPPING = {
   room: {
     pms_category_id: "flat",
     wbp_room_id: "flat",
-    channex_room_type_id: "rt-corpflats-flat",
+    channex_room_type_id: "888b5a90-09cd-40e9-81fb-087127663233",
     name: "Flat",
     maxOccupancy: 3,
     baseOccupancy: 2,
@@ -44,7 +44,7 @@ export const DEFAULT_WBP_MAPPING = {
     {
       pms_plan_id: "sem_cafe",
       wbp_rate_id: "sem_cafe",
-      channex_rate_plan_id: "rp-corpflats-sem-cafe",
+      channex_rate_plan_id: "4269b8b7-d443-4522-a8ed-0c9f0153ae51",
       name: "Sem café",
       breakfastIncluded: false,
       ceiling: null
@@ -52,7 +52,7 @@ export const DEFAULT_WBP_MAPPING = {
     {
       pms_plan_id: "com_cafe",
       wbp_rate_id: "com_cafe",
-      channex_rate_plan_id: "rp-corpflats-com-cafe",
+      channex_rate_plan_id: "2c43ec3b-0cdc-45ed-8dde-210af7d6aa26",
       name: "Com café",
       breakfastIncluded: true,
       ceiling: null
@@ -169,11 +169,11 @@ export function resolveChannexEntityIds(db) {
   const comCafePlan = (mapping.ratePlans || []).find((rp) => rp.pms_plan_id === "com_cafe");
 
   return {
-    propertyId: cfg.propertyId || "prop-corpflats-soho",
-    roomTypeId: cfg.roomTypeId || mapping.room?.channex_room_type_id || "rt-corpflats-flat",
+    propertyId: cfg.propertyId || "0f29f1e1-b970-456c-9950-6f11f7a535b8",
+    roomTypeId: cfg.roomTypeId || mapping.room?.channex_room_type_id || "888b5a90-09cd-40e9-81fb-087127663233",
     ratePlanIds: {
-      sem_cafe: cfg.ratePlanSemCafeId || semCafePlan?.channex_rate_plan_id || "rp-corpflats-sem-cafe",
-      com_cafe: cfg.ratePlanComCafeId || comCafePlan?.channex_rate_plan_id || "rp-corpflats-com-cafe"
+      sem_cafe: cfg.ratePlanSemCafeId || semCafePlan?.channex_rate_plan_id || "4269b8b7-d443-4522-a8ed-0c9f0153ae51",
+      com_cafe: cfg.ratePlanComCafeId || comCafePlan?.channex_rate_plan_id || "2c43ec3b-0cdc-45ed-8dde-210af7d6aa26"
     }
   };
 }

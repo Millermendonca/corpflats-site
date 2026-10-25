@@ -301,14 +301,21 @@ export class ChannexClient {
 
     // 1. Property
     let propertyId = this.propertyId;
-    if (!propertyId) {
-      const existingProps = await this.getPropertyOptions(reqOpts);
-      const foundProp = (existingProps?.data || []).find(
-        (p) => (p.attributes?.title || "").toLowerCase().includes("corpflats")
-      );
-      if (foundProp) {
-        propertyId = foundProp.id;
+    let groupId = this.groupId;
+    const existingProps = await this.getPropertyOptions(reqOpts);
+    const propList = existingProps?.data || [];
+    const foundProp = propList.find(
+      (p) =>
+        (propertyId && p.id === propertyId) ||
+        (p.attributes?.title || "").toLowerCase().includes("corpflats")
+    );
+    if (foundProp) {
+      propertyId = foundProp.id;
+      if (Array.isArray(foundProp.attributes?.group_ids) && foundProp.attributes.group_ids[0]) {
+        groupId = foundProp.attributes.group_ids[0];
       }
+    } else {
+      propertyId = "";
     }
 
     if (!propertyId) {
@@ -338,6 +345,10 @@ export class ChannexClient {
         reqOpts
       );
       propertyId = createdProp?.data?.id;
+      const createdGroup = createdProp?.data?.relationships?.groups?.data?.[0]?.id;
+      if (createdGroup) {
+        groupId = createdGroup;
+      }
     }
 
     // 2. Room Type "Flat" (19 flats)
@@ -461,6 +472,7 @@ export class ChannexClient {
     }
 
     this.propertyId = propertyId;
+    if (groupId) this.groupId = groupId;
     this.roomTypeId = roomTypeId;
     this.ratePlanSemCafeId = ratePlanSemCafeId;
     this.ratePlanComCafeId = ratePlanComCafeId;
@@ -469,6 +481,7 @@ export class ChannexClient {
       updateChannexConfig(
         {
           propertyId,
+          ...(groupId ? { groupId } : {}),
           roomTypeId,
           ratePlanSemCafeId,
           ratePlanComCafeId
@@ -479,6 +492,7 @@ export class ChannexClient {
 
     return {
       propertyId,
+      groupId: groupId || null,
       roomTypeId,
       ratePlanSemCafeId,
       ratePlanComCafeId,
