@@ -103,6 +103,7 @@ import {
   dispatchRequesterGuestCredentialRequest,
   dispatchCatchUpGuestRulerMessages,
   reservationHasAnyContact,
+  isFlatStillBeingCleanedOnCheckinDay,
   checkZapiPhoneExists
 } from "./zapi-service.mjs";
 import {
@@ -24115,16 +24116,13 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   if (hasPendingCheckoutToday) {
     isFlatClean = false;
   } else if (cleanReq) {
+    const reqStatus = cleanReq.status || cleanReq.cleaningRequest?.status;
     // O flat só é considerado limpo se o status for estritamente 'clean' ou 'completed'
-    isFlatClean = cleanReq.status === "clean" || cleanReq.status === "completed";
+    isFlatClean = reqStatus === "clean" || reqStatus === "completed";
   } else {
-    // Se não há solicitação hoje e não há checkout pendente, verifica histórico anterior
-    const lastCleaning = (db.cleaningRequests || [])
-      .filter(c => (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)))
-      .sort((a, b) => (b.requestDate || "").localeCompare(a.requestDate || ""))[0];
-    if (lastCleaning && lastCleaning.status !== "clean" && lastCleaning.status !== "completed") {
-      isFlatClean = false;
-    }
+    // Se não há solicitação hoje e não há checkout pendente hoje, verifica pela regra consolidada da governança
+    // (ignorando cards futuros pré-gerados e registros antigos já superados por limpezas posteriores)
+    isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, r, todayStr);
   }
 
   // 2. Verificação de Benefício de Early Check-in (mediante disponibilidade de flat limpo)
@@ -33117,7 +33115,7 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
         phone: cleanPhone,
         message: otpMessage,
         code: otpCode,
-        buttonText: "Copiar código",
+        buttonText: "📋 Copiar Código",
         channelId: "transactional_chat",
         recipientRole: "guest",
         triggerEvent: "whatsapp_otp",
@@ -33127,10 +33125,19 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
       if (!sendResult.success && (!db.zapiConfig?.instanceId || !db.zapiConfig?.token)) {
         console.log(`[WhatsApp OTP Simulado] Código ${otpCode} gerado para ${cleanPhone}`);
         sendResult = { success: true, simulated: true };
-      } else if (!sendResult.success && !sendResult.blockedByTestMode && !sendResult.blockedByChannelDisabled && !sendResult.blockedByBlacklist) {
+      } else if (!sendResult.success && !sendResult.blockedByTestMode && !sendResult.blockedByChannelDisabled && !sendResult.blockedByBlacklist && !sendResult.blockedByChannelPause) {
         sendResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
           message: otpMessage,
+          buttons: [
+            {
+              id: "btn_otp_copy",
+              type: "COPY",
+              label: "📋 Copiar Código",
+              copyCode: otpCode,
+              url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(otpCode)}`
+            }
+          ],
           channelId: "transactional_chat",
           recipientRole: "guest",
           triggerEvent: "whatsapp_otp",

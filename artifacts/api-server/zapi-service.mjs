@@ -3484,14 +3484,18 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
           if (phoneStr && text.includes(phoneStr)) return null;
           return `📞 *${b.label}:* ${b.phone}`;
         }
-        if (b.type === "COPY" || b.copyCode) {
+        if (b.type === "COPY" || b.copyCode || b.code) {
           const code = b.copyCode || b.code || (b.url && b.url.startsWith("000201") ? b.url : "");
           if (code) {
             if (text.includes(code)) return null;
-            return `📋 *${b.label} (PIX Copia e Cola):*\n\`${code}\``;
+            const isPix = String(code).startsWith("000201") || /pix/i.test(String(b.label || ""));
+            return isPix
+              ? `📋 *${b.label} (PIX Copia e Cola):*\n\`${code}\``
+              : `📋 *${b.label}:* \`${code}\``;
           }
         }
         const urlStr = String(b.url || "").trim();
+        if (urlStr.includes("whatsapp.com/otp")) return null;
         const normUrl = urlStr.replace(/\/+$/, "");
         if (urlStr && (text.includes(urlStr) || (normUrl && text.includes(normUrl)))) {
           return null;
@@ -3866,15 +3870,19 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
 
   return list.map(b => {
     let finalUrl = b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
-    // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
-    if ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || (!finalUrl && (b.type === "COPY" || b.id === "btn_pix"))) {
+    const resolvedCopyCode = b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
+    const isPixBtn = b.id === "btn_pix" || /pix/i.test(String(b.label || "")) || (resolvedCopyCode && String(resolvedCopyCode).startsWith("000201")) || (finalUrl && finalUrl.includes("000201"));
+    // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ em botão PIX ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
+    if (isPixBtn && ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || !finalUrl)) {
       finalUrl = `${appOrigin}/copiar-pix/${resCode}`;
+    } else if (!isPixBtn && !finalUrl && (b.type === "COPY" || resolvedCopyCode)) {
+      finalUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(resolvedCopyCode || "").trim())}`;
     }
     return {
       ...b,
       url: finalUrl,
       phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
-      copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined
+      copyCode: resolvedCopyCode
     };
   });
 }
@@ -4166,7 +4174,7 @@ export async function sendZapiMessage(config, {
     headers["Client-Token"] = clientToken;
   }
 
-  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
+  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.code || b.type === "COPY" || b.type === "REPLY"));
 
   const reviewUrlRegex = /https?:\/\/[^\s]*(?:writereview\?placeid=[^\s]+|g\.page\/r\/[^\s]+|corpflats\.com\.br\/avaliar[^\s]*)/i;
   const isGoogleReviewMsg =
@@ -4297,10 +4305,21 @@ export async function sendZapiMessage(config, {
 
       if (type === "URL") {
         let rawUrl = String(b.url || "").trim();
-        const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl.startsWith("000201") ? rawUrl : "");
-        // Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia/código puro, redireciona para a página oficial do portal para copiar o PIX
-        if (!rawUrl || rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")) {
-          const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/+$/, "");
+        const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl && !rawUrl.startsWith("http") ? rawUrl : "");
+        const isPixBtn =
+          b.id === "btn_pix" ||
+          /pix/i.test(String(b.label || "")) ||
+          (codeToCopy && String(codeToCopy).startsWith("000201")) ||
+          rawUrl.startsWith("000201") ||
+          rawUrl.includes("code=000201");
+
+        // Se for um código OTP de verificação (não-PIX), usa o link nativo de cópia em 1 toque do WhatsApp (otp_type=COPY_CODE)
+        if (!isPixBtn && (codeToCopy || rawUrl.includes("whatsapp.com/otp"))) {
+          rawUrl = rawUrl.includes("whatsapp.com/otp")
+            ? rawUrl
+            : `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(codeToCopy).trim())}`;
+        } else if (!rawUrl || (isPixBtn && (rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")))) {
+          const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
           rawUrl = `${hostBase}/copiar-pix`;
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
@@ -4510,13 +4529,13 @@ export async function sendZapiLocation(config, { phone, title, address, latitude
 }
 
 /**
- * Enviar Botão OTP de Cópia com 1 Toque (/send-button-otp)
+ * Enviar Botão OTP de Cópia com 1 Toque (/send-button-actions com COPY_CODE + fallback /send-button-otp)
  */
 export async function sendZapiOtpButton(config, {
   phone,
   message,
   code,
-  buttonText = "Copiar código",
+  buttonText = "📋 Copiar Código",
   channelId = "transactional_chat",
   recipientRole = "guest",
   triggerEvent = "pre_checkin_otp",
@@ -4570,22 +4589,76 @@ export async function sendZapiOtpButton(config, {
   }
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
-  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`;
   const headers = { "Content-Type": "application/json" };
   if (clientToken) headers["Client-Token"] = clientToken;
 
+  const cleanCode = String(code || "").trim();
+  const cleanLabel = String(buttonText || "📋 Copiar Código").trim().substring(0, 25);
+
+  // 1. Tenta via /send-button-actions com parâmetro nativo COPY_CODE do WhatsApp (suporta texto rico multi-linha e renderiza botão nativo de cópia)
+  const isPixCode = cleanCode.startsWith("000201");
+  if (!isPixCode && cleanCode) {
+    const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
+    const buttonActionsPayload = {
+      phone: targetPhone,
+      message: finalMessage,
+      buttonActions: [
+        {
+          id: "btn_otp_copy",
+          type: "URL",
+          label: cleanLabel,
+          url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(cleanCode)}`
+        }
+      ]
+    };
+
+    try {
+      const resActions = await fetch(buttonActionsUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buttonActionsPayload)
+      });
+      const dataActions = await resActions.json().catch(() => ({}));
+      if (resActions.ok && !dataActions.error && (dataActions.zaapId || dataActions.id || dataActions.messageId || dataActions.value)) {
+        const msgId = dataActions.zaapId || dataActions.id || dataActions.messageId || "ok";
+        recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalMessage });
+        return {
+          success: true,
+          method: "button_actions_otp",
+          messageId: msgId,
+          data: dataActions,
+          phone: targetPhone,
+          originalPhone: cleanPhone,
+          redirected: Boolean(policy.redirected),
+          channelId: policy.channelId
+        };
+      }
+      console.warn(`[Z-API OTP] /send-button-actions retornou HTTP ${resActions.status}, tentando /send-button-otp...`, dataActions);
+    } catch (actErr) {
+      console.warn(`[Z-API OTP] Exceção em /send-button-actions:`, actErr.message);
+    }
+  }
+
+  // 2. Fallback via endpoint dedicado /send-button-otp da Z-API
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`;
   const payload = {
     phone: targetPhone,
     message: finalMessage,
-    code,
-    buttonText
+    code: cleanCode,
+    buttonText: cleanLabel
   };
 
   try {
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
+    const ok = res.ok && !data.error && Boolean(data.zaapId || data.id || data.messageId || data.value);
+    if (ok) {
+      const msgId = data.zaapId || data.id || data.messageId || "ok";
+      recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalMessage });
+    }
     return {
-      success: res.ok,
+      success: ok,
+      method: "button_otp",
       data,
       phone: targetPhone,
       originalPhone: cleanPhone,

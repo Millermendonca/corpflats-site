@@ -33117,7 +33117,7 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
         phone: cleanPhone,
         message: otpMessage,
         code: otpCode,
-        buttonText: "Copiar código",
+        buttonText: "📋 Copiar Código",
         channelId: "transactional_chat",
         recipientRole: "guest",
         triggerEvent: "whatsapp_otp",
@@ -33127,10 +33127,19 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
       if (!sendResult.success && (!db.zapiConfig?.instanceId || !db.zapiConfig?.token)) {
         console.log(`[WhatsApp OTP Simulado] Código ${otpCode} gerado para ${cleanPhone}`);
         sendResult = { success: true, simulated: true };
-      } else if (!sendResult.success && !sendResult.blockedByTestMode && !sendResult.blockedByChannelDisabled && !sendResult.blockedByBlacklist) {
+      } else if (!sendResult.success && !sendResult.blockedByTestMode && !sendResult.blockedByChannelDisabled && !sendResult.blockedByBlacklist && !sendResult.blockedByChannelPause) {
         sendResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
           message: otpMessage,
+          buttons: [
+            {
+              id: "btn_otp_copy",
+              type: "COPY",
+              label: "📋 Copiar Código",
+              copyCode: otpCode,
+              url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(otpCode)}`
+            }
+          ],
           channelId: "transactional_chat",
           recipientRole: "guest",
           triggerEvent: "whatsapp_otp",

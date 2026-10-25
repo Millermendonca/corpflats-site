@@ -3989,6 +3989,7 @@ export default function GuestPreCheckin() {
                     <Input
                       type="text"
                       inputMode="numeric"
+                      autoComplete="one-time-code"
                       maxLength={6}
                       value={whatsappOtpInput}
                       onChange={e => {
@@ -4005,6 +4006,30 @@ export default function GuestPreCheckin() {
                   </div>
 
                   <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const text = await navigator.clipboard.readText()
+                          const digits = (text || "").replace(/\D/g, "").slice(0, 6)
+                          if (digits) {
+                            setWhatsappOtpInput(digits)
+                            setOtpError(null)
+                          } else {
+                            setOtpError("Nenhum código numérico encontrado na área de transferência.")
+                          }
+                        } catch {
+                          setOtpError("Toque e segure no campo 000000 e selecione 'Colar'.")
+                        }
+                      }}
+                      className="text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 rounded-xl h-auto min-h-12 py-2 px-3.5 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none shadow-2xs"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span>📋 Colar</span>
+                    </Button>
+
                     <Button
                       type="button"
                       variant="outline"
