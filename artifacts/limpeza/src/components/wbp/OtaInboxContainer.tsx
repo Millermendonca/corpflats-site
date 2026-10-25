@@ -298,12 +298,12 @@ export const OtaInboxContainer: React.FC = () => {
     }
   };
 
-  const handleOpenChannexIframe = async () => {
+  const handleOpenChannexIframe = async (redirectTo: string = "/channels") => {
     try {
       const res = await fetch("/api/wbp/channex/iframe-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bypassSwitch: true })
+        body: JSON.stringify({ bypassSwitch: true, redirectTo })
       });
       const data = await res.json();
       if (data?.iframeUrl) {
@@ -322,13 +322,20 @@ export const OtaInboxContainer: React.FC = () => {
   const handlePollNow = async () => {
     setIsPolling(true);
     try {
-      await fetch("/api/wbp/channex/poll-feed", {
+      const res = await fetch("/api/wbp/channex/poll-feed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
+        body: JSON.stringify({ bypassSwitch: true })
       });
+      const data = await res.json().catch(() => ({}));
       setTelemetry(prev => ({ ...prev, lastPollingMinutesAgo: 0 }));
-      setToastMessage("Feed de revisões (GET /booking_revisions/feed) consultado na Channex.io!");
+      if (data?.error) {
+        setToastMessage(`Aviso ao consultar feed: ${data.error}`);
+      } else {
+        setToastMessage(
+          `Feed de revisões (GET /booking_revisions/feed) consultado na Channex.io (${data?.processedCount ?? 0} revisões)!`
+        );
+      }
       setTimeout(() => setToastMessage(null), 4000);
       await fetchInboxData();
     } catch {
@@ -345,14 +352,16 @@ export const OtaInboxContainer: React.FC = () => {
       const res = await fetch("/api/wbp/channex/full-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ days: 500 })
+        body: JSON.stringify({ days: 500, bypassSwitch: true })
       });
       const data = await res.json();
       setTelemetry(prev => ({ ...prev, lastAriSyncSecondsAgo: 0 }));
       if (data?.availabilityTaskIds?.length || data?.restrictionsTaskIds?.length) {
         setToastMessage(
-          `Full Sync 500d concluído em 2 chamadas! Task IDs: Avail=${data.availabilityTaskIds[0] || "OK"} | Rest=${data.restrictionsTaskIds[0] || "OK"}`
+          `Full Sync 500d (19 Flats) concluído em 2 chamadas! Task IDs: Avail=${data.availabilityTaskIds[0] || "OK"} | Rest=${data.restrictionsTaskIds[0] || "OK"}`
         );
+      } else if (data?.error) {
+        setToastMessage(`Erro no Full Sync: ${data.error}`);
       } else {
         setToastMessage("Sincronização completa de 500 dias (Availability + Restrictions) disparada!");
       }
@@ -474,7 +483,7 @@ export const OtaInboxContainer: React.FC = () => {
         onPollNow={handlePollNow}
         onSyncAriNow={handleSyncAriNow}
         onAutoSetupChannex={handleAutoSetupChannex}
-        onOpenChannexIframe={handleOpenChannexIframe}
+        onOpenChannexIframe={() => handleOpenChannexIframe("/channels")}
         isPolling={isPolling}
         isSyncingAri={isSyncingAri}
         isSettingUpChannex={isSettingUpChannex}
@@ -492,16 +501,29 @@ export const OtaInboxContainer: React.FC = () => {
               Ambiente: {channexConfig?.environment || "staging"}
             </Badge>
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-muted-foreground font-mono">
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground font-mono">
             <span>Property: <strong className="text-foreground">{channexConfig?.propertyId || "Não configurado"}</strong></span>
             <span>•</span>
-            <span>Room (19 Flats): <strong className="text-foreground">{channexConfig?.roomTypeId || "Flat"}</strong></span>
+            <span>Room (Pool 19 Flats): <strong className="text-foreground">Flat ({channexConfig?.roomTypeId || "Flat"})</strong></span>
             <span>•</span>
             <span>Rate Sem Café: <strong className="text-foreground">{channexConfig?.ratePlanSemCafeId || "sem_cafe"}</strong></span>
             <span>•</span>
             <span>Rate Com Café: <strong className="text-foreground">{channexConfig?.ratePlanComCafeId || "com_cafe"}</strong></span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2.5 text-[11px] font-sans gap-1"
+              onClick={() => handleOpenChannexIframe("/inventory")}
+            >
+              <ExternalLink className="w-3 h-3 text-indigo-600" />
+              Ver Inventário 19 Flats (IFrame)
+            </Button>
           </div>
         </div>
+
+        <p className="text-[11px] text-muted-foreground">
+          Na Channex.io (aba <strong>Inventory</strong>), os <strong>19 flats físicos (113 a 1304)</strong> operam consolidados sob a categoria única <strong>Flat</strong> (linha <strong>AVL = 19 unidades</strong> no pool compartilhado), com as tarifas <strong>Sem Café</strong> e <strong>Com Café</strong> (ocupações 1, 2 e 3 hóspedes). Clique em <strong>Full Sync 500d (2 Calls)</strong> para atualizar instantaneamente as 19 unidades no calendário da Channex.
+        </p>
 
         {channexTaskLogs.length > 0 && (
           <div className="border-t border-border/60 pt-2.5">
@@ -567,13 +589,35 @@ export const OtaInboxContainer: React.FC = () => {
       <Dialog open={isIframeModalOpen} onOpenChange={setIsIframeModalOpen}>
         <DialogContent className="max-w-5xl h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <ExternalLink className="w-4 h-4 text-sky-600" />
-              Conexão e Mapeamento de Canais OTA (Channex.io White-Label IFrame)
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Conecte Booking.com, Airbnb e Expedia diretamente via sessão segura One-Time Token em Português.
-            </DialogDescription>
+            <div className="flex flex-wrap items-center justify-between gap-2 pr-6">
+              <div>
+                <DialogTitle className="text-base font-bold flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4 text-sky-600" />
+                  Painel Channex.io White-Label (Canais OTA & Inventário 19 Flats)
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Sessão segura One-Time Token em Português para CorpFlats Soho Residence (Room Type: Flat • 19 unidades).
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => handleOpenChannexIframe("/channels")}
+                >
+                  Canais OTA (/channels)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => handleOpenChannexIframe("/inventory")}
+                >
+                  Inventário 19 Flats (/inventory)
+                </Button>
+              </div>
+            </div>
           </DialogHeader>
           <div className="flex-1 w-full rounded-xl overflow-hidden border border-border bg-background">
             {iframeUrl ? (

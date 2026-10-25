@@ -10,7 +10,7 @@
 
 import crypto from "node:crypto";
 import express from "express";
-import { getIntegrationMode, getChannexConfig, isWbpEnabled, isWbpAutoMode, WBP_MODES } from "./config.mjs";
+import { getIntegrationMode, getActiveProvider, getChannexConfig, isWbpEnabled, isWbpAutoMode, WBP_MODES } from "./config.mjs";
 import { defaultStorage } from "./storage.mjs";
 import { WBPClient, ChannexClient } from "./client.mjs";
 import { getAriSynchronizer } from "./ari-sync.mjs";
@@ -833,7 +833,10 @@ export class WbpBackgroundWorker {
       pagesFetched++;
       const feedRes = await this.channexClient.getBookingRevisionsFeed(
         {
-          propertyId: options.propertyId || this.channexClient.propertyId,
+          propertyId:
+            options.propertyId ||
+            this.channexClient?._resolveConfig?.()?.propertyId ||
+            this.channexClient?.propertyId,
           page: queryPage,
           limit
         },
@@ -942,6 +945,9 @@ export class WbpBackgroundWorker {
     try {
       const mode = getIntegrationMode(this.db);
       const chxCfg = getChannexConfig(this.db);
+      const hasChannexApiKey = Boolean(
+        this.channexClient?._resolveConfig?.()?.apiKey || this.channexClient?.apiKey || chxCfg.apiKey
+      );
 
       // 1. Startup Recovery: Recover any unprocessed raw payloads from prior crashes
       const unprocessed = await this.storage.getUnprocessedPayloads();
@@ -956,7 +962,7 @@ export class WbpBackgroundWorker {
                 alertsManager: this.alertsManager
               });
               await claim.release({ recovered: true, result });
-              if (item.idempotencyKey?.startsWith("chx_rev_") && (this.channexClient?.apiKey || chxCfg.apiKey)) {
+              if (item.idempotencyKey?.startsWith("chx_rev_") && hasChannexApiKey) {
                 const revId = item.idempotencyKey.replace(/^chx_rev_/, "");
                 await this.channexClient.ackBookingRevision(revId);
               } else if (item.orderId && this.client) {
@@ -973,7 +979,7 @@ export class WbpBackgroundWorker {
 
       // 2. If Channex API Key is configured and no legacy WBP client is forced, poll Channex Feed
       let channexFeedResult = null;
-      if (this.channexClient?.apiKey || chxCfg.apiKey) {
+      if (hasChannexApiKey) {
         try {
           channexFeedResult = await this.pollChannexFeed();
         } catch (chxErr) {
@@ -981,7 +987,10 @@ export class WbpBackgroundWorker {
         }
       }
 
-      if (!this.client) {
+      if (
+        !this.client ||
+        (channexFeedResult && getActiveProvider(this.db) === "channex" && !this.client.sharedSecret)
+      ) {
         return channexFeedResult || { skipped: true, reason: "no_legacy_client" };
       }
 

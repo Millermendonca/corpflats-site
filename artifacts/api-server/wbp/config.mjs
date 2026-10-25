@@ -21,14 +21,21 @@ const __dirname = path.dirname(__filename);
 let _wbpEnvLoaded = false;
 
 /**
- * Loads .env variables once if not already present in process.env (skipped in test environments for strict isolation).
+ * Detects whether the current Node.js process is running inside the automated test suite.
  */
-export function loadWbpEnvFiles(force = false) {
-  if (
+export function isTestEnv() {
+  return (
     process.env.NODE_ENV === "test" ||
     process.execArgv.includes("--test") ||
     process.argv.includes("--test")
-  ) {
+  );
+}
+
+/**
+ * Loads .env variables once if not already present in process.env (skipped in test environments for strict isolation).
+ */
+export function loadWbpEnvFiles(force = false) {
+  if (isTestEnv()) {
     return;
   }
   if (_wbpEnvLoaded && !force) {
@@ -79,14 +86,14 @@ export const CHANNEX_ENVIRONMENTS = {
 };
 
 /**
- * Default non-secret Channex Staging configuration for CorpFlats Soho Residence (19 flats).
- * Secrets (apiKey, webhookSecret) are strictly loaded from environment variables (.env).
+ * Default Channex Staging configuration for CorpFlats Soho Residence (19 flats).
  */
 export const DEFAULT_CHANNEX_CONFIG = {
   provider: "channex",
   environment: CHANNEX_ENVIRONMENTS.STAGING,
   baseUrl: "https://staging.channex.io/api/v1",
   appOrigin: "https://staging.channex.io",
+  stagingApiKey: "Ebtam+V3YRHN91yc/Moj6H7CzqXmsaGKtAXiT7E0K7sNgQezbqpUf9zNjyDbYFa6",
   propertyId: "0f29f1e1-b970-456c-9950-6f11f7a535b8",
   groupId: "d565df25-5a14-405b-89e0-85315b087f19",
   roomTypeId: "888b5a90-09cd-40e9-81fb-087127663233",
@@ -169,7 +176,7 @@ export function isWbpAutoMode(db = null) {
 
 /**
  * Retrieves Channex.io REST API v1 connection and mapping configuration.
- * API Keys and HMAC secrets are read from environment variables first, with optional runtime override in memory.
+ * API Keys and HMAC secrets are read from saved DB overrides, environment variables, or staging defaults when not in test/prod.
  *
  * @param {object} [db]
  * @returns {object}
@@ -190,10 +197,18 @@ export function getChannexConfig(db = null) {
     provider: process.env.OTA_PROVIDER || saved.provider || DEFAULT_CHANNEX_CONFIG.provider,
     mode: getIntegrationMode(db),
     environment,
-    baseUrl: process.env.CHANNEX_BASE_URL || saved.baseUrl || defaultBaseUrl,
-    appOrigin: process.env.CHANNEX_APP_ORIGIN || saved.appOrigin || defaultAppOrigin,
-    apiKey: process.env.CHANNEX_API_KEY || saved.apiKey || "",
-    webhookSecret: process.env.CHANNEX_WEBHOOK_SECRET || process.env.WBP_SHARED_SECRET || saved.webhookSecret || "",
+    baseUrl: saved.baseUrl || process.env.CHANNEX_BASE_URL || defaultBaseUrl,
+    appOrigin: saved.appOrigin || process.env.CHANNEX_APP_ORIGIN || defaultAppOrigin,
+    apiKey:
+      saved.apiKey ||
+      process.env.CHANNEX_API_KEY ||
+      (!isProduction && !isTestEnv() ? DEFAULT_CHANNEX_CONFIG.stagingApiKey : "") ||
+      "",
+    webhookSecret:
+      saved.webhookSecret ||
+      process.env.CHANNEX_WEBHOOK_SECRET ||
+      process.env.WBP_SHARED_SECRET ||
+      "",
     propertyId: saved.propertyId || process.env.CHANNEX_PROPERTY_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.propertyId),
     groupId: saved.groupId || process.env.CHANNEX_GROUP_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.groupId),
     roomTypeId: saved.roomTypeId || process.env.CHANNEX_ROOM_TYPE_ID || (isProduction ? "" : DEFAULT_CHANNEX_CONFIG.roomTypeId),
@@ -247,6 +262,8 @@ export function updateChannexConfig(partial = {}, db = null) {
       "environment",
       "baseUrl",
       "appOrigin",
+      "apiKey",
+      "webhookSecret",
       "propertyId",
       "groupId",
       "roomTypeId",

@@ -59,6 +59,8 @@ export class ChannexClient {
    */
   constructor(options = {}) {
     const config = getChannexConfig(options.db);
+    this._explicitOptions = { ...options };
+    this._bootConfig = { ...config };
     this.baseUrl = options.baseUrl || config.baseUrl;
     this.appOrigin = options.appOrigin || config.appOrigin;
     this.apiKey = options.apiKey !== undefined ? options.apiKey : config.apiKey;
@@ -74,6 +76,35 @@ export class ChannexClient {
     this.backoffBaseMs = options.backoffBaseMs || 100;
     this.rateLimitPauseMs = options.rateLimitPauseMs !== undefined ? options.rateLimitPauseMs : config.rateLimitPauseMs;
     this.db = options.db || null;
+  }
+
+  /**
+   * Dynamically resolves current configuration from this instance and getChannexConfig(this.db)
+   * so that credentials/IDs loaded asynchronously by loadDatabase() or updated at runtime are always active.
+   */
+  _resolveConfig() {
+    const live = getChannexConfig(this.db);
+    const saved = this.db?.settings?.channex_config || {};
+    const pick = (k) => {
+      if (saved[k]) return saved[k];
+      const isCustomized =
+        Boolean(this[k]) &&
+        (Boolean(this._explicitOptions?.[k]) || this[k] !== this._bootConfig?.[k]);
+      if (isCustomized) return this[k];
+      return live[k] || this[k] || "";
+    };
+    return {
+      baseUrl: pick("baseUrl"),
+      appOrigin: pick("appOrigin"),
+      apiKey: pick("apiKey"),
+      propertyId: pick("propertyId"),
+      groupId: pick("groupId"),
+      roomTypeId: pick("roomTypeId"),
+      ratePlanSemCafeId: pick("ratePlanSemCafeId"),
+      ratePlanComCafeId: pick("ratePlanComCafeId"),
+      currency: pick("currency"),
+      timezone: pick("timezone")
+    };
   }
 
   /**
@@ -104,8 +135,15 @@ export class ChannexClient {
       );
     }
 
+    const resolvedCfg = this._resolveConfig();
+    const activeBaseUrl = resolvedCfg.baseUrl || this.baseUrl;
+    const activeApiKey =
+      options.apiKey !== undefined && options.apiKey !== ""
+        ? options.apiKey
+        : resolvedCfg.apiKey || this.apiKey || "";
+
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    const url = `${this.baseUrl.replace(/\/+$/, "")}${normalizedPath}`;
+    const url = `${activeBaseUrl.replace(/\/+$/, "")}${normalizedPath}`;
     let attempt = 0;
     const maxAttempts = 1 + (options.maxRetries ?? this.maxRetries);
 
@@ -117,7 +155,7 @@ export class ChannexClient {
       try {
         const headers = {
           "Accept": "application/json",
-          "user-api-key": options.apiKey !== undefined ? options.apiKey : this.apiKey
+          "user-api-key": activeApiKey
         };
         if (body !== null && method !== "GET") {
           headers["Content-Type"] = "application/json; charset=utf-8";
@@ -217,7 +255,7 @@ export class ChannexClient {
     return this.request("GET", "/properties/options", null, options);
   }
 
-  async getProperty(propertyId = this.propertyId, options = {}) {
+  async getProperty(propertyId = this._resolveConfig().propertyId, options = {}) {
     if (!propertyId) throw new Error("propertyId é obrigatório para getProperty.");
     return this.request("GET", `/properties/${propertyId}`, null, options);
   }
@@ -233,12 +271,12 @@ export class ChannexClient {
 
   // ── Room Types API ───────────────────────────────────────────────────────
 
-  async listRoomTypes(propertyId = this.propertyId, options = {}) {
+  async listRoomTypes(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/room_types${query}`, null, options);
   }
 
-  async getRoomTypeOptions(propertyId = this.propertyId, options = {}) {
+  async getRoomTypeOptions(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/room_types/options${query}`, null, options);
   }
@@ -259,12 +297,12 @@ export class ChannexClient {
 
   // ── Rate Plans API ───────────────────────────────────────────────────────
 
-  async listRatePlans(propertyId = this.propertyId, options = {}) {
+  async listRatePlans(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/rate_plans${query}`, null, options);
   }
 
-  async getRatePlanOptions(propertyId = this.propertyId, options = {}) {
+  async getRatePlanOptions(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/rate_plans/options${query}`, null, options);
   }
@@ -298,10 +336,11 @@ export class ChannexClient {
    */
   async autoSetupCorpFlats(options = {}) {
     const reqOpts = { ...options };
+    const resolvedCfg = this._resolveConfig();
 
     // 1. Property
-    let propertyId = this.propertyId;
-    let groupId = this.groupId;
+    let propertyId = resolvedCfg.propertyId || this.propertyId;
+    let groupId = resolvedCfg.groupId || this.groupId;
     const existingProps = await this.getPropertyOptions(reqOpts);
     const propList = existingProps?.data || [];
     const foundProp = propList.find(
@@ -322,13 +361,13 @@ export class ChannexClient {
       const createdProp = await this.createProperty(
         {
           title: "CorpFlats Soho Residence",
-          currency: this.currency || "BRL",
+          currency: resolvedCfg.currency || this.currency || "BRL",
           country: "BR",
           state: "RJ",
           city: "Campos dos Goytacazes",
           address: "Soho Residence",
           zip_code: "28035-000",
-          timezone: this.timezone || "America/Sao_Paulo",
+          timezone: resolvedCfg.timezone || this.timezone || "America/Sao_Paulo",
           property_type: "apart_hotel",
           meta: {
             pms: "Guest-Flow-Manager",
@@ -352,7 +391,7 @@ export class ChannexClient {
     }
 
     // 2. Room Type "Flat" (19 flats)
-    let roomTypeId = this.roomTypeId;
+    let roomTypeId = resolvedCfg.roomTypeId || this.roomTypeId;
     const existingRooms = await this.getRoomTypeOptions(propertyId, reqOpts);
     const foundRoom = (existingRooms?.data || []).find(
       (r) =>
@@ -386,7 +425,7 @@ export class ChannexClient {
     const existingRates = await this.getRatePlanOptions(propertyId, reqOpts);
     const rateList = existingRates?.data || [];
 
-    let ratePlanSemCafeId = this.ratePlanSemCafeId;
+    let ratePlanSemCafeId = resolvedCfg.ratePlanSemCafeId || this.ratePlanSemCafeId;
     const foundSemCafe = rateList.find(
       (rp) =>
         rp.id === ratePlanSemCafeId ||
@@ -403,7 +442,7 @@ export class ChannexClient {
           title: "Sem Café",
           sell_mode: "per_person",
           rate_mode: "manual",
-          currency: this.currency || "BRL",
+          currency: resolvedCfg.currency || this.currency || "BRL",
           meal_type: "none",
           ui_read_only: true,
           meta: {
@@ -421,7 +460,7 @@ export class ChannexClient {
       ratePlanSemCafeId = createdSemCafe?.data?.id;
     }
 
-    let ratePlanComCafeId = this.ratePlanComCafeId;
+    let ratePlanComCafeId = resolvedCfg.ratePlanComCafeId || this.ratePlanComCafeId;
     const foundComCafe = rateList.find(
       (rp) =>
         rp.id === ratePlanComCafeId ||
@@ -438,7 +477,7 @@ export class ChannexClient {
           title: "Com Café",
           sell_mode: "per_person",
           rate_mode: "manual",
-          currency: this.currency || "BRL",
+          currency: resolvedCfg.currency || this.currency || "BRL",
           meal_type: "breakfast",
           ui_read_only: true,
           meta: {
@@ -505,7 +544,7 @@ export class ChannexClient {
   /**
    * GET /api/v1/availability
    */
-  async getAvailability({ propertyId = this.propertyId, dateFrom, dateTo } = {}, options = {}) {
+  async getAvailability({ propertyId = this._resolveConfig().propertyId, dateFrom, dateTo } = {}, options = {}) {
     if (!propertyId) throw new Error("propertyId é obrigatório para getAvailability.");
     const params = new URLSearchParams();
     params.set("filter[property_id]", propertyId);
@@ -541,7 +580,7 @@ export class ChannexClient {
    */
   async getRestrictions(
     {
-      propertyId = this.propertyId,
+      propertyId = this._resolveConfig().propertyId,
       dateFrom,
       dateTo,
       restrictions = "rate,stop_sell,closed_to_arrival,closed_to_departure,min_stay_arrival,min_stay_through,max_stay"
@@ -585,7 +624,7 @@ export class ChannexClient {
    * GET /api/v1/booking_revisions/feed
    * Primary Channex endpoint to fetch unacknowledged booking revisions.
    */
-  async getBookingRevisionsFeed({ propertyId = this.propertyId, page = 1, limit = 100 } = {}, options = {}) {
+  async getBookingRevisionsFeed({ propertyId = this._resolveConfig().propertyId, page = 1, limit = 100 } = {}, options = {}) {
     const params = new URLSearchParams();
     if (propertyId) params.set("filter[property_id]", propertyId);
     params.set("pagination[page]", String(page));
@@ -629,7 +668,7 @@ export class ChannexClient {
   /**
    * GET /api/v1/bookings
    */
-  async listBookings({ propertyId = this.propertyId, page = 1, limit = 50 } = {}, options = {}) {
+  async listBookings({ propertyId = this._resolveConfig().propertyId, page = 1, limit = 50 } = {}, options = {}) {
     const params = new URLSearchParams();
     if (propertyId) params.set("filter[property_id]", propertyId);
     params.set("pagination[page]", String(page));
@@ -645,8 +684,8 @@ export class ChannexClient {
    */
   async createOneTimeToken(
     {
-      propertyId = this.propertyId,
-      groupId = this.groupId,
+      propertyId,
+      groupId,
       username = "Admin CorpFlats",
       redirectTo = "/channels",
       language = "pt",
@@ -660,21 +699,24 @@ export class ChannexClient {
     } = {},
     options = {}
   ) {
-    if (!propertyId) throw new Error("propertyId é obrigatório para createOneTimeToken.");
+    const resolvedCfg = this._resolveConfig();
+    const resolvedPropertyId = propertyId || resolvedCfg.propertyId || this.propertyId;
+    const resolvedGroupId = groupId || resolvedCfg.groupId || this.groupId;
+    if (!resolvedPropertyId) throw new Error("propertyId é obrigatório para createOneTimeToken.");
     const payload = {
       one_time_token: {
-        property_id: propertyId,
+        property_id: resolvedPropertyId,
         username
       }
     };
-    if (groupId) payload.one_time_token.group_id = groupId;
+    if (resolvedGroupId) payload.one_time_token.group_id = resolvedGroupId;
     const res = await this.request("POST", "/auth/one_time_token", payload, options);
     const token = res?.data?.token || "";
     const iframeUrl = token
       ? this.buildIframeUrl({
           token,
-          propertyId,
-          groupId,
+          propertyId: resolvedPropertyId,
+          groupId: resolvedGroupId,
           redirectTo,
           language,
           channels,
@@ -698,8 +740,8 @@ export class ChannexClient {
    */
   buildIframeUrl({
     token,
-    propertyId = this.propertyId,
-    groupId = this.groupId,
+    propertyId,
+    groupId,
     redirectTo = "/channels",
     language = "pt",
     channels = "",
@@ -710,12 +752,16 @@ export class ChannexClient {
     hideMessagesAttachBtn,
     readOnlyAvailability
   } = {}) {
+    const resolvedCfg = this._resolveConfig();
+    const resolvedPropertyId = propertyId !== undefined ? propertyId : (resolvedCfg.propertyId || this.propertyId);
+    const resolvedGroupId = groupId !== undefined ? groupId : (resolvedCfg.groupId || this.groupId);
+    const resolvedAppOrigin = resolvedCfg.appOrigin || this.appOrigin;
     const params = new URLSearchParams();
     params.set("oauth_session_key", token || "");
     params.set("app_mode", "headless");
     params.set("redirect_to", redirectTo);
-    if (propertyId) params.set("property_id", propertyId);
-    if (groupId) params.set("group_id", groupId);
+    if (resolvedPropertyId) params.set("property_id", resolvedPropertyId);
+    if (resolvedGroupId) params.set("group_id", resolvedGroupId);
     if (language) params.set("lng", language);
     if (channels) params.set("channels", channels);
     if (channelsFilter) params.set("channels_filter", channelsFilter);
@@ -730,7 +776,7 @@ export class ChannexClient {
     if (typeof readOnlyAvailability === "boolean") {
       params.set("read_only_availability", readOnlyAvailability ? "true" : "false");
     }
-    return `${this.appOrigin.replace(/\/+$/, "")}/auth/exchange?${params.toString()}`;
+    return `${resolvedAppOrigin.replace(/\/+$/, "")}/auth/exchange?${params.toString()}`;
   }
 
   // ── Identity, Tasks, Health & Channels API ───────────────────────────────
@@ -739,7 +785,7 @@ export class ChannexClient {
     return this.request("GET", "/whoami", null, options);
   }
 
-  async listTasks({ propertyId = this.propertyId, page = 1, limit = 50 } = {}, options = {}) {
+  async listTasks({ propertyId = this._resolveConfig().propertyId, page = 1, limit = 50 } = {}, options = {}) {
     const params = new URLSearchParams();
     if (propertyId) params.set("filter[property_id]", propertyId);
     params.set("pagination[page]", String(page));
@@ -752,12 +798,12 @@ export class ChannexClient {
     return this.request("GET", `/tasks/${taskId}`, null, options);
   }
 
-  async getPropertyHealth(propertyId = this.propertyId, options = {}) {
+  async getPropertyHealth(propertyId = this._resolveConfig().propertyId, options = {}) {
     if (!propertyId) throw new Error("propertyId é obrigatório para getPropertyHealth.");
     return this.request("GET", `/health_check/${propertyId}`, null, options);
   }
 
-  async listChannels(propertyId = this.propertyId, options = {}) {
+  async listChannels(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/channels${query}`, null, options);
   }
@@ -769,7 +815,7 @@ export class ChannexClient {
 
   // ── Webhooks, Signing Keys, Messages, Reviews, Live Feed & Availability Rules ──
 
-  async listWebhooks(propertyId = this.propertyId, options = {}) {
+  async listWebhooks(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/webhooks${query}`, null, options);
   }
@@ -803,7 +849,7 @@ export class ChannexClient {
     if (typeof paramsOrWebhookId === "string" && paramsOrWebhookId.trim()) {
       return this.request("GET", `/webhooks/${paramsOrWebhookId.trim()}/logs`, null, options);
     }
-    const { propertyId = this.propertyId, webhookId, page = 1, limit = 50 } = paramsOrWebhookId || {};
+    const { propertyId = this._resolveConfig().propertyId, webhookId, page = 1, limit = 50 } = paramsOrWebhookId || {};
     const params = new URLSearchParams();
     if (propertyId) params.set("filter[property_id]", propertyId);
     if (webhookId) params.set("filter[webhook_id]", webhookId);
@@ -918,7 +964,7 @@ export class ChannexClient {
     return this.request("POST", `/message_threads/${threadId}/no_reply_needed`, {}, options);
   }
 
-  async listReviews(propertyId = this.propertyId, options = {}) {
+  async listReviews(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/reviews${query}`, null, options);
   }
@@ -933,7 +979,7 @@ export class ChannexClient {
     );
   }
 
-  async listLiveFeed(propertyId = this.propertyId, options = {}) {
+  async listLiveFeed(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/live_feed${query}`, null, options);
   }
@@ -948,7 +994,7 @@ export class ChannexClient {
     return this.request("POST", `/live_feed/${eventId}/resolve`, { resolution }, options);
   }
 
-  async listAvailabilityRules(propertyId = this.propertyId, options = {}) {
+  async listAvailabilityRules(propertyId = this._resolveConfig().propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/availability_rules${query}`, null, options);
   }

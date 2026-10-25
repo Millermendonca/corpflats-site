@@ -3216,6 +3216,7 @@ app.post("/api/wbp/channex/config", (req, res) => {
     // Sync runtime instances
     if (updated.baseUrl) channexClient.baseUrl = updated.baseUrl;
     if (updated.appOrigin) channexClient.appOrigin = updated.appOrigin;
+    if (updated.apiKey) channexClient.apiKey = updated.apiKey;
     if (updated.propertyId) channexClient.propertyId = updated.propertyId;
     if (updated.groupId) channexClient.groupId = updated.groupId;
     if (updated.roomTypeId) channexClient.roomTypeId = updated.roomTypeId;
@@ -3231,16 +3232,28 @@ app.post("/api/wbp/channex/config", (req, res) => {
 app.post("/api/wbp/channex/auto-setup", async (req, res) => {
   try {
     const { bypassSwitch, apiKey, baseUrl } = req.body || {};
+    const cfg = getChannexConfig(db);
     if (baseUrl) channexClient.baseUrl = baseUrl;
     if (apiKey) channexClient.apiKey = apiKey;
     const setupResult = await channexClient.autoSetupCorpFlats({
       bypassSwitch: Boolean(bypassSwitch),
-      apiKey: apiKey || channexClient.apiKey
+      apiKey: apiKey || cfg.apiKey || channexClient.apiKey
     });
+    let fullSyncResult = null;
+    try {
+      const sync = getAriSynchronizer(db);
+      sync.channexClient = channexClient;
+      fullSyncResult = await sync.performChannexFullSync({
+        days: 500,
+        bypassSwitch: Boolean(bypassSwitch),
+        trigger: "auto_setup_initial_500d"
+      });
+    } catch (_) {}
     saveDatabase("channex_auto_setup");
     res.json({
       success: true,
       ...setupResult,
+      fullSync: fullSyncResult,
       config: getChannexConfig(db)
     });
   } catch (err) {
@@ -3306,14 +3319,25 @@ app.get("/api/wbp/channex/task-logs", (req, res) => {
 
 app.post("/api/wbp/channex/iframe-token", async (req, res) => {
   try {
-    const { propertyId, groupId, username = "CorpFlats PMS Admin", bypassSwitch } = req.body || {};
+    const {
+      propertyId,
+      groupId,
+      username = "CorpFlats PMS Admin",
+      redirectTo = "/channels",
+      bypassSwitch
+    } = req.body || {};
+    const cfg = getChannexConfig(db);
     const result = await channexClient.createOneTimeToken(
       {
-        propertyId: propertyId || channexClient.propertyId,
-        groupId: groupId || channexClient.groupId,
-        username
+        propertyId: propertyId || cfg.propertyId || channexClient.propertyId,
+        groupId: groupId || cfg.groupId || channexClient.groupId,
+        username,
+        redirectTo
       },
-      { bypassSwitch: Boolean(bypassSwitch) }
+      {
+        bypassSwitch: Boolean(bypassSwitch),
+        apiKey: cfg.apiKey || channexClient.apiKey
+      }
     );
     res.json({
       success: true,
@@ -3328,9 +3352,10 @@ app.post("/api/wbp/channex/iframe-token", async (req, res) => {
 app.post("/api/wbp/channex/poll-feed", async (req, res) => {
   try {
     const { propertyId, bypassSwitch } = req.body || {};
+    const cfg = getChannexConfig(db);
     wbpWorker.channexClient = channexClient;
     const result = await wbpWorker.pollChannexFeed({
-      propertyId: propertyId || channexClient.propertyId,
+      propertyId: propertyId || cfg.propertyId || channexClient.propertyId,
       bypassSwitch: Boolean(bypassSwitch)
     });
     saveDatabase("channex_poll_feed");

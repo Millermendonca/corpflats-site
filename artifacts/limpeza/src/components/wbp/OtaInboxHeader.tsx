@@ -159,7 +159,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
             variant="outline"
             size="sm"
             onClick={onPollNow}
-            disabled={isPolling || telemetry.mode === "off"}
+            disabled={isPolling}
             className="h-8 text-xs gap-1.5 shadow-2xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isPolling ? "animate-spin" : ""}`} />
@@ -170,7 +170,7 @@ export const OtaInboxHeader: React.FC<OtaInboxHeaderProps> = ({
           <Button
             size="sm"
             onClick={onSyncAriNow}
-            disabled={isSyncingAri || telemetry.mode === "off"}
+            disabled={isSyncingAri}
             className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-xs"
           >
             <Zap className={`w-3.5 h-3.5 ${isSyncingAri ? "animate-spin" : ""}`} />

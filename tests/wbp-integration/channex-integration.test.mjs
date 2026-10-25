@@ -30,7 +30,7 @@ import {
   getChannexConfig,
   updateChannexConfig
 } from "../../artifacts/api-server/wbp/config.mjs";
-import { ChannexClient, ChannexApiError } from "../../artifacts/api-server/wbp/client.mjs";
+import { WBPClient, ChannexClient, ChannexApiError } from "../../artifacts/api-server/wbp/client.mjs";
 import {
   WbpAriSynchronizer,
   buildChannexAvailabilityValues,
@@ -875,6 +875,96 @@ describe("Channex.io REST API v1 Integration & 14 Certification Tests", () => {
     assert.equal(finRes.otaReservationCode, "OTA-CODE-777-MOD");
     assert.equal(finRes.deposits[0].amount, "330.00");
     assert.equal(finRes.collectedTaxes[0].amount, "33.00");
+
+    // Verify dynamic _resolveConfig() when ChannexClient is instantiated BEFORE loadDatabase() populates db.settings.channex_config
+    const lateDb = { settings: { wbp_integration_mode: "off" } };
+    const prevEnvKey = process.env.CHANNEX_API_KEY;
+    delete process.env.CHANNEX_API_KEY;
+    try {
+      const earlyBootClient = new ChannexClient({
+        db: lateDb,
+        baseUrl: simBaseUrl,
+        appOrigin: simOrigin,
+        apiKey: ""
+      });
+      assert.equal(earlyBootClient.apiKey, "");
+
+      // Simulate loadDatabase() / updateChannexConfig() populating credentials after boot
+      updateChannexConfig(
+        {
+          apiKey: API_KEY,
+          webhookSecret: WEBHOOK_SECRET,
+          propertyId: channexClient.propertyId,
+          groupId: "d565df25-5a14-405b-89e0-85315b087f19"
+        },
+        lateDb
+      );
+
+      const tokenRes = await earlyBootClient.createOneTimeToken(
+        { redirectTo: "/inventory" },
+        { bypassSwitch: true }
+      );
+      assert.ok(tokenRes.token, "One-time token generated dynamically after late DB config load");
+      assert.equal(tokenRes.iframeUrl.includes("redirect_to=%2Finventory"), true);
+      assert.equal(tokenRes.iframeUrl.includes("group_id=d565df25-5a14-405b-89e0-85315b087f19"), true);
+
+      // Verify methods with default propertyId parameter resolve late DB propertyId dynamically
+      const lateHealth = await earlyBootClient.getPropertyHealth(undefined, { bypassSwitch: true });
+      assert.equal(lateHealth.data?.attributes?.status, "healthy");
+      const lateRooms = await earlyBootClient.listRoomTypes(undefined, { bypassSwitch: true });
+      assert.equal(Array.isArray(lateRooms.data) && lateRooms.data.length >= 1, true);
+
+      // Verify environment switch (staging -> production) updates baseUrl & appOrigin when not explicitly pinned
+      const prevBaseUrl = process.env.CHANNEX_BASE_URL;
+      const prevAppOrigin = process.env.CHANNEX_APP_ORIGIN;
+      delete process.env.CHANNEX_BASE_URL;
+      delete process.env.CHANNEX_APP_ORIGIN;
+      try {
+        const envSwitchDb = { settings: { wbp_integration_mode: "off" } };
+        const envSwitchClient = new ChannexClient({ db: envSwitchDb });
+        assert.equal(envSwitchClient._resolveConfig().baseUrl, "https://staging.channex.io/api/v1");
+        updateChannexConfig(
+          {
+            environment: "production",
+            apiKey: "prod-test-key",
+            propertyId: channexClient.propertyId
+          },
+          envSwitchDb
+        );
+        assert.equal(envSwitchClient._resolveConfig().baseUrl, "https://app.channex.io/api/v1");
+        assert.equal(envSwitchClient._resolveConfig().appOrigin, "https://app.channex.io");
+      } finally {
+        process.env.CHANNEX_BASE_URL = prevBaseUrl;
+        process.env.CHANNEX_APP_ORIGIN = prevAppOrigin;
+      }
+
+      // Verify demo-server.mjs dual-client wiring (both legacy WBPClient and ChannexClient passed)
+      const unconfiguredLegacyWbp = new WBPClient({ db, sharedSecret: "" });
+      const dualAriSync = new WbpAriSynchronizer({
+        db,
+        storage,
+        client: unconfiguredLegacyWbp,
+        channexClient
+      });
+      const dualPushRes = await dualAriSync.performFullPush({
+        startDate: "2026-12-01",
+        endDate: "2026-12-03"
+      });
+      assert.equal(dualPushRes.success, true, "Dual-client WbpAriSynchronizer must route performFullPush to Channex");
+      assert.equal(dualPushRes.provider, "channex");
+
+      const dualWorker = new WbpBackgroundWorker({
+        db,
+        storage,
+        client: unconfiguredLegacyWbp,
+        channexClient
+      });
+      const dualPollRes = await dualWorker.poll();
+      assert.equal(dualPollRes.success, true, "Dual-client WbpBackgroundWorker must poll Channex without failing on unconfigured legacy WBP");
+      assert.equal(dualPollRes.provider, "channex");
+    } finally {
+      process.env.CHANNEX_API_KEY = prevEnvKey;
+    }
   });
 });
 

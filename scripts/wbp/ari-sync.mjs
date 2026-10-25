@@ -1076,13 +1076,16 @@ export class WbpAriSynchronizer {
     const activeProvider = getActiveProvider(this.db);
     const channexCfg = getChannexConfig(this.db);
     const hasChannexCredentials = Boolean(
-      this.channexClient?.apiKey || channexCfg.apiKey || this.explicitChannexClient
+      this.channexClient?._resolveConfig?.()?.apiKey ||
+        this.channexClient?.apiKey ||
+        channexCfg.apiKey ||
+        this.explicitChannexClient
     );
 
     if (
       activeProvider === "channex" &&
       hasChannexCredentials &&
-      !this.explicitWbpClient &&
+      !(this.explicitWbpClient && !this.explicitChannexClient) &&
       options.provider !== "wbp"
     ) {
       return this.performChannexFullSync(options);
