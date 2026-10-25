@@ -14,9 +14,57 @@ import { getIntegrationMode, getChannexConfig, isWbpEnabled, isWbpAutoMode, WBP_
 import { defaultStorage } from "./storage.mjs";
 import { WBPClient, ChannexClient } from "./client.mjs";
 import { getAriSynchronizer } from "./ari-sync.mjs";
-import { processIncomingOTA, stripCvvDeep, maskPan, detectCardBrand } from "./inbox.mjs";
+import { processIncomingOTA, routeToQuarantine, stripCvvDeep, maskPan, detectCardBrand } from "./inbox.mjs";
 import { getAlertsManager } from "./alerts.mjs";
 import { getCardVault } from "./vault.mjs";
+
+export const CHANNEX_BOOKING_EVENTS = new Set([
+  "booking",
+  "booking_new",
+  "booking_modification",
+  "booking_cancellation",
+  "booking_unmapped_room",
+  "booking_unmapped_rate",
+  "non_acked_booking"
+]);
+
+export const CHANNEX_NON_BOOKING_EVENTS = new Set([
+  "ari",
+  "sync_error",
+  "sync_warning",
+  "rate_error",
+  "message",
+  "message_thread_booking_assigned",
+  "inquiry",
+  "reservation_request",
+  "alteration_request",
+  "accepted_reservation",
+  "declined_reservation",
+  "review",
+  "updated_review",
+  "new_channel",
+  "updated_channel",
+  "disconnect_channel",
+  "disconnect_listing",
+  "activate_channel",
+  "deactivate_channel",
+  "channel_removal_warning",
+  "property_removal_warning"
+]);
+
+export const CHANNEX_OPERATIONAL_ALERT_EVENTS = new Set([
+  "sync_error",
+  "sync_warning",
+  "rate_error",
+  "disconnect_channel",
+  "disconnect_listing",
+  "deactivate_channel",
+  "channel_removal_warning",
+  "property_removal_warning",
+  "non_acked_booking",
+  "booking_unmapped_room",
+  "booking_unmapped_rate"
+]);
 
 /**
  * Recursively sanitizes card data deeply in memory:
@@ -224,7 +272,10 @@ export function createWbpCallbackRouter(options = {}) {
     express.json({
       limit: "10mb",
       verify: (req, _res, buf) => {
-        req.rawBody = buf.toString("utf8");
+        if (buf && buf.length) {
+          req.rawBody = buf.toString("utf8");
+          req.rawBodyBuffer = Buffer.from(buf);
+        }
       }
     })
   );
@@ -242,7 +293,7 @@ export function createWbpCallbackRouter(options = {}) {
     next();
   });
 
-  // 0. POST /channex (Channex.io v1 Webhook Receiver)
+  // 0. POST /channex (Channex.io v1 Webhook Receiver — 28 Event Types & HMAC-SHA256)
   router.post("/channex", async (req, res) => {
     try {
       const body = req.body || {};
@@ -254,7 +305,12 @@ export function createWbpCallbackRouter(options = {}) {
 
       // If webhook secret is configured OR HMAC headers are sent, verify HMAC-SHA256 over raw bytes
       if (webhookSecret || sigHeader || tsHeader) {
-        const rawBody = req.rawBody !== undefined ? req.rawBody : JSON.stringify(body);
+        const rawBody =
+          req.rawBodyBuffer !== undefined
+            ? req.rawBodyBuffer
+            : req.rawBody !== undefined
+              ? req.rawBody
+              : JSON.stringify(body);
         const hmacCheck = verifyChannexHmacSignature(
           rawBody,
           tsHeader,
@@ -271,14 +327,16 @@ export function createWbpCallbackRouter(options = {}) {
         }
       }
 
-      const eventType = String(body.event || "booking").toLowerCase();
+      const eventType = String(body.event || "booking").toLowerCase().trim();
       const rawInner = body.payload || body.data || body;
       const sanitizedPayload = sanitizeCardDataInMemory(body);
 
       const revisionId = String(
         rawInner?.revision_id ||
+        rawInner?.booking_revision_id ||
         rawInner?.id ||
         body.revision_id ||
+        body.booking_revision_id ||
         ""
       ).trim();
       const bookingId = String(
@@ -289,7 +347,10 @@ export function createWbpCallbackRouter(options = {}) {
         crypto.randomUUID()
       ).trim();
 
-      const idempotencyKey = revisionId ? `chx_rev_${revisionId}` : `chx_evt_${bookingId}_${Date.now()}`;
+      const idempotencyKey =
+        CHANNEX_BOOKING_EVENTS.has(eventType) && revisionId
+          ? `chx_rev_${revisionId}`
+          : `chx_evt_${eventType}_${bookingId}_${Date.now()}`;
 
       // Record raw payload durably BEFORE processing
       const payloadId = await storage.recordRawPayload({
@@ -302,33 +363,132 @@ export function createWbpCallbackRouter(options = {}) {
 
       const mode = getIntegrationMode(db);
       if (mode === WBP_MODES.OBSERVE) {
-        return res.status(200).json({ status: "observed", payloadId });
+        return res.status(200).json({ status: "observed", event: eventType, payloadId });
       }
 
-      // If the webhook is a lightweight notification (only revision_id/booking_id without full rooms/customer)
-      // and channexClient has an API key, fetch the revision or feed from Channex API
+      // Record operational alert for error/warning/removal/unmapped/non_acked events
+      if (
+        CHANNEX_OPERATIONAL_ALERT_EVENTS.has(eventType) ||
+        eventType.includes("error") ||
+        eventType.includes("warning")
+      ) {
+        if (alertsManager && typeof alertsManager.createOperationalAlert === "function") {
+          try {
+            alertsManager.createOperationalAlert(
+              {
+                event: eventType,
+                title: `Evento Channex: ${eventType}`,
+                message: `Alerta operacional Channex (${eventType}) referente à propriedade/reserva ${bookingId}.`,
+                details: sanitizedPayload
+              },
+              db
+            );
+          } catch (_) {}
+        }
+      }
+
+      // Filter non-booking events (21 operational/channel/review/message/ari events)
+      // Do NOT send them to processIncomingOTA to avoid false MALFORMED_PAYLOAD quarantine entries
+      if (!CHANNEX_BOOKING_EVENTS.has(eventType)) {
+        return res.status(200).json({
+          status: "acknowledged",
+          event: eventType,
+          payloadId
+        });
+      }
+
+      // If the webhook is a lightweight notification (send_data: false or non_acked_booking)
+      // without inline rooms/dates, fetch the revision by ID or trigger pollChannexFeed()
       let revisionPayload = rawInner;
-      const hasFullDetails = Boolean(
-        rawInner?.attributes?.rooms ||
-        rawInner?.rooms ||
-        rawInner?.data?.attributes?.rooms
-      );
+      const checkHasFullDetails = (obj) =>
+        Boolean(
+          obj?.attributes?.rooms ||
+          obj?.rooms ||
+          obj?.data?.attributes?.rooms ||
+          obj?.attributes?.arrival_date ||
+          obj?.arrival_date ||
+          obj?.data?.attributes?.arrival_date
+        );
+
+      let hasFullDetails = checkHasFullDetails(revisionPayload);
 
       if (!hasFullDetails && revisionId && (channexClient?.apiKey || chxCfg.apiKey)) {
         try {
           const revRes = await channexClient.getBookingRevisionById(revisionId);
           if (revRes?.data) {
             revisionPayload = sanitizeCardDataInMemory(revRes.data);
+            hasFullDetails = checkHasFullDetails(revisionPayload);
           }
         } catch (fetchErr) {
           console.warn("[Channex Webhook] Falha ao buscar revision completa:", fetchErr.message);
         }
       }
 
-      // Handle unmapped room/rate explicit webhook events
+      // If still no inline details (e.g., send_data: false or non_acked_booking with only property_id),
+      // trigger pollChannexFeed() if API key is available, or handle unmapped/lightweight gracefully
+      if (!hasFullDetails) {
+        if (channexClient?.apiKey || chxCfg.apiKey) {
+          try {
+            const activeWorker =
+              options.worker ||
+              new WbpBackgroundWorker({
+                db,
+                storage,
+                channexClient,
+                alertsManager
+              });
+            const feedResult = await activeWorker.pollChannexFeed({
+              propertyId: rawInner?.property_id || body.property_id || channexClient.propertyId
+            });
+            return res.status(200).json({
+              status: "polled_feed",
+              event: eventType,
+              payloadId,
+              feedResult
+            });
+          } catch (pollErr) {
+            console.warn("[Channex Webhook] Falha ao consultar feed de revisões:", pollErr.message);
+          }
+        }
+
+        if (eventType === "booking_unmapped_room" || eventType === "booking_unmapped_rate") {
+          const qRecord = routeToQuarantine({
+            db,
+            booking: {
+              externalOrderId: bookingId,
+              wbpBookingId: bookingId,
+              channexBookingId: bookingId,
+              channexRevisionId: revisionId || null,
+              rawPayloadId: payloadId,
+              source: "webhook",
+              channel: "booking"
+            },
+            reason: "UNMAPPED_ROOM_OR_RATE",
+            reasonDetails: {
+              message: `Evento ${eventType} recebido sem dados completos de quarto/tarifa (revision_id=${revisionId || "N/A"}).`
+            },
+            alertsManager
+          });
+          return res.status(200).json({
+            status: "quarantined",
+            event: eventType,
+            payloadId,
+            quarantineId: qRecord.id
+          });
+        }
+
+        return res.status(200).json({
+          status: "acknowledged",
+          event: eventType,
+          lightweight: true,
+          payloadId
+        });
+      }
+
+      // Handle unmapped room/rate explicit webhook events when full payload is present
       if (eventType === "booking_unmapped_room" || eventType === "booking_unmapped_rate") {
         if (revisionPayload && typeof revisionPayload === "object") {
-          const targetAttrs = revisionPayload.attributes || revisionPayload;
+          const targetAttrs = revisionPayload.data?.attributes || revisionPayload.attributes || revisionPayload;
           if (!Array.isArray(targetAttrs.rooms) || targetAttrs.rooms.length === 0) {
             targetAttrs.rooms = [{ room_type_id: null, rate_plan_id: null, unmapped: true }];
           } else {
@@ -343,6 +503,7 @@ export function createWbpCallbackRouter(options = {}) {
       }
 
       let result = null;
+      let acked = false;
       try {
         result = await processIncomingOTA(revisionPayload, {
           db,
@@ -364,6 +525,7 @@ export function createWbpCallbackRouter(options = {}) {
         if (ackRevId && (channexClient?.apiKey || chxCfg.apiKey)) {
           try {
             await channexClient.ackBookingRevision(ackRevId);
+            acked = true;
           } catch (ackErr) {
             console.warn("[Channex Webhook] Aviso ao confirmar ACK da revisão:", ackErr.message);
           }
@@ -372,7 +534,7 @@ export function createWbpCallbackRouter(options = {}) {
         await claim.release({ status: "error", error: procErr.message });
       }
 
-      return res.status(200).json({ status: "ok", result });
+      return res.status(200).json({ status: "ok", event: eventType, acknowledged: acked, result });
     } catch (err) {
       console.error("[Channex Webhook] Erro interno:", err);
       return res.status(200).json({ status: "error", message: err.message });
@@ -651,6 +813,7 @@ export class WbpBackgroundWorker {
   /**
    * Polls Channex `GET /api/v1/booking_revisions/feed` (never `GET /bookings`),
    * records raw payloads durably, processes into PMS in `auto` mode, and acknowledges via `POST /booking_revisions/:id/ack`.
+   * Supports multi-page feed pagination when `meta.total > items.length` up to a safe page cap.
    */
   async pollChannexFeed(options = {}) {
     const mode = getIntegrationMode(this.db);
@@ -659,61 +822,112 @@ export class WbpBackgroundWorker {
     }
 
     const reqOpts = { bypassSwitch: Boolean(options.bypassSwitch) };
-    const feedRes = await this.channexClient.getBookingRevisionsFeed(
-      { propertyId: options.propertyId || this.channexClient.propertyId },
-      reqOpts
-    );
-
-    const items = Array.isArray(feedRes?.data) ? feedRes.data : [];
+    const limit = Number(options.limit || 100);
+    const maxPages = Number(options.maxPages || 10);
     const processedRevisions = [];
+    const seenRevisionIds = new Set();
+    let queryPage = Number(options.page || 1);
+    let pagesFetched = 0;
 
-    for (const revItem of items) {
-      const revisionId = String(revItem.id || revItem.attributes?.id || "").trim();
-      const bookingId = String(revItem.attributes?.booking_id || revisionId).trim();
-      const orderId = String(revItem.attributes?.ota_reservation_code || revItem.attributes?.unique_id || bookingId).trim();
-      const idempotencyKey = `chx_rev_${revisionId}`;
+    while (pagesFetched < maxPages) {
+      pagesFetched++;
+      const feedRes = await this.channexClient.getBookingRevisionsFeed(
+        {
+          propertyId: options.propertyId || this.channexClient.propertyId,
+          page: queryPage,
+          limit
+        },
+        reqOpts
+      );
 
-      const sanitized = sanitizeCardDataInMemory(revItem);
-      const payloadId = await this.storage.recordRawPayload({
-        source: "polling_channex_feed",
-        endpoint: "booking_revisions/feed",
-        payload: sanitized,
-        idempotencyKey,
-        orderId
-      });
-
-      if (mode === WBP_MODES.OBSERVE && !options.bypassSwitch) {
-        processedRevisions.push({ revisionId, bookingId, orderId, mode: "observe", payloadId, acknowledged: false });
-        continue;
+      const items = Array.isArray(feedRes?.data) ? feedRes.data : [];
+      if (items.length === 0) {
+        break;
       }
 
-      const claim = await this.storage.claimForProcessing(idempotencyKey, payloadId, orderId);
-      if (claim.shouldProcess) {
-        const processResult = await processIncomingOTA(sanitized, {
-          db: this.db,
-          storage: this.storage,
-          alertsManager: this.alertsManager
+      const total = Number(feedRes?.meta?.total ?? items.length);
+      let newInBatch = 0;
+      let ackedInBatch = 0;
+
+      for (const revItem of items) {
+        const revisionId = String(revItem.id || revItem.attributes?.id || "").trim();
+        if (!revisionId || seenRevisionIds.has(revisionId)) {
+          continue;
+        }
+        seenRevisionIds.add(revisionId);
+        newInBatch++;
+
+        const bookingId = String(revItem.attributes?.booking_id || revisionId).trim();
+        const orderId = String(
+          revItem.attributes?.ota_reservation_code || revItem.attributes?.unique_id || bookingId
+        ).trim();
+        const idempotencyKey = `chx_rev_${revisionId}`;
+
+        const sanitized = sanitizeCardDataInMemory(revItem);
+        const payloadId = await this.storage.recordRawPayload({
+          source: "polling_channex_feed",
+          endpoint: "booking_revisions/feed",
+          payload: sanitized,
+          idempotencyKey,
+          orderId
         });
 
-        await claim.release({ processedFromChannexFeed: true, result: processResult });
+        if (mode === WBP_MODES.OBSERVE && !options.bypassSwitch) {
+          processedRevisions.push({
+            revisionId,
+            bookingId,
+            orderId,
+            mode: "observe",
+            payloadId,
+            acknowledged: false
+          });
+          continue;
+        }
 
-        // Mandatory Channex rule: Acknowledge revision ONLY after durable storage and processing!
-        await this.channexClient.ackBookingRevision(revisionId, reqOpts);
-        processedRevisions.push({
-          revisionId,
-          bookingId,
-          orderId,
-          mode: "auto",
-          payloadId,
-          acknowledged: true,
-          result: processResult
-        });
+        const claim = await this.storage.claimForProcessing(idempotencyKey, payloadId, orderId);
+        if (claim.shouldProcess) {
+          const processResult = await processIncomingOTA(sanitized, {
+            db: this.db,
+            storage: this.storage,
+            alertsManager: this.alertsManager
+          });
+
+          await claim.release({ processedFromChannexFeed: true, result: processResult });
+
+          // Mandatory Channex rule: Acknowledge revision ONLY after durable storage and processing!
+          await this.channexClient.ackBookingRevision(revisionId, reqOpts);
+          ackedInBatch++;
+          processedRevisions.push({
+            revisionId,
+            bookingId,
+            orderId,
+            mode: "auto",
+            payloadId,
+            acknowledged: true,
+            result: processResult
+          });
+        }
+      }
+
+      // Stop if all available revisions were fetched or no new revisions appeared on this page
+      if (newInBatch === 0 || (total <= items.length && items.length < limit)) {
+        break;
+      }
+
+      // If any item on the current page was NOT acknowledged (e.g. observe mode or already claimed),
+      // advance page number so we never re-fetch the same unacked revision infinitely.
+      if (ackedInBatch < items.length) {
+        if (seenRevisionIds.size >= total) {
+          break;
+        }
+        queryPage++;
       }
     }
 
     return {
       success: true,
       provider: "channex",
+      pagesFetched,
       processedCount: processedRevisions.length,
       processedRevisions
     };

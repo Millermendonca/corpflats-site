@@ -48,8 +48,8 @@ interface QuarantineDrawerProps {
 
 // 19 canonical flats of CorpFlats Soho Residence
 const ALL_19_FLATS = [
-  "102", "104", "106", "201", "203", "205", "302", "304", "306",
-  "401", "403", "405", "502", "504", "506", "601", "603", "605", "702"
+  "113", "114", "116", "211", "212", "215", "313", "408", "509",
+  "511", "512", "605", "712", "715", "904", "905", "907", "1004", "1304"
 ];
 
 export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
@@ -61,6 +61,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
   onLink,
 }) => {
   const [selectedFlat, setSelectedFlat] = useState<string>("605");
+  const [manualReservationCode, setManualReservationCode] = useState<string>("");
   const [actionNotes, setActionNotes] = useState<string>("");
   const [rejectReason, setRejectReason] = useState<string>("Overbooking não solucionável");
   const [isRawJsonExpanded, setIsRawJsonExpanded] = useState<boolean>(false);
@@ -71,6 +72,12 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
   if (!item) return null;
 
   const isQuarantine = item.status === "quarantine";
+  const displayCheckin = (item as any).checkIn || item.checkinDate;
+  const displayCheckout = (item as any).checkOut || item.checkoutDate;
+  const displayNights = (item as any).nightsCount || item.nights || 1;
+  const displayPlan = (item as any).planId || item.ratePlan || "sem_cafe";
+  const displayTotal = (item as any).totalGrossAmount ?? item.totalPrice ?? 0;
+  const displayFlat = (item as any).allocatedFlat || item.flatNumber;
 
   const handleAssignFlat = async () => {
     setIsSubmitting(true);
@@ -99,6 +106,17 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
     }
   };
 
+  const handleLinkManual = async () => {
+    if (!manualReservationCode.trim()) return;
+    setIsSubmitting(true);
+    try {
+      await onLink(item.id, manualReservationCode.trim());
+      onClose();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleReject = async () => {
     setIsSubmitting(true);
     try {
@@ -113,7 +131,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
   };
 
   const handleCopyJson = () => {
-    const jsonStr = JSON.stringify(item.rawPayload || item, null, 2);
+    const jsonStr = JSON.stringify((item as any).rawPayload || item, null, 2);
     navigator.clipboard.writeText(jsonStr);
     setCopiedJson(true);
     setTimeout(() => setCopiedJson(false), 2000);
@@ -139,7 +157,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   </Badge>
                 )}
                 <span className="text-xs font-mono text-muted-foreground">
-                  Nº OTA: {item.channelReservationId || item.orderId}
+                  Nº OTA: {(item as any).channelReservationId || item.orderId}
                 </span>
               </div>
             </div>
@@ -148,9 +166,9 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
               {item.guestName}
             </h2>
             <p className="text-xs text-muted-foreground flex items-center gap-2">
-              <span>{item.channel === "booking" ? "Booking.com" : item.channel === "airbnb" ? "Airbnb" : "WebBookingPro"}</span>
+              <span>{item.channel === "booking" ? "Booking.com" : item.channel === "airbnb" ? "Airbnb" : item.channel === "expedia" ? "Expedia" : "Channex.io"}</span>
               <span>•</span>
-              <span>{item.checkIn} → {item.checkOut} ({item.nightsCount} noites)</span>
+              <span>{displayCheckin} → {displayCheckout} ({displayNights} noites)</span>
             </p>
           </div>
 
@@ -163,7 +181,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   Diagnóstico de Bloqueio em Quarentena
                 </div>
                 <p className="text-xs text-rose-950 dark:text-rose-100 font-medium">
-                  {item.quarantineDiagnostic || item.quarantineReason || "Conflito de alocação ou indisponibilidade nas datas solicitadas."}
+                  {(item as any).quarantineDiagnostic || item.quarantineReasonDetail || item.quarantineReason || "Conflito de alocação ou indisponibilidade nas datas solicitadas."}
                 </p>
                 <div className="text-[11px] text-rose-800/80 dark:text-rose-300/80 pt-1 border-t border-rose-200 dark:border-rose-900">
                   Esta reserva permanece isolada sem gerar overbooking no calendário até que uma ação seja tomada abaixo.
@@ -178,10 +196,10 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   Plano & Café
                 </span>
                 <span className="font-bold text-foreground flex items-center gap-1.5">
-                  {item.planId === "com_cafe" ? (
+                  {displayPlan === "com_cafe" ? (
                     <>
                       <Coffee className="w-3.5 h-3.5 text-amber-600" />
-                      Com café ({item.guestCount || 2} hósp.)
+                      Com café ({(item as any).guestCount || (item.adults + item.children) || 2} hósp.)
                     </>
                   ) : (
                     <>
@@ -214,7 +232,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   Valor Total
                 </span>
                 <span className="font-bold font-mono text-foreground text-sm">
-                  R$ {item.totalGrossAmount?.toFixed(2) || "—"}
+                  R$ {Number(displayTotal || 0).toFixed(2)}
                 </span>
               </div>
 
@@ -223,7 +241,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   Flat Alocado
                 </span>
                 <span className="font-black font-mono text-foreground text-sm">
-                  {item.allocatedFlat ? `Flat ${item.allocatedFlat}` : "Pendente (Quarentena)"}
+                  {displayFlat ? `Flat ${displayFlat}` : "Pendente (Quarentena)"}
                 </span>
               </div>
             </div>
@@ -239,7 +257,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                     Garantia de Cartão de Crédito
                   </span>
                   <span className="text-[11px] text-muted-foreground font-mono">
-                    •••• {item.cardLast4 || "4242"} ({item.cardBrand || "Visa"})
+                    {item.maskedCard || `•••• ${(item as any).cardLast4 || "4242"}`} ({item.cardBrand || "Visa"})
                   </span>
                 </div>
               </div>
@@ -266,7 +284,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   <div className="flex items-center gap-2">
                     <Building2 className="w-4 h-4 text-emerald-600" />
                     <span className="font-bold text-xs text-foreground">
-                      1. Alocar Flat Manualmente (dos 19 do condomínio)
+                      1. Alocar Flat Manualmente (dos 19 do Soho Residence)
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -294,11 +312,35 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   </div>
                 </div>
 
-                {/* Option 2: Force Accept */}
+                {/* Option 2: Link to Existing Manual PMS Reservation */}
+                <div className="p-3.5 bg-card border border-border rounded-xl space-y-2">
+                  <span className="font-bold text-xs text-foreground block">
+                    2. Vincular a Reserva Manual Existente no PMS
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder="Código ou ID da reserva (ex: RES-605-1234)..."
+                      value={manualReservationCode}
+                      onChange={(e) => setManualReservationCode(e.target.value)}
+                      className="h-8 text-xs flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleLinkManual}
+                      disabled={isSubmitting || !manualReservationCode.trim()}
+                      className="h-8 text-xs font-semibold"
+                    >
+                      Vincular Reserva
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Option 3: Force Accept */}
                 <div className="p-3.5 bg-card border border-border rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-xs text-foreground">
-                      2. Aceitar Mesmo Assim (Forçar Aceite)
+                      3. Aceitar Mesmo Assim (Forçar Aceite)
                     </span>
                     <Button
                       size="sm"
@@ -315,11 +357,11 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
                   </p>
                 </div>
 
-                {/* Option 3: Reject and Notify Channel */}
+                {/* Option 4: Reject and Notify Channel */}
                 <div className="p-3.5 bg-rose-50/40 dark:bg-rose-950/20 border border-rose-300 dark:border-rose-900 rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-xs text-rose-950 dark:text-rose-200">
-                      3. Rejeitar Reserva e Notificar Canal
+                      4. Rejeitar Reserva e Notificar Canal
                     </span>
                     <Button
                       size="sm"
@@ -351,7 +393,7 @@ export const QuarantineDrawer: React.FC<QuarantineDrawerProps> = ({
               >
                 <span className="flex items-center gap-1.5">
                   <Code className="w-3.5 h-3.5" />
-                  Payload Original da WebBookingPro (JSON)
+                  Payload Original da Reserva OTA (JSON)
                 </span>
                 {isRawJsonExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
               </button>

@@ -485,7 +485,17 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "50mb" }));
+app.use(
+  express.json({
+    limit: "50mb",
+    verify: (req, _res, buf) => {
+      if (buf && buf.length) {
+        req.rawBody = buf.toString("utf8");
+        req.rawBodyBuffer = Buffer.from(buf);
+      }
+    }
+  })
+);
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 app.use(serverMonitorMiddleware);
@@ -2396,22 +2406,43 @@ app.post("/api/wbp/quarantine/:id/resolve", (req, res) => {
       return res.status(400).json({ error: `Item já finalizado com status '${item.status}'.` });
     }
 
-    const { action = "assign_flat", flatNumber, forceOverride, notes, pmsReservationId, user = "admin" } = req.body || {};
+    const {
+      action = "assign_flat",
+      flatNumber,
+      forceOverride,
+      notes,
+      pmsReservationId,
+      existingReservationId,
+      user = "admin"
+    } = req.body || {};
 
-    if (action === "assign_flat") {
-      if (!flatNumber) {
+    if (action === "assign_flat" || action === "force_accept") {
+      let resolvedFlatNumber = flatNumber || item.assignedFlatNumber || null;
+      const effectiveForceOverride = Boolean(forceOverride || action === "force_accept");
+
+      if (!resolvedFlatNumber && action === "force_accept") {
+        const alloc = allocateFairShareFlat(item.checkinDate, item.checkoutDate, { db });
+        if (alloc.allocated && alloc.flat) {
+          resolvedFlatNumber = String(alloc.flat.number);
+        } else {
+          const canonical = getCanonicalFlats(db);
+          resolvedFlatNumber = String(canonical[0]?.number || "113");
+        }
+      }
+
+      if (!resolvedFlatNumber) {
         return res.status(400).json({ error: "flatNumber é obrigatório para alocação manual." });
       }
 
       // Check conflict on chosen flat
       const conflictCheck = checkReservationConflicts({
-        flatNumber: String(flatNumber),
+        flatNumber: String(resolvedFlatNumber),
         checkinDate: item.checkinDate,
         checkoutDate: item.checkoutDate,
         db
       });
 
-      if (conflictCheck.hasConflict && !forceOverride) {
+      if (conflictCheck.hasConflict && !effectiveForceOverride) {
         return res.status(400).json({
           success: false,
           conflict: true,
@@ -2422,21 +2453,29 @@ app.post("/api/wbp/quarantine/:id/resolve", (req, res) => {
 
       // Find flat info
       const flats = getCanonicalFlats(db);
-      const flatObj = flats.find(f => String(f.number) === String(flatNumber)) || { id: Number(flatNumber), number: String(flatNumber) };
+      const flatObj =
+        flats.find(f => String(f.number) === String(resolvedFlatNumber)) || {
+          id: Number(resolvedFlatNumber),
+          number: String(resolvedFlatNumber)
+        };
 
       if (!Array.isArray(db.reservations)) db.reservations = [];
       const nextId = db.reservations.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
-      const code = `RES-${flatNumber}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const code = `RES-${resolvedFlatNumber}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const isPropertyCollect = item.paymentCollect === "Property";
       const paymentStatus = isPropertyCollect ? "pendente" : "pago_total";
-      const paidAmount = isPropertyCollect ? 0 : Number(item.totalPrice || 0);
+      const totalGross = Number(item.totalPrice || 0);
+      const commAmount = Number((totalGross * 0.15).toFixed(2));
+      const netAmount = Number((totalGross - commAmount).toFixed(2));
+      const paidAmount = isPropertyCollect ? 0 : totalGross;
+      const hasCard = Boolean(item.hasCard || item.cardReference);
 
       const newRes = {
         id: nextId,
         code,
         flatId: flatObj.id,
-        flatNumber: String(flatNumber),
+        flatNumber: String(resolvedFlatNumber),
         guestName: item.guestName,
         guestEmail: item.guestEmail,
         guestPhone: item.guestPhone,
@@ -2445,16 +2484,26 @@ app.post("/api/wbp/quarantine/:id/resolve", (req, res) => {
         guestCount: (item.adults || 1) + (item.children || 0),
         adults: item.adults || 1,
         children: item.children || 0,
-        totalAmount: item.totalPrice || 0,
-        dailyRate: item.nights > 0 ? Number(((item.totalPrice || 0) / item.nights).toFixed(2)) : (item.totalPrice || 0),
+        totalAmount: totalGross,
+        dailyRate: item.nights > 0 ? Number((totalGross / item.nights).toFixed(2)) : totalGross,
         paidAmount,
+        netAmount,
+        commissionAmount: commAmount,
+        cardLast4: item.cardReference?.cardLast4 || item.cardLast4 || "",
+        cardBrand: item.cardReference?.cardBrand || item.cardBrand || "",
+        cardExpMonth: item.cardReference?.cardExpMonth || item.cardExpMonth || "",
+        cardExpYear: item.cardReference?.cardExpYear || item.cardExpYear || "",
+        hasCard,
+        vaultStatus: hasCard ? "active" : undefined,
         paymentStatus,
         paymentMethod: item.channel,
         paymentCollect: item.paymentCollect,
         collectAtCheckin: isPropertyCollect,
         channel: item.channel,
-        externalOrderId: item.bookingId,
-        wbpBookingId: item.bookingId,
+        externalOrderId: item.bookingId || item.externalOrderId,
+        wbpBookingId: item.bookingId || item.externalOrderId,
+        channexBookingId: item.channexBookingId || null,
+        channexRevisionId: item.channexRevisionId || null,
         breakfastIncluded: Boolean(item.breakfastIncluded),
         ratePlanId: item.ratePlanId || "sem_cafe",
         status: "ativa",
@@ -2465,24 +2514,30 @@ app.post("/api/wbp/quarantine/:id/resolve", (req, res) => {
         auditLogs: [
           {
             timestamp: new Date().toISOString(),
-            action: "QUARANTINE_MANUALLY_RESOLVED",
-            details: `Reserva liberada da quarentena pelo usuário ${user}. Alocado no Flat ${flatNumber}. Motivo original: ${item.reason}. ${notes ? `Notas: ${notes}` : ""}`
+            action: action === "force_accept" ? "QUARANTINE_FORCE_ACCEPTED" : "QUARANTINE_MANUALLY_RESOLVED",
+            details: `Reserva liberada da quarentena pelo usuário ${user}. Alocado no Flat ${resolvedFlatNumber}. Motivo original: ${item.reason}. ${notes ? `Notas: ${notes}` : ""}`
           }
         ]
       };
 
       if (isPropertyCollect) {
-        newRes.receptionAlert = `COBRAR NO CHECK-IN: R$ ${Number(item.totalPrice || 0).toFixed(2)}`;
+        newRes.receptionAlert = `COBRAR NO CHECK-IN: R$ ${totalGross.toFixed(2)}`;
       }
 
       db.reservations.push(newRes);
 
+      if (hasCard) {
+        try {
+          wbpVault.linkReservation(item.bookingId || item.externalOrderId, newRes.id, newRes.checkoutDate);
+        } catch (_) {}
+      }
+
       item.status = "resolved";
       item.resolvedAt = new Date().toISOString();
       item.resolvedBy = user;
-      item.resolutionAction = "manual_assigned";
+      item.resolutionAction = action === "force_accept" ? "force_accepted" : "manual_assigned";
       item.resolutionNotes = notes || null;
-      item.assignedFlatNumber = String(flatNumber);
+      item.assignedFlatNumber = String(resolvedFlatNumber);
       item.assignedFlatId = flatObj.id;
       item.createdReservationId = newRes.id;
       item.createdReservationCode = newRes.code;
@@ -2501,26 +2556,38 @@ app.post("/api/wbp/quarantine/:id/resolve", (req, res) => {
       return res.json({
         success: true,
         resolved: true,
-        action: "manual_assigned",
+        action: item.resolutionAction,
         reservation: newRes,
         quarantineItem: item
       });
     }
 
-    if (action === "link_manual") {
-      if (!pmsReservationId) {
-        return res.status(400).json({ error: "pmsReservationId é obrigatório para vincular reserva manual." });
+    if (action === "link_manual" || action === "link_existing") {
+      const targetResId = pmsReservationId || existingReservationId;
+      if (!targetResId) {
+        return res.status(400).json({ error: "pmsReservationId ou existingReservationId é obrigatório para vincular reserva manual." });
       }
-      const existingRes = (db.reservations || []).find(r => r.id === Number(pmsReservationId) || r.code === String(pmsReservationId));
+      const existingRes = (db.reservations || []).find(
+        r => r.id === Number(targetResId) || r.code === String(targetResId)
+      );
       if (!existingRes) {
         return res.status(404).json({ error: "Reserva manual não encontrada no PMS." });
       }
 
       applySafeReconciliationLink(existingRes, {
-        externalOrderId: item.bookingId,
-        wbpBookingId: item.bookingId,
+        externalOrderId: item.bookingId || item.externalOrderId,
+        wbpBookingId: item.bookingId || item.externalOrderId,
+        channexBookingId: item.channexBookingId || null,
+        channexRevisionId: item.channexRevisionId || null,
+        channel: item.channel,
         paymentCollect: item.paymentCollect
       }, { db });
+
+      if (item.hasCard || item.cardReference) {
+        try {
+          wbpVault.linkReservation(item.bookingId || item.externalOrderId, existingRes.id, existingRes.checkoutDate);
+        } catch (_) {}
+      }
 
       item.status = "resolved";
       item.resolvedAt = new Date().toISOString();
@@ -2576,8 +2643,14 @@ app.post("/api/wbp/quarantine/:id/link", (req, res) => {
     if (!item) {
       return res.status(404).json({ error: "Item de quarentena não encontrado." });
     }
-    const { pmsReservationId, notes, user = "admin" } = req.body || {};
-    const existingRes = (db.reservations || []).find(r => r.id === Number(pmsReservationId) || r.code === String(pmsReservationId));
+    const { pmsReservationId, existingReservationId, notes, user = "admin" } = req.body || {};
+    const targetResId = pmsReservationId || existingReservationId;
+    if (!targetResId) {
+      return res.status(400).json({ error: "pmsReservationId ou existingReservationId é obrigatório." });
+    }
+    const existingRes = (db.reservations || []).find(
+      r => r.id === Number(targetResId) || r.code === String(targetResId)
+    );
     if (!existingRes) {
       return res.status(404).json({ error: "Reserva manual não encontrada no PMS." });
     }
@@ -2585,6 +2658,9 @@ app.post("/api/wbp/quarantine/:id/link", (req, res) => {
     applySafeReconciliationLink(existingRes, {
       externalOrderId: item.bookingId,
       wbpBookingId: item.bookingId,
+      channexBookingId: item.channexBookingId || null,
+      channexRevisionId: item.channexRevisionId || null,
+      channel: item.channel,
       paymentCollect: item.paymentCollect
     }, { db });
 
@@ -2706,8 +2782,179 @@ app.post("/api/wbp/alerts/trigger-daily-summary", async (req, res) => {
 // ── WebBookingPro: OTA Inbox Endpoints (Feature 19) ────────────────────────────
 app.get("/api/wbp/inbox", (req, res) => {
   try {
-    const inbox = Array.isArray(db.wbpInbox) ? db.wbpInbox : [];
-    res.json({ success: true, count: inbox.length, items: inbox });
+    const rawInbox = Array.isArray(db.wbpInbox) ? db.wbpInbox : [];
+    const rawQuarantine = Array.isArray(db.wbpQuarantine) ? db.wbpQuarantine : [];
+
+    const mappedInbox = rawInbox.map((entry) => {
+      const norm = entry?.normalized || entry || {};
+      const total = Number(norm.totalPrice || entry?.totalPrice || 0);
+      const comm =
+        norm.commissionAmount != null
+          ? Number(norm.commissionAmount)
+          : Number((total * 0.15).toFixed(2));
+      const net =
+        norm.netAmount != null
+          ? Number(norm.netAmount)
+          : Number((total - comm).toFixed(2));
+      const cardLast4 = norm.cardLast4 || "";
+      const expMonth = norm.cardExpMonth || "";
+      const expYear = norm.cardExpYear || "";
+      const status = norm.isCancellation
+        ? "cancelled"
+        : norm.isModification
+          ? "modified"
+          : entry.status === "reconciled" || entry.status === "linked"
+            ? "linked"
+            : "imported";
+      const orderIdStr = String(norm.externalOrderId || entry.code || entry.id || "N/A");
+      const channelReservationId = String(
+        norm.otaReservationCode || norm.channexUniqueId || norm.externalOrderId || orderIdStr
+      );
+      const checkInStr = norm.checkinDate || "";
+      const checkOutStr = norm.checkoutDate || "";
+      const nightsNum = Number(norm.nights || 1);
+      const flatStr =
+        entry.assignedFlatNumber ||
+        (entry.simulatedFlat ? String(entry.simulatedFlat.number || entry.simulatedFlat) : null) ||
+        entry.flatNumber ||
+        null;
+      const isComCafe = norm.ratePlanId === "com_cafe" || Boolean(norm.includeBreakfast);
+      const planId = isComCafe ? "com_cafe" : "sem_cafe";
+      const planName = isComCafe ? "Com café" : "Sem café";
+      const adultsNum = Number(norm.adults || 2);
+      const childrenNum = Number(norm.children || 0);
+
+      return {
+        ...entry,
+        id: String(entry.id || `inbox_${norm.externalOrderId || "item"}`),
+        orderId: orderIdStr,
+        channelReservationId,
+        channel: norm.channel || "booking",
+        guestName: norm.guestName || norm.guest?.name || "Hóspede OTA",
+        guestEmail: norm.guestEmail || norm.guest?.email || "",
+        guestPhone: norm.guestPhone || norm.guest?.phone || "",
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
+        checkinDate: checkInStr,
+        checkoutDate: checkOutStr,
+        nightsCount: nightsNum,
+        nights: nightsNum,
+        allocatedFlat: flatStr,
+        flatNumber: flatStr,
+        planId,
+        planName,
+        ratePlan: planId,
+        guestCount: adultsNum + childrenNum,
+        adults: adultsNum,
+        children: childrenNum,
+        totalGrossAmount: total,
+        totalNetAmount: net,
+        totalPrice: total,
+        commissionAmount: comm,
+        netAmount: net,
+        currency: norm.currency || "BRL",
+        paymentCollect: norm.paymentCollect === "Property" ? "Property" : "Channel",
+        status,
+        linkedReservationCode: entry.code || null,
+        hasCard: Boolean(norm.hasCard || cardLast4),
+        cardLast4: cardLast4 || undefined,
+        cardBrand: norm.cardBrand || undefined,
+        cardExpMonth: expMonth || undefined,
+        cardExpYear: expYear || undefined,
+        maskedCard: cardLast4 ? `**** **** **** ${cardLast4}` : undefined,
+        cardExpiry: expMonth && expYear ? `${expMonth}/${expYear}` : undefined,
+        receivedAt: entry.receivedAt || norm.orderDate || new Date().toISOString()
+      };
+    });
+
+    const mappedQuarantine = rawQuarantine
+      .filter((q) => q && q.status === "pending")
+      .map((q) => {
+        const total = Number(q.totalPrice || 0);
+        const comm = Number((total * 0.15).toFixed(2));
+        const net = Number((total - comm).toFixed(2));
+        const cardLast4 = q.cardReference?.cardLast4 || q.cardLast4 || "";
+        const expMonth = q.cardReference?.cardExpMonth || q.cardExpMonth || "";
+        const expYear = q.cardReference?.cardExpYear || q.cardExpYear || "";
+        const orderIdStr = String(q.externalOrderId || q.bookingId || q.id);
+        const checkInStr = q.checkinDate || "";
+        const checkOutStr = q.checkoutDate || "";
+        const nightsNum = Number(q.nights || 1);
+        const flatStr = q.assignedFlatNumber || null;
+        const isComCafe = q.ratePlanId === "com_cafe" || Boolean(q.breakfastIncluded);
+        const planId = isComCafe ? "com_cafe" : "sem_cafe";
+        const planName = isComCafe ? "Com café" : "Sem café";
+        const adultsNum = Number(q.adults || 2);
+        const childrenNum = Number(q.children || 0);
+        const diagMsg = q.reasonDetails?.message || "";
+
+        return {
+          ...q,
+          id: String(q.id),
+          orderId: orderIdStr,
+          channelReservationId: orderIdStr,
+          channel: q.channel || "booking",
+          guestName: q.guestName || "Hóspede OTA",
+          guestEmail: q.guestEmail || "",
+          guestPhone: q.guestPhone || "",
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          checkinDate: checkInStr,
+          checkoutDate: checkOutStr,
+          nightsCount: nightsNum,
+          nights: nightsNum,
+          allocatedFlat: flatStr,
+          flatNumber: flatStr,
+          planId,
+          planName,
+          ratePlan: planId,
+          guestCount: adultsNum + childrenNum,
+          adults: adultsNum,
+          children: childrenNum,
+          totalGrossAmount: total,
+          totalNetAmount: net,
+          totalPrice: total,
+          commissionAmount: comm,
+          netAmount: net,
+          currency: q.currency || "BRL",
+          paymentCollect: q.paymentCollect === "Property" ? "Property" : "Channel",
+          status: "quarantine",
+          quarantineReason: q.reason,
+          quarantineDiagnostic: diagMsg,
+          quarantineReasonDetail: diagMsg,
+          hasCard: Boolean(q.hasCard || q.cardReference || cardLast4),
+          cardLast4: cardLast4 || undefined,
+          cardBrand: q.cardReference?.cardBrand || q.cardBrand || undefined,
+          cardExpMonth: expMonth || undefined,
+          cardExpYear: expYear || undefined,
+          maskedCard: q.cardReference?.maskedPan || (cardLast4 ? `**** **** **** ${cardLast4}` : undefined),
+          cardExpiry: expMonth && expYear ? `${expMonth}/${expYear}` : undefined,
+          receivedAt: q.createdAt || new Date().toISOString()
+        };
+      });
+
+    const items = [...mappedQuarantine, ...mappedInbox];
+    const mode = getIntegrationMode(db);
+    const ariStatus = typeof getAriSynchronizer === "function" ? getAriSynchronizer().getStatus() : {};
+    const lastAriMs = ariStatus?.lastSyncAt ? Date.now() - new Date(ariStatus.lastSyncAt).getTime() : 0;
+    const telemetry = {
+      mode,
+      lastPollingMinutesAgo: 0,
+      lastAriSyncSecondsAgo: ariStatus?.lastSyncAt ? Math.max(0, Math.floor(lastAriMs / 1000)) : 0,
+      pendingQuarantineCount: mappedQuarantine.length,
+      isPollingActive: mode !== "off",
+      isAriSyncing: Boolean(ariStatus?.syncInProgress)
+    };
+
+    res.json({
+      success: true,
+      mode,
+      telemetry,
+      count: items.length,
+      items,
+      rawInboxCount: rawInbox.length,
+      pendingQuarantineCount: mappedQuarantine.length
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2777,8 +3024,8 @@ app.post("/api/wbp/vault/reauth", (req, res) => {
 
 app.post("/api/wbp/vault/view", (req, res) => {
   try {
-    const { token, reservationId, cardId, bookingId } = req.body || {};
-    const identifier = reservationId || cardId || bookingId;
+    const { token, reservationId, cardId, bookingId, orderId } = req.body || {};
+    const identifier = reservationId || cardId || bookingId || orderId;
 
     if (!token || !identifier) {
       return res.status(400).json({ success: false, error: "Token e identificador da reserva são obrigatórios." });
@@ -2796,7 +3043,10 @@ app.post("/api/wbp/vault/view", (req, res) => {
       return res.status(403).json({ success: false, error: "Token de visualização inválido, expirado ou já utilizado." });
     }
 
-    const cardData = wbpVault.decryptCardByIdentifier(identifier, db);
+    let cardData = wbpVault.decryptCardByIdentifier(identifier, db);
+    if (!cardData && orderId && orderId !== identifier) {
+      cardData = wbpVault.decryptCardByIdentifier(orderId, db);
+    }
     if (!cardData) {
       return res.status(404).json({ success: false, error: "Cartão de crédito não encontrado para a reserva informada." });
     }

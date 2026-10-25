@@ -121,6 +121,8 @@ describe("Channex.io REST API v1 Integration & 14 Certification Tests", () => {
   });
 
   after(async () => {
+    if (ariSync?.debounceTimer) clearTimeout(ariSync.debounceTimer);
+    if (ariSync?.rateLimitRetryTimer) clearTimeout(ariSync.rateLimitRetryTimer);
     if (worker) worker.stop();
     if (simulator) await simulator.stop();
     try {
@@ -511,6 +513,11 @@ describe("Channex.io REST API v1 Integration & 14 Certification Tests", () => {
     });
     assert.equal(blockedByLocalLimiter.rateLimited, true);
     assert.equal(blockedByLocalLimiter.endpoint, "availability");
+    assert.equal(blockedByLocalLimiter.queuedForRetry, true);
+    if (ariSync.rateLimitRetryTimer) {
+      clearTimeout(ariSync.rateLimitRetryTimer);
+      ariSync.rateLimitRetryTimer = null;
+    }
 
     // Clear local timestamps and verify ChannexClient automatic retry when server returns HTTP 429 once
     ariSync.availabilityCallTimestamps = [];
@@ -532,4 +539,343 @@ describe("Channex.io REST API v1 Integration & 14 Certification Tests", () => {
     assert.equal(recovered.taskIds.length, 1, "Client automatically waited and succeeded after HTTP 429");
     simulator.availabilityLimitPerMin = 10;
   });
+
+  test("11. All 28 Webhook Event Types: Non-Booking Events (sync_error, ari, reservation_request) & Lightweight Webhooks (send_data: false)", async () => {
+    const express = (await import("express")).default;
+    const app = express();
+    app.use("/api/callback", createWbpCallbackRouter({
+      db,
+      storage,
+      channexClient,
+      backgroundWorker: worker
+    }));
+
+    const srv = await new Promise((resolve) => {
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const port = srv.address().port;
+
+    try {
+      const postSignedWebhook = async (payloadObj) => {
+        const rawStr = JSON.stringify(payloadObj);
+        const ts = Math.floor(Date.now() / 1000);
+        const sig = crypto
+          .createHmac("sha256", WEBHOOK_SECRET)
+          .update(`${ts}.${rawStr}`)
+          .digest("hex");
+        const res = await fetch(`http://127.0.0.1:${port}/api/callback/channex`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-hmac-timestamp": String(ts),
+            "x-hmac-signature-256": sig
+          },
+          body: rawStr
+        });
+        return { status: res.status, body: await res.json() };
+      };
+
+      const quarantineBefore = db.wbpQuarantine.length;
+
+      // 11a: Non-booking operational event (sync_error) -> 200 OK acknowledged, creates operational alert, NO quarantine
+      const syncErrRes = await postSignedWebhook({
+        event: "sync_error",
+        property_id: channexClient.propertyId,
+        payload: { id: "err-991", channel: "BookingCom", message: "Room mapping mismatch" }
+      });
+      assert.equal(syncErrRes.status, 200);
+      assert.equal(syncErrRes.body.status, "acknowledged");
+      assert.equal(syncErrRes.body.event, "sync_error");
+      assert.equal(db.wbpQuarantine.length, quarantineBefore, "sync_error must not pollute booking quarantine");
+      assert.equal(
+        Array.isArray(db.wbpOperationalAlerts) &&
+          db.wbpOperationalAlerts.some((a) => a.type === "CHANNEX_EVENT_SYNC_ERROR"),
+        true,
+        "Operational alert recorded for sync_error"
+      );
+
+      // 11b: Non-booking informational event (ari) -> 200 OK acknowledged
+      const ariEventRes = await postSignedWebhook({
+        event: "ari",
+        property_id: channexClient.propertyId,
+        payload: { id: "ari-101" }
+      });
+      assert.equal(ariEventRes.status, 200);
+      assert.equal(ariEventRes.body.status, "acknowledged");
+
+      // 11c: Lightweight booking webhook (send_data: false -> only revision_id in payload)
+      const seeded = simulator.seedBookingRevision({
+        property_id: channexClient.propertyId,
+        ota_reservation_code: "AIRBNB-LIGHT-7001",
+        ota_name: "Airbnb",
+        status: "new",
+        arrival_date: "2026-11-01",
+        departure_date: "2026-11-03",
+        amount: "620.00",
+        rooms: [
+          {
+            room_type_id: channexClient.roomTypeId,
+            rate_plan_id: null,
+            meta: { parent_rate_plan_id: channexClient.ratePlanSemCafeId },
+            checkin_date: "2026-11-01",
+            checkout_date: "2026-11-03",
+            amount: "620.00",
+            occupancy: { adults: 2, children: 0 }
+          }
+        ]
+      });
+
+      const lightRes = await postSignedWebhook({
+        event: "booking_new",
+        property_id: channexClient.propertyId,
+        payload: {
+          booking_id: seeded.bookingId,
+          revision_id: seeded.revisionId
+        }
+      });
+      assert.equal(lightRes.status, 200);
+      assert.equal(lightRes.body.acknowledged, true, "Lightweight webhook fetched full revision and ACKed it");
+
+      const createdLight = db.reservations.find((r) => r.externalOrderId === "AIRBNB-LIGHT-7001");
+      assert.ok(createdLight, "Reservation created from lightweight webhook + parent_rate_plan_id fallback");
+      assert.equal(createdLight.ratePlanId, "sem_cafe");
+    } finally {
+      await new Promise((resolve) => srv.close(resolve));
+    }
+  });
+
+  test("12. Multi-Room Booking Modification (Expanding 1 -> 2 Rooms & Shrinking 2 -> 1 Room)", async () => {
+    // Modify AIRBNB-LIGHT-7001 from 1 room to 2 rooms
+    simulator.seedBookingRevision({
+      property_id: channexClient.propertyId,
+      ota_reservation_code: "AIRBNB-LIGHT-7001",
+      ota_name: "Airbnb",
+      status: "modified",
+      arrival_date: "2026-11-01",
+      departure_date: "2026-11-04",
+      amount: "1440.00",
+      rooms: [
+        {
+          room_type_id: channexClient.roomTypeId,
+          rate_plan_id: channexClient.ratePlanSemCafeId,
+          checkin_date: "2026-11-01",
+          checkout_date: "2026-11-04",
+          amount: "720.00",
+          occupancy: { adults: 2, children: 0 }
+        },
+        {
+          room_type_id: channexClient.roomTypeId,
+          rate_plan_id: channexClient.ratePlanComCafeId,
+          checkin_date: "2026-11-01",
+          checkout_date: "2026-11-04",
+          amount: "720.00",
+          occupancy: { adults: 2, children: 0 }
+        }
+      ]
+    });
+
+    await worker.pollChannexFeed();
+    const expandedRooms = db.reservations.filter(
+      (r) =>
+        (r.externalOrderId === "AIRBNB-LIGHT-7001" || r.parentExternalOrderId === "AIRBNB-LIGHT-7001") &&
+        r.status !== "cancelada"
+    );
+    assert.equal(expandedRooms.length, 2, "Expanded modification must allocate a 2nd active room");
+    assert.notEqual(expandedRooms[0].flatNumber, expandedRooms[1].flatNumber);
+
+    // Shrink back from 2 rooms to 1 room
+    simulator.seedBookingRevision({
+      property_id: channexClient.propertyId,
+      ota_reservation_code: "AIRBNB-LIGHT-7001",
+      ota_name: "Airbnb",
+      status: "modified",
+      arrival_date: "2026-11-01",
+      departure_date: "2026-11-04",
+      amount: "720.00",
+      rooms: [
+        {
+          room_type_id: channexClient.roomTypeId,
+          rate_plan_id: channexClient.ratePlanSemCafeId,
+          checkin_date: "2026-11-01",
+          checkout_date: "2026-11-04",
+          amount: "720.00",
+          occupancy: { adults: 2, children: 0 }
+        }
+      ]
+    });
+
+    await worker.pollChannexFeed();
+    const activeAfterShrink = db.reservations.filter(
+      (r) =>
+        (r.externalOrderId === "AIRBNB-LIGHT-7001" || r.parentExternalOrderId === "AIRBNB-LIGHT-7001") &&
+        r.status !== "cancelada"
+    );
+    assert.equal(activeAfterShrink.length, 1, "Shrunk modification must cancel the removed room");
+  });
+
+  test("13. Decoupled Incremental ARI Sync: Availability-Only vs Restrictions-Only Delta Calls", async () => {
+    ariSync.availabilityCallTimestamps = [];
+    ariSync.restrictionsCallTimestamps = [];
+    simulator.rateLimitBuckets.availability.clear();
+    simulator.rateLimitBuckets.restrictions.clear();
+    simulator.requestLog = [];
+
+    // 13a: Availability-only trigger (e.g. reservation_created)
+    ariSync.triggerIncrementalSync("2026-11-10", "2026-11-12", "reservation_created");
+    if (ariSync.debounceTimer) clearTimeout(ariSync.debounceTimer);
+    const avRes = await ariSync.flushIncrementalSync();
+    assert.equal(avRes.success, true);
+
+    const avCalls1 = simulator.requestLog.filter((c) => c.method === "POST" && c.path === "/api/v1/availability");
+    const restCalls1 = simulator.requestLog.filter((c) => c.method === "POST" && c.path === "/api/v1/restrictions");
+    assert.equal(avCalls1.length, 1, "Reservation mutation must call POST /availability");
+    assert.equal(restCalls1.length, 0, "Reservation mutation must NOT waste rate limit on POST /restrictions");
+
+    // 13b: Restrictions-only trigger (e.g. pricing_published)
+    simulator.requestLog = [];
+    ariSync.triggerIncrementalSync("2026-11-10", "2026-11-12", "pricing_published");
+    if (ariSync.debounceTimer) clearTimeout(ariSync.debounceTimer);
+    const prRes = await ariSync.flushIncrementalSync();
+    assert.equal(prRes.success, true);
+
+    const avCalls2 = simulator.requestLog.filter((c) => c.method === "POST" && c.path === "/api/v1/availability");
+    const restCalls2 = simulator.requestLog.filter((c) => c.method === "POST" && c.path === "/api/v1/restrictions");
+    assert.equal(avCalls2.length, 0, "Pricing mutation must NOT call POST /availability");
+    assert.equal(restCalls2.length, 1, "Pricing mutation must call POST /restrictions");
+  });
+
+  test("14. Extended ChannexClient v1 Endpoints (WhoAmI, Tasks, Health, Channels, OTA Ops, Availability Rules)", async () => {
+    const who = await channexClient.getWhoAmI();
+    assert.ok(who.data?.id);
+
+    const health = await channexClient.getPropertyHealth(channexClient.propertyId);
+    assert.equal(health.data?.attributes?.status, "healthy");
+
+    const tasks = await channexClient.listTasks({ propertyId: channexClient.propertyId });
+    assert.equal(Array.isArray(tasks.data), true);
+
+    const channels = await channexClient.listChannels(channexClient.propertyId);
+    assert.equal(Array.isArray(channels.data), true);
+
+    const ruleCreated = await channexClient.createAvailabilityRule({
+      property_id: channexClient.propertyId,
+      title: "Close Out 0",
+      type: "close_out"
+    });
+    assert.ok(ruleCreated.data?.id);
+
+    const rulesList = await channexClient.listAvailabilityRules(channexClient.propertyId);
+    assert.equal(rulesList.data.length >= 1, true);
+
+    const noShow = await channexClient.reportNoShow("00000000-0000-4000-8000-000000000001", { waived_fees: true });
+    assert.equal(noShow.meta?.status, "ok");
+
+    const invCard = await channexClient.reportInvalidCard("00000000-0000-4000-8000-000000000001");
+    assert.equal(invCard.meta?.status, "ok");
+
+    // Verify Signing Keys /generate endpoint & Webhook test/logs contracts
+    const skCreated = await channexClient.createSigningKey({ title: "Key Rotation Test" });
+    assert.ok(skCreated.data?.id);
+    const skGen = await channexClient.generateSigningKeyVersion(skCreated.data.id);
+    assert.equal(skGen.data?.attributes?.status, "pending_rotation");
+    assert.ok(skGen.data?.attributes?.pending_key);
+    const skList = await channexClient.listSigningKeys({ billingAccountId: "ba-123" });
+    assert.equal(Array.isArray(skList.data), true);
+
+    const whTestById = await channexClient.testWebhook("wh-test-id-1");
+    assert.equal(whTestById.meta?.message, "Success");
+    const whTestPayload = await channexClient.testWebhook({
+      property_id: channexClient.propertyId,
+      callback_url: "https://example.com/wh",
+      event_mask: "booking"
+    });
+    assert.equal(whTestPayload.meta?.message, "Success");
+    const whLogsById = await channexClient.getWebhookLogs("wh-test-id-1");
+    assert.equal(Array.isArray(whLogsById.data), true);
+
+    // Verify financial metadata (deposits, collectedTaxes, otaReservationCode) & single-room modification field updates
+    const finCreated = simulator.seedBookingRevision({
+      property_id: channexClient.propertyId,
+      status: "new",
+      channel_id: "BDC",
+      unique_id: "BDC-FIN-777",
+      ota_reservation_code: "OTA-CODE-777",
+      arrival_date: "2027-01-10",
+      departure_date: "2027-01-12",
+      amount: "500.00",
+      deposits: [{ amount: "250.00", currency: "BRL", type: "prepayment" }],
+      collected_taxes: [{ name: "ISS", amount: "25.00" }],
+      customer: { name: "Carlos", surname: "Financeiro", mail: "carlos@test.com", phone: "+5511977776666" },
+      rooms: [
+        {
+          room_type_id: channexClient.roomTypeId,
+          rate_plan_id: channexClient.ratePlanSemCafeId,
+          ota_reservation_code: "OTA-ROOM-777",
+          checkin_date: "2027-01-10",
+          checkout_date: "2027-01-12",
+          amount: "500.00",
+          occupancy: { adults: 1, children: 0 },
+          days: { "2027-01-10": "250.00", "2027-01-11": "250.00" }
+        }
+      ]
+    });
+
+    const finIngest = await processIncomingOTA(
+      { data: { id: finCreated.revisionId, type: "booking_revision", attributes: finCreated.attributes } },
+      { db }
+    );
+    assert.equal(finIngest.action, "created");
+    const finRes = db.reservations.find((r) => r.id === finIngest.reservationId);
+    assert.ok(finRes);
+    assert.equal(finRes.otaReservationCode, "OTA-CODE-777");
+    assert.equal(Array.isArray(finRes.deposits), true);
+    assert.equal(finRes.deposits[0].amount, "250.00");
+    assert.equal(Array.isArray(finRes.collectedTaxes), true);
+    assert.equal(finRes.collectedTaxes[0].name, "ISS");
+
+    // Single-room modification upgrading to com_cafe and 2 adults + 1 child
+    const finMod = simulator.seedBookingRevision({
+      booking_id: finCreated.bookingId,
+      property_id: channexClient.propertyId,
+      status: "modified",
+      channel_id: "BDC",
+      unique_id: "BDC-FIN-777",
+      ota_reservation_code: "OTA-CODE-777-MOD",
+      arrival_date: "2027-01-10",
+      departure_date: "2027-01-12",
+      amount: "660.00",
+      deposits: [{ amount: "330.00", currency: "BRL", type: "prepayment" }],
+      collected_taxes: [{ name: "ISS", amount: "33.00" }],
+      customer: { name: "Carlos", surname: "Financeiro", mail: "carlos@test.com", phone: "+5511977776666" },
+      rooms: [
+        {
+          room_type_id: channexClient.roomTypeId,
+          rate_plan_id: channexClient.ratePlanComCafeId,
+          ota_reservation_code: "OTA-ROOM-777-MOD",
+          checkin_date: "2027-01-10",
+          checkout_date: "2027-01-12",
+          amount: "660.00",
+          occupancy: { adults: 2, children: 1 },
+          days: { "2027-01-10": "330.00", "2027-01-11": "330.00" }
+        }
+      ]
+    });
+
+    const finModResult = await processIncomingOTA(
+      { data: { id: finMod.revisionId, type: "booking_revision", attributes: finMod.attributes } },
+      { db }
+    );
+    assert.equal(finModResult.action, "modified_same_flat");
+    assert.equal(finRes.ratePlanId, "com_cafe");
+    assert.equal(finRes.breakfastIncluded, true);
+    assert.equal(finRes.adults, 2);
+    assert.equal(finRes.children, 1);
+    assert.equal(finRes.guestCount, 3);
+    assert.equal(finRes.dailyRate, 330);
+    assert.equal(finRes.otaReservationCode, "OTA-CODE-777-MOD");
+    assert.equal(finRes.deposits[0].amount, "330.00");
+    assert.equal(finRes.collectedTaxes[0].amount, "33.00");
+  });
 });
+
+

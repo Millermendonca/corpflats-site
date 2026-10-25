@@ -171,12 +171,17 @@ export class ChannexSimulator {
         }
       ],
       services: attrs.booking_services || [],
+      deposits: attrs.deposits !== undefined ? attrs.deposits : null,
+      collected_taxes: attrs.collected_taxes !== undefined ? attrs.collected_taxes : null,
+      meta: attrs.meta || {},
       inserted_at: attrs.inserted_at || new Date().toISOString()
     };
 
     const revisionRecord = {
       type: "booking_revision",
       id: revisionId,
+      revisionId,
+      bookingId,
       attributes: fullAttributes,
       acked: false,
       acked_at: null
@@ -888,6 +893,238 @@ export class ChannexSimulator {
       rev.attributes.reply = replyText;
       rev.attributes.is_replied = true;
       res.json({ data: rev });
+    });
+
+    // ── Identity, Tasks, Health Check, Channels, Signing Keys, Live Feed, Availability Rules & Booking Actions ──
+    app.get("/api/v1/whoami", (_req, res) => {
+      res.json({
+        data: {
+          type: "user",
+          id: "usr-corpflats-pms",
+          attributes: {
+            email: "soho@promenade.com.br",
+            name: "Admin CorpFlats",
+            is_active: true,
+            timezone: "America/Sao_Paulo"
+          }
+        }
+      });
+    });
+
+    app.get("/api/v1/tasks", (req, res) => {
+      const propId = req.query?.filter?.property_id;
+      const list = this.tasks
+        .filter((t) => !propId || t.property_id === propId)
+        .map((t) => ({
+          type: "task",
+          id: t.id,
+          attributes: t
+        }));
+      res.json({
+        data: list,
+        meta: { page: 1, limit: 50, total: list.length }
+      });
+    });
+
+    app.get("/api/v1/tasks/:id", (req, res) => {
+      const found = this.tasks.find((t) => t.id === req.params.id);
+      if (!found) {
+        return res.status(404).json({ errors: { code: "resource_not_found", title: "Resource Not Found" } });
+      }
+      res.json({ data: { type: "task", id: found.id, attributes: found } });
+    });
+
+    app.get("/api/v1/health_check/:property_id", (req, res) => {
+      res.json({
+        data: {
+          type: "health_check",
+          id: req.params.property_id,
+          attributes: {
+            property_id: req.params.property_id,
+            status: "healthy",
+            unmapped_rooms_count: 0,
+            unmapped_rates_count: 0,
+            sync_errors_count: 0
+          }
+        }
+      });
+    });
+
+    app.get("/api/v1/channels", (req, res) => {
+      const propId = req.query?.filter?.property_id;
+      res.json({
+        data: [
+          {
+            type: "channel",
+            id: "ch-booking-com",
+            attributes: {
+              id: "ch-booking-com",
+              title: "Booking.com",
+              channel: "BookingCom",
+              is_active: true,
+              properties: propId ? [propId] : []
+            }
+          },
+          {
+            type: "channel",
+            id: "ch-airbnb",
+            attributes: {
+              id: "ch-airbnb",
+              title: "Airbnb",
+              channel: "Airbnb",
+              is_active: true,
+              properties: propId ? [propId] : []
+            }
+          }
+        ],
+        meta: { page: 1, limit: 50, total: 2 }
+      });
+    });
+
+    app.post("/api/v1/webhooks/test", (req, res) => {
+      res.json({ meta: { message: "Success" }, data: req.body || {} });
+    });
+
+    app.post("/api/v1/webhooks/:id/test", (req, res) => {
+      res.json({ meta: { message: "Success" }, data: { id: req.params.id, ...(req.body || {}) } });
+    });
+
+    app.get("/api/v1/webhook_logs", (_req, res) => {
+      res.json({ data: [], meta: { page: 1, limit: 50, total: 0 } });
+    });
+
+    app.get("/api/v1/webhooks/:id/logs", (_req, res) => {
+      res.json({ data: [], meta: { page: 1, limit: 50, total: 0 } });
+    });
+
+    app.get("/api/v1/signing_keys", (_req, res) => {
+      res.json({
+        data: [
+          {
+            type: "signing_key",
+            id: "sk-corpflats-1",
+            attributes: { id: "sk-corpflats-1", title: "CorpFlats HMAC Key", status: "active" }
+          }
+        ]
+      });
+    });
+
+    app.post("/api/v1/signing_keys", (req, res) => {
+      const id = crypto.randomUUID();
+      res.status(201).json({
+        data: {
+          type: "signing_key",
+          id,
+          attributes: {
+            id,
+            title: req.body?.signing_key?.title || "CorpFlats HMAC Key",
+            secret_key: this.webhookSecret,
+            status: "active"
+          }
+        }
+      });
+    });
+
+    app.post("/api/v1/signing_keys/:id/generate", (req, res) => {
+      res.status(201).json({
+        data: {
+          type: "signing_key",
+          id: req.params.id,
+          attributes: {
+            id: req.params.id,
+            pending_key: crypto.randomBytes(24).toString("hex"),
+            status: "pending_rotation"
+          }
+        }
+      });
+    });
+
+    app.post("/api/v1/signing_keys/:id/versions", (req, res) => {
+      res.status(201).json({
+        data: {
+          type: "signing_key",
+          id: req.params.id,
+          attributes: {
+            id: req.params.id,
+            pending_key: crypto.randomBytes(24).toString("hex"),
+            status: "pending_rotation"
+          }
+        }
+      });
+    });
+
+    app.post("/api/v1/signing_keys/:id/rotate", (req, res) => {
+      res.json({
+        data: {
+          type: "signing_key",
+          id: req.params.id,
+          attributes: { id: req.params.id, status: "active" }
+        },
+        meta: { message: "Success" }
+      });
+    });
+
+    app.delete("/api/v1/signing_keys/:id", (_req, res) => {
+      res.json({ meta: { message: "Success" } });
+    });
+
+    app.post("/api/v1/bookings/:id/no_show", (req, res) => {
+      res.json({ meta: { message: "Success", status: "ok" }, data: { booking_id: req.params.id, ...(req.body?.no_show_report || {}) } });
+    });
+
+    app.post("/api/v1/bookings/:id/invalid_card", (req, res) => {
+      res.json({ meta: { message: "Success", status: "ok" }, data: { booking_id: req.params.id } });
+    });
+
+    app.post("/api/v1/bookings/:id/cancel_due_invalid_card", (req, res) => {
+      res.json({ meta: { message: "Success", status: "ok" }, data: { booking_id: req.params.id } });
+    });
+
+    app.post("/api/v1/bookings/:id/guest_misconduct", (req, res) => {
+      res.json({ meta: { message: "Success", status: "ok" }, data: { booking_id: req.params.id, ...(req.body?.misconduct_report || {}) } });
+    });
+
+    app.post("/api/v1/bookings/:id/change_stay", (req, res) => {
+      res.json({ meta: { message: "Success", status: "ok" }, data: { booking_id: req.params.id, ...(req.body?.stay_change || {}) } });
+    });
+
+    app.get("/api/v1/bookings/:id/price_breakdown", (req, res) => {
+      res.json({ data: { type: "price_breakdown", id: req.params.id, attributes: { currency: "BRL", items: [] } } });
+    });
+
+    app.get("/api/v1/bookings/:id/payout_details", (req, res) => {
+      res.json({ data: { type: "payout_details", id: req.params.id, attributes: { currency: "BRL", net_amount: "0.00" } } });
+    });
+
+    app.get("/api/v1/live_feed", (_req, res) => {
+      res.json({ data: [], meta: { page: 1, limit: 50, total: 0 } });
+    });
+
+    app.post("/api/v1/live_feed/:id/resolve", (req, res) => {
+      res.json({ meta: { message: "Success", status: "ok" }, data: { id: req.params.id, ...(req.body?.resolution || {}) } });
+    });
+
+    if (!this.availabilityRules) {
+      this.availabilityRules = new Map();
+    }
+
+    app.get("/api/v1/availability_rules", (req, res) => {
+      const propId = req.query?.filter?.property_id;
+      const list = [...this.availabilityRules.values()].filter(
+        (r) => !propId || r.attributes?.property_id === propId
+      );
+      res.json({ data: list, meta: { page: 1, limit: 50, total: list.length } });
+    });
+
+    app.post("/api/v1/availability_rules", (req, res) => {
+      const id = crypto.randomUUID();
+      const resource = {
+        type: "availability_rule",
+        id,
+        attributes: { id, ...(req.body?.availability_rule || req.body || {}) }
+      };
+      this.availabilityRules.set(id, resource);
+      res.status(201).json({ data: resource });
     });
 
     return app;

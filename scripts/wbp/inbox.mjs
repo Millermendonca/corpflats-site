@@ -184,18 +184,84 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
   const checkoutDate = normalizeDateStr(primaryRoom.checkout_date || attrs.departure_date || "");
   const nights = checkinDate && checkoutDate ? getNightsBetween(checkinDate, checkoutDate).length : 1;
 
-  // Detect unmapped room_type_id or rate_plan_id (Certification Test #10)
-  const hasUnmappedRoomOrRate = rooms.length > 0 && rooms.some(
-    (r) =>
-      r.room_type_id === null ||
-      r.rate_plan_id === null ||
-      r.unmapped === true ||
-      String(r.room_type_id || "").toLowerCase() === "unmapped" ||
-      String(r.rate_plan_id || "").toLowerCase() === "unmapped"
+  const chxCfg = getChannexConfig(db);
+  const hasConfiguredRoomType = Boolean(db?.wbpConfig?.channex?.roomTypeId);
+  const hasConfiguredRatePlans = Boolean(
+    db?.wbpConfig?.channex?.ratePlanSemCafeId || db?.wbpConfig?.channex?.ratePlanComCafeId
   );
 
-  const chxCfg = getChannexConfig(db);
+  const validRoomIds = new Set(
+    [chxCfg.roomTypeId, "rt-corpflats-flat", "flat"]
+      .filter(Boolean)
+      .map((v) => String(v).toLowerCase())
+  );
+  const validRateIds = new Set(
+    [
+      chxCfg.ratePlanSemCafeId,
+      chxCfg.ratePlanComCafeId,
+      "rp-corpflats-sem-cafe",
+      "rp-corpflats-com-cafe",
+      "sem_cafe",
+      "com_cafe"
+    ]
+      .filter(Boolean)
+      .map((v) => String(v).toLowerCase())
+  );
+
+  // Detect unmapped room_type_id or rate_plan_id (Certification Test #10 + unknown UUIDs)
+  const hasUnmappedRoomOrRate = rooms.length > 0 && rooms.some((r) => {
+    const rtRaw = r.room_type_id != null ? String(r.room_type_id).trim().toLowerCase() : "";
+    const rpRaw = r.rate_plan_id != null ? String(r.rate_plan_id).trim().toLowerCase() : "";
+    const parentRpRaw = r.meta?.parent_rate_plan_id != null
+      ? String(r.meta.parent_rate_plan_id).trim().toLowerCase()
+      : "";
+
+    const effectiveRpRaw = rpRaw || parentRpRaw;
+
+    if (
+      r.room_type_id === null ||
+      (r.rate_plan_id === null && !parentRpRaw) ||
+      r.unmapped === true ||
+      !rtRaw ||
+      !effectiveRpRaw ||
+      rtRaw === "unmapped" ||
+      effectiveRpRaw === "unmapped" ||
+      rtRaw.includes("unmapped") ||
+      effectiveRpRaw.includes("unmapped")
+    ) {
+      return true;
+    }
+
+    if (hasConfiguredRoomType && !validRoomIds.has(rtRaw)) {
+      return true;
+    }
+
+    if (hasConfiguredRatePlans) {
+      const rateMatches =
+        validRateIds.has(rpRaw) ||
+        (parentRpRaw && validRateIds.has(parentRpRaw)) ||
+        rpRaw.includes("sem_cafe") ||
+        rpRaw.includes("com_cafe") ||
+        rpRaw.includes("sem-cafe") ||
+        rpRaw.includes("com-cafe") ||
+        parentRpRaw.includes("sem_cafe") ||
+        parentRpRaw.includes("com_cafe") ||
+        parentRpRaw.includes("sem-cafe") ||
+        parentRpRaw.includes("com-cafe");
+      if (!rateMatches) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+
   const rawRatePlanId = String(primaryRoom.rate_plan_id || "").toLowerCase();
+  const primaryParentRatePlanId = String(
+    primaryRoom.meta?.parent_rate_plan_id || attrs.meta?.parent_rate_plan_id || ""
+  ).trim();
+  const rawParentRatePlanId = primaryParentRatePlanId.toLowerCase();
+
   const services = [
     ...(Array.isArray(attrs.services) ? attrs.services : []),
     ...(Array.isArray(primaryRoom.services) ? primaryRoom.services : [])
@@ -206,9 +272,13 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     String(s?.name || s?.type || "").toLowerCase().includes("cafe")
   );
   const includeBreakfast =
-    (chxCfg.ratePlanComCafeId && primaryRoom.rate_plan_id === chxCfg.ratePlanComCafeId) ||
+    (chxCfg.ratePlanComCafeId &&
+      (primaryRoom.rate_plan_id === chxCfg.ratePlanComCafeId ||
+        primaryParentRatePlanId === chxCfg.ratePlanComCafeId)) ||
     rawRatePlanId.includes("com_cafe") ||
     rawRatePlanId.includes("com-cafe") ||
+    rawParentRatePlanId.includes("com_cafe") ||
+    rawParentRatePlanId.includes("com-cafe") ||
     hasBreakfastService;
   const ratePlanId = includeBreakfast ? "com_cafe" : "sem_cafe";
 
@@ -277,16 +347,25 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     const rNights = rCheckin && rCheckout ? getNightsBetween(rCheckin, rCheckout).length : nights;
     const rAmount = Number(r.amount || (rooms.length > 0 ? totalPrice / rooms.length : totalPrice));
     const rPlanRaw = String(r.rate_plan_id || "").toLowerCase();
+    const rParentPlanId = String(r.meta?.parent_rate_plan_id || "").trim();
+    const rParentPlanRaw = rParentPlanId.toLowerCase();
     const rBreakfast =
-      (chxCfg.ratePlanComCafeId && r.rate_plan_id === chxCfg.ratePlanComCafeId) ||
+      (chxCfg.ratePlanComCafeId &&
+        (r.rate_plan_id === chxCfg.ratePlanComCafeId ||
+          rParentPlanId === chxCfg.ratePlanComCafeId)) ||
       rPlanRaw.includes("com_cafe") ||
       rPlanRaw.includes("com-cafe") ||
+      rParentPlanRaw.includes("com_cafe") ||
+      rParentPlanRaw.includes("com-cafe") ||
       includeBreakfast;
     return {
       index: idx,
       roomTypeId: r.room_type_id ?? null,
       ratePlanId: rBreakfast ? "com_cafe" : "sem_cafe",
       channexRatePlanId: r.rate_plan_id ?? null,
+      parentRatePlanId: rParentPlanId || null,
+      otaReservationCode: r.ota_reservation_code || null,
+      bookingRoomId: r.booking_room_id || null,
       includeBreakfast: rBreakfast,
       checkinDate: rCheckin,
       checkoutDate: rCheckout,
@@ -299,6 +378,18 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
   });
 
   const maskedPayload = maskPanDeep(sanitized);
+  const otaReservationCode =
+    attrs.ota_reservation_code ||
+    primaryRoom.ota_reservation_code ||
+    uniqueId ||
+    null;
+  const deposits = attrs.deposits ?? resource.deposits ?? sanitized.deposits ?? null;
+  const collectedTaxes =
+    attrs.collected_taxes ??
+    attrs.collectedTaxes ??
+    resource.collected_taxes ??
+    sanitized.collected_taxes ??
+    null;
 
   return {
     provider: "channex",
@@ -308,6 +399,8 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     channexBookingId: bookingId,
     channexRevisionId: revisionId,
     channexUniqueId: uniqueId,
+    otaReservationCode,
+    ota_reservation_code: otaReservationCode,
     orderDate: attrs.inserted_at || new Date().toISOString(),
     isCancellation,
     isModification,
@@ -333,6 +426,7 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     adults: totalAdults,
     children: totalChildren,
     ratePlanId,
+    parentRatePlanId: primaryParentRatePlanId || null,
     includeBreakfast,
     paymentCollect,
     paymentType: attrs.payment_type || "credit_card",
@@ -340,6 +434,9 @@ export function normalizeChannexBookingRevision(rawPayload, db = null) {
     currency,
     netAmount,
     commissionAmount,
+    deposits,
+    collectedTaxes,
+    collected_taxes: collectedTaxes,
     hasCard: Boolean(rawPan || cardLast4),
     cardLast4,
     cardBrand,
@@ -776,10 +873,18 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null, va
   }
 
   try {
+    const minCheckin = matching.reduce(
+      (acc, r) => (r.checkinDate && r.checkinDate < acc ? r.checkinDate : acc),
+      existing.checkinDate
+    );
+    const maxCheckout = matching.reduce(
+      (acc, r) => (r.checkoutDate && r.checkoutDate > acc ? r.checkoutDate : acc),
+      existing.checkoutDate
+    );
     notifyPmsMutation(db, {
       type: "reservation_cancelled",
-      checkinDate: existing.checkinDate,
-      checkoutDate: existing.checkoutDate
+      checkinDate: minCheckin,
+      checkoutDate: maxCheckout
     });
   } catch (_) {}
 
@@ -795,17 +900,22 @@ export function handleOtaCancellation({ db, normalized, alertsManager = null, va
 /**
  * Handles OTA modification requests.
  * Evaluates 3-tier reallocation logic: same flat -> alternate flat -> quarantine on conflict.
+ * Supports both single-room and multi-room Channex bookings.
  */
 export function handleOtaModification({ db, normalized, alertsManager = null }) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
-  const existing = reservations.find((r) =>
-    (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
-    (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
-    (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
-    (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId))
+  const matching = reservations.filter((r) =>
+    r.status !== "cancelada" &&
+    r.status !== "cancelled" &&
+    (
+      (r.externalOrderId && String(r.externalOrderId) === String(normalized.externalOrderId)) ||
+      (r.parentExternalOrderId && String(r.parentExternalOrderId) === String(normalized.externalOrderId)) ||
+      (r.channexBookingId && normalized.channexBookingId && String(r.channexBookingId) === String(normalized.channexBookingId)) ||
+      (r.wbpBookingId && String(r.wbpBookingId) === String(normalized.externalOrderId))
+    )
   );
 
-  if (!existing) {
+  if (matching.length === 0) {
     return routeToQuarantine({
       db,
       booking: normalized,
@@ -813,6 +923,305 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
       reasonDetails: { message: `Modificação recebida para reserva #${normalized.externalOrderId} não encontrada no PMS.` },
       alertsManager
     });
+  }
+
+  const existing = matching[0];
+  const isMultiRoomMod =
+    matching.length > 1 || (Array.isArray(normalized.channexRooms) && normalized.channexRooms.length > 1);
+
+  if (isMultiRoomMod) {
+    const roomsSpecs =
+      Array.isArray(normalized.channexRooms) && normalized.channexRooms.length > 0
+        ? normalized.channexRooms
+        : [
+            {
+              index: 0,
+              checkinDate: normalized.checkinDate,
+              checkoutDate: normalized.checkoutDate,
+              nights: normalized.nights,
+              amount: normalized.totalPrice,
+              adults: normalized.adults,
+              children: normalized.children,
+              ratePlanId: normalized.ratePlanId,
+              includeBreakfast: normalized.includeBreakfast
+            }
+          ];
+
+    let minDate = matching.reduce(
+      (acc, r) => (r.checkinDate && r.checkinDate < acc ? r.checkinDate : acc),
+      existing.checkinDate
+    );
+    let maxDate = matching.reduce(
+      (acc, r) => (r.checkoutDate && r.checkoutDate > acc ? r.checkoutDate : acc),
+      existing.checkoutDate
+    );
+
+    const usedFlatNumbers = [];
+    const matchingIds = new Set(matching.map((r) => r.id));
+    const plannedUpdates = [];
+
+    for (let i = 0; i < roomsSpecs.length; i++) {
+      const spec = roomsSpecs[i];
+      if (spec.checkinDate < minDate) minDate = spec.checkinDate;
+      if (spec.checkoutDate > maxDate) maxDate = spec.checkoutDate;
+
+      const targetRes = matching[i] || null;
+      const nights = getNightsBetween(spec.checkinDate, spec.checkoutDate);
+
+      if (targetRes) {
+        let sameFlatFree = !usedFlatNumbers.includes(String(targetRes.flatNumber));
+        const currentFlatRef = { id: targetRes.flatId, number: targetRes.flatNumber };
+        if (sameFlatFree) {
+          for (const night of nights) {
+            const check = checkFlatBlockedOnNight(currentFlatRef, night, db, {
+              excludeReservationId: targetRes.id
+            });
+            if (check.isBlocked && (!check.details?.reservationId || !matchingIds.has(check.details.reservationId))) {
+              sameFlatFree = false;
+              break;
+            }
+          }
+        }
+
+        if (sameFlatFree) {
+          usedFlatNumbers.push(String(targetRes.flatNumber));
+          plannedUpdates.push({
+            type: "update_same",
+            targetRes,
+            spec,
+            flat: currentFlatRef
+          });
+          continue;
+        }
+
+        const alloc = allocateFairShareFlat(spec.checkinDate, spec.checkoutDate, {
+          db,
+          excludeReservationId: targetRes.id,
+          excludeFlatNumbers: usedFlatNumbers
+        });
+        if (!alloc.allocated || !alloc.flat) {
+          return routeToQuarantine({
+            db,
+            booking: normalized,
+            reason: "MODIFICATION_CONFLICT",
+            reasonDetails: {
+              message: `Modificação multi-quarto não pode ser acomodada no quarto #${i + 1} (${spec.checkinDate} a ${spec.checkoutDate}).`,
+              existingReservationId: targetRes.id,
+              existingReservationCode: targetRes.code
+            },
+            alertsManager
+          });
+        }
+
+        usedFlatNumbers.push(String(alloc.flat.number));
+        plannedUpdates.push({
+          type: "update_reallocated",
+          targetRes,
+          spec,
+          flat: alloc.flat
+        });
+      } else {
+        const alloc = allocateFairShareFlat(spec.checkinDate, spec.checkoutDate, {
+          db,
+          excludeFlatNumbers: usedFlatNumbers
+        });
+        if (!alloc.allocated || !alloc.flat) {
+          return routeToQuarantine({
+            db,
+            booking: normalized,
+            reason: "MODIFICATION_CONFLICT",
+            reasonDetails: {
+              message: `Modificação multi-quarto adicionou quarto #${i + 1}, mas não há flat disponível para ${spec.checkinDate} a ${spec.checkoutDate}.`,
+              existingReservationId: existing.id,
+              existingReservationCode: existing.code
+            },
+            alertsManager
+          });
+        }
+        usedFlatNumbers.push(String(alloc.flat.number));
+        plannedUpdates.push({
+          type: "create_extra_room",
+          spec,
+          flat: alloc.flat,
+          roomIndex: i
+        });
+      }
+    }
+
+    let anyReallocated = false;
+    for (const plan of plannedUpdates) {
+      if (plan.type === "update_same" || plan.type === "update_reallocated") {
+        const r = plan.targetRes;
+        const spec = plan.spec;
+        const before = {
+          flatId: r.flatId,
+          flatNumber: r.flatNumber,
+          checkinDate: r.checkinDate,
+          checkoutDate: r.checkoutDate,
+          totalAmount: r.totalAmount,
+          breakfastIncluded: r.breakfastIncluded,
+          guestCount: r.guestCount
+        };
+        const prevFlat = r.flatNumber;
+        if (plan.type === "update_reallocated") {
+          r.flatId = plan.flat.id;
+          r.flatNumber = String(plan.flat.number);
+          anyReallocated = true;
+        }
+        r.checkinDate = spec.checkinDate;
+        r.checkoutDate = spec.checkoutDate;
+        const specTotal = Number(spec.amount || normalized.totalPrice);
+        r.totalAmount = specTotal;
+        r.dailyRate = spec.nights > 0 ? Number((specTotal / spec.nights).toFixed(2)) : specTotal;
+        r.breakfastIncluded = Boolean(spec.includeBreakfast);
+        r.ratePlanId = spec.ratePlanId || normalized.ratePlanId;
+        if (spec.parentRatePlanId || normalized.parentRatePlanId) {
+          r.parentRatePlanId = spec.parentRatePlanId || normalized.parentRatePlanId;
+        }
+        r.guestCount = Number(spec.adults || 1) + Number(spec.children || 0);
+        r.adults = Number(spec.adults || 1);
+        r.children = Number(spec.children || 0);
+        if (normalized.channexRevisionId) {
+          r.channexRevisionId = normalized.channexRevisionId;
+        }
+        if (spec.otaReservationCode || normalized.otaReservationCode) {
+          r.otaReservationCode = spec.otaReservationCode || normalized.otaReservationCode;
+          r.ota_reservation_code = r.otaReservationCode;
+        }
+        if (normalized.deposits !== undefined) r.deposits = normalized.deposits;
+        if (normalized.collectedTaxes !== undefined) {
+          r.collectedTaxes = normalized.collectedTaxes;
+          r.collected_taxes = normalized.collectedTaxes;
+        }
+
+        const after = {
+          flatId: r.flatId,
+          flatNumber: r.flatNumber,
+          checkinDate: r.checkinDate,
+          checkoutDate: r.checkoutDate,
+          totalAmount: r.totalAmount,
+          breakfastIncluded: r.breakfastIncluded,
+          guestCount: r.guestCount
+        };
+
+        if (!Array.isArray(r.auditLogs)) r.auditLogs = [];
+        r.auditLogs.push({
+          timestamp: new Date().toISOString(),
+          action:
+            plan.type === "update_reallocated"
+              ? "OTA_MODIFICATION_REALLOCATED"
+              : "OTA_MODIFICATION_APPLIED_SAME_FLAT",
+          details:
+            plan.type === "update_reallocated"
+              ? `Modificação multi-quarto realocada do Flat ${prevFlat} para Flat ${r.flatNumber}.`
+              : `Modificação multi-quarto aplicada no mesmo Flat ${r.flatNumber}.`,
+          before,
+          after
+        });
+
+        if (!Array.isArray(r.modificationHistory)) r.modificationHistory = [];
+        r.modificationHistory.push({
+          timestamp: new Date().toISOString(),
+          source: "OTA_MODIFICATION",
+          before,
+          after
+        });
+        r.history = r.modificationHistory;
+      } else if (plan.type === "create_extra_room") {
+        const spec = plan.spec;
+        const rFlatNumber = String(plan.flat.number);
+        const rTotal = Number(spec.amount || normalized.totalPrice);
+        const rCommission = Number((rTotal * 0.15).toFixed(2));
+        const rNet = Number((rTotal - rCommission).toFixed(2));
+        const isPropertyCollect = normalized.paymentCollect === "Property";
+        const nextId = db.reservations.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
+        const randSuffix = Math.floor(1000 + Math.random() * 9000);
+        const code = `RES-${rFlatNumber}-${randSuffix}`;
+        const roomOtaCode = spec.otaReservationCode || normalized.otaReservationCode || null;
+
+        db.reservations.push({
+          id: nextId,
+          code,
+          flatId: plan.flat.id,
+          flatNumber: rFlatNumber,
+          guestName: normalized.guestName,
+          guestEmail: normalized.guestEmail,
+          guestPhone: normalized.guestPhone,
+          checkinDate: spec.checkinDate,
+          checkoutDate: spec.checkoutDate,
+          guestCount: Number(spec.adults || 1) + Number(spec.children || 0),
+          adults: Number(spec.adults || 1),
+          children: Number(spec.children || 0),
+          totalAmount: rTotal,
+          dailyRate: spec.nights > 0 ? Number((rTotal / spec.nights).toFixed(2)) : rTotal,
+          paidAmount: isPropertyCollect ? 0 : rTotal,
+          netAmount: rNet,
+          commissionAmount: rCommission,
+          deposits: normalized.deposits ?? null,
+          collectedTaxes: normalized.collectedTaxes ?? null,
+          collected_taxes: normalized.collectedTaxes ?? null,
+          paymentStatus: isPropertyCollect ? "pendente" : "pago_total",
+          paymentMethod: normalized.channel,
+          paymentCollect: normalized.paymentCollect,
+          collectAtCheckin: isPropertyCollect,
+          channel: normalized.channel,
+          externalOrderId: `${normalized.externalOrderId}-R${plan.roomIndex + 1}`,
+          parentExternalOrderId: normalized.externalOrderId,
+          wbpBookingId: normalized.wbpBookingId,
+          channexBookingId: normalized.channexBookingId || null,
+          channexRevisionId: normalized.channexRevisionId || null,
+          otaReservationCode: roomOtaCode,
+          ota_reservation_code: roomOtaCode,
+          breakfastIncluded: Boolean(spec.includeBreakfast),
+          ratePlanId: spec.ratePlanId || normalized.ratePlanId,
+          parentRatePlanId: spec.parentRatePlanId || normalized.parentRatePlanId || null,
+          status: "ativa",
+          createdAt: new Date().toISOString(),
+          pixTxId: null,
+          pixCopiaECola: null,
+          wbpSynced: true,
+          auditLogs: [
+            {
+              timestamp: new Date().toISOString(),
+              action: "OTA_MODIFICATION_EXTRA_ROOM_ADDED",
+              details: `Quarto adicional #${plan.roomIndex + 1} criado durante modificação OTA no Flat ${rFlatNumber}.`
+            }
+          ]
+        });
+      }
+    }
+
+    if (matching.length > roomsSpecs.length) {
+      for (let j = roomsSpecs.length; j < matching.length; j++) {
+        const extraRes = matching[j];
+        const isCheckedIn =
+          extraRes.status === "checked_in" ||
+          extraRes.status === "hospedado" ||
+          extraRes.status === "checkin_realizado" ||
+          extraRes.checkedIn === true;
+        if (!isCheckedIn) {
+          extraRes.status = "cancelada";
+          extraRes.cancelledAt = new Date().toISOString();
+          extraRes.cancelReason = "Quarto removido em modificação multi-quarto via OTA";
+        }
+      }
+    }
+
+    try {
+      notifyPmsMutation(db, {
+        type: "reservation_modified",
+        checkinDate: minDate,
+        checkoutDate: maxDate
+      });
+    } catch (_) {}
+
+    return {
+      success: true,
+      action: anyReallocated ? "modified_reallocated" : "modified_same_flat",
+      reservationId: existing.id,
+      flatNumber: existing.flatNumber,
+      modifiedRoomsCount: roomsSpecs.length
+    };
   }
 
   const oldCheckin = existing.checkinDate;
@@ -848,8 +1257,27 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
     existing.checkinDate = newCheckin;
     existing.checkoutDate = newCheckout;
     existing.totalAmount = normalized.totalPrice;
+    existing.dailyRate = normalized.nights > 0 ? Number((normalized.totalPrice / normalized.nights).toFixed(2)) : normalized.totalPrice;
+    if (normalized.netAmount != null) existing.netAmount = normalized.netAmount;
+    if (normalized.commissionAmount != null) existing.commissionAmount = normalized.commissionAmount;
     existing.breakfastIncluded = normalized.includeBreakfast;
-    existing.guestCount = normalized.adults + normalized.children;
+    existing.ratePlanId = normalized.ratePlanId;
+    if (normalized.parentRatePlanId) existing.parentRatePlanId = normalized.parentRatePlanId;
+    existing.adults = Number(normalized.adults || 1);
+    existing.children = Number(normalized.children || 0);
+    existing.guestCount = existing.adults + existing.children;
+    if (normalized.channexRevisionId) {
+      existing.channexRevisionId = normalized.channexRevisionId;
+    }
+    if (normalized.otaReservationCode) {
+      existing.otaReservationCode = normalized.otaReservationCode;
+      existing.ota_reservation_code = normalized.otaReservationCode;
+    }
+    if (normalized.deposits !== undefined) existing.deposits = normalized.deposits;
+    if (normalized.collectedTaxes !== undefined) {
+      existing.collectedTaxes = normalized.collectedTaxes;
+      existing.collected_taxes = normalized.collectedTaxes;
+    }
 
     const after = {
       flatId: existing.flatId,
@@ -912,8 +1340,27 @@ export function handleOtaModification({ db, normalized, alertsManager = null }) 
     existing.checkinDate = newCheckin;
     existing.checkoutDate = newCheckout;
     existing.totalAmount = normalized.totalPrice;
+    existing.dailyRate = normalized.nights > 0 ? Number((normalized.totalPrice / normalized.nights).toFixed(2)) : normalized.totalPrice;
+    if (normalized.netAmount != null) existing.netAmount = normalized.netAmount;
+    if (normalized.commissionAmount != null) existing.commissionAmount = normalized.commissionAmount;
     existing.breakfastIncluded = normalized.includeBreakfast;
-    existing.guestCount = normalized.adults + normalized.children;
+    existing.ratePlanId = normalized.ratePlanId;
+    if (normalized.parentRatePlanId) existing.parentRatePlanId = normalized.parentRatePlanId;
+    existing.adults = Number(normalized.adults || 1);
+    existing.children = Number(normalized.children || 0);
+    existing.guestCount = existing.adults + existing.children;
+    if (normalized.channexRevisionId) {
+      existing.channexRevisionId = normalized.channexRevisionId;
+    }
+    if (normalized.otaReservationCode) {
+      existing.otaReservationCode = normalized.otaReservationCode;
+      existing.ota_reservation_code = normalized.otaReservationCode;
+    }
+    if (normalized.deposits !== undefined) existing.deposits = normalized.deposits;
+    if (normalized.collectedTaxes !== undefined) {
+      existing.collectedTaxes = normalized.collectedTaxes;
+      existing.collected_taxes = normalized.collectedTaxes;
+    }
 
     const after = {
       flatId: existing.flatId,
@@ -1071,6 +1518,12 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     const { bestMatch, scoreResult } = manualMatch;
     if (scoreResult.isSafeMatch) {
       applySafeReconciliationLink(bestMatch, normalized, { db });
+      if (normalized.hasCard) {
+        try {
+          const vault = getCardVault();
+          vault.linkReservation(normalized.externalOrderId, bestMatch.id, normalized.checkoutDate);
+        } catch (_) {}
+      }
       return {
         success: true,
         action: "reconciled_linked",
@@ -1108,6 +1561,8 @@ export async function processIncomingOTA(rawPayload, options = {}) {
             adults: normalized.adults,
             children: normalized.children,
             ratePlanId: normalized.ratePlanId,
+            parentRatePlanId: normalized.parentRatePlanId || null,
+            otaReservationCode: normalized.otaReservationCode || null,
             includeBreakfast: normalized.includeBreakfast
           }
         ];
@@ -1213,6 +1668,7 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     const nextId = db.reservations.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
     const randSuffix = Math.floor(1000 + Math.random() * 9000);
     const code = `RES-${rFlatNumber}-${randSuffix}`;
+    const roomOtaCode = roomSpec.otaReservationCode || normalized.otaReservationCode || null;
 
     const newReservation = {
       id: nextId,
@@ -1232,6 +1688,9 @@ export async function processIncomingOTA(rawPayload, options = {}) {
       paidAmount: rPaid,
       netAmount: isMultiRoom ? rNet : normalized.netAmount,
       commissionAmount: isMultiRoom ? rCommission : normalized.commissionAmount,
+      deposits: normalized.deposits ?? null,
+      collectedTaxes: normalized.collectedTaxes ?? null,
+      collected_taxes: normalized.collectedTaxes ?? null,
       cardLast4: normalized.cardLast4,
       cardBrand: normalized.cardBrand,
       cardExpMonth: normalized.cardExpMonth,
@@ -1250,8 +1709,11 @@ export async function processIncomingOTA(rawPayload, options = {}) {
       wbpBookingId: normalized.wbpBookingId,
       channexBookingId: normalized.channexBookingId || null,
       channexRevisionId: normalized.channexRevisionId || null,
+      otaReservationCode: roomOtaCode,
+      ota_reservation_code: roomOtaCode,
       breakfastIncluded: Boolean(roomSpec.includeBreakfast),
       ratePlanId: roomSpec.ratePlanId || normalized.ratePlanId,
+      parentRatePlanId: roomSpec.parentRatePlanId || normalized.parentRatePlanId || null,
       status: "ativa",
       createdAt: new Date().toISOString(),
       pixTxId: null,
@@ -1358,12 +1820,20 @@ export async function processIncomingOTA(rawPayload, options = {}) {
     console.warn("[Automations] Falha ao disparar tarefas secundárias:", err.message);
   }
 
-  // 10. Trigger debounced ARI Refresh for the affected stay window
+  // 10. Trigger debounced ARI Refresh for the affected stay window across all created rooms
   try {
+    const minCheckin = createdReservations.reduce(
+      (acc, r) => (r.checkinDate && r.checkinDate < acc ? r.checkinDate : acc),
+      primaryReservation.checkinDate
+    );
+    const maxCheckout = createdReservations.reduce(
+      (acc, r) => (r.checkoutDate && r.checkoutDate > acc ? r.checkoutDate : acc),
+      primaryReservation.checkoutDate
+    );
     notifyPmsMutation(db, {
       type: "reservation_created",
-      checkinDate: primaryReservation.checkinDate,
-      checkoutDate: primaryReservation.checkoutDate
+      checkinDate: minCheckin,
+      checkoutDate: maxCheckout
     });
   } catch (_) {}
 

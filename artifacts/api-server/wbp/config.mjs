@@ -127,6 +127,24 @@ export function getChannexConfig(db = null) {
 }
 
 /**
+ * Resolves the active Channel Manager provider ("channex" or "wbp").
+ *
+ * @param {object} [db]
+ * @returns {"channex" | "wbp"}
+ */
+export function getActiveProvider(db = null) {
+  const envProv = process.env.OTA_PROVIDER;
+  if (envProv === "wbp" || envProv === "channex") {
+    return envProv;
+  }
+  const savedProv = db?.settings?.channex_config?.provider || db?.settings?.ota_provider;
+  if (savedProv === "wbp" || savedProv === "channex") {
+    return savedProv;
+  }
+  return "channex";
+}
+
+/**
  * Updates non-destructive Channex mapping and environment settings in db.settings.channex_config.
  *
  * @param {object} partial

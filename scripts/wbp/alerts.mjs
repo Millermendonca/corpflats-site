@@ -216,6 +216,53 @@ export class WbpAlertsManager {
   }
 
   /**
+   * Records an operational alert for Channex webhook events (sync_error, sync_warning, rate_error,
+   * channel/property removal warnings, unmapped room/rate, non_acked_booking, etc.).
+   *
+   * @param {object} alertPayload
+   * @param {object} [db]
+   * @returns {object|null}
+   */
+  createOperationalAlert(alertPayload = {}, db = null) {
+    const targetDb = db || (typeof global !== "undefined" && global.db ? global.db : null);
+    const evt = String(alertPayload.event || "operational_alert").toLowerCase();
+    const isCritical =
+      evt.includes("error") ||
+      evt.includes("removal") ||
+      evt.includes("unmapped") ||
+      evt === "non_acked_booking";
+    const severity = alertPayload.severity || (isCritical ? "critical" : "warning");
+
+    const record = {
+      category: alertPayload.category || "channex_webhook",
+      type: `CHANNEX_EVENT_${evt.toUpperCase()}`,
+      severity,
+      event: evt,
+      title: alertPayload.title || `Alerta Operacional Channex (${evt})`,
+      message:
+        alertPayload.message ||
+        `Evento operacional recebido da Channex.io: ${evt}. Verifique o painel de canais.`,
+      details: alertPayload.details || null
+    };
+
+    if (targetDb) {
+      if (!Array.isArray(targetDb.wbpOperationalAlerts)) {
+        targetDb.wbpOperationalAlerts = [];
+      }
+      targetDb.wbpOperationalAlerts.unshift({
+        id: `op_alert_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        createdAt: new Date().toISOString(),
+        ...record
+      });
+      if (targetDb.wbpOperationalAlerts.length > 250) {
+        targetDb.wbpOperationalAlerts.length = 250;
+      }
+    }
+
+    return this.pushNotification(targetDb, record);
+  }
+
+  /**
    * 1. Immediate Alert: Reservation placed into Quarantine.
    * Checks triggers.onOverbooking for OVERBOOKING, and triggers.onQuarantine for others.
    *
@@ -443,19 +490,25 @@ A alteração de preço para o plano *${planId}* na data *${date}* foi retida pe
     let rev24h = 0;
     let bkgCount = 0;
     let abnbCount = 0;
+    let expCount = 0;
     let cancelled24h = 0;
 
     for (const r of reservations) {
       const createdMs = r.createdAt ? new Date(r.createdAt).getTime() : 0;
       const cancelledMs = r.cancelledAt ? new Date(r.cancelledAt).getTime() : 0;
       const chan = String(r.channel || "").toLowerCase();
-      const isOta = chan.includes("booking") || chan.includes("airbnb");
+      const isOta =
+        chan.includes("booking") ||
+        chan.includes("airbnb") ||
+        chan.includes("expedia") ||
+        Boolean(r.channexBookingId || r.channexRevisionId);
 
       if (isOta && createdMs >= last24hMs) {
         count24h++;
         rev24h += Number(r.totalAmount || 0);
         if (chan.includes("booking")) bkgCount++;
-        if (chan.includes("airbnb")) abnbCount++;
+        else if (chan.includes("airbnb")) abnbCount++;
+        else if (chan.includes("expedia")) expCount++;
       }
 
       if (isOta && (r.status === "cancelada" || r.status === "cancelled") && cancelledMs >= last24hMs) {
@@ -474,7 +527,14 @@ A alteração de preço para o plano *${planId}* na data *${date}* foi retida pe
       if (r.checkinDate === todayStr) {
         todayCheckins++;
         const chan = String(r.channel || "").toLowerCase();
-        if (chan.includes("booking") || chan.includes("airbnb")) todayOtaCheckins++;
+        if (
+          chan.includes("booking") ||
+          chan.includes("airbnb") ||
+          chan.includes("expedia") ||
+          Boolean(r.channexBookingId || r.channexRevisionId)
+        ) {
+          todayOtaCheckins++;
+        }
       }
       if (r.checkoutDate === todayStr) {
         todayCheckouts++;

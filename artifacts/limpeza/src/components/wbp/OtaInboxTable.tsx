@@ -79,8 +79,10 @@ export const OtaInboxTable: React.FC<OtaInboxTableProps> = ({
       // Text search
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        const matchesGuest = item.guestName.toLowerCase().includes(query);
-        const matchesOrder = item.orderId.toLowerCase().includes(query) || item.channelReservationId.toLowerCase().includes(query);
+        const matchesGuest = (item.guestName || "").toLowerCase().includes(query);
+        const matchesOrder =
+          (item.orderId || "").toLowerCase().includes(query) ||
+          (item.channelReservationId || "").toLowerCase().includes(query);
         const matchesFlat = item.allocatedFlat?.toLowerCase().includes(query);
         return matchesGuest || matchesOrder || matchesFlat;
       }

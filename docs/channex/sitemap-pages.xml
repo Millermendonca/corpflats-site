@@ -1,0 +1,1336 @@
+<?xml version="1.0" encoding="utf-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+			<url>
+				<loc>https://docs.channex.io</loc>
+				<priority>1</priority>
+				<lastmod>2026-10-12T15:27:03.144Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/about-channex-and-faq</loc>
+				<priority>1</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/changelog</loc>
+				<priority>1</priority>
+				<lastmod>2026-10-19T12:23:25.512Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/for-ota/intro</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/for-ota/shopping-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/for-ota/open-channel-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-21T16:50:29.296Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/api-reference</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-limits</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-size-limits</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-22T10:09:57.930Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection/get-list-of-properties-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T09:43:46.010Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection/get-list-of-property-options-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T09:40:59.183Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection/get-property-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T09:40:59.183Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection/create-property-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T09:40:59.183Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection/update-property-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T09:40:59.183Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotels-collection/delete-property-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T09:40:59.184Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-users-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-users-collection/get-list-of-property-users-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-30T13:07:52.355Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-users-collection/get-property-user-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-30T13:07:52.354Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-users-collection/create-property-user-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-30T13:07:52.354Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-users-collection/update-property-user-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-30T13:07:52.355Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/property-users-collection/delete-property-user-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-30T13:07:52.355Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection/get-list-of-groups-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.009Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection/get-list-of-group-options-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:08:53.363Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection/get-group-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:08:53.359Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection/create-group-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:08:53.359Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection/update-group-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:08:53.360Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/groups-collection/delete-group-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:08:53.360Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/group-users-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection/get-list-of-room-types-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T11:17:05.606Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection/get-list-of-room-type-options-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T11:17:05.605Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection/get-room-type-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T11:17:05.605Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection/create-room-type-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T11:17:05.606Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection/update-room-type-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T11:17:05.606Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/room-types-collection/delete-room-type-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T11:17:05.606Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection/get-list-of-rate-plans-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.009Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection/get-list-of-rate-plan-options-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.008Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection/get-rate-plan-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.008Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection/create-rate-plan-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.008Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection/update-rate-plan-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.008Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/rate-plans-collection/delete-rate-plan-api</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-09-22T13:05:09.008Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/ari</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/webhook-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-12T15:29:14.211Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/bookings-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/booking-crs-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/channel-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:21:36.093Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/airbnb-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-23T08:38:02.240Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/airbnb-api/manage-a-booking-requests</loc>
+				<priority>0.7</priority>
+				<lastmod>2026-10-23T08:53:35.166Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/photos-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/hotel-policy-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/facilities-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/taxes-and-tax-sets</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/applications-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/messages-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-29T20:09:38.175Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/reviews-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/availability-rules-collection</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:12:04.734Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/stripe-tokenization-app</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/payment-application-api</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/channel-codes</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-21T03:02:46.741Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/channel-iframe</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/api-v.1-documentation/pms-certification-tests</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-09T18:13:50.259Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/one-hotel-rez</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/advertising-online</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/agoda</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/airbnb</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-25T10:48:27.038Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/alaric</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/atlantis-ors</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/b2b-global</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/bakuun</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/bed-and-breakfast.it</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.276Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/bedshero</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/book-direct-open</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/bookeasy</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:10:06.233Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/booking.com</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/booknpay</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/bookola</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/book-outdoors</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/cakrahub-booking-engine</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/check24</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.098Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/crewdogs</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/ctoutvert</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:10:06.227Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/cultbooking</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/dida-travel</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/dolcebot</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/dream-ireland</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/edreams</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.153Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/emerging-travel-group-ostrovok</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-24T08:24:29.179Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/expedia</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/glamping-hub</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/gopaddi</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/guestaps</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/guirez</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/guru-hotel</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/heytrip</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hipcamp</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hlc-plus</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hookusbookus</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hopper</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.161Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hopper-homes</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:12:46.810Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hostel-hop</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hotelbeds</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.165Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hotel-rez</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hoteltonight</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.168Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hotel-trader</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hoterip</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:10:06.230Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/hyper-guest</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/joodbooking</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/julian-alps-booking</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/jumpon</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/keytel</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:10:06.233Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/kliknbook</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:11:37.386Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/klook</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.185Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/levart</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/lido</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.170Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/local-ota</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/moverii</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/mr-and-mrs-smith</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.188Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/nongnooch</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/novoya</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/omni-hotelier</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/open-gds</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/ota-sync</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/out-reserve</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/pitchup</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.191Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/reconline</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.193Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/rev-chill</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/revenatium</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/roibos</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.197Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/room-panda</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/room-beast</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/room-cloud</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/rukiye-zara</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/rvparkguru</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/selah-comfort</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/seminyak-villas</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/sissae-living</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/sleep-rest</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/spot2nite</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/stayfor-rewards</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/switzerland-travel-centre</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:11:37.375Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/szallas</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-07T10:55:40.882Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/tablet-hotels</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:11:37.378Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/the-square</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/the-tpm-group</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/trip-affiliates</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:11:37.381Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/tripnera</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/vacanceselect</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.200Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/vibe-lobby</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/waverick</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/webready</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/webrooms</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/we-speak-open</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/wigwam-holidays</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/wink</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/world2meet</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T14:18:47.270Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/xcaliber</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/yatra</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-15T14:11:37.383Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/zavia</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-api-examples/zenith-booking-engine</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-13T07:33:04.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/guides/pms-integration-guide</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/guides/best-practices-guide</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/guides/test-account-for-booking.com</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-12T08:06:31.892Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/guides/test-accounts-for-airbnb</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/guides/channex-retention-periods</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-05T13:32:09.761Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/guides/guide-to-pci</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/overview</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-12-21T11:04:08.641Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/dashboard</loc>
+				<priority>0.84</priority>
+				<lastmod>2025-03-07T11:20:55.887Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/properties-and-groups-management</loc>
+				<priority>0.84</priority>
+				<lastmod>2025-01-14T11:59:44.331Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/property-tasks</loc>
+				<priority>0.84</priority>
+				<lastmod>2021-01-08T10:46:36.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/rooms-management</loc>
+				<priority>0.84</priority>
+				<lastmod>2021-05-28T11:07:24.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/inventory-management</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-01-22T08:12:46.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/channels-management</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-05-30T08:30:45.060Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/channel-actions-log</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-01-22T08:20:41.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/bookings-management</loc>
+				<priority>0.84</priority>
+				<lastmod>2020-08-16T09:50:50.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/availability-rules</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-12-13T13:31:32.891Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/api-key-access</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-17T13:43:17.061Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/application-documentation/change-log-feature</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-01-22T08:11:15.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/google/google-hotel-ads</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-23T12:56:40.598Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/google/google-hotel-ads-1</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-23T12:56:40.595Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/agoda</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-10-21T09:49:03.327Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/airbnb</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T11:46:20.369Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/booking.com</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-05-09T08:19:08.571Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/check24</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-02-02T11:49:17.262Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/crewdogs</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-05-06T02:11:48.254Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/ctrip-trip.com</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-28T14:08:00.211Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/despegar</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-07-31T00:35:40.100Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/dida</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-06-06T01:10:41.618Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/emerging-travel</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/expedia</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-05-21T02:11:47.834Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/feratel</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-06-02T07:22:41.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/getaroom</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/glamping-hub</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hipcamp</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-08-01T00:37:52.295Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hostelworld</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-05-15T09:29:48.414Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hopper</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hopper-homes</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hotelbeds</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-07-11T10:42:03.285Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hoteltonight</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-07-11T10:49:56.649Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hoteltrader</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-30T15:26:05.131Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hyperguest</loc>
+				<priority>0.84</priority>
+				<lastmod>2021-02-14T15:58:44.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/hrs</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-06-02T07:23:07.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/inntopia</loc>
+				<priority>0.84</priority>
+				<lastmod>2025-08-25T23:32:58.817Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/instant-booking-page</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-02-24T08:40:42.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/kliknbook</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/klook</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-03-23T15:50:11.934Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/mmt</loc>
+				<priority>0.84</priority>
+				<lastmod>2023-05-29T10:08:37.000Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/mg</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-07-08T14:21:22.611Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/smith</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-03-01T00:58:13.805Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/nuitee</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/opengds</loc>
+				<priority>0.84</priority>
+				<lastmod>2025-04-09T07:20:03.699Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/pricetravel</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-29T02:24:18.039Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/roibos</loc>
+				<priority>0.84</priority>
+				<lastmod>2024-07-31T00:35:40.100Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/traveloka</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-03-23T15:45:35.783Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/tiket</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-03-23T15:45:35.827Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/webbeds</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/vrbo</loc>
+				<priority>0.84</priority>
+				<lastmod>2025-11-19T12:34:05.451Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/channel-mapping-guides/yatra</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-09-18T12:38:16.294Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/app-guide/apaleo</loc>
+				<priority>0.84</priority>
+				<lastmod>2026-08-19T07:58:16.324Z</lastmod>
+</url>
+
+			<url>
+				<loc>https://docs.channex.io/app-guide/pci-app</loc>
+				<priority>0.84</priority>
+				<lastmod>2025-09-10T10:12:57.622Z</lastmod>
+</url>
+
+
+</urlset>

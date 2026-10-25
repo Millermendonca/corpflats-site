@@ -233,9 +233,14 @@ export const OtaInboxContainer: React.FC = () => {
       const inboxRes = await fetch("/api/wbp/inbox");
       if (inboxRes.ok) {
         const inboxData = await inboxRes.json();
-        if (Array.isArray(inboxData)) {
-          setItems(inboxData);
-          const qCount = inboxData.filter(i => i.status === "quarantine").length;
+        const loadedItems = Array.isArray(inboxData)
+          ? inboxData
+          : Array.isArray(inboxData?.items)
+            ? inboxData.items
+            : null;
+        if (loadedItems && loadedItems.length > 0) {
+          setItems(loadedItems);
+          const qCount = loadedItems.filter((i: OtaReservationItem) => i.status === "quarantine").length;
           setTelemetry(prev => ({ ...prev, pendingQuarantineCount: qCount }));
         }
       }
@@ -367,6 +372,7 @@ export const OtaInboxContainer: React.FC = () => {
   };
 
   const handleResolveQuarantine = async (id: string, payload: QuarantineResolutionPayload) => {
+    const isLink = payload.action === "link_existing";
     try {
       await fetch(`/api/wbp/quarantine/${id}/resolve`, {
         method: "POST",
@@ -378,8 +384,9 @@ export const OtaInboxContainer: React.FC = () => {
         if (item.id === id) {
           return {
             ...item,
-            status: "imported",
-            allocatedFlat: payload.flatNumber || "605",
+            status: isLink ? "linked" : "imported",
+            allocatedFlat: isLink ? item.allocatedFlat : (payload.flatNumber || "605"),
+            linkedReservationCode: isLink ? (payload.existingReservationId || null) : item.linkedReservationCode,
             quarantineReason: null,
             quarantineDiagnostic: null,
           };
@@ -387,15 +394,20 @@ export const OtaInboxContainer: React.FC = () => {
         return item;
       }));
 
-      setToastMessage(`Reserva liberada da quarentena com sucesso no Flat ${payload.flatNumber || "605"}!`);
+      setToastMessage(
+        isLink
+          ? `Reserva vinculada com sucesso à reserva manual ${payload.existingReservationId}!`
+          : `Reserva liberada da quarentena com sucesso no Flat ${payload.flatNumber || "605"}!`
+      );
       setTimeout(() => setToastMessage(null), 5000);
     } catch {
       setItems(prev => prev.map(item => {
         if (item.id === id) {
           return {
             ...item,
-            status: "imported",
-            allocatedFlat: payload.flatNumber || "605",
+            status: isLink ? "linked" : "imported",
+            allocatedFlat: isLink ? item.allocatedFlat : (payload.flatNumber || "605"),
+            linkedReservationCode: isLink ? (payload.existingReservationId || null) : item.linkedReservationCode,
             quarantineReason: null,
             quarantineDiagnostic: null,
           };
@@ -426,7 +438,7 @@ export const OtaInboxContainer: React.FC = () => {
       await fetch(`/api/wbp/quarantine/${id}/link`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ existingReservationId }),
+        body: JSON.stringify({ pmsReservationId: existingReservationId, existingReservationId }),
       });
 
       setItems(prev => prev.map(item => {

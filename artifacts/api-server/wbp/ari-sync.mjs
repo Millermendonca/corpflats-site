@@ -19,7 +19,7 @@
 
 import crypto from "node:crypto";
 import { WBPClient, ChannexClient } from "./client.mjs";
-import { getIntegrationMode, getChannexConfig, isWbpEnabled, WBP_MODES } from "./config.mjs";
+import { getIntegrationMode, getChannexConfig, getActiveProvider, isWbpEnabled, WBP_MODES } from "./config.mjs";
 import { calculateCanonicalAvailability, CORPFLATS_19_FLATS } from "./availability.mjs";
 import {
   WbpPricingManager,
@@ -563,6 +563,8 @@ export function compressContiguousBlocks(dailyItems) {
 export class WbpAriSynchronizer {
   constructor(options = {}) {
     this.db = options.db || (typeof global !== "undefined" && global.db ? global.db : {});
+    this.explicitWbpClient = Boolean(options.client);
+    this.explicitChannexClient = Boolean(options.channexClient);
     this.client = options.client || new WBPClient({ db: this.db, ...options });
     this.channexClient = options.channexClient || new ChannexClient({ db: this.db, ...options });
 
@@ -577,8 +579,11 @@ export class WbpAriSynchronizer {
     // Incremental debouncing state
     this.debounceTimer = null;
     this.maxWaitTimer = null;
+    this.rateLimitRetryTimer = null;
     this.pendingMinDate = null;
     this.pendingMaxDate = null;
+    this.pendingNeedsAvailability = false;
+    this.pendingNeedsRestrictions = false;
     this.pendingDirtyIntervals = [];
 
     // Channex per-property sliding-window rate limiter state (max 10 req/min per endpoint)
@@ -597,7 +602,7 @@ export class WbpAriSynchronizer {
    * Checks Channex rate limit for a specific endpoint ("availability" | "restrictions").
    * @param {"availability" | "restrictions"} endpoint
    * @param {number} [nowMs=Date.now()]
-   * @returns {{ allowed: boolean, remaining: number, usedInLastMinute: number, limit: number }}
+   * @returns {{ allowed: boolean, remaining: number, usedInLastMinute: number, limit: number, retryAfterMs: number }}
    */
   checkChannexRateLimit(endpoint, nowMs = Date.now()) {
     const cfg = getChannexConfig(this.db);
@@ -616,12 +621,48 @@ export class WbpAriSynchronizer {
       list.shift();
     }
 
+    const retryAfterMs = list.length >= limit ? Math.max(50, (list[0] + 60_000) - nowMs + 50) : 0;
+
     return {
       allowed: list.length < limit,
       remaining: Math.max(0, limit - list.length),
       usedInLastMinute: list.length,
-      limit
+      limit,
+      retryAfterMs
     };
+  }
+
+  /**
+   * Re-queues a rate-limited Channex delta interval so it automatically flushes
+   * as soon as the 60-second sliding window frees a slot.
+   */
+  _scheduleRateLimitRetry(startDate, endDate, options = {}, retryAfterMs = 60000) {
+    if (startDate && endDate) {
+      this.pendingMinDate = this.pendingMinDate
+        ? (startDate < this.pendingMinDate ? startDate : this.pendingMinDate)
+        : startDate;
+      this.pendingMaxDate = this.pendingMaxDate
+        ? (endDate > this.pendingMaxDate ? endDate : this.pendingMaxDate)
+        : endDate;
+    }
+    if (options.includeAvailability !== false) {
+      this.pendingNeedsAvailability = true;
+    }
+    if (options.includeRestrictions !== false) {
+      this.pendingNeedsRestrictions = true;
+    }
+    if (this.rateLimitRetryTimer) {
+      clearTimeout(this.rateLimitRetryTimer);
+    }
+    const waitMs = Math.max(50, Number(retryAfterMs) || 60000);
+    this.rateLimitRetryTimer = setTimeout(() => {
+      this.rateLimitRetryTimer = null;
+      this.flushIncrementalSync().catch((err) => {
+        console.warn("[Channex ARI Sync] Falha ao reexecutar delta após rate limit:", err.message);
+      });
+    }, waitMs);
+    if (this.rateLimitRetryTimer?.unref) this.rateLimitRetryTimer.unref();
+    return { queuedForRetry: true, retryAfterMs: waitMs };
   }
 
   /**
@@ -779,7 +820,8 @@ export class WbpAriSynchronizer {
 
   /**
    * Pushes a targeted date-range delta to Channex /availability and/or /restrictions,
-   * enforcing the 10 req/min rate limit per endpoint.
+   * enforcing the 10 req/min rate limit per endpoint and automatically re-queuing
+   * rate-limited deltas so no updates are dropped.
    *
    * @param {string} startDate - YYYY-MM-DD
    * @param {string} endDate - YYYY-MM-DD
@@ -823,11 +865,19 @@ export class WbpAriSynchronizer {
     if (includeAvailability && availabilityValues.length > 0) {
       const availLimit = this.checkChannexRateLimit("availability");
       if (!availLimit.allowed && !options.ignoreRateLimit) {
+        const retryMeta = this._scheduleRateLimitRetry(
+          startDate,
+          endDate,
+          { includeAvailability: true, includeRestrictions },
+          availLimit.retryAfterMs
+        );
         return {
           success: false,
           rateLimited: true,
           endpoint: "availability",
           reason: "local_rate_limit_10_per_min",
+          retryAfterMs: availLimit.retryAfterMs,
+          queuedForRetry: retryMeta.queuedForRetry,
           limitInfo: availLimit
         };
       }
@@ -847,11 +897,19 @@ export class WbpAriSynchronizer {
     if (includeRestrictions && restrictionsValues.length > 0) {
       const restLimit = this.checkChannexRateLimit("restrictions");
       if (!restLimit.allowed && !options.ignoreRateLimit) {
+        const retryMeta = this._scheduleRateLimitRetry(
+          startDate,
+          endDate,
+          { includeAvailability: false, includeRestrictions: true },
+          restLimit.retryAfterMs
+        );
         return {
           success: false,
           rateLimited: true,
           endpoint: "restrictions",
           reason: "local_rate_limit_10_per_min",
+          retryAfterMs: restLimit.retryAfterMs,
+          queuedForRetry: retryMeta.queuedForRetry,
           limitInfo: restLimit
         };
       }
@@ -1000,7 +1058,8 @@ export class WbpAriSynchronizer {
   }
 
   /**
-   * Performs an Initial Full Push covering from today through Dec 31 of next calendar year.
+   * Performs an Initial Full Push covering from today through Dec 31 of next calendar year
+   * (or delegating to performChannexFullSync when activeProvider === "channex").
    */
   async performFullPush(options = {}) {
     const mode = getIntegrationMode(this.db);
@@ -1012,6 +1071,21 @@ export class WbpAriSynchronizer {
         reason: "integration_off",
         mode
       };
+    }
+
+    const activeProvider = getActiveProvider(this.db);
+    const channexCfg = getChannexConfig(this.db);
+    const hasChannexCredentials = Boolean(
+      this.channexClient?.apiKey || channexCfg.apiKey || this.explicitChannexClient
+    );
+
+    if (
+      activeProvider === "channex" &&
+      hasChannexCredentials &&
+      !this.explicitWbpClient &&
+      options.provider !== "wbp"
+    ) {
+      return this.performChannexFullSync(options);
     }
 
     const horizon = calculateFullPushHorizon(options.referenceDate || new Date());
@@ -1103,15 +1177,26 @@ export class WbpAriSynchronizer {
 
   /**
    * Triggers an incremental push with debouncing (<10s window: 2s debounce, 6s max-wait).
+   * Tracks whether availability, restrictions/rates, or both were mutated.
    */
-  triggerIncrementalSync(dateRange, metadata = {}) {
+  triggerIncrementalSync(dateRange, metadata = {}, thirdArg = {}) {
     const mode = getIntegrationMode(this.db);
     if (mode === WBP_MODES.OFF) {
       return { scheduled: false, skipped: true, reason: "integration_off" };
     }
 
     let minDate, maxDate;
-    if (typeof dateRange === "string") {
+    let effectiveMeta = metadata;
+
+    if (
+      typeof dateRange === "string" &&
+      typeof metadata === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(metadata.trim())
+    ) {
+      minDate = dateRange.trim();
+      maxDate = metadata.trim();
+      effectiveMeta = thirdArg;
+    } else if (typeof dateRange === "string") {
       minDate = dateRange;
       maxDate = dateRange;
     } else if (Array.isArray(dateRange)) {
@@ -1124,6 +1209,44 @@ export class WbpAriSynchronizer {
 
     if (!minDate || !maxDate) {
       return { scheduled: false, error: "invalid_date_range" };
+    }
+
+    const metaObj =
+      typeof effectiveMeta === "string"
+        ? { type: effectiveMeta }
+        : effectiveMeta && typeof effectiveMeta === "object"
+          ? effectiveMeta
+          : {};
+
+    const rawType = String(
+      metaObj?.type || metaObj?.reason || dateRange?.type || dateRange?.reason || ""
+    ).toLowerCase().trim();
+
+    if (
+      typeof metaObj?.includeAvailability === "boolean" ||
+      typeof metaObj?.includeRestrictions === "boolean"
+    ) {
+      if (metaObj.includeAvailability) this.pendingNeedsAvailability = true;
+      if (metaObj.includeRestrictions) this.pendingNeedsRestrictions = true;
+    } else if (
+      rawType.startsWith("reservation") ||
+      rawType.startsWith("block") ||
+      rawType.startsWith("maintenance") ||
+      rawType.startsWith("availability") ||
+      rawType.includes("ota_") ||
+      rawType.includes("quarantine")
+    ) {
+      this.pendingNeedsAvailability = true;
+    } else if (
+      rawType.startsWith("pricing") ||
+      rawType.startsWith("restriction") ||
+      rawType.startsWith("rate") ||
+      rawType.startsWith("tariff")
+    ) {
+      this.pendingNeedsRestrictions = true;
+    } else {
+      this.pendingNeedsAvailability = true;
+      this.pendingNeedsRestrictions = true;
     }
 
     this.pendingMinDate = this.pendingMinDate
@@ -1156,17 +1279,19 @@ export class WbpAriSynchronizer {
     return {
       scheduled: true,
       minDate: this.pendingMinDate,
-      maxDate: this.pendingMaxDate
+      maxDate: this.pendingMaxDate,
+      includeAvailability: this.pendingNeedsAvailability,
+      includeRestrictions: this.pendingNeedsRestrictions
     };
   }
 
   requestIncrementalPush(mutationInfo = {}) {
-    return this.triggerIncrementalSync(mutationInfo);
+    return this.triggerIncrementalSync(mutationInfo, mutationInfo);
   }
 
   /**
    * Flushes the pending debounced incremental bounding interval.
-   * Supports both Channex v1 (when configured with apiKey/channexClient) and WBP.
+   * Supports both Channex v1 (when activeProvider === "channex") and WBP.
    */
   async flushIncrementalSync() {
     if (this.debounceTimer) {
@@ -1184,8 +1309,14 @@ export class WbpAriSynchronizer {
 
     const minDate = this.pendingMinDate;
     const maxDate = this.pendingMaxDate;
+    const hasSpecificTarget = this.pendingNeedsAvailability || this.pendingNeedsRestrictions;
+    const includeAvailability = hasSpecificTarget ? Boolean(this.pendingNeedsAvailability) : true;
+    const includeRestrictions = hasSpecificTarget ? Boolean(this.pendingNeedsRestrictions) : true;
+
     this.pendingMinDate = null;
     this.pendingMaxDate = null;
+    this.pendingNeedsAvailability = false;
+    this.pendingNeedsRestrictions = false;
 
     const mode = getIntegrationMode(this.db);
     if (mode === WBP_MODES.OFF) {
@@ -1201,12 +1332,21 @@ export class WbpAriSynchronizer {
         mode: "observe",
         minDate,
         maxDate,
+        includeAvailability,
+        includeRestrictions,
         blocksCount: blocks.length
       };
     }
 
+    const activeProvider = getActiveProvider(this.db);
     const channexCfg = getChannexConfig(this.db);
-    const shouldPushChannex = Boolean(this.channexClient?.apiKey || channexCfg.apiKey);
+    const shouldPushChannex = Boolean(
+      this.channexClient?.apiKey || channexCfg.apiKey || this.explicitChannexClient
+    );
+    const isChannexOnly =
+      activeProvider === "channex" &&
+      shouldPushChannex &&
+      !(this.explicitWbpClient && !this.explicitChannexClient);
 
     const guid = crypto.randomUUID();
     try {
@@ -1214,11 +1354,37 @@ export class WbpAriSynchronizer {
       if (shouldPushChannex) {
         try {
           channexResult = await this.performChannexDeltaSync(minDate, maxDate, {
-            trigger: "debounced_incremental"
+            trigger: "debounced_incremental",
+            includeAvailability,
+            includeRestrictions
           });
         } catch (chxErr) {
+          if (isChannexOnly) throw chxErr;
           console.warn("[Channex ARI Sync] Aviso durante delta incremental:", chxErr.message);
         }
+      }
+
+      if (isChannexOnly) {
+        this.lastSyncTimestamp = new Date().toISOString();
+        if (this.persistentAlertSent) {
+          this.triggerRecoveryAlert();
+          this.persistentAlertSent = false;
+        }
+        this.failureStartTime = null;
+
+        return {
+          flushed: true,
+          success: Boolean(channexResult?.success),
+          provider: "channex",
+          mode: "auto",
+          guid,
+          minDate,
+          maxDate,
+          includeAvailability,
+          includeRestrictions,
+          blocksCount: blocks.length,
+          channexResult
+        };
       }
 
       const res = await this.client.sendARIUpdate(
@@ -1244,6 +1410,8 @@ export class WbpAriSynchronizer {
         guid: res.guid || guid,
         minDate,
         maxDate,
+        includeAvailability,
+        includeRestrictions,
         blocksCount: blocks.length,
         channexResult
       };

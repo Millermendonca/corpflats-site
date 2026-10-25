@@ -175,19 +175,26 @@ export function computeReconciliationScore(pmsRes, otaBooking) {
   const pmsChan = String(pmsRes.channel || "").toLowerCase();
   const otaChan = String(otaBooking.channel || otaBooking.Channel || "").toLowerCase();
 
-  const isPmsOta = pmsChan.includes("booking") || pmsChan.includes("airbnb");
+  const isPmsOta =
+    pmsChan.includes("booking") ||
+    pmsChan.includes("airbnb") ||
+    pmsChan.includes("expedia") ||
+    Boolean(pmsRes.channexBookingId || pmsRes.channexRevisionId);
   const isOtaBooking = otaChan.includes("booking");
   const isOtaAirbnb = otaChan.includes("airbnb");
+  const isOtaExpedia = otaChan.includes("expedia");
 
   const exactChannelMatch = Boolean(
-    ((isOtaBooking && pmsChan.includes("booking")) || (isOtaAirbnb && pmsChan.includes("airbnb"))) ||
+    (isOtaBooking && pmsChan.includes("booking")) ||
+    (isOtaAirbnb && pmsChan.includes("airbnb")) ||
+    (isOtaExpedia && pmsChan.includes("expedia")) ||
     (otaChan && pmsChan && otaChan === pmsChan)
   );
 
   if (exactChannelMatch) {
     score += 20;
     reasons.push(`Canal idêntico: ${otaChan}`);
-  } else if (isPmsOta && (isOtaBooking || isOtaAirbnb)) {
+  } else if (isPmsOta && (isOtaBooking || isOtaAirbnb || isOtaExpedia)) {
     // Both are OTAs but different channel (e.g. booked airbnb vs typed booking)
     score += 5;
     discrepancies.push(`Canais OTA divergentes: PMS=${pmsChan} vs OTA=${otaChan}`);
@@ -373,12 +380,30 @@ export function applySafeReconciliationLink(pmsRes, otaBooking, options = {}) {
 
   pmsRes.externalOrderId = externalOrderId;
   pmsRes.wbpBookingId = wbpBookingId;
+  if (otaBooking.channexBookingId) pmsRes.channexBookingId = otaBooking.channexBookingId;
+  if (otaBooking.channexRevisionId) pmsRes.channexRevisionId = otaBooking.channexRevisionId;
+  const otaCode = otaBooking.otaReservationCode || otaBooking.ota_reservation_code || null;
+  if (otaCode) {
+    pmsRes.otaReservationCode = otaCode;
+    pmsRes.ota_reservation_code = otaCode;
+  }
+  if (otaBooking.deposits !== undefined && pmsRes.deposits === undefined) {
+    pmsRes.deposits = otaBooking.deposits;
+  }
+  const cTaxes = otaBooking.collectedTaxes ?? otaBooking.collected_taxes;
+  if (cTaxes !== undefined && pmsRes.collectedTaxes === undefined) {
+    pmsRes.collectedTaxes = cTaxes;
+    pmsRes.collected_taxes = cTaxes;
+  }
   pmsRes.wbpSynced = true;
   pmsRes.wbpMatchedAt = new Date().toISOString();
   pmsRes.wbpLinkMeta = {
     linkedAt: new Date().toISOString(),
     externalOrderId,
     wbpBookingId,
+    channexBookingId: otaBooking.channexBookingId || null,
+    channexRevisionId: otaBooking.channexRevisionId || null,
+    otaReservationCode: otaCode,
     otaChannel: otaBooking.channel || otaBooking.Channel,
     otaPaymentCollect: otaBooking.paymentCollect
   };
@@ -389,7 +414,7 @@ export function applySafeReconciliationLink(pmsRes, otaBooking, options = {}) {
   pmsRes.auditLogs.push({
     timestamp: new Date().toISOString(),
     action: "WBP_MANUAL_RECONCILIATION_LINKED",
-    details: `Reserva manual vinculada com sucesso à reserva WebBookingPro #${externalOrderId}. Flat, tarifas e pagamentos originais estritamente preservados.`
+    details: `Reserva manual vinculada com sucesso à reserva OTA #${externalOrderId}. Flat, tarifas e pagamentos originais estritamente preservados.`
   });
 
   return pmsRes;
@@ -460,11 +485,15 @@ export function generateReconciliationReport({ db, otaBookings = [], options = {
     }
   }
 
-  // Find active manual reservations in PMS that have channel = booking/airbnb but no OTA counterpart
+  // Find active manual reservations in PMS that have channel = booking/airbnb/expedia or channexBookingId/channexRevisionId but no OTA counterpart
   const unmatchedPms = pmsReservations.filter(r => {
     if (r.status === "cancelada" || r.status === "cancelled") return false;
     const chan = String(r.channel || "").toLowerCase();
-    const isOta = chan.includes("booking") || chan.includes("airbnb");
+    const isOta =
+      chan.includes("booking") ||
+      chan.includes("airbnb") ||
+      chan.includes("expedia") ||
+      Boolean(r.channexBookingId || r.channexRevisionId);
     if (!isOta) return false;
     return !pmsMatchedIds.has(r.id || r.code);
   });

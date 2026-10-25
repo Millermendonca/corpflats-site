@@ -252,6 +252,11 @@ export class ChannexClient {
     return this.request("PUT", `/room_types/${roomTypeId}`, { room_type: roomType }, options);
   }
 
+  async deleteRoomType(roomTypeId, options = {}) {
+    if (!roomTypeId) throw new Error("roomTypeId é obrigatório para deleteRoomType.");
+    return this.request("DELETE", `/room_types/${roomTypeId}`, null, options);
+  }
+
   // ── Rate Plans API ───────────────────────────────────────────────────────
 
   async listRatePlans(propertyId = this.propertyId, options = {}) {
@@ -273,14 +278,20 @@ export class ChannexClient {
     return this.request("PUT", `/rate_plans/${ratePlanId}`, { rate_plan: ratePlan }, options);
   }
 
+  async deleteRatePlan(ratePlanId, options = {}) {
+    if (!ratePlanId) throw new Error("ratePlanId é obrigatório para deleteRatePlan.");
+    return this.request("DELETE", `/rate_plans/${ratePlanId}`, null, options);
+  }
+
   // ── 1-Click CorpFlats Inventory Auto-Setup ───────────────────────────────
 
   /**
    * Automatically discovers or creates the CorpFlats Soho Residence inventory on Channex:
-   * - Property: "CorpFlats Soho Residence" (BRL, America/Sao_Paulo, state_length: 500)
+   * - Property: "CorpFlats Soho Residence" (BRL, America/Sao_Paulo, property_type: "apart_hotel", state_length: 500)
    * - Room Type: "Flat" (count_of_rooms: 19, occ_adults: 3, default_occupancy: 2)
-   * - Rate Plan 1: "Sem Café" (sell_mode: per_person, occupancies 1, 2 [primary], 3)
-   * - Rate Plan 2: "Com Café" (sell_mode: per_person, occupancies 1, 2 [primary], 3)
+   * - Rate Plan 1: "Sem Café" (sell_mode: per_person, occupancies 1, 2 [primary], 3, ui_read_only: true)
+   * - Rate Plan 2: "Com Café" (sell_mode: per_person, occupancies 1, 2 [primary], 3, ui_read_only: true)
+   * - Optional Webhook registration when options.callbackUrl is supplied.
    *
    * @param {object} [options]
    * @returns {Promise<object>}
@@ -311,7 +322,11 @@ export class ChannexClient {
           address: "Soho Residence",
           zip_code: "28035-000",
           timezone: this.timezone || "America/Sao_Paulo",
-          property_type: "aparthotel",
+          property_type: "apart_hotel",
+          meta: {
+            pms: "Guest-Flow-Manager",
+            property_code: "CORPFLATS-SOHO"
+          },
           settings: {
             allow_availability_autoupdate_on_confirmation: true,
             allow_availability_autoupdate_on_modification: false,
@@ -345,7 +360,11 @@ export class ChannexClient {
           occ_children: 1,
           occ_infants: 1,
           default_occupancy: 2,
-          room_kind: "room"
+          room_kind: "room",
+          meta: {
+            pms: "Guest-Flow-Manager",
+            room_code: "flat"
+          }
         },
         reqOpts
       );
@@ -375,6 +394,11 @@ export class ChannexClient {
           rate_mode: "manual",
           currency: this.currency || "BRL",
           meal_type: "none",
+          ui_read_only: true,
+          meta: {
+            pms: "Guest-Flow-Manager",
+            plan_code: "sem_cafe"
+          },
           options: [
             { occupancy: 1, is_primary: false, rate: "250.00" },
             { occupancy: 2, is_primary: true, rate: "280.00" },
@@ -405,6 +429,11 @@ export class ChannexClient {
           rate_mode: "manual",
           currency: this.currency || "BRL",
           meal_type: "breakfast",
+          ui_read_only: true,
+          meta: {
+            pms: "Guest-Flow-Manager",
+            plan_code: "com_cafe"
+          },
           options: [
             { occupancy: 1, is_primary: false, rate: "285.00" },
             { occupancy: 2, is_primary: true, rate: "350.00" },
@@ -414,6 +443,21 @@ export class ChannexClient {
         reqOpts
       );
       ratePlanComCafeId = createdComCafe?.data?.id;
+    }
+
+    let webhookId = null;
+    if (options.callbackUrl) {
+      const createdWh = await this.createWebhook(
+        {
+          property_id: propertyId,
+          callback_url: options.callbackUrl,
+          event_mask: options.eventMask || "*",
+          is_active: true,
+          send_data: true
+        },
+        reqOpts
+      );
+      webhookId = createdWh?.data?.id || null;
     }
 
     this.propertyId = propertyId;
@@ -437,7 +481,8 @@ export class ChannexClient {
       propertyId,
       roomTypeId,
       ratePlanSemCafeId,
-      ratePlanComCafeId
+      ratePlanComCafeId,
+      webhookId
     };
   }
 
@@ -457,20 +502,22 @@ export class ChannexClient {
 
   /**
    * POST /api/v1/availability
-   * Updates availability per room type and returns the Channex task IDs.
+   * Updates availability per room type and returns the Channex task IDs and any warnings.
    *
    * @param {Array<object>} values
    * @param {object} [options]
-   * @returns {Promise<{ data: Array, meta: object, taskIds: Array<string> }>}
+   * @returns {Promise<{ data: Array, meta: object, warnings: Array, taskIds: Array<string> }>}
    */
   async updateAvailability(values = [], options = {}) {
     const res = await this.request("POST", "/availability", { values }, options);
     const taskIds = Array.isArray(res?.data)
       ? res.data.map((item) => item?.id).filter(Boolean)
       : [];
+    const warnings = res?.meta?.warnings || res?.warnings || [];
     return {
       data: res?.data || [],
       meta: res?.meta || { message: "Success" },
+      warnings,
       taskIds
     };
   }
@@ -509,10 +556,11 @@ export class ChannexClient {
     const taskIds = Array.isArray(res?.data)
       ? res.data.map((item) => item?.id).filter(Boolean)
       : [];
+    const warnings = res?.meta?.warnings || res?.warnings || [];
     return {
       data: res?.data || [],
       meta: res?.meta || { message: "Success" },
-      warnings: res?.warnings || [],
+      warnings,
       taskIds
     };
   }
@@ -541,6 +589,13 @@ export class ChannexClient {
   }
 
   /**
+   * Alias for getBookingRevisionById used by webhook callback handlers.
+   */
+  async getBookingRevision(revisionId, options = {}) {
+    return this.getBookingRevisionById(revisionId, options);
+  }
+
+  /**
    * POST /api/v1/booking_revisions/:id/ack
    * Mandatory acknowledgement after a booking revision is durably persisted and processed.
    */
@@ -557,6 +612,17 @@ export class ChannexClient {
     return this.request("GET", `/bookings/${bookingId}`, null, options);
   }
 
+  /**
+   * GET /api/v1/bookings
+   */
+  async listBookings({ propertyId = this.propertyId, page = 1, limit = 50 } = {}, options = {}) {
+    const params = new URLSearchParams();
+    if (propertyId) params.set("filter[property_id]", propertyId);
+    params.set("pagination[page]", String(page));
+    params.set("pagination[limit]", String(limit));
+    return this.request("GET", `/bookings?${params.toString()}`, null, options);
+  }
+
   // ── White-Label Headless IFrame One-Time Token API ───────────────────────
 
   /**
@@ -564,7 +630,20 @@ export class ChannexClient {
    * Generates a 15-minute single-use token to open the Channex Channels IFrame inside CorpFlats PMS.
    */
   async createOneTimeToken(
-    { propertyId = this.propertyId, groupId = this.groupId, username = "CorpFlats PMS Admin" } = {},
+    {
+      propertyId = this.propertyId,
+      groupId = this.groupId,
+      username = "Admin CorpFlats",
+      redirectTo = "/channels",
+      language = "pt",
+      channels = "",
+      channelsFilter = "",
+      availableChannels = "",
+      allowNotificationsEdit = false,
+      messagesShowBooking,
+      hideMessagesAttachBtn,
+      readOnlyAvailability
+    } = {},
     options = {}
   ) {
     if (!propertyId) throw new Error("propertyId é obrigatório para createOneTimeToken.");
@@ -578,7 +657,20 @@ export class ChannexClient {
     const res = await this.request("POST", "/auth/one_time_token", payload, options);
     const token = res?.data?.token || "";
     const iframeUrl = token
-      ? this.buildIframeUrl({ token, propertyId, groupId, language: "pt" })
+      ? this.buildIframeUrl({
+          token,
+          propertyId,
+          groupId,
+          redirectTo,
+          language,
+          channels,
+          channelsFilter,
+          availableChannels,
+          allowNotificationsEdit,
+          messagesShowBooking,
+          hideMessagesAttachBtn,
+          readOnlyAvailability
+        })
       : "";
     return {
       token,
@@ -588,7 +680,7 @@ export class ChannexClient {
   }
 
   /**
-   * Builds the Channex Headless IFrame URL in Portuguese.
+   * Builds the Channex Headless IFrame URL in Portuguese with full parameter support.
    */
   buildIframeUrl({
     token,
@@ -597,7 +689,12 @@ export class ChannexClient {
     redirectTo = "/channels",
     language = "pt",
     channels = "",
-    allowNotificationsEdit = false
+    channelsFilter = "",
+    availableChannels = "",
+    allowNotificationsEdit = false,
+    messagesShowBooking,
+    hideMessagesAttachBtn,
+    readOnlyAvailability
   } = {}) {
     const params = new URLSearchParams();
     params.set("oauth_session_key", token || "");
@@ -607,11 +704,56 @@ export class ChannexClient {
     if (groupId) params.set("group_id", groupId);
     if (language) params.set("lng", language);
     if (channels) params.set("channels", channels);
+    if (channelsFilter) params.set("channels_filter", channelsFilter);
+    if (availableChannels) params.set("available_channels", availableChannels);
     params.set("allow_notifications_edit", allowNotificationsEdit ? "true" : "false");
+    if (typeof messagesShowBooking === "boolean") {
+      params.set("messages_show_booking", messagesShowBooking ? "true" : "false");
+    }
+    if (typeof hideMessagesAttachBtn === "boolean") {
+      params.set("hide_messages_attach_btn", hideMessagesAttachBtn ? "true" : "false");
+    }
+    if (typeof readOnlyAvailability === "boolean") {
+      params.set("read_only_availability", readOnlyAvailability ? "true" : "false");
+    }
     return `${this.appOrigin.replace(/\/+$/, "")}/auth/exchange?${params.toString()}`;
   }
 
-  // ── Webhooks, Messages & Reviews API ─────────────────────────────────────
+  // ── Identity, Tasks, Health & Channels API ───────────────────────────────
+
+  async getWhoAmI(options = {}) {
+    return this.request("GET", "/whoami", null, options);
+  }
+
+  async listTasks({ propertyId = this.propertyId, page = 1, limit = 50 } = {}, options = {}) {
+    const params = new URLSearchParams();
+    if (propertyId) params.set("filter[property_id]", propertyId);
+    params.set("pagination[page]", String(page));
+    params.set("pagination[limit]", String(limit));
+    return this.request("GET", `/tasks?${params.toString()}`, null, options);
+  }
+
+  async getTask(taskId, options = {}) {
+    if (!taskId) throw new Error("taskId é obrigatório para getTask.");
+    return this.request("GET", `/tasks/${taskId}`, null, options);
+  }
+
+  async getPropertyHealth(propertyId = this.propertyId, options = {}) {
+    if (!propertyId) throw new Error("propertyId é obrigatório para getPropertyHealth.");
+    return this.request("GET", `/health_check/${propertyId}`, null, options);
+  }
+
+  async listChannels(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/channels${query}`, null, options);
+  }
+
+  async getChannel(channelId, options = {}) {
+    if (!channelId) throw new Error("channelId é obrigatório para getChannel.");
+    return this.request("GET", `/channels/${channelId}`, null, options);
+  }
+
+  // ── Webhooks, Signing Keys, Messages, Reviews, Live Feed & Availability Rules ──
 
   async listWebhooks(propertyId = this.propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
@@ -620,6 +762,116 @@ export class ChannexClient {
 
   async createWebhook(webhook = {}, options = {}) {
     return this.request("POST", "/webhooks", { webhook }, options);
+  }
+
+  async updateWebhook(webhookId, webhook = {}, options = {}) {
+    if (!webhookId) throw new Error("webhookId é obrigatório para updateWebhook.");
+    return this.request("PUT", `/webhooks/${webhookId}`, { webhook }, options);
+  }
+
+  async deleteWebhook(webhookId, options = {}) {
+    if (!webhookId) throw new Error("webhookId é obrigatório para deleteWebhook.");
+    return this.request("DELETE", `/webhooks/${webhookId}`, null, options);
+  }
+
+  async testWebhook(webhookIdOrPayload = {}, options = {}) {
+    if (typeof webhookIdOrPayload === "string" && webhookIdOrPayload.trim()) {
+      return this.request("POST", `/webhooks/${webhookIdOrPayload.trim()}/test`, {}, options);
+    }
+    const payload =
+      webhookIdOrPayload && typeof webhookIdOrPayload === "object" && !webhookIdOrPayload.webhook
+        ? { webhook: webhookIdOrPayload }
+        : webhookIdOrPayload || {};
+    return this.request("POST", "/webhooks/test", payload, options);
+  }
+
+  async getWebhookLogs(paramsOrWebhookId = {}, options = {}) {
+    if (typeof paramsOrWebhookId === "string" && paramsOrWebhookId.trim()) {
+      return this.request("GET", `/webhooks/${paramsOrWebhookId.trim()}/logs`, null, options);
+    }
+    const { propertyId = this.propertyId, webhookId, page = 1, limit = 50 } = paramsOrWebhookId || {};
+    const params = new URLSearchParams();
+    if (propertyId) params.set("filter[property_id]", propertyId);
+    if (webhookId) params.set("filter[webhook_id]", webhookId);
+    params.set("pagination[page]", String(page));
+    params.set("pagination[limit]", String(limit));
+    return this.request("GET", `/webhook_logs?${params.toString()}`, null, options);
+  }
+
+  async listSigningKeys(billingAccountOrOptions = {}, options = {}) {
+    if (typeof billingAccountOrOptions === "string" && billingAccountOrOptions.trim()) {
+      return this.request(
+        "GET",
+        `/signing_keys?filter[billing_account_id]=${encodeURIComponent(billingAccountOrOptions.trim())}`,
+        null,
+        options
+      );
+    }
+    const billingAccountId = billingAccountOrOptions?.billingAccountId || billingAccountOrOptions?.billing_account_id;
+    const reqOpts = billingAccountId ? options : billingAccountOrOptions;
+    const query = billingAccountId
+      ? `?filter[billing_account_id]=${encodeURIComponent(billingAccountId)}`
+      : "";
+    return this.request("GET", `/signing_keys${query}`, null, reqOpts);
+  }
+
+  async createSigningKey(signingKey = {}, options = {}) {
+    const payload = signingKey && signingKey.signing_key ? signingKey : { signing_key: signingKey };
+    return this.request("POST", "/signing_keys", payload, options);
+  }
+
+  async generateSigningKeyVersion(keyId, options = {}) {
+    if (!keyId) throw new Error("keyId é obrigatório para generateSigningKeyVersion.");
+    return this.request("POST", `/signing_keys/${keyId}/generate`, {}, options);
+  }
+
+  async rotateSigningKey(keyId, options = {}) {
+    if (!keyId) throw new Error("keyId é obrigatório para rotateSigningKey.");
+    return this.request("POST", `/signing_keys/${keyId}/rotate`, {}, options);
+  }
+
+  async deleteSigningKey(keyId, options = {}) {
+    if (!keyId) throw new Error("keyId é obrigatório para deleteSigningKey.");
+    return this.request("DELETE", `/signing_keys/${keyId}`, null, options);
+  }
+
+  // ── Booking OTA Channel Actions ──────────────────────────────────────────
+
+  async reportNoShow(bookingId, { waivedFees = true, penaltyAmount } = {}, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para reportNoShow.");
+    const noShowPayload = { waived_fees: Boolean(waivedFees) };
+    if (penaltyAmount != null) noShowPayload.penalty_amount = String(penaltyAmount);
+    return this.request("POST", `/bookings/${bookingId}/no_show`, { no_show_report: noShowPayload }, options);
+  }
+
+  async reportInvalidCard(bookingId, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para reportInvalidCard.");
+    return this.request("POST", `/bookings/${bookingId}/invalid_card`, {}, options);
+  }
+
+  async cancelDueInvalidCard(bookingId, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para cancelDueInvalidCard.");
+    return this.request("POST", `/bookings/${bookingId}/cancel_due_invalid_card`, {}, options);
+  }
+
+  async reportGuestMisconduct(bookingId, report = {}, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para reportGuestMisconduct.");
+    return this.request("POST", `/bookings/${bookingId}/guest_misconduct`, { misconduct_report: report }, options);
+  }
+
+  async requestStayChange(bookingId, stayChange = {}, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para requestStayChange.");
+    return this.request("POST", `/bookings/${bookingId}/change_stay`, { stay_change: stayChange }, options);
+  }
+
+  async getBookingPriceBreakdown(bookingId, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para getBookingPriceBreakdown.");
+    return this.request("GET", `/bookings/${bookingId}/price_breakdown`, null, options);
+  }
+
+  async getBookingPayoutDetails(bookingId, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para getBookingPayoutDetails.");
+    return this.request("GET", `/bookings/${bookingId}/payout_details`, null, options);
   }
 
   async getBookingMessages(bookingId, options = {}) {
@@ -637,6 +889,21 @@ export class ChannexClient {
     );
   }
 
+  async sendBookingAttachment(bookingId, attachment = {}, options = {}) {
+    if (!bookingId) throw new Error("bookingId é obrigatório para sendBookingAttachment.");
+    return this.request("POST", `/bookings/${bookingId}/messages`, { message: attachment }, options);
+  }
+
+  async closeMessageThread(threadId, options = {}) {
+    if (!threadId) throw new Error("threadId é obrigatório para closeMessageThread.");
+    return this.request("POST", `/message_threads/${threadId}/close`, {}, options);
+  }
+
+  async markThreadAsNoReplyNeeded(threadId, options = {}) {
+    if (!threadId) throw new Error("threadId é obrigatório para markThreadAsNoReplyNeeded.");
+    return this.request("POST", `/message_threads/${threadId}/no_reply_needed`, {}, options);
+  }
+
   async listReviews(propertyId = this.propertyId, options = {}) {
     const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
     return this.request("GET", `/reviews${query}`, null, options);
@@ -650,6 +917,40 @@ export class ChannexClient {
       { reply: { reply: String(replyText || "") } },
       options
     );
+  }
+
+  async listLiveFeed(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/live_feed${query}`, null, options);
+  }
+
+  async getLiveFeedEvent(eventId, options = {}) {
+    if (!eventId) throw new Error("eventId é obrigatório para getLiveFeedEvent.");
+    return this.request("GET", `/live_feed/${eventId}`, null, options);
+  }
+
+  async resolveLiveFeedEvent(eventId, resolution = {}, options = {}) {
+    if (!eventId) throw new Error("eventId é obrigatório para resolveLiveFeedEvent.");
+    return this.request("POST", `/live_feed/${eventId}/resolve`, { resolution }, options);
+  }
+
+  async listAvailabilityRules(propertyId = this.propertyId, options = {}) {
+    const query = propertyId ? `?filter[property_id]=${encodeURIComponent(propertyId)}` : "";
+    return this.request("GET", `/availability_rules${query}`, null, options);
+  }
+
+  async createAvailabilityRule(availabilityRule = {}, options = {}) {
+    return this.request("POST", "/availability_rules", { availability_rule: availabilityRule }, options);
+  }
+
+  async updateAvailabilityRule(ruleId, availabilityRule = {}, options = {}) {
+    if (!ruleId) throw new Error("ruleId é obrigatório para updateAvailabilityRule.");
+    return this.request("PUT", `/availability_rules/${ruleId}`, { availability_rule: availabilityRule }, options);
+  }
+
+  async deleteAvailabilityRule(ruleId, options = {}) {
+    if (!ruleId) throw new Error("ruleId é obrigatório para deleteAvailabilityRule.");
+    return this.request("DELETE", `/availability_rules/${ruleId}`, null, options);
   }
 }
 
