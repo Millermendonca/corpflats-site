@@ -1119,7 +1119,13 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
             r.status !== "cancelada" &&
             (String(r.b2bReservationNumber || "") === subjResNum ||
               String(r.externalReservationNumber || "") === subjResNum) &&
-            Boolean(r.agencyName || r.companyName)
+            Boolean(
+              r.agencyName &&
+              r.companyName &&
+              !String(r.companyName).includes("HOTEL CORPFLATS") &&
+              Number(r.dailyRate) > 0 &&
+              Number(r.dailyRate) < 10000
+            )
         );
 
       const needsB2bParse =
@@ -2457,6 +2463,7 @@ function htmlToStructuredLines(html = "") {
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
     .replace(/<head\b[^<]*(?:(?!<\/head>)<[^<]*)*<\/head>/gi, " ")
+    .replace(/[\r\n]+/g, " ")
     .replace(/<\/(?:td|th)\s*>\s*<(?:td|th)\b[^>]*>/gi, " : ")
     .replace(/<(?:br|hr)\b[^>]*>/gi, "\n")
     .replace(/<\/(?:tr|p|div|li|h[1-6]|table|section|article)\s*>/gi, "\n")
@@ -2467,7 +2474,6 @@ function htmlToStructuredLines(html = "") {
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
-    .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/:\s*:/g, ":")
     .replace(/\n\s*\n+/g, "\n")
@@ -2479,10 +2485,22 @@ function htmlToStructuredLines(html = "") {
  */
 function cleanB2bFieldValue(val = "") {
   return String(val || "")
-    .split(/\s*(?:\||;\s+|\s+-\s+(?=(?:Unidade|Filial|Emissor|Agente|Solicitante|Empresa|Centro\s+de\s+Custo|Check-?in|Check-?out|Entrada|Sa[ií]da|Tarifa|Di[aá]ria|Cart[aã]o|Token|RLOC|Localizador)\b))/i)[0]
-    .replace(/\s+(?:Unidade(?:\s*[\/\-]?\s*POS)?|Filial|Ponto\s+de\s+Venda|Emissor|Agente|Solicitante|Empresa(?:\s+Cliente)?|Centro\s+de\s+Custo|Check-?in|Check-?out|Entrada|Sa[ií]da|Tarifa|Di[aá]ria|Cart[aã]o|Token(?:\s+VCN)?|RLOC|Localizador)\s*[:\-].*$/i, "")
+    .split(/\s*(?:\||;\s+|\s+-\s+(?=(?:Unidade|Filial|Ponto\s+de\s+Venda|Emissor|Agente|Solicitante|Empresa|Centro\s+de\s+Custo|Hotel|Apto|Apartamento|Per[ií]odo|H[oó]spede|Check-?in|Check-?out|Entrada|Sa[ií]da|Tarifa|Di[aá]ria|Valor|Cart[aã]o|Token|RLOC|Localizador)\b))/i)[0]
+    .replace(/\s+(?:Status|Unidade(?:\s*[\/\-]?\s*POS)?|Filial|Ponto\s+de\s+Venda|Emissor|Agente|Solicitante|Empresa(?:\s+Cliente)?|Centro\s+de\s+Custo|Hotel|Apto|Apartamento|Per[ií\ufffd?]?odo|H[oó\ufffd?]?spedes?|Hospedes?|Check-?in|Check-?out|Entrada|Sa[ií\ufffd?]?da|Garantia(?:\s+NO\s+SHOW)?|Forma\s+de\s+pagamento|Despesas(?:\s+autorizadas)?|Tarifa|Di[aá\ufffd?]?ria|Valor(?:\s+m[eé\ufffd?]?dio)?|Observa[cç\ufffd?][aã\ufffd?]?o|Cart[aã\ufffd?]?o|Token(?:\s+VCN)?|RLOC|Localizador)\s*[:\-].*$/i, "")
     .replace(/^[:\-\s]+|[:\-\s]+$/g, "")
     .trim();
+}
+
+function parseB2bMoney(raw = "") {
+  const s = String(raw || "").trim();
+  if (!s) return 0;
+  if (s.includes(".") && s.includes(",")) {
+    return Number(s.replace(/\./g, "").replace(",", ".")) || 0;
+  }
+  if (s.includes(",")) {
+    return Number(s.replace(",", ".")) || 0;
+  }
+  return Number(s) || 0;
 }
 
 /**
@@ -2500,7 +2518,8 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const htmlText = opts.htmlText || opts.html || htmlArg || "";
   const subject = opts.subject || subjectArg || "";
   const combinedHtml = String(htmlText || "");
-  const cleanText = [String(rawText || "").replace(/\r/g, "\n"), htmlToStructuredLines(combinedHtml)]
+  const structuredHtmlLines = htmlToStructuredLines(combinedHtml);
+  const cleanText = [structuredHtmlLines, String(rawText || "").replace(/\r/g, "\n")]
     .filter(Boolean)
     .join("\n");
   const fullScan = `${subject || ""}\n${cleanText}`;
@@ -2514,7 +2533,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const resNumMatch =
     fullScan.match(/Confirma[cç][aã]o\s+(?:d[ae]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/N[uú°º]?(?:mero)?\s+d[ae]\s+(?:Reserva|Confirma[cç][aã]o)\s*[\s:\-#]*(\d{7,10})/i) ||
-    fullScan.match(/Reserva\s+B2B\s*[\s:\-#]*(\d{7,10})/i) ||
+    fullScan.match(/Reserva(?:\s+B2B)?\s*[\s:\-#]+(\d{7,10})/i) ||
     fullScan.match(/C[oó]d(?:igo)?\.?\s+Reserva\s*[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/\b(25\d{6})\b/);
   const b2bReservationNumber = resNumMatch ? resNumMatch[1].trim() : "";
@@ -2543,31 +2562,56 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   let guestName = "";
   const subjGuestMatch = String(subject || "").match(/\(([^/)]+)\/([^)]+)\)/);
   if (subjGuestMatch) {
-    const last = subjGuestMatch[1].trim();
-    const first = subjGuestMatch[2].trim();
-    guestName = `${first} ${last}`.replace(/\s+/g, " ").trim();
+    const part1 = subjGuestMatch[1].trim();
+    const part2 = subjGuestMatch[2].trim();
+    // Se a segunda parte tiver preposição (DA/DE/DO/DOS) ou múltiplos sobrenomes enquanto a primeira é nome, preserva part1 + part2
+    if (/\b(?:DE|DA|DO|DOS|DAS)\b/i.test(part2) && !/\b(?:DE|DA|DO|DOS|DAS)\b/i.test(part1)) {
+      guestName = `${part1} ${part2}`.replace(/\s+/g, " ").trim();
+    } else {
+      guestName = `${part2} ${part1}`.replace(/\s+/g, " ").trim();
+    }
   }
   const bodyGuestMatch =
-    fullScan.match(/(?:H[oóô\ufffd?]?spede|Hospede)(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
-    fullScan.match(/Passageiro(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
+    fullScan.match(/(?:H[oóô\ufffd?]?spedes?|Hospedes?)(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
+    fullScan.match(/Passageiros?(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
     fullScan.match(/Pax\s*[:\-]+\s*([^\n|]+)/i);
   if (bodyGuestMatch) {
     const rawPax = cleanB2bFieldValue(bodyGuestMatch[1]).replace(/\s*\(ADT\).*$/i, "").trim();
     if (rawPax.includes("/")) {
       const [last, first] = rawPax.split("/").map(s => s.trim());
       if (first && last) guestName = `${first} ${last}`;
-    } else if (rawPax) {
+    } else if (rawPax && rawPax.length >= 4) {
       guestName = rawPax;
     }
   }
 
-  // 4. Datas Check-in / Check-out
+  // 4. Datas Check-in / Check-out (DD/MM/YYYY ou Período: 26/out - 30/out)
   let checkinDate = "";
   let checkoutDate = "";
   const checkinMatch = fullScan.match(/Check-?in[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Entrada[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i);
   const checkoutMatch = fullScan.match(/Check-?out[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i) || fullScan.match(/Sa[ií\ufffd?]?da[\s:\-]*(\d{2}\/\d{2}\/\d{4})/i);
   if (checkinMatch) checkinDate = dmyToIso(checkinMatch[1]);
   if (checkoutMatch) checkoutDate = dmyToIso(checkoutMatch[1]);
+
+  if (!checkinDate || !checkoutDate) {
+    const periodMatch = fullScan.match(
+      /Per[ií\ufffd?]?odo\s*[:\-]*\s*(\d{1,2})\s*\/\s*([a-zç]{3})\s*-\s*(\d{1,2})\s*\/\s*([a-zç]{3})/i
+    );
+    if (periodMatch) {
+      const monthMap = {
+        jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06",
+        jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12"
+      };
+      const baseYear = checkinDate ? Number(checkinDate.slice(0, 4)) : new Date().getFullYear();
+      const d1 = String(periodMatch[1]).padStart(2, "0");
+      const m1 = monthMap[periodMatch[2].toLowerCase()] || "01";
+      const d2 = String(periodMatch[3]).padStart(2, "0");
+      const m2 = monthMap[periodMatch[4].toLowerCase()] || m1;
+      const y2 = Number(m2) < Number(m1) ? baseYear + 1 : baseYear;
+      if (!checkinDate) checkinDate = `${baseYear}-${m1}-${d1}`;
+      if (!checkoutDate) checkoutDate = `${y2}-${m2}-${d2}`;
+    }
+  }
 
   // 5. Tarifa, Comissão e Café da Manhã
   const hasBreakfast = !/\bSEM\s+CAF[EÉ\ufffd?]/i.test(fullScan);
@@ -2579,15 +2623,15 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const b2bRatePolicy = b2bCommissionPct > 0 || /\bCOMISSIONAD[AO]\b/i.test(fullScan) ? "COMISSIONADA" : "NET";
 
   const rateMatch =
-    fullScan.match(/(?:Di[aá\ufffd?]?ria(?:\s+M[eé\ufffd?]?dia)?|Valor\s+da\s+Di[aá\ufffd?]?ria|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)[\s:\-]*R\$\s*([\d.,]+)/i) ||
+    fullScan.match(/(?:Di[aá\ufffd?]?ria(?:\s+M[eé\ufffd?]?dia)?|Valor\s+(?:m[eé\ufffd?]?dio\s+)?da\s+Di[aá\ufffd?]?ria(?:\s+para\s+o\s+per[ií\ufffd?]?odo)?|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)[\s:\-]*R\$\s*([\d.,]+)/i) ||
     fullScan.match(/R\$\s*(280[.,]00|300[.,]00|313[.,]00|400[.,]00)/i);
   let dailyRate = 0;
   if (rateMatch) {
-    dailyRate = Number(String(rateMatch[1]).replace(/\./g, "").replace(",", ".")) || 0;
+    dailyRate = parseB2bMoney(rateMatch[1]);
   } else {
     const totalMatch = fullScan.match(/(?:Valor\s+Total|Total(?:\s+da\s+Reserva|\s+Geral)?)[\s:\-]*R\$\s*([\d.,]+)/i);
     if (totalMatch) {
-      const totalVal = Number(String(totalMatch[1]).replace(/\./g, "").replace(",", ".")) || 0;
+      const totalVal = parseB2bMoney(totalMatch[1]);
       const nightsCount =
         checkinDate && checkoutDate
           ? Math.max(1, Math.round((new Date(`${checkoutDate}T12:00:00Z`) - new Date(`${checkinDate}T12:00:00Z`)) / 86400000))
@@ -2602,6 +2646,35 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const agentMatch = fullScan.match(/(?:Emissor|Agente|Solicitante)\s*[:\-]+\s*([^\n]+)/i);
   const companyMatch = fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]+\s*([^\n]+)/i);
   const costCenterMatch = fullScan.match(/Centro\s+de\s+Custo\s*[:\-]+\s*([A-Za-z0-9._-]+)/i);
+
+  let agencyName = agencyMatch ? cleanB2bFieldValue(agencyMatch[1]) : "";
+  const agencyPosUnit = posMatch ? cleanB2bFieldValue(posMatch[1]) : "";
+  const agencyAgentName = agentMatch ? cleanB2bFieldValue(agentMatch[1]) : "";
+  let companyName = companyMatch ? cleanB2bFieldValue(companyMatch[1]) : "";
+
+  // Inteligência para formato BOOKING_WS da B2B Reservas onde "Empresa:" traz a TMC (ex: PAYTRACK ou TRIPSERVICE - CBO...) e "Ponto de venda:" traz a Empresa Cliente (ex: UNIAO QUIMICA)
+  if (!agencyName) {
+    const knownTmcRegex = /\b(PAYTRACK|TRIPSERVICE|COPASTUR|AVIPAM|OPUS(?:\s+VIAGENS)?|KONTIK|VOETUR|FLYTOUR|ALATUR|BCD|CVC| REXTUR|RESERVA\s+FACIL|ONFLY|VOLL)\b/i;
+    if (companyName.includes(" - ")) {
+      const [part1, ...rest] = companyName.split(" - ").map(s => s.trim());
+      if (knownTmcRegex.test(part1)) {
+        agencyName = part1.charAt(0).toUpperCase() + part1.slice(1).toLowerCase();
+        companyName = rest.join(" - ").trim() || companyName;
+      }
+    } else if (knownTmcRegex.test(companyName) || knownTmcRegex.test(agencyAgentName)) {
+      const tmcMatch = companyName.match(knownTmcRegex) || agencyAgentName.match(knownTmcRegex);
+      if (tmcMatch) {
+        const rawTmc = tmcMatch[1].trim();
+        agencyName = rawTmc.charAt(0).toUpperCase() + rawTmc.slice(1).toLowerCase();
+      }
+      if (agencyPosUnit && companyName.toUpperCase() === agencyName.toUpperCase()) {
+        companyName =
+          agencyPosUnit.toUpperCase() === "UNIAO QUIMICA"
+            ? "União Química"
+            : agencyPosUnit;
+      }
+    }
+  }
 
   // 7. Cartão Virtual VCN & Token
   const cardMatch = fullScan.match(/\b((?:5\d{3,5}|4\d{3,5}|37\d{2,4})[xX*]{4,8}\d{4})\b/);
@@ -2667,10 +2740,10 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     b2bRatePolicy,
     b2bCommissionPct,
     dailyRate,
-    agencyName: agencyMatch ? cleanB2bFieldValue(agencyMatch[1]) : "",
-    agencyPosUnit: posMatch ? cleanB2bFieldValue(posMatch[1]) : "",
-    agencyAgentName: agentMatch ? cleanB2bFieldValue(agentMatch[1]) : "",
-    companyName: companyMatch ? cleanB2bFieldValue(companyMatch[1]) : "",
+    agencyName,
+    agencyPosUnit,
+    agencyAgentName,
+    companyName,
     costCenter: costCenterMatch ? costCenterMatch[1].trim() : "",
     b2bPaymentType,
     b2bCardBrand,
@@ -2756,6 +2829,22 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   if (!Array.isArray(db.guests)) db.guests = [];
   if (!Array.isArray(db.reservations)) db.reservations = [];
 
+  // Higieniza eventuais empresas ou reservas que capturaram snippet sem quebra de linha ou tarifa multiplicada por 100
+  db.companies = db.companies.filter(
+    c => c && !String(c.name || c.tradeName || "").includes("HOTEL CORPFLATS")
+  );
+  for (const r of db.reservations) {
+    if (!r) continue;
+    if (String(r.companyName || "").includes("HOTEL CORPFLATS")) {
+      r.companyName = cleanB2bFieldValue(r.companyName);
+    }
+    if (r.channel === "b2b" && Number(r.dailyRate) >= 10000) {
+      r.dailyRate = +(Number(r.dailyRate) / 100).toFixed(2);
+      const n = Math.max(1, Number(r.nights) || 1);
+      r.totalAmount = +(r.dailyRate * n).toFixed(2);
+    }
+  }
+
   const normStr = (s = "") =>
     String(s || "")
       .normalize("NFD")
@@ -2771,6 +2860,17 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
 
   // 1. Agência B2B
   let agency = null;
+  if (!parsed.agencyName && parsed.agencyPosUnit) {
+    const posNorm = normStr(parsed.agencyPosUnit);
+    const matchedByPos = db.agencies.find(
+      a =>
+        Array.isArray(a?.posUnits) &&
+        a.posUnits.some(u => normStr(typeof u === "string" ? u : u.name) === posNorm)
+    );
+    if (matchedByPos) {
+      parsed.agencyName = matchedByPos.tradeName || matchedByPos.corporateName || matchedByPos.name || "";
+    }
+  }
   if (parsed.agencyName) {
     const targetAgNorm = normStr(parsed.agencyName);
     agency = db.agencies.find(a => {
