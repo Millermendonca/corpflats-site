@@ -8635,8 +8635,40 @@ function mergeGuestRecords(target, source) {
   }
   if (!target.documentNumber && target.document) target.documentNumber = target.document;
 
-  if (!target.phone && (source.phone || source.phoneNumber || source.guestPhone || source.tomadorTelefone)) {
-    target.phone = source.phone || source.phoneNumber || source.guestPhone || source.tomadorTelefone;
+  const srcPhoneRaw = source.phone || source.phoneNumber || source.guestPhone || source.tomadorTelefone || "";
+  if (srcPhoneRaw && normalizePhone(srcPhoneRaw).length >= 8) {
+    if (!target.phone) {
+      target.phone = srcPhoneRaw;
+    } else if (phonesMatch(target.phone, srcPhoneRaw)) {
+      if (normalizePhone(srcPhoneRaw).length > normalizePhone(target.phone).length) {
+        target.phone = srcPhoneRaw;
+      }
+    } else {
+      if (!Array.isArray(target.additionalPhones)) target.additionalPhones = [];
+      if (!target.additionalPhones.some(ap => phonesMatch(ap, srcPhoneRaw))) {
+        target.additionalPhones.push(srcPhoneRaw);
+      }
+    }
+  }
+  if (Array.isArray(source.additionalPhones)) {
+    if (!Array.isArray(target.additionalPhones)) target.additionalPhones = [];
+    for (const ap of source.additionalPhones) {
+      if (ap && normalizePhone(ap).length >= 8 && !phonesMatch(target.phone, ap) && !target.additionalPhones.some(x => phonesMatch(x, ap))) {
+        target.additionalPhones.push(ap);
+      }
+    }
+  }
+  if (!target.googleContactResourceName && source.googleContactResourceName) {
+    target.googleContactResourceName = source.googleContactResourceName;
+  }
+  if (!target.googleContactEtag && source.googleContactEtag) {
+    target.googleContactEtag = source.googleContactEtag;
+  }
+  if (!target.googleContactSyncedAt && source.googleContactSyncedAt) {
+    target.googleContactSyncedAt = source.googleContactSyncedAt;
+  }
+  if (!target.googleContactDisplayName && source.googleContactDisplayName) {
+    target.googleContactDisplayName = source.googleContactDisplayName;
   }
   if (!target.email && (source.email || source.guestEmail || source.tomadorEmail)) {
     target.email = source.email || source.guestEmail || source.tomadorEmail;
@@ -8857,9 +8889,12 @@ function reconcileAndMergeGuests(database) {
       if (byEmail) return byEmail;
     }
 
-    // Prioridade 3: Telefone normalizado
+    // Prioridade 3: Telefone normalizado (principal ou adicional)
     if (cPhone && cPhone.length >= 8) {
-      const byPhone = list.find(g => phonesMatch(g.phone || g.phoneNumber, cPhone));
+      const byPhone = list.find(g =>
+        phonesMatch(g.phone || g.phoneNumber, cPhone) ||
+        (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cPhone)))
+      );
       if (byPhone) return byPhone;
     }
 
@@ -9056,6 +9091,179 @@ function reconcileAndMergeGuests(database) {
 
     if (matched) {
       mergeGuestRecords(matched, invCand);
+    }
+  }
+
+  // 3.5. Backfill e reconciliação de telefones a partir de Conversas WhatsApp, Histórico WhatsApp,
+  // Solicitantes de Reserva, Pedidos de Café/Frigobar, Garagem e Contratos Mensalistas
+  const isValidPersonName = (nm) => {
+    const clean = String(nm || "").trim();
+    if (!clean || clean.length < 2) return false;
+    if (/^(h[oó]spede|guest|cliente|sem nome|whatsapp|desconhecido|unknown|\.+|-+)$/i.test(clean)) return false;
+    if (/^\+?\d[\d\s().-]*$/.test(clean)) return false;
+    return true;
+  };
+
+  const linkPhoneToReservationOrGuest = ({ phone, name, document, email, reservationCode, reservationId, companyName, createIfMissing = false, tags = [] }) => {
+    const cleanP = normalizePhone(phone);
+    if (!cleanP || cleanP.length < 8) return;
+
+    let linkedRes = null;
+    if (reservationCode || reservationId) {
+      linkedRes = (currentDb.reservations || []).find(r =>
+        (reservationCode && r.code === reservationCode) ||
+        (reservationId && (String(r.id) === String(reservationId) || r.code === String(reservationId)))
+      );
+      if (linkedRes) {
+        if (!linkedRes.guestPhone && !linkedRes.phone) {
+          linkedRes.guestPhone = phone;
+        }
+        const resGuest = findMatchingGuest({
+          guestId: linkedRes.guestId,
+          name: linkedRes.guestName,
+          document: linkedRes.guestDocument || linkedRes.document,
+          phone: linkedRes.guestPhone || phone
+        }, deduplicated);
+        if (resGuest && !isDeleted(resGuest)) {
+          mergeGuestRecords(resGuest, {
+            phone,
+            name: isValidPersonName(linkedRes.guestName) ? linkedRes.guestName : (isValidPersonName(name) ? name : undefined),
+            fullName: isValidPersonName(linkedRes.guestName) ? linkedRes.guestName : (isValidPersonName(name) ? name : undefined),
+            tags
+          });
+          return;
+        }
+      }
+    }
+
+    const cand = {
+      name: isValidPersonName(name) ? String(name).trim() : "",
+      fullName: isValidPersonName(name) ? String(name).trim() : "",
+      phone,
+      document,
+      email,
+      companyName,
+      tags
+    };
+    if (isDeleted(cand)) return;
+
+    let matched = findMatchingGuest(cand, deduplicated);
+    if (!matched && createIfMissing && cand.name) {
+      const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
+      matched = {
+        id: nextId,
+        guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
+        name: cand.name,
+        fullName: cand.name,
+        phone,
+        createdAt: new Date().toISOString()
+      };
+      deduplicated.push(matched);
+    }
+    if (matched) {
+      mergeGuestRecords(matched, cand);
+    }
+  };
+
+  // 3.5a. Solicitantes e Agentes B2B nas reservas
+  for (const r of (currentDb.reservations || [])) {
+    const reqInfo = r.requesterInfo || {};
+    const reqPhone = reqInfo.phone || r.requesterPhone || "";
+    const reqName = reqInfo.name || r.requesterName || "";
+    if (reqPhone && isValidPersonName(reqName)) {
+      linkPhoneToReservationOrGuest({
+        phone: reqPhone,
+        name: reqName,
+        document: reqInfo.cpf || reqInfo.document,
+        email: reqInfo.email || r.requesterEmail,
+        companyName: r.companyName || r.agencyTradeName || r.agencyName,
+        createIfMissing: true,
+        tags: ["Solicitante"]
+      });
+    }
+    if (r.agencyAgentPhone && isValidPersonName(r.agencyAgentName)) {
+      linkPhoneToReservationOrGuest({
+        phone: r.agencyAgentPhone,
+        name: r.agencyAgentName,
+        email: r.agencyAgentEmail,
+        companyName: r.agencyTradeName || r.agencyName || "Agência B2B",
+        createIfMissing: true,
+        tags: ["Agente B2B"]
+      });
+    }
+  }
+
+  // 3.5b. Conversas ativas do WhatsApp (db.whatsappConversations)
+  for (const conv of (currentDb.whatsappConversations || [])) {
+    if (!conv || conv.isGroup) continue;
+    const convPhone = String(conv.phone || conv.guestPhone || conv.remoteJid || conv.id || "").replace(/@.*$/, "");
+    const convName = conv.guestName || conv.contactName || conv.pushName || conv.name || "";
+    linkPhoneToReservationOrGuest({
+      phone: convPhone,
+      name: convName,
+      reservationCode: conv.reservationCode,
+      reservationId: conv.reservationId,
+      createIfMissing: isValidPersonName(convName)
+    });
+  }
+
+  // 3.5c. Histórico e Fila de WhatsApp (Inbound, Outbound, Queue, Dispatch)
+  for (const item of [
+    ...(currentDb.whatsappHistory || []),
+    ...(currentDb.whatsappQueue || []),
+    ...(currentDb.whatsappInboundMessages || []),
+    ...(currentDb.whatsappDispatchHistory || [])
+  ]) {
+    if (!item) continue;
+    const p = item.guestPhone || item.phone || item.recipientPhone || item.from || item.to || "";
+    const nm = item.guestName || item.recipientName || item.senderName || item.name || "";
+    linkPhoneToReservationOrGuest({
+      phone: p,
+      name: nm,
+      reservationCode: item.reservationCode,
+      reservationId: item.reservationId,
+      createIfMissing: false
+    });
+  }
+
+  // 3.5d. Café da Manhã, Frigobar, Garagem, Contratos Long-Stay, Carrinhos Abandonados e OTPs FNRH
+  for (const item of [
+    ...(currentDb.breakfastOrders || []),
+    ...(currentDb.minibarOrders || []),
+    ...(currentDb.garageAuthorizations || []),
+    ...(currentDb.longStayContracts || []),
+    ...(currentDb.abandonedCarts || []),
+    ...(currentDb.fnrhWhatsappOtps || [])
+  ]) {
+    if (!item) continue;
+    const p = item.guestPhone || item.phone || "";
+    const nm = item.guestName || item.name || "";
+    linkPhoneToReservationOrGuest({
+      phone: p,
+      name: nm,
+      document: item.guestDocument || item.cpf || item.document,
+      email: item.guestEmail || item.email,
+      reservationCode: item.reservationCode,
+      reservationId: item.reservationId,
+      createIfMissing: isValidPersonName(nm)
+    });
+  }
+
+  // 3.5e. Agentes de Agências de Viagens (db.agencies) e Contatos de Empresas Parceiras (db.companies)
+  for (const ag of (currentDb.agencies || [])) {
+    if (!ag) continue;
+    const agName = ag.tradeName || ag.corporateName || ag.name || "Agência";
+    for (const agent of (ag.agents || [])) {
+      if (agent?.phone && isValidPersonName(agent.name)) {
+        linkPhoneToReservationOrGuest({
+          phone: agent.phone,
+          name: agent.name,
+          email: agent.email,
+          companyName: agName,
+          createIfMissing: true,
+          tags: ["Agência B2B"]
+        });
+      }
     }
   }
 
@@ -21895,6 +22103,12 @@ app.post("/api/pms/reservations", async (req, res) => {
     });
   } catch (_) {}
 
+  try {
+    reconcileAndMergeGuests(db);
+    const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(newReservation.guestId));
+    if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
+  } catch (_) {}
+
   res.status(201).json(newReservation);
 });
 
@@ -23886,6 +24100,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         maxDate: maxD
       });
     }
+  } catch (_) {}
+
+  try {
+    reconcileAndMergeGuests(db);
+    const syncedMainGuest = (db.guests || []).find(g => Number(g.id) === Number(r.guestId));
+    if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
   } catch (_) {}
 
   res.json(r);
@@ -28326,6 +28546,89 @@ function ensureGoogleContactsConfig(database) {
   return targetDb.googleContactsConfig;
 }
 
+export function expandBrazilianPhoneVariants(rawPhonesList) {
+  const variants = [];
+  const e164Only = [];
+  const suffixKeys = new Set();
+  const seen = new Set();
+
+  const addVar = (val, isE164 = false) => {
+    const clean = String(val || "").trim();
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    variants.push(clean);
+    if (isE164) e164Only.push(clean);
+  };
+
+  for (const raw of (rawPhonesList || [])) {
+    const str = String(raw || "").trim();
+    if (!str) continue;
+    let digits = str.replace(/\D/g, "");
+    if (digits.length < 8) continue;
+
+    // Número internacional não-brasileiro (começa com + e não é +55)
+    if (str.startsWith("+") && !digits.startsWith("55")) {
+      addVar(`+${digits}`, true);
+      suffixKeys.add(digits.slice(-8));
+      continue;
+    }
+
+    if (digits.startsWith("55") && digits.length >= 12) {
+      digits = digits.slice(2);
+    }
+    if (digits.startsWith("0") && (digits.length === 11 || digits.length === 12)) {
+      digits = digits.slice(1);
+    }
+    if (digits.length === 8 || digits.length === 9) {
+      digits = `22${digits}`;
+    }
+
+    if (digits.length === 11) {
+      const ddd = digits.slice(0, 2);
+      const local9 = digits.slice(2); // 9 dígitos (ex: 998887766)
+      const local8 = local9.startsWith("9") ? local9.slice(1) : local9.slice(-8);
+      suffixKeys.add(local8);
+      suffixKeys.add(`${ddd}${local8}`);
+      // 1) E.164 com 9º dígito (+55DD9XXXXXXXX) -> Chamadas de celular e WhatsApp DDD 11-28
+      addVar(`+55${ddd}${local9}`, true);
+      // 2) E.164 sem 9º dígito (+55DDXXXXXXXX) -> Crítico para WhatsApp em DDDs 31-99 (MG, BA, PE, RN, Sul, etc.) e contas antigas!
+      addVar(`+55${ddd}${local8}`, true);
+      // 3) Formato nacional DDD -> Discadores nativos de operadoras
+      addVar(`(${ddd}) ${local9.slice(0, 5)}-${local9.slice(5)}`, false);
+    } else if (digits.length === 10) {
+      const ddd = digits.slice(0, 2);
+      const local8 = digits.slice(2); // 8 dígitos
+      suffixKeys.add(local8);
+      suffixKeys.add(`${ddd}${local8}`);
+      const firstLocal = local8[0];
+      // No Brasil, celulares têm inicial 6, 7, 8 ou 9; fixos têm inicial 2, 3, 4 ou 5
+      if (["6", "7", "8", "9"].includes(firstLocal)) {
+        const local9 = `9${local8}`;
+        // 1) E.164 com o 9º dígito restaurado (+55DD9XXXXXXXX)
+        addVar(`+55${ddd}${local9}`, true);
+        // 2) E.164 sem o 9º dígito (+55DDXXXXXXXX)
+        addVar(`+55${ddd}${local8}`, true);
+        // 3) Formato nacional com 9º dígito
+        addVar(`(${ddd}) ${local9.slice(0, 5)}-${local9.slice(5)}`, false);
+      } else {
+        // Telefone fixo
+        addVar(`+55${ddd}${local8}`, true);
+        addVar(`(${ddd}) ${local8.slice(0, 4)}-${local8.slice(4)}`, false);
+      }
+    } else {
+      addVar(`+55${digits}`, true);
+      suffixKeys.add(digits.slice(-8));
+    }
+  }
+
+  return {
+    variants,
+    e164Only,
+    primaryE164: e164Only[0] || "",
+    suffixKeys: Array.from(suffixKeys)
+  };
+}
+
 export function buildGuestCallerIdContactData(database, guest) {
   const targetDb = database || db;
   const g = guest || {};
@@ -28333,23 +28636,11 @@ export function buildGuestCallerIdContactData(database, guest) {
   const cleanDoc = String(g.documentNumber || g.document || "").replace(/\D/g, "");
   const docType = String(g.docType || (cleanDoc.length > 11 ? "CNPJ" : "CPF")).toUpperCase();
   const rawPhone = String(g.phone || g.phoneNumber || "").trim();
-  const phoneDigits = rawPhone.replace(/\D/g, "");
-
-  let e164Phone = "";
-  if (phoneDigits.length >= 10) {
-    if (phoneDigits.startsWith("55") && phoneDigits.length >= 12) {
-      e164Phone = `+${phoneDigits}`;
-    } else {
-      e164Phone = `+55${phoneDigits}`;
-    }
-  } else if (phoneDigits.length >= 8) {
-    e164Phone = `+5522${phoneDigits}`;
-  }
 
   const cleanEmail = String(g.email || "").trim().toLowerCase();
   const guestNameNorm = normalizeName(fullName);
 
-  // Busca reservas vinculadas para descobrir UH ativa ou mais recente
+  // Busca reservas vinculadas para descobrir UH ativa ou mais recente e todos os telefones associados
   const allReservations = Array.isArray(targetDb?.reservations) ? targetDb.reservations : [];
   const guestReservations = allReservations.filter(r => {
     if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
@@ -28360,7 +28651,7 @@ export function buildGuestCallerIdContactData(database, guest) {
     const resName = normalizeName(r.guestName || "");
     return (r.guestId && g.id && Number(r.guestId) === Number(g.id)) ||
            (cleanDoc && cleanDoc.length >= 8 && resDoc === cleanDoc) ||
-           (gPhoneNorm && gPhoneNorm.length >= 8 && resPhone === gPhoneNorm) ||
+           (gPhoneNorm && gPhoneNorm.length >= 8 && phonesMatch(resPhone, gPhoneNorm)) ||
            (cleanEmail && cleanEmail.includes("@") && resEmail === cleanEmail) ||
            (guestNameNorm && guestNameNorm.length >= 5 && resName === guestNameNorm);
   });
@@ -28382,6 +28673,35 @@ export function buildGuestCallerIdContactData(database, guest) {
   });
 
   const activeRes = sortedRes[0] || null;
+
+  // Coleta TODOS os telefones conhecidos deste cliente (reserva ativa, cadastro CRM, reservas anteriores e WhatsApp)
+  const rawPhonesCandidateList = [];
+  if (activeRes?.guestPhone || activeRes?.phone) {
+    rawPhonesCandidateList.push(activeRes.guestPhone || activeRes.phone);
+  }
+  if (rawPhone) {
+    rawPhonesCandidateList.push(rawPhone);
+  }
+  if (Array.isArray(g.additionalPhones)) {
+    rawPhonesCandidateList.push(...g.additionalPhones);
+  }
+  for (const r of sortedRes) {
+    if (r.guestPhone || r.phone) rawPhonesCandidateList.push(r.guestPhone || r.phone);
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (!rg?.phone) continue;
+        const rgDoc = String(rg.cpf || rg.document || "").replace(/\D/g, "");
+        const rgName = normalizeName(rg.name || "");
+        if ((cleanDoc && rgDoc === cleanDoc) || (guestNameNorm && rgName === guestNameNorm)) {
+          rawPhonesCandidateList.push(rg.phone);
+        }
+      }
+    }
+  }
+
+  const expandedPhones = expandBrazilianPhoneVariants(rawPhonesCandidateList);
+  const e164Phone = expandedPhones.primaryE164;
+  const phoneDigits = e164Phone.replace(/\D/g, "");
   const rawFlat = String(
     activeRes?.flatNumber ||
     activeRes?.unitNumber ||
@@ -28487,6 +28807,10 @@ export function buildGuestCallerIdContactData(database, guest) {
     notesLines.push(`⚠️ Observações CRM: ${alertsAndNotes}`);
   }
 
+  if (expandedPhones.e164Only.length > 1) {
+    notesLines.push(`📞 Telefones vinculados: ${expandedPhones.e164Only.join(" / ")}`);
+  }
+
   const notesText = notesLines.join("\n");
 
   return {
@@ -28503,6 +28827,9 @@ export function buildGuestCallerIdContactData(database, guest) {
     rawPhone,
     phoneDigits,
     e164Phone,
+    phoneVariants: expandedPhones.variants,
+    e164Phones: expandedPhones.e164Only,
+    phoneSuffixKeys: expandedPhones.suffixKeys,
     email: cleanEmail,
     docType,
     document: cleanDoc,
@@ -28536,7 +28863,11 @@ function generateGuestVCard(database, guest) {
     `ORG:${escapeVCardValue(c.organizationName)}`,
     `TITLE:${escapeVCardValue(c.jobTitle)}`
   ];
-  if (c.e164Phone) {
+  if (Array.isArray(c.phoneVariants) && c.phoneVariants.length > 0) {
+    for (const pv of c.phoneVariants) {
+      lines.push(`TEL;TYPE=CELL,VOICE,MSG:${pv}`);
+    }
+  } else if (c.e164Phone) {
     lines.push(`TEL;TYPE=CELL,VOICE,MSG:${c.e164Phone}`);
   } else if (c.rawPhone) {
     lines.push(`TEL;TYPE=CELL,VOICE:${c.rawPhone}`);
@@ -28597,6 +28928,10 @@ async function getValidGoogleContactsAccessToken(database) {
 }
 
 function buildGooglePersonPayload(contactData, guestId) {
+  const phoneEntries = (Array.isArray(contactData.phoneVariants) && contactData.phoneVariants.length > 0)
+    ? contactData.phoneVariants.map(val => ({ value: val, type: "mobile" }))
+    : [{ value: contactData.e164Phone, type: "mobile" }];
+
   const personPayload = {
     names: [
       {
@@ -28605,12 +28940,7 @@ function buildGooglePersonPayload(contactData, guestId) {
         unstructuredName: contactData.displayName
       }
     ],
-    phoneNumbers: [
-      {
-        value: contactData.e164Phone,
-        type: "mobile"
-      }
-    ],
+    phoneNumbers: phoneEntries,
     organizations: [
       {
         name: contactData.organizationName,
@@ -28681,7 +29011,7 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
   try {
     if (!resourceName && contactData.phoneDigits.length >= 8) {
       try {
-        const searchUrl = `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(contactData.phoneDigits.slice(-9))}&readMask=names,phoneNumbers,metadata`;
+        const searchUrl = `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(contactData.phoneDigits.slice(-8))}&readMask=names,phoneNumbers,metadata`;
         const searchRes = await fetch(searchUrl, {
           headers: { Authorization: `Bearer ${accessToken}` }
         });
@@ -28692,7 +29022,7 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
             if (!p) return false;
             return (p.phoneNumbers || []).some(pn => {
               const pDigits = String(pn.value || pn.canonicalForm || "").replace(/\D/g, "");
-              return pDigits && contactData.phoneDigits && pDigits.slice(-9) === contactData.phoneDigits.slice(-9);
+              return pDigits && contactData.phoneDigits && pDigits.slice(-8) === contactData.phoneDigits.slice(-8);
             });
           });
           if (found?.person?.resourceName) {
@@ -29116,7 +29446,16 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
         for (const pn of (p.phoneNumbers || [])) {
           const digits = String(pn.value || pn.canonicalForm || "").replace(/\D/g, "");
           if (digits.length >= 8) {
-            existingByPhoneSuffix.set(digits.slice(-9), entry);
+            existingByPhoneSuffix.set(digits.slice(-8), entry);
+            if (digits.length >= 9) {
+              existingByPhoneSuffix.set(digits.slice(-9), entry);
+            }
+            if (digits.length >= 10) {
+              const norm = normalizePhone(digits);
+              if (norm.length >= 10) {
+                existingByPhoneSuffix.set(`${norm.slice(0, 2)}${norm.slice(-8)}`, entry);
+              }
+            }
           }
         }
       }
@@ -29146,14 +29485,26 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
       continue;
     }
 
-    const phoneKey = contactData.phoneDigits.slice(-9);
+    const phoneKey8 = contactData.phoneDigits.slice(-8);
+    const phoneKey9 = contactData.phoneDigits.slice(-9);
     const personPayload = buildGooglePersonPayload(contactData, g.id);
 
-    const matchedExisting =
+    let matchedExisting =
       (g.googleContactResourceName && existingByResource.get(g.googleContactResourceName)) ||
       existingByCrmId.get(String(g.id)) ||
-      existingByPhoneSuffix.get(phoneKey) ||
+      existingByPhoneSuffix.get(phoneKey9) ||
+      existingByPhoneSuffix.get(phoneKey8) ||
       null;
+
+    if (!matchedExisting && Array.isArray(contactData.phoneSuffixKeys)) {
+      for (const sk of contactData.phoneSuffixKeys) {
+        const hit = existingByPhoneSuffix.get(sk);
+        if (hit) {
+          matchedExisting = hit;
+          break;
+        }
+      }
+    }
 
     if (matchedExisting && matchedExisting.resourceName && matchedExisting.etag) {
       if (!toUpdate.some(u => u.resourceName === matchedExisting.resourceName)) {
@@ -29168,8 +29519,8 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
         g.googleContactResourceName = matchedExisting.resourceName;
         g.googleContactSyncedAt = new Date().toISOString();
       }
-    } else if (!seenPhonesInBatch.has(phoneKey)) {
-      seenPhonesInBatch.add(phoneKey);
+    } else if (!seenPhonesInBatch.has(phoneKey8)) {
+      seenPhonesInBatch.add(phoneKey8);
       toCreate.push({
         guest: g,
         contactData,
