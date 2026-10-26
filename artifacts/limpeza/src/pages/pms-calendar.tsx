@@ -3328,6 +3328,42 @@ export default function PmsCalendar() {
     }
   }
 
+  const formatCentsMaskValue = (val: number | string | undefined | null, allowNegative = false): string => {
+    if (val === "" || val === undefined || val === null) return "";
+    const num = Number(val);
+    if (isNaN(num) || num === 0) return "";
+    const isNeg = allowNegative && num < 0;
+    const cents = Math.round(Math.abs(num) * 100);
+    if (cents === 0) return "";
+    const formatted = (cents / 100).toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return isNeg ? `-${formatted}` : formatted;
+  };
+
+  const parseCentsMaskInput = (raw: string, allowNegative = false): number => {
+    const isNeg = allowNegative && raw.trim().startsWith("-");
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) return 0;
+    const cents = parseInt(digits, 10);
+    if (isNaN(cents) || cents === 0) return 0;
+    const val = Number((cents / 100).toFixed(2));
+    return isNeg ? -val : val;
+  };
+
+  const keepCurrencyCursorAtEnd = (e: React.SyntheticEvent<HTMLInputElement>) => {
+    const target = e.currentTarget;
+    requestAnimationFrame(() => {
+      try {
+        if (target.selectionStart === target.selectionEnd) {
+          const len = target.value.length;
+          target.setSelectionRange(len, len);
+        }
+      } catch {}
+    });
+  };
+
   const calculateTotal = () => {
     let nightsSubtotal = 0;
     if (formDailyRates && formDailyRates.length > 0) {
@@ -3343,7 +3379,7 @@ export default function PmsCalendar() {
       }
     }
     const chargesSubtotal = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    return Math.max(0, nightsSubtotal + chargesSubtotal);
+    return Number(Math.max(0, nightsSubtotal + chargesSubtotal).toFixed(2));
   }
 
   // ── Helpers de Gerenciamento de Diárias & Pagamentos ──────────────
@@ -3356,9 +3392,9 @@ export default function PmsCalendar() {
   ) => {
     const subNights = newDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
     const subCharges = newCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const newTot = Math.max(0, subNights + subCharges);
+    const newTot = Number(Math.max(0, subNights + subCharges).toFixed(2));
     setFormTotalAmount(String(newTot));
-    setPackageTotalInput(String(newTot));
+    setPackageTotalInput(newTot > 0 ? String(newTot) : "");
 
     const isBooking = targetChannel === "booking";
     const isB2b = targetChannel === "b2b";
@@ -3456,11 +3492,11 @@ export default function PmsCalendar() {
     const totalCharges = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
     const amountForNights = Math.max(0, targetTotal - totalCharges);
 
-    const baseNightRate = Math.floor(amountForNights / nightsCount);
-    const remainder = amountForNights - (baseNightRate * nightsCount);
+    const baseNightRate = Math.floor((amountForNights / nightsCount) * 100) / 100;
+    const remainder = Number((amountForNights - (baseNightRate * nightsCount)).toFixed(2));
 
     const updatedDailyRates = formDailyRates.map((item, idx) => {
-      const rate = idx === formDailyRates.length - 1 ? (baseNightRate + remainder) : baseNightRate;
+      const rate = idx === formDailyRates.length - 1 ? Number((baseNightRate + remainder).toFixed(2)) : baseNightRate;
       return { ...item, rate };
     });
 
@@ -8395,10 +8431,16 @@ export default function PmsCalendar() {
                         <div className="relative flex-1 sm:w-32">
                           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">R$</span>
                           <Input
-                            type="number"
-                            placeholder="Ex: 300"
-                            value={packageTotalInput}
-                            onChange={e => setPackageTotalInput(e.target.value)}
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="0,00"
+                            value={formatCentsMaskValue(packageTotalInput)}
+                            onFocus={keepCurrencyCursorAtEnd}
+                            onClick={keepCurrencyCursorAtEnd}
+                            onChange={e => {
+                              const val = parseCentsMaskInput(e.target.value);
+                              setPackageTotalInput(val > 0 ? String(val) : "");
+                            }}
                             onKeyDown={e => {
                               if (e.key === "Enter") {
                                 e.preventDefault();
@@ -8406,7 +8448,7 @@ export default function PmsCalendar() {
                                 if (val > 0) handleDistributeTotalToNights(val);
                               }
                             }}
-                            className="h-7 pl-7 pr-2 text-xs font-bold bg-background text-foreground"
+                            className="h-7 pl-7 pr-2 text-xs font-bold text-right bg-background text-foreground"
                           />
                         </div>
                         <Button
@@ -8456,7 +8498,7 @@ export default function PmsCalendar() {
                                   const nextRates = formDailyRates.map(d => ({ ...d, rate: firstRate, channel: firstChan }));
                                   setFormDailyRates(nextRates);
                                   syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
-                                  toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate}.` });
+                                  toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.` });
                                 }
                               }}
                               className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
@@ -8545,10 +8587,14 @@ export default function PmsCalendar() {
                                     R$
                                   </span>
                                   <Input
-                                    type="number"
-                                    value={d.rate}
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="0,00"
+                                    value={formatCentsMaskValue(d.rate)}
+                                    onFocus={keepCurrencyCursorAtEnd}
+                                    onClick={keepCurrencyCursorAtEnd}
                                     onChange={(e) => {
-                                      const val = Number(e.target.value) || 0;
+                                      const val = parseCentsMaskInput(e.target.value);
                                       setFormDailyRates(prev => {
                                         const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
                                         syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
@@ -8692,9 +8738,17 @@ export default function PmsCalendar() {
                                     R$
                                   </span>
                                   <Input
-                                    type="number"
-                                    value={charge.amount}
-                                    onChange={e => handleUpdateCharge(charge.id, "amount", Number(e.target.value) || 0)}
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="0,00"
+                                    value={formatCentsMaskValue(charge.amount, true)}
+                                    onFocus={keepCurrencyCursorAtEnd}
+                                    onClick={keepCurrencyCursorAtEnd}
+                                    onChange={e => {
+                                      const rawVal = parseCentsMaskInput(e.target.value, true);
+                                      const finalVal = charge.type === "discount" ? -Math.abs(rawVal) : rawVal;
+                                      handleUpdateCharge(charge.id, "amount", finalVal);
+                                    }}
                                     className={`h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right w-full ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
                                   />
                                 </div>
@@ -8816,9 +8870,13 @@ export default function PmsCalendar() {
                                 R$
                               </span>
                               <Input
-                                type="number"
-                                value={pay.amount}
-                                onChange={(e) => handleUpdatePayment(pay.id, "amount", Number(e.target.value) || 0)}
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="0,00"
+                                value={formatCentsMaskValue(pay.amount)}
+                                onFocus={keepCurrencyCursorAtEnd}
+                                onClick={keepCurrencyCursorAtEnd}
+                                onChange={(e) => handleUpdatePayment(pay.id, "amount", parseCentsMaskInput(e.target.value))}
                                 className="h-8 sm:h-7 pl-7 pr-2 text-xs font-bold text-right text-emerald-700 dark:text-emerald-400 w-full"
                               />
                             </div>
