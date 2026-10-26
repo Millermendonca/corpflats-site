@@ -141,6 +141,7 @@ import {
   getZohoAccessToken,
   discoverZohoAccountId,
   callZohoMailApi,
+  syncZohoMessagesToCache,
   getZohoStatusSummary,
   getWebmailFoldersAndCounts,
   listWebmailMessages,
@@ -156,7 +157,9 @@ import {
   fetchAndParseB2bVoucher,
   ingestB2bVoucherIntoDb,
   dispatchB2bAgencyCredentialEmail,
-  ensurePendingB2bAgencyCredentialDispatches
+  ensurePendingB2bAgencyCredentialDispatches,
+  handleZohoIncomingWebhook,
+  ensureZohoWebhookRegistered
 } from "./zoho-mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR, rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 import {
@@ -8297,6 +8300,21 @@ async function _loadDatabaseImpl() {
             bootstrapShoppingTables().then(() => {
               if (typeof migrateShoppingCategories === "function") migrateShoppingCategories().catch(() => {});
             }).catch(() => {});
+          }
+          if (process.env.NODE_ENV !== "test") {
+            setTimeout(() => {
+              ensureZohoWebhookRegistered(db, saveDatabase, {
+                baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+              })
+                .then(() =>
+                  ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+                    baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+                  })
+                )
+                .catch(err => {
+                  console.warn("[Zoho Post-Hydration Sync] Aviso:", err?.message || err);
+                });
+            }, 1500);
           }
         } else if (querySucceeded) {
           pgHydratedSuccessfully = true;
@@ -32593,6 +32611,46 @@ app.get("/api/webmail/attachments/:folderId/:messageId/:attachmentId", async (re
   }
 });
 
+// W16. Webhook em Tempo Real do Zoho Mail (Notificação Instantânea de Novo E-mail Recebido)
+const zohoWebhookPaths = [
+  "/api/webmail/zoho-webhook",
+  "/api/webhooks/zoho-mail",
+  "/api/webmail/webhook"
+];
+
+app.get(zohoWebhookPaths, async (req, res) => {
+  const challenge = req.query.challenge || req.query.validationToken || req.query.echo;
+  if (challenge) {
+    return res.status(200).send(String(challenge));
+  }
+  if (req.query.sync === "true" || req.query.sync === "1") {
+    const result = await handleZohoIncomingWebhook(db, saveDatabase, req.query || {});
+    return res.status(200).json(result);
+  }
+  res.status(200).json({
+    ok: true,
+    service: "CorpFlats Zoho Mail Real-Time Webhook",
+    webhookEndpoint: "https://corpflats.com.br/api/webmail/zoho-webhook"
+  });
+});
+
+app.post(zohoWebhookPaths, async (req, res) => {
+  try {
+    if (pgPool && !pgHydratedSuccessfully) {
+      try {
+        await Promise.race([
+          loadDatabase(),
+          new Promise(r => setTimeout(r, 2500))
+        ]);
+      } catch (_) {}
+    }
+    const result = await handleZohoIncomingWebhook(db, saveDatabase, req.body || {});
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "Erro ao processar webhook Zoho Mail." });
+  }
+});
+
 // ── Sincronização Bidirecional Atômica: Perfil (Minha Conta) & CRM & Check-in Digital ──
 export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) {
   if (!db) return null;
@@ -47630,7 +47688,11 @@ function isConfirmationAlreadyDispatched(r) {
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
     const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created") && (h.status === "sent" || h.status === "delivered");
+    return isSameRes && (
+      h.triggerEvent === "payment_confirmed" ||
+      h.triggerEvent === "reservation_created" ||
+      h.triggerEvent === "sameday_reservation"
+    ) && (h.status === "sent" || h.status === "delivered");
   });
 }
 
@@ -47762,11 +47824,60 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     await dispatchConfirmedReservationToReceptionAndGarage(r, "payment_confirmed");
   }
 
-  // 1. Dispara o comprovante financeiro / confirmação se ainda não foi disparado
-  if (!isConfirmationAlreadyDispatched(r)) {
-    const chan = String(r.channel || "").toLowerCase();
-    const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
+  const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
+  const todayStr = brNow.date;
+  const isSameDay = r.checkinDate === todayStr;
+  const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
+  const chan = String(r.channel || "").toLowerCase();
+  const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
+  if (isAfter0701) {
+    // Quando a reserva para HOJE é criada ou paga após as 07:01, o hóspede deve receber APENAS 1 mensagem consolidada (sameday_reservation)
+    // sem duplicar payment_confirmed + sameday_reservation nem reservation_created + sameday_reservation.
+    // Se houver Solicitante distinto com WhatsApp próprio, enviamos o comprovante financeiro apenas ao Solicitante.
+    if (recipsPay.requester?.isDifferentFromGuest && recipsPay.requester?.hasOwnContact && isPreOrWasPre && isDirect) {
+      const hasRequesterReceipt = (db.whatsappHistory || []).some(h => {
+        const hCode = String(h.reservationCode || "").toUpperCase();
+        const rCode = String(r.code || "").toUpperCase();
+        const rId = String(r.id || "");
+        const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+        return isSameRes && h.triggerEvent === "payment_confirmed" && h.recipientRole === "solicitante" && (h.status === "sent" || h.status === "delivered");
+      });
+      if (!hasRequesterReceipt) {
+        try {
+          await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
+            ...r,
+            _onlyRequesterTarget: true,
+            _skipAutoIntro: true
+          });
+        } catch (err) {
+          console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed ao Solicitante:", err.message);
+        }
+      }
+    }
+
+    const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
+      const hCode = String(h.reservationCode || "").toUpperCase();
+      const rCode = String(r.code || "").toUpperCase();
+      const rId = String(r.id || "");
+      const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+      return isSameRes && h.triggerEvent === "sameday_reservation" && (h.status === "sent" || h.status === "delivered");
+    });
+
+    if (!hasSameDayDispatched) {
+      console.log(`[WhatsApp Dispatch] Reserva para HOJE após 07:01 confirmada: disparando mensagem única consolidada (sameday_reservation) para ${r.guestName} (${r.code})...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
+      }
+    }
+    return;
+  }
+
+  // 1. Para reservas futuras (ou antes das 07:01), dispara o comprovante financeiro / confirmação padrão se ainda não foi disparado
+  if (!isConfirmationAlreadyDispatched(r)) {
     if (isPreOrWasPre && isDirect) {
       console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
       try {
@@ -47783,32 +47894,6 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
         scheduleUpcomingReservationTriggers(db, saveDatabase);
       } catch (err) {
         console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
-      }
-    }
-  }
-
-  // 2. Para reservas confirmadas no dia do check-in após 07:01, garante envio das orientações de chegada imediatas
-  const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
-  const todayStr = brNow.date;
-  const isSameDay = r.checkinDate === todayStr;
-  const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
-
-  if (isAfter0701) {
-    const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
-      const hCode = String(h.reservationCode || "").toUpperCase();
-      const rCode = String(r.code || "").toUpperCase();
-      const rId = String(r.id || "");
-      const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-      return isSameRes && h.triggerEvent === "sameday_reservation" && (h.status === "sent" || h.status === "delivered");
-    });
-
-    if (!hasSameDayDispatched) {
-      console.log(`[WhatsApp Dispatch] Reserva no dia do check-in após as 07:01 confirmada: disparando sameday_reservation para ${r.guestName}...`);
-      try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
-        scheduleUpcomingReservationTriggers(db, saveDatabase);
-      } catch (err) {
-        console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
       }
     }
   }
@@ -55738,11 +55823,19 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
       startCardAutoPurgeScheduler(db, wbpVault);
     }
     setTimeout(() => {
-      ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
-        baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
-      }).catch(err => {
-        console.warn("[B2B Boot Credential Sync] Aviso:", err.message);
-      });
+      if (!pgPool || pgHydratedSuccessfully) {
+        ensureZohoWebhookRegistered(db, saveDatabase, {
+          baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+        })
+          .then(() =>
+            ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+              baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+            })
+          )
+          .catch(err => {
+            console.warn("[B2B Boot Credential Sync] Aviso:", err.message);
+          });
+      }
     }, 3000);
   }
 });

@@ -4061,6 +4061,45 @@ export default function EmailHub() {
                   </div>
                 </div>
 
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-300/60 dark:border-emerald-800 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+                      🔔 Webhook em Tempo Real (Sincronização Instantânea a Cada Novo E-mail):
+                    </Label>
+                    <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
+                      Ativo por Evento
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      readOnly
+                      value={
+                        (webmailStatus as any)?.webhookEndpoint ||
+                        "https://corpflats.com.br/api/webmail/zoho-webhook"
+                      }
+                      className="h-8 text-xs font-mono rounded-xl bg-background"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const url =
+                          (webmailStatus as any)?.webhookEndpoint ||
+                          "https://corpflats.com.br/api/webmail/zoho-webhook"
+                        navigator.clipboard?.writeText(url)
+                        toast({
+                          title: "URL do Webhook copiada!",
+                          description: url
+                        })
+                      }}
+                      className="h-8 text-xs font-bold rounded-xl shrink-0"
+                    >
+                      Copiar URL
+                    </Button>
+                  </div>
+                </div>
+
                 <div className="flex justify-end gap-2 pt-1">
                   <Button
                     type="button"

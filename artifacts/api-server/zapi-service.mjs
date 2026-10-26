@@ -1158,10 +1158,12 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 📋 *Sua Hospedagem:*
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
-• Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
+• Entrada (Check-in): *Hoje a partir das {{horario_liberacao_hoje}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Café da Manhã: *{{status_cafe}}*
 • Pagamento: *{{status_pagamento}}*
+
+{{status_liberacao_flat_hoje}}
 
 📍 *Endereço:* {{endereco_hotel}}
 🗺️ *Localização no Maps:* {{link_maps}}
@@ -2885,7 +2887,9 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
     : Boolean(requester?.isDifferentFromGuest && (requester?.phone || requester?.email));
 
   let targetMode = options.targetMode || tpl?.recipientTarget || "guest";
-  if (options.excludeRequester) {
+  if (options.onlyRequester) {
+    targetMode = "requester";
+  } else if (options.excludeRequester) {
     targetMode = "guest";
   } else if (requester?.isDifferentFromGuest && !options.forceTargetMode) {
     if (isPureBilling) {
@@ -3298,6 +3302,18 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag de link de autodeclaração de checkin ("Já cheguei / Estou no Flat")
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
+  // Estado dinâmico de liberação do flat para reservas do próprio dia (sameday_reservation)
+  const sameDayReleaseState = getSameDayFlatReleaseState(db, reservation, reservation?._nowOverride || null);
+  const horarioLiberacaoHoje = sameDayReleaseState.releaseTimeStr || checkinTime;
+  let statusLiberacaoFlatHoje = "";
+  if (sameDayReleaseState.isFlatReadyNow) {
+    statusLiberacaoFlatHoje = `✨ *Status do Flat ${flatNumber}:* *Limpo e Liberado para Entrada Imediata!* 🔑\nSua acomodação já está 100% pronta e higienizada esperando por você.`;
+  } else if (!sameDayReleaseState.isFlatClean) {
+    statusLiberacaoFlatHoje = `🧹 *Status do Flat ${flatNumber}:* *Em Preparação pela Governança*\nNossa equipe está preparando e higienizando sua acomodação neste momento. Assim que o flat estiver 100% pronto, enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
+  } else {
+    statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje}*\nEnviaremos a confirmação de liberação da sua acomodação aqui no WhatsApp no horário de entrada!`;
+  }
+
   // Tag: {{status_cafe}}, {{mensagem_cafe_incluso}} e {{aviso_cafe_exclusivo_flat}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
   const mensagemCafeIncluso = (hasBreakfast && !isCancelled)
@@ -3421,6 +3437,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl,
     "{{link_autocheckin}}": linkAutocheckin,
+    "{{horario_liberacao_hoje}}": horarioLiberacaoHoje,
+    "{{status_liberacao_flat_hoje}}": statusLiberacaoFlatHoje,
     "{{status_cafe}}": statusCafe,
     "{{mensagem_cafe_incluso}}": mensagemCafeIncluso,
     "{{aviso_cafe_exclusivo_flat}}": avisoCafeExclusivoFlat,
@@ -6848,7 +6866,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defSame.documentUrl;
             tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defSame.documentName;
             tpl.documentCaption = tpl.documentCaption || defSame.documentCaption;
-            if (!tpl.message.includes("instrucao_checkin_ou_chegada") || tpl.message.includes("Como sua reserva foi confirmada") || !tpl.message.includes("status_pagamento")) {
+            if (
+              !tpl.message.includes("instrucao_checkin_ou_chegada") ||
+              tpl.message.includes("Como sua reserva foi confirmada") ||
+              !tpl.message.includes("status_pagamento") ||
+              !tpl.message.includes("status_liberacao_flat_hoje")
+            ) {
               tpl.title = defSame.title;
               tpl.description = defSame.description;
               tpl.message = defSame.message;
@@ -11088,10 +11111,24 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       return;
     }
 
-    const now = new Date();
+    const now = reservation?._nowOverride instanceof Date
+      ? reservation._nowOverride
+      : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date());
     const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
     const brDate = new Date(nowUtc - (3 * 3600000));
     const todayStr = brDate.toISOString().substring(0, 10);
+    const brHour = brDate.getUTCHours();
+    const brMinute = brDate.getUTCMinutes();
+
+    // Se a reserva for para HOJE e já passou das 07:01, converte automaticamente reservation_created em sameday_reservation
+    // para enviar a mensagem única consolidada de entrada no mesmo dia sem redundância.
+    if (
+      eventName === "reservation_created" &&
+      reservation.checkinDate === todayStr &&
+      (brHour > 7 || (brHour === 7 && brMinute >= 1))
+    ) {
+      eventName = "sameday_reservation";
+    }
 
     // REGRA DE OURO: NUNCA disparar mensagens para reservas cuja estadia terminou há mais de 3 dias
     const threeDaysAgo = new Date(nowUtc - (3 * 24 + 3) * 3600000);
@@ -11308,6 +11345,50 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       });
     }
 
+    // Se o evento for reserva para HOJE (sameday_reservation):
+    // 1. Cancela agendamentos redundantes do dia do check-in (checkin_day_instructions e pre_checkin_reminder) na fila.
+    // 2. Avalia se o flat já está limpo e liberado neste momento (isFlatReadyNow). Se SIM, já marca roomReadySentDate = todayStr
+    //    (pois a própria mensagem consolidada sameday_reservation já informa que o flat está limpo e liberado para entrada imediata)
+    //    e cancela qualquer agendamento de room_ready* na fila — evitando o disparo de uma 2ª mensagem repetida de 'Quarto Pronto'.
+    //    Se NÃO estiver pronto (em limpeza ou antes do horário de liberação), mantém roomReadySentDate em branco para que a 2ª mensagem
+    //    seja disparada assim que a governança concluir a limpeza ou atingir o horário de liberação.
+    if (eventName === "sameday_reservation" && reservation.checkinDate === todayStr) {
+      const releaseState = getSameDayFlatReleaseState(db, reservation, now);
+      const nowIso = now.toISOString();
+      if (releaseState.isFlatReadyNow) {
+        reservation.roomReadySentDate = todayStr;
+        reservation.roomReadySentAt = nowIso;
+        if (Array.isArray(db?.reservations)) {
+          const dbRes = db.reservations.find(r =>
+            r && ((reservation.id && r.id === reservation.id) || (reservation.code && r.code === reservation.code))
+          );
+          if (dbRes) {
+            dbRes.roomReadySentDate = todayStr;
+            dbRes.roomReadySentAt = nowIso;
+          }
+        }
+      }
+      if (Array.isArray(db?.whatsappQueue)) {
+        for (const qItem of db.whatsappQueue) {
+          if (qItem.status !== "pending" && qItem.status !== "scheduled") continue;
+          const isSameRes = (reservation.code && qItem.reservationCode === reservation.code) ||
+                            (reservation.id && qItem.reservationId === reservation.id);
+          if (!isSameRes) continue;
+          if (
+            qItem.triggerEvent === "checkin_day_instructions" ||
+            qItem.triggerEvent === "pre_checkin_reminder" ||
+            (releaseState.isFlatReadyNow && ROOM_READY_GROUP_EVENTS.has(qItem.triggerEvent))
+          ) {
+            qItem.status = "cancelled";
+            qItem.error = releaseState.isFlatReadyNow
+              ? "Cancelado: consolidado na mensagem única de reserva para hoje (flat já liberado)"
+              : "Cancelado: consolidado na mensagem de reserva para hoje";
+            qItem.updatedAt = nowIso;
+          }
+        }
+      }
+    }
+
     const recipients = getReservationRecipients(reservation, db);
     const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
     const rId = reservation.id ? String(reservation.id) : "";
@@ -11323,6 +11404,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       const dispatches = buildTemplateTargets(tpl, recipients, {
         targetMode,
         onlyGuestIndex,
+        onlyRequester: Boolean(reservation._onlyRequesterTarget),
         excludeRequester: Boolean(reservation._excludeRequesterTarget),
         onlyCompanions: Boolean(reservation._onlyCompanionsTarget)
       });

@@ -26,6 +26,8 @@ const zohoTokenCache = {
   primaryEmailAddress: null,
   accountDisplayName: null,
   lastSyncAt: null,
+  lastWebhookAt: null,
+  webhookEndpoint: "https://corpflats.com.br/api/webmail/zoho-webhook",
   lastError: null,
   lastFolderSyncAt: {},
   folderMapCache: null,
@@ -605,7 +607,7 @@ export function matchEmailWithReservation(db, item) {
   // 5. Padrão B2B Reservas: Nº B2B (ex: 25055349, 25057926), RLOC (ex: ZYIK2X) ou "(SOBRENOME/NOME)"
   if (!matched && (item.subject || item.snippet || item.bodyText)) {
     const scanB2b = `${item.subject || ""} ${item.snippet || ""} ${item.bodyText || ""}`;
-    const b2bNumMatch = scanB2b.match(/(?:Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*|Reserva\s+B2B\s*#?\s*)(\d{7,10})\b/i);
+    const b2bNumMatch = scanB2b.match(/(?:Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*|Reserva\s+B2B\s*#?\s*)(\d{7,10})\b/i);
     if (b2bNumMatch) {
       const targetNum = b2bNumMatch[1].trim();
       matched = reservations.find(
@@ -1017,7 +1019,7 @@ export function resolveZohoTrueIsoDate(zm = {}) {
 /**
  * Sincroniza mensagens da Zoho Mail API para o cache local quando OAuth2 está ativo
  */
-export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 50 } = {}) {
+export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "", limit = 50, saveDatabase = null } = {}) {
   ensureWebmailCollections(db);
   const oauthCfg = getZohoOAuthConfig(db);
   if (!oauthCfg.isConfigured) {
@@ -1102,36 +1104,63 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         source: "zoho_api"
       };
       const existingMsg = existingIdx >= 0 ? db.zohoMessagesCache[existingIdx] : null;
+      const subjResMatch = String(mapped.subject || "").match(/Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*(\d{7,10})/i);
+      const subjResNum = subjResMatch ? subjResMatch[1].trim() : "";
       const isB2bConfirmationEmail =
         mapped.direction === "inbound" &&
-        !existingMsg?.b2bParsed &&
         (String(mapped.fromEmail || "").toLowerCase().includes("b2breservas") ||
-          /Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(mapped.subject || ""));
+          Boolean(subjResNum));
 
-      if (isB2bConfirmationEmail) {
-        let fetchedHtml = mapped.bodyHtml || "";
-        if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
-          try {
-            const contentRes = await callZohoMailApi(
-              db,
-              `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
-            );
-            if (contentRes.ok && contentRes.data?.content) {
-              fetchedHtml = contentRes.data.content;
+      const hasCompleteB2bReservation =
+        subjResNum &&
+        (db.reservations || []).some(
+          r =>
+            r &&
+            r.status !== "cancelada" &&
+            (String(r.b2bReservationNumber || "") === subjResNum ||
+              String(r.externalReservationNumber || "") === subjResNum) &&
+            Boolean(r.agencyName || r.companyName)
+        );
+
+      const needsB2bParse =
+        isB2bConfirmationEmail &&
+        (!existingMsg?.b2bParsed || (subjResNum && !hasCompleteB2bReservation));
+
+      if (needsB2bParse) {
+        try {
+          let fetchedHtml = mapped.bodyHtml || "";
+          if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+            try {
+              const contentRes = await callZohoMailApi(
+                db,
+                `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
+              );
+              if (contentRes.ok && contentRes.data?.content) {
+                fetchedHtml = contentRes.data.content;
+                mapped.bodyHtml = fetchedHtml;
+              }
+            } catch {
+              // Ignora falha pontual de conteúdo na sincronização
             }
-          } catch {
-            // Ignora falha pontual de conteúdo na sincronização
           }
+          const parsedB2b = await fetchAndParseB2bVoucher({
+            rawText: mapped.snippet || "",
+            htmlText: fetchedHtml || "",
+            subject: mapped.subject || ""
+          });
+          if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+            const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, {
+              saveDatabase,
+              autoSendCredentialEmail: true
+            });
+            if (ingestRes?.ok) {
+              addedOrUpdated++;
+            }
+          }
+          mapped.b2bParsed = true;
+        } catch (b2bErr) {
+          console.warn("[B2B Sync Parse] Aviso ao processar voucher B2B:", b2bErr?.message || b2bErr);
         }
-        const parsedB2b = await fetchAndParseB2bVoucher({
-          rawText: mapped.snippet || "",
-          htmlText: fetchedHtml || "",
-          subject: mapped.subject || ""
-        });
-        if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
-          ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: true });
-        }
-        mapped.b2bParsed = true;
       } else if (existingMsg?.b2bParsed) {
         mapped.b2bParsed = true;
       }
@@ -1148,7 +1177,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
           existingMsg.isRead !== mapped.isRead ||
           existingMsg.isStarred !== mapped.isStarred ||
           existingMsg.folder !== mapped.folder ||
-          !existingMsg.b2bParsed && mapped.b2bParsed;
+          (!existingMsg.b2bParsed && mapped.b2bParsed);
         db.zohoMessagesCache[existingIdx] = { ...existingMsg, ...mapped };
         if (changed) addedOrUpdated++;
       } else {
@@ -1158,6 +1187,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
     }
 
     zohoTokenCache.lastFolderSyncAt[folder] = Date.now();
+    zohoTokenCache.lastSyncAt = new Date().toISOString();
     return { ok: true, synced: addedOrUpdated, mode: "zoho_api" };
   } catch (err) {
     return { ok: false, error: err.message, mode: "hybrid_fallback" };
@@ -1523,7 +1553,11 @@ export async function listWebmailMessages(db, {
     (syncRemote || Date.now() - lastFolderSync > 30000);
 
   if (shouldAutoSync) {
-    const syncRes = await syncZohoMessagesToCache(db, { folder: syncTargetFolder === "newsletters" ? "inbox" : syncTargetFolder, search });
+    const syncRes = await syncZohoMessagesToCache(db, {
+      folder: syncTargetFolder === "newsletters" ? "inbox" : syncTargetFolder,
+      search,
+      saveDatabase
+    });
     if (syncRes.ok && syncRes.synced > 0 && typeof saveDatabase === "function") {
       saveDatabase();
     }
@@ -1717,7 +1751,7 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
   if (
     target.direction === "inbound" &&
     (String(target.fromEmail || "").toLowerCase().includes("b2breservas") ||
-      /Confirmac[aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(target.subject || ""))
+      /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(target.subject || ""))
   ) {
     const parsedB2b = await fetchAndParseB2bVoucher({
       rawText: target.bodyText || target.snippet || "",
@@ -2265,6 +2299,11 @@ export function getZohoStatusSummary(db) {
     primaryEmailAddress: zohoTokenCache.primaryEmailAddress || smtpCfg.fromEmail || smtpCfg.user || "reservas@corpflats.com.br",
     dc: oauthCfg.dc || "com",
     lastSyncAt: zohoTokenCache.lastSyncAt,
+    lastWebhookAt: zohoTokenCache.lastWebhookAt || db?.settings?.zohoOAuth?.lastWebhookAt || null,
+    webhookEndpoint:
+      db?.settings?.zohoOAuth?.webhookEndpoint ||
+      zohoTokenCache.webhookEndpoint ||
+      "https://corpflats.com.br/api/webmail/zoho-webhook",
     lastError: zohoTokenCache.lastError,
     smtpConfigured: smtpCfg.isConfigured,
     smtpHost: smtpCfg.host,
@@ -2473,8 +2512,8 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
 
   // 1. Número da Reserva B2B e RLOC
   const resNumMatch =
-    fullScan.match(/Confirmac[aã]o\s+(?:d[ae]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{7,10})/i) ||
-    fullScan.match(/N[uú°º]?(?:mero)?\s+d[ae]\s+(?:Reserva|Confirmac[aã]o)\s*[\s:\-#]*(\d{7,10})/i) ||
+    fullScan.match(/Confirma[cç][aã]o\s+(?:d[ae]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{7,10})/i) ||
+    fullScan.match(/N[uú°º]?(?:mero)?\s+d[ae]\s+(?:Reserva|Confirma[cç][aã]o)\s*[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/Reserva\s+B2B\s*[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/C[oó]d(?:igo)?\.?\s+Reserva\s*[\s:\-#]*(\d{7,10})/i) ||
     fullScan.match(/\b(25\d{6})\b/);
@@ -2558,7 +2597,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   }
 
   // 6. Agência, Unidade POS, Emissor, Empresa e Centro de Custo
-  const agencyMatch = fullScan.match(/(?:Ag[eê\ufffd?]?ncia|Agencia)\s*[:\-]+\s*([^\n]+)/i);
+  const agencyMatch = fullScan.match(/(?:Ag[eê\ufffd?]?ncia|Agencia)(?:\s+(?:Solicitante|de\s+Viagens))?\s*[:\-]+\s*([^\n]+)/i);
   const posMatch = fullScan.match(/(?:Unidade(?:\s*[\/\-]?\s*POS)?|Filial|Ponto\s+de\s+Venda)\s*[:\-]+\s*([^\n]+)/i);
   const agentMatch = fullScan.match(/(?:Emissor|Agente|Solicitante)\s*[:\-]+\s*([^\n]+)/i);
   const companyMatch = fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]+\s*([^\n]+)/i);
@@ -2652,7 +2691,7 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
   let parsed = parseB2bVoucherText(input, htmlArg, subjectArg);
   if (
     parsed.voucherUrl &&
-    (!parsed.checkoutDate || !parsed.agencyName || !parsed.companyName || !parsed.dailyRate)
+    (!parsed.checkoutDate || !parsed.agencyName || !parsed.companyName || !parsed.dailyRate || !parsed.b2bCardMasked)
   ) {
     try {
       const resp = await fetch(parsed.voucherUrl, {
@@ -2678,6 +2717,30 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
 }
 
 /**
+ * Localiza um Flat disponível sem conflito de datas no período informado
+ */
+function findAvailableFlatForPeriod(db, checkinDate, checkoutDate) {
+  const flats = Array.isArray(db?.flats) ? db.flats.filter(f => f && f.status !== "inativo") : [];
+  if (flats.length === 0) return { id: 1, number: "113" };
+  const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+
+  const isFlatOccupied = (flat) => {
+    const fId = Number(flat.id);
+    const fNum = String(flat.number || "").trim();
+    return reservations.some(r => {
+      if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+      const sameFlat = (fId && Number(r.flatId) === fId) || (fNum && String(r.flatNumber || "").trim() === fNum);
+      if (!sameFlat) return false;
+      if (!r.checkinDate || !r.checkoutDate || !checkinDate || !checkoutDate) return false;
+      return r.checkinDate < checkoutDate && r.checkoutDate > checkinDate;
+    });
+  };
+
+  const available = flats.find(f => !isFlatOccupied(f));
+  return available || flats.find(f => String(f.number) === "113") || flats[0];
+}
+
+/**
  * Registra/vincula automaticamente as 4 pontas (B2B + Agência + Empresa + Hóspede) no banco
  * a partir de um voucher B2B parseado.
  */
@@ -2700,6 +2763,12 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       .toUpperCase()
       .trim();
 
+  const extractNameTokens = (s = "") =>
+    normStr(s)
+      .replace(/[^A-Z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(t => t.length >= 3 && !["DOS", "DAS", "FILHO", "NETO", "JUNIOR", "SRA", "SRTA"].includes(t));
+
   // 1. Agência B2B
   let agency = null;
   if (parsed.agencyName) {
@@ -2709,7 +2778,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       const cNorm = normStr(a.corporateName);
       return (
         (tNorm && (tNorm === targetAgNorm || tNorm.includes(targetAgNorm) || targetAgNorm.includes(tNorm))) ||
-        (cNorm && (cNorm === targetAgNorm || cNorm.includes(targetAgNorm) || targetAgNorm.includes(cNorm)))
+        (cNorm && (cNorm === targetAgNorm || cNorm.includes(targetAgNorm) || targetCompOrAgMatch(targetAgNorm, cNorm)))
       );
     });
     if (!agency) {
@@ -2765,6 +2834,10 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     }
   }
 
+  function targetCompOrAgMatch(a, b) {
+    return Boolean(a && b && (a.includes(b) || b.includes(a)));
+  }
+
   // 2. Empresa Cliente
   let company = null;
   if (parsed.companyName) {
@@ -2797,9 +2870,20 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     }
   }
 
-  // 3. Hóspede Corporativo
+  // 3. Hóspede Corporativo (busca por nome exato ou tokens equivalentes)
   const targetGuestNorm = normStr(parsed.guestName);
-  let guest = db.guests.find(g => normStr(g.fullName || g.name) === targetGuestNorm);
+  const parsedGuestTokens = extractNameTokens(parsed.guestName);
+  let guest = db.guests.find(g => {
+    const gNorm = normStr(g.fullName || g.name);
+    if (gNorm === targetGuestNorm) return true;
+    const gTokens = extractNameTokens(g.fullName || g.name);
+    return (
+      parsedGuestTokens.length >= 2 &&
+      gTokens.length >= 2 &&
+      parsedGuestTokens.every(t => gTokens.includes(t)) &&
+      gTokens.every(t => parsedGuestTokens.includes(t))
+    );
+  });
   if (!guest) {
     const nextGuestId = db.guests.reduce((m, g) => Math.max(m, Number(g.id) || 0), 0) + 1;
     guest = {
@@ -2832,34 +2916,63 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     }
   }
 
-  // 4. Reserva B2B (Cria ou enriquece se já existir)
+  // 4. Reserva B2B (Cria em flat disponível ou enriquece reserva existente/manual)
   let reservation = db.reservations.find(
     r =>
       r &&
       r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
       (String(r.b2bReservationNumber || "") === resNum ||
         String(r.externalReservationNumber || "") === resNum ||
         String(r.b2bLocatorRloc || "") === resNum)
   );
 
+  // Fallback inteligente: vincula reserva manual já criada para o mesmo hóspede e mesma data de check-in (ex: RES-512-0530 Valtencir Soares no Flat 512)
+  if (!reservation && parsedGuestTokens.length > 0 && parsed.checkinDate) {
+    reservation = db.reservations.find(r => {
+      if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+      if (r.b2bReservationNumber && String(r.b2bReservationNumber) !== resNum) return false;
+      if (r.checkinDate !== parsed.checkinDate) return false;
+      const resTokens = extractNameTokens(r.guestName || "");
+      if (resTokens.length === 0) return false;
+      const allResInParsed = resTokens.every(t => parsedGuestTokens.includes(t));
+      const allParsedInRes = parsedGuestTokens.every(t => resTokens.includes(t));
+      const sharedCount = resTokens.filter(t => parsedGuestTokens.includes(t)).length;
+      return (
+        allResInParsed ||
+        allParsedInRes ||
+        sharedCount >= 2 ||
+        (resTokens.length === 1 && resTokens[0].length >= 5 && parsedGuestTokens.includes(resTokens[0]))
+      );
+    });
+  }
+
+  const checkinDate = parsed.checkinDate || reservation?.checkinDate;
+  const checkoutDate =
+    parsed.checkoutDate ||
+    reservation?.checkoutDate ||
+    new Date(new Date(`${checkinDate}T12:00:00Z`).getTime() + 86400000).toISOString().slice(0, 10);
+  const nights = Math.max(
+    1,
+    Math.round((new Date(`${checkoutDate}T12:00:00Z`) - new Date(`${checkinDate}T12:00:00Z`)) / 86400000)
+  );
+  const dailyRate = Number(parsed.dailyRate) || Number(reservation?.dailyRate) || 280;
+  const totalAmount = +(dailyRate * nights).toFixed(2);
+  const commPct = Number(
+    parsed.b2bCommissionPct ?? reservation?.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12)
+  ) || 0;
+  const b2bCommissionAmount = +((totalAmount * commPct) / 100).toFixed(2);
+  const b2bNetRate = +(dailyRate * (1 - commPct / 100)).toFixed(2);
+  const resolvedRecipientType =
+    parsed.invoiceRecipientType ||
+    reservation?.invoiceRecipientType ||
+    agency?.defaultRecipientType ||
+    "company";
+
   let created = false;
   if (!reservation) {
-    const flat = (db.flats || []).find(f => String(f.number) === "113") || (db.flats || [])[0] || { id: 1, number: "113" };
-    const checkinDate = parsed.checkinDate;
-    const checkoutDate =
-      parsed.checkoutDate ||
-      new Date(new Date(`${checkinDate}T12:00:00Z`).getTime() + 86400000).toISOString().slice(0, 10);
-    const nights = Math.max(
-      1,
-      Math.round((new Date(`${checkoutDate}T12:00:00Z`) - new Date(`${checkinDate}T12:00:00Z`)) / 86400000)
-    );
-    const dailyRate = Number(parsed.dailyRate) || 280;
-    const totalAmount = +(dailyRate * nights).toFixed(2);
-    const commPct = Number(parsed.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12)) || 0;
-    const b2bCommissionAmount = +((totalAmount * commPct) / 100).toFixed(2);
-    const b2bNetRate = +(dailyRate * (1 - commPct / 100)).toFixed(2);
+    const flat = findAvailableFlatForPeriod(db, checkinDate, checkoutDate);
     const nextResId = db.reservations.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1;
-    const resolvedRecipientType = parsed.invoiceRecipientType || agency?.defaultRecipientType || "company";
 
     reservation = {
       id: nextResId,
@@ -2876,6 +2989,8 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       companyCnpj: company?.cnpj || "",
       agencyId: agency?.id || null,
       agencyName: agency?.tradeName || parsed.agencyName || "",
+      agencyTradeName: agency?.tradeName || parsed.agencyName || "",
+      agencyCorporateName: agency?.corporateName || parsed.agencyName || "",
       agencyCnpj: agency?.cnpj || "",
       agencyPosUnit: parsed.agencyPosUnit || "",
       agencyAgentName: parsed.agencyAgentName || "",
@@ -2887,9 +3002,11 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       totalAmount,
       status: "confirmada",
       channel: "b2b",
+      requesterType: "agency_b2b",
       paymentStatus: "pendente",
       paymentMethod: parsed.b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b",
       hasBreakfast: parsed.hasBreakfast !== false,
+      includeBreakfast: parsed.hasBreakfast !== false,
       b2bReservationNumber: resNum,
       externalReservationNumber: resNum,
       b2bLocatorRloc: parsed.b2bLocatorRloc || resNum,
@@ -2919,27 +3036,125 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     db.reservations.push(reservation);
     created = true;
   } else {
-    if (!reservation.b2bConciliationUrl && parsed.b2bConciliationUrl) {
-      reservation.b2bConciliationUrl = parsed.b2bConciliationUrl;
+    // Enriquece a reserva existente (ou manual, preservando Flat, código e telefone já lançados)
+    reservation.channel = "b2b";
+    reservation.requesterType = "agency_b2b";
+    reservation.b2bReservationNumber = resNum;
+    reservation.externalReservationNumber = reservation.externalReservationNumber || resNum;
+    reservation.b2bLocatorRloc = parsed.b2bLocatorRloc || reservation.b2bLocatorRloc || resNum;
+    reservation.b2bOriginType = parsed.b2bOriginType || reservation.b2bOriginType || "BOOKING_WS";
+
+    if (guest?.id && !reservation.guestId) {
+      reservation.guestId = guest.id;
     }
-    if (!reservation.b2bVoucherUrl && parsed.voucherUrl) {
-      reservation.b2bVoucherUrl = parsed.voucherUrl;
+    if (reservation.guestPhone && guest && !guest.phone) {
+      guest.phone = reservation.guestPhone;
+      guest.whatsapp = reservation.guestPhone;
     }
-    if (!reservation.b2bVcnToken && parsed.b2bVcnToken) {
+    if (reservation.guestDocument && guest && !guest.cpf) {
+      guest.cpf = reservation.guestDocument;
+      guest.documentNumber = reservation.guestDocument;
+    }
+    if (reservation.guestEmail && guest && !guest.email) {
+      guest.email = reservation.guestEmail;
+    }
+
+    if (agency?.id) {
+      reservation.agencyId = agency.id;
+      reservation.agencyName = agency.tradeName || agency.corporateName || parsed.agencyName || reservation.agencyName || "";
+      reservation.agencyTradeName = agency.tradeName || parsed.agencyName || reservation.agencyTradeName || "";
+      reservation.agencyCorporateName = agency.corporateName || parsed.agencyName || reservation.agencyCorporateName || "";
+      reservation.agencyCnpj = agency.cnpj || reservation.agencyCnpj || "";
+    } else if (parsed.agencyName && !reservation.agencyName) {
+      reservation.agencyName = parsed.agencyName;
+      reservation.agencyTradeName = parsed.agencyName;
+    }
+    if (parsed.agencyPosUnit && !reservation.agencyPosUnit) {
+      reservation.agencyPosUnit = parsed.agencyPosUnit;
+    }
+    if (parsed.agencyAgentName && !reservation.agencyAgentName) {
+      reservation.agencyAgentName = parsed.agencyAgentName;
+    }
+    const agentEmailCandidate = parsed.nfDeliveryEmails?.[0] || agency?.financialEmail || agency?.email || "";
+    if (agentEmailCandidate && !reservation.agencyAgentEmail) {
+      reservation.agencyAgentEmail = agentEmailCandidate;
+    }
+
+    if (company?.id) {
+      reservation.companyId = company.id;
+      reservation.companyName = company.tradeName || company.corporateName || parsed.companyName || reservation.companyName || "";
+      reservation.companyCnpj = company.cnpj || reservation.companyCnpj || "";
+    } else if (parsed.companyName && !reservation.companyName) {
+      reservation.companyName = parsed.companyName;
+    }
+    if (parsed.costCenter && !reservation.costCenter) {
+      reservation.costCenter = parsed.costCenter;
+    }
+
+    if (parsed.checkoutDate) {
+      reservation.checkoutDate = parsed.checkoutDate;
+    }
+    reservation.nights = nights;
+    if (Number(parsed.dailyRate) > 0) {
+      reservation.dailyRate = dailyRate;
+      reservation.totalAmount = totalAmount;
+    } else if (!reservation.totalAmount && dailyRate > 0) {
+      reservation.totalAmount = totalAmount;
+    }
+    if (parsed.hasBreakfast !== undefined) {
+      reservation.hasBreakfast = parsed.hasBreakfast !== false;
+      reservation.includeBreakfast = parsed.hasBreakfast !== false;
+    }
+
+    reservation.b2bRatePolicy = parsed.b2bRatePolicy || reservation.b2bRatePolicy || "COMISSIONADA";
+    reservation.b2bCommissionPct = commPct;
+    reservation.b2bCommissionAmount = b2bCommissionAmount;
+    reservation.b2bNetRate = b2bNetRate;
+    reservation.b2bPaymentType = parsed.b2bPaymentType || reservation.b2bPaymentType || "VIRTUAL_CARD";
+    reservation.paymentMethod =
+      reservation.b2bPaymentType === "FATURADO"
+        ? "faturado_b2b"
+        : !reservation.paymentMethod || reservation.paymentMethod === "pix"
+          ? "vcn_b2b"
+          : reservation.paymentMethod;
+
+    if (parsed.b2bCardMasked) {
+      reservation.b2bCardMasked = parsed.b2bCardMasked;
+      reservation.b2bCardBrand = parsed.b2bCardBrand || reservation.b2bCardBrand || "";
+    }
+    if (parsed.b2bVcnToken) {
       reservation.b2bVcnToken = parsed.b2bVcnToken;
     }
-    if (!reservation.b2bCardMasked && parsed.b2bCardMasked) {
-      reservation.b2bCardMasked = parsed.b2bCardMasked;
-      reservation.b2bCardBrand = parsed.b2bCardBrand || reservation.b2bCardBrand;
+    if (parsed.b2bAuthorizedExpenses && !reservation.b2bAuthorizedExpenses) {
+      reservation.b2bAuthorizedExpenses = parsed.b2bAuthorizedExpenses;
     }
-    if (!reservation.agencyId && agency?.id) {
-      reservation.agencyId = agency.id;
-      reservation.agencyName = agency.tradeName;
+    if (parsed.b2bConciliationUrl) {
+      reservation.b2bConciliationUrl = parsed.b2bConciliationUrl;
     }
-    if (!reservation.companyId && company?.id) {
-      reservation.companyId = company.id;
-      reservation.companyName = company.tradeName;
+    if (parsed.voucherUrl) {
+      reservation.b2bVoucherUrl = parsed.voucherUrl;
     }
+
+    reservation.invoiceRecipientType = resolvedRecipientType;
+    reservation.nfRecipientType = resolvedRecipientType;
+    if (Array.isArray(parsed.nfDeliveryEmails) && parsed.nfDeliveryEmails.length > 0) {
+      const mergedEmails = new Set([
+        ...(Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : []),
+        ...parsed.nfDeliveryEmails
+      ]);
+      reservation.nfDeliveryEmails = Array.from(mergedEmails);
+    }
+    if (parsed.nfHideFromGuest !== undefined) {
+      reservation.nfHideFromGuest = Boolean(parsed.nfHideFromGuest);
+    }
+    if (!reservation.credentialToken) {
+      reservation.credentialToken = `B2B-${resNum}`;
+    }
+    if (!reservation.credentialStatus) {
+      reservation.credentialStatus =
+        reservation.guestPhone && reservation.guestDocument ? "completed" : "pending_agency";
+    }
+    reservation.updatedAt = new Date().toISOString();
   }
 
   // Disparo cordial automático se a reserva B2B ainda estiver sem telefone ou CPF do hóspede
@@ -3106,6 +3321,7 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
   if (!Array.isArray(db.reservationCommunications)) db.reservationCommunications = [];
 
   const canSendReal = Boolean(getZohoOAuthConfig(db).isConfigured || getSmtpConfig(db).isConfigured);
+  if (!canSendReal) return { dispatched: 0 };
   let dispatched = 0;
 
   for (const r of db.reservations) {
@@ -3162,6 +3378,128 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
 
   return { dispatched };
 }
+
+/**
+ * Processa notificação em tempo real (Webhook / Push) de novo e-mail recebido no Zoho Mail.
+ * Sincroniza imediatamente a Caixa de Entrada, processa eventuais vouchers B2B e dispara credenciamento.
+ */
+export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) {
+  ensureWebmailCollections(db);
+  const nowIso = new Date().toISOString();
+  zohoTokenCache.lastWebhookAt = nowIso;
+  if (db?.settings?.zohoOAuth) {
+    db.settings.zohoOAuth.lastWebhookAt = nowIso;
+  }
+
+  let directIngest = null;
+  const rawSubj = String(payload?.subject || payload?.Subject || payload?.data?.subject || "").trim();
+  const rawFrom = String(payload?.fromAddress || payload?.sender || payload?.From || payload?.data?.fromAddress || "").trim();
+  const rawHtml = String(payload?.content || payload?.html || payload?.bodyHtml || payload?.data?.content || "").trim();
+  const rawText = String(payload?.summary || payload?.text || payload?.bodyText || payload?.data?.summary || "").trim();
+
+  if (
+    rawSubj &&
+    (rawFrom.toLowerCase().includes("b2breservas") ||
+      /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(rawSubj))
+  ) {
+    try {
+      const parsedB2b = await fetchAndParseB2bVoucher({
+        rawText,
+        htmlText: rawHtml,
+        subject: rawSubj
+      });
+      if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+        directIngest = ingestB2bVoucherIntoDb(db, parsedB2b, {
+          saveDatabase,
+          autoSendCredentialEmail: true
+        });
+      }
+    } catch (err) {
+      console.warn("[Zoho Webhook Direct B2B] Aviso:", err?.message || err);
+    }
+  }
+
+  const syncRes = await syncZohoMessagesToCache(db, {
+    folder: "inbox",
+    limit: 40,
+    saveDatabase
+  });
+
+  await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase);
+
+  if (typeof saveDatabase === "function") {
+    saveDatabase("zoho_webhook_sync");
+  }
+
+  return {
+    ok: true,
+    synced: syncRes?.synced || 0,
+    directIngestedReservation: directIngest?.reservation?.code || null,
+    lastWebhookAt: nowIso
+  };
+}
+
+/**
+ * Registra / assegura o endpoint de Webhook de entrada na conta Zoho Mail (quando suportado pelo escopo OAuth)
+ * e realiza a sincronização imediata de inicialização para capturar e-mails recebidos recentemente.
+ */
+export async function ensureZohoWebhookRegistered(
+  db,
+  saveDatabase,
+  { baseUrl = "https://corpflats.com.br" } = {}
+) {
+  ensureWebmailCollections(db);
+  const hostBase = String(baseUrl || "https://corpflats.com.br")
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+    .replace(/\/+$/, "");
+  const webhookUrl = `${hostBase}/api/webmail/zoho-webhook`;
+
+  zohoTokenCache.webhookEndpoint = webhookUrl;
+  if (db?.settings?.zohoOAuth) {
+    db.settings.zohoOAuth.webhookEndpoint = webhookUrl;
+  }
+
+  const oauthCfg = getZohoOAuthConfig(db);
+  if (!oauthCfg.isConfigured) {
+    return { ok: false, reason: "oauth_not_configured", webhookUrl };
+  }
+
+  try {
+    const existingRes = await callZohoMailApi(db, "/accounts/{accountId}/webhooks");
+    const list = Array.isArray(existingRes?.data) ? existingRes.data : [];
+    const alreadyRegistered = list.some(w =>
+      String(w?.callbackUrl || w?.webhookUrl || w?.url || "").includes("/api/webmail/zoho-webhook")
+    );
+    if (!alreadyRegistered) {
+      await callZohoMailApi(db, "/accounts/{accountId}/webhooks", {
+        method: "POST",
+        body: JSON.stringify({
+          callbackUrl: webhookUrl,
+          events: ["incoming_mail", "NEW_MAIL"]
+        })
+      }).catch(() => {});
+    }
+  } catch {
+    // Escopo OAuth atual pode não incluir gerenciamento de webhooks; filtros do Zoho Mail podem postar diretamente no endpoint
+  }
+
+  const syncRes = await syncZohoMessagesToCache(db, {
+    folder: "inbox",
+    limit: 50,
+    saveDatabase
+  });
+
+  if (syncRes.ok && syncRes.synced > 0 && typeof saveDatabase === "function") {
+    saveDatabase("zoho_boot_sync");
+  }
+
+  return {
+    ok: true,
+    webhookUrl,
+    synced: syncRes?.synced || 0
+  };
+}
+
 
 
 
