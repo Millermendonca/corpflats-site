@@ -23724,14 +23724,35 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const guestFacingDiffs = filterGuestFacingDiffs(diffs);
     const hasNonFinChanges = hasNonFinancialChanges(guestFacingDiffs);
 
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+    const isSameDay = r.checkinDate === todayStr;
+    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+    const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
+      (h.reservationCode === r.code || h.reservationId === r.id) &&
+      (
+        h.triggerEvent === "sameday_reservation" ||
+        h.triggerEvent === "checkin_day_instructions" ||
+        h.triggerEvent === "room_ready" ||
+        h.triggerEvent === "reservation_created" ||
+        h.triggerEvent === "payment_confirmed" ||
+        h.triggerEvent === "corpflats_intro"
+      ) &&
+      (h.status === "sent" || h.status === "delivered")
+    );
+
     // Se o telefone do hóspede foi inserido na reserva agora (ou alterado para um novo telefone que ainda não recebeu a régua),
     // dispara o motor Catch-Up com a Apresentação CorpFlats + Confirmação + etapas cujo horário já tenha passado
+    const normNewGuestPhone = newGuestPhone.replace(/^55/, "");
     const hasGuestPhoneReceivedConfirmation = (db.whatsappHistory || []).some(h =>
       (h.reservationCode === r.code || h.reservationId === r.id) &&
       (h.recipientType || "guest") === "guest" &&
       (h.triggerEvent === "reservation_created" || h.triggerEvent === "payment_confirmed" || h.triggerEvent === "sameday_reservation") &&
       (h.status === "sent" || h.status === "delivered") &&
-      (!newGuestPhone || String(h.guestPhone || "").replace(/\D/g, "").slice(-8) === newGuestPhone.slice(-8))
+      (!normNewGuestPhone || String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "") === normNewGuestPhone)
     );
 
     if (wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation && !isPreReservationBlocked(r)) {

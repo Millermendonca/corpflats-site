@@ -2706,16 +2706,24 @@ export default function PmsCalendar() {
   }
 
   const handleSelectGuest = (val: string) => {
+    const prevGuestId = formGuestId
     setFormGuestId(val)
     if (!val || val === "manual") {
       return
     }
     const g = crmGuests.find(guest => String(guest.id) === val)
     if (g) {
+      const isSameGuest =
+        String(prevGuestId) === String(g.id) ||
+        (selectedRes?.guestId && String(selectedRes.guestId) === String(g.id)) ||
+        (selectedRes?.guestName && (g.name || g.fullName || "").trim().toLowerCase() === selectedRes.guestName.trim().toLowerCase())
+      const crmCpf = (g.documentNumber || g.document || "").trim()
+      const crmPhone = (g.phone || "").trim()
+      const crmEmail = (g.email || "").trim()
       setFormGuestName(g.name || g.fullName || "")
-      setFormGuest1Cpf(g.documentNumber || g.document || "")
-      setFormGuestPhone(g.phone || "")
-      setFormGuestEmail(g.email || "")
+      setFormGuest1Cpf(prev => isSameGuest ? (prev.trim() || crmCpf) : (crmCpf || prev))
+      setFormGuestPhone(prev => isSameGuest ? (prev.trim() || crmPhone) : (crmPhone || prev))
+      setFormGuestEmail(prev => isSameGuest ? (prev.trim() || crmEmail) : (crmEmail || prev))
 
       if (g.floorPreference === "alto" || g.prefersHighFloor) {
         setFormPrefersHighFloor(true)
@@ -3849,7 +3857,11 @@ export default function PmsCalendar() {
       const selectedComp = companies.find(c => String(c.id) === formCompanyId)
       const selectedAg = agencies.find((a: any) => String(a.id) === formAgencyId)
       const resolvedReqType = formRequesterType || (isB2b ? "agency_b2b" : (formCompanyId || formCompanyName ? "company" : "guest"))
-      const resolvedCompName = (selectedComp ? (selectedComp.tradeName || selectedComp.corporateName) : formCompanyName) || ""
+      const resolvedCompName = (
+        selectedRes && String(selectedRes.companyId || "") === String(formCompanyId || "") && selectedRes.companyName
+          ? selectedRes.companyName
+          : (selectedComp ? (selectedComp.tradeName || selectedComp.corporateName) : formCompanyName)
+      ) || ""
       const resolvedAgName = (selectedAg ? (selectedAg.tradeName || selectedAg.corporateName) : formAgencyName) || ""
       const resolvedAgCnpj = (selectedAg ? selectedAg.cnpj : formAgencyCnpj) || ""
       const commPct = formB2bRatePolicy === "NET" ? 0 : (Number(formB2bCommissionPct) || 0)
@@ -3934,7 +3946,9 @@ export default function PmsCalendar() {
         includeBreakfast: formIncludeBreakfast,
         specialRequests: formSpecialRequests.trim() || formNotes.trim() || "",
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
-        clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
+        clientType: formIsMonthlyGuest
+          ? "mensalista"
+          : ((isB2b || resolvedReqType === "company" || selectedRes?.clientType === "corporativo") ? "corporativo" : "avulso"),
         source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)",
         docPhotoUrl: formDocPhotoUrl || undefined,
         hasMinor: formHasMinor,
