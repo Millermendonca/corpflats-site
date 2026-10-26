@@ -33013,6 +33013,23 @@ app.post("/api/pms/pre-checkin/:code/signature-token", (req, res) => {
     });
   }
 
+  const resStatusLower = String(r.status || "").toLowerCase();
+  if (resStatusLower === "cancelada" || resStatusLower === "cancelled" || resStatusLower === "completed" || r.checkoutDone) {
+    return res.status(403).json({
+      error: "Esta reserva já foi encerrada ou cancelada e não permite envio de código de check-in.",
+      reservationClosed: true
+    });
+  }
+  if (r.checkoutDate && process.env.NODE_ENV !== "test" && !String(r.code || "").startsWith("TEST-")) {
+    const todayBrasilia = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    if (String(r.checkoutDate).slice(0, 10) < todayBrasilia) {
+      return res.status(403).json({
+        error: "O período desta reserva já foi encerrado e não permite envio de código de check-in.",
+        reservationClosed: true
+      });
+    }
+  }
+
   const token = crypto.randomBytes(24).toString("hex");
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2 horas a partir de agora
 
@@ -33055,6 +33072,23 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
       error: "Check-in digital indisponível para pré-reserva. Apenas após a confirmação do pagamento a reserva estará confirmada para prosseguir com o check-in digital.",
       preCheckinBlocked: true
     });
+  }
+
+  const resStatusLower = String(r.status || "").toLowerCase();
+  if (resStatusLower === "cancelada" || resStatusLower === "cancelled" || resStatusLower === "completed" || r.checkoutDone) {
+    return res.status(403).json({
+      error: "Esta reserva já foi encerrada ou cancelada e não permite envio de código de check-in.",
+      reservationClosed: true
+    });
+  }
+  if (r.checkoutDate && process.env.NODE_ENV !== "test" && !String(r.code || "").startsWith("TEST-")) {
+    const todayBrasilia = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    if (String(r.checkoutDate).slice(0, 10) < todayBrasilia) {
+      return res.status(403).json({
+        error: "O período desta reserva já foi encerrado e não permite envio de código de check-in.",
+        reservationClosed: true
+      });
+    }
   }
 
   // Isolamento estrito de telefone entre titular e acompanhantes
@@ -33232,6 +33266,23 @@ app.post("/api/pms/pre-checkin/:code/verify-whatsapp-otp", (req, res) => {
       error: "Check-in digital indisponível para pré-reserva. Apenas após a confirmação do pagamento a reserva estará confirmada para prosseguir com o check-in digital.",
       preCheckinBlocked: true
     });
+  }
+
+  const resStatusLower = String(r.status || "").toLowerCase();
+  if (resStatusLower === "cancelada" || resStatusLower === "cancelled" || resStatusLower === "completed" || r.checkoutDone) {
+    return res.status(403).json({
+      error: "Esta reserva já foi encerrada ou cancelada e não permite envio de código de check-in.",
+      reservationClosed: true
+    });
+  }
+  if (r.checkoutDate && process.env.NODE_ENV !== "test" && !String(r.code || "").startsWith("TEST-")) {
+    const todayBrasilia = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    if (String(r.checkoutDate).slice(0, 10) < todayBrasilia) {
+      return res.status(403).json({
+        error: "O período desta reserva já foi encerrado e não permite envio de código de check-in.",
+        reservationClosed: true
+      });
+    }
   }
 
   const cleanOtp = String(otp || "").replace(/\D/g, "").trim();

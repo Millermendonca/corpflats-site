@@ -398,13 +398,19 @@ export default function GuestPreCheckin() {
 
   // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
   useEffect(() => {
-    if (isGovTriagemMode) return
+    if (isGovTriagemMode || isReadOnlyDocument || isCompleted || !isEditing || !reservation) return
+    const resStatus = String(reservation?.status || "").toLowerCase()
+    if (resStatus === "completed" || resStatus === "cancelada" || resStatus === "cancelled" || reservation?.checkoutDone) return
+    if (reservation?.checkoutDate) {
+      const todayBrasilia = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())
+      if (String(reservation.checkoutDate).slice(0, 10) < todayBrasilia) return
+    }
     const isTitular = selectedGuestIndex === 1
     const targetPhone = phone || (isTitular ? reservation?.guestPhone : "")
     if (step === 3 && !otpSent && targetPhone && !isTokenSessionExpired) {
       handleSendOtp("whatsapp")
     }
-  }, [step, otpSent, phone, selectedGuestIndex, reservation?.guestPhone, isTokenSessionExpired, isGovTriagemMode])
+  }, [step, otpSent, phone, selectedGuestIndex, reservation, isTokenSessionExpired, isGovTriagemMode, isReadOnlyDocument, isCompleted, isEditing])
 
   // Canvas for signature
 
@@ -844,6 +850,7 @@ export default function GuestPreCheckin() {
     if (isReadOnlyDocument) {
       setIsCompleted(true)
       setIsEditing(false)
+      setStep(1)
     } else if (isReSignatureNeeded) {
       setIsCompleted(false)
       setIsEditing(true)
@@ -857,8 +864,16 @@ export default function GuestPreCheckin() {
     } else {
       setIsCompleted(fnhrDone)
       setIsEditing(!fnhrDone)
-      if (!fnhrDone) {
-        setStep(1)
+      setStep(1)
+      if (fnhrDone && typeof window !== "undefined") {
+        try {
+          const url = new URL(window.location.href)
+          if (url.searchParams.has("resign") || url.searchParams.get("step") === "3") {
+            url.searchParams.delete("resign")
+            url.searchParams.delete("step")
+            window.history.replaceState({}, "", url.toString())
+          }
+        } catch {}
       }
     }
   }
