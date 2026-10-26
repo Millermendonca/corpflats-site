@@ -21486,8 +21486,11 @@ app.post("/api/pms/reservations", async (req, res) => {
       db.guests.push(guest);
     } else if (guest) {
       if (primaryPhone) guest.phone = primaryPhone;
+      else if (guest.phone) primaryPhone = String(guest.phone).trim();
       if (primaryEmail) guest.email = primaryEmail;
+      else if (guest.email) primaryEmail = String(guest.email).trim();
       if (primaryDoc) guest.document = primaryDoc;
+      else if (guest.document || guest.cpf) primaryDoc = String(guest.document || guest.cpf).trim();
       if (resolvedCompany?.corporateName || companyName) guest.companyName = resolvedCompany?.corporateName || companyName;
       if (resolvedCompany?.id) guest.companyId = resolvedCompany.id;
       if (resolvedAgency?.id) guest.agencyId = resolvedAgency.id;
@@ -21949,7 +21952,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   db.reservations.unshift(newReservation);
   saveDatabase();
 
-  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
 
   if (resolvedStatus === "pre_reserva") {
     if (!newReservation.pixCopiaECola && Number(newReservation.totalAmount) > 0) {
@@ -23868,7 +23871,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 
   saveDatabase();
 
-  const editBaseUrl = `${req.protocol}://${req.get("host")}`;
+  const editBaseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
 
   // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
   // (Apenas dispara e-mail se for para hoje; para datas futuras a liberação é retida até o dia do check-in)
@@ -24799,7 +24802,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     });
   }
 
-  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
   const preCheckinUrl = await getCheckinUrl(reservation, guestIndex, baseUrl, db);
 
   const template = (db.whatsappTemplates || []).find(t => t.id === "tpl_pre_checkin_reminder");
@@ -24898,7 +24901,7 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
       return res.status(404).json({ error: "Reserva não encontrada." });
     }
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
     const dispatchRes = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
       toEmail: req.body?.toEmail || req.body?.email || "",
       baseUrl,
@@ -25164,7 +25167,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     }
 
     // Motor Catch-Up: dispara Apresentação CorpFlats + Confirmação de Reserva + etapas vencidas da régua para o WhatsApp do hóspede
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
     let catchUpResult = { dispatchedStages: [] };
     try {
       catchUpResult = await dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl });
@@ -31755,7 +31758,7 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
     ensureReservationScheduledEmails(db, saveDatabase, r);
     const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
     if (isB2b && (!r.guestPhone || !r.guestDocument) && !r.b2bCredentialCompletedAt) {
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
       await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, { baseUrl });
     }
   }

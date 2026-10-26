@@ -9,6 +9,7 @@ import {
   resolveWhatsAppTags,
   renderTemplateButtons,
   DEFAULT_WHATSAPP_TEMPLATES,
+  isMissingGuestDataForCredential,
   isPureBillingTemplateOrEvent,
   isRequesterAndGuestTemplateOrEvent,
   isGuestOnlyStayOrPostTemplateOrEvent
@@ -119,18 +120,9 @@ for (const ev of ["pre_reservation_created", "payment_pending", "additional_dail
   );
 }
 
-// ── B. Eventos de Confirmação, Instruções, Pré-Check-in, Quarto Liberado, Modificação e Cancelamento -> Solicitante + Hóspedes (1 e 2) ──
+// ── B. Eventos que vão para Solicitante + Hóspedes (1 e 2) ──
 const sharedEvents = [
-  "reservation_created",
   "payment_confirmed",
-  "sameday_reservation",
-  "checkin_day_instructions",
-  "pre_checkin_reminder",
-  "pre_checkin_completed",
-  "room_ready",
-  "room_ready_ota",
-  "room_ready_regular",
-  "checkin_cleaning_delay",
   "reservation_updated",
   "reservation_cancelled"
 ];
@@ -149,8 +141,17 @@ for (const ev of sharedEvents) {
   );
 }
 
-// ── C. Eventos de Estadia Interna, Café, Check-out, Avaliação e Achados -> SOMENTE Hóspedes (NUNCA Solicitante) ──
+// ── C. Eventos de Instruções de Reserva/Check-in, Estadia Interna, Café, Check-out, Avaliação e Achados -> SOMENTE Hóspedes quando Nome + WhatsApp estão preenchidos ──
 const stayAndPostEvents = [
+  "reservation_created",
+  "sameday_reservation",
+  "checkin_day_instructions",
+  "pre_checkin_reminder",
+  "pre_checkin_completed",
+  "room_ready",
+  "room_ready_ota",
+  "room_ready_regular",
+  "checkin_cleaning_delay",
   "checkin_completed",
   "breakfast_reminder",
   "checkout_reminder",
@@ -178,6 +179,53 @@ for (const ev of stayAndPostEvents) {
     `Obtido: ${JSON.stringify(types)}`
   );
 }
+
+// ── C2. Regra de Solicitação de Credenciamento (isMissingGuestDataForCredential & Texto Neutro) ──
+check(
+  "6b. Reserva com Nome + WhatsApp do hóspede preenchidos (mesmo sem CPF) NÃO dispara credenciamento ao solicitante",
+  isMissingGuestDataForCredential({
+    guestName: "Carlos Eduardo Hóspede",
+    guestPhone: "22999111111",
+    guestDocument: "",
+    guests: [{ index: 1, name: "Carlos Eduardo Hóspede", phone: "22999111111", cpf: "" }]
+  }) === false
+);
+check(
+  "6c. Reserva SEM WhatsApp do hóspede dispara solicitação de dados ao solicitante",
+  isMissingGuestDataForCredential({
+    guestName: "Carlos Eduardo Hóspede",
+    guestPhone: "",
+    guests: [{ index: 1, name: "Carlos Eduardo Hóspede", phone: "" }]
+  }) === true
+);
+check(
+  "6d. Reserva SEM Nome do hóspede (a definir) dispara solicitação de dados ao solicitante",
+  isMissingGuestDataForCredential({
+    guestName: "Hóspede a Definir",
+    guestPhone: "22999111111",
+    guestPending: true
+  }) === true
+);
+
+const tplCred = getTpl("tpl_b2b_agency_credential");
+const msgCredThirdParty = resolveWhatsAppTags(
+  tplCred.message,
+  corporateRes,
+  mockDb,
+  "http://corpflats.onrender.com",
+  "requester",
+  tplCred
+);
+check(
+  "6e. Mensagem de solicitação de dados ao solicitante usa texto neutro (sem 'B2B', 'equipe da' ou 'parceria') e normaliza domínio corpflats.com.br",
+  msgCredThirdParty.includes("Olá, *Paula Secretária Solicitante*!") &&
+    !msgCredThirdParty.includes("equipe da") &&
+    !msgCredThirdParty.includes("B2B") &&
+    !msgCredThirdParty.includes("parceria") &&
+    msgCredThirdParty.includes("https://corpflats.com.br/credenciamento/RES-509-9901") &&
+    !tplCred.footer.includes("B2B"),
+  `Mensagem obtida: ${msgCredThirdParty}`
+);
 
 // ── D. Sigilo Financeiro nas Mensagens (Solicitante vê valores; Hóspede 1 e 2 NÃO veem valores) ──
 const tplConfirm = getTpl("tpl_new_reservation_direct");

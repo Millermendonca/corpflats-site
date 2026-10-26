@@ -3017,7 +3017,9 @@ export async function dispatchB2bAgencyCredentialEmail(
     e => String(e).trim().toLowerCase() !== targetEmail.toLowerCase()
   );
 
-  const hostBase = String(baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+  const hostBase = String(baseUrl || "https://corpflats.com.br")
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+    .replace(/\/+$/, "");
   const credentialUrl = `${hostBase}/credenciamento/${encodeURIComponent(String(reservation.code || reservation.id))}`;
 
   const rendered = renderB2bAgencyCredentialRequestEmail({

@@ -310,8 +310,8 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
   {
     id: "tpl_b2b_agency_credential",
     triggerEvent: "b2b_agency_credential_request",
-    title: "Solicitante / Agência • Solicitação de Dados do Hóspede (Link de Credenciamento)",
-    description: "Enviada para o solicitante (Agência B2B, Empresa ou Terceiro, por E-mail e WhatsApp) assim que uma reserva está Confirmada sem os dados obrigatórios do hóspede (Nome Completo, CPF, Telefone e Documento). Contém o link seguro (/credenciamento/:code) para preenchimento obrigatório.",
+    title: "Solicitante • Solicitação de Dados do Hóspede (Link de Credenciamento)",
+    description: "Enviada para o solicitante (Terceiro, Empresa ou Agência, por E-mail e WhatsApp) exclusivamente quando uma reserva é criada sem o Nome ou WhatsApp do hóspede. Contém o link seguro (/credenciamento/:code) para preenchimento antecipado.",
     enabled: true,
     channels: ["site", "whatsapp", "b2b", "booking", "airbnb", "outros"],
     recipientTarget: "requester",
@@ -321,19 +321,17 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
     fixedTime: "",
     hasAttachment: false,
     sendEmail: true,
-    message: `Olá, *{{nome_agencia}}*! Tudo bem? 🤝
+    message: `Olá, *{{nome_destinatario}}*! Tudo bem? 👋
 
-Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* do(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
+Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
 
-⚠️ *Importante — Preenchimento dos Dados do Hóspede para Liberação na Recepção:*
-Para gerarmos a liberação de entrada na recepção do prédio e enviarmos as instruções de acesso ao hóspede, é indispensável preencher antecipadamente os dados obrigatórios do hóspede (*Nome Completo, CPF, Telefone/WhatsApp e Documento de Identificação*) através do nosso link seguro no sistema:
+⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*
+Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e Documento*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
 
 👉 {{link_credenciamento_agencia}}
 
-Ressaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o credenciamento prévio pelo link a recepção não conseguirá localizar a reserva nem liberar o acesso.
-
-Muito obrigado pela parceria!`,
-    footer: "CorpFlats • Central Corporativa B2B",
+Ressaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.`,
+    footer: "CorpFlats • Edifício Soho Residence",
     buttons: [
       { id: "btn_b2b_cred", type: "URL", label: "🔐 Preencher Dados do Hóspede", url: "{{link_credenciamento_agencia}}" }
     ]
@@ -2512,12 +2510,10 @@ export function isMissingGuestDataForCredential(reservation = {}) {
   if (reservation.b2bCredentialCompletedAt) return false;
   const gName = reservation.guestName || reservation.guests?.[0]?.name || "";
   const cleanPhone = String(reservation.guestPhone || reservation.guests?.[0]?.phone || "").replace(/\D/g, "");
-  const cleanDoc = String(reservation.guestDocument || reservation.guests?.[0]?.cpf || reservation.guests?.[0]?.document || "").replace(/\D/g, "");
   return Boolean(
     reservation.guestPending ||
     isPendingGuestName(gName) ||
-    cleanPhone.length < 10 ||
-    cleanDoc.length < 5
+    cleanPhone.length < 10
   );
 }
 
@@ -2737,44 +2733,34 @@ export const PURE_BILLING_TEMPLATE_IDS = new Set([
 
 // ── Eventos e templates que vão TANTO para o Solicitante (não-hóspede) QUANTO para os Hóspedes ──
 export const REQUESTER_AND_GUEST_EVENTS = new Set([
-  "reservation_created",
-  "new_reservation",
-  "new_reservation_direct",
-  "new_reservation_ota",
   "payment_confirmed",
-  "sameday_reservation",
-  "checkin_day_instructions",
-  "pre_checkin_reminder",
-  "pre_checkin_completed",
-  "room_ready",
-  "room_ready_direct",
-  "room_ready_ota",
-  "room_ready_regular",
-  "checkin_cleaning_delay",
   "reservation_updated",
   "reservation_cancelled"
 ]);
 
 export const REQUESTER_AND_GUEST_TEMPLATE_IDS = new Set([
-  "tpl_new_reservation",
-  "tpl_new_reservation_direct",
-  "tpl_new_reservation_ota",
   "tpl_payment_confirmed",
-  "tpl_sameday_reservation_instructions",
-  "tpl_checkin_day_instructions",
-  "tpl_pre_checkin_reminder",
-  "tpl_pre_checkin_completed",
-  "tpl_room_ready_direct",
-  "tpl_room_ready_ota",
-  "tpl_room_ready_regular",
-  "tpl_checkin_cleaning_delay",
   "tpl_reservation_updated",
   "tpl_reservation_cancelled"
 ]);
 
-// ── Eventos exclusivos de estadia interna, café, saída, frigobar, achados e avaliação (NUNCA vão ao solicitante não-hóspede) ──
+// ── Eventos exclusivos de estadia, instruções de reserva/check-in, café, saída, frigobar, achados e avaliação (vão APENAS aos hóspedes quando Nome + WhatsApp do hóspede estão preenchidos) ──
 export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "corpflats_intro",
+  "reservation_created",
+  "new_reservation",
+  "new_reservation_direct",
+  "new_reservation_ota",
+  "sameday_reservation",
+  "checkin_day_instructions",
+  "pre_checkin_reminder",
+  "pre_checkin_completed",
+  "pre_checkin_enter_prompt",
+  "room_ready",
+  "room_ready_direct",
+  "room_ready_ota",
+  "room_ready_regular",
+  "checkin_cleaning_delay",
   "checkin_completed",
   "breakfast_reminder",
   "checkout_reminder",
@@ -2796,6 +2782,18 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
 
 export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_corpflats_intro",
+  "tpl_new_reservation",
+  "tpl_new_reservation_direct",
+  "tpl_new_reservation_ota",
+  "tpl_sameday_reservation_instructions",
+  "tpl_checkin_day_instructions",
+  "tpl_pre_checkin_reminder",
+  "tpl_pre_checkin_completed",
+  "tpl_pre_checkin_enter_prompt",
+  "tpl_room_ready_direct",
+  "tpl_room_ready_ota",
+  "tpl_room_ready_regular",
+  "tpl_checkin_cleaning_delay",
   "tpl_checkin_completed",
   "tpl_breakfast_reminder",
   "tpl_checkout_reminder",
@@ -3067,7 +3065,8 @@ export function sendMirrorEmail(db, saveDatabase, {
 }) {
   try {
     if (!db || !email || !message) return null;
-    const appOrigin = baseUrl || (typeof process !== "undefined" && process.env?.APP_BASE_URL) || "https://corpflats.com.br";
+    const rawOrigin = baseUrl || (typeof process !== "undefined" && process.env?.APP_BASE_URL) || "https://corpflats.com.br";
+    const appOrigin = String(rawOrigin).replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
     const rendered = renderWhatsAppMirrorEmail({
       message,
       buttons,
@@ -3187,7 +3186,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // URL Base pública do sistema (prioriza domínio de produção ou host)
-  const appOrigin = baseUrl || "https://corpflats.com.br";
+  const appOrigin = String(baseUrl || "https://corpflats.com.br").replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
 
   const resStatus = String(reservation.status || "").toLowerCase().trim();
   const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
@@ -6629,7 +6628,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
             // Garante que templates existentes possuam a propriedade channels, recipientTarget e documentName inicializadas
       for (const tpl of db.whatsappTemplates) {
-        if (!tpl.recipientTarget) {
+        if (!tpl.recipientTarget || GUEST_ONLY_TEMPLATE_IDS.has(tpl.id)) {
           tpl.recipientTarget = "guest";
         }
         if (!tpl.channels || !Array.isArray(tpl.channels) || tpl.channels.length === 0) {
@@ -6654,6 +6653,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_b2b_agency_credential") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "b2b", "booking", "airbnb", "outros"];
+          const defCred = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_b2b_agency_credential");
+          if (
+            defCred &&
+            (tpl.message?.includes("equipe da") ||
+              tpl.message?.includes("B2B #") ||
+              tpl.message?.includes("parceria") ||
+              tpl.message?.includes("{{nome_agencia}}") ||
+              tpl.footer?.includes("B2B"))
+          ) {
+            tpl.title = defCred.title;
+            tpl.description = defCred.description;
+            tpl.message = defCred.message;
+            tpl.footer = defCred.footer;
+            tpl.buttons = defCred.buttons;
+          }
         }
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
