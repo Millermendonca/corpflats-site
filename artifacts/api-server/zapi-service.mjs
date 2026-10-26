@@ -11828,10 +11828,12 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       await new Promise(r => setTimeout(r, ms));
     };
 
-    // 1. APRESENTAÇÃO CORPFLATS (tpl_corpflats_intro) + CONFIRMAÇÃO DE RESERVA (reservation_created)
-    if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed"])) {
-      await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", guestOnlyRes, baseUrl);
-      dispatchedStages.push("corpflats_intro", "reservation_created");
+    // 1. APRESENTAÇÃO CORPFLATS (tpl_corpflats_intro) + CONFIRMAÇÃO DE RESERVA (ou SAMEDAY CONSOLIDADA se check-in for hoje após 07:01)
+    const isSameDayAfter0701 = todayStr === reservation.checkinDate && (brHour > 7 || (brHour === 7 && brMinute >= 1));
+    if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed", "sameday_reservation"])) {
+      const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
+      await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, guestOnlyRes, baseUrl);
+      dispatchedStages.push("corpflats_intro", initialEvent);
       await pauseBetweenStages();
     }
 
@@ -11882,8 +11884,12 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       await pauseBetweenStages();
     }
 
-    // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate e o flat já estiver limpo (ou >= 14:00)
-    if (todayStr === reservation.checkinDate && !hasGuestReceivedEvent(["room_ready", "room_ready_ota", "room_ready_regular"])) {
+    // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate, ainda não tiver sido consolidado no sameday_reservation (roomReadySentDate !== todayStr) e o flat já estiver limpo (ou >= 14:00)
+    if (
+      todayStr === reservation.checkinDate &&
+      reservation.roomReadySentDate !== todayStr &&
+      !hasGuestReceivedEvent(["room_ready", "room_ready_ota", "room_ready_regular"])
+    ) {
       const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
       const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
       const earliestReleaseHour = isOtaOrB2b ? 12 : 10;
@@ -12182,6 +12188,63 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
 
   // Se não há solicitação pendente hoje, não houve check-out hoje e não há limpeza em aberto, o flat já estava limpo e pronto!
   return false;
+}
+
+/**
+ * Avalia o estado de liberação do flat para reservas com check-in HOJE (same-day):
+ * Respeita o horário de liberação da reserva/canal:
+ * - Horário customizado na reserva (`reservation.checkinTime` quando diferente do padrão "14:00")
+ * - Caso contrário, `10:00` para reservas diretas (Site/WhatsApp) e `12:00` para OTAs/B2B (Booking, Airbnb, B2B)
+ * Retorna `{ todayStr, isSameDay, isFlatClean, releaseHour, releaseMin, releaseTimeStr, isAtOrAfterRelease, isFlatReadyNow }`.
+ */
+export function getSameDayFlatReleaseState(db, reservation, nowOverride = null) {
+  const now = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+  const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
+  if (!reservation) {
+    return {
+      todayStr,
+      isSameDay: false,
+      isFlatClean: false,
+      releaseHour: 14,
+      releaseMin: 0,
+      releaseTimeStr: "14:00",
+      isAtOrAfterRelease: false,
+      isFlatReadyNow: false
+    };
+  }
+
+  const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+  const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
+  const defaultReleaseHour = isOtaOrB2b ? 12 : 10;
+  let releaseHour = defaultReleaseHour;
+  let releaseMin = 0;
+
+  const defaultCheckinTime = db?.settings?.checkinTime || "14:00";
+  const rawResCheckinTime = String(reservation.checkinTime || "").trim();
+  if (rawResCheckinTime && /^\d{1,2}:\d{2}$/.test(rawResCheckinTime) && rawResCheckinTime !== defaultCheckinTime && rawResCheckinTime !== "14:00") {
+    const [chH, chM] = rawResCheckinTime.split(":").map(Number);
+    if (!isNaN(chH) && !isNaN(chM)) {
+      releaseHour = chH;
+      releaseMin = chM;
+    }
+  }
+
+  const releaseTimeStr = `${String(releaseHour).padStart(2, "0")}:${String(releaseMin).padStart(2, "0")}`;
+  const isSameDay = reservation.checkinDate === todayStr;
+  const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr);
+  const isAtOrAfterRelease = brHour > releaseHour || (brHour === releaseHour && brMinute >= releaseMin);
+  const isFlatReadyNow = Boolean(isSameDay && isFlatClean && isAtOrAfterRelease);
+
+  return {
+    todayStr,
+    isSameDay,
+    isFlatClean,
+    releaseHour,
+    releaseMin,
+    releaseTimeStr,
+    isAtOrAfterRelease,
+    isFlatReadyNow
+  };
 }
 
 /**
