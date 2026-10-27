@@ -2753,20 +2753,55 @@ function createPreReservationSync(db, args = {}) {
     };
   }
 
+  const autoQuote = handleCalculateQuote(db, {
+    checkIn: inDate,
+    checkOut: outDate,
+    guests,
+    flatId: flat.id,
+    channel: channel === "whatsapp" ? "direct" : channel,
+    ratePlan
+  });
+
   let total = Number(args.total || 0);
-  if (!(total > 0)) {
-    const autoQuote = handleCalculateQuote(db, {
-      checkIn: inDate,
-      checkOut: outDate,
-      guests,
-      flatId: flat.id,
-      channel: channel === "whatsapp" ? "direct" : channel,
-      ratePlan
-    });
-    if (autoQuote && autoQuote.success && autoQuote.total > 0) {
-      total = autoQuote.total;
-    }
+  if (!(total > 0) && autoQuote && autoQuote.success && autoQuote.total > 0) {
+    total = autoQuote.total;
   }
+
+  const nights = autoQuote?.nights || Math.max(1, Math.round((new Date(outDate + "T12:00:00Z").getTime() - new Date(inDate + "T12:00:00Z").getTime()) / 86400000));
+  const resolvedCleaningFee = args.cleaningFee !== undefined && args.cleaningFee !== null
+    ? Number(args.cleaningFee) || 0
+    : (autoQuote && autoQuote.cleaningFee > 0 && (!args.total || total >= (autoQuote.roomTotal || 0) + autoQuote.cleaningFee - 0.05)
+        ? Number(autoQuote.cleaningFee)
+        : 0);
+  const resolvedExtraBedFee = Number(args.extraBedFee ?? autoQuote?.extraBedFee ?? 0) || 0;
+  const charges = [];
+  if (resolvedCleaningFee > 0) {
+    charges.push({
+      id: `charge_cleaning_${Date.now()}`,
+      type: "cleaning",
+      title: "Taxa de Limpeza",
+      amount: resolvedCleaningFee
+    });
+  }
+  if (resolvedExtraBedFee > 0) {
+    charges.push({
+      id: `charge_extrabed_${Date.now()}`,
+      type: "extra_bed",
+      title: "Cama Extra (3º Hóspede)",
+      amount: resolvedExtraBedFee
+    });
+  }
+  const chargesSum = charges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const netRoomTotal = Math.max(0, total - chargesSum);
+  const dailyRate = Number(args.dailyRate) > 0
+    ? Number(args.dailyRate)
+    : Math.round((netRoomTotal / nights) * 100) / 100;
+  const dailyRates = Array.isArray(autoQuote?.dailyRates) && autoQuote.dailyRates.length === nights && Math.abs((autoQuote.roomTotal || 0) - netRoomTotal) < 0.05
+    ? autoQuote.dailyRates.map(d => ({ ...d, channel }))
+    : Array.from({ length: nights }, (_, i) => {
+        const dStr = new Date(new Date(inDate + "T12:00:00Z").getTime() + i * 86400000).toISOString().substring(0, 10);
+        return { date: dStr, rate: dailyRate, channel };
+      });
 
   const botSettings = getBotActionsSettings(db);
   const holdMinutes = botSettings.preReservationHoldMinutes || 30;
@@ -2799,9 +2834,15 @@ function createPreReservationSync(db, args = {}) {
     checkoutDate: outDate,
     channel,
     ratePlan,
+    includeBreakfast: ratePlan === "with_breakfast",
     status: "pre_reserva",
     paymentStatus: "pendente",
     totalAmount: total,
+    cardTotalAmount: Number((total * 1.05).toFixed(2)),
+    dailyRate,
+    dailyRates,
+    cleaningFee: resolvedCleaningFee,
+    charges,
     paidAmount: 0,
     expiresAt,
     pixCopiaECola: pixPayload,
@@ -3469,81 +3510,14 @@ export function handleInformCheckout(dbOrArgs, argsOrDb = {}, optionalPhone = ""
     db.cleaningRequests.unshift(cleanReq);
   }
 
-  // 3. Atualiza reserva ativa se houver (incluindo detecção de Check-out Antecipado)
-  const timeStr = getBrasiliaDateParts().timeStr;
-  let isEarlyCheckout = false;
+  // 3. Atualiza reserva ativa se houver
   if (matchedRes) {
-    const previousStatus = matchedRes.status;
-    const plannedCheckout = matchedRes.originalCheckoutDate || matchedRes.checkoutDate;
-    isEarlyCheckout = Boolean(plannedCheckout && plannedCheckout > todayStr);
-    const reporterLabel = `Hóspede via WhatsApp (${guestName})`;
-
-    if (matchedRes.status !== "completed" && matchedRes.status !== "checked_out") {
-      matchedRes.previousStatus = previousStatus;
-      matchedRes.status = "completed";
-    }
+    matchedRes.status = "completed";
     matchedRes.checkoutDone = true;
     matchedRes.checkoutMethod = matchedRes.checkoutMethod ? `${matchedRes.checkoutMethod} + whatsapp_guest` : "whatsapp_guest";
     matchedRes.actualCheckoutAt = matchedRes.actualCheckoutAt || now;
-    matchedRes.actualCheckoutTime = matchedRes.actualCheckoutTime || timeStr;
-    matchedRes.checkoutReportedBy = matchedRes.checkoutReportedBy || reporterLabel;
-    matchedRes.checkoutReportedAt = matchedRes.checkoutReportedAt || now;
+    matchedRes.actualCheckoutTime = matchedRes.actualCheckoutTime || getBrasiliaDateParts().timeStr;
     matchedRes.updatedAt = now;
-
-    if (isEarlyCheckout) {
-      const oldCheckout = matchedRes.originalCheckoutDate || matchedRes.checkoutDate;
-      matchedRes.originalCheckoutDate = oldCheckout;
-      matchedRes.previousCheckoutDate = oldCheckout;
-      if (matchedRes.originalTotalAmount === undefined && Number(matchedRes.totalAmount) > 0) {
-        matchedRes.originalTotalAmount = Number(matchedRes.totalAmount);
-      }
-      matchedRes.earlyCheckout = true;
-      matchedRes.earlyCheckoutDate = todayStr;
-      matchedRes.earlyCheckoutTime = matchedRes.earlyCheckoutTime || timeStr;
-      matchedRes.earlyCheckoutAt = matchedRes.earlyCheckoutAt || now;
-      matchedRes.earlyCheckoutReportedBy = matchedRes.earlyCheckoutReportedBy || reporterLabel;
-      matchedRes.checkoutDate = todayStr;
-      matchedRes.calendarSequence = (matchedRes.calendarSequence || 0) + 1;
-
-      const fmtBr = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split("-").reverse().join("/") : (d || "");
-      const earlyNoteLine = `Check-out antecipado em ${fmtBr(todayStr)} às ${timeStr} informado por ${reporterLabel} (saída original prevista: ${fmtBr(oldCheckout)})`;
-      matchedRes.earlyCheckoutNote = earlyNoteLine;
-      const curNotes = String(matchedRes.notes || "").trim();
-      if (!curNotes.includes("Check-out antecipado em")) {
-        matchedRes.notes = curNotes ? `${curNotes}\n• ${earlyNoteLine}` : `• ${earlyNoteLine}`;
-      }
-    }
-
-    // Reconcilia café da manhã (hoje antes da entrega/pendente + dias futuros)
-    if (Array.isArray(db.breakfastOrders)) {
-      const maxStayDate = matchedRes.originalCheckoutDate || matchedRes.checkoutDate || todayStr;
-      const fmtBr = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split("-").reverse().join("/") : (d || "");
-      db.breakfastOrders.forEach(o => {
-        const isMatch =
-          (o.reservationCode && (o.reservationCode === matchedRes.code || o.reservationCode === matchedRes.reservationCode)) ||
-          (o.reservationId && Number(o.reservationId) === Number(matchedRes.id)) ||
-          (String(o.roomNumber) === String(resolvedFlatNum) && o.date >= matchedRes.checkinDate && o.date <= maxStayDate);
-        if (!isMatch || o.status === "ready" || o.status === "delivered") return;
-        const deliveryTime = o.deliveryTime || "08:00";
-        if (o.date > todayStr || (o.date === todayStr && (timeStr < deliveryTime || o.status === "pending"))) {
-          o.status = "cancelled";
-          o.manuallyReactivated = false;
-          o.cancelledByCheckout = true;
-          o.checkoutWarningInfo = {
-            isEarlyCheckout,
-            reportedBy: reporterLabel,
-            checkoutDate: todayStr,
-            checkoutTime: timeStr,
-            originalCheckoutDate: maxStayDate,
-            updatedAt: now
-          };
-          o.cancelReason = isEarlyCheckout
-            ? `Check-out antecipado informado por ${reporterLabel} em ${fmtBr(todayStr)} às ${timeStr} (saída prevista era ${fmtBr(maxStayDate)}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`
-            : `Check-out informado por ${reporterLabel} em ${fmtBr(todayStr)} às ${timeStr} antes do café (${deliveryTime}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`;
-          o.updatedAt = now;
-        }
-      });
-    }
   }
 
   // 3.5. Cancela lembretes pendentes de check-out, café da manhã ou estadia na fila (WhatsApp e E-mail)
@@ -11396,6 +11370,7 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
   const effectiveNights = Math.max(1, Number(nights || 1));
   let totalAmount = null;
   let dailyRate = null;
+  let cleaningFee = null;
   let dualOptionRates = null; // { withoutBfDaily, withBfDaily, withoutBfTotal, withBfTotal }
 
   const totalPhraseRx = /\b(?:total|pacote|no\s+total|valor\s+final|valor\s+total|fechado\s+em|fechamos\s+(?:em|por)|(?:para|pelas?|nas|as|por)\s+(?:as\s+|os\s+)?\d+\s*(?:di[aá]rias|noites|dias)|pelos?\s+\d+\s*dias|\b\d+\s*(?:di[aá]rias|noites|dias)\s+(?:fica|ficam|sai|saem)\b|no\s+per[ií]odo|para\s+o\s+per[ií]odo|hospedagem\s+fica)\b/;
@@ -11411,7 +11386,7 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
     const hasCurrencyOrPriceContext =
       /R\$\s*\d/i.test(text) ||
       /\b\d+(?:[.,]\d{1,2})?\s*reais\b/i.test(text) ||
-      /\b(?:valor|total|or[cç]amento|di[aá]rias?|pacote|fica|ficam|fechamos|fechado|cota[cç][aã]o|sem\s+caf[eé]|com\s+caf[eé])\b[^\n\r0-9]{0,25}\d{2,5}(?:[.,]\d{1,2})?\b/i.test(text);
+      /\b(?:valor|total|or[cç]amento|di[aá]rias?|pacote|fica|ficam|fechamos|fechado|cota[cç][aã]o|sem\s+caf[eé]|com\s+caf[eé]|limpeza)\b[^\n\r0-9]{0,25}\d{2,5}(?:[.,]\d{1,2})?\b/i.test(text);
 
     if (!hasCurrencyOrPriceContext) continue;
 
@@ -11433,8 +11408,21 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
       const isBreakfastAddonLine = /\bcafe\b/.test(lowerLine) && /\b(?:avulso|adicional|por\s+pessoa)\b/.test(lowerLine) && !/\b(?:diaria|total|com\s+cafe\s+incluso)\b/.test(lowerLine);
       if (isBreakfastAddonLine) continue;
 
-      // Extrai todos os valores monetários da linha (sem capturar números de "2 diárias", datas ou flats)
+      // Detecta menção à taxa de limpeza na linha (ex: "taxa de limpeza R$ 70" ou "+ R$ 70 de taxa de limpeza")
+      const cleaningFeeMatch = line.match(/(?:taxa\s+(?:[uú]nica\s+)?(?:de\s+)?limpeza|limpeza(?:\s+[uú]nica)?)\s*(?:de|[eé]|por|:|=|-|\+)?\s*R?\$?\s*(\d{2,3}(?:[.,]\d{1,2})?)|R?\$?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:reais\s+)?(?:de\s+)?(?:taxa\s+(?:[uú]nica\s+)?(?:de\s+)?limpeza|limpeza\b)/i);
+      if (cleaningFeeMatch) {
+        const cfParsed = parseBrlAmountValue(cleaningFeeMatch[1] || cleaningFeeMatch[2]);
+        if (cfParsed && cfParsed >= 30 && cfParsed <= 300) {
+          cleaningFee = cfParsed;
+        }
+      }
+      const isCleaningFeeOnlyLine = /\blimpeza\b/.test(lowerLine) && !/\b(?:diaria|diarias|total|pacote|hospedagem|sem\s+cafe|com\s+cafe|ficam?|fechamos)\b/.test(lowerLine);
+      if (isCleaningFeeOnlyLine) continue;
+
+      // Extrai todos os valores monetários da linha (sem capturar taxa de limpeza, números de "2 diárias", datas ou flats)
       const lineSanitizedForNumbers = line
+        .replace(/(?:mais|\+|e|com)?\s*(?:taxa\s+(?:[uú]nica\s+)?(?:de\s+)?limpeza|limpeza(?:\s+[uú]nica)?)\s*(?:de|[eé]|por|:|=|-|\+)?\s*R?\$?\s*\d{2,3}(?:[.,]\d{1,2})?(?:\s*reais)?/gi, " ")
+        .replace(/R?\$?\s*\d{2,3}(?:[.,]\d{1,2})?\s*(?:reais\s+)?(?:de\s+)?(?:taxa\s+(?:[uú]nica\s+)?(?:de\s+)?limpeza|limpeza\b)/gi, " ")
         .replace(/\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g, " ")
         .replace(/\b(?:flat|apto|apartamento|quarto|unidade)\s*\d{3,4}\b/gi, " ");
 
@@ -11533,6 +11521,47 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
       }
     }
 
+    const nightsInMsgMatch = normMsg.match(/\b(\d{1,2})\s*(?:diarias?|noites?)\b/);
+    const inferQuotedNights = (dVal, tVal) => {
+      if (nightsInMsgMatch) return Math.max(1, parseInt(nightsInMsgMatch[1], 10));
+      if (dVal > 0 && tVal >= dVal) {
+        const approxNights = Math.max(1, Math.floor((tVal + 0.05) / dVal));
+        if (approxNights < effectiveNights) return approxNights;
+      }
+      return effectiveNights;
+    };
+
+    if (msgWithoutBfTotal != null || msgWithoutBfDaily != null) {
+      const qNights = inferQuotedNights(msgWithoutBfDaily, msgWithoutBfTotal);
+      if (msgWithoutBfTotal != null && msgWithoutBfDaily != null) {
+        if (cleaningFee == null && msgWithoutBfTotal > msgWithoutBfDaily * qNights + 0.05) {
+          const impliedCf = Math.round((msgWithoutBfTotal - msgWithoutBfDaily * qNights) * 100) / 100;
+          if (impliedCf >= 30 && impliedCf <= 300) {
+            cleaningFee = impliedCf;
+          }
+        }
+        if (effectiveNights !== qNights || msgWithoutBfTotal < msgWithoutBfDaily * effectiveNights) {
+          msgWithoutBfTotal = Math.round((msgWithoutBfDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+        }
+      } else if (msgWithoutBfTotal != null && msgWithoutBfDaily == null && effectiveNights !== qNights) {
+        const netWo = cleaningFee > 0 && msgWithoutBfTotal > cleaningFee ? (msgWithoutBfTotal - cleaningFee) : msgWithoutBfTotal;
+        msgWithoutBfDaily = Math.round((netWo / qNights) * 100) / 100;
+        msgWithoutBfTotal = Math.round((msgWithoutBfDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+      }
+    }
+
+    if (msgWithBfTotal != null || msgWithBfDaily != null) {
+      const qNights = inferQuotedNights(msgWithBfDaily, msgWithBfTotal);
+      if (msgWithBfTotal != null && msgWithBfDaily != null) {
+        if (effectiveNights !== qNights || msgWithBfTotal < msgWithBfDaily * effectiveNights) {
+          msgWithBfTotal = Math.round(msgWithBfDaily * effectiveNights * 100) / 100;
+        }
+      } else if (msgWithBfTotal != null && msgWithBfDaily == null && effectiveNights !== qNights) {
+        msgWithBfDaily = Math.round((msgWithBfTotal / qNights) * 100) / 100;
+        msgWithBfTotal = Math.round(msgWithBfDaily * effectiveNights * 100) / 100;
+      }
+    }
+
     if (msgWithBfDaily || msgWithoutBfDaily || msgWithBfTotal || msgWithoutBfTotal) {
       dualOptionRates = {
         withBfDaily: msgWithBfDaily || dualOptionRates?.withBfDaily || null,
@@ -11543,15 +11572,31 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
     }
 
     if (msgTotal != null || msgDaily != null) {
+      const msgQuotedNights = inferQuotedNights(msgDaily, msgTotal);
       if (msgTotal != null && msgDaily != null) {
-        totalAmount = msgTotal;
+        if (cleaningFee == null && msgTotal > msgDaily * msgQuotedNights + 0.05) {
+          const impliedCf = Math.round((msgTotal - msgDaily * msgQuotedNights) * 100) / 100;
+          if (impliedCf >= 30 && impliedCf <= 300) {
+            cleaningFee = impliedCf;
+          }
+        }
         dailyRate = msgDaily;
+        if (effectiveNights !== msgQuotedNights || msgTotal < msgDaily * effectiveNights) {
+          totalAmount = Math.round((msgDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+        } else {
+          totalAmount = msgTotal;
+        }
       } else if (msgDaily != null) {
         dailyRate = msgDaily;
-        totalAmount = Math.round(msgDaily * effectiveNights * 100) / 100;
+        totalAmount = Math.round((msgDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
       } else if (msgTotal != null) {
-        totalAmount = msgTotal;
-        dailyRate = Math.round((msgTotal / effectiveNights) * 100) / 100;
+        const netMsgTotal = cleaningFee > 0 && msgTotal > cleaningFee ? (msgTotal - cleaningFee) : msgTotal;
+        dailyRate = Math.round((netMsgTotal / msgQuotedNights) * 100) / 100;
+        if (msgQuotedNights !== effectiveNights) {
+          totalAmount = Math.round((dailyRate * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+        } else {
+          totalAmount = msgTotal;
+        }
       }
     }
   }
@@ -11561,35 +11606,37 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
   if (dualOptionRates && totalAmount == null) {
     const preferWithBf = breakfastPreference === "with_breakfast";
     const preferWithoutBf = breakfastPreference === "without_breakfast";
+    const cfForWithoutBf = cleaningFee || 0;
     if (preferWithBf && (dualOptionRates.withBfTotal || dualOptionRates.withBfDaily)) {
       dailyRate = dualOptionRates.withBfDaily || Math.round((dualOptionRates.withBfTotal / effectiveNights) * 100) / 100;
       totalAmount = dualOptionRates.withBfTotal || Math.round(dailyRate * effectiveNights * 100) / 100;
     } else if (preferWithoutBf && (dualOptionRates.withoutBfTotal || dualOptionRates.withoutBfDaily)) {
-      dailyRate = dualOptionRates.withoutBfDaily || Math.round((dualOptionRates.withoutBfTotal / effectiveNights) * 100) / 100;
-      totalAmount = dualOptionRates.withoutBfTotal || Math.round(dailyRate * effectiveNights * 100) / 100;
+      dailyRate = dualOptionRates.withoutBfDaily || Math.round(((dualOptionRates.withoutBfTotal - cfForWithoutBf) / effectiveNights) * 100) / 100;
+      totalAmount = dualOptionRates.withoutBfTotal || Math.round((dailyRate * effectiveNights + cfForWithoutBf) * 100) / 100;
     } else {
       const chosenDaily = dualOptionRates.withoutBfDaily || dualOptionRates.withBfDaily;
       const chosenTotal = dualOptionRates.withoutBfTotal || dualOptionRates.withBfTotal;
       if (chosenDaily || chosenTotal) {
-        dailyRate = chosenDaily || Math.round((chosenTotal / effectiveNights) * 100) / 100;
-        totalAmount = chosenTotal || Math.round(dailyRate * effectiveNights * 100) / 100;
+        dailyRate = chosenDaily || Math.round(((chosenTotal - cfForWithoutBf) / effectiveNights) * 100) / 100;
+        totalAmount = chosenTotal || Math.round((dailyRate * effectiveNights + cfForWithoutBf) * 100) / 100;
       }
     }
   } else if (dualOptionRates && totalAmount != null) {
     // Se a escolha de café ocorreu depois da mensagem de dupla opção, ajusta caso o total atual ainda seja uma das opções
+    const cfForWithoutBf = cleaningFee || 0;
     if (breakfastPreference === "with_breakfast" && (dualOptionRates.withBfTotal || dualOptionRates.withBfDaily)) {
       const wTotal = dualOptionRates.withBfTotal || Math.round(dualOptionRates.withBfDaily * effectiveNights * 100) / 100;
-      const woTotal = dualOptionRates.withoutBfTotal || (dualOptionRates.withoutBfDaily ? Math.round(dualOptionRates.withoutBfDaily * effectiveNights * 100) / 100 : null);
+      const woTotal = dualOptionRates.withoutBfTotal || (dualOptionRates.withoutBfDaily ? Math.round((dualOptionRates.withoutBfDaily * effectiveNights + cfForWithoutBf) * 100) / 100 : null);
       if (totalAmount === woTotal) {
         totalAmount = wTotal;
         dailyRate = dualOptionRates.withBfDaily || Math.round((wTotal / effectiveNights) * 100) / 100;
       }
     } else if (breakfastPreference === "without_breakfast" && (dualOptionRates.withoutBfTotal || dualOptionRates.withoutBfDaily)) {
-      const woTotal = dualOptionRates.withoutBfTotal || Math.round(dualOptionRates.withoutBfDaily * effectiveNights * 100) / 100;
+      const woTotal = dualOptionRates.withoutBfTotal || Math.round((dualOptionRates.withoutBfDaily * effectiveNights + cfForWithoutBf) * 100) / 100;
       const wTotal = dualOptionRates.withBfTotal || (dualOptionRates.withBfDaily ? Math.round(dualOptionRates.withBfDaily * effectiveNights * 100) / 100 : null);
       if (totalAmount === wTotal) {
         totalAmount = woTotal;
-        dailyRate = dualOptionRates.withoutBfDaily || Math.round((woTotal / effectiveNights) * 100) / 100;
+        dailyRate = dualOptionRates.withoutBfDaily || Math.round(((woTotal - cfForWithoutBf) / effectiveNights) * 100) / 100;
       }
     }
   }
@@ -11597,7 +11644,8 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
   return {
     hasQuote: Boolean(totalAmount != null && totalAmount > 0),
     totalAmount: totalAmount != null ? Math.round(totalAmount * 100) / 100 : null,
-    dailyRate: dailyRate != null ? Math.round(dailyRate * 100) / 100 : null
+    dailyRate: dailyRate != null ? Math.round(dailyRate * 100) / 100 : null,
+    cleaningFee: cleaningFee != null ? Math.round(cleaningFee * 100) / 100 : null
   };
 }
 
@@ -11702,6 +11750,7 @@ export function extractActivePreReservationData(convOrMessages, db = null, guest
     displayCheckOut: dateInfo.displayCheckOut,
     totalAmount: quoteInfo.totalAmount,
     dailyRate: quoteInfo.dailyRate,
+    cleaningFee: includeBreakfast ? 0 : (quoteInfo.cleaningFee || 0),
     guestName: fullName,
     guestCpf: cpf,
     formattedCpf: cpf ? formatCpf(cpf) : null,
@@ -11725,6 +11774,8 @@ export function formatActivePreReservationManagerSummary(proposal, db = null, op
 
   const totalFmt = Number(proposal.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const dailyFmt = Number(proposal.dailyRate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cleaningVal = Number(proposal.cleaningFee || 0);
+  const cleaningFmt = cleaningVal > 0 ? ` + Limpeza: R$ ${cleaningVal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
   const cpfFmt = proposal.guestCpf ? formatCpf(proposal.guestCpf) : "Não informado";
   const phoneFmt = proposal.guestPhone ? formatPhoneDisplay(proposal.guestPhone) : "Não informado";
   const inDisp = proposal.checkIn ? proposal.checkIn.split("-").reverse().join("/") : "-";
@@ -11745,7 +11796,7 @@ export function formatActivePreReservationManagerSummary(proposal, db = null, op
 📅 *Período:* ${inDisp} a ${outDisp} (*${nights} ${nights === 1 ? "diária" : "diárias"}*)
 👥 *Hóspedes:* ${guests} ${guests === 1 ? "pessoa" : "pessoas"}
 ☕ *Café da Manhã:* ${proposal.includeBreakfast ? "Incluso" : "Não incluso"}
-💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt})
+💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt}${cleaningFmt})
 🏢 *Flat Sugerido (Flat da Vez):* *Flat ${proposal.flatNumber}*
 _(Flats disponíveis no período: ${availableList})_${proposal.notes ? `\n📝 *Obs:* ${proposal.notes}` : ""}
 
@@ -11821,14 +11872,15 @@ export async function evaluateAndNotifyActivePreReservation({
     db.pendingPreReservationProposals = [];
   }
 
-  // Deduplicação: verifica se já existe uma proposta pendente ou confirmada para este hóspede e datas com os mesmos dados
+  // Deduplicação: verifica se já existe uma proposta pendente ou confirmada para este hóspede
   const signature = `${guestPhone}|${extracted.checkIn}|${extracted.checkOut}|${extracted.totalAmount}|${extracted.guestCpf}|${extracted.guestEmail}|${extracted.guestName}`;
   const existingProposal = db.pendingPreReservationProposals.find(p =>
     p &&
     matchClientPhone(p.guestPhone, guestPhone) &&
-    p.checkIn === extracted.checkIn &&
-    p.checkOut === extracted.checkOut &&
-    (p.status === "pending_manager" || p.status === "confirmed")
+    (
+      p.status === "pending_manager" ||
+      (p.status === "confirmed" && p.checkIn === extracted.checkIn && p.checkOut === extracted.checkOut)
+    )
   );
 
   if (existingProposal && existingProposal.signature === signature) {
@@ -11873,6 +11925,7 @@ export async function evaluateAndNotifyActivePreReservation({
     guests: extracted.guests || 1,
     totalAmount: extracted.totalAmount,
     dailyRate: extracted.dailyRate,
+    cleaningFee: extracted.cleaningFee || 0,
     includeBreakfast: extracted.includeBreakfast,
     ratePlan: extracted.ratePlan,
     flatId: selectedFlat.id,
@@ -12021,21 +12074,31 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
     guestRecord.lastStay = proposal.checkIn;
   }
 
-  // 2. Calcula diárias e estrutura dailyRates (padrão PMS demo-server.mjs)
+  // 2. Calcula diárias, taxa de limpeza e estrutura dailyRates + charges (padrão PMS demo-server.mjs)
   const inD = new Date(`${proposal.checkIn}T12:00:00Z`);
   const outD = new Date(`${proposal.checkOut}T12:00:00Z`);
   const nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
   const totalAmount = Math.round(Number(proposal.totalAmount || 0) * 100) / 100;
-  const dailyRate = proposal.dailyRate != null && proposal.dailyRate > 0
+  const rawPropDaily = proposal.dailyRate != null && proposal.dailyRate > 0
     ? Math.round(Number(proposal.dailyRate) * 100) / 100
-    : Math.round((totalAmount / nights) * 100) / 100;
+    : 0;
+  const resolvedCleaningFee = proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
+    ? Math.round(Number(proposal.cleaningFee) * 100) / 100
+    : (rawPropDaily > 0 && totalAmount > rawPropDaily * nights + 0.05
+        ? Math.round((totalAmount - rawPropDaily * nights) * 100) / 100
+        : 0);
+  const netRoomTotal = Math.max(0, totalAmount - resolvedCleaningFee);
+  const dailyRate = (rawPropDaily > 0 && Math.abs(rawPropDaily * nights - netRoomTotal) < 0.05)
+    ? rawPropDaily
+    : Math.round((netRoomTotal / nights) * 100) / 100;
 
   const dailyRates = [];
   for (let i = 0; i < nights; i++) {
     const d = new Date(inD.getTime() + i * 86400000);
     dailyRates.push({
       date: d.toISOString().slice(0, 10),
-      rate: dailyRate
+      rate: dailyRate,
+      channel: "whatsapp"
     });
   }
 
@@ -12044,6 +12107,15 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
     : 1;
   const code = `RES-${String(flat.number)}-${String(nextResId).padStart(4, "0")}`;
   const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+
+  const charges = resolvedCleaningFee > 0
+    ? [{
+        id: `charge_cleaning_${nextResId}`,
+        type: "cleaning",
+        title: "Taxa de Limpeza",
+        amount: resolvedCleaningFee
+      }]
+    : [];
 
   const pixPayload = generateStaticPixPayload({
     pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
@@ -12103,8 +12175,11 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
     status: "pre_reserva",
     paymentStatus: "pendente",
     totalAmount,
+    cardTotalAmount: Number((totalAmount * 1.05).toFixed(2)),
     dailyRate,
     dailyRates,
+    cleaningFee: resolvedCleaningFee,
+    charges,
     paidAmount: 0,
     payments: [],
     paymentMethod: "pix",
@@ -12247,6 +12322,14 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
   }
 
   const effectiveNights = updates.nights || proposal.nights || 1;
+  const origNights = Math.max(1, Number(proposal.nights || 1));
+  const origDaily = Number(proposal.dailyRate || 0);
+  const origTotal = Number(proposal.totalAmount || 0);
+  const existingProposalCleaningFee = proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
+    ? Number(proposal.cleaningFee)
+    : (origDaily > 0 && origTotal > origDaily * origNights + 0.05
+        ? Math.round((origTotal - origDaily * origNights) * 100) / 100
+        : 0);
 
   // 3. Alteração de Valor Total ou Diária
   // Remove ocorrências de "flat 509", datas e CPF da string para não confundir números de flat/data/CPF com valor
@@ -12274,7 +12357,7 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     const parsedDaily = parseBrlAmountValue(dailyUpdateMatch[1]);
     if (parsedDaily && parsedDaily >= 50) {
       updates.dailyRate = parsedDaily;
-      updates.totalAmount = Math.round(parsedDaily * effectiveNights * 100) / 100;
+      updates.totalAmount = Math.round((parsedDaily * effectiveNights + existingProposalCleaningFee) * 100) / 100;
       hasFieldUpdates = true;
     }
   }
@@ -12283,12 +12366,15 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     if (parsedTotal && parsedTotal >= 50) {
       updates.totalAmount = parsedTotal;
       if (!updates.dailyRate) {
-        updates.dailyRate = Math.round((parsedTotal / effectiveNights) * 100) / 100;
+        const netParsedTotal = existingProposalCleaningFee > 0 && parsedTotal > existingProposalCleaningFee
+          ? (parsedTotal - existingProposalCleaningFee)
+          : parsedTotal;
+        updates.dailyRate = Math.round((netParsedTotal / effectiveNights) * 100) / 100;
       }
       hasFieldUpdates = true;
     }
   } else if (!updates.totalAmount && updates.nights && updates.nights !== proposal.nights && proposal.dailyRate) {
-    updates.totalAmount = Math.round(proposal.dailyRate * updates.nights * 100) / 100;
+    updates.totalAmount = Math.round((proposal.dailyRate * updates.nights + existingProposalCleaningFee) * 100) / 100;
   }
 
   // 4. Alteração de Café da Manhã
@@ -12511,11 +12597,14 @@ export async function handleManagerPreReservationReply({
   if (updates.dailyRate != null) {
     targetProposal.dailyRate = updates.dailyRate;
   } else if (updates.totalAmount != null && targetProposal.nights > 0) {
-    targetProposal.dailyRate = Math.round((updates.totalAmount / targetProposal.nights) * 100) / 100;
+    const propCf = Number(targetProposal.cleaningFee || 0);
+    const netUpdTotal = propCf > 0 && updates.totalAmount > propCf ? (updates.totalAmount - propCf) : updates.totalAmount;
+    targetProposal.dailyRate = Math.round((netUpdTotal / targetProposal.nights) * 100) / 100;
   }
   if (updates.includeBreakfast !== undefined) {
     targetProposal.includeBreakfast = updates.includeBreakfast;
     targetProposal.ratePlan = updates.ratePlan;
+    if (updates.includeBreakfast) targetProposal.cleaningFee = 0;
   }
   if (updates.guests != null) {
     targetProposal.guests = updates.guests;
@@ -12613,6 +12702,8 @@ export async function handleManagerPreReservationReply({
 
   const totalFmt = Number(createdRes.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const dailyFmt = Number(createdRes.dailyRate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cleaningVal = Number(createdRes.cleaningFee || 0);
+  const cleaningFmt = cleaningVal > 0 ? ` + Limpeza: R$ ${cleaningVal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
   const confirmReply = `✅ *Pré-Reserva Criada com Sucesso no Sistema!*
 
 🔖 *Código:* *${createdRes.code}*
@@ -12622,7 +12713,7 @@ export async function handleManagerPreReservationReply({
 📧 *E-mail:* ${createdRes.guestEmail}
 📅 *Período:* ${createdRes.checkinDate.split("-").reverse().join("/")} a ${createdRes.checkoutDate.split("-").reverse().join("/")} (*${targetProposal.nights} ${targetProposal.nights === 1 ? "diária" : "diárias"}*)
 ☕ *Café da Manhã:* ${createdRes.includeBreakfast ? "Incluso" : "Não incluso"}
-💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt})
+💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt}${cleaningFmt})
 📊 *Status:* Pré-Reserva (régua padrão do sistema acionada)`;
 
   await sendManagerReply(confirmReply, "sofia_active_pre_reservation_confirmed");

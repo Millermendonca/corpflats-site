@@ -619,19 +619,23 @@ export default function BookingEngine() {
   }
 
   // Obtenção dinâmica do plano tarifário selecionado
-  const withBreakfastConfig = siteConfig?.ratePlans?.with_breakfast || { 
+  const rawWithBreakfast = siteConfig?.ratePlans?.with_breakfast || {}
+  const withBreakfastConfig = { 
     dailyRate: 225, 
-    cleaningFeeEnabled: false, 
-    cleaningFeeAmount: 0, 
     cleaningFeeType: "per_stay", 
-    description: "Diária com Café da Manhã servido exclusivamente no flat" 
+    description: "Diária com Café da Manhã servido exclusivamente no flat",
+    ...rawWithBreakfast,
+    cleaningFeeEnabled: Boolean(rawWithBreakfast.cleaningFeeEnabled),
+    cleaningFeeAmount: Number(rawWithBreakfast.cleaningFeeAmount ?? 0)
   }
-  const roomOnlyConfig = siteConfig?.ratePlans?.room_only || { 
+  const rawRoomOnly = siteConfig?.ratePlans?.room_only || {}
+  const roomOnlyConfig = { 
     dailyRate: 190, 
-    cleaningFeeEnabled: true, 
-    cleaningFeeAmount: 70, 
     cleaningFeeType: "per_stay", 
-    description: "Tarifa econômica sem café da manhã" 
+    description: "Tarifa econômica sem café da manhã",
+    ...rawRoomOnly,
+    cleaningFeeEnabled: rawRoomOnly.cleaningFeeEnabled !== false,
+    cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 70)
   }
   
   const currentPlan = ratePlan === "with_breakfast" ? withBreakfastConfig : roomOnlyConfig

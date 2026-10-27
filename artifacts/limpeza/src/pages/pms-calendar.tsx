@@ -110,12 +110,15 @@ export function buildReservationDailyRates(
       ? existingRates.filter(r => r && r.date && existingMap.has(r.date) && r.date >= checkinStr && r.date < checkoutStr).length
       : 0;
     if (matchingCount === 0 && Array.isArray(existingRates) && existingRates.length === nights) {
-      return existingRates.map((exist, i) => ({
-        date: format(addDays(d1, i), "yyyy-MM-dd"),
-        rate: Number(exist.rate) >= 0 ? Number(exist.rate) : defaultRate,
-        channel: exist.channel || defaultChannel,
-        notes: exist.notes
-      }));
+      return existingRates.map((exist, i) => {
+        const rawRate = exist.rate !== undefined && exist.rate !== null ? Number(exist.rate) : Number((exist as any).amount);
+        return {
+          date: format(addDays(d1, i), "yyyy-MM-dd"),
+          rate: !isNaN(rawRate) && rawRate >= 0 ? rawRate : defaultRate,
+          channel: exist.channel || defaultChannel,
+          notes: exist.notes
+        };
+      });
     }
 
     const result: DailyRateItem[] = [];
@@ -123,9 +126,10 @@ export function buildReservationDailyRates(
       const dateStr = format(addDays(d1, i), "yyyy-MM-dd");
       const exist = existingMap.get(dateStr);
       if (exist) {
+        const rawRate = exist.rate !== undefined && exist.rate !== null ? Number(exist.rate) : Number((exist as any).amount);
         result.push({
           date: dateStr,
-          rate: Number(exist.rate) >= 0 ? Number(exist.rate) : defaultRate,
+          rate: !isNaN(rawRate) && rawRate >= 0 ? rawRate : defaultRate,
           channel: exist.channel || defaultChannel,
           notes: exist.notes
         });
@@ -1451,30 +1455,55 @@ export default function PmsCalendar() {
       const originNights = differenceInDays(parseISO(current.originCheckout), parseISO(current.originCheckin)) || 1;
       const targetNights = differenceInDays(parseISO(current.currentCheckout), parseISO(current.currentCheckin)) || 1;
 
+      const existingChargesList = Array.isArray(current.res.charges) ? current.res.charges : [];
+      const oldRatesSum = Array.isArray(current.res.dailyRates) && current.res.dailyRates.length > 0
+        ? current.res.dailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate ?? d.amount) || 0), 0)
+        : 0;
+      const explicitFeesSum =
+        (Number(current.res.cleaningFee) || 0) +
+        (Number(current.res.petFee) || 0) +
+        (Number(current.res.extraBedFee) || 0) +
+        (Number(current.res.twinFee) || 0) +
+        (Number(current.res.earlyCheckinFee) || 0) +
+        (Number(current.res.lateCheckoutFee) || 0);
+      const existingChargesSum = existingChargesList.length > 0
+        ? existingChargesList.reduce((acc: number, c: any) => acc + (Number(c.amount) || 0), 0)
+        : (explicitFeesSum > 0
+            ? explicitFeesSum
+            : (oldRatesSum > 0 && Number(current.res.totalAmount) > oldRatesSum + 0.05 && !current.res.earlyCheckout
+                ? Math.round((Number(current.res.totalAmount) - oldRatesSum) * 100) / 100
+                : 0));
+
       let updatedDailyRates: any = undefined;
       if (Array.isArray(current.res.dailyRates) && current.res.dailyRates.length > 0) {
+        const avgExistingRate = Math.round((oldRatesSum / current.res.dailyRates.length) * 100) / 100;
+        const defaultDragRate = avgExistingRate > 0 ? avgExistingRate : (Number(current.res.dailyRate) || 250);
         if (current.mode === "move" && originNights === targetNights && current.res.dailyRates.length === targetNights) {
           const d1 = parseISO(current.currentCheckin);
-          updatedDailyRates = current.res.dailyRates.map((d: any, idx: number) => ({
-            date: format(addDays(d1, idx), "yyyy-MM-dd"),
-            rate: Number(d.rate) >= 0 ? Number(d.rate) : (Number(current.res.dailyRate) || 250),
-            channel: d.channel || current.res.channel || "whatsapp",
-            notes: d.notes
-          }));
+          updatedDailyRates = current.res.dailyRates.map((d: any, idx: number) => {
+            const rawR = d.rate !== undefined && d.rate !== null ? Number(d.rate) : Number(d.amount);
+            return {
+              date: format(addDays(d1, idx), "yyyy-MM-dd"),
+              rate: !isNaN(rawR) && rawR >= 0 ? rawR : defaultDragRate,
+              channel: d.channel || current.res.channel || "whatsapp",
+              notes: d.notes
+            };
+          });
         } else {
           updatedDailyRates = buildReservationDailyRates(
             current.currentCheckin,
             current.currentCheckout,
-            Number(current.res.dailyRate) || 250,
+            defaultDragRate,
             current.res.channel || "whatsapp",
             current.res.dailyRates
           );
         }
       } else if (originNights !== targetNights) {
+        const netTotalForDaily = Math.max(0, (Number(current.res.totalAmount) || 0) - existingChargesSum);
         const inferredRate = Number(current.res.dailyRate) > 0
           ? Number(current.res.dailyRate)
-          : (originNights > 0 && Number(current.res.totalAmount) > 0
-            ? Math.round((Number(current.res.totalAmount) / originNights) * 100) / 100
+          : (originNights > 0 && netTotalForDaily > 0
+            ? Math.round((netTotalForDaily / originNights) * 100) / 100
             : 250);
         updatedDailyRates = buildReservationDailyRates(
           current.currentCheckin,
@@ -1486,7 +1515,7 @@ export default function PmsCalendar() {
       }
 
       const calculatedTotal = updatedDailyRates
-        ? updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0)
+        ? Math.round((updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0) + existingChargesSum) * 100) / 100
         : (Number(current.res.totalAmount) || 0);
 
       const payload: any = {
@@ -2604,7 +2633,62 @@ export default function PmsCalendar() {
       else resolvedMethod = "pix";
     }
     setFormPaymentMethod(resolvedMethod);
-    const baseDailyRate = Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Number(resItem.totalAmount) / nights) : 250);
+
+    // Carregando e reconciliando taxas e cobranças adicionais (charges + cleaningFee/petFee/extraBedFee/twinFee)
+    const loadedCharges: ReservationChargeItem[] = Array.isArray(resItem.charges) ? resItem.charges.map((c: any) => ({
+      id: c.id || `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      type: c.type || "other",
+      title: c.title || "Taxa / Adicional",
+      amount: Number(c.amount) || 0,
+      notes: c.notes || ""
+    })) : [];
+    if (!loadedCharges.some(c => c.type === "cleaning") && Number(resItem.cleaningFee) > 0) {
+      loadedCharges.push({
+        id: `charge_cleaning_${resItem.id || Date.now()}`,
+        type: "cleaning",
+        title: "Taxa de Limpeza",
+        amount: Number(resItem.cleaningFee),
+        notes: ""
+      });
+    }
+    if (!loadedCharges.some(c => c.type === "pet") && Number(resItem.petFee) > 0) {
+      loadedCharges.push({
+        id: `charge_pet_${resItem.id || Date.now()}`,
+        type: "pet",
+        title: "Taxa Pet",
+        amount: Number(resItem.petFee),
+        notes: ""
+      });
+    }
+    if (!loadedCharges.some(c => c.type === "extra_bed") && Number(resItem.extraBedFee) > 0) {
+      loadedCharges.push({
+        id: `charge_extrabed_${resItem.id || Date.now()}`,
+        type: "extra_bed",
+        title: "Cama Extra",
+        amount: Number(resItem.extraBedFee),
+        notes: ""
+      });
+    }
+    if (!loadedCharges.some(c => c.title?.toLowerCase().includes("twin") || c.title?.toLowerCase().includes("solteiro")) && Number(resItem.twinFee) > 0) {
+      loadedCharges.push({
+        id: `charge_twin_${resItem.id || Date.now()}`,
+        type: "other",
+        title: "Taxa Camas Solteiro (Twin)",
+        amount: Number(resItem.twinFee),
+        notes: ""
+      });
+    }
+
+    const existingValidRates = Array.isArray(resItem.dailyRates)
+      ? resItem.dailyRates.map((d: any) => Number(d.rate ?? d.amount)).filter((n: number) => !isNaN(n) && n > 0)
+      : [];
+    const avgFromExistingRates = existingValidRates.length > 0
+      ? Math.round((existingValidRates.reduce((a: number, b: number) => a + b, 0) / existingValidRates.length) * 100) / 100
+      : 0;
+    const initialChargesSum = loadedCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const baseDailyRate = avgFromExistingRates > 0
+      ? avgFromExistingRates
+      : (Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Math.max(0, Number(resItem.totalAmount) - initialChargesSum) / nights) : 250));
     setFormDailyRate(String(baseDailyRate));
     const loadedDailyRates = buildReservationDailyRates(
       resItem.checkinDate,
@@ -2615,7 +2699,29 @@ export default function PmsCalendar() {
     );
     setFormDailyRates(loadedDailyRates);
     const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-    const totCalculated = Number(resItem.totalAmount) > 0 ? Number(resItem.totalAmount) : (calcFromRates > 0 ? calcFromRates : (baseDailyRate * nights));
+
+    // Se a reserva possuía totalAmount maior que a soma das diárias sem item em charges (ex: taxa de limpeza embutida na criação),
+    // preserva a diferença como Taxa de Limpeza para não ser perdida ao editar datas/diárias
+    if (loadedCharges.length === 0 && calcFromRates > 0 && Number(resItem.totalAmount) > calcFromRates + 0.05 && !resItem.earlyCheckout) {
+      const diffFee = Math.round((Number(resItem.totalAmount) - calcFromRates) * 100) / 100;
+      loadedCharges.push({
+        id: `charge_cleaning_${resItem.id || Date.now()}`,
+        type: "cleaning",
+        title: "Taxa de Limpeza",
+        amount: diffFee,
+        notes: ""
+      });
+    }
+
+    const finalChargesSum = loadedCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const compositeFromRatesAndCharges = calcFromRates > 0
+      ? Math.round((calcFromRates + finalChargesSum) * 100) / 100
+      : 0;
+    const rawResTotal = Number(resItem.totalAmount) || 0;
+    // Se houver taxas (ex: taxa de limpeza) e o total salvo estava apenas com a soma das diárias, corrige para o total composto
+    const totCalculated = (!resItem.earlyCheckout && finalChargesSum > 0 && calcFromRates > 0 && Math.abs(rawResTotal - calcFromRates) < 0.05)
+      ? compositeFromRatesAndCharges
+      : (rawResTotal > 0 ? rawResTotal : (compositeFromRatesAndCharges > 0 ? compositeFromRatesAndCharges : (baseDailyRate * nights + finalChargesSum)));
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "");
 
     // 2. Real Paid Amount: se quitada ou comprovante existe, garante o valor total
@@ -2658,15 +2764,6 @@ export default function PmsCalendar() {
       }
     }
     setFormPayments(loadedPayments);
-
-    // Carregando taxas e cobranças adicionais (charges)
-    const loadedCharges: ReservationChargeItem[] = Array.isArray(resItem.charges) ? resItem.charges.map((c: any) => ({
-      id: c.id || `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      type: c.type || "other",
-      title: c.title || "Taxa / Adicional",
-      amount: Number(c.amount) || 0,
-      notes: c.notes || ""
-    })) : [];
     setFormCharges(loadedCharges);
     setPackageTotalInput(totCalculated > 0 ? String(totCalculated) : "");
 
@@ -3417,6 +3514,9 @@ export default function PmsCalendar() {
     const newTot = Number(Math.max(0, subNights + subCharges).toFixed(2));
     setFormTotalAmount(String(newTot));
     setPackageTotalInput(newTot > 0 ? String(newTot) : "");
+    if (newDailyRates.length > 0 && subNights > 0) {
+      setFormDailyRate(String(Math.round((subNights / newDailyRates.length) * 100) / 100));
+    }
 
     const isBooking = targetChannel === "booking";
     const isB2b = targetChannel === "b2b";
@@ -3795,7 +3895,12 @@ export default function PmsCalendar() {
     setSavingRes(true)
     try {
       const calcTot = calculateTotal()
-      const totalAmount = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calcTot
+      const nightsSubInSave = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+      const chargesSubInSave = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+      const rawFormTot = Number(formTotalAmount) || 0
+      const totalAmount = (!selectedRes?.earlyCheckout && chargesSubInSave !== 0 && Math.abs(rawFormTot - nightsSubInSave) < 0.05)
+        ? calcTot
+        : (rawFormTot > 0 ? rawFormTot : calcTot)
       const isOta = formChannel === "booking" || formChannel === "airbnb"
       const isB2b = formChannel === "b2b" || formRequesterType === "agency_b2b"
       const sumPaidFromList = formPayments.length > 0
@@ -3959,10 +4064,13 @@ export default function PmsCalendar() {
         channel: isB2b ? "b2b" : (formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp"),
         paymentMethod: resolvedMethod,
         dailyRate: formDailyRates.length > 0 
-          ? Math.round(totalAmount / formDailyRates.length) 
+          ? Math.round((nightsSubInSave / formDailyRates.length) * 100) / 100
           : (Number(formDailyRate) || 0),
         dailyRates: formDailyRates,
         charges: formCharges,
+        cleaningFee: formCharges
+          .filter(c => c.type === "cleaning")
+          .reduce((acc, c) => acc + (Number(c.amount) || 0), 0),
         payments: normalizedPayments,
         totalAmount,
         paidAmount: resolvedPaidAmount,
@@ -8355,21 +8463,34 @@ export default function PmsCalendar() {
                       {activeQuickMessages.map(qm => {
                         const isSending = modalSendingMsgId === qm.id;
                         const target = qm.recipientTarget || "guest";
-                        const buildEffectiveRes = () => ({
-                          ...selectedRes,
-                          flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
-                          flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
-                          guestName: formGuestName.trim() || selectedRes?.guestName,
-                          guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
-                          guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
-                          guests: (() => { const base = Array.isArray(selectedRes?.guests) ? [...selectedRes.guests] : []; const gList: any[] = [{ ...(base[0] || {}), index: 1, name: formGuestName.trim() || base[0]?.name || selectedRes?.guestName || 'Hóspede', phone: formGuestPhone.trim() || base[0]?.phone || selectedRes?.guestPhone || '', email: formGuestEmail.trim() || base[0]?.email || selectedRes?.guestEmail || '' }]; if ((Number(formGuestCount) || 1) >= 2 || formGuest2Name.trim() || formGuest2Phone.trim() || base[1]) { gList.push({ ...(base[1] || {}), index: 2, name: formGuest2Name.trim() || base[1]?.name || 'Hóspede 2', phone: formGuest2Phone.trim() || base[1]?.phone || base[1]?.whatsapp || '', email: formGuest2Email.trim() || base[1]?.email || '' }); } if ((Number(formGuestCount) || 1) >= 3 || formGuest3Name.trim() || formGuest3Phone.trim() || base[2]) { gList.push({ ...(base[2] || {}), index: 3, name: formGuest3Name.trim() || base[2]?.name || 'Hóspede 3', phone: formGuest3Phone.trim() || base[2]?.phone || base[2]?.whatsapp || '', email: formGuest3Email.trim() || base[2]?.email || '' }); } return gList; })(),
-                          checkinDate: formCheckin || selectedRes?.checkinDate,
-                          checkoutDate: formCheckout || selectedRes?.checkoutDate,
-                          checkinTime: formCheckinTime || selectedRes?.checkinTime,
-                          checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
-                          includeBreakfast: formIncludeBreakfast,
-                          hasBreakfast: formIncludeBreakfast
-                        });
+                        const buildEffectiveRes = () => {
+                          const liveTot = calculateTotal() || Number(formTotalAmount) || Number(selectedRes?.totalAmount) || 0;
+                          const livePaid = formPayments.length > 0
+                            ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+                            : (Number(formPaidAmount) || Number(selectedRes?.paidAmount) || 0);
+                          return {
+                            ...selectedRes,
+                            flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
+                            flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
+                            guestName: formGuestName.trim() || selectedRes?.guestName,
+                            guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
+                            guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
+                            guests: (() => { const base = Array.isArray(selectedRes?.guests) ? [...selectedRes.guests] : []; const gList: any[] = [{ ...(base[0] || {}), index: 1, name: formGuestName.trim() || base[0]?.name || selectedRes?.guestName || 'Hóspede', phone: formGuestPhone.trim() || base[0]?.phone || selectedRes?.guestPhone || '', email: formGuestEmail.trim() || base[0]?.email || selectedRes?.guestEmail || '' }]; if ((Number(formGuestCount) || 1) >= 2 || formGuest2Name.trim() || formGuest2Phone.trim() || base[1]) { gList.push({ ...(base[1] || {}), index: 2, name: formGuest2Name.trim() || base[1]?.name || 'Hóspede 2', phone: formGuest2Phone.trim() || base[1]?.phone || base[1]?.whatsapp || '', email: formGuest2Email.trim() || base[1]?.email || '' }); } if ((Number(formGuestCount) || 1) >= 3 || formGuest3Name.trim() || formGuest3Phone.trim() || base[2]) { gList.push({ ...(base[2] || {}), index: 3, name: formGuest3Name.trim() || base[2]?.name || 'Hóspede 3', phone: formGuest3Phone.trim() || base[2]?.phone || base[2]?.whatsapp || '', email: formGuest3Email.trim() || base[2]?.email || '' }); } return gList; })(),
+                            checkinDate: formCheckin || selectedRes?.checkinDate,
+                            checkoutDate: formCheckout || selectedRes?.checkoutDate,
+                            checkinTime: formCheckinTime || selectedRes?.checkinTime,
+                            checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
+                            includeBreakfast: formIncludeBreakfast,
+                            hasBreakfast: formIncludeBreakfast,
+                            totalAmount: liveTot > 0 ? liveTot : selectedRes?.totalAmount,
+                            paidAmount: livePaid,
+                            dailyRates: formDailyRates.length > 0 ? formDailyRates : selectedRes?.dailyRates,
+                            charges: formCharges,
+                            cleaningFee: formCharges
+                              .filter(c => c.type === "cleaning")
+                              .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+                          };
+                        };
                         return (
                           <Button
                             key={qm.id}
