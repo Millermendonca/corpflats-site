@@ -1110,14 +1110,24 @@ export default function GuestPortal() {
   const isRequesterPortalView = typeof window !== "undefined" && (new URLSearchParams(window.location.search).get("requester") === "1" || new URLSearchParams(window.location.search).get("view") === "requester")
   const hideFinancialForGuest = Boolean(isB2b || (!isRequesterPortalView && (data?.hideFinancialForGuest || reservation?.hideFinancialForGuest || reservation?.nfHideFromGuest)))
   const requesterName = data?.requesterName || reservation?.requesterName || null
-  const totalAmount = hideFinancialForGuest ? 0 : (Number(reservation.totalAmount) || 0)
+  const ratesSubtotalInPortal = Array.isArray((reservation as any).dailyRates) && (reservation as any).dailyRates.length > 0
+    ? (reservation as any).dailyRates.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+    : 0
+  const chargesSubtotalInPortal = Array.isArray((reservation as any).charges) && (reservation as any).charges.length > 0
+    ? (reservation as any).charges.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
+    : (Number((reservation as any).cleaningFee) || 0)
+  const rawTotalInPortal = Number(reservation.totalAmount) || 0
+  const resolvedTotalInPortal = (!(reservation as any).earlyCheckout && chargesSubtotalInPortal > 0 && ratesSubtotalInPortal > 0 && Math.abs(rawTotalInPortal - ratesSubtotalInPortal) < 0.05)
+    ? Math.round((ratesSubtotalInPortal + chargesSubtotalInPortal) * 100) / 100
+    : rawTotalInPortal
+  const totalAmount = hideFinancialForGuest ? 0 : resolvedTotalInPortal
   const rawPaidAmount = hideFinancialForGuest ? 0 : (Number(reservation.paidAmount) || 0)
   const hasAmount = totalAmount > 0 || (!isOta && rawPaidAmount > 0)
   const paidAmount = isPaid ? (totalAmount > 0 ? totalAmount : (isOta ? 0 : rawPaidAmount)) : rawPaidAmount
   const pendingAmount = Math.max(0, totalAmount - paidAmount)
   const computeCardAmount = (pixAmt: number) => Math.round((Number(pixAmt) || 0) * 1.05 * 100) / 100
-  const cardTotalAmount = hideFinancialForGuest ? 0 : (Number(reservation.cardTotalAmount) || computeCardAmount(totalAmount))
-  const cardPendingAmount = hideFinancialForGuest ? 0 : (Number(reservation.cardPendingAmount) || computeCardAmount(pendingAmount))
+  const cardTotalAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(totalAmount) : (Number(reservation.cardTotalAmount) || computeCardAmount(totalAmount)))
+  const cardPendingAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(pendingAmount) : (Number(reservation.cardPendingAmount) || computeCardAmount(pendingAmount)))
 
   const handleCopyPix = () => {
     if (!reservation.pixCopiaECola) return
@@ -2938,6 +2948,11 @@ export default function GuestPortal() {
                 <span className="text-sm sm:text-base font-black text-emerald-700 block mt-0.5">
                   R$ {pendingAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </span>
+                {chargesSubtotalInPortal > 0 && ratesSubtotalInPortal > 0 && (
+                  <span className="text-[10.5px] font-medium text-emerald-800/80 block mt-0.5">
+                    Diárias: R$ {ratesSubtotalInPortal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} + Taxa de Limpeza: R$ {chargesSubtotalInPortal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </span>
+                )}
               </div>
             </div>
           )}

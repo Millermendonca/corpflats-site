@@ -11540,7 +11540,11 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
             cleaningFee = impliedCf;
           }
         }
-        if (effectiveNights !== qNights || msgWithoutBfTotal < msgWithoutBfDaily * effectiveNights) {
+        if (
+          effectiveNights !== qNights ||
+          msgWithoutBfTotal < msgWithoutBfDaily * effectiveNights ||
+          (cleaningFee > 0 && Math.abs(msgWithoutBfTotal - msgWithoutBfDaily * effectiveNights) < 0.05)
+        ) {
           msgWithoutBfTotal = Math.round((msgWithoutBfDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
         }
       } else if (msgWithoutBfTotal != null && msgWithoutBfDaily == null && effectiveNights !== qNights) {
@@ -11574,26 +11578,39 @@ function extractQuoteFromMessages(messages = [], nights = 1, breakfastPreference
     if (msgTotal != null || msgDaily != null) {
       const msgQuotedNights = inferQuotedNights(msgDaily, msgTotal);
       if (msgTotal != null && msgDaily != null) {
-        if (cleaningFee == null && msgTotal > msgDaily * msgQuotedNights + 0.05) {
+        if (breakfastPreference !== "with_breakfast" && cleaningFee == null && msgTotal > msgDaily * msgQuotedNights + 0.05) {
           const impliedCf = Math.round((msgTotal - msgDaily * msgQuotedNights) * 100) / 100;
           if (impliedCf >= 30 && impliedCf <= 300) {
             cleaningFee = impliedCf;
           }
         }
+        const effectiveCf = breakfastPreference === "with_breakfast" ? 0 : (cleaningFee || 0);
         dailyRate = msgDaily;
-        if (effectiveNights !== msgQuotedNights || msgTotal < msgDaily * effectiveNights) {
-          totalAmount = Math.round((msgDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+        if (
+          effectiveNights !== msgQuotedNights ||
+          msgTotal < msgDaily * effectiveNights ||
+          (effectiveCf > 0 && Math.abs(msgTotal - msgDaily * effectiveNights) < 0.05)
+        ) {
+          totalAmount = Math.round((msgDaily * effectiveNights + effectiveCf) * 100) / 100;
+        } else if (
+          breakfastPreference === "with_breakfast" &&
+          cleaningFee > 0 &&
+          Math.abs(msgTotal - (msgDaily * effectiveNights + cleaningFee)) < 0.05
+        ) {
+          totalAmount = Math.round(msgDaily * effectiveNights * 100) / 100;
         } else {
           totalAmount = msgTotal;
         }
       } else if (msgDaily != null) {
+        const effectiveCf = breakfastPreference === "with_breakfast" ? 0 : (cleaningFee || 0);
         dailyRate = msgDaily;
-        totalAmount = Math.round((msgDaily * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+        totalAmount = Math.round((msgDaily * effectiveNights + effectiveCf) * 100) / 100;
       } else if (msgTotal != null) {
-        const netMsgTotal = cleaningFee > 0 && msgTotal > cleaningFee ? (msgTotal - cleaningFee) : msgTotal;
+        const effectiveCf = breakfastPreference === "with_breakfast" ? 0 : (cleaningFee || 0);
+        const netMsgTotal = effectiveCf > 0 && msgTotal > effectiveCf ? (msgTotal - effectiveCf) : msgTotal;
         dailyRate = Math.round((netMsgTotal / msgQuotedNights) * 100) / 100;
         if (msgQuotedNights !== effectiveNights) {
-          totalAmount = Math.round((dailyRate * effectiveNights + (cleaningFee || 0)) * 100) / 100;
+          totalAmount = Math.round((dailyRate * effectiveNights + effectiveCf) * 100) / 100;
         } else {
           totalAmount = msgTotal;
         }
@@ -12078,15 +12095,21 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
   const inD = new Date(`${proposal.checkIn}T12:00:00Z`);
   const outD = new Date(`${proposal.checkOut}T12:00:00Z`);
   const nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
-  const totalAmount = Math.round(Number(proposal.totalAmount || 0) * 100) / 100;
+  const rawTotalAmount = Math.round(Number(proposal.totalAmount || 0) * 100) / 100;
   const rawPropDaily = proposal.dailyRate != null && proposal.dailyRate > 0
     ? Math.round(Number(proposal.dailyRate) * 100) / 100
     : 0;
-  const resolvedCleaningFee = proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
-    ? Math.round(Number(proposal.cleaningFee) * 100) / 100
-    : (rawPropDaily > 0 && totalAmount > rawPropDaily * nights + 0.05
-        ? Math.round((totalAmount - rawPropDaily * nights) * 100) / 100
-        : 0);
+  const includeBreakfast = Boolean(proposal.includeBreakfast);
+  const resolvedCleaningFee = includeBreakfast
+    ? 0
+    : (proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
+        ? Math.round(Number(proposal.cleaningFee) * 100) / 100
+        : (rawPropDaily > 0 && rawTotalAmount > rawPropDaily * nights + 0.05
+            ? Math.round((rawTotalAmount - rawPropDaily * nights) * 100) / 100
+            : 0));
+  const totalAmount = (resolvedCleaningFee > 0 && rawPropDaily > 0 && Math.abs(rawTotalAmount - rawPropDaily * nights) < 0.05)
+    ? Math.round((rawPropDaily * nights + resolvedCleaningFee) * 100) / 100
+    : (rawTotalAmount > 0 ? rawTotalAmount : Math.round((rawPropDaily * nights + resolvedCleaningFee) * 100) / 100);
   const netRoomTotal = Math.max(0, totalAmount - resolvedCleaningFee);
   const dailyRate = (rawPropDaily > 0 && Math.abs(rawPropDaily * nights - netRoomTotal) < 0.05)
     ? rawPropDaily
@@ -12127,7 +12150,6 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
 
   const nowIso = new Date().toISOString();
   const guestsCount = Math.min(Math.max(1, Number(proposal.guests || 1)), 4);
-  const includeBreakfast = Boolean(proposal.includeBreakfast);
 
   const preparedGuests = [];
   for (let i = 1; i <= guestsCount; i++) {
@@ -12325,13 +12347,29 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
   const origNights = Math.max(1, Number(proposal.nights || 1));
   const origDaily = Number(proposal.dailyRate || 0);
   const origTotal = Number(proposal.totalAmount || 0);
-  const existingProposalCleaningFee = proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
+  let effectiveProposalCleaningFee = proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
     ? Number(proposal.cleaningFee)
     : (origDaily > 0 && origTotal > origDaily * origNights + 0.05
         ? Math.round((origTotal - origDaily * origNights) * 100) / 100
         : 0);
 
-  // 3. Alteração de Valor Total ou Diária
+  // 3. Alteração de Café da Manhã e Taxa de Limpeza (avaliados antes do cálculo do total)
+  if (/\b(?:com\s+cafe|inclui(?:r)?\s+cafe|cafe\s+incluso|adiciona(?:r)?\s+cafe)\b/.test(norm)) {
+    updates.includeBreakfast = true;
+    updates.ratePlan = "with_breakfast";
+    updates.cleaningFee = 0;
+    effectiveProposalCleaningFee = 0;
+    hasFieldUpdates = true;
+  } else if (/\b(?:sem\s+cafe|tira(?:r)?\s+(?:o\s+)?cafe|retira(?:r)?\s+(?:o\s+)?cafe|remove(?:r)?\s+(?:o\s+)?cafe)\b/.test(norm)) {
+    updates.includeBreakfast = false;
+    updates.ratePlan = "room_only";
+    if (effectiveProposalCleaningFee <= 0 && db?.siteConfig?.ratePlans?.room_only?.cleaningFeeEnabled !== false) {
+      effectiveProposalCleaningFee = Number(db?.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 70) || 70;
+    }
+    updates.cleaningFee = effectiveProposalCleaningFee;
+    hasFieldUpdates = true;
+  }
+
   // Remove ocorrências de "flat 509", datas e CPF da string para não confundir números de flat/data/CPF com valor
   const textWithoutFlatAndDates = trimmed
     .replace(/\b(?:flat|apto|apartamento|unidade|quarto)\s*[:=\-]?\s*\d{3,4}\b/gi, " ")
@@ -12341,13 +12379,37 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     .replace(/\bcpf\s*(?:para|[eé]|:|=|-|\s)*\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}\b/gi, " ")
     .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ");
 
+  const waiveCleaningFeeMatch = /\b(?:sem\s+(?:taxa\s+de\s+)?limpeza|isenta(?:r)?\s+(?:a\s+)?(?:taxa\s+de\s+)?limpeza|tira(?:r)?\s+(?:a\s+)?(?:taxa\s+de\s+)?limpeza|remove(?:r)?\s+(?:a\s+)?(?:taxa\s+de\s+)?limpeza|limpeza\s*(?:para|de|:|=|-)?\s*(?:R?\$?\s*)?0(?:[.,]00)?\b)/i.test(norm);
+  const cleaningUpdateMatch = !waiveCleaningFeeMatch
+    ? (textWithoutFlatAndDates.match(/\b(?:taxa\s+(?:[uú]nica\s+)?(?:de\s+)?limpeza|limpeza)\s*(?:de|para|por|:|=|-)?\s*R?\$?\s*(\d{2,3}(?:[.,]\d{1,2})?)/i) ||
+       textWithoutFlatAndDates.match(/R?\$?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:reais\s+)?(?:de\s+)?(?:taxa\s+de\s+limpeza|limpeza\b)/i))
+    : null;
+
+  if (waiveCleaningFeeMatch) {
+    updates.cleaningFee = 0;
+    effectiveProposalCleaningFee = 0;
+    hasFieldUpdates = true;
+  } else if (cleaningUpdateMatch && (cleaningUpdateMatch[1] || cleaningUpdateMatch[2])) {
+    const parsedCf = parseBrlAmountValue(cleaningUpdateMatch[1] || cleaningUpdateMatch[2]);
+    if (parsedCf != null && parsedCf >= 0 && parsedCf <= 500) {
+      updates.cleaningFee = parsedCf;
+      effectiveProposalCleaningFee = parsedCf;
+      hasFieldUpdates = true;
+    }
+  }
+
+  const textWithoutCleaning = cleaningUpdateMatch
+    ? textWithoutFlatAndDates.replace(cleaningUpdateMatch[0], " ")
+    : textWithoutFlatAndDates;
+
+  // 4. Alteração de Valor Total ou Diária
   const dailyUpdateMatch =
-    textWithoutFlatAndDates.match(/\bdi[aá]ria\s*(?:de|para|por|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
-    textWithoutFlatAndDates.match(/R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:reais\s+)?(?:a\s+di[aá]ria|por\s+di[aá]ria|por\s+noite|\/\s*dia|\/\s*noite)/i);
+    textWithoutCleaning.match(/\bdi[aá]ria\s*(?:de|para|por|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
+    textWithoutCleaning.match(/R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:reais\s+)?(?:a\s+di[aá]ria|por\s+di[aá]ria|por\s+noite|\/\s*dia|\/\s*noite)/i);
 
   const textWithoutDaily = dailyUpdateMatch
-    ? textWithoutFlatAndDates.replace(dailyUpdateMatch[0], " ")
-    : textWithoutFlatAndDates;
+    ? textWithoutCleaning.replace(dailyUpdateMatch[0], " ")
+    : textWithoutCleaning;
 
   const totalUpdateMatch = textWithoutDaily.match(/\b(?:valor(?:\s+total)?|total|or[cç]amento|pre[cç]o|por)\s*(?:de|para|:|=|-)?\s*R?\$?\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
                            textWithoutDaily.match(/R\$\s*(\d{2,5}(?:[.,]\d{1,2})?)/i) ||
@@ -12357,7 +12419,7 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     const parsedDaily = parseBrlAmountValue(dailyUpdateMatch[1]);
     if (parsedDaily && parsedDaily >= 50) {
       updates.dailyRate = parsedDaily;
-      updates.totalAmount = Math.round((parsedDaily * effectiveNights + existingProposalCleaningFee) * 100) / 100;
+      updates.totalAmount = Math.round((parsedDaily * effectiveNights + effectiveProposalCleaningFee) * 100) / 100;
       hasFieldUpdates = true;
     }
   }
@@ -12366,26 +12428,19 @@ export function parseManagerPreReservationCommand(text, proposal, db = null) {
     if (parsedTotal && parsedTotal >= 50) {
       updates.totalAmount = parsedTotal;
       if (!updates.dailyRate) {
-        const netParsedTotal = existingProposalCleaningFee > 0 && parsedTotal > existingProposalCleaningFee
-          ? (parsedTotal - existingProposalCleaningFee)
+        const netParsedTotal = effectiveProposalCleaningFee > 0 && parsedTotal > effectiveProposalCleaningFee
+          ? (parsedTotal - effectiveProposalCleaningFee)
           : parsedTotal;
         updates.dailyRate = Math.round((netParsedTotal / effectiveNights) * 100) / 100;
       }
       hasFieldUpdates = true;
     }
-  } else if (!updates.totalAmount && updates.nights && updates.nights !== proposal.nights && proposal.dailyRate) {
-    updates.totalAmount = Math.round((proposal.dailyRate * updates.nights + existingProposalCleaningFee) * 100) / 100;
-  }
-
-  // 4. Alteração de Café da Manhã
-  if (/\b(?:com\s+cafe|inclui(?:r)?\s+cafe|cafe\s+incluso|adiciona(?:r)?\s+cafe)\b/.test(norm)) {
-    updates.includeBreakfast = true;
-    updates.ratePlan = "with_breakfast";
-    hasFieldUpdates = true;
-  } else if (/\b(?:sem\s+cafe|tira(?:r)?\s+(?:o\s+)?cafe|retira(?:r)?\s+(?:o\s+)?cafe|remove(?:r)?\s+(?:o\s+)?cafe)\b/.test(norm)) {
-    updates.includeBreakfast = false;
-    updates.ratePlan = "room_only";
-    hasFieldUpdates = true;
+  } else if (
+    !updates.totalAmount &&
+    proposal.dailyRate &&
+    ((updates.nights && updates.nights !== proposal.nights) || updates.cleaningFee !== undefined)
+  ) {
+    updates.totalAmount = Math.round((proposal.dailyRate * effectiveNights + effectiveProposalCleaningFee) * 100) / 100;
   }
 
   // 5. Alteração de Quantidade de Hóspedes
@@ -12591,6 +12646,14 @@ export async function handleManagerPreReservationReply({
     targetProposal.checkOut = updates.checkOut;
     targetProposal.nights = updates.nights || targetProposal.nights;
   }
+  if (updates.includeBreakfast !== undefined) {
+    targetProposal.includeBreakfast = updates.includeBreakfast;
+    targetProposal.ratePlan = updates.ratePlan;
+    if (updates.includeBreakfast) targetProposal.cleaningFee = 0;
+  }
+  if (updates.cleaningFee !== undefined) {
+    targetProposal.cleaningFee = updates.cleaningFee;
+  }
   if (updates.totalAmount != null) {
     targetProposal.totalAmount = updates.totalAmount;
   }
@@ -12600,11 +12663,6 @@ export async function handleManagerPreReservationReply({
     const propCf = Number(targetProposal.cleaningFee || 0);
     const netUpdTotal = propCf > 0 && updates.totalAmount > propCf ? (updates.totalAmount - propCf) : updates.totalAmount;
     targetProposal.dailyRate = Math.round((netUpdTotal / targetProposal.nights) * 100) / 100;
-  }
-  if (updates.includeBreakfast !== undefined) {
-    targetProposal.includeBreakfast = updates.includeBreakfast;
-    targetProposal.ratePlan = updates.ratePlan;
-    if (updates.includeBreakfast) targetProposal.cleaningFee = 0;
   }
   if (updates.guests != null) {
     targetProposal.guests = updates.guests;

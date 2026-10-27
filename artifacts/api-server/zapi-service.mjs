@@ -3208,7 +3208,19 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   
   const guestCount = reservation.guestCount || reservation.adults || 1;
   const chanLower = String(reservation.channel || "").toLowerCase();
-  const totalAmount = Number(reservation.totalAmount) || 0;
+  const ratesSumInTags = Array.isArray(reservation.dailyRates) && reservation.dailyRates.length > 0
+    ? reservation.dailyRates.reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0)
+    : 0;
+  const chargesSumInTags = Array.isArray(reservation.charges) && reservation.charges.length > 0
+    ? reservation.charges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    : (Number(reservation.cleaningFee) || 0);
+  const rawTotalInTags = Number(reservation.totalAmount) || 0;
+  const totalAmount = (!reservation.earlyCheckout && chargesSumInTags > 0 && ratesSumInTags > 0 && Math.abs(rawTotalInTags - ratesSumInTags) < 0.05)
+    ? Math.round((ratesSumInTags + chargesSumInTags) * 100) / 100
+    : rawTotalInTags;
+  if (totalAmount > rawTotalInTags && reservation && typeof reservation === "object") {
+    reservation.totalAmount = totalAmount;
+  }
   const paidAmount = Number(reservation.paidAmount) || 0;
   const pendingAmount = Math.max(0, totalAmount - paidAmount);
   const pixKey = db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47.964.813/0001-65";

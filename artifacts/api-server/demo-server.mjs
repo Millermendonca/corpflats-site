@@ -5316,45 +5316,66 @@ function reconcileUniversalIntegrity(incomingState = null) {
         changed = true;
       }
 
+      const recNights = (r.checkinDate && r.checkoutDate)
+        ? Math.max(1, Math.round((new Date(r.checkoutDate + "T12:00:00Z").getTime() - new Date(r.checkinDate + "T12:00:00Z").getTime()) / (1000 * 60 * 60 * 24)))
+        : 1;
+
       // Correção específica para reserva ativa da Karolina no Flat 905 (ou reservas sem café cuja taxa foi perdida ao alterar de 1 para 3 diárias)
-      const isKarolina905 = String(r.flatNumber) === "905" && /karolina/i.test(String(r.guestName || ""));
-      if (isKarolina905 && !r.includeBreakfast && !r.charges.some(c => c && c.type === "cleaning" && Number(c.amount) > 0)) {
-        let inferredCleanFee = Number(db.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 70) || 70;
+      const isKarolina905 = (String(r.flatNumber) === "905" || Number(r.flatId) === 9) && /[ck]arolina/i.test(String(r.guestName || r.guests?.[0]?.name || ""));
+      if (isKarolina905 && !r.includeBreakfast) {
         const unitRate = (Array.isArray(r.dailyRates) && r.dailyRates.length > 0)
           ? (Number(r.dailyRates[0].rate ?? r.dailyRates[0].amount) || Number(r.dailyRate) || 0)
           : (Number(r.dailyRate) || 0);
-        if (unitRate > 0 && Array.isArray(r.auditLogs)) {
-          for (const log of r.auditLogs) {
-            for (const ch of (log?.changes || [])) {
-              if (ch?.field === "totalAmount") {
-                for (const rawV of [ch.oldValue, ch.newValue]) {
-                  const m = String(rawV || "").match(/(\d+(?:[.,]\d{1,2})?)/);
-                  if (m) {
-                    const numV = parseFloat(m[1].replace(",", "."));
-                    const diff1 = Math.round((numV - unitRate) * 100) / 100;
-                    if (diff1 >= 30 && diff1 <= 150) {
-                      inferredCleanFee = diff1;
+        if (!r.earlyCheckout && r.checkinDate && unitRate > 0 && (!Array.isArray(r.dailyRates) || r.dailyRates.length !== recNights)) {
+          const dStart = new Date(r.checkinDate + "T12:00:00Z");
+          const rebuiltRates = [];
+          for (let i = 0; i < recNights; i++) {
+            const curD = new Date(dStart.getTime() + i * 86400000).toISOString().slice(0, 10);
+            const existingD = Array.isArray(r.dailyRates) ? r.dailyRates.find(x => x && x.date === curD) : null;
+            rebuiltRates.push({
+              date: curD,
+              rate: existingD && Number(existingD.rate ?? existingD.amount) > 0 ? Number(existingD.rate ?? existingD.amount) : unitRate,
+              channel: (existingD && existingD.channel) || r.channel || "whatsapp"
+            });
+          }
+          r.dailyRates = rebuiltRates;
+          changed = true;
+        }
+        if (!r.charges.some(c => c && c.type === "cleaning" && Number(c.amount) > 0)) {
+          let inferredCleanFee = Number(db.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 70) || 70;
+          if (unitRate > 0 && Array.isArray(r.auditLogs)) {
+            for (const log of r.auditLogs) {
+              for (const ch of (log?.changes || [])) {
+                if (ch?.field === "totalAmount") {
+                  for (const rawV of [ch.oldValue, ch.newValue]) {
+                    const m = String(rawV || "").match(/(\d+(?:[.,]\d{1,2})?)/);
+                    if (m) {
+                      const numV = parseFloat(m[1].replace(",", "."));
+                      const diff1 = Math.round((numV - unitRate) * 100) / 100;
+                      if (diff1 >= 30 && diff1 <= 150) {
+                        inferredCleanFee = diff1;
+                      }
                     }
                   }
                 }
               }
             }
           }
+          r.cleaningFee = inferredCleanFee;
+          r.charges.push({
+            id: `charge_cleaning_${r.id || Date.now()}`,
+            type: "cleaning",
+            title: "Taxa de Limpeza",
+            amount: inferredCleanFee
+          });
+          changed = true;
         }
-        r.cleaningFee = inferredCleanFee;
-        r.charges.push({
-          id: `charge_cleaning_${r.id || Date.now()}`,
-          type: "cleaning",
-          title: "Taxa de Limpeza",
-          amount: inferredCleanFee
-        });
-        changed = true;
       }
 
       const recChargesSum = r.charges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0);
       const recRatesSum = Array.isArray(r.dailyRates) && r.dailyRates.length > 0
         ? r.dailyRates.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
-        : 0;
+        : (Number(r.dailyRate) > 0 ? Math.round(Number(r.dailyRate) * recNights * 100) / 100 : 0);
       const curTot = Number(r.totalAmount) || 0;
       if (!r.earlyCheckout && recChargesSum > 0 && recRatesSum > 0 && Math.abs(curTot - recRatesSum) < 0.05) {
         r.totalAmount = Math.round((recRatesSum + recChargesSum) * 100) / 100;
@@ -5377,7 +5398,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
       const isResPaid = !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= resTotalAmt && resTotalAmt > 0));
       const pendingAmt = Math.max(0, Math.round((resTotalAmt - (Number(r.paidAmount) || 0)) * 100) / 100);
       if (!isOtaOrB2b && !isResPaid && pendingAmt > 0) {
-        if (r.pixCopiaECola && isPixPayloadStaleForAmount(r, pendingAmt)) {
+        if (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt)) {
           const cleanTxId = String(r.code || `RES${r.id || ""}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
           r.pixTxId = cleanTxId || r.pixTxId;
           r.pixCopiaECola = generateStaticPixPayload({
@@ -5521,6 +5542,25 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
   });
+
+  // Reconcilia propostas pendentes de pré-reserva (Sofia WhatsApp) caso alguma esteja apenas com a soma das diárias sem a taxa de limpeza
+  for (const p of (db.pendingPreReservationProposals || [])) {
+    if (!p || p.status !== "pending_manager") continue;
+    if (p.includeBreakfast) continue;
+    const isKarolinaProp = (String(p.flatNumber) === "905" || Number(p.flatId) === 9) && /[ck]arolina/i.test(String(p.guestName || ""));
+    if (isKarolinaProp && !(Number(p.cleaningFee) > 0)) {
+      p.cleaningFee = Number(db.siteConfig?.ratePlans?.room_only?.cleaningFeeAmount ?? 70) || 70;
+      changed = true;
+    }
+    const pNights = Math.max(1, Number(p.nights) || 1);
+    const pDaily = Number(p.dailyRate) || 0;
+    const pClean = Number(p.cleaningFee) || 0;
+    const pTot = Number(p.totalAmount) || 0;
+    if (pClean > 0 && pDaily > 0 && Math.abs(pTot - pDaily * pNights) < 0.05) {
+      p.totalAmount = Math.round((pDaily * pNights + pClean) * 100) / 100;
+      changed = true;
+    }
+  }
 
   // Limpeza de instruções automáticas obsoletas:
   // Se a solicitação não for manual e não houver reserva ativa com check-in nessa data/quarto, limpa preferências
@@ -24095,15 +24135,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.charges = [];
   }
 
-  // Se havia taxa de limpeza explícita ou implícita antes da edição e não foi intencionalmente zerada
+  // Se havia taxa de limpeza explícita ou implícita antes da edição e não foi intencionalmente zerada/removida
   const explicitlyZeroedCleaningFee = req.body.cleaningFee !== undefined && Number(req.body.cleaningFee) === 0;
-  const explicitlyClearedExistingCharges =
+  const explicitlyClearedCleaningFromCharges =
     Array.isArray(req.body.charges) &&
-    req.body.charges.length === 0 &&
-    oldChargesBeforeEdit.length > 0 &&
-    (req.body.cleaningFee === undefined || Number(req.body.cleaningFee) === 0);
+    !req.body.charges.some(c => c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || "")))) &&
+    (req.body.cleaningFee === undefined || Number(req.body.cleaningFee) <= 0);
 
-  if (!explicitlyZeroedCleaningFee && !explicitlyClearedExistingCharges) {
+  if (explicitlyZeroedCleaningFee && !Array.isArray(req.body.charges)) {
+    r.charges = r.charges.filter(c => !(c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || "")))));
+  }
+
+  if (!explicitlyZeroedCleaningFee && !explicitlyClearedCleaningFromCharges) {
     const hasCleaningInCharges = r.charges.some(c => c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || ""))));
     let candidateCleaningFee = Number(req.body.cleaningFee ?? r.cleaningFee ?? oldCleaningFeeBeforeEdit) || 0;
     if (
@@ -24123,6 +24166,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         type: "cleaning",
         title: "Taxa de Limpeza",
         amount: candidateCleaningFee
+      });
+    } else if (req.body.cleaningFee !== undefined && Number(req.body.cleaningFee) > 0 && !Array.isArray(req.body.charges) && hasCleaningInCharges) {
+      let updatedFirst = false;
+      r.charges = r.charges.map(c => {
+        if (!updatedFirst && c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || "")))) {
+          updatedFirst = true;
+          return { ...c, amount: Number(req.body.cleaningFee) };
+        }
+        return c;
       });
     }
   }
@@ -25439,6 +25491,39 @@ function findReservationByLocatorOrContact(query) {
   return null;
 }
 
+function ensureReservationCompositeTotal(r) {
+  if (!r || typeof r !== "object") return 0;
+  if (!Array.isArray(r.charges)) r.charges = [];
+  const hasCleaningInCharges = r.charges.some(c => c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || ""))) && Number(c.amount) > 0);
+  if (!hasCleaningInCharges && Number(r.cleaningFee) > 0) {
+    r.charges.push({
+      id: `charge_cleaning_${r.id || Date.now()}`,
+      type: "cleaning",
+      title: "Taxa de Limpeza",
+      amount: Number(r.cleaningFee)
+    });
+  } else if (hasCleaningInCharges && !(Number(r.cleaningFee) > 0)) {
+    r.cleaningFee = Math.round(
+      r.charges
+        .filter(c => c && (c.type === "cleaning" || /limpeza/i.test(String(c.title || ""))))
+        .reduce((acc, c) => acc + (Number(c.amount) || 0), 0) * 100
+    ) / 100;
+  }
+  const nightsCount = (r.checkinDate && r.checkoutDate)
+    ? Math.max(1, Math.round((new Date(r.checkoutDate + "T12:00:00Z").getTime() - new Date(r.checkinDate + "T12:00:00Z").getTime()) / 86400000))
+    : 1;
+  const ratesSum = Array.isArray(r.dailyRates) && r.dailyRates.length > 0
+    ? r.dailyRates.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+    : (Number(r.dailyRate) > 0 ? Math.round(Number(r.dailyRate) * nightsCount * 100) / 100 : 0);
+  const chargesSum = r.charges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0) || (Number(r.cleaningFee) || 0);
+  const curTot = Number(r.totalAmount) || 0;
+  if (!r.earlyCheckout && chargesSum > 0 && ratesSum > 0 && Math.abs(curTot - ratesSum) < 0.05) {
+    r.totalAmount = Math.round((ratesSum + chargesSum) * 100) / 100;
+    r.cardTotalAmount = computeCardAmountFromPix(r.totalAmount);
+  }
+  return Number(r.totalAmount) || 0;
+}
+
 app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
@@ -25446,6 +25531,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada com os dados informados. Verifique o localizador, CPF ou telefone." });
   }
+  ensureReservationCompositeTotal(r);
 
   // Data e hora atual no fuso horário do Brasil respeitando time-travel
   const now = getEffectiveDate();
@@ -25769,6 +25855,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       guestCount: r.guestCount || r.adults || 1,
       guests: r.guests || [],
       channel: r.channel || "site",
+      dailyRate: hideFinancialForGuest ? 0 : (Number(r.dailyRate) || 0),
+      dailyRates: hideFinancialForGuest ? [] : (Array.isArray(r.dailyRates) ? r.dailyRates : []),
+      cleaningFee: hideFinancialForGuest ? 0 : (Number(r.cleaningFee) || 0),
+      charges: hideFinancialForGuest ? [] : (Array.isArray(r.charges) ? r.charges : []),
       totalAmount: hideFinancialForGuest ? 0 : resolvedTotal,
       paidAmount: hideFinancialForGuest ? 0 : resolvedPaid,
       cardTotalAmount: hideFinancialForGuest ? 0 : cardTotalAmount,
@@ -49486,6 +49576,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     const { code } = req.params;
     const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code || x.pixTxId === code);
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+    ensureReservationCompositeTotal(r);
 
     const chanLower = String(r.channel || "").toLowerCase();
     const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
@@ -49686,6 +49777,7 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
     if (!db.reservations) db.reservations = [];
     const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+    ensureReservationCompositeTotal(r);
 
     const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0);
     if (isPaid) {

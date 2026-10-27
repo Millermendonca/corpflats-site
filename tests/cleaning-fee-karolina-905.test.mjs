@@ -8,6 +8,7 @@ import {
   handleManagerPreReservationReply,
   parseManagerPreReservationCommand
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
+import { resolveWhatsAppTags } from "../artifacts/api-server/zapi-service.mjs";
 
 console.log("🧪 Iniciando teste pontual: Taxa de Limpeza (Caso Karolina Flat 905 - 1 para 3 diárias)...");
 
@@ -15,12 +16,16 @@ const serverPath = path.resolve("artifacts/api-server/demo-server.mjs");
 const mirrorServerPath = path.resolve("scripts/demo-server.mjs");
 const aiPath = path.resolve("artifacts/api-server/whatsapp-ai-service.mjs");
 const mirrorAiPath = path.resolve("scripts/whatsapp-ai-service.mjs");
+const zapiPath = path.resolve("artifacts/api-server/zapi-service.mjs");
+const mirrorZapiPath = path.resolve("scripts/zapi-service.mjs");
 const pmsPath = path.resolve("artifacts/limpeza/src/pages/pms-calendar.tsx");
+const portalPath = path.resolve("artifacts/limpeza/src/pages/guest-portal.tsx");
 const funnelPath = path.resolve("artifacts/limpeza/src/components/booking-funnel-modal.tsx");
 const enginePath = path.resolve("artifacts/limpeza/src/pages/booking-engine.tsx");
 
 const serverSrc = fs.readFileSync(serverPath, "utf8");
 const pmsSrc = fs.readFileSync(pmsPath, "utf8");
+const portalSrc = fs.readFileSync(portalPath, "utf8");
 const funnelSrc = fs.readFileSync(funnelPath, "utf8");
 const engineSrc = fs.readFileSync(enginePath, "utf8");
 
@@ -37,6 +42,11 @@ const engineSrc = fs.readFileSync(enginePath, "utf8");
     fs.readFileSync(aiPath).equals(fs.readFileSync(mirrorAiPath)),
     true,
     "scripts/whatsapp-ai-service.mjs deve ser idêntico a artifacts/api-server/whatsapp-ai-service.mjs"
+  );
+  assert.equal(
+    fs.readFileSync(zapiPath).equals(fs.readFileSync(mirrorZapiPath)),
+    true,
+    "scripts/zapi-service.mjs deve ser idêntico a artifacts/api-server/zapi-service.mjs"
   );
   console.log("✅ 1. Paridade byte-a-byte entre artifacts/api-server/ e scripts/ validada.");
 }
@@ -422,7 +432,247 @@ const engineSrc = fs.readFileSync(enginePath, "utf8");
   );
   assert.equal(resCaseB.totalAmount, 730, "PUT com totalAmount=660 (apenas diárias) deve recompor +70 de taxa de limpeza = 730");
 
-  console.log("✅ 5. Casos de borda (cotação implícita, plano com café e recálculo PUT 1 -> 3 diárias) validados.");
+  // Caso C: Remoção intencional da taxa de limpeza via charges: [] (mesmo quando oldChargesBeforeEdit estava vazio e cleaningFee=70)
+  const resCaseC = {
+    id: 905,
+    status: "pre_reserva",
+    channel: "whatsapp",
+    includeBreakfast: false,
+    checkinDate: "2026-11-20",
+    checkoutDate: "2026-11-23",
+    dailyRate: 220,
+    dailyRates: [
+      { date: "2026-11-20", rate: 220, channel: "whatsapp" },
+      { date: "2026-11-21", rate: 220, channel: "whatsapp" },
+      { date: "2026-11-22", rate: 220, channel: "whatsapp" }
+    ],
+    totalAmount: 730,
+    cleaningFee: 70,
+    charges: []
+  };
+  runPutRecalc(
+    resCaseC,
+    { body: { charges: [] } },
+    { siteConfig: { ratePlans: { room_only: { cleaningFeeAmount: 70 } } } },
+    "2026-11-20",
+    "2026-11-23",
+    730,
+    220,
+    [],
+    70,
+    resCaseC.dailyRates
+  );
+  assert.equal(resCaseC.cleaningFee, 0, "Remoção explícita via charges: [] deve zerar cleaningFee");
+  assert.equal(resCaseC.charges.length, 0, "Remoção explícita via charges: [] deve manter charges vazio");
+  assert.equal(resCaseC.totalAmount, 660, "Remoção explícita via charges: [] deve atualizar totalAmount para 660");
+
+  // Caso D: Remoção intencional via cleaningFee: 0 (mesmo quando r.charges tinha item cleaning)
+  const resCaseD = {
+    id: 905,
+    status: "pre_reserva",
+    channel: "whatsapp",
+    includeBreakfast: false,
+    checkinDate: "2026-11-20",
+    checkoutDate: "2026-11-23",
+    dailyRate: 220,
+    dailyRates: [
+      { date: "2026-11-20", rate: 220, channel: "whatsapp" },
+      { date: "2026-11-21", rate: 220, channel: "whatsapp" },
+      { date: "2026-11-22", rate: 220, channel: "whatsapp" }
+    ],
+    totalAmount: 730,
+    cleaningFee: 70,
+    charges: [{ id: "chg-cleaning", type: "cleaning", title: "Taxa de Limpeza", amount: 70 }]
+  };
+  runPutRecalc(
+    resCaseD,
+    { body: { cleaningFee: 0 } },
+    { siteConfig: { ratePlans: { room_only: { cleaningFeeAmount: 70 } } } },
+    "2026-11-20",
+    "2026-11-23",
+    730,
+    220,
+    [{ id: "chg-cleaning", type: "cleaning", title: "Taxa de Limpeza", amount: 70 }],
+    70,
+    resCaseD.dailyRates
+  );
+  assert.equal(resCaseD.cleaningFee, 0, "PUT com cleaningFee: 0 deve remover item de limpeza de r.charges e zerar cleaningFee");
+  assert.equal(resCaseD.charges.length, 0);
+  assert.equal(resCaseD.totalAmount, 660);
+
+  // Caso E: Alteração de valor da taxa de limpeza via cleaningFee: 50 (sem enviar charges)
+  const resCaseE = {
+    id: 905,
+    status: "pre_reserva",
+    channel: "whatsapp",
+    includeBreakfast: false,
+    checkinDate: "2026-11-20",
+    checkoutDate: "2026-11-23",
+    dailyRate: 220,
+    dailyRates: [
+      { date: "2026-11-20", rate: 220, channel: "whatsapp" },
+      { date: "2026-11-21", rate: 220, channel: "whatsapp" },
+      { date: "2026-11-22", rate: 220, channel: "whatsapp" }
+    ],
+    totalAmount: 730,
+    cleaningFee: 70,
+    charges: [{ id: "chg-cleaning", type: "cleaning", title: "Taxa de Limpeza", amount: 70 }]
+  };
+  runPutRecalc(
+    resCaseE,
+    { body: { cleaningFee: 50 } },
+    { siteConfig: { ratePlans: { room_only: { cleaningFeeAmount: 70 } } } },
+    "2026-11-20",
+    "2026-11-23",
+    730,
+    220,
+    [{ id: "chg-cleaning", type: "cleaning", title: "Taxa de Limpeza", amount: 70 }],
+    70,
+    resCaseE.dailyRates
+  );
+  assert.equal(resCaseE.cleaningFee, 50);
+  assert.equal(resCaseE.charges[0].amount, 50);
+  assert.equal(resCaseE.totalAmount, 710, "PUT com cleaningFee: 50 deve atualizar totalAmount para 660 + 50 = 710");
+
+  console.log("✅ 5. Casos de borda (cotação implícita, plano com café, recálculo PUT 1 -> 3 diárias e remoção/edição de taxa) validados.");
+}
+
+// ----------------------------------------------------------------------------
+// 6. Testes adicionais profundos: Subtotal de 3 diárias + limpeza na mesma mensagem,
+//    comandos do gestor (com café / sem café / limpeza), Z-API tags e Portal do Hóspede
+// ----------------------------------------------------------------------------
+{
+  // 6.1 Operador informa subtotal de 3 diárias (R$ 660) + R$ 70 de limpeza na mesma mensagem (effectiveNights === msgQuotedNights)
+  const subtotalConv = {
+    phone: "5522999887766",
+    messages: [
+      { fromMe: false, text: "Oi, gostaria de 3 diárias sem café de 20/11/2026 a 23/11/2026" },
+      { fromMe: true, senderRole: "human_operator", text: "Para 3 diárias sem café fica R$ 220,00 a diária (R$ 660,00 as diárias) + R$ 70,00 de taxa de limpeza." },
+      { fromMe: false, text: "Perfeito, pode reservar! Karolina Oliveira Santos, CPF 123.456.789-01, karolina@email.com" }
+    ]
+  };
+  const extSubtotal = extractActivePreReservationData(subtotalConv, null, "5522999887766");
+  assert.equal(extSubtotal.nights, 3);
+  assert.equal(extSubtotal.dailyRate, 220);
+  assert.equal(extSubtotal.cleaningFee, 70);
+  assert.equal(extSubtotal.totalAmount, 730, "Mesmo quando msgQuotedNights === effectiveNights e o texto cita o subtotal das diárias (660), deve somar R$ 70 de limpeza = 730");
+
+  // 6.2 createStandardPmsPreReservation recebendo proposta com totalAmount=660 (apenas diárias) e cleaningFee=70
+  const dbForCreate = {
+    settings: { interConfig: { pixKey: "47964813000165" } },
+    flats: [{ id: 9, number: "905", isActive: true, status: "disponivel" }],
+    reservations: [],
+    guests: []
+  };
+  const createdFromStaleProp = await createStandardPmsPreReservation(
+    dbForCreate,
+    {
+      checkIn: "2026-11-20",
+      checkOut: "2026-11-23",
+      nights: 3,
+      guests: 1,
+      totalAmount: 660, // veio apenas com 3 * 220
+      dailyRate: 220,
+      cleaningFee: 70,
+      includeBreakfast: false,
+      guestName: "Karolina Oliveira Santos",
+      guestCpf: "12345678901",
+      guestEmail: "karolina@email.com",
+      guestPhone: "5522999887766",
+      flatId: 9,
+      flatNumber: "905"
+    },
+    { triggerImmediateFn: async () => {} }
+  );
+  assert.equal(createdFromStaleProp.success, true);
+  assert.equal(createdFromStaleProp.reservation.totalAmount, 730, "createStandardPmsPreReservation deve recompor 660 + 70 = 730");
+  assert.equal(createdFromStaleProp.reservation.dailyRate, 220, "dailyRate deve permanecer 220 (e não 590/3 = 196.67)");
+  assert.equal(createdFromStaleProp.reservation.cleaningFee, 70);
+
+  // 6.3 Gestor alterando plano (com café <-> sem café) e taxa de limpeza via comando no WhatsApp
+  const propSemCafe = {
+    id: "PRERES-BF1",
+    nights: 3,
+    dailyRate: 220,
+    cleaningFee: 70,
+    totalAmount: 730,
+    includeBreakfast: false,
+    ratePlan: "room_only"
+  };
+  const cmdToWithBf = parseManagerPreReservationCommand("muda para com café e pode criar", propSemCafe, null);
+  assert.equal(cmdToWithBf.matched, true);
+  assert.equal(cmdToWithBf.updates.includeBreakfast, true);
+  assert.equal(cmdToWithBf.updates.cleaningFee, 0);
+  assert.equal(cmdToWithBf.updates.totalAmount, 660, "Mudar para com café deve zerar limpeza e recalcular total para 3 * 220 = 660");
+
+  const propComCafe = {
+    id: "PRERES-BF2",
+    nights: 3,
+    dailyRate: 220,
+    cleaningFee: 0,
+    totalAmount: 660,
+    includeBreakfast: true,
+    ratePlan: "with_breakfast"
+  };
+  const cmdToWithoutBf = parseManagerPreReservationCommand(
+    "muda para sem café e pode criar",
+    propComCafe,
+    { siteConfig: { ratePlans: { room_only: { cleaningFeeEnabled: true, cleaningFeeAmount: 70 } } } }
+  );
+  assert.equal(cmdToWithoutBf.matched, true);
+  assert.equal(cmdToWithoutBf.updates.includeBreakfast, false);
+  assert.equal(cmdToWithoutBf.updates.cleaningFee, 70);
+  assert.equal(cmdToWithoutBf.updates.totalAmount, 730, "Mudar para sem café deve incluir limpeza R$ 70 e recalcular total para 730");
+
+  const cmdChangeCleaning = parseManagerPreReservationCommand("muda limpeza para R$ 50 e pode criar", propSemCafe, null);
+  assert.equal(cmdChangeCleaning.matched, true);
+  assert.equal(cmdChangeCleaning.updates.cleaningFee, 50, "Não deve confundir 'limpeza para R$ 50' com valor total da reserva");
+  assert.equal(cmdChangeCleaning.updates.totalAmount, 710, "3 * 220 + 50 = 710");
+
+  const cmdWaiveCleaning = parseManagerPreReservationCommand("isenta taxa de limpeza e pode criar", propSemCafe, null);
+  assert.equal(cmdWaiveCleaning.matched, true);
+  assert.equal(cmdWaiveCleaning.updates.cleaningFee, 0);
+  assert.equal(cmdWaiveCleaning.updates.totalAmount, 660);
+
+  // 6.4 Z-API resolveWhatsAppTags recompõe totalAmount se a reserva estava com totalAmount = soma das diárias (660) + cleaningFee (70)
+  const tagRes = {
+    id: 905,
+    code: "RES-905-0001",
+    flatNumber: "905",
+    guestName: "Karolina Oliveira Santos",
+    guestPhone: "5522999887766",
+    status: "pre_reserva",
+    paymentStatus: "pendente",
+    channel: "whatsapp",
+    checkinDate: "2026-11-20",
+    checkoutDate: "2026-11-23",
+    dailyRate: 220,
+    dailyRates: [
+      { date: "2026-11-20", rate: 220 },
+      { date: "2026-11-21", rate: 220 },
+      { date: "2026-11-22", rate: 220 }
+    ],
+    cleaningFee: 70,
+    charges: [{ id: "chg-1", type: "cleaning", title: "Taxa de Limpeza", amount: 70 }],
+    totalAmount: 660, // valor defasado sem a limpeza
+    paidAmount: 0
+  };
+  const resolvedMsg = resolveWhatsAppTags(
+    "Total: {{valor_total}} | Pendente: {{quanto_falta}} | Cartão: {{valor_cartao}} | PIX: {{pix_copia_e_cola}}",
+    tagRes,
+    { settings: { interConfig: { pixKey: "47964813000165" } } }
+  );
+  assert.match(resolvedMsg, /Total: R\$\s*730,00/);
+  assert.match(resolvedMsg, /Pendente: R\$\s*730,00/);
+  assert.match(resolvedMsg, /Cartão: R\$\s*766,50/);
+  assert.ok(resolvedMsg.includes("730.00"), "PIX Copia e Cola resolvido no WhatsApp deve conter 730.00");
+  assert.equal(tagRes.totalAmount, 730, "resolveWhatsAppTags deve atualizar reservation.totalAmount para 730");
+
+  // 6.5 Guest Portal (demo-server.mjs + guest-portal.tsx) expõe e recompõe charges/cleaningFee
+  assert.equal(serverSrc.includes("function ensureReservationCompositeTotal(r)"), true);
+  assert.equal(portalSrc.includes("const resolvedTotalInPortal ="), true);
+
+  console.log("✅ 6. Testes profundos (subtotal 3 diárias + limpeza, comandos de café/limpeza do gestor, Z-API tags e Portal do Hóspede) validados.");
 }
 
 console.log("🎉 Todos os testes pontuais da Taxa de Limpeza (Karolina Flat 905) passaram com 100% de sucesso!");
