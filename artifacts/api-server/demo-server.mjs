@@ -5278,6 +5278,62 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
+    // Saneamento de re-assinatura indevida: apenas reservas que já realizaram check-in digital podem exigir re-assinatura
+    if (r.needsReSignature || (Array.isArray(r.guests) && r.guests.some(g => g && g.needsReSignature))) {
+      if (isPreReservationBlocked(r) || !hasReservationCompletedAnyCheckin(r)) {
+        if (r.needsReSignature) {
+          r.needsReSignature = false;
+          delete r.reSignatureReason;
+          changed = true;
+        }
+        if (Array.isArray(r.guests)) {
+          r.guests.forEach(g => {
+            if (g && g.needsReSignature) {
+              g.needsReSignature = false;
+              changed = true;
+            }
+          });
+        }
+      }
+    }
+
+    // Sincronização do valor de Cartão (+5%) e payloads PIX/Mercado Pago quando houver saldo pendente
+    const resTotalAmt = Number(r.totalAmount) || 0;
+    if (resTotalAmt > 0) {
+      const expectedCardTot = computeCardAmountFromPix(resTotalAmt);
+      if (Number(r.cardTotalAmount) !== expectedCardTot) {
+        r.cardTotalAmount = expectedCardTot;
+        changed = true;
+      }
+    }
+    if (r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada") {
+      const rChanLower = String(r.channel || "").toLowerCase();
+      const isOtaOrB2b = rChanLower.includes("booking") || rChanLower.includes("airbnb") || rChanLower.includes("b2b") || Boolean(r.agencyId || r.b2bReservationNumber);
+      const isResPaid = !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= resTotalAmt && resTotalAmt > 0));
+      const pendingAmt = Math.max(0, Math.round((resTotalAmt - (Number(r.paidAmount) || 0)) * 100) / 100);
+      if (!isOtaOrB2b && !isResPaid && pendingAmt > 0) {
+        if (r.pixCopiaECola && isPixPayloadStaleForAmount(r, pendingAmt)) {
+          const cleanTxId = String(r.code || `RES${r.id || ""}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+          r.pixTxId = cleanTxId || r.pixTxId;
+          r.pixCopiaECola = generateStaticPixPayload({
+            pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+            amount: pendingAmt,
+            merchantName: "CORPFLATS LTDA",
+            merchantCity: "CAMPOS DOS GOYTACAZES",
+            txid: cleanTxId || "***"
+          });
+          r.pixChargedAmount = pendingAmt;
+          changed = true;
+        }
+        const expectedCardPending = computeCardAmountFromPix(pendingAmt);
+        if (r.mpInitPoint && (!r.mpChargedAmount || Math.abs(Number(r.mpChargedAmount) - expectedCardPending) > 0.01)) {
+          r.mpInitPoint = null;
+          r.mpPreferenceId = null;
+          r.mpChargedAmount = null;
+          changed = true;
+        }
+      }
+    }
 
     // Sincronização geral de preferências de quarto (camas/colchão/recado) da reserva com a solicitação de limpeza do dia do check-in
     if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkinDate) {
@@ -22372,6 +22428,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       notes: c.notes ? String(c.notes) : undefined
     })) : [],
     totalAmount: finalTotalAmount,
+    cardTotalAmount: computeCardAmountFromPix(finalTotalAmount),
     paidAmount: resolvedPaidAmount,
     paymentStatus: resolvedPaymentStatus,
     paymentCollect: req.body.paymentCollect || (isPropertyCollect ? "Property" : (isOta ? "Channel" : undefined)),
@@ -22544,41 +22601,43 @@ app.post("/api/pms/reservations", async (req, res) => {
   saveDatabase();
 
   const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+  const initialPendingAmt = Math.max(0, Math.round(((Number(newReservation.totalAmount) || 0) - (Number(newReservation.paidAmount) || 0)) * 100) / 100);
+
+  if (!isOta && !isB2b && !newReservation.pixCopiaECola && initialPendingAmt > 0) {
+    const recipsForPix = getReservationRecipients(newReservation, db);
+    const pixDebtorName = isGuestPending
+      ? (recipsForPix.requester?.name || newReservation.companyName || "Solicitante CorpFlats")
+      : newReservation.guestName;
+    const pixDebtorDoc = newReservation.guestDocument || newReservation.document || newReservation.requesterInfo?.cpf || newReservation.companyCnpj || "";
+    try {
+      const pixResult = await createInterPixCob({
+        amount: initialPendingAmt,
+        description: `Reserva CorpFlats ${newReservation.code}`,
+        debtorName: pixDebtorName,
+        debtorDocument: pixDebtorDoc,
+        reservationCode: newReservation.code
+      });
+      newReservation.pixTxId = pixResult.txid;
+      newReservation.pixCopiaECola = pixResult.pixCopiaECola;
+      newReservation.pixChargedAmount = initialPendingAmt;
+    } catch (pixErr) {
+      console.warn("[PMS Reservation] Falha na emissão de PIX dinâmico Inter, gerando PIX estático:", pixErr.message);
+      const cleanTxId = newReservation.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+      const staticPayload = generateStaticPixPayload({
+        pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+        amount: initialPendingAmt,
+        merchantName: "CORPFLATS LTDA",
+        merchantCity: "CAMPOS DOS GOYTACAZES",
+        txid: cleanTxId
+      });
+      newReservation.pixTxId = cleanTxId;
+      newReservation.pixCopiaECola = staticPayload;
+      newReservation.pixChargedAmount = initialPendingAmt;
+    }
+    saveDatabase();
+  }
 
   if (resolvedStatus === "pre_reserva") {
-    if (!newReservation.pixCopiaECola && Number(newReservation.totalAmount) > 0) {
-      const recipsForPix = getReservationRecipients(newReservation, db);
-      const pixDebtorName = isGuestPending
-        ? (recipsForPix.requester?.name || newReservation.companyName || "Solicitante CorpFlats")
-        : newReservation.guestName;
-      const pixDebtorDoc = newReservation.guestDocument || newReservation.document || newReservation.requesterInfo?.cpf || newReservation.companyCnpj || "";
-      try {
-        const pixResult = await createInterPixCob({
-          amount: newReservation.totalAmount,
-          description: `Reserva CorpFlats ${newReservation.code}`,
-          debtorName: pixDebtorName,
-          debtorDocument: pixDebtorDoc,
-          reservationCode: newReservation.code
-        });
-        newReservation.pixTxId = pixResult.txid;
-        newReservation.pixCopiaECola = pixResult.pixCopiaECola;
-        newReservation.pixChargedAmount = Number(newReservation.totalAmount);
-      } catch (pixErr) {
-        console.warn("[PMS Reservation] Falha na emissão de PIX dinâmico Inter, gerando PIX estático:", pixErr.message);
-        const cleanTxId = newReservation.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
-        const staticPayload = generateStaticPixPayload({
-          pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
-          amount: newReservation.totalAmount,
-          merchantName: "CORPFLATS LTDA",
-          merchantCity: "CAMPOS DOS GOYTACAZES",
-          txid: cleanTxId
-        });
-        newReservation.pixTxId = cleanTxId;
-        newReservation.pixCopiaECola = staticPayload;
-        newReservation.pixChargedAmount = Number(newReservation.totalAmount);
-      }
-      saveDatabase();
-    }
     triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation, baseUrl);
   } else {
     // Reserva Confirmada: se houver Solicitante e faltarem dados obrigatórios do hóspede (Nome, CPF, Telefone),
@@ -23351,13 +23410,13 @@ export function hasGuestCompletedOrHadCheckin(g) {
   if (!g) return false;
   return Boolean(
     g.hasCompletedCheckin ||
+    g.hadCompletedCheckinBefore ||
     g.checkinCompletedAt ||
     g.signatureUrl ||
     g.fnrhPdfUrl ||
     g.fnrhDocumentUuid ||
     g.fnrhSha256Hash ||
-    g.fnrhSignedAt ||
-    g.needsReSignature
+    g.fnrhSignedAt
   );
 }
 
@@ -23367,13 +23426,13 @@ export function hasReservationCompletedAnyCheckin(r) {
     r.fnhrCompleted ||
     r.preCheckinCompleted ||
     r.hasPreCheckin ||
+    r.hadCompletedCheckinBefore ||
     r.signatureUrl ||
     r.checkedInAt ||
     r.fnrhPdfUrl ||
     r.fnrhDocumentUuid ||
     r.fnrhSha256Hash ||
-    r.fnrhSignedAt ||
-    r.needsReSignature
+    r.fnrhSignedAt
   ) {
     return true;
   }
@@ -23391,9 +23450,11 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
   r.signatureUrl = null;
   r.checkedInAt = null;
   if (hadCheckinBefore) {
+    r.hadCompletedCheckinBefore = true;
     r.needsReSignature = true;
     r.reSignatureReason = reason;
   } else {
+    r.hadCompletedCheckinBefore = false;
     r.needsReSignature = false;
     delete r.reSignatureReason;
   }
@@ -23420,6 +23481,7 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
       g.hasCompletedCheckin = false;
       g.checkinCompletedAt = null;
       g.signatureUrl = null;
+      g.hadCompletedCheckinBefore = gHadCheckin;
       g.needsReSignature = gHadCheckin;
       delete g.fnrhPdfUrl;
       delete g.fnrhDownloadUrl;
@@ -25350,9 +25412,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     saveDatabase();
   }
 
-  if (isPreReservationBlocked(r) && r.needsReSignature) {
+  if ((isPreReservationBlocked(r) || !hasReservationCompletedAnyCheckin(r)) && (r.needsReSignature || (Array.isArray(r.guests) && r.guests.some(g => g && g.needsReSignature)))) {
     r.needsReSignature = false;
     delete r.reSignatureReason;
+    if (Array.isArray(r.guests)) {
+      r.guests.forEach(g => {
+        if (g) g.needsReSignature = false;
+      });
+    }
     saveDatabase();
   }
 
@@ -35162,6 +35229,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     targetGuest.aiDocInspection = aiDocInspection;
   }
   targetGuest.hasCompletedCheckin = true;
+  targetGuest.hadCompletedCheckinBefore = true;
   targetGuest.checkinCompletedAt = now;
   targetGuest.needsReSignature = false;
 
@@ -35219,6 +35287,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // Atualiza flags agregadas da reserva
   if (Number(guestIndex) === 1 || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))) {
     r.hasPreCheckin = true;
+    r.hadCompletedCheckinBefore = true;
     r.preCheckinCompleted = true;
   }
   const hasPendingGuestsReSign = Array.isArray(r.guests) && r.guests.some(g => g.needsReSignature);
@@ -48989,23 +49058,41 @@ async function confirmReservationPayment(r, {
 } = {}) {
   if (!r) return;
 
-  const valorPago = Number(amount || r.totalAmount || 0);
+  const priorPaid = Math.max(0, Number(r.paidAmount || 0));
   const totalAmount = Number(r.totalAmount || 0);
+  const pendingBefore = Math.max(0, Math.round((totalAmount - priorPaid) * 100) / 100);
+  const valorPago = Number(amount || pendingBefore || totalAmount || 0);
   const isCard = Boolean(
     mpPaymentId ||
     /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(String(paymentMethod || "")) ||
     String(source || "").toLowerCase().includes("mercado pago")
   );
 
+  // Determina se o pagamento recebido refere-se à liquidação de saldo complementar (quando já havia sinal pago)
+  const cardPendingBefore = computeCardAmountFromPix(pendingBefore);
+  const isComplementaryPayment = Boolean(
+    priorPaid > 0 &&
+    pendingBefore > 0 &&
+    valorPago > 0 &&
+    (
+      Math.abs(valorPago - pendingBefore) <= 0.5 ||
+      (isCard && Math.abs(valorPago - cardPendingBefore) <= 0.5)
+    )
+  );
+  const cumulativePaid = isComplementaryPayment
+    ? Math.round((priorPaid + valorPago) * 100) / 100
+    : valorPago;
+
   // Se o pagamento foi efetuado no Cartão de Crédito com o valor normal (+5%), ajusta o totalAmount para refletir o valor efetivamente cobrado no cartão
-  if (isCard && valorPago > totalAmount && totalAmount > 0) {
+  if (isCard && cumulativePaid > totalAmount && totalAmount > 0) {
     r.basePixTotalAmount = r.basePixTotalAmount || totalAmount;
-    r.totalAmount = valorPago;
+    r.totalAmount = cumulativePaid;
+    r.cardTotalAmount = cumulativePaid;
   }
 
   const effectiveTotalAmount = Number(r.totalAmount || 0);
-  r.paymentStatus = (effectiveTotalAmount > 0 && valorPago < effectiveTotalAmount) ? "sinal_pago" : "pago_total";
-  r.paidAmount = valorPago;
+  r.paymentStatus = (effectiveTotalAmount > 0 && cumulativePaid + 0.01 < effectiveTotalAmount) ? "sinal_pago" : "pago_total";
+  r.paidAmount = cumulativePaid;
   r.paidAt = paidAt || r.paidAt || new Date().toISOString();
 
   if (isCard) {
@@ -49023,23 +49110,23 @@ async function confirmReservationPayment(r, {
   // Sincroniza r.payments para garantir consistência em relatórios e no PMS
   const payRecord = {
     id: isCard ? `pay_card_${Date.now()}` : `pay_pix_${Date.now()}`,
-    amount: valorPago,
+    amount: isComplementaryPayment ? valorPago : cumulativePaid,
     method: r.paymentMethod || (isCard ? "cartao_credito" : "pix"),
     date: r.paidAt,
     notes: isCard
-      ? `Cartão de Crédito confirmado via ${source}${r.mpPaymentId ? ` (ID: ${r.mpPaymentId})` : ""}`
-      : `PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
+      ? `${isComplementaryPayment ? "Complemento " : ""}Cartão de Crédito confirmado via ${source}${r.mpPaymentId ? ` (ID: ${r.mpPaymentId})` : ""}`
+      : `${isComplementaryPayment ? "Complemento " : ""}PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
   };
   if (!Array.isArray(r.payments) || r.payments.length === 0) {
-    r.payments = [payRecord];
+    r.payments = [{ ...payRecord, amount: cumulativePaid }];
   } else {
     const existingSum = r.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
     if (existingSum === 0) {
-      r.payments = [payRecord];
-    } else if (existingSum < valorPago) {
+      r.payments = [{ ...payRecord, amount: cumulativePaid }];
+    } else if (existingSum + 0.01 < cumulativePaid) {
       r.payments.push({
         ...payRecord,
-        amount: valorPago - existingSum,
+        amount: Math.round((cumulativePaid - existingSum) * 100) / 100,
         notes: isCard ? `Complemento Cartão via ${source}` : `Complemento PIX via ${source}`
       });
     }
@@ -49134,7 +49221,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           paymentStatus: "pago_total",
           paymentMethod: "cartao_credito",
           paidAt: r.paidAt || null,
-          paidAmount: valorPago,
+          paidAmount: r.paidAmount || valorPago,
           totalAmount: r.totalAmount || 0,
           pixTxId: null,
           pixEndToEndId: null,
@@ -49162,7 +49249,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           paymentStatus: "pago_total",
           paymentMethod: "pix",
           paidAt: r.paidAt || null,
-          paidAmount: valorPago,
+          paidAmount: r.paidAmount || valorPago,
           totalAmount: r.totalAmount || 0,
           pixTxId: r.pixTxId,
           pixEndToEndId: r.pixEndToEndId || null,
@@ -49216,7 +49303,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           paymentStatus: "pago_total",
           paymentMethod: "cartao_credito",
           paidAt: r.paidAt || null,
-          paidAmount: valorPago,
+          paidAmount: r.paidAmount || valorPago,
           totalAmount: r.totalAmount || 0,
           pixTxId: null,
           pixEndToEndId: null,
@@ -50815,8 +50902,9 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const flatNumber = r?.flatNumber || r?.flatId || "";
   const totalAmount = Number(r?.totalAmount) || 0;
   const paidAmount = Number(r?.paidAmount) || 0;
-  const pendingAmount = Math.max(0, totalAmount - paidAmount) || totalAmount;
-  let pixCode = r?.pixCopiaECola || "";
+  const isAlreadyPaid = Boolean(r && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)));
+  const pendingAmount = isAlreadyPaid ? 0 : (Math.max(0, totalAmount - paidAmount) || totalAmount);
+  let pixCode = isAlreadyPaid ? "" : (r?.pixCopiaECola || "");
 
   if (pendingAmount > 0 && (!pixCode || (r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
     const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
@@ -50993,6 +51081,11 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
                 badge.style.background = 'rgba(16, 185, 129, 0.28)';
                 badge.style.borderColor = '#10b981';
                 badge.innerHTML = '<span>🎉 Pagamento PIX Confirmado Automaticamente!</span>';
+              }
+            } else if (data && data.pixCopiaECola) {
+              const el = document.getElementById('pix-code');
+              if (el && el.value && el.value !== data.pixCopiaECola) {
+                window.location.reload();
               }
             }
           } catch (_) {}

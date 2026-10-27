@@ -288,12 +288,21 @@ export function isPixPayloadStaleForAmount(reservationOrPayload, expectedAmount)
   if (
     typeof reservationOrPayload === "object" &&
     reservationOrPayload.pixChargedAmount !== undefined &&
-    reservationOrPayload.pixChargedAmount !== null
+    reservationOrPayload.pixChargedAmount !== null &&
+    Number(reservationOrPayload.pixChargedAmount) > 0
   ) {
     if (Math.abs(Number(reservationOrPayload.pixChargedAmount) - amt) > 0.01) return true;
   }
   const embeddedAmount = extractPixPayloadAmount(pixStr);
-  if (embeddedAmount !== null && Math.abs(embeddedAmount - amt) > 0.01) {
+  if (embeddedAmount !== null) {
+    return Math.abs(embeddedAmount - amt) > 0.01;
+  }
+  if (
+    typeof reservationOrPayload === "object" &&
+    (reservationOrPayload.pixChargedAmount === undefined ||
+      reservationOrPayload.pixChargedAmount === null ||
+      Number(reservationOrPayload.pixChargedAmount) <= 0)
+  ) {
     return true;
   }
   return false;

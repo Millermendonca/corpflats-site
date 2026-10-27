@@ -769,13 +769,30 @@ export default function GuestPortal() {
     data?.preCheckinBlocked
   )
 
-  // Avaliação estritamente individual e coletiva da re-assinatura (apenas quando não é pré-reserva não paga)
-  const reservationNeedsReSignature = !isPreReservaUnpaid && Boolean(
+  // Avaliação estritamente individual e coletiva da re-assinatura (apenas quando não é pré-reserva não paga e houve check-in anterior)
+  const hasEverDoneCheckin = Boolean(
+    reservation?.hasPreCheckin ||
+    reservation?.hadCompletedCheckinBefore ||
+    reservation?.fnhrCompleted ||
+    reservation?.preCheckinCompleted ||
+    reservation?.signatureUrl ||
+    reservation?.checkedInAt ||
+    reservation?.fnrhSignedAt ||
+    (Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(
+      g?.hasCompletedCheckin ||
+      g?.hadCompletedCheckinBefore ||
+      g?.checkinCompletedAt ||
+      g?.signatureUrl ||
+      g?.fnrhSignedAt
+    )))
+  )
+
+  const reservationNeedsReSignature = !isPreReservaUnpaid && hasEverDoneCheckin && Boolean(
     reservation?.needsReSignature ||
     (Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(g.needsReSignature)))
   )
 
-  const currentGuestNeedsReSignature = !isPreReservaUnpaid && Boolean(
+  const currentGuestNeedsReSignature = !isPreReservaUnpaid && hasEverDoneCheckin && Boolean(
     currentGuest?.needsReSignature !== undefined
       ? currentGuest.needsReSignature
       : (reservationNeedsReSignature && !currentGuest?.hasCompletedCheckin)
@@ -783,18 +800,18 @@ export default function GuestPortal() {
 
   // Status de re-assinatura por grupo de ocupantes
   const pendingReSignGuests = useMemo(() => {
-    if (isPreReservaUnpaid) return []
+    if (isPreReservaUnpaid || !hasEverDoneCheckin) return []
     return guestsList.filter((g: any) => Boolean(g.needsReSignature))
-  }, [guestsList, isPreReservaUnpaid])
+  }, [guestsList, isPreReservaUnpaid, hasEverDoneCheckin])
 
   const completedReSignGuests = useMemo(() => {
     return guestsList.filter((g: any) => Boolean(g.hasCompletedCheckin && !g.needsReSignature))
   }, [guestsList])
 
   const otherPendingReSignGuests = useMemo(() => {
-    if (isPreReservaUnpaid) return []
+    if (isPreReservaUnpaid || !hasEverDoneCheckin) return []
     return guestsList.filter((g: any) => Number(g.index) !== Number(activeGuestIndex) && Boolean(g.needsReSignature))
-  }, [guestsList, activeGuestIndex, isPreReservaUnpaid])
+  }, [guestsList, activeGuestIndex, isPreReservaUnpaid, hasEverDoneCheckin])
 
   // Preserva needsReSignature apontando para a obrigação do hóspede atual
   const needsReSignature = currentGuestNeedsReSignature

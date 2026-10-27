@@ -2583,7 +2583,8 @@ export default function PmsCalendar() {
     // Regra: Pré-Reserva (canal direto) sem comprovação real de PIX/cartão nunca é considerada paga,
     // mesmo que o banco tenha um paymentStatus inconsistente (ex.: pagamento integral pré-preenchido)
     const isUnpaidPreReserva = resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid;
-    const isResCurrentlyPaid = !isUnpaidPreReserva && (
+    const hasPendingBalance = !isOtaRes && Number(resItem.totalAmount) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) && resItem.paymentStatus !== "pago_total" && resItem.paymentStatus !== "pago";
+    const isResCurrentlyPaid = !isUnpaidPreReserva && !hasPendingBalance && (
       isOtaRes || 
       isGatewayPaid || 
       resItem.paymentStatus === "pago_total" || 
@@ -3444,7 +3445,24 @@ export default function PmsCalendar() {
       return newTot;
     }
 
-    // O valor pago deve ser SEMPRE pré-preenchido com o mesmo valor total composto
+    // Ao editar uma reserva existente de canal direto (selectedRes !== null), preserva o valor efetivamente recebido
+    // para que novas diárias/alterações de valor gerem saldo pendente real (PIX e link Cartão atualizados)
+    if (selectedRes && !isBooking && targetChannel !== "airbnb" && !isB2b) {
+      const currentPaidSum = Number(
+        formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2)
+      );
+      setFormPaidAmount(String(currentPaidSum));
+      if (currentPaidSum >= newTot && newTot > 0) {
+        setFormPaymentStatus("pago_total");
+      } else if (currentPaidSum > 0) {
+        setFormPaymentStatus("sinal_pago");
+      } else {
+        setFormPaymentStatus("pendente");
+      }
+      return newTot;
+    }
+
+    // Para novas reservas já marcadas como confirmadas (ou OTAs), pré-preenche o valor pago com o total composto
     setFormPaidAmount(String(newTot));
 
     setFormPayments(prev => {
