@@ -4799,8 +4799,28 @@ export default function PmsCalendar() {
                       {/* Unified Multi-Day Reservation Continuous Bars (Arrastável & Redimensionável) */}
                       {flatReservations.map(resItem => {
                         const isBeingDragged = resDragState?.res.id === resItem.id;
+                        const isEarlyCheckout = Boolean(resItem.earlyCheckout);
+                        const hasGhostExtension = Boolean(
+                          isEarlyCheckout &&
+                          resItem.originalCheckoutDate &&
+                          resItem.originalCheckoutDate > resItem.checkoutDate
+                        );
                         const pos = getReservationPosition(resItem.checkinDate, resItem.checkoutDate, resItem.checkinTime, resItem.checkoutTime);
-                        if (!pos) return null;
+                        const ghostPos = hasGhostExtension
+                          ? getReservationPosition(
+                              resItem.checkoutDate,
+                              resItem.originalCheckoutDate,
+                              resItem.checkoutTime || defaultCheckoutTime || "12:00",
+                              resItem.checkoutTime || defaultCheckoutTime || "12:00"
+                            )
+                          : null;
+                        if (!pos && !ghostPos) return null;
+
+                        const hasOverlappingNewBooking = hasGhostExtension && flatReservations.some((other: any) =>
+                          other.id !== resItem.id &&
+                          other.checkinDate < resItem.originalCheckoutDate &&
+                          other.checkoutDate > resItem.checkoutDate
+                        );
 
                         const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
                         const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
@@ -4859,164 +4879,206 @@ export default function PmsCalendar() {
                         );
 
                         return (
-                          <ReservationHoverCard
-                            key={`res-${resItem.id}`}
-                            resItem={resItem}
-                            flat={flat}
-                            isBeingDragged={Boolean(resDragState && (resDragState.hasMoved || resDragState.isLongPressReady))}
-                            onOpenDetails={handleOpenEditRes}
-                            channelCfg={channelCfg}
-                            isMensalista={isMensalista}
-                            isOpenMobile={mobileCardResId === resItem.id}
-                            onCloseMobile={() => setMobileCardResId(null)}
-                          >
-                            <div
-                              data-reservation-id={resItem.id}
-                              data-checked-out-today={isCheckedOutToday ? "true" : undefined}
-                              style={{ 
-                                position: "absolute",
-                                left: `${pos.left}px`,
-                                width: `${pos.width}px`,
-                                top: "7px",
-                                height: "34px",
-                                touchAction: isLongPressActive ? "none" : undefined
-                              }}
-                              onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
-                              className={`rounded-xl select-none relative ${
-                                isMensalista 
-                                  ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
-                                  : isMultiChannel
-                                  ? 'bg-slate-900 text-white border-2 border-indigo-400/80 shadow-md ring-1 ring-indigo-500/50'
-                                  : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
-                              } ${
-                                resItem.status === 'pre_reserva'
-                                  ? 'border-dashed border-2 border-amber-400 ring-1 ring-amber-300/80'
-                                  : ''
-                              } ${
-                                isCheckedOutToday
-                                  ? 'ring-2 ring-emerald-400 border-emerald-300'
-                                  : resItem.hasMinor 
-                                  ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
-                                  : (resItem.isCamposResident || isCamposCard)
-                                  ? 'border-2 border-purple-500 ring-1 ring-purple-400'
-                                  : resItem.riskAttentionAlert
-                                  ? 'border-2 border-amber-400 ring-1 ring-amber-300'
-                                  : ''
-                              } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
-                                isBeingDragged && (resDragState?.hasMoved || resDragState?.isLongPressReady) ? 'opacity-30 border-dashed scale-95' : ''
-                              } ${
-                                isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
-                              }`}
-                              title={`${isCheckedOutToday ? `✓ CHECK-OUT REALIZADO${resItem.actualCheckoutTime ? ` ÀS ${resItem.actualCheckoutTime}` : ""} • ` : ""}${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou segure para mover`}
-                            >
-                              {/* Background Segmentado por Diária para Reservas Multi-Canal */}
-                              {isMultiChannel && (
-                                <div className="absolute inset-0 flex pointer-events-none overflow-hidden rounded-xl z-0">
-                                  {resItem.dailyRates.map((d: any, dIdx: number) => {
-                                    const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
-                                    const cfg = CHANNEL_CONFIG[dChan] || CHANNEL_CONFIG.direta;
-                                    return (
-                                      <div 
-                                        key={dIdx} 
-                                        className={`flex-1 h-full ${cfg.bg} opacity-90 border-r border-white/30 last:border-r-0`}
-                                        title={`${d.date}: ${cfg.label} (R$ ${d.rate})`}
-                                      />
-                                    );
-                                  })}
+                          <div key={`res-${resItem.id}`} className="contents">
+                            {pos && (
+                              <ReservationHoverCard
+                                resItem={resItem}
+                                flat={flat}
+                                isBeingDragged={Boolean(resDragState && (resDragState.hasMoved || resDragState.isLongPressReady))}
+                                onOpenDetails={handleOpenEditRes}
+                                channelCfg={channelCfg}
+                                isMensalista={isMensalista}
+                                isOpenMobile={mobileCardResId === resItem.id}
+                                onCloseMobile={() => setMobileCardResId(null)}
+                              >
+                                <div
+                                  data-reservation-id={resItem.id}
+                                  data-checked-out-today={isCheckedOutToday ? "true" : undefined}
+                                  data-early-checkout={isEarlyCheckout ? "true" : undefined}
+                                  style={{ 
+                                    position: "absolute",
+                                    left: `${pos.left}px`,
+                                    width: `${pos.width}px`,
+                                    top: "7px",
+                                    height: "34px",
+                                    touchAction: isLongPressActive ? "none" : undefined
+                                  }}
+                                  onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
+                                  className={`rounded-xl select-none relative ${
+                                    isMensalista 
+                                      ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
+                                      : isMultiChannel
+                                      ? 'bg-slate-900 text-white border-2 border-indigo-400/80 shadow-md ring-1 ring-indigo-500/50'
+                                      : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
+                                  } ${
+                                    resItem.status === 'pre_reserva'
+                                      ? 'border-dashed border-2 border-amber-400 ring-1 ring-amber-300/80'
+                                      : ''
+                                  } ${
+                                    isEarlyCheckout
+                                      ? 'ring-2 ring-amber-400 border-amber-300'
+                                      : isCheckedOutToday
+                                      ? 'ring-2 ring-emerald-400 border-emerald-300'
+                                      : resItem.hasMinor 
+                                      ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
+                                      : (resItem.isCamposResident || isCamposCard)
+                                      ? 'border-2 border-purple-500 ring-1 ring-purple-400'
+                                      : resItem.riskAttentionAlert
+                                      ? 'border-2 border-amber-400 ring-1 ring-amber-300'
+                                      : ''
+                                  } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
+                                    isBeingDragged && (resDragState?.hasMoved || resDragState?.isLongPressReady) ? 'opacity-30 border-dashed scale-95' : ''
+                                  } ${
+                                    isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
+                                  }`}
+                                  title={`${isEarlyCheckout ? `⚡ CHECK-OUT ANTECIPADO${resItem.earlyCheckoutTime ? ` ÀS ${resItem.earlyCheckoutTime}` : ""}${resItem.earlyCheckoutReportedBy ? ` (${resItem.earlyCheckoutReportedBy})` : ""} • ` : isCheckedOutToday ? `✓ CHECK-OUT REALIZADO${resItem.actualCheckoutTime ? ` ÀS ${resItem.actualCheckoutTime}` : ""} • ` : ""}${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime}${resItem.originalCheckoutDate ? ` (Previsto originalmente até ${resItem.originalCheckoutDate})` : ""} • Toque para ver detalhes ou segure para mover`}
+                                >
+                                  {/* Background Segmentado por Diária para Reservas Multi-Canal */}
+                                  {isMultiChannel && (
+                                    <div className="absolute inset-0 flex pointer-events-none overflow-hidden rounded-xl z-0">
+                                      {resItem.dailyRates.map((d: any, dIdx: number) => {
+                                        const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
+                                        const cfg = CHANNEL_CONFIG[dChan] || CHANNEL_CONFIG.direta;
+                                        return (
+                                          <div 
+                                            key={dIdx} 
+                                            className={`flex-1 h-full ${cfg.bg} opacity-90 border-r border-white/30 last:border-r-0`}
+                                            title={`${d.date}: ${cfg.label} (R$ ${d.rate})`}
+                                          />
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
+                                  {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
+                                  <div
+                                    style={{ touchAction: "none" }}
+                                    className={`absolute left-0 top-0 bottom-0 ${
+                                      isSingleNight ? 'w-2 max-w-[10%]' : 'w-3 max-w-[16%]'
+                                    } sm:w-2.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l touch-none select-none`}
+                                    onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
+                                    onPointerEnter={(e) => e.stopPropagation()}
+                                    title="Arraste para alterar a data de Check-in"
+                                  >
+                                    <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/resize-l:bg-white pointer-events-none shadow-xs" />
+                                  </div>
+
+                                  {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
+                                  <div className="relative z-10 flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none select-none">
+                                    {isEarlyCheckout ? (
+                                      <span
+                                        data-early-checkout-badge="true"
+                                        title={`Check-out antecipado${resItem.earlyCheckoutTime ? ` às ${resItem.earlyCheckoutTime}` : ""}${resItem.earlyCheckoutReportedBy ? ` • Informado por ${resItem.earlyCheckoutReportedBy}` : ""}`}
+                                        className="shrink-0 text-[9.5px] px-1.5 py-0.2 bg-amber-300 text-slate-950 border border-amber-500 font-black rounded shadow-xs flex items-center gap-0.5"
+                                      >
+                                        ⚡ Saiu Antecipado{resItem.earlyCheckoutTime ? ` ${resItem.earlyCheckoutTime}` : ""}
+                                      </span>
+                                    ) : isCheckedOutToday && (
+                                      <span
+                                        data-checkout-done-badge="true"
+                                        title={`Check-out já realizado hoje${resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""} (Quarto desocupado)`}
+                                        className="shrink-0 text-[9.5px] px-1.5 py-0.2 bg-white text-emerald-900 border border-emerald-300 font-black rounded shadow-xs flex items-center gap-0.5"
+                                      >
+                                        ✓ Saiu{resItem.actualCheckoutTime ? ` ${resItem.actualCheckoutTime}` : ""}
+                                      </span>
+                                    )}
+                                    {resItem.status === 'pre_reserva' && (
+                                      <span title="Pré-Reserva (Aguardando Pagamento / Confirmação)" className="shrink-0 text-[9px] px-1 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
+                                        ⏳ Pré-Reserva
+                                      </span>
+                                    )}
+                                    {(resItem.isFlatLocked || resItem.flatLocked) && (
+                                      <span title={`Quarto Preferencial / Bloqueado${resItem.flatLockReason ? `: ${resItem.flatLockReason}` : ""}`} className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
+                                        🔒 Fixo
+                                      </span>
+                                    )}
+                                    {isMultiChannel && (
+                                      <span title="Reserva com múltiplos canais de diárias" className="shrink-0 text-[8.5px] px-1 py-0.2 bg-black/60 backdrop-blur-xs text-white font-black rounded shadow-xs border border-white/40 flex items-center gap-0.5">
+                                        🔀 Multi
+                                      </span>
+                                    )}
+                                    {resItem.includeBreakfast && (
+                                      <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
+                                    )}
+                                    {isMensalista && (
+                                      <span title="Cliente Mensalista / Contrato Long Stay" className="shrink-0 text-[8.5px] uppercase font-black px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded shadow-xs tracking-wider">
+                                        👑 Mensalista
+                                      </span>
+                                    )}
+                                    {resItem.hasMinor && (
+                                      <span title="Hóspede Menor de Idade Registrado (ECA Art. 82)" className="shrink-0 text-xs px-1 py-0.2 bg-rose-600 text-white rounded font-black shadow-xs">
+                                        👶 Menor
+                                      </span>
+                                    )}
+                                    {resItem.riskAttentionAlert && !resItem.hasMinor && !(resItem.isCamposResident || isCamposCard) && (
+                                      <span title={resItem.riskAttentionReason || "Atenção: Hóspede jovem < 30 anos (Campos dos Goytacazes)"} className="shrink-0 text-xs px-1 py-0.2 bg-amber-400 text-slate-950 rounded font-black shadow-xs">
+                                        ⚠️ &lt;30a
+                                      </span>
+                                    )}
+                                    {(resItem.isCamposResident || isCamposCard) && (
+                                      <span title="Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" className="shrink-0 text-[10px] px-1.5 py-0.2 bg-purple-700 text-white rounded font-black shadow-xs flex items-center gap-0.5">
+                                        📍 Campos/RJ
+                                      </span>
+                                    )}
+                                    <span className="truncate font-black text-white text-[11px] min-w-0 drop-shadow-xs">
+                                      {resItem.guestName}
+                                      {formattedTotal ? ` • ${formattedTotal}` : ""}
+                                      {` • ${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'}`}
+                                    </span>
+                                    {isCheckedOutToday && !isEarlyCheckout && nightsCount > 1 && pos.width >= 150 && (
+                                      <span
+                                        title={`Check-out concluído hoje${resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""}`}
+                                        className="ml-auto shrink-0 text-[9px] px-1.5 py-0.2 bg-emerald-400 text-slate-950 font-black rounded shadow-xs border border-white/80 flex items-center gap-0.5"
+                                      >
+                                        ✓ Check-out
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Handle Direito: Redimensionar Fim (Check-out) */}
+                                  <div
+                                    style={{ touchAction: "none" }}
+                                    className={`absolute right-0 top-0 bottom-0 ${
+                                      isSingleNight ? 'w-2 max-w-[10%]' : 'w-3 max-w-[16%]'
+                                    } sm:w-2.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r touch-none select-none`}
+                                    onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
+                                    onPointerEnter={(e) => e.stopPropagation()}
+                                    title="Arraste para alterar a data de Check-out"
+                                  >
+                                    <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/resize-r:bg-white pointer-events-none shadow-xs" />
+                                  </div>
                                 </div>
-                              )}
+                              </ReservationHoverCard>
+                            )}
 
-                              {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
+                            {/* Extensão Fantasma (Ghost Bar) para Dias Liberados por Check-out Antecipado */}
+                            {ghostPos && ghostPos.width > 8 && (
                               <div
-                                style={{ touchAction: "none" }}
-                                className={`absolute left-0 top-0 bottom-0 ${
-                                  isSingleNight ? 'w-2 max-w-[10%]' : 'w-3 max-w-[16%]'
-                                } sm:w-2.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l touch-none select-none`}
-                                onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
-                                onPointerEnter={(e) => e.stopPropagation()}
-                                title="Arraste para alterar a data de Check-in"
+                                data-early-checkout-ghost-id={resItem.id}
+                                style={{
+                                  position: "absolute",
+                                  left: `${ghostPos.left}px`,
+                                  width: `${ghostPos.width}px`,
+                                  top: hasOverlappingNewBooking ? "0px" : "7px",
+                                  height: hasOverlappingNewBooking ? "11px" : "34px",
+                                }}
+                                className={`pointer-events-none select-none overflow-hidden flex items-center px-1.5 transition-all ${
+                                  hasOverlappingNewBooking
+                                    ? "rounded-md border border-dashed border-amber-500/80 bg-amber-500/20 text-amber-950 dark:text-amber-200 z-20 text-[8.5px] font-extrabold opacity-80"
+                                    : "rounded-xl border-2 border-dashed border-amber-500/80 dark:border-amber-400/80 bg-amber-500/15 dark:bg-amber-500/20 text-amber-950 dark:text-amber-100 z-5 text-[10px] font-bold opacity-55"
+                                }`}
                               >
-                                <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/resize-l:bg-white pointer-events-none shadow-xs" />
-                              </div>
-
-                              {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
-                              <div className="relative z-10 flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none select-none">
-                                {isCheckedOutToday && (
-                                  <span
-                                    data-checkout-done-badge="true"
-                                    title={`Check-out já realizado hoje${resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""} (Quarto desocupado)`}
-                                    className="shrink-0 text-[9.5px] px-1.5 py-0.2 bg-white text-emerald-900 border border-emerald-300 font-black rounded shadow-xs flex items-center gap-0.5"
-                                  >
-                                    ✓ Saiu{resItem.actualCheckoutTime ? ` ${resItem.actualCheckoutTime}` : ""}
+                                <span className="truncate flex items-center gap-1">
+                                  <span>⚡</span>
+                                  <span>
+                                    {hasOverlappingNewBooking
+                                      ? `Antecipado: ${resItem.guestName} (previsto até ${format(parseISO(resItem.originalCheckoutDate), "dd/MM")})`
+                                      : `Check-out antecipado • ${resItem.guestName} (liberado p/ nova reserva até ${format(parseISO(resItem.originalCheckoutDate), "dd/MM")})`}
                                   </span>
-                                )}
-                                {resItem.status === 'pre_reserva' && (
-                                  <span title="Pré-Reserva (Aguardando Pagamento / Confirmação)" className="shrink-0 text-[9px] px-1 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
-                                    ⏳ Pré-Reserva
-                                  </span>
-                                )}
-                                {(resItem.isFlatLocked || resItem.flatLocked) && (
-                                  <span title={`Quarto Preferencial / Bloqueado${resItem.flatLockReason ? `: ${resItem.flatLockReason}` : ""}`} className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
-                                    🔒 Fixo
-                                  </span>
-                                )}
-                                {isMultiChannel && (
-                                  <span title="Reserva com múltiplos canais de diárias" className="shrink-0 text-[8.5px] px-1 py-0.2 bg-black/60 backdrop-blur-xs text-white font-black rounded shadow-xs border border-white/40 flex items-center gap-0.5">
-                                    🔀 Multi
-                                  </span>
-                                )}
-                                {resItem.includeBreakfast && (
-                                  <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
-                                )}
-                                {isMensalista && (
-                                  <span title="Cliente Mensalista / Contrato Long Stay" className="shrink-0 text-[8.5px] uppercase font-black px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded shadow-xs tracking-wider">
-                                    👑 Mensalista
-                                  </span>
-                                )}
-                                {resItem.hasMinor && (
-                                  <span title="Hóspede Menor de Idade Registrado (ECA Art. 82)" className="shrink-0 text-xs px-1 py-0.2 bg-rose-600 text-white rounded font-black shadow-xs">
-                                    👶 Menor
-                                  </span>
-                                )}
-                                {resItem.riskAttentionAlert && !resItem.hasMinor && !(resItem.isCamposResident || isCamposCard) && (
-                                  <span title={resItem.riskAttentionReason || "Atenção: Hóspede jovem < 30 anos (Campos dos Goytacazes)"} className="shrink-0 text-xs px-1 py-0.2 bg-amber-400 text-slate-950 rounded font-black shadow-xs">
-                                    ⚠️ &lt;30a
-                                  </span>
-                                )}
-                                {(resItem.isCamposResident || isCamposCard) && (
-                                  <span title="Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" className="shrink-0 text-[10px] px-1.5 py-0.2 bg-purple-700 text-white rounded font-black shadow-xs flex items-center gap-0.5">
-                                    📍 Campos/RJ
-                                  </span>
-                                )}
-                                <span className="truncate font-black text-white text-[11px] min-w-0 drop-shadow-xs">
-                                  {resItem.guestName}
-                                  {formattedTotal ? ` • ${formattedTotal}` : ""}
-                                  {` • ${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'}`}
                                 </span>
-                                {isCheckedOutToday && nightsCount > 1 && pos.width >= 150 && (
-                                  <span
-                                    title={`Check-out concluído hoje${resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""}`}
-                                    className="ml-auto shrink-0 text-[9px] px-1.5 py-0.2 bg-emerald-400 text-slate-950 font-black rounded shadow-xs border border-white/80 flex items-center gap-0.5"
-                                  >
-                                    ✓ Check-out
-                                  </span>
-                                )}
                               </div>
-
-                              {/* Handle Direito: Redimensionar Fim (Check-out) */}
-                              <div
-                                style={{ touchAction: "none" }}
-                                className={`absolute right-0 top-0 bottom-0 ${
-                                  isSingleNight ? 'w-2 max-w-[10%]' : 'w-3 max-w-[16%]'
-                                } sm:w-2.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r touch-none select-none`}
-                                onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
-                                onPointerEnter={(e) => e.stopPropagation()}
-                                title="Arraste para alterar a data de Check-out"
-                              >
-                                <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/resize-r:bg-white pointer-events-none shadow-xs" />
-                              </div>
-                            </div>
-                          </ReservationHoverCard>
+                            )}
+                          </div>
                         );
                       })}
 
@@ -7971,6 +8033,133 @@ export default function PmsCalendar() {
                   </div>
                 </div>
 
+                {/* Banner de Check-out Antecipado & Ações Rápidas */}
+                {selectedRes && (
+                  selectedRes.earlyCheckout ? (
+                    <div className="p-3.5 rounded-2xl border-2 border-amber-400/90 dark:border-amber-600/80 bg-amber-50/90 dark:bg-amber-950/40 space-y-2 shadow-2xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <span className="text-xs font-black text-amber-950 dark:text-amber-100 uppercase tracking-wide">
+                            ⚡ Check-out Antecipado Registrado
+                          </span>
+                        </div>
+                        <Badge className="bg-amber-500 text-slate-950 font-black text-[10px]">
+                          Datas Liberadas p/ Novas Reservas
+                        </Badge>
+                      </div>
+                      <div className="text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5 leading-relaxed">
+                        <p>
+                          <strong>Informado por:</strong>{" "}
+                          {selectedRes.earlyCheckoutReportedBy || selectedRes.checkoutReportedBy || "Portaria / Governança / Recepção"}
+                        </p>
+                        <p>
+                          <strong>Saída realizada em:</strong>{" "}
+                          {format(parseISO(selectedRes.earlyCheckoutDate || selectedRes.checkoutDate), "dd/MM/yyyy")}
+                          {selectedRes.earlyCheckoutTime ? ` às ${selectedRes.earlyCheckoutTime}` : ""}
+                          {selectedRes.originalCheckoutDate && (
+                            <>
+                              {" "}• <strong>Saída original prevista:</strong>{" "}
+                              {format(parseISO(selectedRes.originalCheckoutDate), "dd/MM/yyyy")}
+                            </>
+                          )}
+                        </p>
+                        <p className="text-[10.5px] text-amber-800/90 dark:text-amber-300/90">
+                          O valor integral contratado foi preservado, os pedidos futuros de café foram suspensos e os dias restantes ficaram abertos no calendário (com rastro tracejado).
+                        </p>
+                      </div>
+                      <div className="pt-1 flex justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`/api/pms/reservations/${selectedRes.id}/undo-checkout`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                credentials: "include"
+                              });
+                              const json = await resp.json().catch(() => ({}));
+                              if (!resp.ok) throw new Error(json.error || "Falha ao desfazer check-out antecipado.");
+                              if (json.reservation) {
+                                setSelectedRes(json.reservation);
+                                setFormCheckout(json.reservation.checkoutDate);
+                                setFormNotes(json.reservation.notes || "");
+                              }
+                              toast({
+                                title: "Check-out antecipado desfeito! ↩️",
+                                description: `A saída original foi restaurada e os cafés futuros foram reativados.`
+                              });
+                              fetchData(false);
+                              notifyCalendarUpdated();
+                            } catch (err: any) {
+                              toast({
+                                title: "Erro ao desfazer check-out",
+                                description: err.message || "Tente novamente.",
+                                variant: "destructive"
+                              });
+                            }
+                          }}
+                          className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-amber-400 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Desfazer Check-out Antecipado</span>
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    selectedRes.checkinDate <= todayStr &&
+                    selectedRes.checkoutDate > todayStr && (
+                      <div className="p-3 rounded-2xl border border-amber-300/80 dark:border-amber-800/60 bg-amber-50/40 dark:bg-amber-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 dark:text-amber-200">
+                            <DoorOpen className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Hóspede saiu antes da data prevista?</span>
+                          </div>
+                          <p className="text-[10.5px] text-muted-foreground">
+                            Libera o calendário a partir de hoje mantendo a reserva visível em tracejado, preserva o valor pago e suspende os cafés futuros.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`/api/pms/reservations/${selectedRes.id}/checkout`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ source: "reception_pms" }),
+                                credentials: "include"
+                              });
+                              const json = await resp.json().catch(() => ({}));
+                              if (!resp.ok) throw new Error(json.error || "Falha ao registrar check-out antecipado.");
+                              toast({
+                                title: "Check-out antecipado registrado! ⚡",
+                                description: `Datas restantes do Flat ${selectedRes.flatNumber} liberadas no calendário e cafés futuros suspensos.`
+                              });
+                              await fetchData(false);
+                              notifyCalendarUpdated();
+                              setResModalOpen(false);
+                            } catch (err: any) {
+                              toast({
+                                title: "Erro ao registrar check-out antecipado",
+                                description: err.message || "Tente novamente.",
+                                variant: "destructive"
+                              });
+                            }
+                          }}
+                          className="h-8 text-xs font-bold gap-1.5 shrink-0 border-amber-400 bg-amber-500/10 text-amber-900 dark:text-amber-200 hover:bg-amber-500/20"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Registrar Check-out Antecipado Hoje</span>
+                        </Button>
+                      </div>
+                    )
+                  )
+                )}
+
                 {/* Observações Gerais da Reserva */}
                 <div className="space-y-1">
                   <Label className="text-xs font-semibold">Observações Gerais da Reserva</Label>
@@ -9071,6 +9260,8 @@ export default function PmsCalendar() {
                         const isCancel = log.action === "cancelled";
                         const isCheckin = log.action === "checkin";
                         const isCheckout = log.action === "checkout";
+                        const isEarlyCheckoutLog = log.action === "early_checkout";
+                        const isUndoEarlyCheckoutLog = log.action === "undo_early_checkout";
                         const isEarly = log.action === "early_checkin";
                         const isPortal = log.action === "portal_modify";
 
@@ -9104,6 +9295,16 @@ export default function PmsCalendar() {
                           actionLabel = "Check-in Realizado";
                           dotColor = "bg-teal-500";
                           IconComp = LogIn;
+                        } else if (isEarlyCheckoutLog) {
+                          badgeBg = "bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-amber-400 dark:border-amber-700";
+                          actionLabel = "⚡ Check-out Antecipado";
+                          dotColor = "bg-amber-500";
+                          IconComp = Zap;
+                        } else if (isUndoEarlyCheckoutLog) {
+                          badgeBg = "bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700";
+                          actionLabel = "↩️ Check-out Antecipado Desfeito";
+                          dotColor = "bg-slate-500";
+                          IconComp = RotateCcw;
                         } else if (isCheckout) {
                           badgeBg = "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800";
                           actionLabel = "Check-out Finalizado";

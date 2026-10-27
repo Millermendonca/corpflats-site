@@ -547,7 +547,21 @@ export function ReservationHoverCard({
             </div>
           )}
 
-          {isCheckoutCompleted && (
+          {resItem.earlyCheckout ? (
+            <div className="mt-1.5 flex flex-col gap-0.5 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-400 dark:border-amber-700 rounded-lg text-amber-950 dark:text-amber-100 text-[10.5px] font-bold shadow-2xs">
+              <div className="flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>
+                  ⚡ Check-out Antecipado em {format(parseISO(resItem.earlyCheckoutDate || resItem.checkoutDate), "dd/MM")}
+                  {resItem.earlyCheckoutTime ? ` às ${resItem.earlyCheckoutTime}` : ""}
+                </span>
+              </div>
+              <span className="text-[10px] font-medium text-amber-800 dark:text-amber-300 pl-5">
+                Informado por: <strong>{resItem.earlyCheckoutReportedBy || resItem.checkoutReportedBy || "Portaria / Governança"}</strong>
+                {resItem.originalCheckoutDate ? ` • Previsto até ${format(parseISO(resItem.originalCheckoutDate), "dd/MM")}` : ""}
+              </span>
+            </div>
+          ) : isCheckoutCompleted && (
             <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 rounded-lg text-emerald-900 dark:text-emerald-200 text-[10.5px] font-bold shadow-2xs">
               <DoorOpen className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <span>

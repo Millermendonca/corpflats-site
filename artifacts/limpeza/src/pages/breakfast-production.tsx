@@ -1159,44 +1159,72 @@ export default function BreakfastProduction() {
                                 </div>
                               </div>
 
-                              {isCancelled && (
-                                <div className="mt-2.5 p-3 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 space-y-1.5 shadow-2xs">
-                                  <div className="flex items-center justify-between gap-2 border-b border-rose-200/80 dark:border-rose-800/60 pb-1.5">
-                                    <span className="flex items-center gap-1.5 text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wide">
-                                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                                      <span>Motivo do Cancelamento • Não Preparar</span>
-                                    </span>
-                                    <Badge variant="destructive" className="text-[10px] font-black uppercase px-2 py-0.5 shadow-none">
-                                      {order.cancelReason?.toLowerCase().includes("early check-out") 
-                                        ? "🚪 Early Check-out" 
-                                        : order.cancelReason?.toLowerCase().includes("check-in") 
-                                          ? "🔄 Check-in Alterado" 
-                                          : order.cancelReason?.toLowerCase().includes("diária") || order.cancelReason?.toLowerCase().includes("check-out antecipado") || order.cancelReason?.toLowerCase().includes("reduzida")
-                                            ? "✂️ Diária Removida"
-                                            : order.cancelReason?.toLowerCase().includes("autoatendimento")
-                                              ? "👤 Cancelado p/ Hóspede"
-                                              : order.cancelReason?.toLowerCase().includes("desmarcado")
-                                                ? "☕ Café Desmarcado"
-                                                : "🚫 Cancelado"}
-                                    </Badge>
+                              {isCancelled && (() => {
+                                const isCheckoutCancel = Boolean(
+                                  order.cancelledByCheckout ||
+                                  order.checkoutWarningInfo ||
+                                  order.cancelReason?.toLowerCase().includes("check-out")
+                                );
+                                const warningInfo = order.checkoutWarningInfo;
+                                return (
+                                  <div className="mt-2.5 p-3 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 space-y-2 shadow-2xs">
+                                    <div className="flex items-center justify-between gap-2 border-b border-rose-200/80 dark:border-rose-800/60 pb-1.5">
+                                      <span className="flex items-center gap-1.5 text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wide">
+                                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                                        <span>
+                                          {isCheckoutCancel
+                                            ? "Check-out Informado • Conferir Antes de Preparar!"
+                                            : "Motivo do Cancelamento • Não Preparar"}
+                                        </span>
+                                      </span>
+                                      <Badge variant="destructive" className="text-[10px] font-black uppercase px-2 py-0.5 shadow-none">
+                                        {warningInfo?.isEarlyCheckout || order.cancelReason?.toLowerCase().includes("check-out antecipado")
+                                          ? "⚡ Check-out Antecipado"
+                                          : order.cancelReason?.toLowerCase().includes("early check-out") || isCheckoutCancel
+                                            ? "🚪 Check-out Informado"
+                                            : order.cancelReason?.toLowerCase().includes("check-in")
+                                              ? "🔄 Check-in Alterado"
+                                              : order.cancelReason?.toLowerCase().includes("diária") || order.cancelReason?.toLowerCase().includes("reduzida")
+                                                ? "✂️ Diária Removida"
+                                                : order.cancelReason?.toLowerCase().includes("autoatendimento")
+                                                  ? "👤 Cancelado p/ Hóspede"
+                                                  : order.cancelReason?.toLowerCase().includes("desmarcado")
+                                                    ? "☕ Café Desmarcado"
+                                                    : "🚫 Cancelado"}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-xs font-bold text-rose-900 dark:text-rose-200 leading-relaxed pl-5.5">
+                                      {order.cancelReason || "Reserva cancelada no calendário ou alteração na estadia."}
+                                    </p>
+                                    {isCheckoutCancel && (
+                                      <div className="p-2.5 rounded-xl bg-amber-100/90 dark:bg-amber-950/60 border border-amber-400 dark:border-amber-700 text-amber-950 dark:text-amber-100 text-[11px] space-y-1">
+                                        <div className="font-black flex items-center gap-1.5 text-amber-900 dark:text-amber-200">
+                                          <AlertTriangle className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
+                                          <span>⚠️ Confira se o check-out deste hóspede foi realmente feito antes de preparar o café!</span>
+                                        </div>
+                                        {warningInfo?.reportedBy && (
+                                          <p className="text-[10.5px] font-semibold text-amber-900/90 dark:text-amber-200/90 pl-5">
+                                            Baixa informada por: <strong>{warningInfo.reportedBy}</strong>
+                                            {warningInfo.checkoutTime ? ` às ${warningInfo.checkoutTime}` : ""}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                    <div className="pt-1 flex items-center justify-end">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleReactivateOrder(order)}
+                                        className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-rose-300 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950 shadow-xs"
+                                      >
+                                        <RotateCcw className="w-3 h-3 text-rose-600" />
+                                        <span>{isCheckoutCancel ? "Reativar Pedido (Caso Engano)" : "Reativar Pedido"}</span>
+                                      </Button>
+                                    </div>
                                   </div>
-                                  <p className="text-xs font-bold text-rose-900 dark:text-rose-200 leading-relaxed pl-5.5">
-                                    {order.cancelReason || "Reserva cancelada no calendário ou alteração na estadia."}
-                                  </p>
-                                  <div className="pt-1.5 flex items-center justify-end">
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => handleReactivateOrder(order)}
-                                      className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-rose-300 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950 shadow-xs"
-                                    >
-                                      <RotateCcw className="w-3 h-3 text-rose-600" />
-                                      <span>Reativar Pedido</span>
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
+                                );
+                              })()}
                             </CardHeader>
 
                             <CardContent className="p-4 pt-2 space-y-3">

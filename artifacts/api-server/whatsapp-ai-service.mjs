@@ -3469,14 +3469,81 @@ export function handleInformCheckout(dbOrArgs, argsOrDb = {}, optionalPhone = ""
     db.cleaningRequests.unshift(cleanReq);
   }
 
-  // 3. Atualiza reserva ativa se houver
+  // 3. Atualiza reserva ativa se houver (incluindo detecção de Check-out Antecipado)
+  const timeStr = getBrasiliaDateParts().timeStr;
+  let isEarlyCheckout = false;
   if (matchedRes) {
-    matchedRes.status = "completed";
+    const previousStatus = matchedRes.status;
+    const plannedCheckout = matchedRes.originalCheckoutDate || matchedRes.checkoutDate;
+    isEarlyCheckout = Boolean(plannedCheckout && plannedCheckout > todayStr);
+    const reporterLabel = `Hóspede via WhatsApp (${guestName})`;
+
+    if (matchedRes.status !== "completed" && matchedRes.status !== "checked_out") {
+      matchedRes.previousStatus = previousStatus;
+      matchedRes.status = "completed";
+    }
     matchedRes.checkoutDone = true;
     matchedRes.checkoutMethod = matchedRes.checkoutMethod ? `${matchedRes.checkoutMethod} + whatsapp_guest` : "whatsapp_guest";
     matchedRes.actualCheckoutAt = matchedRes.actualCheckoutAt || now;
-    matchedRes.actualCheckoutTime = matchedRes.actualCheckoutTime || getBrasiliaDateParts().timeStr;
+    matchedRes.actualCheckoutTime = matchedRes.actualCheckoutTime || timeStr;
+    matchedRes.checkoutReportedBy = matchedRes.checkoutReportedBy || reporterLabel;
+    matchedRes.checkoutReportedAt = matchedRes.checkoutReportedAt || now;
     matchedRes.updatedAt = now;
+
+    if (isEarlyCheckout) {
+      const oldCheckout = matchedRes.originalCheckoutDate || matchedRes.checkoutDate;
+      matchedRes.originalCheckoutDate = oldCheckout;
+      matchedRes.previousCheckoutDate = oldCheckout;
+      if (matchedRes.originalTotalAmount === undefined && Number(matchedRes.totalAmount) > 0) {
+        matchedRes.originalTotalAmount = Number(matchedRes.totalAmount);
+      }
+      matchedRes.earlyCheckout = true;
+      matchedRes.earlyCheckoutDate = todayStr;
+      matchedRes.earlyCheckoutTime = matchedRes.earlyCheckoutTime || timeStr;
+      matchedRes.earlyCheckoutAt = matchedRes.earlyCheckoutAt || now;
+      matchedRes.earlyCheckoutReportedBy = matchedRes.earlyCheckoutReportedBy || reporterLabel;
+      matchedRes.checkoutDate = todayStr;
+      matchedRes.calendarSequence = (matchedRes.calendarSequence || 0) + 1;
+
+      const fmtBr = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split("-").reverse().join("/") : (d || "");
+      const earlyNoteLine = `Check-out antecipado em ${fmtBr(todayStr)} às ${timeStr} informado por ${reporterLabel} (saída original prevista: ${fmtBr(oldCheckout)})`;
+      matchedRes.earlyCheckoutNote = earlyNoteLine;
+      const curNotes = String(matchedRes.notes || "").trim();
+      if (!curNotes.includes("Check-out antecipado em")) {
+        matchedRes.notes = curNotes ? `${curNotes}\n• ${earlyNoteLine}` : `• ${earlyNoteLine}`;
+      }
+    }
+
+    // Reconcilia café da manhã (hoje antes da entrega/pendente + dias futuros)
+    if (Array.isArray(db.breakfastOrders)) {
+      const maxStayDate = matchedRes.originalCheckoutDate || matchedRes.checkoutDate || todayStr;
+      const fmtBr = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split("-").reverse().join("/") : (d || "");
+      db.breakfastOrders.forEach(o => {
+        const isMatch =
+          (o.reservationCode && (o.reservationCode === matchedRes.code || o.reservationCode === matchedRes.reservationCode)) ||
+          (o.reservationId && Number(o.reservationId) === Number(matchedRes.id)) ||
+          (String(o.roomNumber) === String(resolvedFlatNum) && o.date >= matchedRes.checkinDate && o.date <= maxStayDate);
+        if (!isMatch || o.status === "ready" || o.status === "delivered") return;
+        const deliveryTime = o.deliveryTime || "08:00";
+        if (o.date > todayStr || (o.date === todayStr && (timeStr < deliveryTime || o.status === "pending"))) {
+          o.status = "cancelled";
+          o.manuallyReactivated = false;
+          o.cancelledByCheckout = true;
+          o.checkoutWarningInfo = {
+            isEarlyCheckout,
+            reportedBy: reporterLabel,
+            checkoutDate: todayStr,
+            checkoutTime: timeStr,
+            originalCheckoutDate: maxStayDate,
+            updatedAt: now
+          };
+          o.cancelReason = isEarlyCheckout
+            ? `Check-out antecipado informado por ${reporterLabel} em ${fmtBr(todayStr)} às ${timeStr} (saída prevista era ${fmtBr(maxStayDate)}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`
+            : `Check-out informado por ${reporterLabel} em ${fmtBr(todayStr)} às ${timeStr} antes do café (${deliveryTime}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`;
+          o.updatedAt = now;
+        }
+      });
+    }
   }
 
   // 3.5. Cancela lembretes pendentes de check-out, café da manhã ou estadia na fila (WhatsApp e E-mail)

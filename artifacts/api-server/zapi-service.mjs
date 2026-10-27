@@ -257,6 +257,46 @@ export function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0
   return `${toCrc}${crc16(toCrc)}`;
 }
 
+export function extractPixPayloadAmount(pixPayload) {
+  if (!pixPayload || typeof pixPayload !== "string") return null;
+  const str = pixPayload.trim();
+  if (!str.startsWith("000201")) return null;
+  let idx = 0;
+  while (idx + 4 <= str.length) {
+    const tag = str.substring(idx, idx + 2);
+    const len = parseInt(str.substring(idx + 2, idx + 4), 10);
+    if (Number.isNaN(len) || len < 0 || idx + 4 + len > str.length) break;
+    const val = str.substring(idx + 4, idx + 4 + len);
+    if (tag === "54") {
+      const num = Number(val);
+      return Number.isFinite(num) && num > 0 ? num : null;
+    }
+    if (tag === "63") break;
+    idx += 4 + len;
+  }
+  return null;
+}
+
+export function isPixPayloadStaleForAmount(reservation, expectedAmount) {
+  const amt = Number(expectedAmount) || 0;
+  if (amt <= 0) return false;
+  if (!reservation || !reservation.pixCopiaECola) return true;
+  if (reservation.pixChargedAmount !== undefined && reservation.pixChargedAmount !== null) {
+    if (Math.abs(Number(reservation.pixChargedAmount) - amt) > 0.01) return true;
+  }
+  const embeddedAmount = extractPixPayloadAmount(reservation.pixCopiaECola);
+  if (embeddedAmount !== null && Math.abs(embeddedAmount - amt) > 0.01) {
+    return true;
+  }
+  return false;
+}
+
+export function computeCardAmountFromPix(pixAmount) {
+  const base = Number(pixAmount) || 0;
+  if (base <= 0) return 0;
+  return Math.round(base * 1.05 * 100) / 100;
+}
+
 // ── Utilitário Canônico de Fuso Horário de Brasília (America/Sao_Paulo) ────────
 export function getBrasiliaDateParts(d = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -340,7 +380,7 @@ Ressaltamos gentilmente que *não é possível informar esses dados apenas na ho
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
     title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
-    description: "Enviado automaticamente para o solicitante quando uma pré-reserva é registrada, informando os dados da estadia, valores e botão de copiar o código PIX.",
+    description: "Enviado automaticamente para o solicitante quando uma pré-reserva é registrada ou atualizada, informando os dados da estadia, valores (Cartão e PIX com desconto) e botão de copiar o código PIX.",
     enabled: true,
     channels: ["site", "whatsapp", "outros"],
     recipientTarget: "requester",
@@ -358,12 +398,13 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Noites: *{{num_diarias}}*
 • Total de Hóspedes: *{{num_hospedes}}*
+• Café da Manhã: *{{status_cafe}}*
 
 💰 *Situação Financeira:*
-• Valor Total: *{{valor_total}}*
-• Quanto foi Pago: *{{valor_pago}}*
-• Quanto Falta Pagar: *{{quanto_falta}}*
+• Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
 {{instrucao_pagamento}}`,
     footer: "CorpFlats • Hospedagem Contemporânea",
@@ -1043,10 +1084,11 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 
 📋 *Detalhes da Estadia:*
 • Código: *{{numero_reserva}}*
-• Período: *{{data_checkin}} a {{data_checkout}}*
-• Valor Pendente: *{{quanto_falta}}*
+• Período: *{{data_checkin}} a {{data_checkout}}* ({{num_diarias}} diária(s))
+• Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
-Para garantir sua acomodação antes que as datas sejam liberadas, efetue o pagamento via PIX ou parcele em até 12x no cartão pelo portal seguro:
+Para garantir sua acomodação antes que as datas sejam liberadas, efetue o pagamento via PIX (com desconto) ou Cartão de Crédito pelo portal seguro:
 👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
@@ -1076,9 +1118,10 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 • Total de Noites: *{{num_diarias}}*
 
 💰 *Saldo Pendente da Alteração:*
-• Valor a Quitar: *{{quanto_falta}}*
+• Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
-Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX ou cartão em seu portal seguro:
+Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX (com desconto) ou Cartão de Crédito em seu portal seguro:
 👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Alteração Confirmada",
     buttons: [
@@ -1230,9 +1273,10 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagame
 📋 *Resumo:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
-• Valor: *{{valor_total}}*
+• Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
-Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seguro:
+Para garantir sua acomodação via PIX (com 5% de desconto) ou Cartão de Crédito, acesse o link seguro:
 {{link_portal_hospede}}`,
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
@@ -3211,24 +3255,32 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
+  const cardTotalAmount = computeCardAmountFromPix(totalAmount);
+  const cardPendingAmount = computeCardAmountFromPix(pendingAmount > 0 ? pendingAmount : totalAmount);
+
   let instrucaoPagamento = "";
   if (paidAmount === 0) {
-    instrucaoPagamento = `Para garantir e confirmar definitivamente sua acomodação, efetue o pagamento via PIX ou cartão de crédito pelo portal do hóspede:\n👉 ${linkPortalHospede}`;
+    instrucaoPagamento = `Para garantir e confirmar definitivamente sua acomodação, efetue o pagamento via PIX com 5% de desconto (*${formatCurrency(pendingAmount)}*) ou no Cartão de Crédito (*${formatCurrency(cardPendingAmount)}*) pelo portal do hóspede:\n👉 ${linkPortalHospede}`;
   } else if (paidAmount > 0 && pendingAmount > 0) {
-    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante de *${formatCurrency(pendingAmount)}* poderá ser quitado pelo portal:\n👉 ${linkPortalHospede}`;
+    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante é de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), e poderá ser quitado pelo portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoPagamento = "Reserva 100% quitada! Nenhuma pendência financeira.";
   }
 
   let instrucaoSaldo = "";
   if (pendingAmount > 0) {
-    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*, que poderá ser quitado pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
+    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), que poderá ser quitado pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoSaldo = "";
   }
 
-  // Código PIX Copia e Cola da transação integrada (Inter ou payload oficial)
+  // Código PIX Copia e Cola da transação integrada (Inter ou payload oficial).
+  // Se o valor pendente mudou (ex: alteração de diárias/datas/valor) e o PIX Copia e Cola
+  // salvo ainda reflete o valor antigo, regenera imediatamente com o novo valor pendente.
   let pixCopiaECola = reservation.pixCopiaECola || "";
+  if (pendingAmount > 0 && isPixPayloadStaleForAmount(reservation, pendingAmount)) {
+    pixCopiaECola = "";
+  }
   if (!pixCopiaECola && pendingAmount > 0) {
     const cleanTxId = (resCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
     pixCopiaECola = generateStaticPixPayload({
@@ -3240,6 +3292,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     });
     if (reservation && typeof reservation === "object") {
       reservation.pixCopiaECola = pixCopiaECola;
+      reservation.pixChargedAmount = pendingAmount;
     }
   }
 
@@ -3407,8 +3460,13 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{num_hospedes}}": String(guestCount),
     "{{num_diarias}}": String(totalNights),
     "{{valor_total}}": hideFinancialForGuest ? "" : formatCurrency(totalAmount),
+    "{{valor_total_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardTotalAmount),
+    "{{valor_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
+    "{{valor_com_desconto_pix}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount > 0 ? pendingAmount : totalAmount),
     "{{valor_pago}}": hideFinancialForGuest ? "" : formatCurrency(paidAmount),
     "{{quanto_falta}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
+    "{{quanto_falta_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
+    "{{valor_pendente_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
     "{{saldo_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{valor_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{chave_pix}}": hideFinancialForGuest ? "" : pixKey,
@@ -3635,12 +3693,13 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const linkCheckinDigital = getCheckinUrlSync(reservation, companionTarget ? companionTarget.index : 1, appOrigin, db);
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
-  // Predicado para identificar botões de check-in por ID (btn_chk, btn_pre, btn_chk_digital) ou URLs (pre-checkin, turismo.gov.br)
+  // Predicado para identificar botões de check-in por ID (btn_chk, btn_pre, btn_chk_digital, btn_checkin) ou URLs (pre-checkin, turismo.gov.br)
   const isCheckinBtn = b => 
     Boolean(b) && (
       b.id === "btn_chk" || 
       b.id === "btn_pre" || 
       b.id === "btn_chk_digital" || 
+      b.id === "btn_checkin" ||
       (b.url && (
         String(b.url).includes("/pre-checkin") || 
         String(b.url).includes("/precheckin") || 
@@ -3758,6 +3817,24 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     // Pré-check-in PENDENTE:
     // NUNCA exibe "Já Cheguei no Flat" antes do pré-check-in estar preenchido!
     list = list.filter(b => b.id !== "btn_cheguei" && (!b.url || !String(b.url).includes("/self-checkin")));
+
+    // Se o hóspede ainda não tinha assinado a ficha anteriormente (needsReSignature === false),
+    // nunca exibir "Assinar Ficha Atualizada" — rotular como "📝 Fazer Check-in Online".
+    const titularGuestForBtn = (reservation?.guests || []).find(g => Number(g.index) === 1) || reservation?.guests?.[0];
+    const targetGuestForBtn = companionTarget || titularGuestForBtn;
+    const needsReSign = Boolean(
+      targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
+        ? targetGuestForBtn.needsReSignature
+        : reservation?.needsReSignature
+    );
+    if (!needsReSign) {
+      list = list.map(b => {
+        if (b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))) {
+          return { ...b, label: "📝 Fazer Check-in Online" };
+        }
+        return b;
+      });
+    }
 
     const isArrivalOrCheckinTemplate = [
       "tpl_sameday_reservation_instructions",
@@ -5852,21 +5929,18 @@ export async function handleConciergeGroupMessage({
       db.cleaningRequests.unshift(cleanReq);
     }
 
-    // 3. Atualiza reservas com saída prevista para hoje (nunca marca hóspedes entrando hoje ou em meio de estadia)
-    const matchingResList = (db.reservations || []).filter(r => 
-      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
-      r.status !== "cancelada" && r.status !== "cancelado" &&
-      r.checkoutDate === todayStr
-    );
+    // 3. Atualiza reservas com saída prevista para hoje OU reservas em andamento (Check-out Antecipado)
+    const matchingResList = findCheckoutTargetReservationsForFlat(db, flat.id, flat.number, todayStr);
+    let anyEarlyCheckout = false;
     for (const r of matchingResList) {
-      if (!r.actualCheckoutAt) {
-        r.actualCheckoutAt = now;
-        r.actualCheckoutTime = timeStr;
-      }
-      r.status = "completed";
-      r.checkoutDone = true;
-      r.checkoutMethod = r.checkoutMethod ? `${r.checkoutMethod} + portaria_whatsapp` : "portaria_whatsapp";
-      r.updatedAt = now;
+      const earlyRes = await applyReservationCheckoutAndEarlyRelease(db, saveDatabase, r, {
+        source: "portaria_whatsapp",
+        senderName: senderLabel,
+        nowIso: now,
+        todayStr,
+        timeStr
+      });
+      if (earlyRes?.isEarlyCheckout) anyEarlyCheckout = true;
 
       // Dispara o gatilho pós check-out garantindo não-duplicação caso o hóspede já tenha informado
       await triggerCheckoutWhatsApp(db, saveDatabase, r, `portaria_whatsapp (${senderLabel})`).catch(e => {
@@ -5881,14 +5955,30 @@ export async function handleConciergeGroupMessage({
       reason: `Cancelado: check-out informado na portaria via WhatsApp (${senderLabel})`
     });
 
-    // 4. Reconciliação de café da manhã para hoje (cancela se checkout ocorreu antes do horário do café)
+    // 4. Reconciliação complementar de café da manhã por número do quarto (para pedidos avulsos ou futuros deste flat)
     if (!db.breakfastOrders) db.breakfastOrders = [];
+    const reporterLabel = formatCheckoutReporterLabel("portaria_whatsapp", senderLabel);
+    const actualBr = formatDateBrSimple(todayStr);
     db.breakfastOrders.forEach(o => {
       const isMatch = String(o.roomNumber) === String(flat.number) || matchingResList.some(mr => mr.code === o.reservationCode || mr.id === o.reservationId);
       const deliveryTime = o.deliveryTime || "08:00";
-      if (isMatch && o.date === todayStr && o.status !== "cancelled" && isTimeBefore(timeStr, deliveryTime)) {
+      const isTodayTarget = o.date === todayStr && (isTimeBefore(timeStr, deliveryTime) || o.status === "pending");
+      const isFutureTarget = anyEarlyCheckout && o.date > todayStr;
+      if (isMatch && (isTodayTarget || isFutureTarget) && o.status !== "cancelled" && o.status !== "ready" && o.status !== "delivered") {
         o.status = "cancelled";
-        o.cancelReason = `Check-out Portaria (WhatsApp): Quarto desocupado às ${timeStr} antes do café (${deliveryTime})`;
+        o.manuallyReactivated = false;
+        o.cancelledByCheckout = true;
+        o.checkoutWarningInfo = {
+          isEarlyCheckout: anyEarlyCheckout,
+          reportedBy: reporterLabel,
+          checkoutDate: todayStr,
+          checkoutTime: timeStr,
+          updatedAt: now
+        };
+        o.cancelReason = anyEarlyCheckout
+          ? `Check-out antecipado informado por ${reporterLabel} em ${actualBr} às ${timeStr}. ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`
+          : `Check-out Portaria (WhatsApp - ${senderLabel}): Quarto desocupado às ${timeStr} antes do café (${deliveryTime}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`;
+        o.updatedAt = now;
       }
     });
 
@@ -5896,11 +5986,15 @@ export async function handleConciergeGroupMessage({
     if (typeof createNotification === "function") {
       createNotification({
         category: "checkout",
-        title: `🚪 Check-out Portaria - Apt ${flat.number}`,
-        message: `Saída do Apt ${flat.number} informada no WhatsApp por ${senderLabel}. Quarto desocupado e pronto para limpeza!`,
-        severity: "info",
-        metadata: { flatId: flat.id, flatNumber: flat.number, source: "whatsapp_concierge", sender: senderLabel, isTest },
-        targetUrl: "/dashboard"
+        title: anyEarlyCheckout
+          ? `⚡ Check-out Antecipado (Portaria) - Apt ${flat.number}`
+          : `🚪 Check-out Portaria - Apt ${flat.number}`,
+        message: anyEarlyCheckout
+          ? `Saída antecipada do Apt ${flat.number} informada no WhatsApp por ${senderLabel}. Datas futuras liberadas no calendário e quarto pronto para limpeza!`
+          : `Saída do Apt ${flat.number} informada no WhatsApp por ${senderLabel}. Quarto desocupado e pronto para limpeza!`,
+        severity: anyEarlyCheckout ? "warning" : "info",
+        metadata: { flatId: flat.id, flatNumber: flat.number, source: "whatsapp_concierge", sender: senderLabel, isEarlyCheckout: anyEarlyCheckout, isTest },
+        targetUrl: anyEarlyCheckout ? "/reservas" : "/dashboard"
       });
     }
 
@@ -6690,7 +6784,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe") || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
@@ -6706,7 +6800,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.offsetValue = 1;
           tpl.offsetUnit = "hours";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp"))) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x")) {
             const defPend = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_pending");
             if (defPend) {
               tpl.title = defPend.title;
@@ -6718,7 +6812,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_additional_daily_pending") {
           tpl.recipientTarget = "requester";
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp"))) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
@@ -6929,6 +7023,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (qm.id === "qm_payment_pending" || qm.id === "qm_payment_confirmed") {
           qm.recipientTarget = "requester";
+        }
+        if (qm.id === "qm_payment_pending") {
+          const defPayQm = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_payment_pending");
+          if (defPayQm && (!qm.message?.includes("quanto_falta_cartao") || qm.message?.includes("12x"))) {
+            qm.message = defPayQm.message;
+          }
         }
         if (qm.id === "qm_breakfast") {
           const defBreakfast = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_breakfast");
@@ -9313,6 +9413,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           reason: "Cancelado: check-out confirmado via WhatsApp / Sofia Assist"
         });
         if (checkedOutRes) {
+          if (checkedOutRes.earlyCheckout) {
+            await sendEarlyCheckoutManagerWhatsAppAlert(db, saveDatabase, checkedOutRes, {
+              originalCheckoutDate: checkedOutRes.originalCheckoutDate,
+              earlyCheckoutDate: checkedOutRes.earlyCheckoutDate || checkedOutRes.checkoutDate,
+              timeStr: checkedOutRes.earlyCheckoutTime || checkedOutRes.actualCheckoutTime,
+              reportedBy: checkedOutRes.earlyCheckoutReportedBy || "Hóspede via WhatsApp / Sofia"
+            }).catch(() => {});
+          }
           await triggerCheckoutWhatsApp(db, saveDatabase, checkedOutRes, "whatsapp_sofia_assist").catch(e => {
             console.warn("[Sofia Assist Checkout Trigger Error]:", e.message);
           });
@@ -11142,6 +11250,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     // EXCETO quando os dados/WhatsApp do hóspede acabaram de ser preenchidos pela agência no link de credenciamento ou na reserva (_forceInitialWelcome).
     const credentialedRecently = Boolean(
       reservation._forceInitialWelcome ||
+      reservation._isPreReservationUpdate ||
       (reservation.b2bCredentialCompletedAt && (now.getTime() - new Date(reservation.b2bCredentialCompletedAt).getTime()) <= 48 * 3600 * 1000) ||
       (reservation.guestPhoneUpdatedAt && (now.getTime() - new Date(reservation.guestPhoneUpdatedAt).getTime()) <= 48 * 3600 * 1000)
     );
@@ -11397,6 +11506,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const isSingleFireEvent = SINGLE_DISPATCH_EVENTS.has(eventName);
     const isUpdatedEvent = eventName === "reservation_updated";
     const isReSignPreCheckin = eventName === "pre_checkin_completed" && Boolean(reservation._wasReSignature);
+    const isPreResUpdate = eventName === "pre_reservation_created" && Boolean(reservation._isPreReservationUpdate);
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
@@ -11432,7 +11542,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               : "";
             const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
 
-            const alreadySentWa = (db.whatsappHistory || []).some(h => {
+            const alreadySentWa = isPreResUpdate ? false : (db.whatsappHistory || []).some(h => {
               if (h.status !== "sent" && h.status !== "delivered") return false;
               const hCode = String(h.reservationCode || "").trim().toUpperCase();
               const hId = h.reservationId ? String(h.reservationId) : "";
@@ -11456,7 +11566,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
           if (target.email) {
             const normTargetEmail = String(target.email).trim().toLowerCase();
-            const alreadySentEmail = (db.reservationCommunications || []).some(c => {
+            const alreadySentEmail = isPreResUpdate ? false : (db.reservationCommunications || []).some(c => {
               if (c.status === "failed") return false;
               const cResId = String(c.reservation_id || "").trim().toUpperCase();
               const isSameRes = (rCode && cResId === rCode) || (rId && cResId === rId);
@@ -11493,6 +11603,356 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
   } catch (err) {
     console.error(`[Z-API Instant Trigger Error]:`, err.message);
   }
+}
+
+// ── Helpers Centralizados de Check-out e Check-out Antecipado ──────────────────
+function formatDateBrSimple(dateStr) {
+  if (!dateStr || typeof dateStr !== "string") return "";
+  const m = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return dateStr;
+}
+
+export function formatCheckoutReporterLabel(source = "manual", customActorName = "") {
+  const actor = String(customActorName || "").trim();
+  const s = String(source || "manual").toLowerCase().trim();
+  if (s.startsWith("portaria_whatsapp") || s === "whatsapp_concierge") {
+    if (actor && !actor.toLowerCase().includes("portaria")) {
+      return `Portaria WhatsApp (${actor})`;
+    }
+    return actor || "Portaria via WhatsApp";
+  }
+  if (s === "link_digital" || s === "guest_checkout") {
+    return actor ? `Hóspede via Link Digital (${actor})` : "Hóspede via Link Digital";
+  }
+  if (s === "whatsapp_guest" || s === "whatsapp_sofia_assist") {
+    return actor ? `Hóspede via WhatsApp (${actor})` : "Hóspede via WhatsApp / Sofia";
+  }
+  if (s === "reception_pms" || s === "reception_checkout") {
+    return actor ? `Recepção / PMS (${actor})` : "Recepção / Portaria";
+  }
+  if (s === "card_desocupado" || s === "manual_card" || s === "admin") {
+    return actor ? `Governança / Card (${actor})` : "Governança (Card marcado como Desocupado)";
+  }
+  if (s === "cleaning_started") {
+    return actor ? `Governança - Início de Limpeza (${actor})` : "Governança (Início de Limpeza)";
+  }
+  if (s === "cleaning_completed") {
+    return actor ? `Governança - Conclusão de Limpeza (${actor})` : "Governança (Limpeza Concluída)";
+  }
+  if (s === "pms_edit") {
+    return actor ? `Calendário PMS (${actor})` : "Calendário PMS";
+  }
+  return actor || source || "Sistema";
+}
+
+/**
+ * Localiza reservas elegíveis para check-out em um flat na data `todayStr`:
+ * 1. Reservas com saída prevista hoje (`checkoutDate === todayStr`)
+ * 2. Caso não haja saída prevista hoje pendente, localiza reserva em andamento (stayover: `checkinDate < todayStr && checkoutDate > todayStr`)
+ *    ou hóspede que entrou hoje (`checkinDate === todayStr && checkoutDate > todayStr && status === "in_house"`) para registrar Check-out Antecipado.
+ */
+export function findCheckoutTargetReservationsForFlat(db, flatId, flatNumber, todayStr) {
+  if (!db || !Array.isArray(db.reservations)) return [];
+  const fNumClean = String(flatNumber || "").replace(/\D/g, "").trim();
+  const matchesFlat = (r) => {
+    if (flatId !== undefined && flatId !== null && Number(r.flatId) === Number(flatId)) return true;
+    const rNumClean = String(r.flatNumber || "").replace(/\D/g, "").trim();
+    return Boolean(fNumClean && rNumClean && fNumClean === rNumClean);
+  };
+  const isActiveRes = (r) => {
+    const st = String(r.status || "").toLowerCase();
+    return st !== "cancelada" && st !== "cancelado" && st !== "cancelled" && st !== "expirada" && st !== "no_show" && st !== "pre_reserva" && st !== "pendente";
+  };
+
+  // 1. Prioriza reservas com checkoutDate === todayStr
+  const regularToday = db.reservations.filter(r =>
+    matchesFlat(r) && isActiveRes(r) && r.checkoutDate === todayStr
+  );
+  const uncompletedRegular = regularToday.filter(r => !r.checkoutDone && r.status !== "completed" && r.status !== "checked_out");
+  if (uncompletedRegular.length > 0) {
+    return uncompletedRegular;
+  }
+
+  // 2. Busca reservas em andamento com saída futura (Check-out Antecipado)
+  const stayoverEarly = db.reservations.filter(r =>
+    matchesFlat(r) &&
+    isActiveRes(r) &&
+    !r.checkoutDone &&
+    r.status !== "completed" &&
+    r.status !== "checked_out" &&
+    r.checkinDate < todayStr &&
+    r.checkoutDate > todayStr
+  );
+  if (stayoverEarly.length > 0) {
+    return stayoverEarly;
+  }
+
+  // 3. Se já havia uma reserva regular de hoje (mesmo concluída) e nenhuma stayover, retorna regularToday
+  if (regularToday.length > 0) {
+    return regularToday;
+  }
+
+  // 4. Caso hóspede tenha feito check-in hoje (in_house) e saído no mesmo dia antes das diárias seguintes
+  const sameDayInHouseEarly = db.reservations.filter(r =>
+    matchesFlat(r) &&
+    isActiveRes(r) &&
+    !r.checkoutDone &&
+    (r.status === "in_house" || Boolean(r.actualCheckinAt)) &&
+    r.checkinDate === todayStr &&
+    r.checkoutDate > todayStr
+  );
+  return sameDayInHouseEarly;
+}
+
+/**
+ * Envia alerta imediato para o WhatsApp do Gestor (22998505276) quando ocorre Check-out Antecipado.
+ */
+export async function sendEarlyCheckoutManagerWhatsAppAlert(db, saveDatabase, reservation, info = {}) {
+  try {
+    if (!db || !reservation) return { sent: false, reason: "missing_data" };
+    if (reservation.earlyCheckoutAdminNotifiedAt) {
+      return { sent: false, reason: "already_notified" };
+    }
+
+    const managerPhone = cleanWhatsAppPhone(
+      db?.settings?.adminPhone ||
+      db?.zapiConfig?.npsManagerAlertPhone ||
+      DEFAULT_MANAGER_NPS_ALERT_PHONE ||
+      "5522998505276"
+    ) || "5522998505276";
+
+    const flatLabel = reservation.flatNumber ? `Flat ${reservation.flatNumber}` : `Flat ID ${reservation.flatId}`;
+    const guestName = reservation.guestName || "Hóspede";
+    const resCode = reservation.code || reservation.reservationCode || `#${reservation.id}`;
+    const checkinBr = formatDateBrSimple(reservation.checkinDate);
+    const originalOutBr = formatDateBrSimple(info.originalCheckoutDate || reservation.originalCheckoutDate || reservation.checkoutDate);
+    const actualOutBr = formatDateBrSimple(info.earlyCheckoutDate || reservation.checkoutDate);
+    const timeStr = info.timeStr || reservation.actualCheckoutTime || "";
+    const reportedBy = info.reportedBy || reservation.earlyCheckoutReportedBy || "Sistema";
+    const cancelledBfCount = Number(info.cancelledBreakfastCount || 0);
+
+    let msg = `⚡ *ALERTA DE CHECK-OUT ANTECIPADO — ${flatLabel}*\n\n`;
+    msg += `👤 *Hóspede:* ${guestName} (${resCode})\n`;
+    msg += `🏢 *Unidade:* ${flatLabel}\n`;
+    msg += `📅 *Período Original:* ${checkinBr} a ${originalOutBr}\n`;
+    msg += `🚪 *Saída Antecipada:* ${actualOutBr}${timeStr ? ` às ${timeStr}` : ""}\n`;
+    msg += `📢 *Informado por:* ${reportedBy}\n\n`;
+    msg += `🔓 *Calendário de Reservas:* As datas de *${actualOutBr} a ${originalOutBr}* foram abertas automaticamente para novas reservas (a estadia original permanece visível em modo tracejado/transparente).\n`;
+    if (cancelledBfCount > 0) {
+      msg += `☕ *Café da Manhã:* ${cancelledBfCount} pedido(s) de café suspenso(s)/cancelado(s) automaticamente com aviso de conferência.\n`;
+    }
+    msg += `\n🔗 _Confira no calendário: corpflats.com.br/reservas_`;
+
+    reservation.earlyCheckoutAdminNotifiedAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") saveDatabase();
+
+    const sendRes = await sendZapiMessage(db.zapiConfig, {
+      phone: managerPhone,
+      message: msg,
+      channelId: "internal_alerts",
+      recipientRole: "manager",
+      triggerEvent: "early_checkout_manager_alert",
+      bypassTestMode: true,
+      db
+    });
+
+    return { sent: true, result: sendRes };
+  } catch (err) {
+    console.warn("[Early Checkout Manager WhatsApp Alert Error]:", err?.message || err);
+    return { sent: false, error: err?.message };
+  }
+}
+
+/**
+ * Aplica de forma unificada o Check-out (normal ou antecipado) em uma reserva:
+ * - Se `checkoutDate > todayStr`, configura Check-out Antecipado (`earlyCheckout = true`),
+ *   preserva `originalCheckoutDate` e os valores financeiros (`totalAmount` e `paidAmount` intactos),
+ *   atualiza `checkoutDate` para abrir as datas no calendário, anota em `r.notes` e `r.auditLogs`,
+ *   reconcilia solicitudes de limpeza e dispara alerta no WhatsApp do gestor.
+ * - Cancela/suspende pedidos de café da manhã de hoje (se antes do horário de entrega ou ainda pendentes)
+ *   e de todos os dias futuros (`o.date > todayStr`), gravando o aviso de conferência com quem informou.
+ */
+export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, reservation, options = {}) {
+  if (!db || !reservation) return { isEarlyCheckout: false, cancelledBreakfastCount: 0 };
+
+  const nowIso = options.nowIso || new Date().toISOString();
+  const nowBrl = getBrasiliaNow();
+  const todayStr = options.todayStr || nowBrl.date;
+  const timeStr = options.timeStr || nowBrl.timeStr;
+  const source = options.source || "manual";
+  const reportedBy = formatCheckoutReporterLabel(source, options.reportedBy || options.senderName || options.actorName);
+
+  const previousStatus = reservation.status;
+  const plannedCheckout = reservation.originalCheckoutDate || reservation.checkoutDate;
+  const isEarlyCheckout = Boolean(plannedCheckout && plannedCheckout > todayStr);
+
+  if (!reservation.actualCheckoutAt) {
+    reservation.actualCheckoutAt = nowIso;
+    reservation.actualCheckoutTime = timeStr;
+  }
+  if (reservation.status !== "completed" && reservation.status !== "checked_out") {
+    reservation.previousStatus = previousStatus;
+    reservation.status = "completed";
+  }
+  reservation.checkoutDone = true;
+  reservation.checkoutMethod = reservation.checkoutMethod
+    ? (reservation.checkoutMethod.includes(source) ? reservation.checkoutMethod : `${reservation.checkoutMethod} + ${source}`)
+    : source;
+  reservation.checkoutReportedBy = reservation.checkoutReportedBy || reportedBy;
+  reservation.checkoutReportedAt = reservation.checkoutReportedAt || nowIso;
+  reservation.updatedAt = nowIso;
+
+  if (isEarlyCheckout) {
+    const oldCheckout = reservation.originalCheckoutDate || reservation.checkoutDate;
+    reservation.originalCheckoutDate = oldCheckout;
+    reservation.previousCheckoutDate = oldCheckout;
+
+    // Preserva integralmente o valor financeiro e pagamentos contratados
+    if (reservation.originalTotalAmount === undefined && Number(reservation.totalAmount) > 0) {
+      reservation.originalTotalAmount = Number(reservation.totalAmount);
+    }
+
+    reservation.earlyCheckout = true;
+    reservation.earlyCheckoutDate = todayStr;
+    reservation.earlyCheckoutTime = reservation.earlyCheckoutTime || timeStr;
+    reservation.earlyCheckoutAt = reservation.earlyCheckoutAt || nowIso;
+    reservation.earlyCheckoutReportedBy = reservation.earlyCheckoutReportedBy || reportedBy;
+
+    // Abre as datas no calendário atualizando checkoutDate para a data real da saída
+    reservation.checkoutDate = todayStr;
+    reservation.calendarSequence = (reservation.calendarSequence || 0) + 1;
+
+    const actualBr = formatDateBrSimple(todayStr);
+    const origBr = formatDateBrSimple(oldCheckout);
+    const earlyNoteLine = `Check-out antecipado em ${actualBr} às ${timeStr} informado por ${reportedBy} (saída original prevista: ${origBr})`;
+    reservation.earlyCheckoutNote = earlyNoteLine;
+
+    const currentNotes = String(reservation.notes || "").trim();
+    if (!currentNotes.includes("Check-out antecipado em")) {
+      reservation.notes = currentNotes ? `${currentNotes}\n• ${earlyNoteLine}` : `• ${earlyNoteLine}`;
+    }
+
+    if (!Array.isArray(reservation.auditLogs)) reservation.auditLogs = [];
+    const alreadyLogged = reservation.auditLogs.some(l => l.action === "early_checkout" && l.details?.earlyCheckoutDate === todayStr);
+    if (!alreadyLogged) {
+      reservation.auditLogs.unshift({
+        id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: nowIso,
+        action: "early_checkout",
+        actor: {
+          id: options.actorId || null,
+          name: reportedBy,
+          role: options.actorRole || "system",
+          type: "user"
+        },
+        source: reportedBy,
+        description: `${earlyNoteLine}. Datas de ${actualBr} a ${origBr} abertas no calendário.`,
+        details: {
+          earlyCheckoutDate: todayStr,
+          originalCheckoutDate: oldCheckout,
+          reportedBy
+        },
+        changes: [
+          {
+            field: "checkoutDate",
+            label: "Data de Saída (Check-out Antecipado)",
+            oldValue: oldCheckout,
+            newValue: `${todayStr} (Original: ${oldCheckout})`
+          },
+          {
+            field: "notes",
+            label: "Observação na Reserva",
+            oldValue: currentNotes || "(vazio)",
+            newValue: reservation.notes
+          }
+        ]
+      });
+    }
+
+    // Remove solicitação de limpeza futura órfã na data antiga caso não haja outra reserva saindo nela
+    if (Array.isArray(db.cleaningRequests) && oldCheckout !== todayStr) {
+      const otherLeavingOnOldDate = (db.reservations || []).some(other =>
+        other.id !== reservation.id &&
+        other.status !== "cancelada" &&
+        other.status !== "cancelled" &&
+        (other.flatId === reservation.flatId || String(other.flatNumber) === String(reservation.flatNumber)) &&
+        other.checkoutDate === oldCheckout
+      );
+      if (!otherLeavingOnOldDate) {
+        db.cleaningRequests = db.cleaningRequests.filter(c => {
+          const sameFlat = (c.flatId === reservation.flatId || String(c.flatNumber) === String(reservation.flatNumber));
+          return !(sameFlat && c.requestDate === oldCheckout && c.status !== "clean" && !c.isInstructionOnly);
+        });
+      }
+    }
+  }
+
+  // Reconcilia e cancela/suspende pedidos de café da manhã vinculados (hoje antes da entrega/pendentes + todos os dias futuros)
+  let cancelledBreakfastCount = 0;
+  if (!Array.isArray(db.breakfastOrders)) db.breakfastOrders = [];
+  const maxStayDate = reservation.originalCheckoutDate || reservation.checkoutDate || todayStr;
+  const actualBr = formatDateBrSimple(todayStr);
+  const origBr = formatDateBrSimple(maxStayDate);
+
+  db.breakfastOrders.forEach(o => {
+    const matchByCodeOrId =
+      (o.reservationCode && (o.reservationCode === reservation.code || o.reservationCode === reservation.reservationCode)) ||
+      (o.reservationId && Number(o.reservationId) === Number(reservation.id));
+    const matchByRoomAndDate =
+      !o.reservationCode && !o.reservationId &&
+      String(o.roomNumber) === String(reservation.flatNumber) &&
+      o.date >= reservation.checkinDate &&
+      o.date <= maxStayDate;
+
+    if (!matchByCodeOrId && !matchByRoomAndDate) return;
+    if (o.status === "ready" || o.status === "delivered") return;
+
+    const deliveryTime = o.deliveryTime || "08:00";
+    const isFutureOrder = o.date > todayStr;
+    const isTodayBeforeDeliveryOrPending = o.date === todayStr && (isTimeBefore(timeStr, deliveryTime) || o.status === "pending");
+
+    if (isFutureOrder || isTodayBeforeDeliveryOrPending) {
+      if (o.status !== "cancelled") {
+        cancelledBreakfastCount++;
+      }
+      o.status = "cancelled";
+      o.manuallyReactivated = false;
+      o.cancelledByCheckout = true;
+      o.checkoutWarningInfo = {
+        isEarlyCheckout,
+        reportedBy,
+        checkoutDate: todayStr,
+        checkoutTime: timeStr,
+        originalCheckoutDate: maxStayDate,
+        updatedAt: nowIso
+      };
+      if (isEarlyCheckout) {
+        o.cancelReason = `Check-out antecipado informado por ${reportedBy} em ${actualBr} às ${timeStr} (saída prevista era ${origBr}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`;
+      } else {
+        o.cancelReason = `Check-out informado por ${reportedBy} em ${actualBr} às ${timeStr} antes do café (${deliveryTime}). ⚠️ Confira se o check-out foi realmente feito antes de preparar o café!`;
+      }
+      o.updatedAt = nowIso;
+    }
+  });
+
+  if (isEarlyCheckout && !options.skipManagerWhatsAppAlert) {
+    await sendEarlyCheckoutManagerWhatsAppAlert(db, saveDatabase, reservation, {
+      originalCheckoutDate: reservation.originalCheckoutDate,
+      earlyCheckoutDate: todayStr,
+      timeStr,
+      reportedBy,
+      cancelledBreakfastCount
+    });
+  }
+
+  return {
+    isEarlyCheckout,
+    reportedBy,
+    originalCheckoutDate: reservation.originalCheckoutDate || null,
+    effectiveCheckoutDate: reservation.checkoutDate,
+    cancelledBreakfastCount
+  };
 }
 
 // ── Disparo Centralizado de Check-out (com Desduplicação Estrita) ─────────────
