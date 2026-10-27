@@ -756,7 +756,7 @@ export default function Payments() {
                         <Badge className="bg-sky-600 text-white font-bold text-[10px]">3.99% Taxa</Badge>
                       </div>
                       <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        Permite parcelamento em até 12x para o hóspede com repasse direto via Checkout Pro.
+                        Pagamento com Cartão de Crédito para o hóspede com repasse direto via Checkout Pro.
                       </p>
                     </div>
 

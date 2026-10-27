@@ -732,6 +732,7 @@ export default function BookingEngine() {
         cleaningFee,
         paymentMethod,
         totalAmount,
+        pixTotalAmount,
         baseTotalAmount,
         cardTotalAmount,
         pixDiscountPercent,
@@ -765,7 +766,6 @@ export default function BookingEngine() {
           setMpInitPoint(data.initPoint)
           setMpResData(data.reservation)
           setCardModalOpen(true)
-          // Abre o checkout oficial do Mercado Pago para parcelamento seguro em até 12x
           window.open(data.initPoint, "_blank")
         } else {
           setCurrentPendingRes(data.reservation)
@@ -829,7 +829,7 @@ export default function BookingEngine() {
     { q: "Qual o horário de check-in e check-out?", a: "O check-in inicia a partir das 14:00 e o check-out é até as 12:00. Caso precise de early check-in ou late check-out, solicite diretamente pelo WhatsApp com nossa equipe." },
     { q: "Como funciona o estacionamento / garagem?", a: "Dispomos de vagas privativas cobertas no condomínio com portão eletrônico e monitoramento 24h, inclusas gratuitamente na sua diária em qualquer tarifa." },
     { q: "Como é servido o café da manhã?", a: "O café da manhã é servido sob pedido personalizado diretamente no seu flat, no horário de sua preferência entre 05:00 e 09:30." },
-    { q: "Quais são as formas de pagamento aceitas?", a: "Aceitamos PIX Instantâneo com confirmação automática na hora e Cartão de Crédito com parcelamento facilitado." },
+    { q: "Quais são as formas de pagamento aceitas?", a: "Aceitamos PIX Instantâneo com desconto e confirmação automática na hora, e Cartão de Crédito via Mercado Pago." },
     { q: "O flat possui Wi-Fi veloz para trabalhar?", a: "Sim! Todos os nossos flats contam com fibra óptica dedicada de 500 Mega de alta estabilidade e bancada própria para notebook." }
   ]
 
@@ -1670,7 +1670,7 @@ export default function BookingEngine() {
               <span>Pagamento com Cartão de Crédito</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">
-              Checkout Seguro do Mercado Pago (à vista ou parcelado com juros do cartão).
+              Checkout Seguro do Mercado Pago para Cartão de Crédito.
             </DialogDescription>
           </DialogHeader>
 
@@ -1689,8 +1689,8 @@ export default function BookingEngine() {
                 <span className="font-bold text-slate-900 text-right">{nights} {nights === 1 ? 'noite' : 'noites'}</span>
               </div>
               <div className="border-t border-sky-200/80 pt-2 flex justify-between items-center gap-2">
-                <span className="text-xs font-black text-slate-900">Total à Vista:</span>
-                <span className="text-lg font-black text-sky-700 shrink-0">R$ {totalAmount.toLocaleString('pt-BR')}</span>
+                <span className="text-xs font-black text-slate-900">Valor no Cartão de Crédito:</span>
+                <span className="text-lg font-black text-sky-700 shrink-0">R$ {cardTotalAmount.toLocaleString('pt-BR')}</span>
               </div>
             </div>
 
@@ -1706,7 +1706,7 @@ export default function BookingEngine() {
                 </Button>
                 
                 <p className="text-[11px] text-center text-slate-500 font-medium">
-                  🔒 Ambiente 100% criptografado e exclusivo para Cartão de Crédito. Se desejar parcelar, as opções e taxas são simuladas diretamente pela sua operadora.
+                  🔒 Ambiente 100% criptografado e exclusivo para Cartão de Crédito via Mercado Pago.
                 </p>
               </div>
             )}

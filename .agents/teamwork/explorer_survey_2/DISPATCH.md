@@ -1,38 +1,22 @@
-## 2026-10-21T18:30:49Z
-Você é o subagente explorer_survey_2 (teamwork_preview_explorer).
-Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2
+## 2026-10-27T15:59:31Z
+[Message] timestamp=2026-10-27T15:59:31Z sender=5c8f06aa-a876-42b7-8e25-4f73f9a21590 priority=MESSAGE_PRIORITY_HIGH content=Você é o explorer_survey_2 (Maid Rates & Financial Statements Explorer).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
+Leia também c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+Regras Críticas (AGENTS.md):
+- NÃO execute testes globais ou em lote.
+- Você é um agente read-only de exploração: NÃO altere arquivos de código ou produção.
 
-Leia atentamente os seguintes arquivos antes de começar:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
+Objetivo da Exploração:
+1. Inspecione artifacts/api-server/maid-automation-service.mjs e scripts/maid-automation-service.mjs: analise syncMaidCredits, getMaidPeriodFinances e a geração de maidStatementEntries.
+2. Inspecione como db.cleaningRates é estruturado em demo-server.mjs, e as rotas GET /api/cleaning/rates e POST /api/cleaning/rates (como default e taxas específicas por camareira, como Cris id: 2 e Grazi id: 3, são armazenadas e lidas).
+3. Inspecione as rotas /api/analytics/report e /api/maids/:id/statement: como o cálculo financeiro e a contagem de limpezas devem discriminar Checkout vs. Stayover.
+4. Inspecione o frontend: artifacts/limpeza/src/pages/reports.tsx, artifacts/limpeza/src/pages/hr-dashboard.tsx, artifacts/limpeza/src/pages/maid-statement.tsx: como as taxas de stayover devem ser editadas e como o extrato e o recibo de impressão devem exibir contagens e valores separados.
+5. Verifique a paridade SHA-256 dos serviços de camareira gêmeos.
 
-Missão do Explorer 2:
-Mapear o FRONTEND MOBILE DO HÓSPEDE e rotas de autoatendimento para o frigobar:
-1. Analise o roteamento em `artifacts/limpeza/src/App.tsx`:
-   - Rotas públicas sem login: como `/minha-reserva/:code` é estruturada (`guest-portal.tsx`).
-   - Como adicionar `/frigobar/flat/:flatNumber` (e `/frigobar/:flatNumber`) e `/minha-reserva/:code/frigobar`.
-2. Analise a experiência mobile do hóspede:
-   - Acesso por QR Code no flat: tela de boas-vindas pedindo os 4 últimos dígitos do celular cadastrado na reserva, validação via API `/api/minibar/flat-context`, saudação calorosa pelo nome do hóspede.
-   - Acesso por link direto (`/minha-reserva/:code/frigobar` e card em `/minha-reserva/:code`): identificação automática da reserva sem pedir os 4 dígitos.
-   - Catálogo de produtos: cards com fotos, nome, categoria, preço, e indicador visual claro e não-editável do padrão que havia no frigobar (ex: "Padrão no flat: 4 un.").
-   - Controle de seleção de quantidade (`-` e `+`), cálculo de subtotal em tempo real, exibição de itens já pagos anteriormente na mesma reserva.
-   - Aviso visual destacado: "O consumo de frigobar não pode ser faturado junto com a diária de hospedagem".
-   - Etapa de Checkout & Dados Fiscais:
-     * Preferência de descrição na NF: (a) Discriminar todos os itens, (b) Lançar como "Água", (c) Lançar como "Consumo de Frigobar".
-     * Documento para a NF: manter CPF cadastrado ou informar outro CPF / CNPJ da empresa.
-     * E-mail para recebimento da NF: pré-preenchido ou obrigatório se ausente.
-   - Modal/Interface de Pagamento:
-     * Opção PIX (QR Code e botão Copia e Cola, com pooling de verificação em tempo real e tela de confirmação imediata).
-     * Opção Cartão de Crédito (Mercado Pago).
-3. Mapeie componentes UI reutilizáveis (Tailwind, Lucide icons, componentes shadcn/ui disponíveis no projeto).
-4. Identifique o fluxo de compilação do Vite (`artifacts/limpeza/vite.config.ts`, `npm run build`) e possíveis problemas de types/build.
-
-Escreva um relatório estruturado completo em `analysis.md` e um sumário em `handoff.md` no seu diretório de trabalho (.agents/teamwork/explorer_survey_2).
-Ao terminar, use `send_message` para notificar o caller (d10c20e2-adfb-4695-835e-52dd3bebe9a9) informando a conclusão e o caminho do relatório.
-Lembre-se: Você é um Explorer de leitura/investigação. NÃO modifique arquivos de código fonte.
+Entregáveis:
+- Escreva a análise completa em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\analysis.md.
+- Escreva o handoff completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\handoff.md com números de linha exatos, contratos e plano de implementação.
+- Ao finalizar, envie uma mensagem para o orchestrator_18 com o sumário dos achados e links dos arquivos.

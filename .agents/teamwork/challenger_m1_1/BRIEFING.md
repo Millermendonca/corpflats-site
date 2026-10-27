@@ -1,59 +1,64 @@
-# BRIEFING — 2026-10-22T10:45:00Z
+# BRIEFING — 2026-10-27T17:05:00Z
 
 ## Mission
-Adversarial verification and empirical stress testing of Milestone M1 (CLT HR Backend Core, Twin-Server Parity & Database Prune Rules).
+Adversarially challenge and stress-test the implementation of Milestone 1 (Stayover Cleaning / Housekeeping for B2B long-stay reservations). Run isolated empirical tests to verify card generation and cleaning completion rules without modifying production data or code.
 
 ## 🔒 My Identity
 - Archetype: challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: M1
+- Original parent: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Milestone: M1 (Stayover Housekeeping)
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code
-- Strict testing scope: Never run global test suites `tests/*.test.mjs`, only single dedicated isolated test
-- Run verification empirically; do not trust worker assertions
+- Review-only — do NOT modify implementation code.
+- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar `tests/*.test.mjs`).
+- Crie e execute testes adversariais pontuais em arquivos temporários isolados ou em tests/challenger-m1-1.test.mjs sem tocar no banco de dados de produção.
+- Use `send_message` to communicate results and handoffs.
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T10:45:00Z
+- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Updated: 2026-10-27T16:49:30Z
 
 ## Review Scope
-- **Files reviewed**: `artifacts/api-server/hr/*`, `scripts/hr/*`, `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `scripts/check-twin-parity.mjs`, `tests/hr-m1-backend-core.test.mjs`
-- **Interface contracts**: `PROJECT.md` (Orchestrator 17), `ORIGINAL_REQUEST.md` (2026-10-22T09:58:01Z)
-- **Review criteria**: Twin-server 100% SHA-256 parity & bootability, `pruneDatabase()` 5-year retention rule, Cris & Grazi strict isolation, CLT employee schemas & CRUD.
+- **Files reviewed**:
+  - `artifacts/api-server/demo-server.mjs`
+  - `scripts/demo-server.mjs`
+  - `tests/b2b-housekeeping-m1.test.mjs`
+  - `worker_m1/changes.md`
+  - `worker_m1/handoff.md`
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md (§ R1, R3, R4)
+- **Review criteria**: Correctness of card generation (B2B on checkin date, checkout date, intermediate days; OTA intermediate days), safe stayover completion (retaining flat occupancy, reservation status, checkoutDone), 10-minute lock bypass, DND blocking, twin-server SHA-256 parity.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Paridade Twin-Server e Bootabilidade:
-     - Hipótese: Todos os serviços importados por `scripts/demo-server.mjs` existem em `scripts/` e inicializam.
-     - Resultado: FALHA CRÍTICA. `microsoft-graph-service.mjs` existe em `artifacts/api-server/` e é importado na linha 68 de `scripts/demo-server.mjs`, mas NÃO EXISTE em `scripts/`.
-     - Execução empírica `node -e "import('./scripts/demo-server.mjs')"` resultou em `ERR_MODULE_NOT_FOUND`.
-     - `scripts/check-twin-parity.mjs` omitiu `microsoft-graph-service.mjs` de `rootPairs`, gerando falso positivo de 29/29.
-  2. Estresse da Regra de Poda Trabalhista em `pruneDatabase()`:
-     - Hipótese: Registros de 4 anos (< 1825 dias) em `hrTimeRecords` e `hrPayroll` sobrevivem à poda, enquanto registros > 1825 dias são podados sob volume alto (> 50k / > 10k).
-     - Resultado: PASSOU com 100% de precisão empírica. Sob carga de 50.005 itens de ponto e 10.005 de folha, registros de 4 anos (1460 dias), 1824 dias e 1825 dias foram preservados. Registros de 1826 dias, 6 anos e 8 anos foram podados. Sob volume normal, nenhuma poda ocorreu.
-  3. Schemas de RH e Isolamento de Cris e Grazi:
-     - Hipótese: Cris e Grazi permanecem blindadas e isoladas de qualquer rotina CLT.
-     - Resultado: PASSOU. Guardas `isPrestadora`, `isCltEmployee` e `validateRecipientNotPrestador` estão estritamente integradas.
-
-- **Vulnerabilidades confirmadas**:
-  1. `scripts/microsoft-graph-service.mjs` inexistente causa crash com código 1 (`ERR_MODULE_NOT_FOUND`) em `scripts/demo-server.mjs`.
-  2. `scripts/check-twin-parity.mjs` possui lista incompleta e mascara a falta de `microsoft-graph-service.mjs`.
-
-- **Untested angles**:
-  - Testes E2E com upload real de planilhas no OneDrive via Microsoft Graph em produção.
+  - [PASS] B2B on checkin date does NOT produce stayover card (Scenario 1)
+  - [PASS] B2B on checkout date produces only checkout card, not stayover card (Scenario 2)
+  - [PASS] Pure OTA/Direct bookings on intermediate days never produce stayover cards (Scenario 3)
+  - [FAIL] Non-B2B bookings (Booking, Airbnb, WhatsApp) with `companyName` or `agencyName` leak into B2B stayovers (Probe A)
+  - [FAIL] Early checked-out or completed B2B reservations continue to spawn ghost stayover cards (Probe B)
+  - [PASS] Valid B2B on intermediate days generates stayover card with source: 'stayover' (Scenario 4)
+  - [PASS] Card generation idempotency in getRequestsForDate (Scenario 4b)
+  - [PASS] Stayover completion does not free flat or complete reservation or mark checkoutDone (Scenario 5)
+  - [PASS] 10-minute minimum lock does not block housekeeper in stayover, but blocks in checkout (Scenario 6)
+  - [PASS] Do Not Disturb (DND) mode blocks maid from starting or completing stayover with HTTP 422 (Scenario 7)
+  - [PASS] Passing isVacant: true for stayover is coerced to false/ignored (Scenario 8)
+  - [PASS] Twin-server SHA-256 parity verified in tests/challenger-m1-1.test.mjs after twin resync
+- **Vulnerabilities found**:
+  1. `isB2bReservation` false-positive leak: Evaluates `r.companyName` without checking if `r.channel` is a non-B2B channel (`booking`, `airbnb`, `whatsapp`, etc.), leaking corporate OTA reservations into stayover housekeeping.
+  2. `getRequestsForDate` ghost stayovers: Filters only `status !== "cancelada" && status !== "cancelado" && status !== "no_show"`, ignoring `status === "completed"`, `status === "checked_out"`, `r.checkoutDone`, or `r.earlyCheckout`.
+- **Untested angles**: Full frontend UI interaction (delegated to M3/M4 workers/reviewers).
 
 ## Loaded Skills
-- None explicitly assigned.
+- None loaded externally.
 
 ## Key Decisions Made
-- Veredito emitido: REQUEST_CHANGES.
-- Aprovada a lógica de poda e schemas de RH, mas bloqueado o marco M1 até a restauração de `scripts/microsoft-graph-service.mjs` e atualização do verificador de paridade.
+- Created and executed empirical test harness `tests/challenger-m1-1.test.mjs` running an isolated server instance with ephemeral DB in `os.tmpdir()` and zero side effects on production `database.json`.
+- Verdict: **REQUEST_CHANGES** due to Bug 1 (companyName OTA leak) and Bug 2 (ghost stayovers for completed reservations).
 
 ## Artifact Index
-- `DISPATCH.md` — Log de comandos recebidos do orquestrador
-- `progress.md` — Status de execução e heartbeat
-- `handoff.md` — Relatório formal de 5 componentes com evidências empíricas e veredito REQUEST_CHANGES
+- `DISPATCH.md` — Received dispatch from orchestrator
+- `BRIEFING.md` — Situational awareness
+- `progress.md` — Heartbeat and step tracking
+- `handoff.md` — Final challenge report with 5 mandatory components

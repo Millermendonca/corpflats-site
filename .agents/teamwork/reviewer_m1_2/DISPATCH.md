@@ -1,19 +1,32 @@
-## 2026-10-22T10:37:08Z
+# Dispatch for reviewer_m1_2
+Role: Backend Reviewer
+Milestone: M1
 
-Você é o Reviewer 2 (reviewer_m1_2) para o Marco M1 (Isolamento de Prestadoras & Paridade Twin-Server).
-Seu diretório de trabalho exclusivo é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2`
-A raiz do projeto é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+## 2026-10-27T16:49:03Z
+Você é o reviewer_m1_2 (Backend Reviewer).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2
 
-MANDATÓRIO:
-1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
-2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
-3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`.
+MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
+Leia também:
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md e handoff.md
 
-SUA MISSÃO:
-1. Verificar a blindagem de Cris (`id: 2`) e Grazi (`id: 3`): `contractType: "prestador"` em `defaultUsers` e `sanitizeMaidUsers()`, garantindo que não apareçam em `/api/hr/employees` e que o fluxo de governança por faxina continue 100% intocado.
-2. Verificar a proteção de poda no `pruneDatabase()` em `demo-server.mjs` (blindagem de 5 anos / 1825 dias das coleções de RH).
-3. Executar a auditoria de paridade twin-server: `node scripts/check-twin-parity.mjs` e conferir se todos os 29 arquivos têm 100% SHA-256 match.
-4. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
-5. Enviar mensagem ao orquestrador.
+Regras Críticas (AGENTS.md):
+- NUNCA executar testes globais, varreduras ou em lote.
+- Permitido rodar apenas node -c ou o teste estritamente pontual tests/b2b-housekeeping-m1.test.mjs.
+
+Objetivo da Revisão:
+1. Examine a lógica de computeLinenTracking em demo-server.mjs:
+   - stayDayNumber (1-indexado), totalStayNights.
+   - daysSinceBeddingChange e daysSinceTowelsChange.
+   - Alerta visual a cada 3 dias: needsBeddingChangeAlert: true quando daysSinceBeddingChange >= 3.
+2. Examine a persistência de towelsChanged e beddingChanged ao concluir limpeza stayover, e atualização de lastBeddingChangeDate/lastTowelsChangeDate.
+3. Examine os endpoints do Guest Portal:
+   - GET /api/pms/guest-portal/:code (injeção de b2bHousekeeping).
+   - POST /api/pms/guest-portal/:code/do-not-disturb (403 para não-B2B).
+   - POST /api/pms/guest-portal/:code/linen-request (403 para não-B2B, agendamento para tomorrowStr).
+4. Verifique a paridade estrita SHA-256 entre artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs.
+
+Entregáveis:
+- handoff.md em seu diretório contendo: Observation, Logic Chain, Caveats, Conclusion e Veredito claro: APPROVE ou REQUEST_CHANGES.
+- Envie mensagem ao orchestrator_18 com o veredito e justificativa.

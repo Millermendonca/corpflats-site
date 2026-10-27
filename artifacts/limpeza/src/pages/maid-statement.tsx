@@ -47,6 +47,7 @@ interface StatementEntry {
   id: string
   userId: number
   cleaningRequestId?: string | null
+  cleaningType?: "checkout" | "stayover" | string
   paymentId?: string | null
   entryType: "credit" | "debit"
   amount: number
@@ -692,6 +693,11 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       <span className="text-xs font-black text-foreground truncate">
                         {entry.description}
                       </span>
+                      {isCredit && (entry.cleaningType === "stayover" || entry.description?.toLowerCase().includes("stayover")) && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-700 dark:text-indigo-400">
+                          Stayover B2B
+                        </span>
+                      )}
                       {isAdvance && (
                         <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400">
                           Vale
@@ -792,7 +798,9 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                                 {isCredit ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownLeft className="w-3.5 h-3.5" />}
                               </div>
                               <span className={`font-bold ${isCredit ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}>
-                                {isCredit ? "Crédito Diária" : isAdvance ? "Vale Adiantado" : "Pagamento PIX"}
+                                {isCredit 
+                                  ? ((entry.cleaningType === "stayover" || entry.description?.toLowerCase().includes("stayover")) ? "Crédito Stayover" : "Crédito Diária")
+                                  : isAdvance ? "Vale Adiantado" : "Pagamento PIX"}
                               </span>
                             </div>
                           </td>
@@ -805,7 +813,14 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                           </td>
 
                           <td className="p-3.5 font-medium text-foreground">
-                            {entry.description}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{entry.description}</span>
+                              {(entry.cleaningType === "stayover" || entry.description?.toLowerCase().includes("stayover")) && (
+                                <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/30">
+                                  Stayover B2B
+                                </Badge>
+                              )}
+                            </div>
                           </td>
 
                           <td className="p-3.5 text-center">
@@ -884,7 +899,9 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                   </DialogTitle>
                   <DialogDescription className="text-xs text-center">
                     {selectedEntry.entryType === "credit" 
-                      ? "Crédito por Conclusão de Faxina" 
+                      ? ((selectedEntry.cleaningType === "stayover" || selectedEntry.description?.toLowerCase().includes("stayover"))
+                          ? "Crédito por Governança Diária (Stayover B2B)"
+                          : "Crédito por Conclusão de Faxina (Check-out)")
                       : selectedEntry.payment?.type === "advance" 
                         ? "Vale / Adiantamento Financeiro" 
                         : "Pagamento de Diárias via PIX"}
@@ -914,6 +931,15 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       <span className="text-muted-foreground">Descrição:</span>
                       <strong className="text-foreground text-right">{selectedEntry.description}</strong>
                     </div>
+
+                    {(selectedEntry.cleaningType === "stayover" || selectedEntry.description?.toLowerCase().includes("stayover")) && (
+                      <div className="flex justify-between items-center py-1 border-b border-border/50">
+                        <span className="text-muted-foreground">Tipo de Limpeza:</span>
+                        <Badge variant="outline" className="bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border-indigo-500/30 text-[10px] font-bold">
+                          Stayover B2B (Diária)
+                        </Badge>
+                      </div>
+                    )}
 
                     <div className="flex justify-between items-center py-1 border-b border-border/50">
                       <span className="text-muted-foreground">Colaboradora:</span>

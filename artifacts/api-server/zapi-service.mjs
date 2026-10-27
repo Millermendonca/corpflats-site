@@ -277,14 +277,22 @@ export function extractPixPayloadAmount(pixPayload) {
   return null;
 }
 
-export function isPixPayloadStaleForAmount(reservation, expectedAmount) {
+export function isPixPayloadStaleForAmount(reservationOrPayload, expectedAmount) {
   const amt = Number(expectedAmount) || 0;
   if (amt <= 0) return false;
-  if (!reservation || !reservation.pixCopiaECola) return true;
-  if (reservation.pixChargedAmount !== undefined && reservation.pixChargedAmount !== null) {
-    if (Math.abs(Number(reservation.pixChargedAmount) - amt) > 0.01) return true;
+  if (!reservationOrPayload) return true;
+  const pixStr = typeof reservationOrPayload === "string"
+    ? reservationOrPayload
+    : reservationOrPayload.pixCopiaECola;
+  if (!pixStr) return true;
+  if (
+    typeof reservationOrPayload === "object" &&
+    reservationOrPayload.pixChargedAmount !== undefined &&
+    reservationOrPayload.pixChargedAmount !== null
+  ) {
+    if (Math.abs(Number(reservationOrPayload.pixChargedAmount) - amt) > 0.01) return true;
   }
-  const embeddedAmount = extractPixPayloadAmount(reservation.pixCopiaECola);
+  const embeddedAmount = extractPixPayloadAmount(pixStr);
   if (embeddedAmount !== null && Math.abs(embeddedAmount - amt) > 0.01) {
     return true;
   }
@@ -3462,9 +3470,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{valor_total}}": hideFinancialForGuest ? "" : formatCurrency(totalAmount),
     "{{valor_total_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardTotalAmount),
     "{{valor_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
+    "{{valor_pix}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount > 0 ? pendingAmount : totalAmount),
     "{{valor_com_desconto_pix}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount > 0 ? pendingAmount : totalAmount),
     "{{valor_pago}}": hideFinancialForGuest ? "" : formatCurrency(paidAmount),
     "{{quanto_falta}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
+    "{{quanto_falta_pix}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{quanto_falta_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
     "{{valor_pendente_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
     "{{saldo_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
@@ -3520,6 +3530,12 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   };
 
   let rendered = text;
+  if (reservation._isPreReservationUpdate) {
+    rendered = rendered.replace(
+      /Recebemos o pedido de \*Pré-Reserva\*/gi,
+      "Atualizamos os dados da sua *Pré-Reserva*"
+    );
+  }
   if (hideFinancialForGuest) {
     rendered = rendered
       .replace(/Confirmamos o recebimento do seu pagamento[^\n]*A sua reserva está \*100% garantida\*! 🎉/gi, "A sua reserva está *100% confirmada e garantida*! 🎉")
@@ -3528,7 +3544,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       .replace(/💰\s*\*Saldo Pendente da Alteração:\*[\s\S]*?(?=\n\n|$)/gi, "")
       .replace(/💳\s*\*Dados para Pagamento[\s\S]*?(?=\n\n|$)/gi, "")
       .replace(/📋\s*\*PIX Copia e Cola[\s\S]*?(?=\n\n|$)/gi, "")
-      .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor Total[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*|Situação do Pagamento|Chave PIX|Favorecido|Forma de Pagamento)\*?:[^\n]*\n?/gim, "");
+      .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor Total[^\n:]*|Valor no Cartão[^\n:]*|Valor com Desconto[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*|Situação do Pagamento|Chave PIX|Favorecido|Forma de Pagamento)\*?:[^\n]*\n?/gim, "");
   }
 
   for (const [tag, val] of Object.entries(tagsMap)) {

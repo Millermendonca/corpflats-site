@@ -1,65 +1,56 @@
-# BRIEFING — 2026-10-22T11:36:00Z
+# BRIEFING — 2026-10-27T17:59:30Z
 
 ## Mission
-Implementar o Marco M2: Ponto Eletrônico Mobile (Portaria 671 MTE REP-P) e Motor de Conformidade Trabalhista em 3 Níveis (alert, admin_override, hard_block), com espelhamento duplo perfeito (artifacts/api-server/hr/ <-> scripts/hr/) e 100% de testes passando.
+Implement Maid Rates & Financial Statements (R2) support in maid-automation-service.mjs and demo-server.mjs with stayover cleaning rates, period finances separation, rate endpoints, and analytics reporting, ensuring 100% SHA-256 twin-server parity and passing dedicated test tests/b2b-housekeeping-m2.test.mjs.
 
 ## 🔒 My Identity
 - Archetype: worker
 - Roles: implementer, qa
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
-- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Milestone: M2 (Ponto Eletrônico & Motor de Conformidade)
+- Original parent: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Milestone: M2 - Maid Rates & Financial Statements
 
 ## 🔒 Key Constraints
-- Portaria 671 MTE / REP-P: ciclo de 6 batidas, NSR estritamente sequencial, comprovante digital assinado/formatado, geofence Haversine com Soho Residence (-21.7584, -41.3262), validação e hash SHA-256 de selfie, device whitelist.
-- Blindagem total de Cris e Grazi (IDs 2 e 3 ou isPrestadora=true): NUNCA bater ponto, NUNCA ter espelho de ponto (retornar 403 Forbidden).
-- Motor de Conformidade em 3 Níveis com 10 regras (alert, admin_override com validação de senha admin e justificativa substantiva auditada em hrComplianceAudits, hard_block HTTP 400).
-- Estrutura gêmea (Twin Parity): `artifacts/api-server/hr/*` e `scripts/hr/*` devem ter SHA-256 idêntico.
-- NUNCA executar suítes globais de testes. Executar estritamente `node --test tests/hr-m2-timekeeping-compliance.test.mjs` e `node scripts/check-twin-parity.mjs`.
+- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs).
+- Apenas o teste estritamente pontual do que foi alterado: tests/b2b-housekeeping-m2.test.mjs.
+- Paridade Twin-Server: Manter 100% SHA-256 idêntico entre scripts/demo-server.mjs e artifacts/api-server/demo-server.mjs, e entre scripts/maid-automation-service.mjs e artifacts/api-server/maid-automation-service.mjs.
+- Atestar no handoff EXCLUSIVAMENTE resultados empiricamente obtidos.
+- Propriedade Exclusiva: artifacts/api-server/maid-automation-service.mjs, scripts/maid-automation-service.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, tests/b2b-housekeeping-m2.test.mjs.
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T11:36:00Z
+- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Updated: 2026-10-27T17:43:49Z
 
 ## Task Summary
-- **What to build**:
-  1. `artifacts/api-server/hr/timekeeping.mjs` e `scripts/hr/timekeeping.mjs` (concluído)
-  2. `artifacts/api-server/hr/compliance.mjs` e `scripts/hr/compliance.mjs` (concluído)
-  3. Atualizar `artifacts/api-server/hr/router.mjs` e `scripts/hr/router.mjs` (concluído)
-  4. Atualizar `artifacts/api-server/hr/index.mjs` e `scripts/hr/index.mjs` (concluído)
-  5. `tests/hr-m2-timekeeping-compliance.test.mjs` (concluído)
-- **Success criteria**:
-  - 8/8 testes passando em `tests/hr-m2-timekeeping-compliance.test.mjs` (atingido: 8/8 PASS)
-  - 100% de paridade SHA-256 verificado por `scripts/check-twin-parity.mjs` (atingido: 32/32 PASS)
-- **Interface contracts**: `.agents/teamwork/orchestrator_17/PROJECT.md`
-- **Code layout**: `artifacts/api-server/hr/` e `scripts/hr/`
-
-## Key Decisions Made
-- Seguir fielmente os designs dos 3 Explorers de M2.
-- Registrar em `db.hrComplianceAudits` exclusivamente eventos de override aprovados per contrato do M2.
-- Inicializar `lastNsr: 1000` para que o primeiro registro sequencial receba `1001`.
-- Suportar retorno de `dailySheets` e `sheets` em `getDailySheet` para compatibilidade irrestrita.
-
-## Artifact Index
-- `.agents/teamwork/worker_m2/DISPATCH.md` — Despacho inicial
-- `.agents/teamwork/worker_m2/progress.md` — Heartbeat e progresso
-- `.agents/teamwork/worker_m2/handoff.md` — Relatório final
+- **What to build**: Stayover rate handling in syncMaidCredits, September normalization loop shield for stayover, getMaidPeriodFinances separation (checkout vs stayover), cleaningRates endpoint in demo-server, analytics report separation, twin-server file parity, and dedicated unit/integration test.
+- **Success criteria**: All requirements in DISPATCH.md and PROJECT.md met, SHA-256 hashes matching across mirrors, tests/b2b-housekeeping-m2.test.mjs passing 11/11.
+- **Interface contracts**: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md
+- **Code layout**: artifacts/api-server/ & scripts/
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/hr/timekeeping.mjs`: Implementação completa do Ponto Eletrônico Mobile
-  - `scripts/hr/timekeeping.mjs`: Espelho twin idêntico de timekeeping.mjs
-  - `artifacts/api-server/hr/compliance.mjs`: Implementação do Motor de Conformidade em 3 Níveis e 10 Regras
-  - `scripts/hr/compliance.mjs`: Espelho twin idêntico de compliance.mjs
-  - `artifacts/api-server/hr/router.mjs`: Conexão dos 9 novos endpoints REST
-  - `scripts/hr/router.mjs`: Espelho twin idêntico de router.mjs
-  - `artifacts/api-server/hr/index.mjs`: Exportação das novas funções e catálogo das 10 regras
-  - `scripts/hr/index.mjs`: Espelho twin idêntico de index.mjs
-  - `tests/hr-m2-timekeeping-compliance.test.mjs`: Suíte de testes pontual dedicada com 8 testes
-- **Build status**: 8/8 PASS em `node --test tests/hr-m2-timekeeping-compliance.test.mjs` e 100% PASS (32/32) em `node scripts/check-twin-parity.mjs`
-- **Pending issues**: Nenhum
+  - `artifacts/api-server/maid-automation-service.mjs`: stayover rate support, normalization shield, getMaidPeriodFinances & getMaidStats segregation.
+  - `artifacts/api-server/demo-server.mjs`: db.cleaningRates init, GET/POST /api/cleaning/rates, /api/analytics/report discrimination, auth token exports.
+  - `scripts/maid-automation-service.mjs`: 100% twin-server mirror.
+  - `scripts/demo-server.mjs`: 100% twin-server mirror.
+  - `tests/b2b-housekeeping-m2.test.mjs`: 11-test suite verifying R2 requirements and twin parity.
+- **Build status**: node --test tests/b2b-housekeeping-m2.test.mjs passed 11/11 tests.
+- **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: 8 pass, 0 fail
-- **Lint status**: OK
-- **Tests added/modified**: `tests/hr-m2-timekeeping-compliance.test.mjs`
+- **Build/test result**: 11 passed, 0 failed, duration ~2.78s
+- **Lint status**: clean
+- **Tests added/modified**: tests/b2b-housekeeping-m2.test.mjs (11 assertions)
+
+## Loaded Skills
+- None requested.
+
+## Key Decisions Made
+- Implemented robust identification of stayover entries using `cleaningType`, `description`, and linked `cleaningRequestId` to ensure complete protection during September normalization.
+- Retained `cleaningsCount` and `grossAmount` while augmenting return objects with `checkoutCount`, `stayoverCount`, `checkoutGross`, `stayoverGross`, `userCheckoutRate`, and `userStayoverRate` for backwards compatibility.
+
+## Artifact Index
+- DISPATCH.md — Assignment instructions
+- progress.md — Liveness heartbeat and step tracking
+- changes.md — Detailed change log
+- handoff.md — 5-component handoff report

@@ -1,59 +1,53 @@
-# BRIEFING — 2026-10-21T18:42:30Z
+# BRIEFING — 2026-10-27T16:15:00Z
 
 ## Mission
-Mapear a arquitetura de backend, persistência, modelo de dados, fluxos de pagamento (PIX Inter / Cartão Mercado Pago), notificações (WhatsApp Z-API / E-mail SMTP) e uploads para o ecossistema de Frigobar (CorpFlats + Anserve).
+Investigar e mapear a arquitetura de backend do fluxo de governança (housekeeping), checkouts, cards de limpeza diária, estadias ativas (stayover), identificação B2B, linenTracking e arquivos gêmeos.
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_explorer
-- Roles: explorer, investigator, analyst
+- Archetype: explorer
+- Roles: Backend & Housekeeping Architecture Explorer
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1
-- Original parent: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Milestone: Milestone 1 - Reconhecimento & Arquitetura de Backend/Persistência/Pagamentos Frigobar
+- Original parent: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Milestone: Housekeeping Stayover & B2B Architecture Discovery
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
-- Diretrizes do projeto em AGENTS.md: sem testes em lote, sem execução desnecessária, sem envio real em testes
-- Nunca modificar arquivos de código-fonte (.mjs, etc.) diretamente nesta fase
+- Strictly NO global or batch tests
+- Respect twin files synchronization rules (scripts/demo-server.mjs vs artifacts/api-server/demo-server.mjs)
+- Write only to .agents/teamwork/explorer_survey_1/
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T18:42:30Z
+- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Updated: 2026-10-27T16:15:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/demo-server.mjs` (linhas 1-1250, 6000-6300, 8100-8700, 21400-21800, 40700-42150)
-  - `scripts/demo-server.mjs` (verificada paridade SHA-256)
-  - `artifacts/api-server/inter-pix-service.mjs` (cash-out governança)
-  - `artifacts/api-server/storage-service.mjs` (upload local e Cloudflare R2)
-  - `artifacts/api-server/zapi-service.mjs` (sendZapiMessage, sendZapiDocument, governança de canais, appendMessageToConversation)
-  - `artifacts/api-server/mail-service.mjs` (sendEmailAsync, nodemailer attachments)
-  - `artifacts/api-server/whatsapp-ai-service.mjs` (querySystemData, buildGuestContext, Sofia)
-  - `artifacts/limpeza/src/lib/permissions.ts` (RBAC, perfis, canonical modules)
-  - `tests/auth-roles-permissions.test.mjs` e `tests/nfse-crm-whatsapp-flow.test.mjs` (padrões de testes pontuais isolados)
+  - `artifacts/api-server/demo-server.mjs` (linhas 13150-13250, 14596-15092, 15109-15374, 15743-16120, 18966-19130, 24450-24650, 50540-50670)
+  - `scripts/demo-server.mjs` (twin)
+  - `artifacts/api-server/maid-automation-service.mjs` (linhas 1-430)
+  - `scripts/maid-automation-service.mjs` (twin)
+  - `data/database.json` (reservas B2B e canais)
+  - `artifacts/limpeza/src/components/flat-card.tsx`
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`
+  - `artifacts/limpeza/src/pages/reports.tsx`
+  - `artifacts/limpeza/src/pages/hr-dashboard.tsx`
 - **Key findings**:
-  - `db` em memória hidratado via PostgreSQL (`system_store` chave `'db_state'`) e gravado com debounce (`localSaveTimeout` 300ms, `pgSaveTimeout` 800ms) por `saveDatabase(reason)`.
-  - `pruneDatabase()` em `demo-server.mjs` (linha 8395) descarta arrays antigos para evitar OOM no Render. `minibarOrders` e `minibarInspections` precisam de limites saudáveis (ex.: 2500) para não perder histórico financeiro e fiscal.
-  - Motores de pagamento existentes:
-    - PIX: `createInterPixCob({ amount, description, debtorName, debtorDocument, reservationCode })` gera txid e Copia e Cola via mTLS Inter API (`/pix/v2/cob/${txid}`). Polling via `getCachedInterExtratoCompleto()`.
-    - Cartão: `createMercadoPagoPreference({ reservationCode, amount, guestName, guestEmail, ... })` cria preferência via API do Mercado Pago e retorna `initPoint`. Webhook em `/api/pms/mercadopago/webhook` e polling via `checkMercadoPagoPaymentByRef(ref)`.
-  - Envio de NF anexada:
-    - `sendZapiDocument` já converte arquivos locais de `/api/storage/files/...` em Base64 e despacha via WhatsApp.
-    - `sendEmailAsync` aceita `attachments: [{ filename, path }]` para envio via SMTP Zoho.
-    - `/api/pms/guest-portal/:code` já existe e pode expor `minibarOrders` com o link direto da NF anexada.
-  - Alerta da Sofia sobre divergência:
-    - `sendZapiMessage` com `appendMessageToConversation` unifica a mensagem no WhatsApp Web da equipe.
-    - `querySystemData` e `buildGuestContext` em `whatsapp-ai-service.mjs` aceitam facilmente o módulo `minibar` para Sofia orientar hóspedes e enviar o link `/minha-reserva/:code/frigobar`.
-  - Armadilhas mapeadas: Paridade SHA-256 obrigatória entre arquivos gêmeos, nunca somar frigobar à fatura da hospedagem, controle de cortesia 1x por estadia, segurança do QR Code via validação dos 4 dígitos do celular.
-- **Unexplored areas**: Nenhuma no escopo desta missão; pronta para elaboração do relatório estruturado `analysis.md` e `handoff.md`.
+  - `getRequestsForDate` localiza-se na linha 14596 e atualmente apenas descarta checkouts em stayovers sem gerar cards diários.
+  - Rota `GET /api/reservations/checkouts` (linha 15109) mapeia `requestsForDate` em cards com metadados de hóspede e quarto.
+  - Reservas B2B são identificadas por `channel === 'b2b'`, `channel.includes('b2b')`, `b2bReservationNumber`, `agencyId` ou `b2bLocatorRloc`.
+  - `PATCH /api/cleaning/assignments/:requestId/status` força `checkoutDone = true` e desocupa o quarto ao mudar para `cleaning_now` ou `clean`; exige bypass explícito para `isStayover`.
+  - Lógica de `linenTracking` desenhada com histórico de trocas de cama/banho e alerta visual a cada 3 dias (`daysSinceBeddingChange >= 3`).
+  - Tarifação de camareiras (`syncMaidCredits` e `getMaidPeriodFinances`) exige suporte a `userStayoverRates` (R$ 15,00) discriminando no extrato.
+  - Endpoints do portal do hóspede (`do-not-disturb` e `linen-request` para `tomorrowStr`) devem validar e restringir para B2B retornando 403 para outros canais.
+  - Hashes SHA-256 dos arquivos gêmeos conferidos e 100% idênticos.
+- **Unexplored areas**: Nenhuma. Todos os 6 itens foram completamente investigados.
 
 ## Key Decisions Made
-- Estruturar a modelagem de dados de forma nativa e aderente às demais entidades de `db` (`minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections`, `minibarSettings`).
-- Mapear a reutilização direta e isolada dos motores de PIX Inter e Cartão Mercado Pago sem acoplamento à reserva de hospedagem.
-- Documentar em detalhes os contratos de rotas REST, payloads de request/response e tratamento de anexos.
+- Estruturação completa em `analysis.md` e `handoff.md` pronta para consumo imediato pelo orquestrador e workers de implementação.
 
 ## Artifact Index
-- DISPATCH.md — Registro do chamado inicial
+- DISPATCH.md — Log das diretivas de dispatch recebidas
+- BRIEFING.md — Persistência de contexto e identidade
 - progress.md — Heartbeat de execução
-- BRIEFING.md — Memória de trabalho do agente
-- analysis.md — [Em elaboração] Relatório completo e estruturado de backend, persistência e pagamentos
-- handoff.md — [Em elaboração] Sumário executivo e protocolo de handoff de 5 seções
+- analysis.md — Relatório técnico aprofundado com linhas exatas e algoritmos
+- handoff.md — Relatório formal de handoff em 5 seções

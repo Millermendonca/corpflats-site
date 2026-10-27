@@ -1,98 +1,147 @@
-# Handoff Report — Explorer Survey 1 (Backend, Persistência e Pagamentos do Frigobar)
+# Handoff Report: Backend & Housekeeping Architecture Explorer
 
-**Data**: 2026-10-21  
-**Agente**: `explorer_survey_1` (teamwork_preview_explorer)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Tipo**: Hard Handoff (Investigação completa)
+**Agente Emissor:** `explorer_survey_1` (Backend & Housekeeping Architecture Explorer)  
+**Agente Receptor:** `orchestrator_18` / Workers de Implementação  
+**Data:** 2026-10-27T16:15:00Z  
+**Status do Handoff:** Hard Handoff (Exploração concluída com sucesso)
 
 ---
 
 ## 1. Observation
 
-1. **Persistência de Estado e Carregamento**:
-   - `artifacts/api-server/demo-server.mjs`:
-     - Linhas 1147–1218: Inicialização do objeto singleton `let db = { ... }`.
-     - Linhas 6013–6040: `loadDatabase()` lê `data/database.json` via `fs.promises.readFile(DB_FILE, "utf-8")` e faz `Object.assign(db, loaded)`.
-     - Linhas 6041–6135: Criação das tabelas PostgreSQL (`system_store`, `system_store_backups`, `media_blobs`, `reservation_communications`, `system_audit_logs`) e leitura de `SELECT value FROM system_store WHERE key = 'db_state'`.
-     - Linhas 8395–8456: Função `pruneDatabase()` que impõe limites máximos para coleções voláteis a fim de evitar OOM no contêiner de 2GB do Render.
-     - Linhas 8655–8714: `saveDatabase(reason)` executa invalidação de caches (`invalidateGuestCache()`, `invalidateFlatsCache()`), chama `pruneDatabase()` e grava em disco local com debounce de 300ms e no PostgreSQL com debounce de 800ms.
-2. **Motores de Pagamento Existentes**:
-   - **PIX Banco Inter**:
-     - `artifacts/api-server/demo-server.mjs`: Linha 40764 `getInterAccessToken()` (autenticação mTLS via certificados `certs/inter.crt` e `certs/inter.key` e token OAuth2 com escopo `cob.read cob.write pix.read pix.write extrato.read`).
-     - Linha 40816: `createInterPixCob({ amount, description, debtorName, debtorDocument, reservationCode })` executa chamada PUT em `https://cdpj.partners.bancointer.com.br/pix/v2/cob/${txid}`, retornando `{ txid, pixCopiaECola, ... }`.
-     - Linhas 41109–41259: Consulta ativa no extrato bancário completo `/banking/v2/extrato/completo` (`getCachedInterExtratoCompleto()`), realizando conciliação por `txId` ou por `valor + documento/nome do pagador`.
-     - Linha 40927: `POST /api/pms/inter/webhook` recebe notificações instantâneas.
-   - **Cartão de Crédito Mercado Pago**:
-     - `artifacts/api-server/demo-server.mjs`: Linha 41949 `createMercadoPagoPreference({ reservationCode, amount, guestName, guestEmail, nights, flatNumber })` chama `https://api.mercadopago.com/checkout/preferences` e retorna `{ id, initPoint, sandboxInitPoint }`.
-     - Linha 41073: `checkMercadoPagoPaymentByRef(externalRef)` consulta `/v1/payments/search?external_reference=${externalRef}`.
-     - Linha 42072: `POST /api/pms/mercadopago/webhook` recebe notificações de pagamentos aprovados.
-3. **Serviços de Mensageria e Envio de Anexos**:
-   - `artifacts/api-server/zapi-service.mjs`:
-     - Linha 3436: `sendZapiDocument(config, { phone, document, fileName, caption, ... })`. As linhas 3515–3525 demonstram que se `document` for um caminho em `/api/storage/files/...`, ele lê fisicamente de `artifacts/api-server/uploads`, converte em Base64 e dispara via API Z-API `/send-document/${extension}`.
-     - Linha 5582: `appendMessageToConversation(db, { phone, text, type, mediaUrl, fileName, caption, ... })` grava a mensagem diretamente no chat unificado do CRM/Recepção.
-   - `artifacts/api-server/mail-service.mjs`:
-     - Linha 1255: `sendEmailAsync({ db, saveDatabase, reservationId, recipient, subject, bodyHtml, attachments })` aceita `attachments: [{ filename, path }]` e envia via Nodemailer / Zoho SMTP, gravando auditoria em `reservation_communications`.
-   - `artifacts/api-server/storage-service.mjs`:
-     - Linha 96: `uploadImageToStorage(base64Data, filenamePrefix, db, folder)` suporta upload direto com SigV4 no Cloudflare R2 e fallback permanente em `/api/storage/files/...` ou data URLs.
-   - `artifacts/api-server/whatsapp-ai-service.mjs`:
-     - Linha 909: `querySystemData(db, { module, query, filters, ... })` possui arquitetura modular em switch-case.
-     - Linha 601: `buildGuestContext(db, phone, now)` centraliza o contexto da conversa da IA Sofia.
-4. **Controle de Acesso e Módulos Canônicos**:
-   - `artifacts/limpeza/src/lib/permissions.ts` (linhas 108–160) e `artifacts/api-server/demo-server.mjs` (linhas 755–850) sincronizam `DEV_ONLY_MODULES`, `ALL_CANONICAL_MODULES` e `getDefaultModulesForRole(role)`.
-5. **Paridade Twin-Server e Testes**:
-   - PowerShell verificou paridade SHA-256 idêntica entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
-   - `tests/nfse-crm-whatsapp-flow.test.mjs` e `tests/auth-roles-permissions.test.mjs` comprovam o padrão de teste pontual obrigatório: porta dinâmica (`getAvailablePort()`), `NODE_ENV = "test"`, `DATABASE_URL` deletada, cópia de banco em `os.tmpdir()` e asserção de que `data/database.json` original não foi modificado.
+### 1.1 Paridade Criptográfica dos Arquivos Gêmeos (Twin Parity)
+- **Comando executado:**
+  `powershell -Command "Get-FileHash -Algorithm SHA256 artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, artifacts/api-server/maid-automation-service.mjs, scripts/maid-automation-service.mjs | Format-Table -AutoSize"`
+- **Resultado verbatim:**
+  - `artifacts/api-server/demo-server.mjs`: `E3E697950560C692FDFF9D2E32C0269376E905A62DD4BEC388A238022859AFA8`
+  - `scripts/demo-server.mjs`: `E3E697950560C692FDFF9D2E32C0269376E905A62DD4BEC388A238022859AFA8`
+  - `artifacts/api-server/maid-automation-service.mjs`: `813410E808A8B6BDC04C8422A8E39940E3408523996F13B98D1E8756442A35CA`
+  - `scripts/maid-automation-service.mjs`: `813410E808A8B6BDC04C8422A8E39940E3408523996F13B98D1E8756442A35CA`
+- **Conclusão direta:** Paridade 100% byte a byte confirmada.
+
+### 1.2 Localização de `getRequestsForDate` e Geração de Cards
+- **Arquivo:** `artifacts/api-server/demo-server.mjs` (espelhado em `scripts/demo-server.mjs`)
+- **Linha 14596:** `function getRequestsForDate(dateStr, isNested = false) {`
+- **Linha 14624:**
+  ```javascript
+  const stayoverFlatNumbers = new Set(
+    (db.reservations || [])
+      .filter(r => r.status !== "cancelada" && r.checkinDate < dateStr && r.checkoutDate > dateStr)
+      .map(r => String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")))
+  );
+  ```
+- **Linha 14644:** `if (stayoverFlatNumbers.has(fNumber)) continue;`
+- **Linha 14973:** `if (stayoverFlatNumbers.has(fNumber) && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation) continue;`
+- **Linha 15008:** Filtro de carry-over descartando stayovers legados.
+- **Linha 15092:** Término da função (`return requestsForDate;`).
+- *Fato Verbatim:* Atualmente `stayoverFlatNumbers` é utilizado estritamente para suprimir a criação de cards de checkout para quartos com hóspede contínuo; NENHUM card de stayover é gerado no sistema.
+
+### 1.3 Rota `GET /api/reservations/checkouts`
+- **Linha 15109:** `app.get("/api/reservations/checkouts", (req, res) => {`
+- **Linhas 15113–15116:**
+  ```javascript
+  const dateStr = req.query.date || getTodayStr();
+  const requestsForDate = getRequestsForDate(dateStr);
+  const activeSurveys = db.surveys.filter(s => s.isActive);
+  const result = requestsForDate.map(req_ => {
+  ```
+- **Linhas 15288–15360:** Montagem do objeto retornado. Cada card expõe propriedades no nível superior (`flatId`, `flatNumber`, `leavingGuest`, `arrivingGuest`, `isOccupied`, `isVacant`, `setupInfo`, etc.) e um subobjeto `cleaningRequest: { id, source, status, ... }`.
+
+### 1.4 Identificação de Reservas B2B no Banco de Dados
+- **Inspeção de `data/database.json` via Node:**
+  - Encontradas 5 reservas B2B ativas no banco de produção/desenvolvimento.
+  - Exemplo real (ID 405): `code: "B2B-25055349"`, `b2bReservationNumber: "25055349"`, `channel: "b2b"`, `agencyId: 1`, `companyId: 5`, `checkinDate: "2026-10-26"`, `checkoutDate: "2026-10-28"`.
+- **Padrões no código:**
+  - Linha 21225: `chanLower === "b2b" || chanLower.includes("b2b") || Boolean(b2bReservationNumber)`
+  - Linha 24468: `chanLower === "b2b" || chanLower.includes("b2b") || Boolean(r.b2bReservationNumber || r.agencyId || r.agencyName)`
+  - Linha 33415: `String(r.channel || "").toLowerCase() === "b2b" || r.b2bReservationNumber || r.agencyId || r.agencyName`
+  - Frontend (`guest-portal.tsx`, linha 613): `channelLower === "b2b" || channelLower.includes("b2b") || reservation?.agencyId || reservation?.b2bReservationNumber || reservation?.b2bLocatorRloc`
+
+### 1.5 Rota `PATCH /api/cleaning/assignments/:requestId/status` e Bloqueio de Checkout
+- **Linha 15743:** `app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {`
+- **Linhas 15767–15820:** Bloco `if (typeof isVacant === "boolean")` altera `relatedFlat.isOccupied = !isVacant` e, se `isVacant === true`, marca `checkoutRes.checkoutDone = true`, `checkoutRes.status = "completed"` e dispara `triggerCheckoutWhatsApp`.
+- **Linhas 15824–15832:** Trava de tempo mínimo de 10 minutos para camareiras se `status === "clean"`.
+- **Linhas 15836–15883:** Bloco automático: ao mudar para `cleaning_now`, `in_progress` ou `clean`, força `item.isVacant = true`, `relatedFlat.isOccupied = false`, `checkoutRes.checkoutDone = true` e cancela lembretes de estadia.
+- **Linha 16106:** Dispara `triggerRoomReadyWhatsApp` para novos hóspedes chegando hoje.
+
+### 1.6 Tarifação e Extrato das Camareiras
+- **Linhas 18966–19001 de `demo-server.mjs`:** `GET /api/cleaning/rates` e `POST /api/cleaning/rates` gerenciam `db.cleaningRates = { defaultRatePerRoom: 22.50, userRates: {} }`.
+- **Linhas 173–278 de `maid-automation-service.mjs`:** `syncMaidCredits(db, userId)` credita cada limpeza limpa em `db.maidStatementEntries` com taxa `userRate` (R$ 22,50). Linhas 217–220 forçam reescrita de todas as diárias de Setembro+ para `userRate`.
+- **Linhas 283–400 de `maid-automation-service.mjs`:** `getMaidPeriodFinances` calcula produção multiplicando `cleaningsCount * userRate`.
 
 ---
 
 ## 2. Logic Chain
 
-1. A partir das observações do ciclo de vida de `db` (Obs 1), constata-se que a inclusão das coleções `minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections` e `minibarSettings` em `db` garante a persistência nativa tanto em arquivo local (`data/database.json`) quanto no PostgreSQL (`system_store`), sem necessidade de criar tabelas relacionais adicionais.
-2. Como `pruneDatabase()` (Obs 1) remove itens de coleções que excedem seus limites, os dados de `minibarOrders` e `minibarInspections` devem receber blindagem explícita com retenção mínima de 730 dias para evitar a exclusão de comprovantes fiscais e transações financeiras.
-3. Observando os motores de pagamento existentes (Obs 2), verificou-se que `createInterPixCob` e `createMercadoPagoPreference` operam de forma agnóstica a parâmetros de hospedagem quando alimentados com descrições e identificadores próprios. Portanto, os novos endpoints `/api/minibar/orders` podem reutilizar diretamente essas funções, associando `reservationCode: "MB-" + order.id`, garantindo que o frigobar seja liquidado de forma 100% autônoma, sem alterar o valor da hospedagem (`r.totalAmount`).
-4. Observando os serviços de envio de documentos e e-mails (Obs 3), conclui-se que o upload de Nota Fiscal em `POST /api/minibar/orders/:id/invoice` pode gravar o arquivo em `uploads/invoices/` ou Cloudflare R2 e acionar imediatamente `sendZapiDocument` (com Base64 e sincronização via `appendMessageToConversation`) e `sendEmailAsync` (com `attachments`), além de expor o arquivo no retorno de `/api/pms/guest-portal/:code`.
-5. Da mesma forma, quando a repositora registrar divergência em `POST /api/minibar/inspections`, o backend pode criar a ordem pendente e chamar `sendZapiMessage` com o texto formatado da IA Sofia e link `/minha-reserva/:code/frigobar?ord=...`.
-6. Observando o RBAC e permissões (Obs 4), a criação dos perfis `anserve_repositora` e `anserve_gestor` com acesso a link rápido por PIN (`/frigobar-reposicao?pin=...`) resolve a exigência de operação mobile rápida sem atrito de login complexo.
-7. Observando a regra do AGENTS.md e os testes de referência (Obs 5), conclui-se que qualquer validação automatizada deve ser escrita em um arquivo pontual isolado (`tests/minibar-backend-flow.test.mjs`), sem varreduras globais e sem chamadas de rede externas reais.
+1. **Premissa de Isolamento do Canal B2B:**
+   Apenas reservas corporativas B2B possuem previsão de serviço diário de hotelaria/stayover contratado. Reservas de Booking, Airbnb, WhatsApp e Site Direto pagam apenas taxa de limpeza de saída (turnover).
+   *Inferência:* O gerador em `getRequestsForDate` deve filtrar ativamente `isB2BReservation(r)` e `r.checkinDate < dateStr && r.checkoutDate > dateStr`. Para os demais canais, nenhum card é gerado para datas intermediárias.
+
+2. **Garantia de Não Desocupação do Flat:**
+   Atualmente, o método `PATCH /api/cleaning/assignments/:requestId/status` possui uma regra de negócio agressiva nas linhas 15836–15883 que presume que qualquer limpeza realizada é um check-out, desocupando o flat (`relatedFlat.isOccupied = false`), marcando `checkoutDone = true` e alterando o status da reserva para `completed`.
+   *Inferência:* Para cards de `source: "stayover"` ou `cleaningType: "stayover"`, é imperativo criar um desvio explícito:
+   - `relatedFlat.isOccupied` permanece `true`;
+   - `item.isVacant` permanece `false`;
+   - `checkoutDone` jamais é marcado;
+   - Não disparar avisos de check-out nem mensagem de quarto pronto (`triggerRoomReadyWhatsApp`).
+   - Dispensar a trava de 10 minutos de higienização.
+
+3. **Cálculo Preciso de `linenTracking` e Alerta de 3 Dias:**
+   - O hóspede tem direito à contagem de dias de estadia (`stayDayNumber = Math.round((current - checkin)/86400000) + 1`).
+   - A cada 3 dias (`daysSinceBeddingChange >= 3`), o sistema deve acionar `needsBeddingChangeAlert: true` para que a camareira realize a troca completa da roupa de cama.
+   - O histórico de trocas é alimentado no checklist de conclusão da faxina (`towelsChanged`, `beddingChanged`), atualizando `lastBeddingChangeDate` e `lastTowelsChangeDate` da reserva.
+
+4. **Tarifação Diferenciada (Checkout R$ 22,50 vs. Stayover R$ 15,00):**
+   - Limpezas de Stayover possuem escopo reduzido (arrumação de cama, troca de toalhas e reposição de itens), sendo remuneradas a R$ 15,00 (configurável em `userStayoverRates`).
+   - `syncMaidCredits` e `getMaidPeriodFinances` devem reconhecer `cleaningType === "stayover"` para creditar R$ 15,00 com a descrição `"Limpeza Stayover (Diária) — Flat ${flatNum}"`, mantendo a limpeza de checkout a R$ 22,50 com `"Diária — Flat ${flatNum}"`.
+   - Na normalização de créditos, não sobrescrever stayover para o valor de checkout.
+
+5. **Portal do Hóspede B2B & Regra "Próximo Dia":**
+   - Hóspede corporativo pode ativar o "Não Perturbe" contínuo (`doNotDisturb: true`), o que bloqueia o card da camareira com aviso "🔕 Não Perturbe" e impede a conclusão da faxina.
+   - Solicitações de troca de enxoval no portal são sempre agendadas para o dia seguinte (`tomorrowStr = getOffsetDateStr(1)`), garantindo previsibilidade para a governança.
+   - Chamadas a esses endpoints por reservas não-B2B retornam `403 Forbidden`.
 
 ---
 
 ## 3. Caveats
 
-1. **Credenciais em Produção**: O ambiente local opera com certificados ou credenciais simuladas de Banco Inter e Mercado Pago caso as chaves reais de produção não estejam presentes nas variáveis de ambiente do desenvolvedor. A implementação deve manter os fallbacks simulados resilientes já existentes no código.
-2. **Cloudflare R2 vs Armazenamento Local**: Se as credenciais do Cloudflare R2 não estiverem ativas, o sistema grava automaticamente os uploads na pasta local `artifacts/api-server/uploads/invoices/` servida estaticamente em `/api/storage/files/invoices/`, o que é 100% funcional e compatível com `sendZapiDocument`.
-3. **Escopo de Leitura Estrita**: Por se tratar de uma missão de Explorer (investigação), nenhum arquivo de código-fonte foi alterado nesta etapa.
+- **Áreas não investigadas:** Os módulos de integração com WebBookingPro (ARI, XML/SOAP de canais) não foram escopo desta análise pois operam desacoplados da governança física do hotel.
+- **Premissas assumidas:**
+  - Cris (`id: 2`) e Grazi (`id: 3`) são as duas diaristas autônomas cadastradas no sistema que realizam a higienização dos flats.
+  - O valor inicial padrão de diária stayover para Cris e Grazi é R$ 15,00 cada.
+  - Para hóspedes com check-in hoje (`checkinDate === dateStr`), a limpeza gerada é sempre de Checkout/Turnover da saída anterior ou preparação do flat, nunca Stayover.
 
 ---
 
 ## 4. Conclusion
 
-A arquitetura do backend do Guest-Flow-Manager está plenamente apta e preparada para receber o ecossistema completo de Frigobar:
-1. **Modelo de Dados**: 5 coleções limpas (`minibarProducts`, `minibarDefaultStock`, `minibarOrders`, `minibarInspections`, `minibarSettings`), integradas a `loadDatabase`, `saveDatabase` e `pruneDatabase` blindado.
-2. **Pagamentos**: Reutilização direta do Banco Inter (mTLS + PUT cob + Webhook + Extrato) e Mercado Pago (Checkout Pro + Webhook + Busca Ativa), totalmente desacoplados da conta da hospedagem.
-3. **Mensageria e Documentos**: Fluxo imediato e automatizado de envio de NF (WhatsApp Z-API + E-mail SMTP Zoho + Portal do Hóspede) e cobrança automática pela Sofia ao detectar divergências.
-4. **Governança de Código**: O plano de implementação preserva a paridade SHA-256 e segue estritamente as regras de isolamento e não-varredura de testes do `AGENTS.md`.
-
-O relatório técnico detalhado e especificação dos contratos de API encontra-se em `.agents/teamwork/explorer_survey_1/analysis.md`.
+O ecossistema de backend e governança está perfeitamente preparado para receber a extensão de Stayover B2B. A separação clara entre as rotas de `checkouts`, `cleaning/assignments` e o serviço `maid-automation-service.mjs` permite a implementação limpa e cirúrgica através de:
+1. Geração de cards `stayover` em `getRequestsForDate` para B2B ativos em dias intermediários.
+2. Inclusão dos metadados de `linenTracking` no schema de `GET /api/reservations/checkouts`.
+3. Desvio protetivo em `PATCH /api/cleaning/assignments/:requestId/status` para não alterar `checkoutDone` nem desocupar o quarto.
+4. Suporte a `defaultStayoverRatePerRoom` e `userStayoverRates` no motor financeiro e de extratos.
+5. Endpoints de "Não Perturbe" e agendamento de enxoval para o próximo dia no Portal do Hóspede B2B, com bloqueio 403 para outros canais.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar independentemente todas as constatações deste relatório:
+Para que o orquestrador ou o implementador valide as descobertas de forma independente:
 
-1. **Verificação de Paridade Twin-Server**:
+1. **Verificação de Paridade Twin-Server:**
    ```powershell
-   (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+   Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, artifacts/api-server/maid-automation-service.mjs, scripts/maid-automation-service.mjs
    ```
-   *Condição de sucesso*: Retorna `True`.
-2. **Inspeção dos Motores de Pagamento**:
-   - Inspecionar linhas 40764–40920 de `artifacts/api-server/demo-server.mjs` para validar `createInterPixCob` e `getInterAccessToken`.
-   - Inspecionar linhas 41949–42120 de `artifacts/api-server/demo-server.mjs` para validar `createMercadoPagoPreference` e webhook do Mercado Pago.
-3. **Inspeção de Envio de Documentos e E-mails**:
-   - Inspecionar linhas 3436–3560 de `artifacts/api-server/zapi-service.mjs` para conferir a leitura e envio de arquivos locais em `sendZapiDocument`.
-   - Inspecionar linhas 1255–1310 de `artifacts/api-server/mail-service.mjs` para conferir `sendEmailAsync` com suporte a `attachments`.
-4. **Inspeção da IA Sofia**:
-   - Inspecionar linhas 601–796 e 909–1250 de `artifacts/api-server/whatsapp-ai-service.mjs` para conferir `buildGuestContext` e `querySystemData`.
-5. **Critério de Invalidação**:
-   - Se for constatada a necessidade de misturar a cobrança do frigobar com as diárias da reserva, ou se `sendZapiDocument` não suportar envio de arquivos locais, este diagnóstico precisará de revisão. Ambas as hipóteses foram refutadas pelas evidências diretas do código.
+   *Condição de invalidação:* Hashes divergentes entre arquivos correspondentes.
+
+2. **Inspeção de Linhas Críticas no Código:**
+   - Visualizar `artifacts/api-server/demo-server.mjs` nas linhas 14596–14645 para confirmar a lógica de `stayoverFlatNumbers`.
+   - Visualizar linhas 15836–15883 para confirmar a necessidade do bypass em `checkoutDone`.
+   - Visualizar linhas 173–225 de `artifacts/api-server/maid-automation-service.mjs` para confirmar o cálculo de créditos e a necessidade de suporte a `userStayoverRates`.
+
+3. **Execução de Teste Pontual (Após Implementação pelos Workers):**
+   - Rodar EXCLUSIVAMENTE o teste pontual dedicado:
+     ```bash
+     node tests/b2b-stayover-housekeeping.test.mjs
+     ```
+   - **Regra Estrita do AGENTS.md:** NUNCA rodar testes globais (`tests/*.test.mjs`) ou testes de outros módulos.

@@ -1,120 +1,200 @@
-# Relatório de Handoff Adversarial — Marco M1 (Challenger 1)
+# Handoff Report — challenger_m1_1 (Housekeeping Challenger)
 
-- **Autor**: Challenger 1 (`challenger_m1_1`)
-- **Papéis**: Critic, Specialist (Empirical Challenger)
-- **Milestone**: M1 (Backend Core & Isolamento de Prestadoras)
-- **Data/Hora**: 2026-10-22T10:48:00Z
-- **Veredito**: `REQUEST_CHANGES`
+## 1. Observation
+
+### 1.1 Executed Test Suite
+Executed the isolated adversarial test harness:
+```bash
+node --test tests/challenger-m1-1.test.mjs
+```
+Output:
+```
+# Subtest: CHALLENGER M1: Adversarial Housekeeping Challenge
+    # Subtest: 1. Card Generation Adversarial Testing (getRequestsForDate & GET /api/reservations/checkouts)
+        ok 1 - Scenario 1: B2B reservation on check-in day (checkinDate === dateStr) MUST NOT generate stayover card
+        ok 2 - Scenario 2: B2B reservation on checkout day (checkoutDate === dateStr) MUST NOT generate stayover card (generates checkout)
+        ok 3 - Scenario 3: Non-B2B channels (Booking, Airbnb, WhatsApp, Site Direto) in intermediate days MUST NEVER generate stayover cards
+        not ok 4 - Adversarial Probe A: Non-B2B channels with companyName / agencyName MUST NOT leak into B2B stayovers
+          ---
+          error: 'CRITICAL LEAK: Booking reservation with companyName was classified as B2B and generated a stayover card!'
+          code: 'ERR_ASSERTION'
+          expected: undefined
+          actual: { id: ..., source: 'stayover', cleaningType: 'stayover', ... }
+          ...
+        not ok 5 - Adversarial Probe B: B2B reservations that are already completed / checked-out MUST NOT generate stayover cards
+          ---
+          error: 'DEFECT: getRequestsForDate generated stayover card for a reservation with status === "completed" / checkoutDone === true!'
+          code: 'ERR_ASSERTION'
+          expected: undefined
+          actual: { id: ..., source: 'stayover', cleaningType: 'stayover', ... }
+          ...
+        ok 6 - Scenario 4: B2B reservation in intermediate day (checkinDate < dateStr && checkoutDate > dateStr) MUST generate stayover card
+        ok 7 - Scenario 4b: Idempotency of card generation in getRequestsForDate
+    # Subtest: 2. Stayover Cleaning Completion Adversarial Testing (PATCH /api/cleaning/assignments/:id/status)
+        ok 1 - Scenario 5: Completing stayover cleaning MUST NOT free flat, complete reservation, or set checkoutDone
+        ok 2 - Scenario 6: 10-minute minimum lock does NOT block housekeeper in stayover, but DOES block in checkout
+        ok 3 - Scenario 7: Do Not Disturb (DND) mode blocks maid from starting or completing stayover with HTTP 422
+        ok 4 - Scenario 8: Passing isVacant: true for a stayover request is safely overridden (invariant holds)
+    # Subtest: 3. Twin-Server SHA-256 Parity Empirical Audit
+        ok 1 - Twin servers artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs SHA-256 parity
+# tests 12
+# suites 4
+# pass 10
+# fail 2
+```
+
+### 1.2 Direct Code Inspections
+
+#### Defect 1: Leak of Non-B2B Channels into Stayover Cards via `companyName` / `agencyName`
+- File: `artifacts/api-server/demo-server.mjs:14636-14651` (and `scripts/demo-server.mjs`):
+```javascript
+function isB2bReservation(r) {
+  if (!r) return false;
+  const chanLower = String(r.channel || "").toLowerCase().trim();
+  return Boolean(
+    chanLower === "b2b" ||
+    chanLower.includes("b2b") ||
+    r.isB2b === true ||
+    r.b2bReservationNumber ||
+    r.agencyId ||
+    r.agencyName ||
+    r.agencyTradeName ||
+    r.companyName ||
+    r.b2bLocatorRloc ||
+    String(r.code || "").startsWith("B2B-")
+  );
+}
+```
+- Empirical Verification:
+```bash
+node -e "import('./artifacts/api-server/demo-server.mjs').then(({ isB2bReservation }) => {
+  console.log('bookingWithCompany:', isB2bReservation({ channel: 'booking', companyName: 'Petrobras S.A.' }));
+  console.log('airbnbWithCompany: ', isB2bReservation({ channel: 'airbnb', companyName: 'Vale S.A.' }));
+  console.log('whatsappWithAgency:', isB2bReservation({ channel: 'whatsapp', agencyName: 'Agência Corporativa' }));
+  process.exit(0);
+});"
+```
+Output verbatim:
+```
+bookingWithCompany: true
+airbnbWithCompany:  true
+whatsappWithAgency: true
+```
+Any OTA or Direct reservation (Booking.com, Airbnb, WhatsApp) that includes corporate billing details (`companyName` or `agencyName`) is falsely classified as B2B, causing `getRequestsForDate` and `/api/reservations/checkouts` to generate stayover cards on intermediate days.
+
+#### Defect 2: Ghost Stayover Cards for Checked-Out / Completed Reservations
+- File: `artifacts/api-server/demo-server.mjs:14792-14801`:
+```javascript
+  const b2bStayoversForDate = (db.reservations || []).filter(r =>
+    r.status !== "cancelada" &&
+    r.status !== "cancelado" &&
+    r.status !== "no_show" &&
+    r.checkinDate &&
+    r.checkoutDate &&
+    r.checkinDate < dateStr &&
+    r.checkoutDate > dateStr &&
+    isB2bReservation(r)
+  );
+```
+- Observed Behavior: The filter excludes ONLY `cancelada`, `cancelado`, and `no_show`. It does NOT exclude reservations with `r.status === "completed"`, `r.status === "checked_out"`, `r.checkoutDone === true`, or `r.earlyCheckout === true`.
+- Empirical Verification in Probe B: When a B2B guest checks out early (e.g. departs on day 2 of a 10-day stay and is marked `status: "completed"`, `checkoutDone: true`), `getRequestsForDate` on day 6 continues to generate a daily stayover cleaning card for Flat 105.
+
+### 1.3 Verified Positive Invariants
+1. **Scenario 1 (Check-in Day)**: `checkinDate === dateStr` correctly evaluates `checkinDate < dateStr` as `false`, generating 0 stayover cards.
+2. **Scenario 2 (Checkout Day)**: `checkoutDate === dateStr` correctly evaluates `checkoutDate > dateStr` as `false`, generating a standard checkout card instead of a stayover card.
+3. **Scenario 3 (Pure OTA Intermediate Days)**: Booking, Airbnb, and WhatsApp without companyName evaluate `isB2bReservation(r) === false`, producing 0 stayover cards.
+4. **Scenario 4 (Valid B2B Intermediate Days)**: Valid active B2B reservations generate cards with `source: "stayover"`, `cleaningType: "stayover"`, `isOccupied: true`, `isVacant: false`, and `linenTracking` attached.
+5. **Scenario 5 (Safe Completion)**: On transition to `clean`, `relatedFlat.isOccupied` remains `true`, reservation status remains active (e.g. `confirmada`), `checkoutDone` remains `false`, and `linenChangeHistory` records the bed/towel changes.
+6. **Scenario 6 (10-Minute Lock Bypass)**: Stayovers bypass the 10-minute minimum lock (`!isStayover` guard in line 16181), whereas normal checkouts are blocked with HTTP 400 when elapsed time is under 10 minutes.
+7. **Scenario 7 (Do Not Disturb Enforcement)**: Maids attempting to start or complete a stayover under DND receive HTTP 422 with `"Não é possível iniciar ou concluir a limpeza. Hóspede ativou o modo Não Perturbe."`.
+8. **Scenario 8 (isVacant Invariant)**: Housekeepers sending `{ isVacant: true }` in stayover updates are overridden: `isVacant` remains `false` and `relatedFlat.isOccupied` remains `true`.
+9. **Twin-Server Parity**: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` match after twin resynchronization.
 
 ---
 
-## 1. Observation (O que foi diretamente observado)
+## 2. Logic Chain
 
-1. **Paridade Twin-Server e Falha Crítica de Inicialização**:
-   - `artifacts/api-server/demo-server.mjs` (linha 68) e `scripts/demo-server.mjs` (linha 68) contêm a seguinte importação ativa:
-     ```javascript
-     import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-     ```
-   - O arquivo `artifacts/api-server/microsoft-graph-service.mjs` existe fisicamente com 4.112 bytes (122 linhas).
-   - O arquivo `scripts/microsoft-graph-service.mjs` **NÃO EXISTE**.
-   - Execução empírica direta de importação de `scripts/demo-server.mjs`:
-     ```powershell
-     node -e "import('./scripts/demo-server.mjs').catch(err => { console.error('CRASH:', err.code, err.message); process.exit(1); })"
-     ```
-     **Resultado (Saída Verbatim)**:
-     ```
-     CRASH: ERR_MODULE_NOT_FOUND Cannot find module 'C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\microsoft-graph-service.mjs' imported from C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
-     ```
-     O processo encerrou com código de saída `1`.
-
-2. **Omissão no Script de Auditoria de Paridade (`scripts/check-twin-parity.mjs`)**:
-   - Linhas 17-32 de `scripts/check-twin-parity.mjs` definem o array `rootPairs` com 14 pares de arquivos.
-   - O par `["artifacts/api-server/microsoft-graph-service.mjs", "scripts/microsoft-graph-service.mjs"]` foi **omitido** de `rootPairs`.
-   - Por conta dessa omissão, a execução de `node scripts/check-twin-parity.mjs` relatou falsamente `Resultado: 29/29 arquivos gêmeos com 100% de paridade SHA-256. STATUS: 100% PASS`, mascarando a quebra de resolução de módulo em `scripts/`.
-   - Similarmente, o teste M1-1 em `tests/hr-m1-backend-core.test.mjs` chama `checkTwinParity()` e passou com falso positivo.
-
-3. **Estresse Empírico da Regra de Poda Trabalhista (`pruneDatabase()`)**:
-   - A função `pruneDatabase()` em `artifacts/api-server/demo-server.mjs` (linhas 8869-8994) implementa a blindagem preventiva de `HR_PROTECTED_COLLECTIONS` e a retenção de 5 anos (1825 dias) para `hrTimeRecords` (> 50.000 itens) e `hrPayroll` (> 10.000 itens).
-   - Foi executado harness de teste empírico injetando volumes extraordinários:
-     - 50.005 itens em `db.hrTimeRecords`, contendo registros com 1 ano (365 dias), 4 anos (1460 dias), 1824 dias, 1825 dias (borda exata), 1826 dias, 6 anos (2190 dias) e 8 anos (2920 dias).
-     - 10.005 itens em `db.hrPayroll`, contendo competências recentes, 4 anos (< 1825 dias), 1824 dias, 1826 dias, 6 anos e 8 anos.
-     - Volume normal (< 50.000 e < 10.000) contendo registros de 4, 6 e 10 anos.
-   - **Resultado do Harness**:
-     - Registros com 4 anos (1460 dias), 1824 dias e 1825 dias foram **100% preservados** após `pruneDatabase()`.
-     - Registros com 1826 dias, 6 anos e 8 anos foram **corretamente descartados** apenas quando o volume excedeu os limites extraordinários.
-     - Em volume normal (< 50.000 e < 10.000), **nenhum registro foi podado**, comprovando a imunidade contra `LIMITS`.
-     - O harness executou 4 asserções com `pass 4, fail 0` (código de saída 0).
-
-4. **Isolamento de Cris e Grazi & Schemas de RH**:
-   - `artifacts/api-server/hr/employees.mjs` e `scripts/hr/employees.mjs`:
-     - `isPrestadora` valida estritamente IDs (2, 3), usernames ("cris", "grazi"), telefones e contractType ("prestador").
-     - `isCltEmployee` exclui prestadoras sumariamente.
-     - `validateRecipientNotPrestador` lança erro crítico `[CRITICAL_SECURITY_VIOLATION]` caso uma rotina CLT seja acionada para prestadoras.
-     - CRUD e rotas Express em `artifacts/api-server/hr/router.mjs` rejeitam criação com nome "Cris" ou "Grazi" com código 400 e retornam 404 em `GET /employees/:id` para IDs 2 e 3.
+1. *From Observation 1.1 and 1.2*: `isB2bReservation` evaluates `r.companyName`, `r.agencyName`, and `r.agencyTradeName` as independent fallback boolean OR clauses (`||`).
+2. *From Observation 1.2*: OTA platforms (Booking.com, Airbnb) allow guests to enter corporate names or billing entities during checkout.
+3. *Logic Step*: When a Booking.com or Airbnb guest enters a company name, `r.companyName` is truthy, triggering `isB2bReservation(r) = true` despite `r.channel === "booking"`.
+4. *Direct Violation*: This directly violates requirement § R1 of `ORIGINAL_REQUEST.md`:
+   *"Reservas de Booking, Airbnb, WhatsApp, Site Direto ou outros canais nunca geram limpeza diária de stayover."*
+5. *From Observation 1.1 and 1.2 (Probe B)*: In `getRequestsForDate`, `b2bStayoversForDate` only checks `r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "no_show"`.
+6. *Logic Step*: Completed reservations (including early check-outs) retain their original `checkinDate` and `checkoutDate`. Because their status is `"completed"` or `"checked_out"` (and not `"cancelada"`), they satisfy all predicates of `b2bStayoversForDate`.
+7. *Direct Violation*: Housekeeping cards for stayover cleaning are generated for unoccupied rooms where the guest has already checked out and departed.
+8. *Conclusion*: Milestone 1 fails adversarial verification on two functional counts. A `REQUEST_CHANGES` verdict is necessary.
 
 ---
 
-## 2. Logic Chain (Cadeia de Raciocínio)
+## 3. Caveats
 
-1. A partir da **Observação 1**, o arquivo `scripts/demo-server.mjs` possui uma dependência estática não resolvida (`./microsoft-graph-service.mjs`) que impede completamente a sua execução em ambiente Node.js.
-2. A partir da **Observação 2**, a suíte de verificação fornecida pelo worker (`scripts/check-twin-parity.mjs`) não é exaustiva, pois ignora serviços existentes em `artifacts/api-server/`, permitindo que código quebrado passe como "100% PASS".
-3. A partir da **Observação 3**, a regra de poda em `pruneDatabase()` e a guarda de 5 anos (1825 dias) funcionam exatamente conforme o Art. 11 da CLT e a Portaria 671 MTP, garantindo que registros de 4 anos jamais sejam apagados.
-4. A partir da **Observação 4**, os módulos de RH e o isolamento de Cris e Grazi foram modelados com rigor e funcionam perfeitamente.
-5. Contudo, como o projeto estabelece que a arquitetura twin-server deve ser funcional e manter paridade estrita (Requisito R7 em `ORIGINAL_REQUEST.md` e `PROJECT.md`), a quebra de inicialização do servidor em `scripts/` constitui um impedimento bloqueante.
-6. Portanto, o Marco M1 requer correção antes de ser aprovado.
+- Milestone 2 (Maid rates in `maid-automation-service.mjs`), Milestone 3 (Guest Portal UI), and Milestone 4 (Housekeeper Flat Cards UI) were not evaluated as they belong to subsequent milestones.
+- The twin-server SHA-256 parity was temporarily broken earlier due to asynchronous edits in `artifacts/api-server/demo-server.mjs`, but is now passing.
 
 ---
 
-## 3. Caveats (Ressalvas)
+## 4. Conclusion
 
-- Em `hrPayroll`, a comparação do corte de 5 anos é realizada via `fDate = String(f.referenceMonth || f.date || f.createdAt || "").split("T")[0]; return fDate >= cutoffDate5Years;`. Como `cutoffDate5Years` é uma string no formato `"YYYY-MM-DD"` (ex: `"2021-10-22"`) e `referenceMonth` normalmente é `"YYYY-MM"` (ex: `"2021-10"`), uma folha do mês de corte exato (ex: Outubro/2021) é lexicograficamente menor que `"2021-10-22"` (`"2021-10" < "2021-10-22"`), podendo ser podada alguns dias antes de completar 5 anos exatos caso não contenha o campo `date` ou `createdAt`. Recomenda-se normalizar para `fDate.length === 7 ? fDate + "-01" : fDate`. Registros de 4 anos (ex: `"2022-10"`), contudo, não são afetados e sobrevivem com segurança (`"2022-10" >= "2021-10-22"` é verdadeiro).
-- Nenhuma alteração foi realizada em código fonte de produção pelo Challenger, em estrito cumprimento às restrições de revisão.
+**Verdict**: **REQUEST_CHANGES**
 
----
+Milestone 1 core implementation is mostly solid (Scenarios 1, 2, 3, 4, 5, 6, 7, and 8 all passed 100%), but contains two critical empirical bugs that must be remediated by worker before proceeding to Milestone 2:
 
-## 4. Conclusion (Conclusão)
-
-**Veredito**: `REQUEST_CHANGES`
-
-A lógica de banco, proteção de poda de 5 anos e isolamento de Cris e Grazi foi aprovada com louvor no estresse empírico. No entanto, o Marco M1 não pode ser aprovado devido a:
-1. **Ausência de `scripts/microsoft-graph-service.mjs`**, fazendo com que `scripts/demo-server.mjs` falhe ao inicializar com erro fatal `ERR_MODULE_NOT_FOUND`.
-2. **Falso positivo em `scripts/check-twin-parity.mjs`**, que precisa incluir o par `["artifacts/api-server/microsoft-graph-service.mjs", "scripts/microsoft-graph-service.mjs"]` em `rootPairs`.
-
-**Ações Necessárias do Worker**:
-1. Copiar `artifacts/api-server/microsoft-graph-service.mjs` para `scripts/microsoft-graph-service.mjs` (garantindo paridade SHA-256).
-2. Adicionar `["artifacts/api-server/microsoft-graph-service.mjs", "scripts/microsoft-graph-service.mjs"]` à lista `rootPairs` em `scripts/check-twin-parity.mjs`.
-3. Executar `node scripts/check-twin-parity.mjs` (agora com 30/30 arquivos) e validar que `node -c scripts/demo-server.mjs` e a importação do servidor executam com código 0.
-
----
-
-## 5. Verification Method (Método de Verificação Independente)
-
-Para reproduzir empiricamente os achados deste relatório:
-
-1. **Reproduzir o Crash do Twin-Server `scripts/demo-server.mjs`**:
-   ```powershell
-   node -e "import('./scripts/demo-server.mjs').catch(err => { console.error('CRASH:', err.code, err.message); process.exit(1); })"
+### Required Remediation:
+1. **Fix `isB2bReservation` (demo-server.mjs ~line 14636)**:
+   Explicitly reject non-B2B channels before inspecting corporate fields, unless `r.isB2b === true` or channel explicitly contains `"b2b"`:
+   ```javascript
+   function isB2bReservation(r) {
+     if (!r) return false;
+     const chanLower = String(r.channel || "").toLowerCase().trim();
+     const nonB2b = ["booking", "airbnb", "whatsapp", "site", "direct", "balcao"];
+     if (nonB2b.includes(chanLower) && !r.isB2b && !chanLower.includes("b2b")) {
+       return false;
+     }
+     return Boolean(
+       chanLower === "b2b" ||
+       chanLower.includes("b2b") ||
+       r.isB2b === true ||
+       r.b2bReservationNumber ||
+       r.agencyId ||
+       r.agencyName ||
+       r.agencyTradeName ||
+       r.companyName ||
+       r.b2bLocatorRloc ||
+       String(r.code || "").startsWith("B2B-")
+     );
+   }
    ```
-   *Resultado esperado atual*: Falha com código 1 e mensagem `ERR_MODULE_NOT_FOUND Cannot find module ... scripts/microsoft-graph-service.mjs`.
-   *Critério de resolução*: Deve carregar sem lançar `ERR_MODULE_NOT_FOUND`.
-
-2. **Verificar a Regra de Poda em `pruneDatabase()`**:
-   Execute o seguinte comando de teste em memória:
-   ```powershell
-   node -e "
-   const fs = require('fs');
-   const assert = require('assert');
-   const code = fs.readFileSync('artifacts/api-server/demo-server.mjs', 'utf8');
-   const pruneMatch = code.match(/function pruneDatabase\(\) \{[\s\S]*?\n\}/m);
-   const offsetMatch = code.match(/function getOffsetDateStr[\s\S]*?^}/m);
-   const runner = new Function('db', 'const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat(\"en-CA\", { timeZone: \"America/Sao_Paulo\", year: \"numeric\", month: \"2-digit\", day: \"2-digit\" }); function getEffectiveDate() { return new Date(); } function getTodayStr() { return BRAZIL_DATE_FORMATTER.format(getEffectiveDate()); } ' + offsetMatch[0] + ' ' + pruneMatch[0] + ' pruneDatabase(); return db;');
-   const records = [{ id: 'rec_4y', date: '2022-10-22' }, { id: 'rec_6y', date: '2020-10-22' }];
-   for (let i = 0; i < 50005; i++) records.push({ id: 'p_' + i, date: '2025-10-22' });
-   const db = { hrTimeRecords: records };
-   runner(db);
-   assert.ok(db.hrTimeRecords.some(r => r.id === 'rec_4y'), 'Registro de 4 anos NÃO pode ser apagado');
-   assert.ok(!db.hrTimeRecords.some(r => r.id === 'rec_6y'), 'Registro de 6 anos DEVE ser podado');
-   console.log('PRUNE STRESS TEST: PASS');
-   "
+2. **Fix `b2bStayoversForDate` in `getRequestsForDate` (demo-server.mjs ~line 14792)**:
+   Exclude completed, checked-out, or early-checkout reservations:
+   ```javascript
+   const b2bStayoversForDate = (db.reservations || []).filter(r =>
+     r.status !== "cancelada" &&
+     r.status !== "cancelado" &&
+     r.status !== "no_show" &&
+     r.status !== "completed" &&
+     r.status !== "checked_out" &&
+     !r.checkoutDone &&
+     !r.earlyCheckout &&
+     r.checkinDate &&
+     r.checkoutDate &&
+     r.checkinDate < dateStr &&
+     r.checkoutDate > dateStr &&
+     isB2bReservation(r)
+   );
    ```
-   *Critério de aprovação*: Imprime `PRUNE STRESS TEST: PASS` com código 0.
+3. Keep twin-server parity 100% synchronized between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+
+---
+
+## 5. Verification Method
+
+To independently verify the defects:
+```bash
+node --test tests/challenger-m1-1.test.mjs
+```
+Expected prior to fix:
+- `Adversarial Probe A`: Fails with `AssertionError: CRITICAL LEAK: Booking reservation with companyName was classified as B2B and generated a stayover card!`
+- `Adversarial Probe B`: Fails with `AssertionError: DEFECT: getRequestsForDate generated stayover card for a reservation with status === "completed" / checkoutDone === true!`
+
+Expected post fix:
+- 12/12 tests passing across 4 suites.

@@ -1,106 +1,159 @@
-# Handoff Report: Mapeamento de Portais Anserve, Admin CorpFlats, CRM & Sofia IA (Frigobar)
+# Handoff Report: Guest Portal & Frontend Housekeeping UI Explorer
 
-**Agente**: `explorer_survey_3` (teamwork_preview_explorer)  
-**Destinatário**: Project Orchestrator (`d10c20e2-adfb-4695-835e-52dd3bebe9a9`)  
-**Data**: 2026-10-21T18:50:00Z  
-**Tipo**: Hard (Tarefa de Investigação Concluída)  
-**Arquivo de Análise Completo**: `.agents/teamwork/explorer_survey_3/analysis.md`
-
----
-
-## 1. Observation (Observações Diretas)
-
-1. **Catálogo de Permissões e Perfis Atuais**:
-   - Arquivo `artifacts/limpeza/src/lib/permissions.ts:19-106` define `PERMISSION_CATEGORIES` com 6 categorias (`reservas`, `comunicacao`, `governanca`, `financeiro`, `propriedade`, `engenharia`).
-   - Linhas `147-161`: `getDefaultModulesForRole(role)` trata exclusivamente `dev`, `admin`, `recepcao`/`reception` e `camareira` (fallback).
-   - Linhas `166-250`: `ROUTE_ALIASES` normaliza sinônimos de rotas para acesso granular.
-   - Arquivo `artifacts/limpeza/src/pages/equipe.tsx:63`: tipo `role: "dev" | "admin" | "recepcao" | "camareira" | string`.
-   - Linhas `1150-1167` e `1250-1270`: elementos `<select>` no cadastro e edição de colaboradores oferecem apenas as 4 opções padrão.
-
-2. **Guarda de Rotas e Navegação Dinâmica**:
-   - Arquivo `artifacts/limpeza/src/App.tsx:200-243`: `AdminGuard` e `StaffGuard` chamam estritamente `hasModuleAccess(user as any, location)`.
-   - Arquivo `artifacts/limpeza/src/components/layout.tsx:424-430`: `rawNavCategories` é mapeado e filtrado dinamicamente com `cat.items.filter(item => hasModuleAccess(user as any, item.href))`.
-   - Linhas `880-975`: o menu inferior mobile (`BottomNav`) exibe abas fixas por condição estática (`if (isAdminOrDev) ... else if (isRecepcao) ... else ...` com botões de camareira: Limpeza, Compras, Extrato, Manutenções).
-
-3. **Arquitetura de Acesso sem Senha / Link Rápido**:
-   - Arquivo `artifacts/limpeza/src/pages/service-worker-portal.tsx:1-100`: padrão de portal operacional de prestador com validação de token ou PIN numérico sem dependência do cookie de autenticação padrão.
-
-4. **CRM 360 e Dados Ministeriais**:
-   - Arquivo `artifacts/limpeza/src/pages/crm-guests.tsx:850-930`: tabela de hóspedes exibe LTV (`totalSpent`), estadias (`totalStays`), flat favorito e tags.
-   - Linhas `1200-1415`: modal de detalhes 360º exibe mídias biométricas (Selfie, Documento PDF/Imagem, Assinatura digital) e ficha FNHR (`activeGuest.city`, `activeGuest.state`, endereço completo).
-   - Linhas `1568-1615`: renderiza `activeGuest.reservations` e `activeGuest.invoices`. Não há atualmente histórico nem métricas de frigobar.
-
-5. **IA Sofia e Contexto no WhatsApp**:
-   - Arquivo `artifacts/api-server/whatsapp-ai-service.mjs:753-796`: `buildGuestContext` retorna `reservationCode`, `checkinUrl`, `checkoutUrl`, status de estadia e quarto, sem informações de frigobar.
-   - Linhas `918-1440`: `querySystemData` suporta 10 módulos (`flats`, `reservations`, `cleaning`, `maintenance`, `breakfast`, `garage`, `lost_and_found`, `faq`, `finance`, `sentiment`). Não há suporte a frigobar.
-   - Linha `173`: o prompt do sistema instrui explicitamente: `"frigobar vazio e ligado para uso particular (sem cortesia de água)"`.
-   - Linhas `4376-4377` e `8532`: respostas prontas da IA reiteram frigobar vazio para uso particular.
-   - Arquivo `artifacts/api-server/demo-server.mjs:3547-3550` (FAQ `faq-agua-frigobar`): *"Não disponibilizamos água mineral ou bebidas como cortesia gratuita de boas-vindas."*
+**Agent:** `explorer_survey_3`  
+**Timestamp:** 2026-10-27T16:10:00Z  
+**Type:** Hard (Task Complete)  
+**Parent / Recipient:** `5c8f06aa-a876-42b7-8e25-4f73f9a21590` (orchestrator_18)  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3`  
 
 ---
 
-## 2. Logic Chain (Cadeia Lógica de Raciocínio)
+## 1. Observation
 
-1. **Sobre o Controle de Acesso (Eixo 1)**:
-   - A partir de (1) e (2), como `hasModuleAccess` já delega a liberação para `allowedModules`, basta adicionar os papéis `anserve_repositora` e `anserve_gestor` em `getDefaultModulesForRole(role)` em `permissions.ts` e seus espelhos no backend.
-   - O papel `anserve_repositora` deve ter como padrão apenas `["/frigobar-reposicao"]`.
-   - O papel `anserve_gestor` deve ter como padrão `["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]`.
-   - Para evitar que o menu inferior mobile (`BottomNav` em `layout.tsx`) direcione a repositora para telas de governança às quais ela não tem acesso, a barra inferior deve renderizar itens contextuais para os perfis da Anserve.
-   - Para permitir operação imediata sem login, o padrão de token persistente demonstrado em (3) deve ser adotado na rota `/frigobar-reposicao?token=...` com gravação em `localStorage`.
+Direct observations obtained through file examination and code exploration:
 
-2. **Sobre a Interface da Repositora (Eixo 2)**:
-   - Da análise operacional, flats com checkout no dia são a prioridade máxima para a vistoria de saída antes da entrada do próximo hóspede às 14:00.
-   - Exibir o consumo já declarado/pago pelo hóspede permite à repositora conferir se o estoque restante bate com a conta física.
-   - O botão "Conforme" atesta a ausência de extravios e registra a reposição física necessária (itens vendidos + reposição das cortesias: 2 cápsulas Nespresso, balas e amendoim).
-   - O botão "Apontar divergência" captura a quantidade faltante, permite foto da câmera do celular e cria cobrança pendente.
+1. **Backend Route `GET /api/pms/guest-portal/:code`:**
+   - **Path:** `artifacts/api-server/demo-server.mjs:24360` (and `scripts/demo-server.mjs:24360`).
+   - Line 24468 calculates B2B status verbatim:
+     ```javascript
+     const chanLower = String(r.channel || "").toLowerCase();
+     const isB2b = chanLower === "b2b" || chanLower.includes("b2b") || Boolean(r.b2bReservationNumber || r.agencyId || r.agencyName);
+     ```
+   - Line 24640 passes `isB2b` directly to the client: `reservation.isB2b = isB2b`.
+   - Today's date is calculated on line 24371: `const todayStr = bNow.date;`.
+   - Lines 24631–24762 return the full JSON response, currently lacking the `b2bHousekeeping` metadata block.
 
-3. **Sobre a Interface de Supervisão da Anserve (Eixo 3)**:
-   - Para evitar sobrecarga de alertas no WhatsApp dos gestores da Anserve, a fila de NFs no painel `/anserve` atua como o ponto focal.
-   - Os dados exibidos (Nome, CPF/CNPJ corporativo, E-mail, Valor e o formato de discriminação: *Itens discriminados*, *Água* ou *Consumo de Frigobar*) fornecem tudo o que o emissor fiscal precisa.
-   - O upload da NF anexada na plataforma aciona automaticamente o disparo do PDF para o WhatsApp (Z-API) e E-mail do hóspede, além de publicar na Área da Reserva (`/minha-reserva/:code`).
+2. **Frontend Guest Portal Page:**
+   - **Path:** `artifacts/limpeza/src/pages/guest-portal.tsx`.
+   - Line 302 fetches portal data:
+     ```typescript
+     const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(q)}${isReqQuery ? "?requester=1" : ""}`)
+     ```
+   - Card structure in layout:
+     - Line 2255: `1. Hero / Saudação e Resumo da Estadia`
+     - Line 2604: `1.5 Card de Pagamento & Confirmação Financeira`
+     - Line 3003: `2. Card: Acomodação & Chave de Acesso / Portaria` (ends at line 3236)
+     - Line 3238: `3. Card: Room Service & Café da Manhã`
 
-4. **Sobre o Painel Admin CorpFlats (Eixo 4)**:
-   - O catálogo centraliza preços, fotos, estoques ideais (gabarito) por flat e cortesias.
-   - O gerador de QR Codes individualiza cada flat (`/frigobar/flat/:flatNumber`), gerando cartões em formato A6 para displays físicos nos apartamentos.
-   - O extrato CorpFlats ↔ Anserve consolida o balanço: `Valor Vendido Pago - Taxas Financeiras - Comissão + Custo de Cortesias Repostas = Repasse Líquido à Anserve`.
+3. **Flat Card Component & 10-Minute Lock:**
+   - **Path:** `artifacts/limpeza/src/components/flat-card.tsx`.
+   - Line 114: `const [finishModalOpen, setFinishModalOpen] = useState(false)`
+   - Lines 902–909 enforce a 10-minute minimum cleaning time before completing:
+     ```typescript
+     if (request?.cleaningStartedAt) {
+       const started = new Date(request.cleaningStartedAt).getTime()
+       const mins = (Date.now() - started) / 60000
+       if (mins < 10) {
+         setMinTimeAlertOpen(true)
+         return
+       }
+     }
+     ```
+   - Lines 945–948 capture the backend 10-minute error:
+     ```typescript
+     if (err.error?.includes("Tempo insuficiente")) {
+       setMinTimeAlertOpen(true)
+       return
+     }
+     ```
+   - Lines 911–914 open `finishModalOpen` for pending exit surveys:
+     ```typescript
+     if (pendingPeriodicTasks.length > 0 || pendingSurveys.length > 0) {
+       setFinishModalOpen(true)
+       return
+     }
+     ```
+   - Lines 2183–2610 render `finishModalOpen`, including the exit survey (`pendingSurveys`) asking checkout-specific questions and photo evidence.
 
-5. **Sobre o CRM e Analytics Demográfico (Eixo 5)**:
-   - A partir de (4), a ficha 360º de `crm-guests.tsx` já armazena o histórico ministerial com Cidade e UF de origem do hóspede.
-   - Adicionando o card de histórico de frigobar e tags automáticas de preferência (ex: *Cerveja Artesanal*, *Vinho*, *Nespresso*), o hotel passa a traçar o perfil de consumo de cada hóspede.
-   - O cruzamento analítico permite correlacionar origem demográfica (ex: SP vs RJ vs MG) com categorias consumidas, orientando a estocagem preventiva.
+4. **Backend Assignment Status & Automatic Checkout Hazard:**
+   - **Path:** `artifacts/api-server/demo-server.mjs:15743` (`PATCH /api/cleaning/assignments/:requestId/status`).
+   - Lines 15824–15832 enforce 10-minute minimum:
+     ```javascript
+     if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest) {
+       const started = new Date(item.cleaningStartedAt).getTime();
+       const elapsedMinutes = (Date.now() - started) / 60000;
+       if (elapsedMinutes < 10 && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
+         return res.status(400).json({
+           error: "Não é possível finalizar a limpeza ainda. Tempo insuficiente de higienização (mínimo de 10 minutos)."
+         });
+       }
+     }
+     ```
+   - Lines 15834–15875 automatically close checkout reservations upon `cleaning_now` or `clean`:
+     ```javascript
+     if (!isInstructionRequest && (status === "cleaning_now" || status === "in_progress" || status === "clean")) {
+       ...
+       checkoutRes.checkoutDone = true;
+       checkoutRes.status = "completed";
+       ...
+       triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, autoSource);
+     }
+     ```
+     *Hazard:* Unless `isStayover` is exempted, completing a stayover cleaning would prematurely complete the guest's reservation and send a checkout WhatsApp message.
 
-6. **Sobre a Integração da Sofia IA (Eixo 6)**:
-   - A partir de (5), o texto legado afirmando que o frigobar é vazio e que não há cortesia deve ser completamente removido de `whatsapp-ai-service.mjs` e `demo-server.mjs`.
-   - Adicionando o módulo `minibar` no `querySystemData` e os links no `buildGuestContext`, a Sofia consegue responder perguntas sobre bebidas, enviar o link `/minha-reserva/:code/frigobar` e reforçar a regra contábil: *"O frigobar é faturado de forma independente e não pode ser embutido na diária do hotel"*.
-   - Ao ser registrada uma divergência de conferência pela repositora, o backend aciona a Sofia para enviar mensagem proativa amigável ao hóspede com os itens e o link de pagamento.
+5. **Existing Targeted Test Architecture:**
+   - **Path:** `tests/tariff-engine.test.mjs`.
+   - Spawns child server process on isolated port `3995` with `DATA_FILE: isolatedDbPath` and `NODE_ENV: "test"`.
+   - Tears down process cleanly via `taskkill /F /T /PID` in `after()`.
+   - Verifies SHA-256 integrity and leaves production data untouched.
 
 ---
 
-## 3. Caveats (Ressalvas & Limitações)
+## 2. Logic Chain
 
-1. **Paridade SHA-256 Obrigatória**: Quaisquer rotas ou modificações adicionadas em `artifacts/api-server/demo-server.mjs` devem ser espelhadas de forma exata e idêntica em `scripts/demo-server.mjs`.
-2. **Ambiente de Testes (`AGENTS.md`)**: É expressamente proibido rodar suítes globais (`tests/*.test.mjs`). Apenas testes unitários pontuais dedicados aos endpoints novos de frigobar podem ser executados durante a fase de implementação.
-3. **Storage de Notas Fiscais**: O upload de PDF ou imagens de notas fiscais pode ser salvo como Data URL / Base64 no banco de dados temporariamente ou transferido para bucket Cloudflare R2 caso configurado. O backend deve suportar ambas as estratégias com fallback resiliente.
+1. **Premise 1 (from Observation 1 & 2):**
+   The Guest Portal already has the `r.channel` and `isB2b` detection mechanism in `demo-server.mjs:24468`. By exposing `b2bHousekeeping` in `GET /api/pms/guest-portal/:code` exclusively when `isB2b === true`, the frontend can safely render the DND and linen request controls without leaking this functionality to non-B2B guests.
+2. **Premise 2 (from Observation 1 & 4):**
+   New endpoints `POST /api/pms/guest-portal/:code/do-not-disturb` and `POST /api/pms/guest-portal/:code/linen-request` must validate `isB2b` immediately after looking up the reservation. If `!isB2b`, returning HTTP 403 satisfies acceptance criteria § Portal do Hóspede B2B. Scheduling linen change for `tomorrowStr` prevents day-of operational conflicts with housekeeping schedules.
+3. **Premise 3 (from Observation 3 & 4):**
+   The existing checkout flow in `flat-card.tsx` and `demo-server.mjs` enforces a 10-minute minimum duration and executes exit surveys (`pendingSurveys`). Stayover cleaning is an in-stay service, not an exit inspection. Therefore, stayover cards must bypass the 10-minute check and bypass exit surveys.
+4. **Premise 4 (from Observation 4):**
+   `PATCH /api/cleaning/assignments/:requestId/status` currently marks `checkoutDone = true` and `status = "completed"`. For stayovers (`source === "stayover"` or `cleaningType === "stayover"`), these mutations must be bypassed so the guest's reservation remains active (`status: "confirmada"` or `status: "in_house"`), flat remains occupied, and no checkout WhatsApp is triggered.
+5. **Premise 5 (from Observation 3):**
+   In `flat-card.tsx`, replacing the complex `finishModalOpen` with a streamlined `StayoverCompletionModal` that asks only:
+   (1) "Toalhas de banho foram trocadas? (Sim / Não)"
+   (2) "Roupa de cama foi trocada? (Sim / Não)"
+   directly fulfills Requirement R3 and sends `towelsChanged` and `beddingChanged` in the status PATCH payload.
+6. **Premise 6 (from Observation 5):**
+   Designing `tests/b2b-stayover-housekeeping.test.mjs` using the child-process spawn pattern (`TEST_PORT = 3999`, isolated database file, `NODE_ENV = "test"`) guarantees 100% adherence to AGENTS.md rules: strict targeted execution, zero production data modification, and no batch test suite runs.
 
 ---
 
-## 4. Conclusion (Conclusão & Direcionamento de Implementação)
+## 3. Caveats
 
-A arquitetura dos 6 eixos está totalmente detalhada e mapeada no arquivo `.agents/teamwork/explorer_survey_3/analysis.md`. A estrutura do PMS comporta com total naturalidade as novas interfaces, contratos de API e inteligência de IA sem quebrar o fluxo de produção já existente.
+- **Scope Boundary:** This investigation is strictly read-only and architectural. No production files were modified.
+- **Twin-Server Parity Rule:** Any future changes to `artifacts/api-server/demo-server.mjs` must be synchronized byte-for-byte (SHA-256) with `scripts/demo-server.mjs`. The same applies to `maid-automation-service.mjs`.
+- **Admin Clean on Behalf of Maid:** In `flat-card.tsx`, when an admin marks a stayover flat as clean via `adminCleanModalOpen`, the UI must include the two linen questions (`towelsChanged` and `beddingChanged`) so the admin can record whether linens were changed.
 
 ---
 
-## 5. Verification Method (Método de Verificação Independente)
+## 4. Conclusion
 
-O implementador e o orquestrador podem verificar de forma independente as constatações deste relatório através dos seguintes passos:
+1. **Guest Portal Architecture:**
+   - Endpoints `POST /api/pms/guest-portal/:code/do-not-disturb` and `POST /api/pms/guest-portal/:code/linen-request` can be implemented directly below line 24765 in `demo-server.mjs` (and twin).
+   - In `guest-portal.tsx`, a new card between lines 3236 and 3238 provides the DND switch and next-day linen request buttons.
+2. **FlatCard Stayover Architecture:**
+   - Detect `isStayover = flat.source === "stayover" || flat.cleaningType === "stayover" || request?.source === "stayover" || request?.cleaningType === "stayover"`.
+   - Bypass 10-minute lock in `flat-card.tsx:905` and `demo-server.mjs:15824`.
+   - Bypass checkout exit survey in `flat-card.tsx:911`.
+   - Prevent reservation completion / flat vacant marking in `demo-server.mjs:15836`.
+   - Render distinct Stayover card visual with `Dia X de Y`, guest name, linen change counters, 3-day alert (`daysSinceBeddingChange >= 3`), and DND blocking banner.
+   - Introduce `StayoverCompletionModal` with questions for bath towels and bed linen changes.
+3. **Targeted Test Architecture:**
+   - `tests/b2b-stayover-housekeeping.test.mjs` is fully specified to validate R1 through R4 against an isolated server instance without touching production data.
 
-1. **Inspeção de Arquivos**:
-   - `artifacts/limpeza/src/lib/permissions.ts` (linhas 19-161): verificar categorias e `getDefaultModulesForRole`.
-   - `artifacts/limpeza/src/pages/equipe.tsx` (linhas 1150-1270): verificar `<select>` de perfis de usuário.
-   - `artifacts/limpeza/src/pages/crm-guests.tsx` (linhas 1200-1615): verificar seções de ficha 360º, FNHR e histórico.
-   - `artifacts/api-server/whatsapp-ai-service.mjs` (linhas 173, 620-796 e 918-1440): verificar diretrizes de frigobar, `buildGuestContext` e `querySystemData`.
-   - `.agents/teamwork/explorer_survey_3/analysis.md`: ler a especificação técnica detalhada com contratos REST e mockups conceituais.
+---
 
-2. **Condições de Invalidação**:
-   - Se for encontrada alguma restrição no modelo de permissões que impeça a criação dos perfis `anserve_repositora` e `anserve_gestor`.
-   - Se os módulos do menu lateral não puderem ser filtrados de forma independente por `hasModuleAccess`.
+## 5. Verification Method
+
+To independently verify these findings and line numbers:
+1. **Inspect Guest Portal B2B Logic in Demo Server:**
+   `view_file` at `artifacts/api-server/demo-server.mjs` lines 24360 to 24765.
+2. **Inspect Checkout Completion & 10-Minute Lock:**
+   `view_file` at `artifacts/limpeza/src/components/flat-card.tsx` lines 900 to 1024 and lines 2183 to 2260.
+3. **Inspect Automatic Checkout Logic in Assignment Status Route:**
+   `view_file` at `artifacts/api-server/demo-server.mjs` lines 15820 to 15880.
+4. **Inspect Reference Test Suite:**
+   `view_file` at `tests/tariff-engine.test.mjs` lines 1 to 90.
+5. **Detailed Architecture Document:**
+   Review `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\analysis.md`.

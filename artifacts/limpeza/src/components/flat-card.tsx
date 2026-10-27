@@ -25,7 +25,7 @@ import {
   User, CheckCircle2, AlertCircle, Clock, PlayCircle, Sparkles, 
   Flame, Wrench, ClipboardCheck, DoorOpen, RotateCcw, AlertTriangle, Check, CalendarX,
   PackageOpen, Camera, BedDouble, Image as ImageIcon, UserX, Calendar, CloudOff, Loader2,
-  DollarSign, CalendarDays, Trash2, Coins
+  DollarSign, CalendarDays, Trash2, Coins, Bell, BellOff
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
@@ -156,6 +156,20 @@ export function FlatCard({
   const [amountManuallyEdited, setAmountManuallyEdited] = useState(false)
   const [isTogglingBeds, setIsTogglingBeds] = useState(false)
   const [isTogglingPriority, setIsTogglingPriority] = useState(false)
+
+  // ── Stayover B2B & Troca de Enxoval States (M4) ────────────────────
+  const isStayover = Boolean(request?.source === "stayover" || request?.cleaningType === "stayover")
+  const linenTracking = request?.linenTracking
+  const isDnd = Boolean(request?.doNotDisturb || linenTracking?.doNotDisturb)
+  const [stayoverModalOpen, setStayoverModalOpen] = useState(false)
+  const [towelsChanged, setTowelsChanged] = useState<boolean>(true)
+  const [beddingChanged, setBeddingChanged] = useState<boolean>(false)
+
+  useEffect(() => {
+    if (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding) {
+      setBeddingChanged(true)
+    }
+  }, [request?.guestRequestedBedding, linenTracking?.guestRequestedBedding])
 
   const currentCheckoutStr = flat.reservation?.checkoutDate || flat.checkoutDate || date
   const currentTotalAmount = Number(flat.reservation?.totalAmount || 0)
@@ -310,6 +324,74 @@ export function FlatCard({
       console.error("Erro ao confirmar limpeza pelo admin:", err)
     } finally {
       setAdminCleanSubmitting(false)
+    }
+  }
+
+  // Confirmar Limpeza Stayover B2B com checklist de enxoval (M4)
+  const handleConfirmStayoverClean = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsProcessing(true)
+    try {
+      let activeReqId = request?.id
+      if (!activeReqId) {
+        const createRes = await fetch("/api/cleaning/requests/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flatId: flat.flatId, requestDate: date, cleaningType: "stayover" }),
+          credentials: "include"
+        })
+        const created = await createRes.json()
+        activeReqId = created.id
+      }
+
+      if (activeReqId) {
+        const payload: any = {
+          status: "clean",
+          towelsChanged,
+          beddingChanged,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date
+        }
+        if (isAdmin && selectedMaidId) {
+          payload.assignedUserId = parseInt(selectedMaidId)
+          payload.maidId = parseInt(selectedMaidId)
+        } else if (request?.assignedUserId) {
+          payload.assignedUserId = request.assignedUserId
+          payload.maidId = request.assignedUserId
+        }
+
+        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          credentials: "include"
+        })
+
+        if (res.ok) {
+          toast({
+            title: "Limpeza Stayover Concluída",
+            description: `Flat ${flat.flatNumber} higienizado e trocas de enxoval registradas.`
+          })
+          setStayoverModalOpen(false)
+          refreshData()
+        } else {
+          const err = await res.json()
+          toast({
+            title: "Não foi possível concluir",
+            description: err.error || "Erro ao salvar conclusão de stayover.",
+            variant: "destructive"
+          })
+        }
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message || "Falha ao comunicar com o servidor.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
     }
   }
 
@@ -888,12 +970,26 @@ export function FlatCard({
 
   // Status transition handler
   const handleStatusChange = async (newStatus: FlatStatus) => {
+    if (isDnd) {
+      toast({
+        title: "🔕 Não Perturbe Ativo",
+        description: "O hóspede ativou o modo Não Perturbe no portal. Esta limpeza não pode ser iniciada nem concluída.",
+        variant: "destructive"
+      })
+      return
+    }
+
     if (newStatus === "pending_issue") {
       setIssueDialogOpen(true)
       return
     }
 
     if (newStatus === "clean") {
+      if (isStayover) {
+        setStayoverModalOpen(true)
+        return
+      }
+
       if (isAdmin) {
         setAdminCleanModalOpen(true)
         return
@@ -1251,6 +1347,50 @@ export function FlatCard({
                 {conf.label}
               </Badge>
 
+              {/* Badge Stayover B2B vs Check-out */}
+              {isStayover ? (
+                <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <BedDouble className="w-3 h-3 shrink-0" />
+                  <span>Stayover B2B (Diária)</span>
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[10.5px] px-2 py-0.5 rounded-lg">
+                  <span>Check-out</span>
+                </Badge>
+              )}
+
+              {/* Tag de Dia da Estadia B2B */}
+              {isStayover && (
+                <Badge variant="outline" className="bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200 font-bold text-[10px] px-2 py-0.5 rounded-lg">
+                  <Calendar className="w-3 h-3 text-indigo-600 mr-1" />
+                  <span>Dia {request?.stayDayNumber || linenTracking?.stayDayNumber || 1} de {request?.totalStayNights || linenTracking?.totalStayNights || 1}</span>
+                </Badge>
+              )}
+
+              {/* Tag de Alerta de 3 Dias Sem Troca de Cama */}
+              {isStayover && (request?.needsBeddingChangeAlert || (linenTracking?.daysSinceBeddingChange !== undefined && linenTracking.daysSinceBeddingChange >= 3)) && (
+                <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg animate-pulse">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  <span>⚠️ Troca de Cama ({linenTracking?.daysSinceBeddingChange || 3}d)</span>
+                </Badge>
+              )}
+
+              {/* Tag de Pedido de Enxoval do Hóspede */}
+              {isStayover && (request?.guestRequestedBedding || request?.guestRequestedTowels || linenTracking?.guestRequestedBedding || linenTracking?.guestRequestedTowels) && (
+                <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <Sparkles className="w-3 h-3 shrink-0" />
+                  <span>🔔 Troca Solicitada</span>
+                </Badge>
+              )}
+
+              {/* Tag de Não Perturbe (DND) */}
+              {isDnd && (
+                <Badge className="bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <BellOff className="w-3 h-3 shrink-0" />
+                  <span>🔕 Não Perturbe</span>
+                </Badge>
+              )}
+
               {flat.serviceInProgress && (
                 <Badge 
                   className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg border border-amber-600 animate-pulse shrink-0"
@@ -1347,19 +1487,26 @@ export function FlatCard({
             {/* Guest Info - Admin View (Nomes dos hóspedes em box limpo) */}
             {isAdmin && !isInstruction && (flat?.leavingGuest || flat?.arrivingGuest || flat?.activeReservation?.guestName) && (
               <div className="text-[11px] bg-muted/40 rounded-xl p-2.5 border border-border/70 space-y-1">
-                {flat.leavingGuest && (
-                  <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
-                    <span className="font-bold text-slate-500 shrink-0">
-                      {isViewingTomorrow
-                        ? "Check-out amanhã:"
-                        : isViewingFuture
-                          ? "Saída Prevista:"
-                          : currentStatus === "clean"
-                            ? "Saiu:"
-                            : "Check-out hoje:"}
-                    </span>
-                    <span className="font-semibold break-words">{flat.leavingGuest}</span>
+                {isStayover ? (
+                  <div className="flex items-start gap-1.5 text-indigo-700 dark:text-indigo-400">
+                    <span className="font-bold text-indigo-600 dark:text-indigo-500 shrink-0">Hóspede em Estadia B2B:</span>
+                    <span className="font-semibold break-words">{request?.guestName || flat.activeReservation?.guestName || flat.leavingGuest}</span>
                   </div>
+                ) : (
+                  flat.leavingGuest && (
+                    <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
+                      <span className="font-bold text-slate-500 shrink-0">
+                        {isViewingTomorrow
+                          ? "Check-out amanhã:"
+                          : isViewingFuture
+                            ? "Saída Prevista:"
+                            : currentStatus === "clean"
+                              ? "Saiu:"
+                              : "Check-out hoje:"}
+                      </span>
+                      <span className="font-semibold break-words">{flat.leavingGuest}</span>
+                    </div>
+                  )
                 )}
                 {flat.arrivingGuest && (
                   <div className="flex items-start gap-1.5 text-blue-700 dark:text-blue-400">
@@ -1373,11 +1520,52 @@ export function FlatCard({
                     <span className="font-semibold break-words">{flat.arrivingGuest}</span>
                   </div>
                 )}
-                {flat.activeReservation?.guestName && flat.activeReservation.guestName !== flat.leavingGuest && flat.activeReservation.guestName !== flat.arrivingGuest && (
+                {!isStayover && flat.activeReservation?.guestName && flat.activeReservation.guestName !== flat.leavingGuest && flat.activeReservation.guestName !== flat.arrivingGuest && (
                   <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
                     <span className="font-bold text-amber-600 dark:text-amber-500 shrink-0">Hóspede no quarto:</span>
                     <span className="font-semibold break-words">{flat.activeReservation.guestName}</span>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* Box Informativo de Não Perturbe (DND) */}
+            {isDnd && (
+              <div className="bg-rose-100/90 dark:bg-rose-950/40 border-2 border-rose-400 dark:border-rose-700/80 rounded-xl p-3 text-xs text-rose-950 dark:text-rose-200 shadow-2xs space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-rose-900 dark:text-rose-300">
+                  <BellOff className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                  <span>🔕 Não Perturbe — Hóspede dispensou limpeza</span>
+                </div>
+                <p className="text-[11px] font-semibold text-rose-900/90 dark:text-rose-200">
+                  O hóspede ativou o modo Não Perturbe no portal. O apartamento não deve ser limpo hoje.
+                </p>
+              </div>
+            )}
+
+            {/* Box Informativo de Governança Stayover B2B e Enxoval */}
+            {isStayover && !isDnd && (
+              <div className="bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl p-2.5 text-xs text-indigo-950 dark:text-indigo-200 space-y-1">
+                <div className="flex items-center justify-between font-bold text-[11px]">
+                  <span className="flex items-center gap-1">
+                    <BedDouble className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Controle de Enxoval:</span>
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Cama: {linenTracking?.daysSinceBeddingChange !== undefined ? `${linenTracking.daysSinceBeddingChange}d sem troca` : "Estadia recente"}
+                    {" • "}
+                    Toalhas: {linenTracking?.daysSinceTowelsChange !== undefined ? `${linenTracking.daysSinceTowelsChange}d sem troca` : "Estadia recente"}
+                  </span>
+                </div>
+                {(request?.guestRequestedBedding || request?.guestRequestedTowels || linenTracking?.guestRequestedBedding || linenTracking?.guestRequestedTowels) && (
+                  <p className="text-[11px] font-bold text-purple-700 dark:text-purple-300">
+                    🔔 Pedido do hóspede para hoje: {
+                      (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding) && (request?.guestRequestedTowels || linenTracking?.guestRequestedTowels)
+                        ? "Trocar Roupa de Cama e Toalhas"
+                        : (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding)
+                          ? "Trocar Roupa de Cama"
+                          : "Trocar Toalhas de Banho"
+                    }
+                  </p>
                 )}
               </div>
             )}
@@ -1603,7 +1791,17 @@ export function FlatCard({
 
           {/* Action Buttons */}
           <div className="pt-3 border-t border-slate-200/70 mt-2">
-            {isAssignedToOther ? (
+            {isDnd ? (
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl text-center space-y-1">
+                <p className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center justify-center gap-1.5">
+                  <BellOff className="w-4 h-4 text-rose-600" />
+                  <span>🔕 Não Perturbe Ativo</span>
+                </p>
+                <p className="text-[11px] text-rose-700 dark:text-rose-400">
+                  Hóspede dispensou limpeza hoje no portal. Ações bloqueadas.
+                </p>
+              </div>
+            ) : isAssignedToOther ? (
               <div 
                 title={`Assumido por: ${request.assignedUserName || request.assignedUsername}`}
                 className="text-center py-2 px-2.5 bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 whitespace-normal break-words"
@@ -1652,7 +1850,7 @@ export function FlatCard({
                       <Button 
                         size="sm" 
                         className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs gap-1" 
-                        onClick={() => setAdminCleanModalOpen(true)}
+                        onClick={() => isStayover ? setStayoverModalOpen(true) : setAdminCleanModalOpen(true)}
                         disabled={isProcessing}
                         title={isInstruction ? "Marcar instrução como concluída" : "Marcar como limpo escolhendo a camareira responsável"}
                       >
@@ -1713,7 +1911,7 @@ export function FlatCard({
                         <Button 
                           size="sm" 
                           className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs" 
-                          onClick={() => setAdminCleanModalOpen(true)}
+                          onClick={() => isStayover ? setStayoverModalOpen(true) : setAdminCleanModalOpen(true)}
                           disabled={isProcessing}
                         >
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> {isInstruction ? "Concluir" : "Limpo"}
@@ -2927,6 +3125,151 @@ export function FlatCard({
           </DialogContent>
         </Dialog>
       )}
+
+      {/* ── Modal de Conclusão de Limpeza Stayover B2B (Checklist de Enxoval) ── */}
+      <Dialog open={stayoverModalOpen} onOpenChange={setStayoverModalOpen}>
+        <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
+              <BedDouble className="w-5 h-5 text-indigo-600" />
+              <span>Concluir Limpeza Stayover — Flat {flat.flatNumber}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Limpeza diária de manutenção do flat ocupado (Reserva B2B). Confirme as trocas de enxoval realizadas:
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleConfirmStayoverClean} className="space-y-4 pt-2">
+            {/* Contexto da Estadia */}
+            <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-2xl border border-indigo-200/80 text-xs space-y-1.5">
+              <div className="flex items-center justify-between font-bold text-indigo-950 dark:text-indigo-200">
+                <span>Hóspede: {request?.guestName || flat.activeReservation?.guestName || "Hóspede B2B"}</span>
+                <span>Dia {request?.stayDayNumber || linenTracking?.stayDayNumber || 1} de {request?.totalStayNights || linenTracking?.totalStayNights || 1}</span>
+              </div>
+              {(request?.guestRequestedBedding || request?.guestRequestedTowels || linenTracking?.guestRequestedBedding || linenTracking?.guestRequestedTowels) && (
+                <div className="text-purple-800 dark:text-purple-300 font-bold bg-white/80 dark:bg-card/80 p-1.5 rounded-lg border border-purple-200 text-[11px] flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                  <span>
+                    Pedido do hóspede: {
+                      (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding) && (request?.guestRequestedTowels || linenTracking?.guestRequestedTowels)
+                        ? "Trocar Roupa de Cama e Toalhas"
+                        : (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding)
+                          ? "Trocar Roupa de Cama"
+                          : "Trocar Toalhas de Banho"
+                    }
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Pergunta 1: Toalhas */}
+            <div className="p-3.5 bg-muted/30 border border-border rounded-2xl flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs font-bold text-foreground block">
+                  1. As toalhas de banho foram trocadas?
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  Substituição por toalhas limpas e higienizadas
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={towelsChanged ? "default" : "outline"}
+                  onClick={() => setTowelsChanged(true)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${towelsChanged ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                >
+                  Sim
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!towelsChanged ? "default" : "outline"}
+                  onClick={() => setTowelsChanged(false)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${!towelsChanged ? "bg-slate-700 text-white" : ""}`}
+                >
+                  Não
+                </Button>
+              </div>
+            </div>
+
+            {/* Pergunta 2: Cama */}
+            <div className="p-3.5 bg-muted/30 border border-border rounded-2xl flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs font-bold text-foreground block">
+                  2. A roupa de cama foi trocada?
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  Lençóis, fronhas e protetores substituídos
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={beddingChanged ? "default" : "outline"}
+                  onClick={() => setBeddingChanged(true)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${beddingChanged ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                >
+                  Sim
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!beddingChanged ? "default" : "outline"}
+                  onClick={() => setBeddingChanged(false)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${!beddingChanged ? "bg-slate-700 text-white" : ""}`}
+                >
+                  Não
+                </Button>
+              </div>
+            </div>
+
+            {/* Se Admin: seleção de camareira responsável */}
+            {isAdmin && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-foreground">Camareira Responsável *</Label>
+                <Select value={selectedMaidId} onValueChange={setSelectedMaidId}>
+                  <SelectTrigger className="h-9 rounded-xl text-xs font-bold">
+                    <SelectValue placeholder="Selecione a camareira..." />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl">
+                    {staffList.map(s => (
+                      <SelectItem key={s.id} value={String(s.id)} className="text-xs font-semibold">
+                        {s.name || s.username} ({s.role === "admin" ? "Admin" : "Camareira"})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStayoverModalOpen(false)}
+                className="rounded-xl h-9 text-xs font-bold"
+              >
+                Voltar
+              </Button>
+              <Button
+                type="submit"
+                disabled={isProcessing || (isAdmin && !selectedMaidId && !request?.assignedUserId)}
+                className="rounded-xl h-9 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+              >
+                {isProcessing ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <span>Confirmar Limpeza Stayover</span>
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: Confirmar Estadia Estendida (Hóspede Estendeu - Admin Only) */}
       {isAdmin && (

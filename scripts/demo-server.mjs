@@ -4234,11 +4234,20 @@ function sanitizeAndRecoverCleanings() {
 
   // 5. Garantir valores corretos das taxas quinzenais
   if (!db.cleaningRates) {
-    db.cleaningRates = { defaultRatePerRoom: 35.00, userRates: { "2": 22.50, "3": 23.25 } };
+    db.cleaningRates = {
+      defaultRatePerRoom: 35.00,
+      userRates: { "2": 22.50, "3": 23.25 },
+      defaultStayoverRatePerRoom: 15.00,
+      userStayoverRates: { "2": 15.00, "3": 15.00 }
+    };
   } else {
     if (!db.cleaningRates.userRates) db.cleaningRates.userRates = {};
     if (db.cleaningRates.userRates["2"] === undefined) db.cleaningRates.userRates["2"] = 22.50;
     if (db.cleaningRates.userRates["3"] === undefined) db.cleaningRates.userRates["3"] = 23.25;
+    if (db.cleaningRates.defaultStayoverRatePerRoom === undefined) db.cleaningRates.defaultStayoverRatePerRoom = 15.00;
+    if (!db.cleaningRates.userStayoverRates) db.cleaningRates.userStayoverRates = {};
+    if (db.cleaningRates.userStayoverRates["2"] === undefined) db.cleaningRates.userStayoverRates["2"] = 15.00;
+    if (db.cleaningRates.userStayoverRates["3"] === undefined) db.cleaningRates.userStayoverRates["3"] = 15.00;
   }
 }
 
@@ -11540,11 +11549,11 @@ globalThis.getCheckinUrl = getCheckinUrl;
 globalThis.getCheckinUrlSync = getCheckinUrlSync;
 
 // ── Session Auth Helper (with Global Session Revocation Version & HMAC-SHA256) ──
-const AUTH_COOKIE_NAME = "gfm_session_v2";
-const AUTH_SESSION_VERSION = 2;
+export const AUTH_COOKIE_NAME = "gfm_session_v2";
+export const AUTH_SESSION_VERSION = 2;
 const AUTH_SECRET = process.env.AUTH_SECRET || process.env.GUEST_SESSION_SECRET || process.env.SESSION_SECRET || process.env.JWT_SECRET || crypto.createHash("sha256").update(__dirname + "_corpflats_session_hmac_key").digest("hex");
 
-function createAuthToken(payload) {
+export function createAuthToken(payload) {
   const dataB64 = Buffer.from(JSON.stringify(payload), "utf-8").toString("base64url");
   const sig = crypto.createHmac("sha256", AUTH_SECRET).update(dataB64).digest("base64url");
   return `${dataB64}.${sig}`;
@@ -14647,17 +14656,33 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
 function isB2bReservation(r) {
   if (!r) return false;
   const chanLower = String(r.channel || "").toLowerCase().trim();
+
+  // Guarda estrita de canais não-B2B:
+  // Se o canal for expressamente OTA ou canal direto convencional (Booking, Airbnb, WhatsApp, Site, Balcão, Direto),
+  // rejeita categoricamente, mesmo que haja companyName ou agencyName preenchidos para nota fiscal corporativa.
+  // Exceção estrita: se houver flag explícita isB2b === true ou o canal contiver "b2b".
+  const isExplicitNonB2b =
+    chanLower === "booking" || chanLower.includes("booking") ||
+    chanLower === "airbnb" || chanLower.includes("airbnb") ||
+    chanLower === "whatsapp" || chanLower.includes("whatsapp") ||
+    chanLower === "site" || chanLower.includes("site") ||
+    chanLower === "balcao" || chanLower === "direto" || chanLower === "direct";
+
+  if (isExplicitNonB2b && r.isB2b !== true && chanLower !== "b2b" && !chanLower.includes("b2b")) {
+    return false;
+  }
+
   return Boolean(
     chanLower === "b2b" ||
     chanLower.includes("b2b") ||
     r.isB2b === true ||
     r.b2bReservationNumber ||
+    r.b2bLocatorRloc ||
+    String(r.code || "").startsWith("B2B-") ||
     r.agencyId ||
     r.agencyName ||
     r.agencyTradeName ||
-    r.companyName ||
-    r.b2bLocatorRloc ||
-    String(r.code || "").startsWith("B2B-")
+    r.companyName
   );
 }
 const isB2BReservation = isB2bReservation;
@@ -14792,18 +14817,36 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 1. Identifica flats que estão com hóspede contínuo (STAYOVER) na data consultada
   // Se o hóspede entrou ANTES de dateStr (checkinDate < dateStr) e só sai DEPOIS de dateStr (checkoutDate > dateStr),
   // o flat é um stayover. Hóspedes entrando hoje (checkinDate === dateStr) são novos check-ins / turnovers, não stayover!
+  // Reservas concluídas (checkoutDone === true, status: completed/checked_out, earlyCheckout) não são stayover ativo.
   const stayoverFlatNumbers = new Set(
     (db.reservations || [])
-      .filter(r => r.status !== "cancelada" && r.checkinDate < dateStr && r.checkoutDate > dateStr)
+      .filter(r =>
+        r.status !== "cancelada" &&
+        r.status !== "cancelado" &&
+        r.status !== "cancelled" &&
+        r.status !== "no_show" &&
+        r.status !== "completed" &&
+        r.status !== "checked_out" &&
+        !r.checkoutDone &&
+        !r.earlyCheckout &&
+        r.checkinDate < dateStr &&
+        r.checkoutDate > dateStr
+      )
       .map(r => String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")))
   );
 
   // 1.2. Identifica e gera cards de limpeza diária (STAYOVER) exclusivos para reservas B2B em dias intermediários
   // Reservas de Booking, Airbnb, WhatsApp, Site Direto NUNCA geram card de stayover nas datas intermediárias.
+  // Reservas que já fizeram checkout antecipado (completed, checked_out, checkoutDone) NUNCA geram card de stayover.
   const b2bStayoversForDate = (db.reservations || []).filter(r =>
     r.status !== "cancelada" &&
     r.status !== "cancelado" &&
+    r.status !== "cancelled" &&
     r.status !== "no_show" &&
+    r.status !== "completed" &&
+    r.status !== "checked_out" &&
+    !r.checkoutDone &&
+    !r.earlyCheckout &&
     r.checkinDate &&
     r.checkoutDate &&
     r.checkinDate < dateStr &&
@@ -15550,7 +15593,9 @@ app.get("/api/reservations/checkouts", (req, res) => {
       r.id === req_.autoReservationId ||
       (req_.autoReservationCode && r.code === req_.autoReservationCode) ||
       (
-        r.status !== "cancelada" && r.status !== "cancelado" &&
+        r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+        r.status !== "no_show" && r.status !== "completed" && r.status !== "checked_out" &&
+        !r.checkoutDone && !r.earlyCheckout &&
         (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
         r.checkinDate < dateStr && r.checkoutDate > dateStr &&
         isB2bReservation(r)
@@ -16092,7 +16137,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     r.id === item.autoReservationId ||
     (item.autoReservationCode && r.code === item.autoReservationCode) ||
     (
-      r.status !== "cancelada" && r.status !== "cancelled" &&
+      r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+      r.status !== "no_show" && r.status !== "completed" && r.status !== "checked_out" &&
+      !r.checkoutDone && !r.earlyCheckout &&
       (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber)) &&
       r.checkinDate < targetDate && r.checkoutDate > targetDate &&
       isB2bReservation(r)
@@ -16343,7 +16390,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
             r.id === item.reservationId ||
             r.id === item.autoReservationId ||
             (
-              r.status !== "cancelada" && r.status !== "cancelled" &&
+              r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+              r.status !== "no_show" && r.status !== "completed" && r.status !== "checked_out" &&
+              !r.checkoutDone && !r.earlyCheckout &&
               (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber)) &&
               r.checkinDate < execDate && r.checkoutDate > execDate &&
               isB2bReservation(r)
@@ -19369,9 +19418,20 @@ app.get("/api/cleaning/rates", (req, res) => {
   if (!db.cleaningRates) {
     db.cleaningRates = {
       defaultRatePerRoom: 22.50,
-      userRates: {}
+      userRates: { "2": 22.50, "3": 23.25 },
+      defaultStayoverRatePerRoom: 15.00,
+      userStayoverRates: { "2": 15.00, "3": 15.00 }
     };
     saveDatabase();
+  }
+  if (db.cleaningRates.defaultStayoverRatePerRoom === undefined) {
+    db.cleaningRates.defaultStayoverRatePerRoom = 15.00;
+  }
+  if (!db.cleaningRates.userStayoverRates) {
+    db.cleaningRates.userStayoverRates = { "2": 15.00, "3": 15.00 };
+  } else {
+    if (db.cleaningRates.userStayoverRates["2"] === undefined) db.cleaningRates.userStayoverRates["2"] = 15.00;
+    if (db.cleaningRates.userStayoverRates["3"] === undefined) db.cleaningRates.userStayoverRates["3"] = 15.00;
   }
   const cleaners = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin" || u.role === "dev");
   const list = cleaners.map(u => ({
@@ -19379,12 +19439,15 @@ app.get("/api/cleaning/rates", (req, res) => {
     username: u.username,
     name: u.name || u.username,
     role: u.role,
-    rate: db.cleaningRates.userRates?.[u.id] !== undefined ? Number(db.cleaningRates.userRates[u.id]) : Number(db.cleaningRates.defaultRatePerRoom || 22.50)
+    rate: db.cleaningRates.userRates?.[u.id] !== undefined ? Number(db.cleaningRates.userRates[u.id]) : Number(db.cleaningRates.defaultRatePerRoom || 22.50),
+    stayoverRate: db.cleaningRates.userStayoverRates?.[u.id] !== undefined ? Number(db.cleaningRates.userStayoverRates[u.id]) : Number(db.cleaningRates.defaultStayoverRatePerRoom || 15.00)
   }));
 
   res.json({
     defaultRatePerRoom: Number(db.cleaningRates.defaultRatePerRoom || 22.50),
     userRates: db.cleaningRates.userRates || {},
+    defaultStayoverRatePerRoom: Number(db.cleaningRates.defaultStayoverRatePerRoom || 15.00),
+    userStayoverRates: db.cleaningRates.userStayoverRates || {},
     cleaners: list
   });
 });
@@ -19394,10 +19457,12 @@ app.post("/api/cleaning/rates", (req, res) => {
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
     return res.status(403).json({ error: "Apenas administradores podem configurar taxas e diárias." });
   }
-  const { defaultRatePerRoom, userRates } = req.body;
+  const { defaultRatePerRoom, userRates, defaultStayoverRatePerRoom, userStayoverRates } = req.body;
   if (!db.cleaningRates) db.cleaningRates = {};
   if (defaultRatePerRoom !== undefined) db.cleaningRates.defaultRatePerRoom = Number(defaultRatePerRoom);
   if (userRates !== undefined) db.cleaningRates.userRates = userRates;
+  if (defaultStayoverRatePerRoom !== undefined) db.cleaningRates.defaultStayoverRatePerRoom = Number(defaultStayoverRatePerRoom);
+  if (userStayoverRates !== undefined) db.cleaningRates.userStayoverRates = userStayoverRates;
   saveDatabase();
   res.json({ success: true, rates: db.cleaningRates });
 });
@@ -19409,9 +19474,15 @@ app.get("/api/analytics/report", (req, res) => {
   const endDate = req.query.endDate || getTodayStr();
 
   if (!db.cleaningRates) {
-    db.cleaningRates = { defaultRatePerRoom: 22.50, userRates: {} };
+    db.cleaningRates = {
+      defaultRatePerRoom: 22.50,
+      userRates: { "2": 22.50, "3": 23.25 },
+      defaultStayoverRatePerRoom: 15.00,
+      userStayoverRates: { "2": 15.00, "3": 15.00 }
+    };
   }
   const defaultRate = Number(db.cleaningRates.defaultRatePerRoom || 22.50);
+  const defaultStayoverRate = Number(db.cleaningRates.defaultStayoverRatePerRoom !== undefined ? db.cleaningRates.defaultStayoverRatePerRoom : 15.00);
 
   // Filtra limpezas concluídas no período [startDate, endDate]
   const completedCleanings = (db.cleaningRequests || []).filter(r => {
@@ -19488,8 +19559,20 @@ app.get("/api/analytics/report", (req, res) => {
     const ratePerRoom = db.cleaningRates.userRates?.[u.id] !== undefined
       ? Number(db.cleaningRates.userRates[u.id])
       : defaultRate;
+    const stayoverRate = db.cleaningRates.userStayoverRates?.[u.id] !== undefined
+      ? Number(db.cleaningRates.userStayoverRates[u.id])
+      : (u.id === 2 || u.id === 3 ? 15.00 : defaultStayoverRate);
 
-    const totalToPay = userCleanings.length * ratePerRoom;
+    const checkoutCleanings = userCleanings.filter(c => c.cleaningType !== "stayover" && c.source !== "stayover");
+    const stayoverCleanings = userCleanings.filter(c => c.cleaningType === "stayover" || c.source === "stayover");
+
+    const checkoutCount = checkoutCleanings.length;
+    const stayoverCount = stayoverCleanings.length;
+
+    const checkoutTotal = checkoutCount * ratePerRoom;
+    const stayoverTotal = stayoverCount * stayoverRate;
+    const totalToPay = checkoutTotal + stayoverTotal;
+
     const netProduced = Math.max(0, Number((totalToPay - advancesInPeriod).toFixed(2)));
     const pendingToPay = Math.max(0, Number((netProduced - paymentsInPeriod).toFixed(2)));
     const isPaid = (totalToPay > 0 || advancesInPeriod > 0) && pendingToPay === 0 && paymentsInPeriod >= netProduced;
@@ -19509,8 +19592,13 @@ app.get("/api/analytics/report", (req, res) => {
       pixKey: u.pixKey || "",
       whatsapp: u.whatsapp || u.phone || "",
       count: userCleanings.length,
+      checkoutCount,
+      stayoverCount,
       avgDurationMinutes: avgMinutes,
       ratePerRoom,
+      stayoverRate,
+      checkoutTotal: Number(checkoutTotal.toFixed(2)),
+      stayoverTotal: Number(stayoverTotal.toFixed(2)),
       totalToPay: Number(totalToPay.toFixed(2)),
       advancesInPeriod: Number(advancesInPeriod.toFixed(2)),
       paymentsInPeriod: Number(paymentsInPeriod.toFixed(2)),
@@ -19528,6 +19616,7 @@ app.get("/api/analytics/report", (req, res) => {
           const e = new Date(c.completedAt).getTime();
           if (e > s) itemDuration = Math.max(1, Math.round((e - s) / 60000));
         }
+        const isStay = c.cleaningType === "stayover" || c.source === "stayover";
         return {
           id: c.id,
           flatNumber: flat ? flat.number : (c.flatNumber || String(c.flatId)),
@@ -19536,7 +19625,9 @@ app.get("/api/analytics/report", (req, res) => {
           cleaningStartedAt: c.cleaningStartedAt,
           completedAt: c.completedAt,
           durationMinutes: c.durationMinutes || itemDuration,
-          rate: ratePerRoom,
+          rate: isStay ? stayoverRate : ratePerRoom,
+          cleaningType: isStay ? "stayover" : "checkout",
+          source: c.source || (isStay ? "stayover" : "reservation"),
           leavingGuest: c.leavingGuest || null
         };
       }),
@@ -19546,10 +19637,20 @@ app.get("/api/analytics/report", (req, res) => {
 
   // My cleanings stats se for camareira
   const myCleanings = userAuth ? completedCleanings.filter(c => c.assignedUserId === userAuth.id) : [];
+  const myCheckoutCleanings = myCleanings.filter(c => c.cleaningType !== "stayover" && c.source !== "stayover");
+  const myStayoverCleanings = myCleanings.filter(c => c.cleaningType === "stayover" || c.source === "stayover");
+
   const myRate = userAuth && db.cleaningRates.userRates?.[userAuth.id] !== undefined
     ? Number(db.cleaningRates.userRates[userAuth.id])
     : defaultRate;
-  const myTotalToPay = myCleanings.length * myRate;
+  const myStayoverRate = userAuth && db.cleaningRates.userStayoverRates?.[userAuth.id] !== undefined
+    ? Number(db.cleaningRates.userStayoverRates[userAuth.id])
+    : (userAuth && (userAuth.id === 2 || userAuth.id === 3) ? 15.00 : defaultStayoverRate);
+
+  const myCheckoutTotal = myCheckoutCleanings.length * myRate;
+  const myStayoverTotal = myStayoverCleanings.length * myStayoverRate;
+  const myTotalToPay = myCheckoutTotal + myStayoverTotal;
+
   let myAdvancesInPeriod = 0;
   let myPaymentsInPeriod = 0;
   let myCurrentBalance = 0;
@@ -19620,11 +19721,23 @@ app.get("/api/analytics/report", (req, res) => {
     count
   }));
 
+  let totalCheckoutCleanings = 0;
+  let totalStayoverCleanings = 0;
+  completedCleanings.forEach(c => {
+    if (c.cleaningType === "stayover" || c.source === "stayover") {
+      totalStayoverCleanings++;
+    } else {
+      totalCheckoutCleanings++;
+    }
+  });
+
   res.json({
     startDate,
     endDate,
     isCamareira,
     totalCleanings: completedCleanings.length,
+    totalCheckoutCleanings,
+    totalStayoverCleanings,
     grandTotalToPay: Number(grandTotalToPay.toFixed(2)),
     grandTotalAdvances: Number(grandTotalAdvances.toFixed(2)),
     grandTotalNetProduced: Number((grandTotalNetProduced || 0).toFixed(2)),
@@ -19633,7 +19746,12 @@ app.get("/api/analytics/report", (req, res) => {
     grandTotalPendingToPay: Number(grandTotalNetToPay.toFixed(2)),
     isPeriodFullyPaid: grandTotalToPay > 0 && grandTotalNetToPay === 0 && grandTotalPayments >= (grandTotalToPay - grandTotalAdvances),
     defaultRatePerRoom: defaultRate,
+    defaultStayoverRatePerRoom: defaultStayoverRate,
     myTotalToPay: Number(myTotalToPay.toFixed(2)),
+    myCheckoutCount: myCheckoutCleanings.length,
+    myStayoverCount: myStayoverCleanings.length,
+    myCheckoutTotal: Number(myCheckoutTotal.toFixed(2)),
+    myStayoverTotal: Number(myStayoverTotal.toFixed(2)),
     myAdvancesInPeriod: Number(myAdvancesInPeriod.toFixed(2)),
     myNetProduced: Number(myNetProduced.toFixed(2)),
     myNetToPay: Number(myPendingToPay.toFixed(2)),
@@ -19642,6 +19760,7 @@ app.get("/api/analytics/report", (req, res) => {
     myIsPaid,
     myCurrentBalance,
     myRatePerRoom: myRate,
+    myStayoverRate,
     myPixKey: userAuth?.pixKey || "",
     myTotalCleanings: userAuth ? completedCleanings.filter(c => c.assignedUserId === userAuth.id).length : completedCleanings.length,
     myAvgDurationMinutes: (() => {

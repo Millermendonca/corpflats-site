@@ -110,15 +110,23 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
         timeFmt = format(new Date(c.completedAt), "HH:mm")
       }
       const dur = c.durationMinutes || 35
-      const guest = c.leavingGuest ? `<div style="font-size: 8pt; color: #64748b;">Saída: ${c.leavingGuest}</div>` : ""
+      const isStayoverClean = c.cleaningType === "stayover" || c.source === "stayover"
+      const typeBadge = isStayoverClean 
+        ? `<span style="display:inline-block; padding:1px 5px; font-size:7pt; font-weight:bold; background:#e0e7ff; color:#3730a3; border-radius:4px; margin-left:4px;">Stayover</span>` 
+        : `<span style="display:inline-block; padding:1px 5px; font-size:7pt; font-weight:bold; background:#f1f5f9; color:#475569; border-radius:4px; margin-left:4px;">Check-out</span>`
+      const guest = c.leavingGuest ? `<div style="font-size: 8pt; color: #64748b;">${isStayoverClean ? "Hóspede:" : "Saída:"} ${c.leavingGuest}</div>` : ""
+      const lineRate = c.rateApplied !== undefined 
+        ? Number(c.rateApplied).toFixed(2)
+        : (isStayoverClean ? Number(cleaner.stayoverRate || cleaner.userStayoverRate || 15).toFixed(2) : rate)
+
       return `
         <tr>
           <td style="text-align: center; color: #94a3b8; font-family: monospace;">${String(idx + 1).padStart(2, "0")}</td>
           <td>${dateFmt}</td>
           <td style="font-family: monospace; color: #475569;">${timeFmt}</td>
-          <td><strong>Apartamento ${c.flatNumber}</strong>${guest}</td>
+          <td><strong>Apartamento ${c.flatNumber}</strong>${typeBadge}${guest}</td>
           <td style="text-align: center; font-family: monospace;">${dur} min</td>
-          <td style="text-align: right; font-weight: bold; color: #059669; font-family: monospace;">R$ ${rate}</td>
+          <td style="text-align: right; font-weight: bold; color: #059669; font-family: monospace;">R$ ${lineRate}</td>
         </tr>
       `
     }).join("")
@@ -675,8 +683,10 @@ export default function Reports() {
   // ── Configuração de Taxas ──
   const [ratesModalOpen, setRatesModalOpen] = useState(false)
   const [defaultRateInput, setDefaultRateInput] = useState("35.00")
+  const [defaultStayoverRateInput, setDefaultStayoverRateInput] = useState("15.00")
   const [cleanersList, setCleanersList] = useState<any[]>([])
   const [userRatesInput, setUserRatesInput] = useState<Record<string, string>>({})
+  const [userStayoverRatesInput, setUserStayoverRatesInput] = useState<Record<string, string>>({})
   const [savingRates, setSavingRates] = useState(false)
 
   // ── Modal de Recibo Individual da Camareira ──
@@ -747,12 +757,17 @@ export default function Reports() {
 
       if (ratesRes) {
         if (ratesRes.defaultRatePerRoom) setDefaultRateInput(String(ratesRes.defaultRatePerRoom))
+        if (ratesRes.defaultStayoverRatePerRoom !== undefined) setDefaultStayoverRateInput(String(ratesRes.defaultStayoverRatePerRoom))
         if (Array.isArray(ratesRes.cleaners)) {
           const initialMap: Record<string, string> = {}
+          const initialStayoverMap: Record<string, string> = {}
           ratesRes.cleaners.forEach((c: any) => {
-            initialMap[String(c.userId)] = String(c.rate !== undefined ? c.rate : ratesRes.defaultRatePerRoom || 35.00)
+            const uid = String(c.userId || c.id)
+            initialMap[uid] = String(c.rate !== undefined ? c.rate : ratesRes.defaultRatePerRoom || 35.00)
+            initialStayoverMap[uid] = String(c.stayoverRate !== undefined ? c.stayoverRate : ratesRes.defaultStayoverRatePerRoom || 15.00)
           })
           setUserRatesInput(initialMap)
+          setUserStayoverRatesInput(initialStayoverMap)
         }
       }
     } finally {
@@ -1077,17 +1092,27 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
         }
       })
 
+      const formattedUserStayoverRates: Record<string, number> = {}
+      Object.entries(userStayoverRatesInput).forEach(([userId, val]) => {
+        const num = parseFloat(val)
+        if (!isNaN(num) && num >= 0) {
+          formattedUserStayoverRates[userId] = num
+        }
+      })
+
       const res = await fetch("/api/cleaning/rates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           defaultRatePerRoom: parseFloat(defaultRateInput) || 35.00,
-          userRates: formattedUserRates
+          defaultStayoverRatePerRoom: parseFloat(defaultStayoverRateInput) || 15.00,
+          userRates: formattedUserRates,
+          userStayoverRates: formattedUserStayoverRates
         }),
         credentials: "include"
       })
       if (res.ok) {
-        toast({ title: "Taxas Atualizadas", description: "Os novos valores de diária foram salvos com sucesso." })
+        toast({ title: "Taxas Atualizadas", description: "Os novos valores de diária e stayover foram salvos com sucesso." })
         setRatesModalOpen(false)
         fetchReport()
       }
@@ -2302,22 +2327,42 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </DialogHeader>
 
             <form onSubmit={handleSaveRates} className="space-y-4 pt-2">
-              <div className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-1.5">
-                <Label className="text-xs font-bold text-foreground">Valor Padrão Base (R$) *</Label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-muted-foreground">R$</span>
-                  <Input 
-                    type="number"
-                    step="0.50"
-                    value={defaultRateInput}
-                    onChange={e => setDefaultRateInput(e.target.value)}
-                    required
-                    className="pl-10 text-sm font-black text-emerald-600 rounded-xl h-10 bg-background"
-                  />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-1.5">
+                  <Label className="text-xs font-bold text-foreground">Padrão Check-out (R$) *</Label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-muted-foreground">R$</span>
+                    <Input 
+                      type="number"
+                      step="0.50"
+                      value={defaultRateInput}
+                      onChange={e => setDefaultRateInput(e.target.value)}
+                      required
+                      className="pl-10 text-sm font-black text-emerald-600 rounded-xl h-10 bg-background"
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Taxa padrão para limpezas de saída (check-out).
+                  </p>
                 </div>
-                <p className="text-[10px] text-muted-foreground">
-                  Aplicado para novas camareiras que não tenham valor individual configurado abaixo.
-                </p>
+
+                <div className="p-3.5 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200/60 dark:border-indigo-800/60 space-y-1.5">
+                  <Label className="text-xs font-bold text-indigo-950 dark:text-indigo-200">Padrão Stayover (R$) *</Label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-xs text-muted-foreground">R$</span>
+                    <Input 
+                      type="number"
+                      step="0.50"
+                      value={defaultStayoverRateInput}
+                      onChange={e => setDefaultStayoverRateInput(e.target.value)}
+                      required
+                      className="pl-10 text-sm font-black text-indigo-600 dark:text-indigo-400 rounded-xl h-10 bg-background"
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Taxa padrão para limpezas de diária em andamento (B2B).
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -2331,7 +2376,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                     <div className="text-xs text-muted-foreground p-3 text-center">Nenhuma camareira cadastrada na equipe.</div>
                   ) : (
                     cleanersList.map(c => (
-                      <div key={c.id || c.userId} className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-3 shadow-2xs hover:border-primary/40 transition-colors">
+                      <div key={c.id || c.userId} className="p-3 rounded-2xl bg-card border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs hover:border-primary/40 transition-colors">
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-black text-xs shrink-0">
                             {(c.name || c.username).charAt(0).toUpperCase()}
@@ -2342,20 +2387,35 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-bold text-muted-foreground">R$</span>
-                          <Input 
-                            type="number"
-                            step="0.50"
-                            placeholder={defaultRateInput}
-                            value={userRatesInput[String(c.id || c.userId)] || ""}
-                            onChange={e => {
-                              const val = e.target.value
-                              setUserRatesInput(prev => ({ ...prev, [String(c.id || c.userId)]: val }))
-                            }}
-                            className="w-24 h-9 text-xs font-black text-emerald-600 rounded-xl text-right"
-                          />
-                          <span className="text-[10px] text-muted-foreground">/quarto</span>
+                        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground font-semibold">Saída: R$</span>
+                            <Input 
+                              type="number"
+                              step="0.50"
+                              placeholder={defaultRateInput}
+                              value={userRatesInput[String(c.id || c.userId)] || ""}
+                              onChange={e => {
+                                const val = e.target.value
+                                setUserRatesInput(prev => ({ ...prev, [String(c.id || c.userId)]: val }))
+                              }}
+                              className="w-20 h-8 text-xs font-black text-emerald-600 rounded-xl text-right"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold">Stayover: R$</span>
+                            <Input 
+                              type="number"
+                              step="0.50"
+                              placeholder={defaultStayoverRateInput}
+                              value={userStayoverRatesInput[String(c.id || c.userId)] || ""}
+                              onChange={e => {
+                                const val = e.target.value
+                                setUserStayoverRatesInput(prev => ({ ...prev, [String(c.id || c.userId)]: val }))
+                              }}
+                              className="w-20 h-8 text-xs font-black text-indigo-600 dark:text-indigo-400 rounded-xl text-right"
+                            />
+                          </div>
                         </div>
                       </div>
                     ))
@@ -2673,21 +2733,39 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                         const timeRange = c.cleaningStartedAt && c.completedAt
                           ? `${format(new Date(c.cleaningStartedAt), "HH:mm")} - ${format(new Date(c.completedAt), "HH:mm")}`
                           : (c.completedAt ? format(new Date(c.completedAt), "HH:mm") : "—")
+                        const isStayoverClean = c.cleaningType === "stayover" || c.source === "stayover"
+                        const cVal = c.rateApplied !== undefined 
+                          ? Number(c.rateApplied)
+                          : (isStayoverClean ? Number(activeCleanerReceipt.stayoverRate || report?.defaultStayoverRatePerRoom || 15) : Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35))
+
                         return (
                           <tr key={idx}>
                             <td className="p-2.5 text-center font-mono text-muted-foreground">{String(idx + 1).padStart(2, "0")}</td>
                             <td className="p-2.5">{formatDate(execDateStr)}</td>
                             <td className="p-2.5 font-mono text-muted-foreground">{timeRange}</td>
-                            <td className="p-2.5 font-bold">Apartamento {c.flatNumber}</td>
+                            <td className="p-2.5 font-bold">
+                              <span>Apartamento {c.flatNumber}</span>
+                              <span className={cn(
+                                "text-[9.5px] px-1.5 py-0.2 rounded font-bold ml-1.5 inline-block",
+                                isStayoverClean ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300" : "bg-muted text-muted-foreground"
+                              )}>
+                                {isStayoverClean ? "Stayover" : "Check-out"}
+                              </span>
+                            </td>
                             <td className="p-2.5 text-center font-mono">{c.durationMinutes || 35} min</td>
-                            <td className="p-2.5 text-right font-black text-emerald-600">R$ {Number(activeCleanerReceipt.ratePerRoom || 35).toFixed(2)}</td>
+                            <td className="p-2.5 text-right font-black text-emerald-600">R$ {cVal.toFixed(2)}</td>
                           </tr>
                         )
                       })}
                     </tbody>
                     <tfoot className="bg-muted/30 font-bold border-t border-border">
                       <tr>
-                        <td colSpan={4} className="p-2.5 text-right uppercase text-[10px] text-muted-foreground">Subtotal Bruto ({activeCleanerReceipt.count} diárias):</td>
+                        <td colSpan={4} className="p-2.5 text-right uppercase text-[10px] text-muted-foreground">
+                          Subtotal Bruto ({activeCleanerReceipt.count} diárias
+                          {activeCleanerReceipt.checkoutCount !== undefined && activeCleanerReceipt.stayoverCount !== undefined
+                            ? ` • ${activeCleanerReceipt.checkoutCount} saídas / ${activeCleanerReceipt.stayoverCount} stayovers`
+                            : ""}):
+                        </td>
                         <td className="p-2.5 text-center font-mono">~{activeCleanerReceipt.avgDurationMinutes || 35} min</td>
                         <td className="p-2.5 text-right font-black">R$ {formatBRL(gross)}</td>
                       </tr>

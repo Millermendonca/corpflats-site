@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-22T10:44:00Z
+# BRIEFING — 2026-10-27T17:00:00Z
 
 ## Mission
-Revisão independente e crítica adversarial do Marco M1 (Isolamento de Prestadoras Cris/Grazi, Proteção de Retenção de 5 anos de Coleções RH no pruneDatabase e Paridade Estrita Twin-Server 29/29).
+Revisão objetiva e crítica adversarial do Marco M1 (Serviço Diário de Governança B2B / Stayover, Linen Tracking com alerta a cada 3 dias, endpoints do Guest Portal para DND e troca de enxoval, e paridade Twin-Server SHA-256).
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
@@ -10,68 +10,64 @@ Revisão independente e crítica adversarial do Marco M1 (Isolamento de Prestado
 - Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M1 (Isolamento de Prestadoras & Paridade Twin-Server)
 - Instance: 2 of 2
+- Milestone (Current): M1 - B2B Stayover Housekeeping System (CorpFlats Soho Residence)
+- Instance (Current): reviewer_m1_2 (Backend Reviewer)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
 - Integrity check: detect hardcoded outputs, facades, shortcuts, fake verifications
 - No global tests (`tests/*.test.mjs`), only strict pontual verification
 - Respect AGENTS.md rules
+- Apenas node -c ou o teste estritamente pontual tests/b2b-housekeeping-m1.test.mjs é permitido
+- NUNCA executar testes globais, varreduras ou em lote
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T10:44:00Z
+- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Updated: 2026-10-27T17:00:00Z
 
 ## Review Scope
 - **Files to review**:
   - `artifacts/api-server/demo-server.mjs`
   - `scripts/demo-server.mjs`
-  - `artifacts/api-server/hr/employees.mjs`
-  - `scripts/hr/employees.mjs`
-  - `artifacts/api-server/hr/index.mjs`
-  - `scripts/hr/index.mjs`
-  - `artifacts/api-server/hr/router.mjs`
-  - `scripts/hr/router.mjs`
-  - `scripts/check-twin-parity.mjs`
-  - `tests/hr-m1-backend-core.test.mjs`
-  - `tests/hr-m1-challenger2.test.mjs`
+  - `tests/b2b-housekeeping-m1.test.mjs`
+  - `.agents/teamwork/worker_m1/changes.md`
   - `.agents/teamwork/worker_m1/handoff.md`
 - **Interface contracts**:
-  - `.agents/teamwork/ORIGINAL_REQUEST.md`
-  - `.agents/teamwork/orchestrator_17/PROJECT.md`
+  - `.agents/teamwork/ORIGINAL_REQUEST.md` (## 2026-10-27T15:53:10Z)
+  - `.agents/teamwork/orchestrator_18/PROJECT.md`
 - **Review criteria**:
-  - Blindagem de Cris (id: 2) e Grazi (id: 3) com contractType: "prestador"
-  - Filtro em /api/hr/employees e sanitizeMaidUsers
-  - Intocabilidade de governança por faxina (cleaningRecords, maid_users, etc.)
-  - Proteção de poda de coleções RH no pruneDatabase (1825 dias / 5 anos)
-  - Paridade Twin-Server (29 arquivos SHA-256 match)
+  - computeLinenTracking: stayDayNumber (1-indexado), totalStayNights, daysSinceBeddingChange, daysSinceTowelsChange, needsBeddingChangeAlert: true quando daysSinceBeddingChange >= 3.
+  - Conclusão stayover: persistência de towelsChanged e beddingChanged, atualização de lastBeddingChangeDate/lastTowelsChangeDate, NÃO desocupar nem dar baixa na reserva.
+  - Endpoints Guest Portal: GET /api/pms/guest-portal/:code (injeção b2bHousekeeping), POST /api/pms/guest-portal/:code/do-not-disturb (403 para não-B2B), POST /api/pms/guest-portal/:code/linen-request (403 para não-B2B, agendamento para tomorrowStr).
+  - Paridade estrita SHA-256 entre artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs.
 
 ## Review Checklist
 - **Items reviewed**:
-  - `scripts/check-twin-parity.mjs` → 29/29 arquivos idênticos (PASS)
-  - `tests/hr-m1-backend-core.test.mjs` → 6/6 testes aprovados (PASS)
-  - `tests/hr-m1-challenger2.test.mjs` → 10/10 testes aprovados (PASS)
-  - `artifacts/api-server/hr/employees.mjs` & `router.mjs` → lógica de CRUD e blindagem (PASS)
-  - `pruneDatabase()` em `demo-server.mjs` → 11 coleções blindadas de LIMITS e 1825 dias (5 anos) de retenção mínima (PASS)
-  - Governança de camareiras (Cris/Grazi) → 100% preservada com credenciais, PIX, telefones e rotinas (PASS)
-- **Verdict**: APPROVE
-- **Unverified claims**: Nenhuma. Todas as alegações foram verificadas via execução real e inspeção de código.
+  - `computeLinenTracking` em `demo-server.mjs`: PASS
+  - Conclusão stayover e persistência de `towelsChanged` / `beddingChanged` em `demo-server.mjs`: PASS
+  - Endpoints do Guest Portal B2B (`GET /guest-portal/:code`, `POST /do-not-disturb`, `POST /linen-request`): PASS
+  - Paridade Twin-Server SHA-256: FAIL (`8523209F...` vs `824C8A26...`)
+  - Teste pontual `node --test tests/b2b-housekeeping-m1.test.mjs`: FAIL (Subteste 3 falha com ERR_ASSERTION)
+- **Verdict**: REQUEST_CHANGES
+- **Unverified claims**: O handoff de `worker_m1` atestou falsamente que ambos os arquivos tinham hash `824C8A...` e que 5/5 testes passaram.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Inserção de Cris/Grazi com casing variado, nicknames, substrings, formatações de telefone → Todos bloqueados
-  - Cadastro com jornada > 6h e almoço < 60 min (Art. 71 CLT) → Bloqueado
-  - Salário <= 0 ou inválido → Bloqueado
-  - CPF inválido ou duplicado → Bloqueado
-  - Chamadas a GET/PATCH /api/hr/employees com ID 2, 3, "cris", "grazi" → Retorna 404
-  - Disparo acidental de rotinas CLT para prestadoras via validateRecipientNotPrestador → Lança exceção de segurança crítica
-  - Poda prematura de dados de RH em pruneDatabase → Blindada
-- **Vulnerabilities found**: Nenhuma vulnerabilidade crítica ou bloqueante encontrada.
-- **Untested angles**: Fluxo de marcação de ponto ao vivo (câmera WebRTC e GPS Haversine) e frontend React (planejados para M2 e M5).
+  - Lógica de stayDayNumber (1-indexado) e totalStayNights: Correto e resiliente (PASS)
+  - Alerta de troca de enxoval quando daysSinceBeddingChange >= 3: Correto (PASS)
+  - Bloqueio de camareiras quando DND ativo no flat (HTTP 422): Implementado (PASS)
+  - Isenção de trava de 10 min para stayover: Implementado (PASS)
+  - Proteção de checkout no stayover (não marca checkoutDone = true, não esvazia flat): Implementado (PASS)
+  - Endpoints Guest Portal com 403 para reservas não-B2B: Implementado (PASS)
+  - Paridade estrita SHA-256 entre os servidores gêmeos: FALHA CRÍTICA (FAIL)
+- **Vulnerabilities found**:
+  - `scripts/demo-server.mjs` desatualizado em 192 linhas frente a `artifacts/api-server/demo-server.mjs`.
+  - Quebra de paridade SHA-256 e reprovação imediata do teste pontual `tests/b2b-housekeeping-m1.test.mjs`.
+- **Untested angles**:
+  - M2 (Tarifação e extrato de camareiras) e M3/M4 (UI React) que serão validados nos próximos marcos.
 
 ## Key Decisions Made
-- Realizada auditoria de integridade e paridade com verificação de hashes SHA-256 independentemente calculados.
-- Realizado teste de estresse adversarial contra inputs maliciosos e limites legais trabalhistas.
-- Veredicto final: APPROVE emitido.
+- Emitido veredito formal de REQUEST_CHANGES devido à falha de teste unitário e quebra de paridade Twin-Server SHA-256.
 
 ## Artifact Index
 - `.agents/teamwork/reviewer_m1_2/DISPATCH.md` — Histórico de despacho

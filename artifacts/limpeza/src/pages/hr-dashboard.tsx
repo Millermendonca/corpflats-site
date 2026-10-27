@@ -528,6 +528,13 @@ export default function HrDashboardPage() {
 
   const [newPin, setNewPin] = useState<string>("");
 
+  // Estados de Taxas de Governança B2B (Cris e Grazi - Prestadoras Autônomas)
+  const [crisCheckoutRate, setCrisCheckoutRate] = useState<string>("35.00");
+  const [crisStayoverRate, setCrisStayoverRate] = useState<string>("15.00");
+  const [graziCheckoutRate, setGraziCheckoutRate] = useState<string>("35.00");
+  const [graziStayoverRate, setGraziStayoverRate] = useState<string>("15.00");
+  const [savingPrestadoraRates, setSavingPrestadoraRates] = useState<boolean>(false);
+
   // Referência do Canvas de Assinatura Digital
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
@@ -634,10 +641,76 @@ export default function HrDashboardPage() {
           setContracts(dataContr.contracts);
         }
       }
+      // 10. Taxas de Governança Prestadoras Autônomas (Cris e Grazi)
+      await fetchCleaningRates();
     } catch (err: any) {
       console.error("Erro ao carregar dados do RH:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchCleaningRates = async () => {
+    try {
+      const res = await fetch("/api/cleaning/rates", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        const cleaners = data.cleaners || [];
+        const cris = cleaners.find((c: any) => c.userId === 2 || (c.name && c.name.toLowerCase().includes("cris")));
+        const grazi = cleaners.find((c: any) => c.userId === 3 || (c.name && c.name.toLowerCase().includes("grazi")));
+        if (cris) {
+          if (cris.rate !== undefined && cris.rate !== null) setCrisCheckoutRate(String(cris.rate));
+          if (cris.stayoverRate !== undefined && cris.stayoverRate !== null) setCrisStayoverRate(String(cris.stayoverRate));
+        }
+        if (grazi) {
+          if (grazi.rate !== undefined && grazi.rate !== null) setGraziCheckoutRate(String(grazi.rate));
+          if (grazi.stayoverRate !== undefined && grazi.stayoverRate !== null) setGraziStayoverRate(String(grazi.stayoverRate));
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar taxas de governança:", e);
+    }
+  };
+
+  const handleSavePrestadoraRates = async () => {
+    try {
+      setSavingPrestadoraRates(true);
+      const res = await fetch("/api/cleaning/rates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userRates: {
+            "2": parseFloat(crisCheckoutRate) || 35.00,
+            "3": parseFloat(graziCheckoutRate) || 35.00
+          },
+          userStayoverRates: {
+            "2": parseFloat(crisStayoverRate) || 15.00,
+            "3": parseFloat(graziStayoverRate) || 15.00
+          }
+        }),
+        credentials: "include"
+      });
+      if (res.ok) {
+        toast({
+          title: "Taxas Atualizadas",
+          description: "Valores de Check-out e Stayover atualizados com sucesso para Cris e Grazi."
+        });
+        await fetchCleaningRates();
+      } else {
+        toast({
+          title: "Erro ao Salvar",
+          description: "Não foi possível salvar os valores de governança.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de Conexão",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setSavingPrestadoraRates(false);
     }
   };
 
@@ -1404,22 +1477,66 @@ export default function HrDashboardPage() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {PRESTADORAS_AUTONOMAS.map(p => (
-                    <div key={p.id} className="p-4 rounded-2xl bg-card border border-amber-500/30 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-800 dark:text-amber-200 flex items-center justify-center font-black">
-                          {p.name[0]}
+                    <div key={p.id} className="p-4 rounded-2xl bg-card border border-amber-500/30 flex flex-col justify-between gap-3 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-800 dark:text-amber-200 flex items-center justify-center font-black">
+                            {p.name[0]}
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-foreground">{p.name}</p>
+                            <p className="text-[11px] text-muted-foreground font-semibold">Chave PIX: {p.pixKey}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-black text-foreground">{p.name}</p>
-                          <p className="text-[11px] text-muted-foreground font-semibold">Chave PIX: {p.pixKey}</p>
-                          <p className="text-[10px] text-amber-700 dark:text-amber-400 font-bold">{p.remunerationBasis}</p>
+                        <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400 text-[10px] font-bold">
+                          Diarista Autônoma
+                        </Badge>
+                      </div>
+
+                      <div className="pt-2 border-t border-amber-500/20 grid grid-cols-2 gap-2.5">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-muted-foreground">Check-out (R$)</Label>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">R$</span>
+                            <Input
+                              type="number"
+                              step="0.50"
+                              value={p.id === 2 ? crisCheckoutRate : graziCheckoutRate}
+                              onChange={e => p.id === 2 ? setCrisCheckoutRate(e.target.value) : setGraziCheckoutRate(e.target.value)}
+                              className="h-8 pl-7 text-xs font-black text-emerald-600 rounded-xl text-right"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-muted-foreground">Stayover B2B (R$)</Label>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">R$</span>
+                            <Input
+                              type="number"
+                              step="0.50"
+                              value={p.id === 2 ? crisStayoverRate : graziStayoverRate}
+                              onChange={e => p.id === 2 ? setCrisStayoverRate(e.target.value) : setGraziStayoverRate(e.target.value)}
+                              className="h-8 pl-7 text-xs font-black text-indigo-600 dark:text-indigo-400 rounded-xl text-right"
+                            />
+                          </div>
                         </div>
                       </div>
-                      <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400 text-[10px] font-bold">
-                        Diarista Autônoma
-                      </Badge>
                     </div>
                   ))}
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border/60">
+                  <span className="text-[11px] text-muted-foreground font-medium">
+                    As taxas acima definem a remuneração por quarto limpo (Saída) e governança diária de hóspedes B2B (Stayover).
+                  </span>
+                  <Button
+                    onClick={handleSavePrestadoraRates}
+                    disabled={savingPrestadoraRates}
+                    className="h-8 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shrink-0 shadow-xs"
+                  >
+                    <DollarSign className="w-3.5 h-3.5 mr-1.5" />
+                    {savingPrestadoraRates ? "Salvando..." : "Salvar Taxas de Governança"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>

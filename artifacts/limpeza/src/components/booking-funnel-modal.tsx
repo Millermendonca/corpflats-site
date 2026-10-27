@@ -713,6 +713,8 @@ export function BookingFunnelModal({
         petFee,
         paymentMethod,
         totalAmount,
+        pixTotalAmount,
+        cardTotalAmount: baseTotalAmount,
         baseTotalAmount,
         pixDiscountPercent,
         pixDiscountAmount: paymentMethod === "pix" ? pixDiscountAmount : 0,
@@ -1775,7 +1777,7 @@ export function BookingFunnelModal({
                     </div>
                   </div>
                   <p className="text-[10px] text-slate-500 font-medium mt-1.5">
-                    À vista ou em até 12x no Mercado Pago
+                    Checkout Seguro Mercado Pago
                   </p>
                 </div>
               </div>

@@ -771,3 +771,67 @@ Integrity mode: development
 - [ ] `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` possuem hash SHA-256 idêntico.
 - [ ] `npm --prefix artifacts/limpeza run build` compila com código de saída 0 sem erros.
 - [ ] Teste pontual `node tests/hr-employee-management.test.mjs` passa 100% das asserções sem executar testes de outros módulos.
+
+
+## 2026-10-27T15:53:10Z
+
+Implementar o sistema completo de **Serviço Diário de Governança (Stayover) exclusivo para reservas B2B**, incluindo diferenciação visual nos cards de limpeza (Check-out vs. Diária em Andamento), tarifação diferenciada de limpeza Stayover para prestadoras terceirizadas (Cris e Grazi) com discriminação no extrato/relatórios e no painel de RH, checklist e contador de dias de troca de roupa de cama e toalhas de banho (com alerta a cada 3 dias), e controles de "Não Perturbe" e solicitação de troca de enxoval (sempre para o próximo dia) no Portal do Hóspede B2B.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Regras Críticas do Projeto (AGENTS.md - Obrigatório)
+- **NUNCA executar testes globais, varreduras ou em lote**: É terminantemente PROIBIDO rodar `tests/*.test.mjs`, scripts que varrem a pasta `tests/`, ou suítes completas do projeto.
+- **Apenas o teste estritamente pontual do que foi alterado**: Crie e execute EXCLUSIVAMENTE o arquivo de teste pontual `tests/b2b-stayover-housekeeping.test.mjs` associado a esta funcionalidade.
+- **Proibido rodar testes de outros módulos**.
+- **Build de Verificação**: Ao alterar arquivos em `artifacts/limpeza/src`, rode o build (`npm run build` na pasta `artifacts/limpeza`).
+
+## Requirements
+
+### R1. Geração e Diferenciação Visual de Cards de Limpeza Diária (Stayover) Exclusivos para B2B
+- Apenas reservas do canal **B2B** (`channel === "b2b"`, `channel.includes("b2b")`, `b2bReservationNumber` ou `agencyId`) em andamento (`checkinDate < dateStr && checkoutDate > dateStr`, status ativo/não cancelado/não no_show) devem gerar cards diários de limpeza do tipo **Stayover (`source: "stayover"`, `cleaningType: "stayover"`)** em `getRequestsForDate` e `GET /api/reservations/checkouts`.
+- Reservas de **Booking, Airbnb, WhatsApp, Site Direto** ou outros canais **nunca** geram limpeza diária de stayover.
+- Nos cards de limpeza (`artifacts/limpeza/src/components/flat-card.tsx` e painel de governança), diferenciar visualmente de forma clara o que é **Limpeza de Check-out (Saída)** do que é **Limpeza de Diária em Andamento (Stayover B2B)**, exibindo no card de Stayover o dia atual da estadia (ex.: `Dia 3 de 10`), nome do hóspede em estadia e status de enxoval.
+- Iniciar (`cleaning_now`) ou concluir (`clean`) uma limpeza de **Stayover** (`PATCH /api/cleaning/assignments/:requestId/status`) jamais deve dar baixa de check-out na reserva (`checkoutDone` não deve ser marcado como `true`, o status da reserva não muda para `completed`, e o flat permanece ocupado pelo hóspede).
+
+### R2. Tarifação Diferenciada (Checkout vs. Stayover) e Extrato das Terceirizadas (Cris & Grazi)
+- Adicionar suporte a taxas de limpeza **Stayover** em `db.cleaningRates`: `defaultStayoverRatePerRoom` (valor inicial padrão `15.00`) e `userStayoverRates` por camareira (ex.: Cris `id: 2` e Grazi `id: 3` iniciando em `15.00`, editáveis).
+- Permitir configurar os valores de **Limpeza de Check-out** e **Limpeza de Stayover** tanto no modal de taxas em `/reports` (`artifacts/limpeza/src/pages/reports.tsx`) quanto diretamente no card de **Prestadoras Autônomas (Cris & Grazi)** em `/hr-dashboard` (`artifacts/limpeza/src/pages/hr-dashboard.tsx`).
+- Contabilizar cada limpeza concluída com o valor correspondente ao seu tipo (`checkout` vs. `stayover`) em `syncMaidCredits` e `getMaidPeriodFinances` (`artifacts/api-server/maid-automation-service.mjs` e `scripts/maid-automation-service.mjs`), `/api/analytics/report`, `/api/maids/:id/statement`, `/maid-statement` (`artifacts/limpeza/src/pages/maid-statement.tsx`) e `/reports` (incluindo recibo impresso), discriminando claramente no histórico e nos demonstrativos o que foi **Limpeza de Check-out** e o que foi **Limpeza de Stayover (Diária)**, exibindo contagens e valores separados.
+
+### R3. Checklist de Troca de Enxoval na Limpeza Stayover e Contagem de Dias
+- Ao concluir uma limpeza de **Stayover** (pela camareira ou pelo admin em nome dela em `flat-card.tsx`), exibir modal específico solicitando apenas o checklist de enxoval (sem exigir vistoria de saída de check-out e sem bloqueio de 10 minutos):
+  1. **Toalhas de banho foram trocadas?** (Sim / Não)
+  2. **Roupa de cama foi trocada?** (Sim / Não)
+- Persistir `towelsChanged: boolean` e `beddingChanged: boolean` no registro da limpeza concluída.
+- Calcular e retornar em `linenTracking` (no endpoint `/api/reservations/checkouts` e no card `FlatCard`) o histórico de trocas da reserva:
+  - `stayDayNumber` e `totalStayNights`
+  - `lastBeddingChangeDate` (data da última troca de cama ou `checkinDate` caso ainda não trocada na estadia) e `daysSinceBeddingChange`
+  - `lastTowelsChangeDate` (data da última troca de toalhas ou `checkinDate` caso ainda não trocada na estadia) e `daysSinceTowelsChange`
+  - **Alerta visual sugerindo troca de roupa de cama a cada 3 dias** (`daysSinceBeddingChange >= 3`, `needsBeddingChangeAlert: true`)
+  - Destaque prioritário quando o hóspede tiver solicitado troca de roupa de cama (`guestRequestedBedding`) e/ou toalhas (`guestRequestedTowels`) para aquela data.
+
+### R4. Portal do Hóspede B2B: "Não Perturbe" e Solicitação de Troca de Cama/Banho (Próximo Dia)
+- Exclusivamente para reservas **B2B** em andamento no Portal do Hóspede (`artifacts/limpeza/src/pages/guest-portal.tsx` e rotas `/api/pms/guest-portal/:code` em `demo-server.mjs`):
+  - **Modo "Não Perturbe" (`POST /api/pms/guest-portal/:code/do-not-disturb`)**: permanece ativo continuamente (`doNotDisturb: true`) até que o hóspede o desative no portal (`doNotDisturb: false`). Enquanto ativo, o card de limpeza Stayover aparece bloqueado no painel das camareiras com aviso visual **"🔕 Não Perturbe — Hóspede dispensou limpeza"**, impedindo início/conclusão da limpeza pela camareira e não gerando crédito de diária.
+  - **Solicitação de Troca de Roupa de Cama e/ou Banho (`POST /api/pms/guest-portal/:code/linen-request`)**: permite ao hóspede B2B solicitar troca de **Roupa de Cama** (`bedding`), **Toalhas de Banho** (`towels`) ou **Ambos**, sempre agendada para a limpeza do **próximo dia (`tomorrowStr`)** (exibindo confirmação da data agendada, permitindo cancelar se desejar, e refletindo no card de limpeza de amanhã).
+- Reservas de Booking, Airbnb, WhatsApp ou Site Direto **não** exibem o painel de governança diária, "Não Perturbe" ou solicitação de troca no portal, e os endpoints retornam `403` para reservas não-B2B.
+
+## Acceptance Criteria
+
+### Governança Diária B2B & Cards de Limpeza
+- [ ] Reserva B2B com `checkinDate < dateStr && checkoutDate > dateStr` gera card com `cleaningType: "stayover"` e `source: "stayover"` em `GET /api/reservations/checkouts?date=YYYY-MM-DD`.
+- [ ] Reservas de canais `booking`, `airbnb`, `whatsapp` e `site` nas mesmas datas intermediárias **não** geram card de stayover.
+- [ ] Concluir um card de `stayover` (`PATCH /api/cleaning/assignments/:id/status` com `status: "clean"`, `towelsChanged`, `beddingChanged`) mantém a reserva ativa (`checkoutDone !== true`) e registra o histórico de troca de enxoval.
+- [ ] O contador de dias sem troca de cama/banho calcula corretamente os dias desde a última troca (ou `checkinDate`) e ativa o alerta de sugestão de troca de cama quando `daysSinceBeddingChange >= 3`.
+
+### Tarifação Terceirizadas & Extrato
+- [ ] `GET /api/cleaning/rates` e `POST /api/cleaning/rates` retornam e persistem `defaultStayoverRatePerRoom` e `userStayoverRates`.
+- [ ] Limpezas de `stayover` concluídas por Cris (`id: 2`) ou Grazi (`id: 3`) creditam o valor configurado em `userStayoverRates` no extrato (`maidStatementEntries`) com descrição discriminando `Stayover` e contabilizam separadamente de `Check-out` em `/api/analytics/report`.
+
+### Portal do Hóspede B2B
+- [ ] `GET /api/pms/guest-portal/:code` retorna dados de governança diária (`b2bHousekeeping`) apenas para reservas B2B.
+- [ ] Ativar "Não Perturbe" via endpoint do portal B2B persiste `doNotDisturb: true` na reserva, reflete o status bloqueado (`doNotDisturb: true`) no card de Stayover para a camareira e bloqueia a conclusão/crédito da limpeza enquanto ativo.
+- [ ] Solicitar troca de roupa de cama e/ou banho no portal B2B agenda a solicitação sempre para o dia seguinte (`tomorrowStr`) e exibe o pedido no card de limpeza de Stayover daquela data.
+- [ ] Endpoints de "Não Perturbe" e solicitação de enxoval retornam erro `403` se chamados para reservas não-B2B (Booking, Airbnb, WhatsApp, Site).
+- [ ] O build do frontend (`npm run build` em `artifacts/limpeza`) compila sem erros e o teste pontual dedicado `tests/b2b-stayover-housekeeping.test.mjs` passa 100%.

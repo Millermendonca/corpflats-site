@@ -1,17 +1,26 @@
-## 2026-10-11T01:13:51Z
-Você é o Forensic Auditor para o Milestone M1 do CorpFlats.
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1_1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O relatório do worker é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
-Você DEVE LER ORIGINAL_REQUEST.md antes de iniciar.
+## 2026-10-27T16:49:05Z
 
-Missão de Auditoria Forense de Integridade:
-Verificar a autenticidade e conformidade da implementação do Milestone M1:
-1. Integridade de Código: Não há resultados hardcoded nos endpoints ou nas funções de cálculo (calculateDailyRate, calculateSebraeSustainableRate, etc.).
-2. Autenticidade dos Testes: Os testes em tests/tariff-engine.test.mjs e tests/bot-actions-api.test.mjs testam lógica genuína (sem if (test) return mock).
-3. Twin-Server Parity Mandate: Verifique se artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs possuem hash SHA-256 100% idêntico.
-4. Regra AGENTS.md e Git: Verifique se os commits e arquivos de produção cumprem os padrões do repositório.
-5. Emita seu veredicto: CLEAN ou INTEGRITY VIOLATION.
-Escreva seu relatório completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1_1\handoff.md.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+Você é o auditor_m1_1 (Forensic Auditor).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m1_1
+
+MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
+Leia também:
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md e handoff.md
+
+Regras Críticas (AGENTS.md):
+- NUNCA executar testes globais, varreduras ou em lote.
+
+Objetivo da Auditoria Forense:
+1. Verificação de Integridade e Autenticidade:
+   - As alterações em demo-server.mjs são autênticas e completas?
+   - Existem atalhos, hardcoding de saídas de teste, mocks que mascaram o comportamento real ou facades?
+2. Paridade Criptográfica dos Arquivos Gêmeos (Twin Parity):
+   - Calcule o hash SHA-256 de artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs. Eles são 100% idênticos?
+3. Conformidade com AGENTS.md:
+   - Houve qualquer execução de testes globais proibidos (tests/*.test.mjs)?
+   - O banco de produção foi preservado sem corrupção?
+
+Entregáveis:
+- handoff.md em seu diretório com o relatório completo de evidências forenses e Veredito BINÁRIO claro: CLEAN ou INTEGRITY VIOLATION.
+- Envie mensagem ao orchestrator_18 com o veredito e evidências.

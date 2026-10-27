@@ -1,83 +1,58 @@
-# Sentinel Interim Handoff Report — Gestão de Funcionários CLT
+# Handoff Report — Sentinel: Serviço Diário de Governança (Stayover) B2B
 
-**Mission**: Construir um Sistema Completo de Gestão de Funcionários CLT (RH, Ponto Eletrônico com Selfie/GPS e Whitelist de Aparelho, Automação WhatsApp, Escalas 6x1, Motor de Conformidade CLT/Sindicato com Travas em 3 Níveis, Folha de Pagamento, Contratos e Controle de ASO) integrado ao Guest-Flow-Manager (CorpFlats Soho Residence).
-**Recipient**: Parent Agent (`2b0428a9-8d7c-4d9d-bc04-5306661d369e`) / Human Operator  
-**Sentinel Conversation ID**: `44c9d5d3-ce43-4735-9676-136dc0811c34`  
-**Active Orchestrator ID**: `58ecb31f-60d2-4e1e-9aac-82400a58c263` (`orchestrator_17`)  
-**Status**: **IN PROGRESS** (Marcos M1, M2 e M3 100% Concluídos com Gate 2 PASS; Marco M4 com Laudos Unânimes de Aprovação no Gate 2)
+**Data/Hora**: 2026-10-27T18:14:00Z  
+**Autor**: Project Sentinel  
+**Destinatário**: Parent Agent (`711eef81-f180-4faf-b505-0c5ff8be0673`)  
+**Missão**: Construção do Sistema Completo de Serviço Diário de Governança (Stayover) exclusivo para reservas B2B (regras de stayover diário, diferenciação visual dos cards, tarifação diferenciada para Cris e Grazi R$ 15/diária, checklist/contador de troca de enxoval com alerta de 3 dias, controles de Não Perturbe e solicitação de enxoval no Portal do Hóspede B2B).  
+**Status**: EM ANDAMENTO (M1 e M2 Homologados CLEAN; M3/M4/M5 em execução ativa sob orchestrator_19)
 
 ---
 
 ## 1. Observation
 
-1. **Marco M1 (Backend Core & Isolamento de Prestadoras) — CONCLUÍDO (Gate 2 PASS)**:
-   - Módulos `employees.mjs`, `router.mjs`, `index.mjs` (espelhados em `scripts/hr/`).
-   - Seed de funcionários CLT (`emp_cozinha_01` e `emp_camareira_01`).
-   - Isolamento em 4 camadas de Cris (`id: 2`) e Grazi (`id: 3`) garantindo regime autônomo.
-   - Proteção de poda de 5 anos em `pruneDatabase()` (Portaria 671 MTP / Art. 11 CLT).
-   - Testes: 7/7 unit tests e 10/10 challenger tests; 30/30 paridade twin-server.
-
-2. **Marco M2 (Ponto Eletrônico & Motor de Conformidade em 3 Níveis) — CONCLUÍDO (Gate 2 PASS)**:
-   - Módulos `timekeeping.mjs` e `compliance.mjs` (espelhados em `scripts/hr/`).
-   - Cerca virtual Haversine nos limiares 149.9m vs 150.1m Soho com clamp numérico contra NaN em antípodas geográficas.
-   - Selfie com hash SHA-256 e NSR monótono sequencial (Portaria 671 MTP); Whitelist de Aparelhos.
-   - 10 regras trabalhistas nos 3 níveis (`alert`, `admin_override` com senha/trilha, `hard_block`).
-   - Testes: 10/10 testes pontuais, 33/33 geofence stress, 46/46 compliance stress, auditoria forense CLEAN.
-
-3. **Marco M3 (Automação WhatsApp & Escalas 6x1, Horas Extras, Férias) — CONCLUÍDO (Gate 2 PASS)**:
-   - Módulos `schedules.mjs` e `whatsapp-automation.mjs` (espelhados em `scripts/hr/`).
-   - Interseção noturna minuto a minuto na janela 22:00–05:00 com hora ficta reduzida (52m30s), prorrogação pós-05h apenas com jornada noturna integral (Súmula 60 TST) e 0 horas noturnas em turnos diurnos.
-   - Tolerâncias legais Art. 58 CLT (5 min/10 min diários) tratadas simetricamente para atrasos e horas extras.
-   - Bloqueio estrito de férias nos 2 dias que antecedem feriados oficiais municipais e federais (Art. 134 §3º CLT).
-   - Testes: 16/16 testes em `tests/hr-m3-whatsapp-schedules.test.mjs`, 16/16 stress math, 75/75 stress security, 26/26 stress vacations, 34/34 paridade twin-server, auditoria CLEAN.
-
-4. **Marco M4 (Folha de Pagamento, Contratos e ASO) — APROVAÇÃO UNÂNIME NO GATE 2**:
-   - Módulos `payroll.mjs` (770 linhas) e `contracts-aso.mjs` (484 linhas) espelhados em `scripts/hr/`.
-   - Fórmulas CLT implementadas: folha 220h, tabela progressiva INSS 2026 com parcelas a deduzir (teto R$ 951,64), reflexos DSR sobre horas extras (Súmula 172 TST) e adicional noturno (Súmula 60 TST), Vale-Transporte (6%), holerite estruturado e quitação PIX.
-   - Contratos digitais com assinatura eletrônica canvas em Base64, metadados probatórios (IP, timestamp, User-Agent) e selo digital SHA-256 (Lei 14.063/2020); gestão de 5 exames ASO per NR-7 com alertas em 3 horizontes (`expired`, `<=30d`, `<=60d`) e trava trabalhista `aso_vencido`.
-   - Remediação de segurança na Iteração 2: blindagem em 2 camadas (Router + Service) em `POST /payroll/close-month` e `POST /contracts/:id/sign` com retorno `HTTP 403 Forbidden` (`PRESTADORA_PAYROLL_BLOCKED` e `PRESTADORA_CONTRACT_BLOCKED`) para Cris e Grazi.
-   - Paridade Twin-Server expandida para **36/36 arquivos com 100% SHA-256 match**.
-   - Suíte pontual dedicada `tests/hr-m4-payroll-contracts.test.mjs`: **16/16 PASS (100%)**.
-   - Comitê Pericial do Gate 2:
-     - `reviewer_m4_it2_1`: **APPROVE** (código, rotas e paridade 36/36 validadas)
-     - `reviewer_m4_it2_2`: **APPROVE** (assinatura canvas, metadados e ASO validados)
-     - `challenger_m4_it2_1`: **APPROVE** (848/848 testes adversariais matemáticos PASS)
-     - `challenger_m4_it2_2`: **APPROVE** (41/41 testes adversariais de segurança e blindagem PASS)
-     - `auditor_m4_it2`: **CLEAN** (auditoria forense com 100% de integridade e não-regressão)
+- **Milestone 0 (Survey & Arquitetura)**: Concluído com 3 exploradores.
+- **Milestone 1 (Backend Stayover Core, Linen Tracking, DND, Twin Parity)**:
+  - Implementado e homologado com veredito CLEAN (`auditor_m1_revalidate`, `reviewer_m1_revalidate`, `challenger_m1_revalidate`).
+  - 40/40 testes passando nas suítes dedicadas (`b2b-housekeeping-m1.test.mjs`, `challenger-m1-1.test.mjs`, `adversarial-b2b-m1.test.mjs`).
+  - Paridade 100% SHA-256 mantida entre os servidores gêmeos.
+- **Milestone 2 (Tarifação Stayover & Extrato Terceirizadas Cris/Grazi)**:
+  - Implementado em `maid-automation-service.mjs` e `demo-server.mjs`.
+  - Homologado como CLEAN por `auditor_m2`. 11/11 testes passando em `tests/b2b-housekeeping-m2.test.mjs`.
+  - Paridade SHA-256 byte a byte idêntica verificada em ambos os pares:
+    - `maid-automation-service.mjs`: `3305DF86D045C13EF260AE17D363DC669D1C0FD534BD3465060A8363117A411F`
+    - `demo-server.mjs`: `ED64E237E30EE3785453EE69A4A2AFAEF9828083BABC95B18B7908679536645E`
+- **Sucessão do Orquestrador (Gen 1 -> Gen 2)**:
+  - `orchestrator_18` atingiu o teto de spawns com M1 e M2 concluídos.
+  - Sucessor `orchestrator_19` (gen2, id `f2b006e6-21b8-4227-9b41-26a4892c80c8`) assumiu a execução dos Marcos M3 (Guest Portal B2B), M4 (Housekeeping Frontend) e M5 (Build, Teste Pontual Dedicado, Paridade e Push).
+  - `orchestrator_19` já realizou o mapeamento dos arquivos-alvo (`guest-portal.tsx`, `flat-card.tsx`, `reports.tsx`, `hr-dashboard.tsx`, `maid-statement.tsx`) e está em fase ativa de codificação.
 
 ---
 
 ## 2. Logic Chain
 
-1. A demanda autoritativa do usuário está preservada verbatim em `ORIGINAL_REQUEST.md`.
-2. O Sentinel mantém governança ativa via Crons de Reporting (`task-784`) e Liveness Check (`task-786`).
-3. O orquestrador (`orchestrator_17`, Geração 4) conduziu a remediação da Iteração 2 do Marco M4 com especialistas dedicados e submeteu ao comitê pericial independente de 5 agentes.
-4. Com vereditos unânimes de APPROVE e CLEAN, o Marco M4 atinge conformidade plena, abrindo caminho para a sucessão para Geração 5 (se atingido limite de 16 spawns) e início do Marco M5 (Frontend React, Build e Teste Pontual Final).
+1. O Sentinel manteve supervisão contínua com dois crons ativos (`task-32` para reporte e `task-34` para liveness).
+2. Com a sucessão regular de `orchestrator_18` para `orchestrator_19`, o Sentinel atualizou o rastreamento em `BRIEFING.md` e monitora o heartbeat de `orchestrator_19`.
+3. Ao término dos trabalhos por `orchestrator_19`, o Sentinel acionará o `teamwork_preview_victory_auditor` com verificação estrita antes de qualquer reporte final de conclusão ao usuário/parent.
 
 ---
 
-## 3. Caveats & Restrições
+## 3. Caveats
 
-- **Proibição Estrita de Testes Globais (AGENTS.md)**: NUNCA rodar `tests/*.test.mjs` ou varreduras em lote para prevenir disparos externos ou poluição de estado.
-- **Isolamento de Prestadoras**: Cris e Grazi permanecem 100% autônomas no extrato de governança, blindadas contra qualquer rotina CLT.
-- **Paridade Twin-Server SHA-256**: Todos os 36 arquivos de runtime sincronizados entre `artifacts/api-server/` e `scripts/`.
-- **Git Push Obrigatório**: Sempre fazer `git push` após cada `git commit`.
-- **Build Frontend**: `npm --prefix artifacts/limpeza run build` com saída 0 e inclusão de `dist/` no commit.
-- **Victory Audit Mandatória**: Nenhuma conclusão de projeto será reportada sem auditoria independente em 3 fases (`teamwork_preview_victory_auditor`).
+- **Regra Estrita de Testes (AGENTS.md)**: Nunca rodar testes globais ou varreduras (`tests/*.test.mjs`). Apenas o teste estritamente pontual do que foi alterado: `tests/b2b-stayover-housekeeping.test.mjs`.
+- **Prestadoras Terceirizadas**: Cris e Grazi permanecem estritamente diaristas autônomas; tarifação diferenciada (R$ 15,00 padrão) sem vínculo ou ponto CLT.
+- **Paridade Twin-Server**: 100% SHA-256 entre `scripts/` e `artifacts/api-server/`.
+- **Git Push Obrigatório**: Sempre enviar commits diretamente para `origin main`.
 
 ---
 
 ## 4. Conclusion
 
-Os Marcos M1, M2, M3 e M4 do módulo de Recursos Humanos CLT estão integralmente concluídos e aprovados com auditorias adversariais e forenses impecáveis. O projeto avança para a fase final: Marco M5 (Frontend React, Telas `/rh` e `/ponto`, Build do Frontend e Teste Pontual Final `tests/hr-employee-management.test.mjs`).
+A orquestração de segunda geração (`orchestrator_19`) está em andamento com alto grau de integridade, avançando na implementação dos componentes de Frontend (M3 e M4) e posterior validação/build (M5).
 
 ---
 
 ## 5. Verification Method
 
-- Paridade twin-server: `node scripts/check-twin-parity.mjs` (36/36 PASS).
-- Testes pontuais M1: `node --test tests/hr-m1-backend-core.test.mjs` (7/7 PASS).
-- Testes pontuais M2: `node --test tests/hr-m2-timekeeping-compliance.test.mjs` (10/10 PASS).
-- Testes pontuais M3: `node --test tests/hr-m3-whatsapp-schedules.test.mjs` (16/16 PASS).
-- Testes pontuais M4: `node --test tests/hr-m4-payroll-contracts.test.mjs` (16/16 PASS).
-- Estresse adversarial M4: `node .agents/teamwork/challenger_m4_1/stress_payroll_math.mjs` (848/848 PASS) e `node .agents/teamwork/challenger_m4_2/stress_contracts_aso_security.mjs` (41/41 PASS).
+- Monitoramento ativo de `orchestrator_19/progress.md` e logs de transcrição.
+- Crons de reporte e liveness em execução.
+- Auditoria de Vitória (`teamwork_preview_victory_auditor`) mandatória ao receber alegação de conclusão.

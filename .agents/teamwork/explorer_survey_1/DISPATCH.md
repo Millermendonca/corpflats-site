@@ -1,36 +1,23 @@
-## 2026-10-21T18:30:49Z
+## 2026-10-27T15:59:31Z
+Você é o explorer_survey_1 (Backend & Housekeeping Architecture Explorer).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1
 
-Você é o subagente explorer_survey_1 (teamwork_preview_explorer).
-Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1
+MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
+Leia também c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md.
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Regras Críticas (AGENTS.md):
+- NÃO execute testes globais ou em lote.
+- Você é um agente read-only de exploração: NÃO altere arquivos de código ou produção.
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+Objetivo da Exploração:
+1. Localize e mapeie onde getRequestsForDate ou o gerador de cards de limpeza/checkouts está implementado em artifacts/api-server/demo-server.mjs (e scripts/demo-server.mjs).
+2. Examine a rota GET /api/reservations/checkouts e o schema retornado para cada card.
+3. Analise como reservas B2B são identificadas no banco de dados (campos como channel === 'b2b', channel.includes('b2b'), agencyId, b2bReservationNumber, etc.).
+4. Examine PATCH /api/cleaning/assignments/:requestId/status (ou a rota onde o status de limpeza é alterado para cleaning_now ou clean): como checkoutDone é marcado ou afeta a reserva, e onde deve ser colocado o desvio para não marcar checkoutDone em stayover.
+5. Desenhe a lógica de cálculo de linenTracking (stayDayNumber, totalStayNights, lastBeddingChangeDate, daysSinceBeddingChange, needsBeddingChangeAlert a cada 3 dias, lastTowelsChangeDate, daysSinceTowelsChange, guestRequestedBedding, guestRequestedTowels, doNotDisturb).
+6. Verifique os arquivos gêmeos e o hash SHA-256 de scripts/demo-server.mjs vs artifacts/api-server/demo-server.mjs.
 
-Leia atentamente os seguintes arquivos antes de começar:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-
-Missão do Explorer 1:
-Mapear a arquitetura de BACKEND, PERSISTÊNCIA e PAGAMENTOS para o ecossistema de Frigobar (CorpFlats + Anserve):
-1. Analise como os dados são mantidos em `artifacts/api-server/demo-server.mjs` (e `scripts/demo-server.mjs`), como `db` é persistido e estruturado, e como modelar:
-   - Produtos de frigobar e itens de cortesia (`db.minibarProducts` ou similar).
-   - Gabarito padrão de produtos por flat (`defaultStock` por flat).
-   - Pedidos de consumo (`db.minibarOrders`): flat, reserva, itens, valor total, status de pagamento, preferências fiscais (discriminação, CPF/CNPJ, e-mail), comprovante de pagamento, Nota Fiscal anexada, etc.
-   - Inspeções e conferências da Anserve (`db.minibarInspections`): flat, data, itens declarados vs encontrados, divergências, fotos, itens repostos (pagos e cortesias).
-   - Fila de NFs pendentes e extrato de repasse Anserve (total vendido, desconto de taxas/comissões, custo de cortesias).
-2. Analise os fluxos e endpoints de pagamento existentes no backend:
-   - Como funciona o PIX (Inter / Copia e Cola / polling / webhook).
-   - Como funciona o Cartão de Crédito (Mercado Pago).
-   - Como criar os novos endpoints `/api/minibar/...` reutilizando esses motores de pagamento com segurança.
-3. Analise o disparo de notificações e anexos:
-   - Como funcionam `global.sendZapiMessage` / Z-API e `global.sendEmailAsync` / SMTP.
-   - Como implementar o upload de Nota Fiscal (PDF ou imagem) em `/api/minibar/orders/:id/invoice` e o disparo imediato para WhatsApp e E-mail do hóspede, além de disponibilizar em `/api/pms/guest-portal/:code`.
-   - Como disparar mensagem da Sofia no WhatsApp quando houver divergência apontada pela repositora.
-4. Identifique contratos de interface, restrições e potenciais armadilhas (ex: paridade SHA-256 com scripts/demo-server.mjs, isolamento de testes sem envio real).
-
-Escreva um relatório estruturado completo em `analysis.md` e um sumário em `handoff.md` no seu diretório de trabalho (.agents/teamwork/explorer_survey_1).
-Ao terminar, use `send_message` para notificar o caller (d10c20e2-adfb-4695-835e-52dd3bebe9a9) informando a conclusão e o caminho do relatório.
-Lembre-se: Você é um Explorer de leitura/investigação. NÃO modifique arquivos de código fonte.
+Entregáveis:
+- Escreva a análise completa em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\analysis.md.
+- Escreva o handoff completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\handoff.md com números de linha exatos, contratos e plano de implementação.
+- Ao finalizar, envie uma mensagem para o orchestrator_18 com o sumário dos achados e links dos arquivos.

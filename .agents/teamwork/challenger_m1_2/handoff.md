@@ -1,142 +1,163 @@
-# Relatório de Handoff — Challenger 2 (challenger_m1_2)
+# Handoff Report — Challenger M1.2: Housekeeping & B2B Guest Portal
 
-- **Autor**: Challenger 2 (`challenger_m1_2`)
-- **Papéis**: critic, specialist
-- **Milestone**: M1 (CLT Base Architecture & Clean Isolations)
-- **Data/Hora**: 2026-10-22T10:43:30Z
-- **Veredicto Explícito**: **APPROVE**
+## Veredito: REQUEST_CHANGES
 
 ---
 
-## Challenge Summary
+## 1. Observation
 
-**Overall risk assessment**: **LOW** (Arquitetura robusta, blindagem em múltiplas camadas lógicas e na borda HTTP, validações estritas de conformidade CLT e dados cadastrais).
+### Obs 1: Falha Crítica de Paridade Twin-Server (AGENTS.md)
+Ao executar a verificação de hash SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`:
+- Comando:
+  ```powershell
+  (Get-FileHash artifacts/api-server/demo-server.mjs).Hash; (Get-FileHash scripts/demo-server.mjs).Hash
+  ```
+- Resultado empírico:
+  ```
+  96E92C10BF2A91BA6A7E60373597177B7B4F7F246D640DECC15CD8A3BA033F95
+  824C8A26E29379DE7728D8731236406B7E107D6F0BD71AD4A659FF950159671A
+  ```
+- O comando `git diff --no-index --stat artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` revelou divergência substancial:
+  ```
+  {artifacts/api-server => scripts}/demo-server.mjs | 192 ++++++----------------
+  1 file changed, 52 insertions(+), 140 deletions(-)
+  ```
+- O próprio teste criado pelo worker (`tests/b2b-housekeeping-m1.test.mjs`) falha na asserção de paridade (linha 122):
+  ```
+  # Subtest: 3. Twin-Server SHA-256 Parity
+      not ok 1 - artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs must have identical SHA-256
+        error: 'Twin-servers must have exact byte-for-byte SHA-256 parity'
+        expected: '824c8a26e29379de7728d8731236406b7e107d6f0bd71ad4a659ff950159671a'
+        actual: '96e92c10bf2a91ba6a7e60373597177b7b4f7f246d640decc15cd8a3ba033f95'
+  ```
+- A alegação de `worker_m1` em `handoff.md` ("git diff --no-index ... exited with code 0 (zero diff)") foi empiricamente refutada.
+
+### Obs 2: Vazamento de Classificação B2B em Reservas Não-B2B (`isB2bReservation`)
+Em `artifacts/api-server/demo-server.mjs` (linhas 14636–14651):
+```javascript
+function isB2bReservation(r) {
+  if (!r) return false;
+  const chanLower = String(r.channel || "").toLowerCase().trim();
+  return Boolean(
+    chanLower === "b2b" ||
+    chanLower.includes("b2b") ||
+    r.isB2b === true ||
+    r.b2bReservationNumber ||
+    r.agencyId ||
+    r.agencyName ||
+    r.agencyTradeName ||
+    r.companyName ||
+    r.b2bLocatorRloc ||
+    String(r.code || "").startsWith("B2B-")
+  );
+}
+```
+- A função avalia `r.companyName`, `r.agencyName` ou `r.agencyId` sem checar ou bloquear canais expressamente não-B2B (`booking`, `airbnb`, `whatsapp`, `site`, `balcao`).
+- No banco de dados real (`data/database.json`), existem reservas de canal `whatsapp` com `companyName` preenchido (ex: `RES-212-0296` com `companyName: "RPM"` e `RES-712-0288` com `companyName: "Goal"`).
+- Ao testar:
+  ```javascript
+  isB2bReservation({ channel: 'booking', companyName: 'Petrobras' }) // => true (ERRADO!)
+  isB2bReservation({ channel: 'whatsapp', companyName: 'RPM Transportes' }) // => true (ERRADO!)
+  ```
+- Consequência empírica testada em `tests/adversarial-b2b-m1.test.mjs`:
+  - Chamada `POST /api/pms/guest-portal/RES-BKG-CORP/do-not-disturb` retornou **HTTP 200** (deveria retornar **HTTP 403 Forbidden**).
+  - Chamada `POST /api/pms/guest-portal/RES-WAPP-CORP/do-not-disturb` retornou **HTTP 200** (deveria retornar **HTTP 403 Forbidden**).
+  - Em `getRequestsForDate`, essas reservas geram cards diários de limpeza Stayover, violando R1 ("Reservas de Booking, Airbnb, WhatsApp, Site Direto ou outros canais nunca geram limpeza diária de stayover").
+
+### Obs 3: Verificações Adversariais Aprovadas com Sucesso
+Foram executados testes adversariais pontuais e isolados em `tests/adversarial-b2b-m1.test.mjs`:
+1. **Cálculo de `computeLinenTracking` e Regra de Alerta a cada 3 dias**:
+   - `daysSinceBeddingChange = 0` -> `needsBeddingChangeAlert === false` (OK)
+   - `daysSinceBeddingChange = 1` -> `needsBeddingChangeAlert === false` (OK)
+   - `daysSinceBeddingChange = 2` -> `needsBeddingChangeAlert === false` (OK)
+   - `daysSinceBeddingChange = 3` -> `needsBeddingChangeAlert === true` (OK)
+   - `daysSinceBeddingChange = 4` -> `needsBeddingChangeAlert === true` (OK)
+   - `daysSinceBeddingChange = 10` -> `needsBeddingChangeAlert === true` (OK)
+   - Ano bissexto (28/02 a 02/03 em ano bissexto = 3 dias) -> Alerta ativado corretamente (OK)
+   - Fallback de data antiga para `checkinDate` -> Correto (OK)
+2. **Bloqueio 403 no Guest Portal para Canais Convencionais sem empresa**:
+   - Booking, Airbnb, WhatsApp e Site sem companyName retornam estritamente HTTP 403 em `/do-not-disturb` e `/linen-request` (OK).
+3. **Funcionamento B2B Legítimo**:
+   - Ativação de DND via POST `/do-not-disturb` atualiza `r.doNotDisturb: true` e reflete imediatamente no card de stayover de hoje (OK).
+   - Solicitação de enxoval via POST `/linen-request` sem `targetDate` agenda corretamente para `tomorrowStr` (OK).
+4. **Rejeição 422 de Limpeza com DND Ativo**:
+   - Tentativa da camareira de iniciar limpeza (`cleaning_now`) com DND ativo rejeitada com **HTTP 422** ("Não é possível iniciar ou concluir a limpeza. Hóspede ativou o modo Não Perturbe.") (OK).
+   - Tentativa da camareira de concluir limpeza (`clean`) com DND ativo rejeitada com **HTTP 422** (OK).
+5. **Conclusão Segura de Stayover e Atualização de Histórico de Enxoval**:
+   - Ao desativar DND e concluir limpeza com `beddingChanged: true, towelsChanged: true`:
+     - `targetRes.lastBeddingChangeDate` atualizado para a data de execução (OK).
+     - `targetRes.lastTowelsChangeDate` atualizado para a data de execução (OK).
+     - `linenChangeHistory` registrado com sucesso (OK).
+     - `daysSinceBeddingChange` reseta para 0 e limpa o alerta (OK).
+     - Proteção contra checkout acidental: `checkoutDone` não é alterado para true, status não muda para `completed`, e flat permanece ocupado (`isOccupied: true`) (OK).
 
 ---
 
-## 1. Observation (O que foi diretamente observado)
+## 2. Logic Chain
 
-1. **Blindagem e Isolamento de Prestadoras de Serviço (Cris e Grazi)**:
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 17–36), a função `isPrestadora(entity)` verifica:
-     - IDs numéricos e strings: `idNum === 2 || idNum === 3 || rawId === "2" || rawId === "3"`.
-     - Usernames normalizados: `username === "cris" || username === "grazi"`.
-     - Nomes e apelidos: `name.includes("cris") || name.includes("grazi")`.
-     - Telefones/WhatsApp: `phone.includes("22988486446") || phone.includes("22999106204")`.
-     - Tipos contratuais: `prestador`, `prestadora`, `diarista`.
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 41–47), `isCltEmployee(emp)` descarta sumariamente qualquer entidade onde `isPrestadora(emp)` retorne `true`.
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 52–58), `validateRecipientNotPrestador(recipient)` lança `[CRITICAL_SECURITY_VIOLATION]` com bloqueio sumário se acionada para prestadora.
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 325–329 e 345–347), `getEmployeeById` e `getEmployeeRawById` barram IDs `2`, `3`, `"cris"`, `"grazi"` retornando `null`.
-   - Em `artifacts/api-server/hr/router.mjs` (linhas 73–78 e 105–110), os endpoints `GET /api/hr/employees/:id` e `PATCH /api/hr/employees/:id` checam `if (isPrestadora({ id }))` retornando status `404 Not Found`.
+1. *Premissa A (AGENTS.md & ORIGINAL_REQUEST R10)*: É mandatório manter paridade de 100% SHA-256 byte-a-byte entre `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
+2. *Evidência A*: A verificação empírica demonstrou que `scripts/demo-server.mjs` difere em 192 linhas de `artifacts/api-server/demo-server.mjs`, com hashes divergentes (`824C8A2...` vs `96E92C1...`), reprovando tanto `tests/b2b-housekeeping-m1.test.mjs` quanto `tests/adversarial-b2b-m1.test.mjs`.
+3. *Premissa B (ORIGINAL_REQUEST R1 & R4)*: Apenas canais B2B devem gerar stayover ou ter acesso ao portal de governança (DND / troca de enxoval). Reservas de Booking, Airbnb, WhatsApp ou Site Direto nunca podem ser tratadas como B2B.
+4. *Evidência B*: `isB2bReservation` retorna `true` para qualquer reserva que possua `companyName`, `agencyName` ou `agencyId`, mesmo que o canal seja `booking`, `airbnb` ou `whatsapp`. Reservas reais com canal `whatsapp` e `companyName` (ex: `RES-212-0296`) vazam para a classificação B2B, permitindo bypass do 403 e gerando cards indevidos de stayover.
 
-2. **Validação de Cadastro e Rejeição de Prestadoras**:
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 368–371), `createEmployee` valida:
-     ```javascript
-     const lowerName = name.toLowerCase();
-     if (lowerName.includes("cris") || lowerName.includes("grazi")) {
-       throw new Error("Operação rejeitada: Cris e Grazi são prestadoras de serviços autônomas e não podem ser cadastradas como funcionárias CLT.");
+---
+
+## 3. Caveats
+- O teste adversário comprovou que as regras matemáticas de cálculo de dias (`computeLinenTracking`), o bloqueio 422 de DND para camareiras e a não-execução de check-out ao concluir stayovers estão perfeitamente implementadas e funcionais.
+- A reprovação limita-se estritamente à sincronização do arquivo espelho (`scripts/demo-server.mjs`) e à blindagem do helper `isB2bReservation`.
+
+---
+
+## 4. Conclusion
+Veredito: **REQUEST_CHANGES**
+
+O worker `worker_m1` precisa realizar os seguintes ajustes antes da aprovação do Milestone 1:
+1. **Blindar `isB2bReservation(r)`**:
+   Adicionar guarda explícita rejeitando canais não-B2B antes de checar campos genéricos como `companyName` ou `agencyName`:
+   ```javascript
+   function isB2bReservation(r) {
+     if (!r) return false;
+     const chanLower = String(r.channel || "").toLowerCase().trim();
+     if (
+       chanLower === "booking" || chanLower.includes("booking") ||
+       chanLower === "airbnb" || chanLower.includes("airbnb") ||
+       chanLower === "whatsapp" ||
+       chanLower === "site" || chanLower.includes("site") ||
+       chanLower === "balcao"
+     ) {
+       return false;
      }
-     ```
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 633–637), `updateEmployee` repete a mesma checagem contra renomeação maliciosa.
-
-3. **Validação de Jornada e Art. 71 CLT (Intrajornada)**:
-   - Em `artifacts/api-server/hr/employees.mjs` (linhas 405–410 e 621–624), tanto `createEmployee` quanto `updateEmployee` calculam a duração total da jornada e do intervalo via `calculateTimeDiffMinutes`:
-     ```javascript
-     if (totalShiftMinutes > 360 && breakMinutes < 60) {
-       throw new Error("Conformidade CLT (Art. 71): Para jornadas diárias superiores a 6 horas, o intervalo de repouso e alimentação deve ser de no mínimo 60 minutos (1 hora).");
-     }
-     ```
-
-4. **Validações Cadastrais e Financeiras**:
-   - Unicidade e formato de CPF: `cleanCpf.length !== 11` e verificação contra duplicatas em `db.hrEmployees` (linhas 373–384).
-   - Salário base positivo: `isNaN(baseSalary) || baseSalary <= 0` em `createEmployee` (linhas 412–415) e em `updateEmployee` (linhas 560–563).
-   - Formato estrito de PIN: exatamente 4 dígitos numéricos `/^\d{4}$/` com hash SHA-256 e sanitização sem exposição de `pinHash` em `sanitizeEmployee`.
-
-5. **Execução Empírica do Harness Adversarial**:
-   - Criou-se a suíte adversarial dedicada `tests/hr-m1-challenger2.test.mjs` contendo 10 baterias de testes empíricos de estresse.
-   - Execução do comando: `node --test tests/hr-m1-challenger2.test.mjs`:
-     ```
-     # tests 10
-     # suites 0
-     # pass 10
-     # fail 0
-     # duration_ms 750.1233
-     ```
-   - Execução do comando de paridade: `node scripts/check-twin-parity.mjs`:
-     ```
-     Resultado: 29/29 arquivos gêmeos com 100% de paridade SHA-256.
-     STATUS: 100% PASS - Paridade perfeita restabelecida!
-     ```
-   - Execução do teste do worker: `node --test tests/hr-m1-backend-core.test.mjs`:
-     ```
-     # tests 6
-     # pass 6
-     # fail 0
-     ```
-
----
-
-## 2. Logic Chain (Cadeia de Raciocínio)
-
-1. A partir da **Observação 1**, a blindagem de Cris e Grazi não depende de um único ponto de falha. Foram testados acessos diretos com IDs numéricos (`2`, `3`), strings (`"2"`, `"3"`, `" 2 "`, `"02"`), usernames (`"cris"`, `"CRIS"`, `"grazi"`), telefones oficiais e entidades com contratos de prestador. Em 100% dos cenários, `isPrestadora` retornou `true`, `isCltEmployee` retornou `false`, `getEmployeeById` retornou `null` e a API HTTP retornou `404 Not Found`. Não foi encontrada nenhuma brecha de vazamento ou impersonação.
-2. A partir da **Observação 2**, ataques de injeção tentando cadastrar funcionários CLT com nomes como "Cris", "  cRiS  ", "Cristina Maria", "Grazi", "  gRaZiElA  " foram completamente barrados com HTTP 400 e mensagem explícita protegendo as prestadoras autônomas.
-3. A partir da **Observação 3**, submissões de jornadas de 8h ou superiores (ex: 08:00 às 16:30 com 30min de intervalo, 08:00 às 17:00 com 45min de intervalo, ou jornada limítrofe de 6h05 com 30min de intervalo) foram terminantemente bloqueadas em conformidade com o Art. 71 da CLT, tanto na criação quanto na edição (`PATCH`).
-4. A partir da **Observação 4**, tentativas de cadastrar funcionários com salário `0`, `-100`, `-0.01`, strings não numéricas ou nulos foram rejeitadas. CPFs duplicados (idênticos, sem pontuação ou com espaços) e CPFs com menos ou mais de 11 dígitos foram interceptados com erro descritivo.
-5. A partir da **Observação 5**, a verificação empírica executada de forma independente confirmou taxa de sucesso de 100% (zero falhas em 10 testes adversariais), mantendo paridade byte-a-byte íntegra (29/29 arquivos).
-
----
-
-## 3. Stress Test Results (Matriz de Ataque Adversarial)
-
-| ID | Cenário de Teste Adversarial | Comportamento Esperado | Comportamento Observado | Status |
-|:---|:---|:---|:---|:---:|
-| ADV-01 | `isPrestadora` com primitivos, nulos, strings, objetos vazios | Retornar `false` sem lançar TypeError | Retornou `false` com segurança | **PASS** |
-| ADV-02 | `isPrestadora` com IDs variantes (`2`, `" 2 "`, `"02"`, `2.0`, `userId: 3`) | Retornar `true` | Retornou `true` em todos | **PASS** |
-| ADV-03 | `isPrestadora` com variações de casing/espaço de "cris" e "grazi" | Retornar `true` | Retornou `true` | **PASS** |
-| ADV-04 | `isCltEmployee` para Cris/Grazi disfarçadas com `contractType: "clt"` | Retornar `false` categoricamente | Retornou `false` | **PASS** |
-| ADV-05 | `validateRecipientNotPrestador` para prestadoras autônomas | Lançar `CRITICAL_SECURITY_VIOLATION` | Exceção disparada corretamente | **PASS** |
-| ADV-06 | `getEmployeeById` e `getEmployeeRawById` para ID `2`, `3`, `"cris"`, `"grazi"` | Retornar `null` | Retornou `null` | **PASS** |
-| ADV-07 | `POST /api/hr/employees` com variações do nome "Cris" ou "Grazi" | Rejeitar com código 400 | Rejeitado com código 400 | **PASS** |
-| ADV-08 | `POST /api/hr/employees` jornada 8h+ com almoço de 30min (Art. 71 CLT) | Rejeitar com código 400 | Rejeitado com código 400 | **PASS** |
-| ADV-09 | `POST /api/hr/employees` salário <= 0 ou CPF duplicado/inválido | Rejeitar com código 400 | Rejeitado com código 400 | **PASS** |
-| ADV-10 | Chamadas aos endpoints Express `GET/PATCH /api/hr/employees/2` e `3` | Retornar status 404 Not Found | Retornou status 404 Not Found | **PASS** |
-
----
-
-## 4. Caveats (Ressalvas)
-
-- Caso um payload malicioso tente passar um `id: 2` explícito no `POST /api/hr/employees` com nome aleatório, o `createEmployee` não lança erro no momento da inserção, porém o funcionário inserido torna-se **imediatamente invisível e inoperável** em todo o sistema porque `isPrestadora({ id: 2 })` avalia como `true` e desativa o funcionário em `isCltEmployee`, `getEmployees`, `getEmployeeById` e na API HTTP. Para os próximos marcos, recomenda-se adicionar uma checagem preventiva explícita `if (payload.id && isPrestadora({ id: payload.id })) throw new Error(...)` em `createEmployee` como reforço de higiene.
-- O motor de ponto mobile com geofencing (M2), automação WhatsApp com histórico (M3) e folha de pagamento (M4) serão avaliados em seus respectivos marcos.
-
----
-
-## 5. Conclusion (Conclusão)
-
-A implementação do **Marco M1** cumpriu integralmente os requisitos funcionais e contratuais estabelecidos no `PROJECT.md` e `ORIGINAL_REQUEST.md`.
-As guardas de isolamento de Cris e Grazi demonstraram altíssima resiliência frente a tentativas de bypass por ID, nome, username, telefone ou contrato.
-As validações de CRUD de funcionários CLT (Art. 71 CLT, unicidade de CPF, piso salarial positivo e formato de PIN) foram comprovadas empiricamente.
-
-Veredicto Final: **APPROVE**.
-
----
-
-## 6. Verification Method (Método de Verificação Independente)
-
-Para reproduzir os resultados de auditoria adversarial:
-
-1. Executar a suíte de testes adversariais criada por este auditor:
-   ```powershell
-   node --test tests/hr-m1-challenger2.test.mjs
+     return Boolean(
+       chanLower === "b2b" ||
+       chanLower.includes("b2b") ||
+       r.isB2b === true ||
+       r.b2bReservationNumber ||
+       r.agencyId ||
+       r.agencyName ||
+       r.agencyTradeName ||
+       r.companyName ||
+       r.b2bLocatorRloc ||
+       String(r.code || "").startsWith("B2B-")
+     );
+   }
    ```
-   *Critério*: Deve passar 10/10 subtestes sem erros.
+2. **Sincronizar `scripts/demo-server.mjs`**:
+   Copiar integralmente `artifacts/api-server/demo-server.mjs` para `scripts/demo-server.mjs` e garantir que `Get-FileHash` retorne hashes SHA-256 idênticos.
 
-2. Executar a verificação de paridade de arquivos gêmeos:
-   ```powershell
-   node scripts/check-twin-parity.mjs
-   ```
-   *Critério*: 29/29 arquivos gêmeos com 100% de paridade SHA-256.
+---
 
-3. Executar o teste pontual do worker:
-   ```powershell
-   node --test tests/hr-m1-backend-core.test.mjs
+## 5. Verification Method
+Para verificar a resolução:
+1. Executar o teste adversário dedicado:
+   ```cmd
+   node --test tests/adversarial-b2b-m1.test.mjs
    ```
-   *Critério*: 6/6 subtestes com status OK.
+   Deve passar 100% dos testes (incluindo as asserções de paridade de hash e imunidade de reservas com `companyName`).
+2. Executar o teste pontual do worker:
+   ```cmd
+   node --test tests/b2b-housekeeping-m1.test.mjs
+   ```
+3. Conferir paridade de hash no PowerShell:
+   ```powershell
+   (Get-FileHash artifacts/api-server/demo-server.mjs).Hash; (Get-FileHash scripts/demo-server.mjs).Hash
+   ```

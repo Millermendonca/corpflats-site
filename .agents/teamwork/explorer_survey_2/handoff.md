@@ -1,77 +1,172 @@
-# Handoff Report — Explorer Survey 2
-**Mapeamento de Arquitetura do Frontend Mobile do Hóspede & Rotas de Autoatendimento do Frigobar**
-**Data/Hora**: 2026-10-21T18:48:00Z  
-**Origem**: explorer_survey_2 (teamwork_preview_explorer)  
-**Destinatário**: Project Orchestrator (d10c20e2-adfb-4695-835e-52dd3bebe9a9)  
-**Tipo de Handoff**: Hard (Task complete)  
+# Handoff Report — Maid Rates & Financial Statements Exploration
+
+**Agent**: `explorer_survey_2`  
+**Mission**: Maid Rates & Financial Statements Explorer (Milestone 2)  
+**Date**: 2026-10-27  
+**Status**: Hard Handoff (Investigation Complete)
 
 ---
 
 ## 1. Observation
 
-1. **Roteamento Público no Wouter (`artifacts/limpeza/src/App.tsx`)**:
-   - Em `App.tsx` (linhas 287–342), as rotas públicas de autoatendimento para hóspedes (`/reservar`, `/minha-reserva/:code/cafe`, `/minha-reserva/:code`, `/minha-reserva/:code/checkout`) não possuem guardas de sessão (`AdminGuard`, `StaffGuard`).
-   - A linha 294 traz `<Route path="/minha-reserva/:code/cafe" component={GuestBreakfast} />` imediatamente antes da linha 298 `<Route path="/minha-reserva/:code" component={GuestPortalWrapper} />`. A avaliação de rotas do Wouter é top-down.
-2. **Estrutura de Cards no Portal do Hóspede (`artifacts/limpeza/src/pages/guest-portal.tsx`)**:
-   - Linha 1860: `DropdownMenuContent` com atalhos de navegação rápida para o hóspede.
-   - Linhas 3228–3338: Bloco dedicado ao café da manhã (`<Card className="bg-gradient-to-b from-amber-50/50 via-white to-amber-50/20 ...">`).
-   - Linhas 3341–3390: Bloco de Wi-Fi (`<Card className="bg-white rounded-3xl border border-slate-200/80 ...">`).
-   - Linhas 4120–4205: Implementação de polling com detecção bancária a cada 2.500 ms para PIX e link seguro de redirecionamento para o Mercado Pago.
-3. **Componentes UI no Repositório (`artifacts/limpeza/src/components/ui/`)**:
-   - Total de 55 componentes prontos, incluindo `input-otp.tsx` (com `InputOTP`, `InputOTPGroup`, `InputOTPSlot`), `card.tsx`, `dialog.tsx`, `drawer.tsx`, `sheet.tsx`, `tabs.tsx`, `radio-group.tsx`, `accordion.tsx`, `badge.tsx` e `button.tsx`.
-   - `lucide-react`: Ícones `Refrigerator`, `Package`, `Plus`, `Minus`, `CheckCircle2`, `Copy`, `QrCode`, `CreditCard`, `AlertTriangle`, `Sparkles` e `Coffee` verificados e disponíveis.
-4. **Build e Tipagem (`artifacts/limpeza/vite.config.ts` e `package.json`)**:
-   - O comando `npm --prefix artifacts/limpeza run build` executa `vite build --config vite.config.ts` e compila com sucesso (código de saída `0`) em `30.61s`, gerando os bundles em `artifacts/limpeza/dist/public` (`index.html`, `assets/index.js`, `assets/index.css`).
-   - O comando `npm --prefix artifacts/limpeza run typecheck` revelou que o repositório base possui erros de TypeScript pré-existentes em telas administrativas legadas (`property-settings.tsx`, `reception-tablet.tsx`, `settings.tsx`, `surveys.tsx`, `whatsapp-chat.tsx`), enquanto o build do Vite passa sem erros.
+### Obs 1: Paridade SHA-256 dos Arquivos Gêmeos
+Execução do comando PowerShell:
+```powershell
+Get-FileHash artifacts/api-server/maid-automation-service.mjs, scripts/maid-automation-service.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs
+```
+Resultado obtido:
+- `artifacts/api-server/maid-automation-service.mjs`: `813410E808A8B6BDC04C8422A8E39940E3408523996F13B98D1E8756442A35CA`
+- `scripts/maid-automation-service.mjs`: `813410E808A8B6BDC04C8422A8E39940E3408523996F13B98D1E8756442A35CA`
+- `artifacts/api-server/demo-server.mjs`: `E3E697950560C692FDFF9D2E32C0269376E905A62DD4BEC388A238022859AFA8`
+- `scripts/demo-server.mjs`: `E3E697950560C692FDFF9D2E32C0269376E905A62DD4BEC388A238022859AFA8`
+Ambos os pares de arquivos possuem paridade de 100% (hashes idênticos).
+
+### Obs 2: `syncMaidCredits` e Bug de Normalização
+Em `artifacts/api-server/maid-automation-service.mjs`:
+- Linhas 181–184:
+  ```javascript
+  const defaultRate = Number(db.cleaningRates?.defaultRatePerRoom || 22.50);
+  const userRate = db.cleaningRates?.userRates?.[userId] !== undefined
+    ? Number(db.cleaningRates.userRates[userId])
+    : defaultRate;
+  ```
+- Linhas 213–220:
+  ```javascript
+  for (const e of db.maidStatementEntries) {
+    if (e.userId !== userId || e.entryType !== "credit") continue;
+    const entryDate = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
+    if (entryDate < "2026-09-01") continue;
+    if ((userId === 2 || userId === 3) && Math.abs(Number(e.amount || 0) - userRate) > 0.001) {
+      e.amount = userRate;
+      modified = true;
+    }
+  ```
+- Linhas 257–267:
+  ```javascript
+  newEntries.push({
+    id: generatePaymentId(),
+    userId,
+    cleaningRequestId: cleaning.id,
+    paymentId: null,
+    entryType: "credit",
+    amount: userRate,
+    description: `Diária — Flat ${flatNum}`,
+    entryDate,
+    createdAt: cleaning.completedAt || new Date().toISOString(),
+  });
+  ```
+A função não verifica se o `cleaning` é do tipo `stayover`. O loop de normalização na linha 217 forçará qualquer crédito de Setembro+ para `userRate` (R$ 22,50 ou R$ 23,25), sobrescrevendo qualquer valor de Stayover (R$ 15,00).
+
+### Obs 3: Multiplicação Indiscriminada em `getMaidPeriodFinances`
+Em `artifacts/api-server/maid-automation-service.mjs:316-318`:
+```javascript
+const cleaningsCount = cleanings.length;
+const grossAmount = Number((cleaningsCount * userRate).toFixed(2));
+```
+Calcula o bruto multiplicando a contagem total de limpezas (`cleaningsCount`) unicamente por `userRate`, sem discriminar limpezas de Stayover.
+
+### Obs 4: Estrutura Atual de `db.cleaningRates` e Rotas
+Em `data/database.json`:
+```json
+{
+  "defaultRatePerRoom": 35,
+  "userRates": {
+    "2": 22.5,
+    "3": 23.25
+  }
+}
+```
+Em `demo-server.mjs:18949-18984`:
+`GET /api/cleaning/rates` e `POST /api/cleaning/rates` só leem e gravam `defaultRatePerRoom` e `userRates`. Não existem `defaultStayoverRatePerRoom` nem `userStayoverRates`.
+
+### Obs 5: Cálculo sem Discriminação em `/api/analytics/report`
+Em `demo-server.mjs:19069-19074`:
+```javascript
+const ratePerRoom = db.cleaningRates.userRates?.[u.id] !== undefined
+  ? Number(db.cleaningRates.userRates[u.id])
+  : defaultRate;
+
+const totalToPay = userCleanings.length * ratePerRoom;
+```
+Multiplica todas as limpezas de `u` pela taxa de checkout (`ratePerRoom`). Além disso, no mapeamento de cada quarto limpo (linhas 19120), passa `rate: ratePerRoom` fixo.
+
+### Obs 6: Recibo Impresso em `reports.tsx`
+Em `artifacts/limpeza/src/pages/reports.tsx:89`:
+```typescript
+const rate = Number(cleaner.ratePerRoom || 35).toFixed(2)
+```
+Linha 121: Na tabela de quartos impressa:
+```html
+<td style="text-align: right; font-weight: bold; color: #059669; font-family: monospace;">R$ ${rate}</td>
+```
+Linha 262: No banner de resumo:
+```html
+<span>Produção Bruta: <strong>R$ ${formatBRL(gross)}</strong> (${count} quartos × R$ ${rate})</span>
+```
+Todas as linhas e totais assumem uma única taxa de quarto.
+
+### Obs 7: Card de Prestadoras Autônomas em `hr-dashboard.tsx`
+Em `artifacts/limpeza/src/pages/hr-dashboard.tsx:1406-1422`:
+O card renderiza a constante `PRESTADORAS_AUTONOMAS` (linhas 411–430) com informações estáticas. Não consome `/api/cleaning/rates` nem possui inputs para editar os valores de Check-out e Stayover de Cris e Grazi.
 
 ---
 
 ## 2. Logic Chain
 
-1. A partir da **Observação 1**, constatou-se que sub-rotas com `:code` no Wouter devem vir antes de rotas de padrão pai para evitar que `/minha-reserva/:code` engula rotas filhas. Logo, as rotas `/minha-reserva/:code/frigobar` e `/minha-reserva/:code/minibar` devem ser inseridas acima de `/minha-reserva/:code`.
-2. A partir da **Observação 1 e 2**, as rotas `/frigobar/flat/:flatNumber` e `/frigobar/:flatNumber` destinam-se a acessos anônimos via escaneamento do QR Code físico do flat. Para evitar vazamento de dados de hóspedes no quarto ou cobranças não autorizadas, a tela deve exibir um portão de segurança solicitando os 4 últimos dígitos do celular cadastrado na reserva, validado via API `POST /api/minibar/flat-context`.
-3. Por outro lado, quando o acesso ocorre via `/minha-reserva/:code/frigobar`, o parâmetro `:code` já é uma credencial unívoca da reserva gerada pelo PMS. Logo, essa rota não deve pedir os 4 dígitos e deve exibir a saudação e o catálogo imediatamente.
-4. A partir da **Observação 2 e 3**, o componente `input-otp.tsx` (OTPInput) encaixa-se perfeitamente para a entrada dos 4 dígitos no mobile, com 4 slots destacados e teclado numérico automático.
-5. Para evitar divergências de conferência na vistoria da Anserve, a exibição de um selo visual não-editável `"Padrão no flat: X un."` no card de cada produto permite que o hóspede compare o que vê no frigobar físico com o padrão contratual e marque exatamente o que consumiu.
-6. A necessidade corporativa de reembolso de diárias exige 3 opções de descrição na NF: *(a) Discriminar todos os itens*, *(b) Lançar como "Água"*, ou *(c) Lançar como "Consumo de Frigobar"*.
-7. A partir da **Observação 4**, o build do Vite (`npm run build`) é o gate oficial de entrega em produção (conforme `AGENTS.md`), que gera o `dist/`. O implementador deve escrever código com tipagem limpa sem depender do typecheck global da raiz que contém pendências legadas.
+1. **A partir de Obs 4**, `db.cleaningRates` não possui as chaves `defaultStayoverRatePerRoom` e `userStayoverRates`. Para atender ao Requisito R2, a API deve suportar `defaultStayoverRatePerRoom` (padrão 15.00) e `userStayoverRates` (Cris `id: 2` = 15.00, Grazi `id: 3` = 15.00), e persisti-las em `GET /api/cleaning/rates` e `POST /api/cleaning/rates`.
+2. **A partir de Obs 2**, quando um card de Stayover for concluído (marcado como `clean`), a chamada reativa a `syncMaidCredits(userId)` precisa creditar `userStayoverRate` (R$ 15,00) em vez de `userRate` (R$ 22,50/23,25). Além disso, o loop de normalização de Setembro+ precisa ser protegido para não sobrescrever créditos de Stayover. A descrição deve ser gerada como `Diária Stayover — Flat ${flatNum}` para discriminação contábil.
+3. **A partir de Obs 3 e Obs 5**, tanto o cálculo da quinzena (`getMaidPeriodFinances`) quanto o relatório analítico (`/api/analytics/report`) devem segregar `checkoutCleanings` de `stayoverCleanings`. O subtotal bruto de cada camareira deve ser a soma exata: `(checkoutCount * checkoutRate) + (stayoverCount * stayoverRate)`. Cada item no array `cleanings` deve refletir sua taxa e seu tipo (`stayover` vs `checkout`).
+4. **A partir de Obs 6 e Obs 7**, os componentes de frontend devem ser enriquecidos:
+   - `reports.tsx`: Modal de taxas deve permitir configurar `defaultStayoverRatePerRoom` e `userStayoverRates` para cada colaboradora. O gerador do recibo A4 (`printReceiptWindow`) deve exibir a taxa individual de cada quarto, a identificação do tipo (`[Stayover]` vs `[Check-out]`) e o subtotal discriminando a quantidade e valores de cada modalidade.
+   - `hr-dashboard.tsx`: O card de Prestadoras Autônomas deve carregar os valores da API e permitir a edição direta das taxas de Check-out e Stayover de Cris e Grazi, salvando via `POST /api/cleaning/rates`.
+   - `maid-statement.tsx`: As movimentações de crédito devem destacar o badge `Stayover` quando aplicável, e o modal de comprovante deve explicitar o tipo de serviço prestado.
+5. **A partir de Obs 1**, toda e qualquer alteração efetuada nos arquivos de backend deve ser replicada de forma idêntica entre `artifacts/api-server/` e `scripts/`, garantindo 100% de paridade SHA-256.
 
 ---
 
 ## 3. Caveats
 
-- **Ambiente de Teste do Mercado Pago**: A integração do Mercado Pago depende de credenciais de produção ou sandbox configuradas em variáveis de ambiente (`MP_ACCESS_TOKEN`). No caso de ausência no ambiente de desenvolvimento, o backend deve retornar um link mock ou de teste seguro sem travar o frontend.
-- **Armazenamento de Sessão dos 4 Dígitos**: Para que o hóspede não seja obrigado a redigitar os 4 dígitos a cada atualização de tela (refresh F5), recomenda-se salvar a autorização efetuada em `sessionStorage` indexado pelo número do flat durante o ciclo da aba do navegador.
-- **No Caveats adicionais**: Todo o restante dos fluxos, rotas e componentes foi verificado diretamente no código fonte e testado em compilação.
+- **Transição de Dados Legados**: Entradas de créditos de limpezas concluídas antes do lançamento desta funcionalidade não possuem o campo `cleaningType`. A inferência deve considerar `cleaningType || (cleaningRequestId ? linkedCleaning.source : null) || (description.includes("Stayover") ? "stayover" : "checkout")`.
+- **Limpeza de Setembro/Agosto**: O código em `syncMaidCredits` preserva estritamente intocadas as entradas anteriores a `2026-09-01` (Agosto). Essa regra de negócio foi respeitada e deve ser mantida.
+- **Não modificação de código nesta etapa**: Como este agente possui perfil read-only de exploração, nenhuma alteração em arquivos de produção foi realizada. Todas as propostas e contratos estão descritos neste relatório e em `analysis.md`.
 
 ---
 
 ## 4. Conclusion
 
-O frontend mobile do frigobar é plenamente viável sem impacto na operação existente. A arquitetura recomendada consiste em:
-1. Criar uma nova página de autoatendimento mobile em `artifacts/limpeza/src/pages/guest-minibar.tsx` que suporte os modos QR Code (`flatNumber`) e Link Direto (`code`).
-2. Adicionar as rotas públicas correspondentes em `artifacts/limpeza/src/App.tsx`.
-3. Inserir o card dedicado de Frigobar e item de navegação rápida em `artifacts/limpeza/src/pages/guest-portal.tsx`.
-4. Utilizar os componentes shadcn/ui existentes (`InputOTP`, `Card`, `Badge`, `Button`, `RadioGroup`, `Tabs`, `Accordion`) e ícones `lucide-react` (`Refrigerator`, etc.).
-5. Validar a compilação final com `npm --prefix artifacts/limpeza run build` gerando `dist/public`.
+O sistema possui uma arquitetura centralizada e consistente para a apuração de diárias através de `maid-automation-service.mjs` e `demo-server.mjs`. No entanto, atualmente todas as limpezas são tratadas como uma única modalidade tarifada à taxa de check-out.
 
-O relatório detalhado com especificações de tela, fluxos e código de referência está registrado em `.agents/teamwork/explorer_survey_2/analysis.md`.
+Para atender plenamente o Milestone 2 e os critérios de aceitação R2:
+1. `db.cleaningRates` deve armazenar `defaultStayoverRatePerRoom: 15.00` e `userStayoverRates: { "2": 15.00, "3": 15.00 }`.
+2. As rotas `GET /api/cleaning/rates` e `POST /api/cleaning/rates` devem ler e persistir ambos os campos.
+3. `syncMaidCredits` e `getMaidPeriodFinances` em `maid-automation-service.mjs` (com paridade estrita em `scripts/` e `artifacts/api-server/`) devem discriminar Check-out e Stayover na geração de entradas, no loop de normalização e no cálculo do valor bruto.
+4. `/api/analytics/report` e `/api/maids/:userId/statement` devem retornar contagens e valores separados de Check-out e Stayover.
+5. As telas `reports.tsx`, `hr-dashboard.tsx` e `maid-statement.tsx` devem refletir a edição de taxas e a exibição discriminada nos demonstrativos e recibos de impressão.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar de forma independente as observações e conclusões deste handoff:
+Para verificar de forma independente as observações e o plano:
 
-1. **Inspeção de Rotas e Precedência**:
-   - Inspecionar `artifacts/limpeza/src/App.tsx` nas linhas 287–342 com `view_file` e atestar a ordem de sub-rotas públicas.
-2. **Inspeção de Componentes UI**:
-   - Verificar a existência de `input-otp.tsx` em `artifacts/limpeza/src/components/ui/input-otp.tsx`.
-   - Executar no terminal:
-     `node -e "import('lucide-react').then(l => console.log('Refrigerator:', Boolean(l.Refrigerator)))"` na pasta `artifacts/limpeza`.
-3. **Verificação de Compilação Vite**:
-   - Executar no terminal:
-     `npm --prefix artifacts/limpeza run build`
-     e confirmar código de saída `0` e geração dos arquivos em `artifacts/limpeza/dist/public`.
-4. **Condição de Invalidação**:
-   - O handoff seria invalidado se o Wouter não suportasse subcaminhos parametrizados antes da rota base, ou se a biblioteca de ícones/componentes não possuísse suporte aos elementos mobile descritos, o que foi refutado pelas verificações práticas acima.
+1. **Paridade SHA-256 Atual**:
+   ```powershell
+   Get-FileHash artifacts/api-server/maid-automation-service.mjs, scripts/maid-automation-service.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs | Format-Table -AutoSize
+   ```
+   *Condição de invalidação*: Qualquer diferença entre os hashes dos pares gêmeos.
+
+2. **Inspeção de `db.cleaningRates` no Banco**:
+   ```bash
+   node -e "const db = JSON.parse(require('fs').readFileSync('data/database.json', 'utf8')); console.log(db.cleaningRates);"
+   ```
+   *Resultado esperado*: Atualmente contém apenas `defaultRatePerRoom` e `userRates`.
+
+3. **Verificação de Vulnerabilidade de Normalização**:
+   Inspecionar `artifacts/api-server/maid-automation-service.mjs:213-228`.
+   *Constatação*: O loop sobrescreve qualquer `e.amount` que divirja de `userRate` para os usuários 2 e 3.
+
+4. **Teste Pontual do Módulo (quando implementado pelo implementador)**:
+   ```bash
+   node tests/b2b-stayover-housekeeping.test.mjs
+   ```
+   *Regra*: Nunca executar suítes de testes globais ou em lote (`AGENTS.md`).

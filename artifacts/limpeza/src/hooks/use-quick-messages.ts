@@ -262,9 +262,10 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagame
 📋 *Resumo:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
-• Valor: *{{valor_total}}*
+• Valor no Cartão de Crédito: *{{valor_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{valor_pix}}*
 
-Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seguro:
+Para garantir sua acomodação via PIX ou Cartão de Crédito, acesse o link seguro:
 {{link_portal_hospede}}`,
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
@@ -492,12 +493,16 @@ export function renderQuickMessage(
   const totalAmount = Number(resItem.totalAmount || resItem.amount || 0)
   const paidAmount = Number(resItem.paidAmount ?? (resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" ? totalAmount : 0))
   const pendingAmount = Math.max(0, totalAmount - paidAmount)
+  const pixBaseAmount = pendingAmount > 0 ? pendingAmount : totalAmount
+  const cardBaseAmount = Math.round(pixBaseAmount * 1.05 * 100) / 100
 
   const formattedTotal = totalAmount > 0 
     ? totalAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     : "R$ 0,00"
   const formattedPaid = paidAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
   const formattedPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  const formattedPix = pixBaseAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  const formattedCard = cardBaseAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 
   const chanLower = String(resItem.channel || "").toLowerCase()
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb")
@@ -536,12 +541,14 @@ export function renderQuickMessage(
     "{{valor_pago}}": hideFinancialForGuest ? "" : formattedPaid,
     "{{quanto_falta}}": hideFinancialForGuest ? "" : formattedPending,
     "{{saldo_restante}}": hideFinancialForGuest ? "" : formattedPending,
+    "{{valor_pix}}": hideFinancialForGuest ? "" : formattedPix,
+    "{{valor_cartao}}": hideFinancialForGuest ? "" : formattedCard,
     "{{status_confirmacao}}": statusConfirmacao,
     "{{status_pagamento}}": hideFinancialForGuest ? "" : paymentStatus,
     "{{chave_pix}}": hideFinancialForGuest ? "" : "47.964.813/0001-65",
     "{{titular_pix}}": hideFinancialForGuest ? "" : "CorpFlats Hospedagem",
     "{{instrucao_saldo}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Saldo restante de ${formattedPending} a acertar no check-in.` : "Reserva quitada."),
-    "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 ${linkPortal}` : "Reserva 100% quitada! Nenhuma pendência financeira."),
+    "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou Cartão de Crédito pelo portal do hóspede:\n👉 ${linkPortal}` : "Reserva 100% quitada! Nenhuma pendência financeira."),
     "{{canal_reserva}}": resItem.channel || "Site CorpFlats",
     "{{nome_hotel}}": "CorpFlats",
     "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
@@ -563,7 +570,7 @@ export function renderQuickMessage(
   if (hideFinancialForGuest) {
     text = text
       .replace(/💰\s*\*Situação Financeira:\*[\s\S]*?(?=\n\n|$)/gi, "")
-      .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor|Valor Total[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*)\*?:[^\n]*\n?/gim, "")
+      .replace(/^[ \t]*•[ \t]*\*?(Pagamento|Valor|Valor Total[^\n:]*|Valor no Cartão[^\n:]*|Valor com Desconto[^\n:]*|Quanto foi Pago|Valor Pago|Saldo a Quitar|Saldo Restante|Quanto Falta[^\n:]*)\*?:[^\n]*\n?/gim, "")
   }
   for (const [tag, val] of Object.entries(tagMap)) {
     text = text.split(tag).join(val)
@@ -643,6 +650,15 @@ function normalizeQuickMessagesList(list: any[]): WhatsAppQuickMessage[] {
     let next = m
     if (m.id === "qm_payment_pending" || m.id === "qm_payment_confirmed") {
       next = { ...next, recipientTarget: "requester" }
+    }
+    if (next.id === "qm_payment_pending") {
+      const defPay = DEFAULT_QUICK_MESSAGES.find(q => q.id === "qm_payment_pending")
+      if (defPay && (next.message?.includes("12x") || !next.message?.includes("{{valor_cartao}}"))) {
+        next = {
+          ...next,
+          message: defPay.message
+        }
+      }
     }
     if (next.id === "qm_breakfast" && (!next.buttons || next.buttons.length === 0)) {
       return {

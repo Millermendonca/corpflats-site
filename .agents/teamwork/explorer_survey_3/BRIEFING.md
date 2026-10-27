@@ -1,61 +1,48 @@
-# BRIEFING — 2026-10-21T18:55:00Z
+# BRIEFING — 2026-10-27T16:10:00Z
 
 ## Mission
-Mapear as INTERFACES DA ANSERVE (Repositora e Supervisão), ADMIN CORPFLATS, CRM e SOFIA IA para o ecossistema de Frigobar (CorpFlats + Anserve) no Guest-Flow-Manager.
+Investigar e mapear com precisão cirúrgica a arquitetura do Guest Portal (frontend e backend em demo-server.mjs), FlatCard/InspectionModal em artifacts/limpeza/src/components/flat-card.tsx para Stayover B2B, e estruturar o teste pontual tests/b2b-stayover-housekeeping.test.mjs.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: frontend investigator, survey analyzer, testing infra & test cases investigator, iot hardware architect, hospitality audio & automation investigator
+- Roles: investigation, synthesis
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
-- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
-- Milestone: Smart Flat Hub - Survey Phase (R4 & R5) Complete
-- Role (2026-10-21): explorer_survey_3 (Anserve & Admin Portals, CRM & Sofia AI Investigator)
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
-- Milestone (2026-10-21): Frigobar Ecossistema - Survey Phase (Interfaces Anserve, Admin CorpFlats, CRM & Sofia IA)
+- Original parent: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Milestone: B2B Stayover Housekeeping Survey & Design
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement code changes in the source code
-- Always follow the communication and handoff protocols
-- Deliver structured analysis in `analysis.md` and handoff in `handoff.md`
-- Restrição crítica de privacidade: NADA do Smart Flat Hub visível para clientes reais em produção (modo preview / sandbox exclusivo)
-- Proibido rodar testes globais ou em lote (AGENTS.md)
+- Read-only investigation — do NOT implement or modify production code
 - NUNCA executar testes globais, varreduras ou em lote (AGENTS.md)
-- Não fazer modificações de código fonte durante a fase de investigação (apenas relatórios em `.agents/teamwork/explorer_survey_3/`)
-- Notificar parent via `send_message` ao concluir
+- Somente arquivos de metadados em .agents/teamwork/explorer_survey_3/
+- Sempre comunicar via send_message para o parent ao finalizar
 
 ## Current Parent
-- Conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9
-- Updated: 2026-10-21T18:55:00Z
+- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Updated: 2026-10-27T16:00:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/limpeza/src/lib/permissions.ts`
-  - `artifacts/limpeza/src/pages/equipe.tsx`
-  - `artifacts/limpeza/src/components/layout.tsx`
-  - `artifacts/limpeza/src/App.tsx`
-  - `artifacts/limpeza/src/pages/service-worker-portal.tsx`
-  - `artifacts/limpeza/src/pages/crm-guests.tsx`
-  - `artifacts/api-server/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/demo-server.mjs`
-  - `scripts/demo-server.mjs`
+  - `artifacts/api-server/demo-server.mjs` (rotas guest-portal, checkouts, assignments/status, getRequestsForDate)
+  - `artifacts/limpeza/src/pages/guest-portal.tsx` (estrutura da UI, cards, layout, integração de API)
+  - `artifacts/limpeza/src/components/flat-card.tsx` (cards de limpeza, finishModalOpen, 10-minute check, adminCleanModalOpen)
+  - `artifacts/limpeza/src/pages/dashboard.tsx` (grid de cards e integração com checkouts)
+  - `artifacts/limpeza/src/pages/reports.tsx` e `hr-dashboard.tsx` (gestão de taxas e diárias)
+  - `tests/tariff-engine.test.mjs` (padrão de testes isolados com child process spawn)
 - **Key findings**:
-  - Mapeamento completo dos 6 eixos de Frigobar:
-    1. Controle de Acesso e Perfis: papéis `anserve_repositora` (`["/frigobar-reposicao"]`) e `anserve_gestor` (`["/anserve", "/frigobar-reposicao", "/frigobar-gestao"]`), link rápido com token persistente no `localStorage` ou PIN 4 dígitos.
-    2. Interface Repositora Anserve (`/frigobar-reposicao`): lista mobile por prioridade (🔴 checkouts do dia, 🔵 ocupados, 🟢 livres), confronto de consumo declarado/pago, botões Conforme vs Divergência com foto e reposição de itens pagos e cortesias (2 cápsulas Nespresso, balas e amendoim).
-    3. Interface de Supervisão Anserve (`/anserve` / `/frigobar-gestao`): fila de NFs pendentes (sem alertas no WhatsApp, apenas no painel), visualização de opção de discriminação (*Itens discriminados*, *Água*, *Consumo de Frigobar*), upload e disparo automático multicanal (Z-API WhatsApp + E-mail + Área da Reserva).
-    4. Interface Admin CorpFlats (`/frigobar`): catálogo, cortesias, gabarito por flat, gerador de QR Codes para display de acrílico e extrato de repasse financeiro.
-    5. CRM e Analytics Demográfico (`crm-guests.tsx`): histórico de consumo de frigobar, tags automáticas e cruzamento analítico de origem demográfica (cidade/UF) vs mix de categorias.
-    6. Integração Sofia IA: injeção de `minibarUrl` em `buildGuestContext`, adição de `case "minibar"` em `querySystemData`, erradicação do texto legado de "frigobar vazio sem cortesia" e disparo amigável em caso de divergência.
-- **Unexplored areas**: Nenhuma pendência na fase de investigação (fase de survey 100% concluída).
+  - `demo-server.mjs:24468` já possui checagem de B2B consolidada (`r.channel === "b2b" || ...`).
+  - Rotas DND e Linen Request devem retornar 403 para não-B2B. Troca de enxoval agendada para `tomorrowStr`.
+  - `flat-card.tsx:902` e `demo-server.mjs:15824` impõem trava de 10 min que deve ser ignorada em Stayover.
+  - `demo-server.mjs:15836` fecha a reserva e envia WhatsApp de check-out ao marcar `clean` ou `cleaning_now`; para Stayover isso DEVE ser bloqueado (o hóspede continua no quarto).
+  - Vistoria de saída (`pendingSurveys`) deve ser ignorada em Stayover, substituída por modal simples de troca de toalhas e cama.
+- **Unexplored areas**: Nenhuma. Todos os 4 objetivos foram investigados e documentados.
 
 ## Key Decisions Made
-- Consolidar toda a especificação técnica e contratos REST em `analysis.md`.
-- Estruturar o relatório formal em `handoff.md` nos 5 componentes obrigatórios.
-- Concluir a missão e reportar ao Project Orchestrator via `send_message`.
+- `analysis.md` detalha toda a arquitetura de endpoints, componentes UI e contratos.
+- `handoff.md` estruturado estritamente nos 5 componentes protocolares.
 
 ## Artifact Index
-- `DISPATCH.md` — Despacho e registro de mensagens recebidas
-- `BRIEFING.md` — Identidade persistente e resumo executivo
-- `progress.md` — Heartbeat de liveness e status das tarefas
-- `analysis.md` — Relatório de análise técnica detalhada (6 eixos)
-- `handoff.md` — Relatório formal de handoff (5 componentes)
+- DISPATCH.md — Log de despacho recebido do orchestrator
+- BRIEFING.md — Memória de trabalho persistente
+- progress.md — Heartbeat de progresso e vivacidade
+- analysis.md — Relatório detalhado de análise da arquitetura e modificações necessárias
+- handoff.md — Relatório de handoff estruturado em 5 componentes

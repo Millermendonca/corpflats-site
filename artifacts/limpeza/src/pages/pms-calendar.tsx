@@ -1470,6 +1470,19 @@ export default function PmsCalendar() {
             current.res.dailyRates
           );
         }
+      } else if (originNights !== targetNights) {
+        const inferredRate = Number(current.res.dailyRate) > 0
+          ? Number(current.res.dailyRate)
+          : (originNights > 0 && Number(current.res.totalAmount) > 0
+            ? Math.round((Number(current.res.totalAmount) / originNights) * 100) / 100
+            : 250);
+        updatedDailyRates = buildReservationDailyRates(
+          current.currentCheckin,
+          current.currentCheckout,
+          inferredRate,
+          current.res.channel || "whatsapp",
+          []
+        );
       }
 
       const calculatedTotal = updatedDailyRates

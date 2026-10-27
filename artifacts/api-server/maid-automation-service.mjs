@@ -183,6 +183,11 @@ export function syncMaidCredits(db, userId) {
     ? Number(db.cleaningRates.userRates[userId])
     : defaultRate;
 
+  const defaultStayoverRate = Number(db.cleaningRates?.defaultStayoverRatePerRoom !== undefined ? db.cleaningRates.defaultStayoverRatePerRoom : 15.00);
+  const userStayoverRate = db.cleaningRates?.userStayoverRates?.[userId] !== undefined
+    ? Number(db.cleaningRates.userStayoverRates[userId])
+    : (userId === 2 || userId === 3 ? 15.00 : defaultStayoverRate);
+
   const cleanings = (db.cleaningRequests || []).filter(r => {
     if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     if (r.id === 1 && (r.flatId === 22 || r.requestDate === "2026-09-01")) return false;
@@ -210,12 +215,30 @@ export function syncMaidCredits(db, userId) {
   if (db.maidStatementEntries.length !== beforeLen) modified = true;
 
   // 1.1 Normaliza taxa por quarto e timestamp real de conclusão nos créditos de Setembro+
+  // BLINDAGEM CONTRA SOBRESCRITA DE STAYOVERS:
   for (const e of db.maidStatementEntries) {
     if (e.userId !== userId || e.entryType !== "credit") continue;
     const entryDate = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
     if (entryDate < "2026-09-01") continue;
-    if ((userId === 2 || userId === 3) && Math.abs(Number(e.amount || 0) - userRate) > 0.001) {
-      e.amount = userRate;
+
+    const linkedCleaning = e.cleaningRequestId ? (validCleaningMap.get(e.cleaningRequestId) || (db.cleaningRequests || []).find(r => r.id === e.cleaningRequestId)) : null;
+    const isStayover = e.cleaningType === "stayover" ||
+      linkedCleaning?.cleaningType === "stayover" ||
+      linkedCleaning?.source === "stayover" ||
+      (typeof e.description === "string" && e.description.toLowerCase().includes("stayover"));
+
+    if (isStayover && e.cleaningType !== "stayover") {
+      e.cleaningType = "stayover";
+      modified = true;
+    } else if (!isStayover && !e.cleaningType && e.cleaningRequestId) {
+      e.cleaningType = "checkout";
+      modified = true;
+    }
+
+    const expectedRate = isStayover ? userStayoverRate : userRate;
+
+    if ((userId === 2 || userId === 3) && Math.abs(Number(e.amount || 0) - expectedRate) > 0.001) {
+      e.amount = expectedRate;
       modified = true;
     }
     if (e.cleaningRequestId && validCleaningMap.has(e.cleaningRequestId)) {
@@ -243,25 +266,31 @@ export function syncMaidCredits(db, userId) {
       ? getExecutionDateStr(cleaning.completedAt)
       : (cleaning.effectiveDate || cleaning.requestDate);
 
+    const isStayover = cleaning.cleaningType === "stayover" || cleaning.source === "stayover";
+    const expectedDesc = isStayover ? `Diária Stayover — Flat ${flatNum}` : `Diária — Flat ${flatNum}`;
+
     // Se existe uma entrada legada sem cleaningRequestId para o mesmo flat e data da camareira, vincula
     const legacyEntry = db.maidStatementEntries.find(
-      e => !e.cleaningRequestId && e.userId === userId && e.entryType === "credit" && e.entryDate === entryDate && e.description === `Diária — Flat ${flatNum}`
+      e => !e.cleaningRequestId && e.userId === userId && e.entryType === "credit" && e.entryDate === entryDate && (e.description === expectedDesc || (!isStayover && e.description === `Diária — Flat ${flatNum}`))
     );
     if (legacyEntry) {
       legacyEntry.cleaningRequestId = cleaning.id;
+      if (!legacyEntry.cleaningType) legacyEntry.cleaningType = isStayover ? "stayover" : "checkout";
       existingCreditRefs.add(cleaning.id);
       modified = true;
       continue;
     }
 
+    const rate = isStayover ? userStayoverRate : userRate;
     newEntries.push({
       id: generatePaymentId(),
       userId,
       cleaningRequestId: cleaning.id,
       paymentId: null,
       entryType: "credit",
-      amount: userRate,
-      description: `Diária — Flat ${flatNum}`,
+      amount: rate,
+      description: expectedDesc,
+      cleaningType: isStayover ? "stayover" : "checkout",
       entryDate,
       createdAt: cleaning.completedAt || new Date().toISOString(),
     });
@@ -306,6 +335,11 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
     ? Number(db.cleaningRates.userRates[userId])
     : defaultRate;
 
+  const defaultStayoverRate = Number(db?.cleaningRates?.defaultStayoverRatePerRoom !== undefined ? db.cleaningRates.defaultStayoverRatePerRoom : 15.00);
+  const userStayoverRate = db?.cleaningRates?.userStayoverRates?.[userId] !== undefined
+    ? Number(db.cleaningRates.userStayoverRates[userId])
+    : (userId === 2 || userId === 3 ? 15.00 : defaultStayoverRate);
+
   const cleanings = (db?.cleaningRequests || []).filter(r => {
     if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     if (r.assignedUserId !== userId) return false;
@@ -313,8 +347,16 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
     return effectiveDate >= startD && effectiveDate <= endD;
   });
 
+  const checkoutCleanings = cleanings.filter(r => r.cleaningType !== "stayover" && r.source !== "stayover");
+  const stayoverCleanings = cleanings.filter(r => r.cleaningType === "stayover" || r.source === "stayover");
+
+  const checkoutCount = checkoutCleanings.length;
+  const stayoverCount = stayoverCleanings.length;
   const cleaningsCount = cleanings.length;
-  const grossAmount = Number((cleaningsCount * userRate).toFixed(2));
+
+  const checkoutGross = Number((checkoutCount * userRate).toFixed(2));
+  const stayoverGross = Number((stayoverCount * userStayoverRate).toFixed(2));
+  const grossAmount = Number((checkoutGross + stayoverGross).toFixed(2));
 
   // 2. Saldo devedor de quinzenas anteriores (transporte de conta-corrente negativa)
   const priorEntries = (db?.maidStatementEntries || []).filter(e => {
@@ -390,7 +432,13 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
 
   return {
     cleaningsCount,
+    checkoutCount,
+    stayoverCount,
+    checkoutGross,
+    stayoverGross,
     grossAmount,
+    userCheckoutRate: userRate,
+    userStayoverRate,
     previousDebitBalance,
     advancesAmount,
     paymentsAmount,
@@ -466,14 +514,21 @@ export function getMaidStats(db, maidUserId, targetDateStr = null) {
     ? Number(db.cleaningRates.userRates[maidUserId])
     : defaultRate;
 
+  const defaultStayoverRate = Number(db.cleaningRates?.defaultStayoverRatePerRoom !== undefined ? db.cleaningRates.defaultStayoverRatePerRoom : 15.00);
+  const userStayoverRate = db.cleaningRates?.userStayoverRates?.[maidUserId] !== undefined
+    ? Number(db.cleaningRates.userStayoverRates[maidUserId])
+    : (maidUserId === 2 || maidUserId === 3 ? 15.00 : defaultStayoverRate);
+
   // Agrupamento por dia para o detalhamento do fechamento
   const cleaningsByDayMap = {};
   quinzenaCleanings.forEach(c => {
     const d = c.completedAt ? getExecutionDateStr(c.completedAt) : (c.effectiveDate || c.requestDate);
     const flat = (db.flats || []).find(f => f.id === c.flatId);
     const fNum = flat ? flat.number : (c.flatNumber || String(c.flatId));
+    const isStay = c.cleaningType === "stayover" || c.source === "stayover";
+    const label = isStay ? `${fNum} (Stayover)` : `${fNum}`;
     if (!cleaningsByDayMap[d]) cleaningsByDayMap[d] = [];
-    cleaningsByDayMap[d].push(fNum);
+    cleaningsByDayMap[d].push(label);
   });
 
   const sortedDays = Object.keys(cleaningsByDayMap).sort();
@@ -499,7 +554,14 @@ export function getMaidStats(db, maidUserId, targetDateStr = null) {
     isFirstHalf,
     isClosingDay: day === 15 || day === lastDayOfMonth,
     quinzenaCount: finances.cleaningsCount,
+    checkoutCount: finances.checkoutCount,
+    stayoverCount: finances.stayoverCount,
+    checkoutGross: finances.checkoutGross,
+    stayoverGross: finances.stayoverGross,
     ratePerRoom: userRate,
+    userCheckoutRate: userRate,
+    userStayoverRate,
+    stayoverRate: userStayoverRate,
     quinzenaTotalValue: finances.grossAmount,
     grossAmount: finances.grossAmount,
     previousDebitBalance: finances.previousDebitBalance,

@@ -101,8 +101,8 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Saída (Check-out): *{{data_checkout}} até às 12:00*
 
 💰 *Situação Financeira:*
-• Valor Total: *{{valor_total}}*
-• Quanto Falta Pagar: *{{quanto_falta}}*
+• Valor no Cartão de Crédito: *{{valor_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{valor_pix}}*
 
 {{instrucao_pagamento}}`,
     buttons: [
@@ -132,9 +132,10 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 📋 *Detalhes da Estadia:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
-• Valor Pendente: *{{quanto_falta}}*
+• Valor no Cartão de Crédito: *{{valor_cartao}}*
+• Valor com Desconto no PIX (-5%): *{{valor_pix}}*
 
-Para garantir sua acomodação antes que as datas sejam liberadas, efetue o pagamento via PIX ou parcele em até 12x no cartão pelo portal seguro:
+Para garantir sua acomodação antes que as datas sejam liberadas, efetue o pagamento via PIX ou Cartão de Crédito pelo portal seguro:
 👉 {{link_portal_hospede}}`,
     buttons: [
       { label: "💳 Ver Reserva & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
@@ -1189,7 +1190,7 @@ export default function ReservationJourney() {
       name: "🌐 Site Oficial (Direto)",
       icon: Globe,
       color: "border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20",
-      summary: "Canal mais rentável. Permite pré-reserva com PIX automático ou confirmação com cartão em até 12x. Concede Early Check-in cortesia às 10:00 e acesso imediato ao portal.",
+      summary: "Canal mais rentável. Permite pré-reserva com PIX automático (-5%) ou confirmação com Cartão de Crédito. Concede Early Check-in cortesia às 10:00 e acesso imediato ao portal.",
       earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 se liberado pelas camareiras.",
       flatNumberRule: "✅ Revelado imediatamente na confirmação.",
       breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado e ainda não solicitado.",

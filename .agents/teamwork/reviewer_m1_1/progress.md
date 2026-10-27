@@ -1,14 +1,12 @@
-# Progresso de Revisão — reviewer_m1_1
+# Progress — reviewer_m1_1
 
-Last visited: 2026-10-22T10:42:35Z
+Last visited: 2026-10-27T17:05:00Z
+Status: Completed
 
-- [x] Leitura do despacho e inicialização de BRIEFING.md / DISPATCH.md
-- [x] Leitura de ORIGINAL_REQUEST.md
-- [x] Leitura de PROJECT.md (orchestrator_17)
-- [x] Leitura de worker_m1/handoff.md
-- [x] Inspeção aprofundada dos arquivos de código implementados (`employees.mjs`, `router.mjs`, `index.mjs`, `demo-server.mjs`)
-- [x] Execução e verificação do teste estritamente pontual `node --test tests/hr-m1-backend-core.test.mjs` (6/6 passaram)
-- [x] Execução e verificação de paridade `node scripts/check-twin-parity.mjs` (29/29 passaram)
-- [x] Análise adversarial e checagem de integridade (anti-cheating, integridade do schema, edge cases, injeção/falhas)
-- [x] Conclusão do relatório handoff.md com veredicto APPROVE
-- [x] Envio da mensagem ao orquestrador
+- [x] Initialized DISPATCH.md and BRIEFING.md
+- [x] Read context: ORIGINAL_REQUEST.md, PROJECT.md, worker_m1/changes.md, worker_m1/handoff.md
+- [x] Inspect source code: artifacts/api-server/demo-server.mjs vs scripts/demo-server.mjs
+- [x] Syntax check & SHA-256 parity verification (Identified divergence: 8523209F vs 824C8A26)
+- [x] Run pontual test: tests/b2b-housekeeping-m1.test.mjs (Failed test 3 with AssertionError)
+- [x] Adversarial challenge & edge case analysis (Identified leak in isB2bReservation for non-B2B with companyName)
+- [x] Generate handoff.md and send verdict to orchestrator (REQUEST_CHANGES)

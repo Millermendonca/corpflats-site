@@ -1,60 +1,62 @@
-# BRIEFING — 2026-10-22T10:35:00Z
+# BRIEFING — 2026-10-27T16:47:00Z
 
 ## Mission
-Implementação do Marco M1: Backend Core, sincronização twin-server, módulo modular `hr/`, schema CLT, isolamento rigoroso de prestadoras (Cris e Grazi) e guarda contra poda no banco de dados.
+Implementar suporte completo de backend no twin-server (artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs) para Governança e Housekeeping de reservas B2B (estadias longas com limpezas diárias do tipo Stayover, controle de enxoval de cama/banho a cada 3 dias, Não Perturbe / DND, requisição de enxoval via Guest Portal e paridade SHA-256).
 
 ## 🔒 My Identity
-- Archetype: worker
+- Archetype: implementer
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
-- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Milestone: M1 - Backend Core & Isolamento de Prestadoras
+- Original parent: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Milestone: Milestone 1 (M1) - Backend Housekeeping B2B & Twin-Server Parity
 
 ## 🔒 Key Constraints
-- Sincronização estrita SHA-256 entre `artifacts/api-server/` e `scripts/`
-- Isolamento absoluto de Cris e Grazi: contractType = 'prestador', bloqueadas em todas as APIs CLT (/api/hr/employees)
-- Guarda contra poda de 11 coleções de RH no pruneDatabase (5 anos / 1825 dias para transações)
-- NUNCA executar testes globais (`tests/*.test.mjs`), apenas validação pontual estrita
-- Integridade total: sem hardcoding em testes, sem facades falsas
+- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs).
+- Paridade Twin-Server: Manter 100% SHA-256 idêntico entre scripts/demo-server.mjs e artifacts/api-server/demo-server.mjs.
+- Reservas de Booking, Airbnb, WhatsApp, Site Direto NUNCA geram card de stayover nas datas intermediárias.
+- Stayover cards na conclusão JAMAIS marcam checkoutDone = true, status completed, nem isOccupied = false.
+- Trava de 10 minutos deve ser dispensada para stayovers.
+- Paridade de sintaxe validada via `node -c`.
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T10:35:00Z
+- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
+- Updated: 2026-10-27T16:47:00Z
 
 ## Task Summary
 - **What to build**:
-  - Restabelecimento de 100% de paridade SHA-256 entre `artifacts/api-server/` e `scripts/`
-  - Estrutura modular `hr/` (`employees.mjs`, `router.mjs`, `index.mjs`) em `artifacts/api-server/hr/` e `scripts/hr/`
-  - Integração em `demo-server.mjs`: `ensureHrCollections`, montagem de `/api/hr`, proteção em `pruneDatabase` contra `LIMITS` e guarda legal de 1825 dias (5 anos)
-  - Blindagem estrita de Cris e Grazi com `contractType = "prestador"` em `defaultUsers` e `sanitizeMaidUsers()`
-  - Criação do verificador `scripts/check-twin-parity.mjs`
-  - Criação e aprovação do teste pontual dedicado `tests/hr-m1-backend-core.test.mjs`
+  1. Helper canônico `isB2bReservation(r)`
+  2. Gerar cards Stayover em `getRequestsForDate` para reservas B2B ativas em dias intermediários
+  3. Metadados ricos de enxoval (`linenTracking`) em `GET /api/reservations/checkouts`
+  4. Suporte a stayover e troca de enxoval em `PATCH /api/cleaning/assignments/:requestId/status`
+  5. Endpoints de Guest Portal B2B (`/do-not-disturb`, `/linen-request`, injeção em `/guest-portal/:code`)
+  6. Paridade twin-server e validação de sintaxe
 - **Success criteria**:
-  - `check-twin-parity.mjs` retorna 29/29 PASS (100%)
-  - Testes pontuais `tests/hr-m1-backend-core.test.mjs` 6/6 subtestes aprovados
-  - Cris e Grazi 100% isoladas de rotinas CLT
+  - Twin servers sincronizados com o mesmo SHA-256: `824C8A26E29379DE7728D8731236406B7E107D6F0BD71AD4A659FF950159671A`.
+  - Sintaxe Node válida sem erros (`node -c`).
+  - Sem quebra de contratos existentes.
+  - Testes pontuais estritos passando (5/5 testes em `tests/b2b-housekeeping-m1.test.mjs`).
+
+## Key Decisions Made
+- `isB2bReservation`: canonical helper consolidando múltiplos critérios (canal "b2b", flag `isB2b`, localizador `B2B-`, número de reserva B2B, agência ou empresa).
+- Stayover completion preserves `isOccupied: true`, does not trigger checkout notifications, and updates linen tracking history on reservation.
+- Guest Portal endpoints enforce 403 Forbidden for non-B2B reservations.
+
+## Artifact Index
+- `.agents/teamwork/worker_m1/DISPATCH.md` — Assigned instructions
+- `.agents/teamwork/worker_m1/progress.md` — Liveness & heartbeat
+- `.agents/teamwork/worker_m1/changes.md` — Detail of changes made
+- `.agents/teamwork/worker_m1/handoff.md` — 5-component handoff report
+- `tests/b2b-housekeeping-m1.test.mjs` — Strictly isolated unit test suite for M1
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: import de hr, chamada ensureHrCollections, montagem de /api/hr, proteção de poda de 5 anos, contractType prestador
-  - `scripts/mail-service.mjs` & `scripts/zapi-service.mjs`: sincronizados da base de artifacts
-  - `artifacts/api-server/hr/employees.mjs` & `scripts/hr/employees.mjs`: schemas CLT, guardas isPrestadora e isCltEmployee, CRUD
-  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`: rotas Express para /api/hr
-  - `artifacts/api-server/hr/index.mjs` & `scripts/hr/index.mjs`: exportações unificadas e ensureHrCollections
-  - `scripts/check-twin-parity.mjs`: ferramenta canônica de auditoria de paridade
-  - `tests/hr-m1-backend-core.test.mjs`: suíte de teste pontual dedicada do Marco M1
-- **Build status**: PASS (node --test tests/hr-m1-backend-core.test.mjs)
-- **Pending issues**: Nenhuma pendência em M1
+  - `artifacts/api-server/demo-server.mjs`: Added B2B stayover logic, linen tracking, endpoints, exports.
+  - `scripts/demo-server.mjs`: Synchronized with primary twin-server.
+  - `tests/b2b-housekeeping-m1.test.mjs`: Targeted unit test suite.
+- **Build status**: `node -c` PASSED (code 0) for both twin files.
+- **Pending issues**: None.
 
 ## Quality Status
-- **Build/test result**: 6/6 subtests PASS (6.4s)
-- **Parity status**: 29/29 files SHA-256 identical (100% PASS)
-- **Tests added/modified**: `tests/hr-m1-backend-core.test.mjs`
-
-## Loaded Skills
-- N/A
-
-## Key Decisions Made
-- Sincronização inicial efetuada a partir de `artifacts/api-server/` para `scripts/` para absorver os commits `a7d4f78` e `4c5b997`.
-- Isolamento de Cris e Grazi garantido em 5 camadas: em `defaultUsers`, em `sanitizeMaidUsers`, nas guardas `isPrestadora`/`isCltEmployee`, na rejeição de cadastro por nome/CPF/ID e nas rotas HTTP com retorno 404/403.
-- Proteção legal de 5 anos (1825 dias) implementada formalmente em `pruneDatabase()` para cumprir Art. 11 da CLT e Portaria MTP 671/2021.
+- **Build/test result**: 5 tests passed, 0 failures (3.0s duration).
+- **Lint status**: Clean syntax check.
+- **Tests added/modified**: `tests/b2b-housekeeping-m1.test.mjs` (5 unit tests covering B2B recognition, 3-day linen alert threshold, DND/guest request tracking, twin-server SHA-256 parity).

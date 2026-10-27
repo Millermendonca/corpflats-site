@@ -1,48 +1,26 @@
-## 2026-10-21T19:19:35Z
-Você é o subagente challenger_m1_1 (teamwork_preview_challenger).
-Seu diretório de trabalho exclusivo é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
+## 2026-10-27T16:49:03Z
+Você é o challenger_m1_1 (Housekeeping Challenger).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
 
-O diretório raiz do projeto é:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
+Leia também:
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md e handoff.md
 
-Seu parent é o Project Orchestrator (conversation ID: d10c20e2-adfb-4695-835e-52dd3bebe9a9).
+Regras Críticas (AGENTS.md):
+- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs).
+- Crie e execute seus scripts de teste adversariais pontuais em arquivos temporários isolados ou em tests/challenger-m1-1.test.mjs sem tocar no banco de dados de produção.
 
-Leia atentamente:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (seção 2026-10-21T18:26:13Z)
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_16\PROJECT.md
-4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+Objetivo do Desafio:
+1. Verifique adversariamente a geração de cards em getRequestsForDate:
+   - Cenário 1: Reserva B2B no dia do check-in (checkinDate === dateStr) -> NÃO deve gerar card stayover.
+   - Cenário 2: Reserva B2B no dia do checkout (checkoutDate === dateStr) -> NÃO deve gerar card stayover (gera checkout comum).
+   - Cenário 3: Reservas de Booking, Airbnb, WhatsApp, Site Direto em dias intermediários -> NUNCA devem gerar card stayover.
+   - Cenário 4: Reserva B2B em dia intermediário -> gera card stayover com source: "stayover".
+2. Verifique adversariamente a conclusão de limpeza stayover:
+   - Ao transicionar para "clean", o quarto DEVE permanecer ocupado (relatedFlat.isOccupied === true), a reserva NÃO deve ser completed, e checkoutDone NÃO deve ser marcado como true.
+   - Provar que a trava de 10 minutos NÃO bloqueia a camareira em stayover.
 
-Missão do Challenger M1_1:
-Verificação adversária e testes empíricos de estresse para o backend de Frigobar (Marco M1):
-1. Teste casos limites de concorrência e borda:
-   - Tentativa de pedir 2 cortesias gratuitas na mesma reserva em requisições paralelas ou subsequentes.
-   - Digitação de 4 dígitos incorretos no `POST /api/minibar/flat-context` (rejeição com 401).
-   - Pedido com itens inexistentes ou quantidades negativas/zero.
-   - Pedido com flat sem reserva ativa (comportamento resiliente).
-2. Crie um script de teste pontual temporário isolado em `os.tmpdir()` ou `tests/minibar-stress-challenger.test.mjs` (com `NODE_ENV=test`, sem `DATABASE_URL`, porta isolada, mock de banco).
-3. Execute APENAS esse seu teste pontual. NUNCA execute testes globais `tests/*.test.mjs`.
-4. Conclua com veredito explícito: APPROVE ou REQUEST_CHANGES.
-
-Escreva seu relatório em `handoff.md` no seu diretório de trabalho e envie mensagem com o veredito para d10c20e2-adfb-4695-835e-52dd3bebe9a9.
-
-
-## 2026-10-22T10:37:08Z
-Você é o Challenger 1 (challenger_m1_1) para o Marco M1.
-Seu diretório de trabalho exclusivo é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1`
-A raiz do projeto é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
-
-MANDATÓRIO:
-1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
-2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
-3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`.
-
-SUA MISSÃO ADVERSARIAL:
-1. Estressar a paridade twin-server: executar verificação independente de hash SHA-256 de todos os arquivos em `artifacts/api-server/` vs `scripts/`.
-2. Estressar a regra de poda em `pruneDatabase()`: crie um script temporário em seu diretório de trabalho injetando registros em `db.hrTimeRecords` e `db.hrPayroll` com datas de 4 anos atrás (< 1825 dias) e 6 anos atrás (> 1825 dias). Execute `pruneDatabase()` e assertar que registros de 4 anos NÃO são apagados.
-3. Não altere arquivos de código fonte de produção.
-4. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
-5. Enviar mensagem ao orquestrador.
+Entregáveis:
+- handoff.md em seu diretório com as evidências empíricas dos testes adversariais executados e Veredito claro: APPROVE ou REQUEST_CHANGES.
+- Envie mensagem ao orchestrator_18 com o veredito e evidências.
