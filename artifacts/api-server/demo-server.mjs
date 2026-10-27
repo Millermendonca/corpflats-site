@@ -3602,7 +3602,7 @@ const DEFAULT_SITE_CONFIG = {
     },
     {
       q: "Quais são as formas de pagamento aceitas?",
-      a: "Aceitamos PIX Instantâneo com confirmação automática na hora e Cartão de Crédito com parcelamento facilitado."
+      a: "Aceitamos PIX Instantâneo com desconto e confirmação automática na hora, e Cartão de Crédito via Mercado Pago."
     },
     {
       q: "O flat possui Wi-Fi?",
@@ -8199,6 +8199,8 @@ async function _loadDatabaseImpl() {
           const localWhatsappQueue = [...(db.whatsappQueue || [])];
           const localWhatsappConversations = [...(db.whatsappConversations || [])];
           const localFaqItems = Array.isArray(db.faqItems) ? [...db.faqItems] : [];
+          const localShoppingList = Array.isArray(db.shoppingList) ? [...db.shoppingList] : [];
+          const localShoppingCatalog = Array.isArray(db.shoppingCatalog) ? [...db.shoppingCatalog] : [];
 
           // Blindagem de Configurações de E-mail / SMTP contra perda em reinícios ou restores
           const localEmailSettings = db.settings?.emailSettings;
@@ -8246,6 +8248,15 @@ async function _loadDatabaseImpl() {
             console.log("[PostgreSQL] Hidratando faqItems da base local para a nuvem...");
           }
           if (!Array.isArray(db.faqItems)) db.faqItems = [];
+
+          if ((!Array.isArray(db.shoppingList) || db.shoppingList.length === 0) && localShoppingList.length > 0) {
+            db.shoppingList = localShoppingList;
+          }
+          if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+          if ((!Array.isArray(db.shoppingCatalog) || db.shoppingCatalog.length === 0) && localShoppingCatalog.length > 0) {
+            db.shoppingCatalog = localShoppingCatalog;
+          }
+          if (!Array.isArray(db.shoppingCatalog)) db.shoppingCatalog = [];
 
           if (!db.settings) db.settings = {};
           if (preservedEmailSettings && (preservedEmailSettings.user || preservedEmailSettings.pass)) {
@@ -14639,9 +14650,12 @@ function isB2bReservation(r) {
   return Boolean(
     chanLower === "b2b" ||
     chanLower.includes("b2b") ||
+    r.isB2b === true ||
     r.b2bReservationNumber ||
     r.agencyId ||
     r.agencyName ||
+    r.agencyTradeName ||
+    r.companyName ||
     r.b2bLocatorRloc ||
     String(r.code || "").startsWith("B2B-")
   );
@@ -16012,6 +16026,7 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
       flatNumber: targetFlatObj ? targetFlatObj.number : (virtualCard?.flatNumber || String(flatNumber || "113")),
       requestDate: targetDate,
       source: virtualCard?.source || "checkout",
+      cleaningType: virtualCard?.cleaningType || (virtualCard?.source === "stayover" ? "stayover" : "checkout"),
       status: virtualCard?.status || "dirty",
       assignedUserId: virtualCard?.assignedUserId || null,
       assignedUsername: virtualCard?.assignedUsername || null,
@@ -16021,10 +16036,15 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
       isExtended: false,
       twinBeds: Boolean(virtualCard?.twinBeds),
       extraMattress: Boolean(virtualCard?.extraMattress),
+      reservationId: virtualCard?.reservationId || virtualCard?.autoReservationId || null,
       adminNote: virtualCard?.adminNote || null,
       leavingGuest: virtualCard?.leavingGuest || null,
+      currentGuest: virtualCard?.currentGuest || null,
       arrivingGuest: virtualCard?.arrivingGuest || null,
       pendingObservation: null,
+      doNotDisturb: Boolean(virtualCard?.doNotDisturb),
+      towelsChanged: Boolean(virtualCard?.towelsChanged),
+      beddingChanged: Boolean(virtualCard?.beddingChanged),
       willCleanAt: null,
       cleaningStartedAt: null,
       completedAt: null,
@@ -16063,82 +16083,113 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
 
   const userAuth = getAuthUser(req);
   const now = new Date().toISOString();
+  const isStayover = Boolean(item.source === "stayover" || item.cleaningType === "stayover");
+  const targetDate = item.requestDate || date || item.effectiveDate || getTodayStr();
+
+  // Se for stayover, identifica a reserva B2B ativa no flat
+  const stayoverActiveRes = isStayover ? (db.reservations || []).find(r =>
+    r.id === item.reservationId ||
+    r.id === item.autoReservationId ||
+    (item.autoReservationCode && r.code === item.autoReservationCode) ||
+    (
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber)) &&
+      r.checkinDate < targetDate && r.checkoutDate > targetDate &&
+      isB2bReservation(r)
+    )
+  ) : null;
+
+  // Trava de Não Perturbe (DND) para camareiras
+  if (isStayover && (stayoverActiveRes?.doNotDisturb || item.doNotDisturb) && (status === "cleaning_now" || status === "clean") && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
+    return res.status(422).json({
+      error: "Não é possível iniciar ou concluir a limpeza. Hóspede ativou o modo Não Perturbe."
+    });
+  }
+
   if (typeof isVacant === "boolean") {
-    item.isVacant = isVacant;
-    item.isVacantExplicitlySet = true;
-    item.vacantSource = (userAuth?.role === "admin" || userAuth?.role === "dev") ? "admin" : "manual_card";
-    item.vacantSetAt = now;
-    item.vacantSetBy = userAuth?.username || "card";
+    if (isStayover) {
+      item.isVacant = false;
+      const relatedFlat = db.flats.find(f => f.id === item.flatId || String(f.number) === String(item.flatNumber));
+      if (relatedFlat) {
+        relatedFlat.isOccupied = true;
+        relatedFlat.updatedAt = now;
+      }
+    } else {
+      item.isVacant = isVacant;
+      item.isVacantExplicitlySet = true;
+      item.vacantSource = (userAuth?.role === "admin" || userAuth?.role === "dev") ? "admin" : "manual_card";
+      item.vacantSetAt = now;
+      item.vacantSetBy = userAuth?.username || "card";
 
-    const relatedFlat = db.flats.find(f => f.id === item.flatId || String(f.number) === String(item.flatNumber));
-    if (relatedFlat) {
-      relatedFlat.isOccupied = !isVacant;
-      relatedFlat.updatedAt = now;
-    }
+      const relatedFlat = db.flats.find(f => f.id === item.flatId || String(f.number) === String(item.flatNumber));
+      if (relatedFlat) {
+        relatedFlat.isOccupied = !isVacant;
+        relatedFlat.updatedAt = now;
+      }
 
-    const targetDate = item.requestDate || date || item.effectiveDate || getTodayStr();
-    const targetCandidates = isVacant
-      ? findCheckoutTargetReservationsForFlat(db, item.flatId, item.flatNumber || relatedFlat?.number || "", targetDate)
-      : (db.reservations || []).filter(r =>
-          r.status !== "cancelada" && r.status !== "cancelled" &&
-          (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
-          (r.checkoutDate === targetDate || r.checkoutDate === (date || getTodayStr()) || r.earlyCheckoutDate === targetDate)
-        );
-    const checkoutRes = targetCandidates[0] || null;
-    if (checkoutRes) {
-      if (isVacant) {
-        applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
-          source: "card_desocupado",
-          actorName: userAuth?.name || userAuth?.username || "Camareira / Governança",
-          nowIso: now,
-          todayStr: targetDate
-        }).catch(e => console.warn("[Cleaning Card Early Checkout Error]:", e?.message));
+      const targetCandidates = isVacant
+        ? findCheckoutTargetReservationsForFlat(db, item.flatId, item.flatNumber || relatedFlat?.number || "", targetDate)
+        : (db.reservations || []).filter(r =>
+            r.status !== "cancelada" && r.status !== "cancelled" &&
+            (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
+            (r.checkoutDate === targetDate || r.checkoutDate === (date || getTodayStr()) || r.earlyCheckoutDate === targetDate)
+          );
+      const checkoutRes = targetCandidates[0] || null;
+      if (checkoutRes) {
+        if (isVacant) {
+          applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
+            source: "card_desocupado",
+            actorName: userAuth?.name || userAuth?.username || "Camareira / Governança",
+            nowIso: now,
+            todayStr: targetDate
+          }).catch(e => console.warn("[Cleaning Card Early Checkout Error]:", e?.message));
+          cancelPendingStayRemindersForCheckout(db, null, {
+            reservation: checkoutRes,
+            flatId: item.flatId,
+            flatNumber: item.flatNumber || relatedFlat?.number,
+            reason: "Cancelado: card de limpeza marcado como desocupado"
+          });
+          triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "card_desocupado").catch(e => {
+            console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
+          });
+        } else {
+          if (checkoutRes.earlyCheckout && checkoutRes.originalCheckoutDate) {
+            checkoutRes.checkoutDate = checkoutRes.originalCheckoutDate;
+            checkoutRes.earlyCheckout = false;
+            checkoutRes.originalCheckoutDate = null;
+            checkoutRes.earlyCheckoutDate = null;
+            checkoutRes.earlyCheckoutTime = null;
+            checkoutRes.earlyCheckoutAt = null;
+            checkoutRes.earlyCheckoutReportedBy = null;
+            checkoutRes.earlyCheckoutNote = null;
+            checkoutRes.earlyCheckoutAdminNotifiedAt = null;
+            if (checkoutRes.notes) {
+              checkoutRes.notes = String(checkoutRes.notes)
+                .replace(/\n?•\s*Check-out antecipado em [^\n]+/g, "")
+                .trim();
+            }
+          }
+          checkoutRes.checkoutDone = false;
+          if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
+            checkoutRes.status = checkoutRes.previousStatus || "confirmada";
+          }
+          checkoutRes.actualCheckoutAt = null;
+          checkoutRes.actualCheckoutTime = null;
+        }
+        checkoutRes.updatedAt = now;
+      } else if (isVacant) {
         cancelPendingStayRemindersForCheckout(db, null, {
-          reservation: checkoutRes,
           flatId: item.flatId,
           flatNumber: item.flatNumber || relatedFlat?.number,
           reason: "Cancelado: card de limpeza marcado como desocupado"
         });
-        triggerCheckoutWhatsApp(db, saveDatabase, checkoutRes, "card_desocupado").catch(e => {
-          console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
-        });
-      } else {
-        if (checkoutRes.earlyCheckout && checkoutRes.originalCheckoutDate) {
-          checkoutRes.checkoutDate = checkoutRes.originalCheckoutDate;
-          checkoutRes.earlyCheckout = false;
-          checkoutRes.originalCheckoutDate = null;
-          checkoutRes.earlyCheckoutDate = null;
-          checkoutRes.earlyCheckoutTime = null;
-          checkoutRes.earlyCheckoutAt = null;
-          checkoutRes.earlyCheckoutReportedBy = null;
-          checkoutRes.earlyCheckoutNote = null;
-          checkoutRes.earlyCheckoutAdminNotifiedAt = null;
-          if (checkoutRes.notes) {
-            checkoutRes.notes = String(checkoutRes.notes)
-              .replace(/\n?•\s*Check-out antecipado em [^\n]+/g, "")
-              .trim();
-          }
-        }
-        checkoutRes.checkoutDone = false;
-        if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
-          checkoutRes.status = checkoutRes.previousStatus || "confirmada";
-        }
-        checkoutRes.actualCheckoutAt = null;
-        checkoutRes.actualCheckoutTime = null;
       }
-      checkoutRes.updatedAt = now;
-    } else if (isVacant) {
-      cancelPendingStayRemindersForCheckout(db, null, {
-        flatId: item.flatId,
-        flatNumber: item.flatNumber || relatedFlat?.number,
-        reason: "Cancelado: card de limpeza marcado como desocupado"
-      });
     }
   }
 
-  // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments)
+  // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments and stayovers)
   const isInstructionRequest = Boolean(item.isInstructionOnly || item.isBedAdjustmentOnly || item.type === "instruction" || item.type === "bed_adjustment_only" || item.source === "manual_instruction");
-  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest) {
+  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest && !isStayover) {
     const started = new Date(item.cleaningStartedAt).getTime();
     const elapsedMinutes = (Date.now() - started) / 60000;
     if (elapsedMinutes < 10 && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
@@ -16148,9 +16199,10 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     }
   }
 
-  // Regra de Negócio: Sempre que um card for marcado como limpeza iniciada (ou concluída),
+  // Regra de Negócio: Sempre que um card de CHECKOUT for marcado como limpeza iniciada (ou concluída),
   // considera-se automaticamente como desocupado e check-out realizado caso ainda não esteja.
-  if (!isInstructionRequest && (status === "cleaning_now" || status === "in_progress" || status === "clean")) {
+  // Em STAYOVER, o hóspede continua ocupando o quarto, logo NÃO realiza check-out nem altera isOccupied para false!
+  if (!isInstructionRequest && !isStayover && (status === "cleaning_now" || status === "in_progress" || status === "clean")) {
     const autoSource = status === "clean" ? "cleaning_completed" : "cleaning_started";
     if (!item.isVacant || !item.isVacantExplicitlySet) {
       item.isVacant = true;
@@ -16166,7 +16218,6 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       relatedFlat.updatedAt = now;
     }
 
-    const targetDate = item.requestDate || date || item.effectiveDate || getTodayStr();
     const checkoutRes = (db.reservations || []).find(r =>
       r.status !== "cancelada" && r.status !== "cancelled" &&
       (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
@@ -16196,6 +16247,13 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         flatNumber: item.flatNumber || relatedFlat?.number,
         reason: `Cancelado: card de limpeza marcado como ${status === "clean" ? "limpo" : "limpeza iniciada"}`
       });
+    }
+  } else if (isStayover) {
+    item.isVacant = false;
+    const relatedFlat = db.flats.find(f => f.id === item.flatId || String(f.number) === String(item.flatNumber));
+    if (relatedFlat) {
+      relatedFlat.isOccupied = true;
+      relatedFlat.updatedAt = now;
     }
   }
 
@@ -16270,6 +16328,50 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         }
         if (item.adminNote && item.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
           item.adminNote = null;
+        }
+
+        if (typeof req.body.towelsChanged === "boolean") {
+          item.towelsChanged = Boolean(req.body.towelsChanged);
+        }
+        if (typeof req.body.beddingChanged === "boolean") {
+          item.beddingChanged = Boolean(req.body.beddingChanged);
+        }
+
+        if (isStayover) {
+          const execDate = item.requestDate || date || getTodayStr();
+          const targetRes = stayoverActiveRes || (db.reservations || []).find(r =>
+            r.id === item.reservationId ||
+            r.id === item.autoReservationId ||
+            (
+              r.status !== "cancelada" && r.status !== "cancelled" &&
+              (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber)) &&
+              r.checkinDate < execDate && r.checkoutDate > execDate &&
+              isB2bReservation(r)
+            )
+          );
+
+          if (targetRes) {
+            if (item.beddingChanged) {
+              targetRes.lastBeddingChangeDate = execDate;
+            }
+            if (item.towelsChanged) {
+              targetRes.lastTowelsChangeDate = execDate;
+            }
+
+            if (!Array.isArray(targetRes.linenChangeHistory)) {
+              targetRes.linenChangeHistory = Array.isArray(targetRes.linenChanges) ? [...targetRes.linenChanges] : [];
+            }
+            targetRes.linenChangeHistory.push({
+              date: execDate,
+              beddingChanged: Boolean(item.beddingChanged),
+              towelsChanged: Boolean(item.towelsChanged),
+              performedByUserId: item.assignedUserId || userAuth?.id || 2,
+              performedByName: userAuth ? (userAuth.name || userAuth.username) : "Camareira",
+              createdAt: now
+            });
+            targetRes.linenChanges = targetRes.linenChangeHistory;
+            targetRes.updatedAt = now;
+          }
         }
       }
 
@@ -16420,7 +16522,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   });
 
   // ── WhatsApp: Notificar hóspedes que chegam hoje neste flat ─────────────────
-  if (status === "clean") {
+  if (status === "clean" && !isStayover) {
     const flatNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
     const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
     triggerRoomReadyWhatsApp(db, saveDatabase, item.flatId, flatNum, reqBaseUrl).catch(e =>
@@ -20368,6 +20470,25 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     const resCode = `CORP-${primaryFlat.number}-${String(newResId).padStart(4, "0")}`;
 
     const totalGuestsCount = roomsList.reduce((acc, r) => acc + (Number(r.adults) || 2), 0);
+    const directNightsCount = Math.max(1, Math.round((new Date(checkoutDate + "T12:00:00Z").getTime() - new Date(checkinDate + "T12:00:00Z").getTime()) / (1000 * 60 * 60 * 24)));
+    const resolvedPixTotalAmount = Number(req.body.pixTotalAmount) > 0
+      ? Number(req.body.pixTotalAmount)
+      : Number(totalAmount);
+    const effectiveNightlyRate = Number(dailyRate) > 0
+      ? Number(dailyRate)
+      : Math.round((resolvedPixTotalAmount / directNightsCount) * 100) / 100;
+    const directDailyRates = [];
+    {
+      const startD = new Date(checkinDate + "T12:00:00Z");
+      for (let i = 0; i < directNightsCount; i++) {
+        const curDate = new Date(startD.getTime() + i * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+        directDailyRates.push({
+          date: curDate,
+          rate: effectiveNightlyRate,
+          channel: "site_direto"
+        });
+      }
+    }
 
     const reservation = {
       id: newResId,
@@ -20396,7 +20517,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       includeBreakfast: ratePlan === "with_breakfast" || Boolean(req.body.includeBreakfast),
       bedType: roomsList.some(r => r.bedType === "twin") ? "twin" : "queen",
       twinBeds: roomsList.some(r => r.bedType === "twin"),
-      dailyRate: Number(dailyRate) || 0,
+      dailyRate: effectiveNightlyRate,
+      dailyRates: directDailyRates,
       cleaningFee: Number(cleaningFee) || 0,
       twinFee: Number(twinFee) || 0,
       extraBedFee: Number(extraBedFee) || 0,
@@ -20413,8 +20535,9 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       checkoutTime: lateCheckout && lateCheckoutTime ? lateCheckoutTime : (db.settings?.checkoutTime || "12:00"),
       extras: extras || null,
       status: (paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito") ? "pre_reserva" : "confirmada",
-      totalAmount: Number(totalAmount),
-      paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : Number(totalAmount),
+      totalAmount: resolvedPixTotalAmount,
+      cardTotalAmount: computeCardAmountFromPix(resolvedPixTotalAmount),
+      paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : resolvedPixTotalAmount,
       paymentStatus: paymentMethod === "pix" ? "pendente_pix" : (paymentMethod === "card" || paymentMethod === "cartao_credito" ? "pendente_cartao" : "pago_total"),
       paymentMethod: paymentMethod === "card" ? "cartao_credito" : (paymentMethod || "pix"),
       isWorkTrip: Boolean(isWorkTrip),
@@ -20670,10 +20793,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     // 5. Integração PIX Banco Inter Oficial com Fallback Estático
     let pixData = null;
-    if (paymentMethod === "pix") {
+    if (paymentMethod === "pix" || reservation.status === "pre_reserva") {
       try {
         const pixResult = await createInterPixCob({
-          amount: totalAmount,
+          amount: resolvedPixTotalAmount,
           description: `Reserva CorpFlats ${resCode}`,
           debtorName: guestName,
           debtorDocument: guestDocument,
@@ -20682,16 +20805,17 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         pixData = {
           pixCopiaECola: pixResult.pixCopiaECola,
           txid: pixResult.txid,
-          valor: totalAmount
+          valor: resolvedPixTotalAmount
         };
         reservation.pixTxId = pixResult.txid;
         reservation.pixCopiaECola = pixResult.pixCopiaECola;
+        reservation.pixChargedAmount = resolvedPixTotalAmount;
         saveDatabase();
       } catch (pixErr) {
         console.warn("[Direct Booking] Falha na emissão de PIX dinâmico Inter, gerando PIX estático oficial:", pixErr.message);
         const staticPayload = generateStaticPixPayload({
           pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
-          amount: totalAmount,
+          amount: resolvedPixTotalAmount,
           merchantName: "CORPFLATS LTDA",
           merchantCity: "CAMPOS DOS GOYTACAZES",
           txid: resCode.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
@@ -20699,22 +20823,24 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         pixData = {
           pixCopiaECola: staticPayload,
           txid: `STAT_${Date.now()}`,
-          valor: totalAmount
+          valor: resolvedPixTotalAmount
         };
         reservation.pixTxId = pixData.txid;
         reservation.pixCopiaECola = staticPayload;
+        reservation.pixChargedAmount = resolvedPixTotalAmount;
         saveDatabase();
       }
     }
 
-    // 6. Integração Mercado Pago Checkout Pro (Cartão de Crédito)
+    // 6. Integração Mercado Pago Checkout Pro (Cartão de Crédito - Valor Normal +5%)
     let mpPreference = null;
     if (paymentMethod === "card" || paymentMethod === "cartao_credito") {
       try {
         const nightsCount = Math.max(1, Math.round((new Date(checkoutDate).getTime() - new Date(checkinDate).getTime()) / (1000 * 60 * 60 * 24)));
+        const cardChargeAmount = computeCardAmountFromPix(resolvedPixTotalAmount);
         mpPreference = await createMercadoPagoPreference({
           reservationCode: resCode,
-          amount: totalAmount,
+          amount: cardChargeAmount,
           guestName: guestName.trim(),
           guestEmail: guestEmail.trim(),
           nights: nightsCount,
@@ -20723,6 +20849,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
         reservation.mpPreferenceId = mpPreference.id;
         reservation.mpInitPoint = mpPreference.initPoint;
+        reservation.mpChargedAmount = cardChargeAmount;
         saveDatabase();
       } catch (mpErr) {
         console.error("[Direct Booking] Erro ao gerar preferência Mercado Pago:", mpErr.message);
@@ -22316,6 +22443,7 @@ app.post("/api/pms/reservations", async (req, res) => {
         });
         newReservation.pixTxId = pixResult.txid;
         newReservation.pixCopiaECola = pixResult.pixCopiaECola;
+        newReservation.pixChargedAmount = Number(newReservation.totalAmount);
       } catch (pixErr) {
         console.warn("[PMS Reservation] Falha na emissão de PIX dinâmico Inter, gerando PIX estático:", pixErr.message);
         const cleanTxId = newReservation.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
@@ -22328,6 +22456,7 @@ app.post("/api/pms/reservations", async (req, res) => {
         });
         newReservation.pixTxId = cleanTxId;
         newReservation.pixCopiaECola = staticPayload;
+        newReservation.pixChargedAmount = Number(newReservation.totalAmount);
       }
       saveDatabase();
     }
@@ -23099,14 +23228,56 @@ app.post("/api/pms/reservations/import-csv", async (req, res) => {
 
 
 // ── M2: Função Canônica de Invalidação de Assinatura de Check-in em Mudança de Flat/Datas ──
+export function hasGuestCompletedOrHadCheckin(g) {
+  if (!g) return false;
+  return Boolean(
+    g.hasCompletedCheckin ||
+    g.checkinCompletedAt ||
+    g.signatureUrl ||
+    g.fnrhPdfUrl ||
+    g.fnrhDocumentUuid ||
+    g.fnrhSha256Hash ||
+    g.fnrhSignedAt ||
+    g.needsReSignature
+  );
+}
+
+export function hasReservationCompletedAnyCheckin(r) {
+  if (!r) return false;
+  if (
+    r.fnhrCompleted ||
+    r.preCheckinCompleted ||
+    r.hasPreCheckin ||
+    r.signatureUrl ||
+    r.checkedInAt ||
+    r.fnrhPdfUrl ||
+    r.fnrhDocumentUuid ||
+    r.fnrhSha256Hash ||
+    r.fnrhSignedAt ||
+    r.needsReSignature
+  ) {
+    return true;
+  }
+  if (Array.isArray(r.guests) && r.guests.some(g => hasGuestCompletedOrHadCheckin(g))) {
+    return true;
+  }
+  return false;
+}
+
 export function invalidateReservationCheckinSignatures(r, reason = "Alteração de acomodação (flat) ou período da estadia") {
   if (!r) return;
+  const hadCheckinBefore = Boolean(hasReservationCompletedAnyCheckin(r) && !isPreReservationBlocked(r));
   r.fnhrCompleted = false;
   r.preCheckinCompleted = false;
   r.signatureUrl = null;
   r.checkedInAt = null;
-  r.needsReSignature = true;
-  r.reSignatureReason = reason;
+  if (hadCheckinBefore) {
+    r.needsReSignature = true;
+    r.reSignatureReason = reason;
+  } else {
+    r.needsReSignature = false;
+    delete r.reSignatureReason;
+  }
 
   delete r.fnrhPdfUrl;
   delete r.fnrhDownloadUrl;
@@ -23126,10 +23297,11 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
 
   if (Array.isArray(r.guests)) {
     r.guests.forEach(g => {
+      const gHadCheckin = Boolean((hasGuestCompletedOrHadCheckin(g) || hadCheckinBefore) && !isPreReservationBlocked(r));
       g.hasCompletedCheckin = false;
       g.checkinCompletedAt = null;
       g.signatureUrl = null;
-      g.needsReSignature = true;
+      g.needsReSignature = gHadCheckin;
       delete g.fnrhPdfUrl;
       delete g.fnrhDownloadUrl;
       delete g.fnrhDocumentUuid;
@@ -23151,7 +23323,7 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
  * Executa de forma assíncrona, não-bloqueante e tolerante a falhas de gateway.
  */
 export function dispatchReservationReSignatureNotifications(reservation, changes = [], options = {}) {
-  if (!reservation) return;
+  if (!reservation || !reservation.needsReSignature || isPreReservationBlocked(reservation)) return;
   const appOrigin = (options.origin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
   const reSignatureUrl = `${appOrigin}/pre-checkin/${reservation.code}?resign=1`;
 
@@ -23250,6 +23422,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldStatus = r.status;
   const oldGuestName = r.guestName;
   const oldGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
+  const oldTotalAmount = Number(r.totalAmount) || 0;
+  const oldPaidAmount = Number(r.paidAmount) || 0;
+  const oldPendingAmount = Math.max(0, oldTotalAmount - oldPaidAmount);
+  const oldDailyRate = Number(r.dailyRate) || 0;
+  const hadCheckinBeforeEdit = hasReservationCompletedAnyCheckin(r);
+  const guestHadCheckinBeforeEdit = Array.isArray(r.guests) ? r.guests.map(g => hasGuestCompletedOrHadCheckin(g)) : [];
   const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
   const oldFlatLockReason = r.flatLockReason || "";
 
@@ -23260,7 +23438,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.previousCheckoutDate = oldCheckout;
   }
 
-  // Se datas ou flat mudarem na edição, invalida assinatura para nova conferência legal,
+  // Se datas ou flat mudarem na edição e o hóspede já havia assinado o check-in, invalida assinatura para nova conferência legal,
   // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva.
   const isDatesOrFlatChanged = Boolean(
     (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
@@ -23270,7 +23448,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   );
 
   if (isDatesOrFlatChanged) {
-    console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas. Invalidando assinatura de check-in (needsReSignature = true) e preservando dados cadastrais.`);
+    console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas (hadCheckinBeforeEdit=${hadCheckinBeforeEdit}).`);
     invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
   }
 
@@ -23486,9 +23664,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
 
   // Se houve alteração de flat ou datas, garante que req.body.guests não ressuscite flags de check-in concluído
+  // e só solicita re-assinatura se o check-in digital já havia sido concluído anteriormente (e não for pré-reserva bloqueada)
   if (isDatesOrFlatChanged) {
-    r.needsReSignature = true;
-    r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+    const shouldRequireReSig = Boolean(hadCheckinBeforeEdit && !isPreReservationBlocked(r));
+    r.needsReSignature = shouldRequireReSig;
+    if (shouldRequireReSig) {
+      r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+    } else {
+      delete r.reSignatureReason;
+    }
     r.fnhrCompleted = false;
     r.preCheckinCompleted = false;
     r.signatureUrl = null;
@@ -23497,8 +23681,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     delete r.fnrhDocumentUuid;
     delete r.fnrhSha256Hash;
     if (Array.isArray(r.guests)) {
-      r.guests.forEach(g => {
-        g.needsReSignature = true;
+      r.guests.forEach((g, idx) => {
+        const gHad = Boolean((guestHadCheckinBeforeEdit[idx] || hadCheckinBeforeEdit) && !isPreReservationBlocked(r));
+        g.needsReSignature = gHad;
         g.hasCompletedCheckin = false;
         g.signatureUrl = null;
         g.checkinCompletedAt = null;
@@ -23507,6 +23692,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         delete g.fnrhSha256Hash;
       });
     }
+  } else if (isPreReservationBlocked(r)) {
+    r.needsReSignature = false;
+    delete r.reSignatureReason;
   }
 
   if (req.body.docPhotoBase64) {
@@ -23521,8 +23709,27 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  // Normalização de dailyRates na edição
-  if (Array.isArray(req.body.dailyRates)) {
+  // Normalização de dailyRates e totalAmount na edição
+  const oldNightsCount = (oldCheckin && oldCheckout)
+    ? Math.max(1, Math.round((new Date(oldCheckout + "T12:00:00Z").getTime() - new Date(oldCheckin + "T12:00:00Z").getTime()) / (1000 * 60 * 60 * 24)))
+    : 1;
+  const newNightsCount = (r.checkinDate && r.checkoutDate)
+    ? Math.max(1, Math.round((new Date(r.checkoutDate + "T12:00:00Z").getTime() - new Date(r.checkinDate + "T12:00:00Z").getTime()) / (1000 * 60 * 60 * 24)))
+    : oldNightsCount;
+  const nightsChangedOnEdit = Boolean((req.body.checkinDate || req.body.checkoutDate) && newNightsCount !== oldNightsCount && !r.earlyCheckout);
+  const hadExistingDailyRates = Array.isArray(r.dailyRates) && r.dailyRates.length > 0;
+  const isUnpaidOrPreOnEdit = Boolean(
+    isPreReservationBlocked(r) ||
+    r.status === "pre_reserva" ||
+    (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") ||
+    oldPendingAmount > 0
+  );
+
+  if (
+    Array.isArray(req.body.dailyRates) &&
+    req.body.dailyRates.length > 0 &&
+    (!nightsChangedOnEdit || req.body.dailyRates.length === newNightsCount)
+  ) {
     r.dailyRates = req.body.dailyRates.map(d => ({
       date: String(d.date || ""),
       rate: Number(d.rate) || 0,
@@ -23530,15 +23737,25 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       notes: d.notes ? String(d.notes) : undefined
     })).filter(d => d.date);
 
-    if (req.body.totalAmount === undefined && r.dailyRates.length > 0 && !r.earlyCheckout) {
-      r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    const extraChargesSum = Array.isArray(req.body.charges ?? r.charges)
+      ? (req.body.charges ?? r.charges).reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+      : 0;
+    const isStaleTotalOnNightChange = nightsChangedOnEdit && Number(req.body.totalAmount) === oldTotalAmount;
+    if ((req.body.totalAmount === undefined || isStaleTotalOnNightChange) && r.dailyRates.length > 0 && !r.earlyCheckout) {
+      r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0) + extraChargesSum;
     } else if (req.body.totalAmount === undefined && r.earlyCheckout && preservedTotalBeforeEdit > 0) {
       r.totalAmount = preservedTotalBeforeEdit;
     }
-  } else if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0 && (req.body.checkinDate || req.body.checkoutDate) && !r.earlyCheckout) {
-    // Preserva e adapta dailyRates existentes caso as datas mudem sem envio explícito de dailyRates
+  } else if (
+    (req.body.checkinDate || req.body.checkoutDate) &&
+    !r.earlyCheckout &&
+    (hadExistingDailyRates || isUnpaidOrPreOnEdit)
+  ) {
+    // Preserva e adapta dailyRates existentes (ou constrói para pré-reserva/pendente) caso as datas mudem
     const existingMap = new Map();
-    r.dailyRates.forEach(d => { if (d && d.date) existingMap.set(d.date, d); });
+    if (Array.isArray(r.dailyRates)) {
+      r.dailyRates.forEach(d => { if (d && d.date) existingMap.set(d.date, d); });
+    }
     const cin = r.checkinDate;
     const cout = r.checkoutDate;
     if (cin && cout) {
@@ -23546,7 +23763,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       const d2 = new Date(cout + "T12:00:00Z");
       const nights = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)));
       const newRates = [];
-      const defaultRate = Number(r.dailyRate) || 250;
+      const fallbackRate = Number(r.dailyRate) || (oldNightsCount > 0 && oldTotalAmount > 0 ? Math.round((oldTotalAmount / oldNightsCount) * 100) / 100 : 250);
       const defaultChannel = r.channel || "whatsapp";
       for (let i = 0; i < nights; i++) {
         const curDate = new Date(d1.getTime() + i * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
@@ -23557,15 +23774,35 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           const prev = newRates.length > 0 ? newRates[newRates.length - 1] : null;
           newRates.push({
             date: curDate,
-            rate: prev && Number(prev.rate) >= 0 ? Number(prev.rate) : defaultRate,
+            rate: prev && Number(prev.rate) > 0 ? Number(prev.rate) : fallbackRate,
             channel: prev && prev.channel ? prev.channel : defaultChannel
           });
         }
       }
       r.dailyRates = newRates;
-      if (req.body.totalAmount === undefined) {
-        r.totalAmount = newRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+      const isStaleTotalOnNightChange = nightsChangedOnEdit && Number(req.body.totalAmount) === oldTotalAmount;
+      if (req.body.totalAmount === undefined || isStaleTotalOnNightChange) {
+        const extraChargesSum = Array.isArray(req.body.charges ?? r.charges)
+          ? (req.body.charges ?? r.charges).reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+          : 0;
+        r.totalAmount = newRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0) + extraChargesSum;
       }
+    }
+  } else if (
+    req.body.dailyRate !== undefined &&
+    Number(req.body.dailyRate) > 0 &&
+    Number(req.body.dailyRate) !== oldDailyRate &&
+    req.body.totalAmount === undefined &&
+    !Array.isArray(req.body.dailyRates) &&
+    !r.earlyCheckout &&
+    (hadExistingDailyRates || isUnpaidOrPreOnEdit)
+  ) {
+    const newRateVal = Number(req.body.dailyRate);
+    if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+      r.dailyRates = r.dailyRates.map(d => ({ ...d, rate: newRateVal }));
+      r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    } else {
+      r.totalAmount = newRateVal * newNightsCount;
     }
   }
 
@@ -23629,6 +23866,67 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         r.b2bCommissionAmount = Number((((Number(r.totalAmount) || 0) * commPct) / 100).toFixed(2));
         r.b2bNetAmount = Number(((Number(r.totalAmount) || 0) - r.b2bCommissionAmount).toFixed(2));
       }
+    }
+  }
+
+  // Atualização imediata do PIX Copia e Cola e invalidação de preferência antiga de Cartão
+  // sempre que o saldo pendente, valor total, diárias ou datas de reserva não paga forem alterados
+  {
+    const updatedTotalAmt = Number(r.totalAmount) || 0;
+    const updatedPaidAmt = Number(r.paidAmount) || 0;
+    const updatedPendingAmt = Math.max(0, updatedTotalAmt - updatedPaidAmt);
+    r.cardTotalAmount = computeCardAmountFromPix(updatedTotalAmt);
+    const isFinancialOrStayUpdated = Boolean(
+      Math.abs(updatedPendingAmt - oldPendingAmount) > 0.01 ||
+      Math.abs(updatedTotalAmt - oldTotalAmount) > 0.01 ||
+      isDatesOrFlatChanged ||
+      req.body.dailyRate !== undefined ||
+      req.body.dailyRates !== undefined ||
+      req.body.charges !== undefined ||
+      req.body.payments !== undefined ||
+      req.body.totalAmount !== undefined
+    );
+    const chanLowerEdit = String(r.channel || "").toLowerCase();
+    const isOtaOrB2bEdit = chanLowerEdit.includes("booking") || chanLowerEdit.includes("airbnb") || chanLowerEdit.includes("b2b") || Boolean(r.b2bReservationNumber);
+
+    if (
+      !isOtaOrB2bEdit &&
+      updatedPendingAmt > 0 &&
+      r.paymentStatus !== "pago_total" &&
+      r.paymentStatus !== "pago" &&
+      (isFinancialOrStayUpdated || isPixPayloadStaleForAmount(r, updatedPendingAmt))
+    ) {
+      const recipsForPix = getReservationRecipients(r, db);
+      const pixDebtorName = r.guestPending
+        ? (recipsForPix.requester?.name || r.companyName || "Solicitante CorpFlats")
+        : (r.guestName || "Hóspede CorpFlats");
+      const pixDebtorDoc = r.guestDocument || r.document || r.requesterInfo?.cpf || r.companyCnpj || "";
+      try {
+        const pixResult = await createInterPixCob({
+          amount: updatedPendingAmt,
+          description: `Reserva CorpFlats ${r.code}`,
+          debtorName: pixDebtorName,
+          debtorDocument: pixDebtorDoc,
+          reservationCode: r.code
+        });
+        r.pixTxId = pixResult.txid;
+        r.pixCopiaECola = pixResult.pixCopiaECola;
+        r.pixChargedAmount = updatedPendingAmt;
+      } catch (pixUpdateErr) {
+        const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+        r.pixTxId = cleanTxId;
+        r.pixCopiaECola = generateStaticPixPayload({
+          pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+          amount: updatedPendingAmt,
+          merchantName: "CORPFLATS LTDA",
+          merchantCity: "CAMPOS DOS GOYTACAZES",
+          txid: cleanTxId
+        });
+        r.pixChargedAmount = updatedPendingAmt;
+      }
+      r.mpInitPoint = null;
+      r.mpPreferenceId = null;
+      r.mpChargedAmount = null;
     }
   }
 
@@ -24325,7 +24623,21 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       (!normNewGuestPhone || String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "") === normNewGuestPhone)
     );
 
-    if (wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation && !isPreReservationBlocked(r)) {
+    if (isPreReservationBlocked(r)) {
+      const preResModified = Boolean(
+        isDatesOrFlatChanged ||
+        Math.abs(pendingAmt - oldPendingAmount) > 0.01 ||
+        Math.abs(totalAmt - oldTotalAmount) > 0.01 ||
+        wasGuestPhoneJustAdded ||
+        guestFacingDiffs.length > 0
+      );
+      if (preResModified && pendingAmt > 0) {
+        console.log(`[WhatsApp Trigger] Pré-reserva não paga ${r.code} (${r.guestName}) teve datas/flat/valores atualizados. Reenviando mensagem de pré-reserva com novo link e PIX Copia e Cola atualizado.`);
+        triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", { ...r, _isPreReservationUpdate: true }, editBaseUrl).catch(err => {
+          console.warn("[WhatsApp Trigger] Erro ao reenviar pre_reservation_created na edição da pré-reserva:", err.message);
+        });
+      }
+    } else if (wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Catch-Up] Telefone do hóspede inserido na reserva ${r.code} (${r.guestName}). Disparando recuperação da régua de envios.`);
       dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
         console.warn(`[WhatsApp Catch-Up] Erro ao disparar recuperação da régua para ${r.code}:`, err.message);
@@ -24353,7 +24665,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
 
-      if (isDatesOrFlatChanged) {
+      if (isDatesOrFlatChanged && r.needsReSignature) {
         const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
         dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
           origin: originHeader,
@@ -24363,20 +24675,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     } else if (!isPreReservationBlocked(r)) {
       if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
-        if (guestFacingDiffs.length > 0) {
-          console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
-          const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
-          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
-            console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
-          });
-        }
-
-        if (isDatesOrFlatChanged) {
+        if (isDatesOrFlatChanged && r.needsReSignature) {
           const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
             origin: originHeader,
             source: "pms_admin_edit",
             actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
+          });
+        } else if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
+          console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
+          const resvForTrigger = { ...r, _changesContext: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs };
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
+            console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
           });
         }
       } else if (isAfter0701 && !hasReceivedTodayInstructions) {
@@ -24800,7 +25110,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isCancelledRes = r.status === "cancelada" || r.status === "cancelled";
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-  const isB2b = chanLower === "b2b" || chanLower.includes("b2b") || Boolean(r.b2bReservationNumber || r.agencyId || r.agencyName);
+  const isB2b = isB2bReservation(r);
   const isUnpaidPre = isUnverifiedPreReservation(r);
   let isPaid = !isCancelledRes && !isUnpaidPre && (isOta || Boolean(
     r.paymentStatus === "pago_total" ||
@@ -24912,9 +25222,18 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   const resolvedTotal = Number(r.totalAmount) || 0;
   const resolvedPaid = isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (isUnpaidPre && !isPaid ? 0 : (Number(r.paidAmount) || 0));
+  const pendingAmount = Math.max(0, resolvedTotal - resolvedPaid);
+  const cardTotalAmount = computeCardAmountFromPix(resolvedTotal);
+  const cardPendingAmount = computeCardAmountFromPix(pendingAmount);
 
   if (isPaid && resolvedTotal > 0 && r.paidAmount !== resolvedTotal) {
     r.paidAmount = resolvedTotal;
+    saveDatabase();
+  }
+
+  if (isPreReservationBlocked(r) && r.needsReSignature) {
+    r.needsReSignature = false;
+    delete r.reSignatureReason;
     saveDatabase();
   }
 
@@ -24922,21 +25241,29 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isPortalUnlocked = Boolean(!isCancelledRes && (isPaid || isB2b));
   canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
 
-  // Se pendente com valor total cadastrado e sem chave PIX ainda (e não é B2B), gera cobrança estática PIX com a chave oficial CorpFlats
-  if (!isCancelledRes && !isPaid && !isB2b && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
+  // Se pendente com saldo a pagar e sem chave PIX ou com PIX de valor divergente (ex.: após alterar diárias), regenera cobrança PIX atualizada
+  if (!isCancelledRes && !isPaid && !isB2b && pendingAmount > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmount))) {
     try {
       const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
       const staticPayload = generateStaticPixPayload({
         pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
-        amount: r.totalAmount,
+        amount: pendingAmount,
         merchantName: "CORPFLATS LTDA",
         merchantCity: "CAMPOS DOS GOYTACAZES",
         txid: cleanTxId
       });
       r.pixTxId = r.pixTxId || cleanTxId;
       r.pixCopiaECola = staticPayload;
+      r.pixChargedAmount = pendingAmount;
       saveDatabase();
     } catch {}
+  }
+
+  if (!isCancelledRes && !isPaid && !isB2b && r.mpInitPoint && (!r.mpChargedAmount || Math.abs(Number(r.mpChargedAmount) - cardPendingAmount) > 0.01)) {
+    r.mpInitPoint = null;
+    r.mpPreferenceId = null;
+    r.mpChargedAmount = null;
+    saveDatabase();
   }
 
   // Se modo Gov.br (FNRH SERPRO) estiver ativo e a reserva confirmada ainda não tiver link SERPRO, registra automaticamente
@@ -25002,6 +25329,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       channel: r.channel || "site",
       totalAmount: hideFinancialForGuest ? 0 : resolvedTotal,
       paidAmount: hideFinancialForGuest ? 0 : resolvedPaid,
+      cardTotalAmount: hideFinancialForGuest ? 0 : cardTotalAmount,
+      cardPendingAmount: hideFinancialForGuest ? 0 : cardPendingAmount,
+      pixDiscountPercent: 5,
       isPaid: isPortalUnlocked ? true : isPaid,
       paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
       paymentMethod: (r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix")),
@@ -25036,7 +25366,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null,
       checkedInAt: r.checkedInAt || null,
       actualCheckinAt: r.actualCheckinAt || null,
-      guestSelfCheckin: Boolean(r.guestSelfCheckin)
+      guestSelfCheckin: Boolean(r.guestSelfCheckin),
+      doNotDisturb: Boolean(r.doNotDisturb)
     },
     hasBreakfast,
     breakfastLink,
@@ -25093,7 +25424,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
         items: o.items,
         invoice: o.invoice || null
       })),
-    minibarUrl: `/minha-reserva/${r.code}/frigobar`
+    minibarUrl: `/minha-reserva/${r.code}/frigobar`,
+    b2bHousekeeping: isB2b ? {
+      isB2b: true,
+      doNotDisturb: Boolean(r.doNotDisturb),
+      linenTracking: computeLinenTracking(r, todayStr, db),
+      pendingLinenRequests: (r.linenRequests || []).filter(lr => lr.status === "pending"),
+      linenRequestsHistory: r.linenRequests || []
+    } : null
   });
 });
 
@@ -25120,6 +25458,161 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
     success: true,
     message: "🎉 Early Check-in antecipado ativado com sucesso! Seu apartamento foi liberado na portaria.",
     flatNumber: r.flatNumber
+  });
+});
+
+// Endpoint: Guest Portal - Alternar Modo Não Perturbe (DND) para Hóspedes B2B
+app.post("/api/pms/guest-portal/:code/do-not-disturb", (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada com os dados informados." });
+  }
+
+  if (!isB2bReservation(r)) {
+    return res.status(403).json({ error: "Opção de Não Perturbe disponível apenas para reservas corporativas B2B." });
+  }
+
+  const { doNotDisturb } = req.body || {};
+  if (typeof doNotDisturb !== "boolean") {
+    return res.status(400).json({ error: "Campo 'doNotDisturb' booleano é obrigatório." });
+  }
+
+  r.doNotDisturb = doNotDisturb;
+  r.doNotDisturbUpdatedAt = new Date().toISOString();
+  r.updatedAt = new Date().toISOString();
+
+  // Replicar imediatamente no card de stayover de hoje, se existir
+  const todayStr = getBrasiliaNow().date;
+  if (!db.cleaningRequests) db.cleaningRequests = [];
+  const todayStayover = db.cleaningRequests.find(c =>
+    (c.reservationId === r.id || String(c.flatNumber) === String(r.flatNumber)) &&
+    c.requestDate === todayStr &&
+    (c.source === "stayover" || c.cleaningType === "stayover")
+  );
+  if (todayStayover) {
+    todayStayover.doNotDisturb = doNotDisturb;
+  }
+
+  saveDatabase("guest_portal_do_not_disturb");
+
+  res.json({
+    success: true,
+    doNotDisturb: r.doNotDisturb,
+    message: r.doNotDisturb
+      ? "Modo Não Perturbe ativado. A equipe de governança não entrará no apartamento hoje."
+      : "Modo Não Perturbe desativado. A equipe de governança poderá realizar a limpeza normalmente."
+  });
+});
+
+// Endpoint: Guest Portal - Solicitar Troca de Enxoval (Roupas de Cama / Toalhas) para Hóspedes B2B
+app.post("/api/pms/guest-portal/:code/linen-request", (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada com os dados informados." });
+  }
+
+  if (!isB2bReservation(r)) {
+    return res.status(403).json({ error: "Solicitação de troca de enxoval disponível apenas para reservas corporativas B2B." });
+  }
+
+  const { type, notes } = req.body || {};
+  const validTypes = ["bedding", "towels", "both"];
+  let chosenType = type;
+  if (!validTypes.includes(chosenType)) {
+    chosenType = "both";
+  }
+
+  const todayStr = getBrasiliaNow().date;
+  let targetDate = req.body.targetDate;
+  if (!targetDate || typeof targetDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    targetDate = addDaysToDateStr(todayStr, 1);
+  }
+
+  if (targetDate < todayStr) {
+    return res.status(400).json({ error: "A data de solicitação não pode ser no passado." });
+  }
+  if (r.checkoutDate && targetDate >= r.checkoutDate) {
+    return res.status(400).json({ error: `A data deve ser anterior ao check-out (${r.checkoutDate}), quando ocorre a troca completa.` });
+  }
+
+  if (!r.linenRequests) r.linenRequests = [];
+
+  const linenReq = {
+    id: `lr_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+    reservationId: r.id,
+    reservationCode: r.code,
+    flatNumber: r.flatNumber,
+    flatId: r.flatId,
+    guestName: r.guestName,
+    type: chosenType,
+    targetDate,
+    status: "pending",
+    notes: (notes || "").trim(),
+    requestedAt: new Date().toISOString()
+  };
+
+  r.linenRequests.push(linenReq);
+  r.updatedAt = new Date().toISOString();
+
+  // Se a solicitação for para hoje, já sinaliza flags no card de stayover de hoje
+  if (targetDate === todayStr) {
+    if (!db.cleaningRequests) db.cleaningRequests = [];
+    const todayStayover = db.cleaningRequests.find(c =>
+      (c.reservationId === r.id || String(c.flatNumber) === String(r.flatNumber)) &&
+      c.requestDate === todayStr &&
+      (c.source === "stayover" || c.cleaningType === "stayover")
+    );
+    if (todayStayover) {
+      if (chosenType === "towels" || chosenType === "both") todayStayover.guestRequestedTowels = true;
+      if (chosenType === "bedding" || chosenType === "both") todayStayover.guestRequestedBedding = true;
+    }
+  }
+
+  saveDatabase("guest_portal_linen_request");
+
+  res.json({
+    success: true,
+    message: "Solicitação de enxoval registrada com sucesso.",
+    request: linenReq,
+    scheduledDate: targetDate
+  });
+});
+
+// Endpoint: Guest Portal - Cancelar Solicitação de Troca de Enxoval Pendente
+app.post("/api/pms/guest-portal/:code/linen-request/:requestId/cancel", (req, res) => {
+  const code = (req.params.code || "").trim();
+  const requestId = (req.params.requestId || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+  if (!isB2bReservation(r)) {
+    return res.status(403).json({ error: "Acesso restrito a reservas B2B." });
+  }
+  if (!r.linenRequests) r.linenRequests = [];
+  const lr = r.linenRequests.find(item => String(item.id) === requestId);
+  if (!lr) {
+    return res.status(404).json({ error: "Solicitação de enxoval não encontrada." });
+  }
+  if (lr.status !== "pending") {
+    return res.status(400).json({ error: "Apenas solicitações pendentes podem ser canceladas." });
+  }
+
+  lr.status = "cancelled";
+  lr.cancelledAt = new Date().toISOString();
+  r.updatedAt = new Date().toISOString();
+
+  saveDatabase("guest_portal_linen_request_cancelled");
+
+  res.json({
+    success: true,
+    message: "Solicitação de enxoval cancelada com sucesso.",
+    requestId
   });
 });
 
@@ -26178,7 +26671,7 @@ export async function commitPendingModification(r, pending, {
     r.paymentStatus = (r.totalAmount > 0 && r.paidAmount >= r.totalAmount) ? "pago_total" : (r.paidAmount > 0 ? "sinal_pago" : r.paymentStatus);
   }
 
-  // 4. Invalidação Obrigatória de Assinatura (Requisito R3 / M2)
+  // 4. Invalidação Condicional de Assinatura (apenas se já havia ficha de check-in assinada)
   invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
 
   // 5. Registro no Histórico de Modificações com Deduplicação
@@ -26240,12 +26733,12 @@ export async function commitPendingModification(r, pending, {
         oldValue: `R$ ${oldTotalAmount.toFixed(2)}`,
         newValue: `R$ ${(oldTotalAmount + additionalPaid).toFixed(2)} (+R$ ${additionalPaid.toFixed(2)})`
       },
-      {
+      ...(r.needsReSignature ? [{
         field: "needsReSignature",
         label: "Re-assinatura FNRH",
         oldValue: "false",
         newValue: "true"
-      }
+      }] : [])
     ]
   });
 
@@ -26425,7 +26918,7 @@ export async function commitPendingModification(r, pending, {
     }
   }
 
-  // 10. Disparo de Notificações de Re-Assinatura ao Hóspede (WhatsApp & E-mail)
+  // 10. Disparo de Notificações ao Hóspede (Re-Assinatura apenas se já tinha check-in assinado)
   const modChanges = [
     {
       field: "checkinDate",
@@ -26453,11 +26946,18 @@ export async function commitPendingModification(r, pending, {
     }] : [])
   ];
 
-  dispatchReservationReSignatureNotifications(r, modChanges, {
-    origin: (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br",
-    source: "portal_modify_settled",
-    actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
-  });
+  if (r.needsReSignature) {
+    dispatchReservationReSignatureNotifications(r, modChanges, {
+      origin: (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br",
+      source: "portal_modify_settled",
+      actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
+    });
+  } else {
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", {
+      ...r,
+      _changesContext: modChanges
+    }).catch(err => console.warn("[commitPendingModification] Erro ao disparar WhatsApp de modificação:", err.message));
+  }
 
   try {
     scheduleUpcomingReservationTriggers(db, saveDatabase);
@@ -26626,9 +27126,10 @@ app.post("/api/pms/guest-portal/:code/modify-preview", (req, res) => {
   const originalTotalAmount = Number(r.totalAmount || 0);
   const newTotalAmount = Math.max(0, originalTotalAmount + additionalAmountToPay - refundAmount);
   const requiresPayment = additionalAmountToPay > 0;
+  const additionalCardAmountToPay = computeCardAmountFromPix(additionalAmountToPay);
   const datesChanged = r.checkinDate !== newCheckinDate || r.checkoutDate !== newCheckoutDate;
   const flatChanged = String(r.flatNumber || r.flatId) !== targetFlatNumber;
-  const requiresReSignature = datesChanged || flatChanged;
+  const requiresReSignature = Boolean((datesChanged || flatChanged) && hasReservationCompletedAnyCheckin(r));
 
   return res.json({
     success: true,
@@ -26657,6 +27158,7 @@ app.post("/api/pms/guest-portal/:code/modify-preview", (req, res) => {
     duration: newNights,
     extraNights,
     additionalAmountToPay,
+    additionalCardAmountToPay,
     refundAmount,
     currency: "BRL",
     requiresPayment,
@@ -26778,6 +27280,7 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
         success: true,
         requiresPayment: false,
         additionalAmountToPay: 0,
+        additionalCardAmountToPay: 0,
         refundAmount,
         message: "Esta alteração não requer pagamento adicional e pode ser confirmada diretamente.",
         newDates: {
@@ -26789,12 +27292,14 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
       });
     }
 
+    const additionalCardAmountToPay = computeCardAmountFromPix(additionalAmountToPay);
+
     // 4. Parâmetros de Hold (30 minutos)
     const holdMinutes = 30;
     const expiresAt = new Date(now.getTime() + holdMinutes * 60 * 1000).toISOString();
     const pendingId = `mod_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
 
-    // 5. Geração de Cobrança PIX (Inter Dinâmico com Fallback Estático)
+    // 5. Geração de Cobrança PIX (Inter Dinâmico com Fallback Estático - valor com desconto no PIX)
     let pixTxId = null;
     let pixCopiaECola = null;
 
@@ -26831,14 +27336,14 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
       }
     }
 
-    // 6. Geração de Preferência Mercado Pago (Checkout Pro)
+    // 6. Geração de Preferência Mercado Pago (Checkout Pro - valor normal no Cartão +5%)
     let mpPreferenceId = null;
     let mpCheckoutUrl = null;
 
     try {
       const mpPreference = await createMercadoPagoPreference({
         reservationCode: `MOD-${r.code}`,
-        amount: additionalAmountToPay,
+        amount: additionalCardAmountToPay,
         guestName: r.guestName,
         guestEmail: r.guestEmail,
         nights: Math.max(1, newNights - oldNights),
@@ -26861,6 +27366,7 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
       newFlatId: targetFlatId,
       newFlatNumber: targetFlatNumber,
       additionalAmountToPay,
+      additionalCardAmountToPay,
       createdAt: now.toISOString(),
       expiresAt,
       status: "pending",
@@ -26899,6 +27405,7 @@ app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
       success: true,
       pendingId,
       additionalAmountToPay,
+      additionalCardAmountToPay,
       expiresAt,
       holdMinutes,
       pixQrCodeUrl: qrCodeBase64,
@@ -26953,7 +27460,7 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
         newCheckoutDate: recentMod ? recentMod.newCheckout : r.checkoutDate,
         flatNumber: (recentMod && recentMod.newFlatNumber) || r.flatNumber,
         needsReSignature: Boolean(r.needsReSignature),
-        reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+        reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null
       });
     }
 
@@ -26974,7 +27481,7 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
           newCheckoutDate: recentMod.newCheckout,
           flatNumber: recentMod.newFlatNumber || r.flatNumber,
           needsReSignature: Boolean(r.needsReSignature),
-          reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+          reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null
         });
       }
 
@@ -27131,7 +27638,7 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
           newCheckoutDate: recentMod ? recentMod.newCheckout : r.checkoutDate,
           flatNumber: (recentMod && recentMod.newFlatNumber) || r.flatNumber,
           needsReSignature: Boolean(r.needsReSignature),
-          reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+          reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null
         });
       }
 
@@ -27156,8 +27663,8 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
           newCheckinDate: r.checkinDate,
           newCheckoutDate: r.checkoutDate,
           flatNumber: r.flatNumber,
-          needsReSignature: true,
-          reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+          needsReSignature: Boolean(r.needsReSignature),
+          reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null
         });
       } finally {
         activeModificationCommits.delete(reservationCode);
@@ -27174,6 +27681,7 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
       pendingId: pending.pendingId,
       expiresAt: pending.expiresAt,
       additionalAmountToPay: pending.additionalAmountToPay,
+      additionalCardAmountToPay: pending.additionalCardAmountToPay || computeCardAmountFromPix(pending.additionalAmountToPay || 0),
       pixTxId: pending.pixTxId || null,
       pixCopiaECola: pending.pixCopiaECola || null,
       pixQrCodeUrl: pending.pixQrCodeUrl || null,
@@ -27393,6 +27901,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
       error: "PAYMENT_REQUIRED",
       message: `A alteração solicitada requer acréscimo de R$ ${additionalAmountToPay.toFixed(2)}. Por favor, utilize o fluxo de checkout com pagamento para confirmar.`,
       additionalAmountToPay,
+      additionalCardAmountToPay: computeCardAmountFromPix(additionalAmountToPay),
       policyNotice
     });
   }
@@ -27422,6 +27931,8 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     nonRefundableReduction,
     reason: reason || "Modificação solicitada pelo hóspede via autoatendimento"
   });
+
+  const hadCheckinBeforeDirectModify = hasReservationCompletedAnyCheckin(r);
 
   // 6. Trilha de Auditoria
   ensureReservationAuditLogs(r);
@@ -27460,12 +27971,12 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
         oldValue: `R$ ${Number(r.totalAmount + refundAmount).toFixed(2)}`,
         newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (-R$ ${refundAmount.toFixed(2)})`
       }] : []),
-      {
+      ...(hadCheckinBeforeDirectModify ? [{
         field: "needsReSignature",
         label: "Re-assinatura FNRH",
         oldValue: "false",
         newValue: "true"
-      }
+      }] : [])
     ]
   });
 
@@ -27492,7 +28003,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
 
-  // 8. Invalidação Obrigatória de Assinatura (Requisito R3 / M2)
+  // 8. Invalidação Condicional de Assinatura (apenas se já havia ficha de check-in assinada)
   invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
 
   // Sincronizar pedidos de café da manhã vinculados
@@ -27616,7 +28127,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     }
   }
 
-  // Disparo de Comunicação ao Hóspede com Link de Re-Assinatura
+  // Disparo de Comunicação ao Hóspede (com Link de Re-Assinatura apenas se já havia ficha assinada)
   const directModChanges = [
     {
       field: "checkinDate",
@@ -27638,11 +28149,18 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     }] : [])
   ];
 
-  dispatchReservationReSignatureNotifications(r, directModChanges, {
-    origin: req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br"),
-    source: "portal_modify_direct",
-    actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
-  });
+  if (r.needsReSignature) {
+    dispatchReservationReSignatureNotifications(r, directModChanges, {
+      origin: req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br"),
+      source: "portal_modify_direct",
+      actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
+    });
+  } else {
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", {
+      ...r,
+      _changesContext: directModChanges
+    }).catch(err => console.warn("[Portal Modify Direct] Erro ao disparar WhatsApp de modificação:", err.message));
+  }
 
   try {
     scheduleUpcomingReservationTriggers(db, saveDatabase);
@@ -27665,8 +28183,8 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     newCheckoutDate,
     newNights,
     newGuestCount: guestsNum,
-    needsReSignature: true,
-    reSignatureUrl: `/pre-checkin/${r.code}?resign=1`,
+    needsReSignature: Boolean(r.needsReSignature),
+    reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null,
     reservation: {
       ...r,
       nights: newNights
@@ -48360,7 +48878,14 @@ async function confirmReservationPayment(r, {
     String(source || "").toLowerCase().includes("mercado pago")
   );
 
-  r.paymentStatus = (totalAmount > 0 && valorPago < totalAmount) ? "sinal_pago" : "pago_total";
+  // Se o pagamento foi efetuado no Cartão de Crédito com o valor normal (+5%), ajusta o totalAmount para refletir o valor efetivamente cobrado no cartão
+  if (isCard && valorPago > totalAmount && totalAmount > 0) {
+    r.basePixTotalAmount = r.basePixTotalAmount || totalAmount;
+    r.totalAmount = valorPago;
+  }
+
+  const effectiveTotalAmount = Number(r.totalAmount || 0);
+  r.paymentStatus = (effectiveTotalAmount > 0 && valorPago < effectiveTotalAmount) ? "sinal_pago" : "pago_total";
   r.paidAmount = valorPago;
   r.paidAt = paidAt || r.paidAt || new Date().toISOString();
 
@@ -48581,6 +49106,33 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       }
     }
 
+    // Sincroniza PIX Copia e Cola e link do Cartão caso o valor pendente da reserva tenha sido alterado
+    const pendingAmt = Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)) || Number(r.totalAmount) || 0;
+    const cardPendingAmt = computeCardAmountFromPix(pendingAmt);
+    let syncedPayloads = false;
+    if (pendingAmt > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt))) {
+      const cleanTxId = String(r.code || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+      r.pixTxId = cleanTxId;
+      r.pixCopiaECola = generateStaticPixPayload({
+        pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+        amount: pendingAmt,
+        merchantName: "CORPFLATS LTDA",
+        merchantCity: "CAMPOS DOS GOYTACAZES",
+        txid: cleanTxId || "***"
+      });
+      r.pixChargedAmount = pendingAmt;
+      syncedPayloads = true;
+    }
+    if (r.mpInitPoint && (!r.mpChargedAmount || Math.abs(Number(r.mpChargedAmount) - cardPendingAmt) > 0.01)) {
+      r.mpInitPoint = null;
+      r.mpPreferenceId = null;
+      r.mpChargedAmount = null;
+      syncedPayloads = true;
+    }
+    if (syncedPayloads) {
+      saveDatabase();
+    }
+
     res.json({
       code: r.code,
       paid: false,
@@ -48588,6 +49140,8 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       paymentMethod: r.paymentMethod || "pix",
       paidAmount: r.paidAmount || 0,
       totalAmount: r.totalAmount || 0,
+      cardTotalAmount: computeCardAmountFromPix(r.totalAmount || 0),
+      cardPendingAmount: cardPendingAmt,
       pixTxId: r.pixTxId || null,
       pixCopiaECola: r.pixCopiaECola || null,
       mpInitPoint: r.mpInitPoint || null,
@@ -48619,16 +49173,18 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
     }
 
     const targetMethod = (method || "").toLowerCase().includes("card") || (method || "").toLowerCase().includes("cartao") ? "cartao_credito" : "pix";
+    const pendingAmt = Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)) || Number(r.totalAmount) || 0;
+    const cardPendingAmt = computeCardAmountFromPix(pendingAmt);
 
     if (targetMethod === "pix") {
       r.paymentMethod = "pix";
       r.paymentStatus = "aguardando_pix";
 
-      // Se ainda não tem PIX emitido ou precisa gerar
-      if (!r.pixCopiaECola) {
+      // Se ainda não tem PIX emitido ou se o valor pendente mudou
+      if (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmt)) {
         try {
           const pixResult = await createInterPixCob({
-            amount: r.totalAmount,
+            amount: pendingAmt,
             description: `Reserva CorpFlats ${r.code}`,
             debtorName: r.guestName,
             debtorDocument: r.guestDocument || r.document,
@@ -48636,18 +49192,20 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
           });
           r.pixTxId = pixResult.txid;
           r.pixCopiaECola = pixResult.pixCopiaECola;
+          r.pixChargedAmount = pendingAmt;
         } catch (pixErr) {
           console.warn("[Change Payment Method] Falha Inter, gerando PIX estático:", pixErr.message);
           const cleanTxId = r.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
           const staticPayload = generateStaticPixPayload({
             pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
-            amount: r.totalAmount,
+            amount: pendingAmt,
             merchantName: "CORPFLATS LTDA",
             merchantCity: "CAMPOS DOS GOYTACAZES",
             txid: cleanTxId
           });
           r.pixTxId = cleanTxId;
           r.pixCopiaECola = staticPayload;
+          r.pixChargedAmount = pendingAmt;
         }
       }
 
@@ -48655,22 +49213,25 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
       return res.json({
         success: true,
         paymentMethod: "pix",
+        pixAmount: pendingAmt,
+        cardAmount: cardPendingAmt,
         pixCopiaECola: r.pixCopiaECola,
         pixTxId: r.pixTxId,
         paymentStatus: r.paymentStatus,
         reservation: r
       });
     } else {
-      // Cartão de Crédito (Mercado Pago)
+      // Cartão de Crédito (Mercado Pago - Valor Normal +5%)
       r.paymentMethod = "cartao_credito";
       r.paymentStatus = "aguardando_cartao";
 
-      if (!r.mpInitPoint) {
+      const isMpStale = !r.mpInitPoint || !r.mpChargedAmount || Math.abs(Number(r.mpChargedAmount) - cardPendingAmt) > 0.01;
+      if (isMpStale) {
         try {
           const nightsCount = Math.max(1, Math.round((new Date(r.checkoutDate).getTime() - new Date(r.checkinDate).getTime()) / (1000 * 60 * 60 * 24)));
           const mpPreference = await createMercadoPagoPreference({
             reservationCode: r.code,
-            amount: r.totalAmount,
+            amount: cardPendingAmt,
             guestName: r.guestName,
             guestEmail: r.guestEmail,
             nights: nightsCount,
@@ -48678,6 +49239,7 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
           });
           r.mpPreferenceId = mpPreference.id;
           r.mpInitPoint = mpPreference.initPoint;
+          r.mpChargedAmount = cardPendingAmt;
         } catch (mpErr) {
           console.error("[Change Payment Method] Erro ao criar preferência Mercado Pago:", mpErr.message);
           return res.status(500).json({ error: `Falha ao gerar link Mercado Pago: ${mpErr.message}` });
@@ -48688,6 +49250,8 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
       return res.json({
         success: true,
         paymentMethod: "cartao_credito",
+        cardAmount: cardPendingAmt,
+        pixAmount: pendingAmt,
         initPoint: r.mpInitPoint,
         preferenceId: r.mpPreferenceId,
         paymentStatus: r.paymentStatus,
@@ -48888,32 +49452,41 @@ async function createMercadoPagoPreference({
 app.post("/api/pms/mercadopago/create-preference", async (req, res) => {
   try {
     const { reservationCode, amount, guestName, guestEmail, nights, flatNumber } = req.body;
-    if (!amount || Number(amount) <= 0) {
+    const r = reservationCode
+      ? (db.reservations || []).find(x => x.code === reservationCode || String(x.id) === reservationCode)
+      : null;
+
+    let chargeAmount = Number(amount) || 0;
+    if (r && !String(reservationCode || "").startsWith("MB-")) {
+      const pendingAmt = Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)) || Number(r.totalAmount) || chargeAmount;
+      chargeAmount = computeCardAmountFromPix(pendingAmt);
+    }
+
+    if (!chargeAmount || Number(chargeAmount) <= 0) {
       return res.status(400).json({ error: "Valor da reserva é obrigatório." });
     }
 
     const pref = await createMercadoPagoPreference({
       reservationCode,
-      amount,
-      guestName,
-      guestEmail,
+      amount: chargeAmount,
+      guestName: guestName || r?.guestName,
+      guestEmail: guestEmail || r?.guestEmail,
       nights,
-      flatNumber
+      flatNumber: flatNumber || r?.flatNumber
     });
 
-    if (reservationCode) {
-      const r = (db.reservations || []).find(x => x.code === reservationCode || String(x.id) === reservationCode);
-      if (r) {
-        r.mpPreferenceId = pref.id;
-        r.mpInitPoint = pref.initPoint;
-        saveDatabase();
-      }
+    if (r) {
+      r.mpPreferenceId = pref.id;
+      r.mpInitPoint = pref.initPoint;
+      r.mpChargedAmount = chargeAmount;
+      saveDatabase();
     }
 
     res.json({
       success: true,
       initPoint: pref.initPoint,
-      preferenceId: pref.id
+      preferenceId: pref.id,
+      amount: chargeAmount
     });
   } catch (err) {
     console.error("[Mercado Pago] Erro ao criar preferência:", err.message);
@@ -50126,7 +50699,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const pendingAmount = Math.max(0, totalAmount - paidAmount) || totalAmount;
   let pixCode = r?.pixCopiaECola || "";
 
-  if (!pixCode && pendingAmount > 0) {
+  if (pendingAmount > 0 && (!pixCode || (r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
     const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
     pixCode = generateStaticPixPayload({
       pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
@@ -50136,12 +50709,16 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
       txid: cleanTxId || "***"
     });
     if (r) {
+      r.pixTxId = cleanTxId || r.pixTxId;
       r.pixCopiaECola = pixCode;
+      r.pixChargedAmount = pendingAmount;
       saveDatabase();
     }
   }
 
+  const cardPendingAmount = computeCardAmountFromPix(pendingAmount);
   const formattedValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(pendingAmount);
+  const formattedCardValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cardPendingAmount);
   const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(pixCode)}` : "";
   const portalUrl = rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
@@ -50203,7 +50780,11 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
         <span class="detail-val">${guestName}</span>
       </div>
       <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
-        <span class="detail-label">Valor a Quitar:</span>
+        <span class="detail-label">Valor no Cartão de Crédito:</span>
+        <span class="detail-val" style="color: #94a3b8; text-decoration: line-through;">${formattedCardValue}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Valor com Desconto no PIX (-5%):</span>
         <span class="detail-val price">${formattedValue}</span>
       </div>
     </div>
@@ -50382,6 +50963,96 @@ if (fs.existsSync(distPath)) {
 
 // Bootstrap das tabelas de shopping list no PostgreSQL (roda após hidratação para não disputar pool no boot)
 let shoppingTablesBootstrapped = false;
+
+async function syncShoppingListCacheFromPg() {
+  if (!pgPool) return;
+  try {
+    // 1. Se houver itens criados em modo fallback (id começando com 'shop_' ou _pendingPgSync) na memória, insere no PostgreSQL primeiro
+    if (Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
+      const pendingOffline = db.shoppingList.filter(it => it && (it._pendingPgSync || String(it.id || "").startsWith("shop_")));
+      for (const item of pendingOffline) {
+        try {
+          const catStr = item.category && String(item.category).startsWith("[")
+            ? item.category
+            : autoCategorizeRules(item.title || "Item");
+          await pgPool.query(
+            `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role, completed_by_user_id, completed_by_name, completed_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            [
+              String(item.title || "").trim(),
+              item.quantity ? String(item.quantity).trim() : null,
+              catStr,
+              item.notes ? String(item.notes).trim() : null,
+              Boolean(item.completed),
+              item.sortOrder ?? 0,
+              item.createdBy?.id || 1,
+              item.createdBy?.name || "Admin",
+              item.createdBy?.role || "admin",
+              item.completedBy?.id || null,
+              item.completedBy?.name || null,
+              item.completedAt ? new Date(item.completedAt) : null
+            ]
+          );
+          item._pendingPgSync = false;
+        } catch (_) {}
+      }
+    }
+
+    // 2. Carrega a lista autoritativa do PostgreSQL para db.shoppingList em memória
+    const listRes = await pgPool.query(`SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`);
+    if (listRes.rows.length > 0) {
+      const mapped = listRes.rows.map(mapShoppingRow);
+      const prevSig = Array.isArray(db.shoppingList) ? db.shoppingList.map(i => `${i.id}:${i.completed}`).join(",") : "";
+      const nextSig = mapped.map(i => `${i.id}:${i.completed}`).join(",");
+      db.shoppingList = mapped;
+      if (prevSig !== nextSig) {
+        saveDatabase("shopping_list_cache_sync");
+      }
+    } else if (Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
+      // Se a tabela do PostgreSQL estiver vazia mas db.shoppingList tiver backup em memória/JSON, restaura para o PostgreSQL!
+      console.log(`[ShoppingList] Restaurando ${db.shoppingList.length} itens do backup em memória para shopping_list no PostgreSQL...`);
+      for (const item of db.shoppingList) {
+        if (!item || !item.title) continue;
+        try {
+          const catStr = item.category && String(item.category).startsWith("[")
+            ? item.category
+            : autoCategorizeRules(item.title);
+          await pgPool.query(
+            `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role, completed_by_user_id, completed_by_name, completed_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            [
+              String(item.title).trim(),
+              item.quantity ? String(item.quantity).trim() : null,
+              catStr,
+              item.notes ? String(item.notes).trim() : null,
+              Boolean(item.completed),
+              item.sortOrder ?? 0,
+              item.createdBy?.id || 1,
+              item.createdBy?.name || "Admin",
+              item.createdBy?.role || "admin",
+              item.completedBy?.id || null,
+              item.completedBy?.name || null,
+              item.completedAt ? new Date(item.completedAt) : null
+            ]
+          );
+        } catch (_) {}
+      }
+      const restored = await pgPool.query(`SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`);
+      if (restored.rows.length > 0) {
+        db.shoppingList = restored.rows.map(mapShoppingRow);
+      }
+    }
+
+    // 3. Sincroniza o catálogo em memória (db.shoppingCatalog)
+    const catRes = await pgPool.query(`SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`);
+    if (catRes.rows.length > 0) {
+      db.shoppingCatalog = catRes.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count }));
+    }
+  } catch (err) {
+    console.warn("[ShoppingList] Aviso ao sincronizar cache em memória:", err.message);
+  }
+}
+
 async function bootstrapShoppingTables() {
   if (!pgPool || shoppingTablesBootstrapped) return;
   if (!pgHydratedSuccessfully) return;
@@ -50425,8 +51096,9 @@ async function bootstrapShoppingTables() {
        ON CONFLICT (name) DO NOTHING`,
       [initialItems]
     );
+    await syncShoppingListCacheFromPg();
     shoppingTablesBootstrapped = true;
-    console.log("[ShoppingList] Tabelas PostgreSQL prontas.");
+    console.log(`[ShoppingList] Tabelas PostgreSQL prontas e cache sincronizado (${Array.isArray(db.shoppingList) ? db.shoppingList.length : 0} itens).`);
   } catch (err) {
     console.warn("[ShoppingList] Erro ao criar tabelas:", err.message);
   }
@@ -50628,13 +51300,30 @@ async function upsertCatalogEntry(name) {
 app.get("/api/shopping-list/catalog", async (req, res) => {
   if (pgPool) {
     try {
-      const result = await pgPool.query(
-        `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`
-      );
-      return res.json(result.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count })));
+      let result;
+      try {
+        result = await pgPool.query(
+          `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`
+        );
+      } catch (poolErr) {
+        result = await queryDirectPgClient(
+          `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`,
+          [],
+          12000
+        );
+        resetPgPool("shopping_catalog_direct_ok_pool_failed");
+      }
+      const mapped = result.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count }));
+      if (mapped.length > 0) {
+        db.shoppingCatalog = mapped;
+      }
+      return res.json(mapped);
     } catch (err) {
       console.error("[ShoppingList] catalog error:", err.message);
     }
+  }
+  if (Array.isArray(db.shoppingCatalog) && db.shoppingCatalog.length > 0) {
+    return res.json(db.shoppingCatalog);
   }
   // Fallback JSON
   const CATALOG_FALLBACK = [
@@ -50652,22 +51341,26 @@ app.patch("/api/shopping-list/reorder", async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "items[] obrigatório" });
   }
+  const order = {};
+  items.forEach(({ id, sortOrder }) => { order[String(id)] = sortOrder; });
+  if (Array.isArray(db.shoppingList)) {
+    db.shoppingList.forEach(item => {
+      if (order[String(item.id)] !== undefined) item.sortOrder = order[String(item.id)];
+    });
+    db.shoppingList.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    saveDatabase("shopping_list_reorder");
+  }
   if (pgPool) {
     try {
-      await Promise.all(items.map(({ id, sortOrder }) =>
-        pgPool.query(`UPDATE shopping_list SET sort_order=$1, updated_at=now() WHERE id=$2`, [sortOrder, parseInt(id)])
-      ));
+      await Promise.all(items.map(({ id, sortOrder }) => {
+        const numId = parseInt(id, 10);
+        if (Number.isNaN(numId)) return Promise.resolve();
+        return pgPool.query(`UPDATE shopping_list SET sort_order=$1, updated_at=now() WHERE id=$2`, [sortOrder, numId]);
+      }));
       return res.json({ ok: true });
     } catch (err) {
       console.error("[ShoppingList] reorder error:", err.message);
     }
-  }
-  // Fallback JSON: reorder db.shoppingList
-  if (Array.isArray(db.shoppingList)) {
-    const order = {};
-    items.forEach(({ id, sortOrder }) => { order[id] = sortOrder; });
-    db.shoppingList.sort((a, b) => (order[a.id] ?? 0) - (order[b.id] ?? 0));
-    saveDatabase();
   }
   res.json({ ok: true });
 });
@@ -50675,11 +51368,18 @@ app.patch("/api/shopping-list/reorder", async (req, res) => {
 // GET /api/shopping-list/categories — categorias com contagem
 app.get("/api/shopping-list/categories", async (req, res) => {
   const allItems = [];
+  let loadedFromPg = false;
   if (pgPool) {
     try {
       const result = await pgPool.query(`SELECT category FROM shopping_list WHERE completed = false`);
       result.rows.forEach(r => { allItems.push(...parseCategories(r.category)); });
+      loadedFromPg = true;
     } catch {}
+  }
+  if (!loadedFromPg && Array.isArray(db.shoppingList)) {
+    db.shoppingList.filter(i => !i.completed).forEach(i => {
+      allItems.push(...parseCategories(i.category));
+    });
   }
   const counts = {};
   allItems.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
@@ -50697,6 +51397,7 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
       await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
       updated++;
     }
+    await syncShoppingListCacheFromPg();
     return res.json({ ok: true, updated, message: `${updated} itens recategorizados.` });
   } catch (e) {
     return res.status(500).json({ error: e.message });
@@ -50768,18 +51469,35 @@ app.get("/api/shopping-list", async (req, res) => {
           [],
           15000
         );
+        resetPgPool("shopping_list_direct_ok_pool_failed");
       }
-      return res.json(result.rows.map(mapShoppingRow));
+      let mapped = result.rows.map(mapShoppingRow);
+      // Se o banco retornou vazio mas db.shoppingList em memória tem itens (ex: itens adicionados durante oscilação de conexão), sincroniza de volta para o PG!
+      if (mapped.length === 0 && Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {
+        await syncShoppingListCacheFromPg();
+        mapped = Array.isArray(db.shoppingList) ? db.shoppingList : [];
+      } else if (mapped.length > 0) {
+        const prevSig = Array.isArray(db.shoppingList) ? db.shoppingList.map(i => `${i.id}:${i.completed}`).join(",") : "";
+        const nextSig = mapped.map(i => `${i.id}:${i.completed}`).join(",");
+        db.shoppingList = mapped;
+        if (prevSig !== nextSig) {
+          saveDatabase("shopping_list_get_sync");
+        }
+      }
+      res.setHeader("X-Shopping-Source", "postgres");
+      return res.json(mapped);
     } catch (err) {
-      console.error("[ShoppingList] GET error:", err.message);
+      console.error("[ShoppingList] GET error (usando espelho em memória):", err.message);
     }
   }
-  // Fallback JSON (legado)
+  // Fallback espelho em memória (blindado contra oscilações de rede do PostgreSQL)
   if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
   const items = [...db.shoppingList].sort((a, b) => {
-    if (a.completed === b.completed) return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    if (a.completed === b.completed) return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
     return a.completed ? 1 : -1;
   });
+  res.setHeader("X-Shopping-Source", "memory-cache");
   res.json(items);
 });
 
@@ -50814,6 +51532,9 @@ app.post("/api/shopping-list", async (req, res) => {
       );
       await upsertCatalogEntry(String(title).trim());
       const newItem = mapShoppingRow(result.rows[0]);
+      if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+      db.shoppingList = [newItem, ...db.shoppingList.filter(i => String(i.id) !== String(newItem.id))];
+      saveDatabase("shopping_list_post");
       try {
         createNotification({
           category: "general",
@@ -50829,17 +51550,27 @@ app.post("/api/shopping-list", async (req, res) => {
       console.error("[ShoppingList] POST error:", err.message);
     }
   }
-  // Fallback JSON
+  // Fallback JSON (com flag _pendingPgSync para sincronizar assim que o PostgreSQL reconectar)
   if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+  const minOrder = db.shoppingList.reduce((acc, it) => Math.min(acc, it.sortOrder ?? 0), 0);
+  const rawCat = category || autoCategorizeRules(String(title).trim());
   const newItem = {
     id: `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    title: String(title).trim(), quantity: quantity || "", category: category || "Limpeza",
-    notes: notes || "", completed: false,
+    title: String(title).trim(),
+    quantity: quantity || "",
+    category: rawCat,
+    categories: parseCategories(rawCat),
+    notes: notes || "",
+    completed: false,
+    sortOrder: minOrder - 1,
     createdBy: { id: userAuth?.id || 1, name, role: userAuth?.role || "camareira" },
-    createdAt: new Date().toISOString(), completedBy: null, completedAt: null
+    createdAt: new Date().toISOString(),
+    completedBy: null,
+    completedAt: null,
+    _pendingPgSync: true
   };
   db.shoppingList.unshift(newItem);
-  saveDatabase();
+  saveDatabase("shopping_list_post_fallback");
   res.status(201).json(newItem);
 });
 
@@ -50849,7 +51580,7 @@ app.patch("/api/shopping-list/:id/toggle", async (req, res) => {
   const userAuth = getAuthUser(req);
   const name = userAuth?.name || userAuth?.username || "Admin";
 
-  if (pgPool) {
+  if (pgPool && !String(id).startsWith("shop_")) {
     try {
       const cur = await pgPool.query(`SELECT * FROM shopping_list WHERE id=$1`, [parseInt(id)]);
       if (!cur.rows[0]) return res.status(404).json({ error: "Item não encontrado." });
@@ -50866,20 +51597,25 @@ app.patch("/api/shopping-list/:id/toggle", async (req, res) => {
           parseInt(id)
         ]
       );
-      return res.json(mapShoppingRow(result.rows[0]));
+      const updatedItem = mapShoppingRow(result.rows[0]);
+      if (Array.isArray(db.shoppingList)) {
+        db.shoppingList = db.shoppingList.map(i => String(i.id) === String(id) ? updatedItem : i);
+        saveDatabase("shopping_list_toggle");
+      }
+      return res.json(updatedItem);
     } catch (err) {
       console.error("[ShoppingList] toggle error:", err.message);
     }
   }
   // Fallback JSON
   if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
-  const item = db.shoppingList.find(i => i.id === id);
+  const item = db.shoppingList.find(i => String(i.id) === String(id));
   if (!item) return res.status(404).json({ error: "Item não encontrado." });
   const willComplete = req.body?.completed !== undefined ? Boolean(req.body.completed) : !item.completed;
   item.completed = willComplete;
   item.completedAt = willComplete ? new Date().toISOString() : null;
   item.completedBy = willComplete ? { id: userAuth?.id || 1, name, role: userAuth?.role || "admin" } : null;
-  saveDatabase();
+  saveDatabase("shopping_list_toggle_fallback");
   res.json(item);
 });
 
@@ -50890,7 +51626,7 @@ app.patch("/api/shopping-list/:id", async (req, res) => {
   if (title !== undefined && !String(title).trim()) {
     return res.status(400).json({ error: "Título não pode ficar vazio." });
   }
-  if (pgPool) {
+  if (pgPool && !String(id).startsWith("shop_")) {
     try {
       const sets = [];
       const vals = [];
@@ -50907,27 +51643,39 @@ app.patch("/api/shopping-list/:id", async (req, res) => {
       );
       if (!result.rows[0]) return res.status(404).json({ error: "Item não encontrado." });
       if (title) await upsertCatalogEntry(String(title).trim());
-      return res.json(mapShoppingRow(result.rows[0]));
+      const updatedItem = mapShoppingRow(result.rows[0]);
+      if (Array.isArray(db.shoppingList)) {
+        db.shoppingList = db.shoppingList.map(it => String(it.id) === String(id) ? updatedItem : it);
+        saveDatabase("shopping_list_patch");
+      }
+      return res.json(updatedItem);
     } catch (err) {
       console.error("[ShoppingList] PATCH error:", err.message);
     }
   }
   // Fallback JSON
   if (!Array.isArray(db.shoppingList)) return res.status(404).json({ error: "Item não encontrado." });
-  const item = db.shoppingList.find(i => i.id === id);
+  const item = db.shoppingList.find(i => String(i.id) === String(id));
   if (!item) return res.status(404).json({ error: "Item não encontrado." });
   if (title !== undefined) item.title = String(title).trim();
   if (quantity !== undefined) item.quantity = quantity || "";
   if (category !== undefined) item.category = category;
   if (notes !== undefined) item.notes = notes || "";
-  saveDatabase();
+  saveDatabase("shopping_list_patch_fallback");
   res.json(item);
 });
 
 // DELETE /api/shopping-list/:id
 app.delete("/api/shopping-list/:id", async (req, res) => {
   const { id } = req.params;
-  if (pgPool) {
+  if (Array.isArray(db.shoppingList)) {
+    const idx = db.shoppingList.findIndex(i => String(i.id) === String(id));
+    if (idx !== -1) {
+      db.shoppingList.splice(idx, 1);
+      saveDatabase("shopping_list_delete");
+    }
+  }
+  if (pgPool && !String(id).startsWith("shop_")) {
     try {
       await pgPool.query(`DELETE FROM shopping_list WHERE id=$1`, [parseInt(id)]);
       return res.json({ success: true });
@@ -50935,11 +51683,6 @@ app.delete("/api/shopping-list/:id", async (req, res) => {
       console.error("[ShoppingList] DELETE error:", err.message);
     }
   }
-  if (!Array.isArray(db.shoppingList)) return res.status(404).json({ error: "Item não encontrado." });
-  const idx = db.shoppingList.findIndex(i => i.id === id);
-  if (idx === -1) return res.status(404).json({ error: "Item não encontrado." });
-  db.shoppingList.splice(idx, 1);
-  saveDatabase();
   res.json({ success: true });
 });
 
@@ -56310,5 +57053,8 @@ export {
   verifyChannexHmacSignature,
   buildChannexAvailabilityValues,
   buildChannexRestrictionsValues,
-  normalizeChannexBookingRevision
+  normalizeChannexBookingRevision,
+  isB2bReservation,
+  computeLinenTracking,
+  getRequestsForDate
 };

@@ -81,6 +81,26 @@ interface QuickShoppingModalProps {
   onPendingCountChange?: (count: number) => void
 }
 
+const SHOPPING_LIST_CACHE_KEY = "corpflats_shopping_list_cache_v1"
+
+function loadCachedModalItems(): ShoppingItem[] {
+  try {
+    const raw = localStorage.getItem(SHOPPING_LIST_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveCachedModalItems(items: ShoppingItem[]) {
+  try {
+    const clean = items.filter(i => !String(i.id || "").startsWith("temp_"))
+    localStorage.setItem(SHOPPING_LIST_CACHE_KEY, JSON.stringify(clean))
+  } catch {}
+}
+
 export function QuickShoppingModal({
   open,
   onOpenChange,
@@ -91,7 +111,7 @@ export function QuickShoppingModal({
 
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const [items, setItems] = useState<ShoppingItem[]>([])
+  const [items, setItems] = useState<ShoppingItem[]>(() => loadCachedModalItems())
   const [catalog, setCatalog] = useState<string[]>(COMMON_SHOPPING_ITEMS)
   const [loading, setLoading] = useState(false)
 
@@ -119,7 +139,15 @@ export function QuickShoppingModal({
       if (res.ok) {
         const data = await res.json()
         const itemList: ShoppingItem[] = Array.isArray(data) ? data : []
+        const source = res.headers.get("X-Shopping-Source")
+        if (itemList.length === 0 && source === "memory-cache" && loadCachedModalItems().length > 0) {
+          const cached = loadCachedModalItems()
+          setItems(cached)
+          onPendingCountChange?.(cached.filter(i => !i.completed).length)
+          return
+        }
         setItems(itemList)
+        saveCachedModalItems(itemList)
         const pendingCount = itemList.filter(i => !i.completed).length
         onPendingCountChange?.(pendingCount)
       }

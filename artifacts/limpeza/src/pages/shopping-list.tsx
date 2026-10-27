@@ -117,13 +117,45 @@ function EditRow({ item, onSave, onCancel }: EditRowProps) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+const SHOPPING_LIST_CACHE_KEY = "corpflats_shopping_list_cache_v1"
+const SHOPPING_CATALOG_CACHE_KEY = "corpflats_shopping_catalog_cache_v1"
+
+function loadCachedShoppingItems(): ShoppingItem[] {
+  try {
+    const raw = localStorage.getItem(SHOPPING_LIST_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveCachedShoppingItems(items: ShoppingItem[]) {
+  try {
+    const clean = items.filter(i => !String(i.id || "").startsWith("temp_"))
+    localStorage.setItem(SHOPPING_LIST_CACHE_KEY, JSON.stringify(clean))
+  } catch {}
+}
+
+function loadCachedCatalog(): CatalogEntry[] {
+  try {
+    const raw = localStorage.getItem(SHOPPING_CATALOG_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export default function ShoppingListPage() {
   const { data: user } = useGetMe()
   const { toast } = useToast()
 
-  const [items, setItems] = useState<ShoppingItem[]>([])
-  const [catalog, setCatalog] = useState<CatalogEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  const [items, setItems] = useState<ShoppingItem[]>(() => loadCachedShoppingItems())
+  const [catalog, setCatalog] = useState<CatalogEntry[]>(() => loadCachedCatalog())
+  const [loading, setLoading] = useState(() => loadCachedShoppingItems().length === 0)
   const [activeTab, setActiveTab] = useState<"pending" | "completed">("pending")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
@@ -143,24 +175,46 @@ export default function ShoppingListPage() {
   // ── Undo delete ────────────────────────────────────────────────────────────
   const pendingDeletes = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
+  useEffect(() => {
+    if (items.length > 0) {
+      saveCachedShoppingItems(items)
+    }
+  }, [items])
+
   // ── Fetch ──────────────────────────────────────────────────────────────────
+
+  const applyServerItems = useCallback((res: Response, d: unknown) => {
+    if (!Array.isArray(d)) return
+    const source = res.headers.get("X-Shopping-Source")
+    if (d.length === 0 && source === "memory-cache" && loadCachedShoppingItems().length > 0) {
+      return
+    }
+    setItems(d)
+    saveCachedShoppingItems(d)
+  }, [])
 
   const fetchItems = useCallback(async () => {
     try {
       setLoading(true)
       const res = await fetch("/api/shopping-list")
-      if (res.ok) { const d = await res.json(); setItems(Array.isArray(d) ? d : []) }
+      if (res.ok) { const d = await res.json(); applyServerItems(res, d) }
     } catch {
       toast({ title: "Erro ao carregar lista", variant: "destructive" })
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [applyServerItems])
 
   const fetchCatalog = useCallback(async () => {
     try {
       const res = await fetch("/api/shopping-list/catalog")
-      if (res.ok) { const d = await res.json(); setCatalog(Array.isArray(d) ? d : []) }
+      if (res.ok) {
+        const d = await res.json()
+        if (Array.isArray(d) && d.length > 0) {
+          setCatalog(d)
+          try { localStorage.setItem(SHOPPING_CATALOG_CACHE_KEY, JSON.stringify(d)) } catch {}
+        }
+      }
     } catch {}
   }, [])
 
@@ -168,10 +222,16 @@ export default function ShoppingListPage() {
     setLoading(true)
     try {
       const [r1, r2] = await Promise.all([fetch("/api/shopping-list"), fetch("/api/shopping-list/catalog")])
-      if (r1.ok) { const d = await r1.json(); setItems(Array.isArray(d) ? d : []) }
-      if (r2.ok) { const d = await r2.json(); setCatalog(Array.isArray(d) ? d : []) }
+      if (r1.ok) { const d = await r1.json(); applyServerItems(r1, d) }
+      if (r2.ok) {
+        const d = await r2.json()
+        if (Array.isArray(d) && d.length > 0) {
+          setCatalog(d)
+          try { localStorage.setItem(SHOPPING_CATALOG_CACHE_KEY, JSON.stringify(d)) } catch {}
+        }
+      }
     } catch {} finally { setLoading(false) }
-  }, [])
+  }, [applyServerItems])
 
   useEffect(() => { refresh() }, [])
 
@@ -264,7 +324,11 @@ export default function ShoppingListPage() {
 
   const handleDelete = (item: ShoppingItem) => {
     // Remove da UI imediatamente (otimista)
-    setItems(prev => prev.filter(i => i.id !== item.id))
+    setItems(prev => {
+      const next = prev.filter(i => i.id !== item.id)
+      saveCachedShoppingItems(next)
+      return next
+    })
 
     // Agenda a deleção real no servidor após 6 segundos
     const tid = setTimeout(async () => {
