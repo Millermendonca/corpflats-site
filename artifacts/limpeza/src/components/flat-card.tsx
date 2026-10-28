@@ -509,7 +509,11 @@ export function FlatCard({
   } : rawConf
 
   const Icon = conf.icon
-  const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
+  const isPriority = currentStatus === "clean"
+    ? false
+    : (typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false))
+  const serviceBlocksCleaning = Boolean(flat.serviceInProgress && !(flat.serviceInProgress as any).allowSimultaneousCleaning)
+  const isCleaningBlockedByService = serviceBlocksCleaning && !isAdmin
   // REGRA: isTwinBeds só vem do request (atrelado ao dia específico).
   // Não usa flat.setupInfo.twinBeds como fallback — setupInfo é informação de setup da próxima
   // reserva e não deve acionar o indicador de instrução de camas para a camareira.
@@ -1227,7 +1231,7 @@ export function FlatCard({
             {/* Top Bar - Linha 1: Identificação do Flat (Sem corte) e Ocupação */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 shrink-0">
-                {selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && !flat.serviceInProgress && (
+                {selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && !isCleaningBlockedByService && (
                   <input
                     type="checkbox"
                     checked={isSelected}
@@ -1247,7 +1251,7 @@ export function FlatCard({
                     Apt {flat.flatNumber}
                   </h3>
                   {/* Camareira (não-admin): Exibe badge ao lado do número do apto */}
-                  {isPriority && !isInstruction && !isAdmin && (
+                  {isPriority && !isInstruction && !isAdmin && currentStatus !== "clean" && (
                     <Badge 
                       variant="destructive" 
                       title="Prioridade Alta"
@@ -1286,8 +1290,8 @@ export function FlatCard({
               </button>
             </div>
 
-            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ação Rápida de Prioridade em Limpezas Normais) */}
-            {isAdmin && !isInstruction && (
+            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ação Rápida de Prioridade em Limpezas Normais, oculta quando Limpo) */}
+            {isAdmin && !isInstruction && currentStatus !== "clean" && (
               <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
                 {/* Botão / Ícone de Prioridade: Desativado por padrão, 1 clique para ativar */}
                 <button
@@ -1600,7 +1604,11 @@ export function FlatCard({
                   {flat.serviceInProgress.workerName && ` • Prestador: ${flat.serviceInProgress.workerName}`}
                 </p>
                 <p className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">
-                  Aguardando conclusão do serviço externo para liberar a higienização do apartamento.
+                  {(flat.serviceInProgress as any).allowSimultaneousCleaning
+                    ? "Limpeza simultânea liberada nesta Ordem de Serviço."
+                    : isAdmin
+                      ? "Limpeza bloqueada para camareiras durante o serviço (liberada para Admin)."
+                      : "Aguardando conclusão do serviço externo para liberar a higienização do apartamento."}
                 </p>
               </div>
             )}
@@ -1811,7 +1819,7 @@ export function FlatCard({
             ) : (
               <div className="space-y-2">
                 {(currentStatus === "dirty" || (currentStatus as string) === "pending") && (
-                  flat.serviceInProgress ? (
+                  isCleaningBlockedByService && flat.serviceInProgress ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="w-full cursor-not-allowed">
@@ -1878,7 +1886,7 @@ export function FlatCard({
                 )}
 
                 {currentStatus === "will_clean" && (
-                  flat.serviceInProgress ? (
+                  isCleaningBlockedByService && flat.serviceInProgress ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="w-full cursor-not-allowed">

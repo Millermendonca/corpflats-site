@@ -13590,6 +13590,7 @@ function getFlatServiceInProgress(flatId, flatNumber) {
   if (!Array.isArray(db.serviceOrders)) return null;
   const fId = Number(flatId);
   const fNum = String(flatNumber || "");
+  let fallbackMatch = null;
   for (const order of db.serviceOrders) {
     if (order.status !== "active") continue;
     if (!Array.isArray(order.flats)) continue;
@@ -13598,14 +13599,19 @@ function getFlatServiceInProgress(flatId, flatNumber) {
       (Number(f.flatId) === fId || (fNum && String(f.flatNumber) === fNum))
     );
     if (inProgFlat) {
-      return {
+      const allowSimul = Boolean(order.allowSimultaneousCleaning);
+      const match = {
         serviceTitle: order.title,
         workerName: inProgFlat.workerName || "Prestador Externo",
-        serviceOrderId: order.id
+        serviceOrderId: order.id,
+        allowSimultaneousCleaning: allowSimul,
+        blocksCleaning: !allowSimul
       };
+      if (!allowSimul) return match;
+      if (!fallbackMatch) fallbackMatch = match;
     }
   }
-  return null;
+  return fallbackMatch;
 }
 
 function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
@@ -14986,7 +14992,8 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     existing.isPaidCleaning = isPaid;
     existing.instructionText = isInstruction ? noteText : null;
     existing.isExtended = false;
-    existing.isPriority = Boolean(isPriority);
+    existing.isPriority = markAsClean ? false : Boolean(isPriority);
+    if (markAsClean || !existing.isPriority) delete existing.priorityReason;
     existing.status = markAsClean ? "clean" : "dirty";
     existing.isVacant = markAsClean ? true : !flat.isOccupied;
     existing.twinBeds = resolvedTwinBeds;
@@ -15032,7 +15039,7 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     assignedUsername: assignedUser ? assignedUser.username : null,
     assignedUserName: assignedUser ? (assignedUser.name || assignedUser.username) : null,
     isVacant: markAsClean ? true : !flat.isOccupied,
-    isPriority: Boolean(isPriority),
+    isPriority: markAsClean ? false : Boolean(isPriority),
     isExtended: false,
     twinBeds: resolvedTwinBeds,
     manualTwinBeds: true,
@@ -15603,7 +15610,7 @@ function getRequestsForDate(dateStr, isNested = false) {
       isVacant: isExplicitlyVacantCheckout,
       isVacantExplicitlySet: Boolean(existingCleaning?.isVacantExplicitlySet || isExplicitlyVacantCheckout),
       vacantSource: resolvedVacantSource,
-      isPriority: existingCleaning ? Boolean(existingCleaning.isPriority) : Boolean(pmsRes.isPriority),
+      isPriority: resolvedStatus === "clean" ? false : (existingCleaning ? Boolean(existingCleaning.isPriority) : Boolean(pmsRes.isPriority)),
       isExtended: false,
       twinBeds: resolvedTwinBeds,
       extraMattress: resolvedExtraMattress,
@@ -16039,7 +16046,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       hasCheckinToday: isInst || isStayover ? false : hasCheckinToday,
       isOccupied: isInst ? false : isOccupied,
       isVacant: isInst ? true : isVacant,
-      isPriority: req_.isPriority || false,
+      isPriority: req_.status === "clean" ? false : Boolean(req_.isPriority),
       isExtended: isInst ? false : (req_.isExtended || req_.status === "extended"),
       isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
       originalRequestDate: req_.originalRequestDate || null,
@@ -16102,7 +16109,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
         linenTracking: linenTracking,
         towelsChanged: Boolean(req_.towelsChanged),
         beddingChanged: Boolean(req_.beddingChanged),
-        isPriority: req_.isPriority || false,
+        isPriority: req_.status === "clean" ? false : Boolean(req_.isPriority),
         isExtended: req_.isExtended || req_.status === "extended",
         isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
         originalRequestDate: req_.originalRequestDate || null,
@@ -16332,6 +16339,9 @@ app.patch("/api/cleaning/assignments/:requestId/priority", (req, res) => {
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
   item.isPriority = typeof isPriority === "boolean" ? isPriority : !item.isPriority;
+  if (!item.isPriority) {
+    delete item.priorityReason;
+  }
   item.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json(item);
@@ -16407,6 +16417,8 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
   const userAuth = getAuthUser(req);
   const now = new Date().toISOString();
   item.status = "clean";
+  item.isPriority = false;
+  delete item.priorityReason;
   item.assignedUserId = userAuth ? userAuth.id : (item.assignedUserId || 2);
   item.completedAt = now;
   item.pendingObservation = null;
@@ -16557,6 +16569,20 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     });
   }
 
+  // Trava de Serviço Externo em Andamento (liberado para Admin ou quando a OS permite limpeza simultânea)
+  const activeService = getFlatServiceInProgress(item.flatId, item.flatNumber);
+  const isCallerAdmin = Boolean((userAuth && (userAuth.role === "admin" || userAuth.role === "dev")) || bodyMarkedByAdmin);
+  if (
+    activeService &&
+    !activeService.allowSimultaneousCleaning &&
+    !isCallerAdmin &&
+    (status === "will_clean" || status === "cleaning_now" || status === "clean")
+  ) {
+    return res.status(422).json({
+      error: `Limpeza bloqueada: Serviço externo em andamento (${activeService.serviceTitle || "Manutenção"}). Aguarde a conclusão do prestador.`
+    });
+  }
+
   if (typeof isVacant === "boolean") {
     if (isStayover) {
       item.isVacant = false;
@@ -16697,8 +16723,13 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   }
 
   if (status) {
+    const previousStatus = item.status;
     item.status = status;
     if (status === "dirty") {
+      if (previousStatus === "clean") {
+        item.isPriority = false;
+        delete item.priorityReason;
+      }
       item.assignedUserId = null;
       item.assignedUsername = null;
       item.assignedUserName = null;
@@ -16751,6 +16782,21 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
 
       if (status === "clean") {
+        item.isPriority = false;
+        delete item.priorityReason;
+        if (stayoverActiveRes && stayoverActiveRes.isPriority) {
+          stayoverActiveRes.isPriority = false;
+          delete stayoverActiveRes.priorityReason;
+        }
+        const relatedCheckoutRes = (db.reservations || []).find(r =>
+          (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber)) &&
+          (r.checkoutDate === targetDate || r.checkinDate === targetDate)
+        );
+        if (relatedCheckoutRes && relatedCheckoutRes.isPriority) {
+          relatedCheckoutRes.isPriority = false;
+          delete relatedCheckoutRes.priorityReason;
+        }
+
         const isAdmin = Boolean((userAuth && (userAuth.role === "admin" || userAuth.role === "dev")) || bodyMarkedByAdmin);
         if (isAdmin) {
           item.markedByAdmin = true;
@@ -16990,6 +17036,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
 app.post("/api/cleaning/assignments/batch-claim", (req, res) => {
   const { requestIds = [] } = req.body;
   const userAuth = getAuthUser(req);
+  const isAdminUser = userAuth?.role === "admin" || userAuth?.role === "dev";
   const now = new Date().toISOString();
   let claimed = 0;
 
@@ -16997,6 +17044,10 @@ app.post("/api/cleaning/assignments/batch-claim", (req, res) => {
   for (const id of requestIds) {
     const item = findOrUpsertCleaningRequest(id, null, null, todayStr);
     if (item && (item.status === "dirty" || !item.status)) {
+      const activeService = getFlatServiceInProgress(item.flatId, item.flatNumber);
+      if (activeService && !activeService.allowSimultaneousCleaning && !isAdminUser) {
+        continue;
+      }
       item.status = "will_clean";
       item.assignedUserId = userAuth ? userAuth.id : 2;
       const assignedU = db.users.find(u => u.id === item.assignedUserId);
@@ -18107,6 +18158,11 @@ app.post("/api/service-orders", (req, res) => {
     createdBy: userAuth.name || userAuth.username || "admin",
     cleanFlatMode,
     allowedRoomStatuses,
+    allowSimultaneousCleaning: Boolean(
+      req.body?.allowSimultaneousCleaning ??
+      req.body?.allowCleaningDuringService ??
+      (req.body?.blockCleaningDuringService !== undefined ? !req.body.blockCleaningDuringService : false)
+    ),
     maxSimultaneousFlats: Math.max(1, parseInt(maxSimultaneousFlats, 10) || 2),
     maxFlatsPerDay: Math.max(1, parseInt(maxFlatsPerDay, 10) || 4),
     requirePhotos: typeof requirePhotos === "boolean" ? requirePhotos : true,
@@ -18196,6 +18252,7 @@ app.get("/api/service-orders/:id", (req, res) => {
   const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
   res.json({
     ...order,
+    allowSimultaneousCleaning: Boolean(order.allowSimultaneousCleaning),
     allowedRoomStatuses: getAllowedRoomStatuses(order),
     workerName: worker?.mainWorker?.name || order.workerName || null,
     workerCpf: worker?.mainWorker?.cpf || order.workerCpf || null,
@@ -18240,6 +18297,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
     order.allowedRoomStatuses = Array.isArray(body.allowedRoomStatuses)
       ? body.allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s))
       : [...DEFAULT_ALLOWED_ROOM_STATUSES];
+  }
+  if (body.allowSimultaneousCleaning !== undefined || body.allowCleaningDuringService !== undefined || body.blockCleaningDuringService !== undefined) {
+    order.allowSimultaneousCleaning = Boolean(
+      body.allowSimultaneousCleaning ??
+      body.allowCleaningDuringService ??
+      (body.blockCleaningDuringService !== undefined ? !body.blockCleaningDuringService : false)
+    );
   }
   if (body.maxSimultaneousFlats !== undefined) order.maxSimultaneousFlats = Math.max(1, parseInt(body.maxSimultaneousFlats, 10) || 2);
   if (body.maxFlatsPerDay !== undefined) order.maxFlatsPerDay = Math.max(1, parseInt(body.maxFlatsPerDay, 10) || 4);
@@ -18533,6 +18597,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     token: order.token,
     status: order.status,
     cleanFlatMode: order.cleanFlatMode,
+    allowSimultaneousCleaning: Boolean(order.allowSimultaneousCleaning),
     allowedRoomStatuses: allowedStatuses,
     notificationRecipients: order.notificationRecipients || [],
     stats: {

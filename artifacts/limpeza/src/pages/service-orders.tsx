@@ -210,6 +210,7 @@ export interface ServiceOrder {
   createdBy?: string;
   cleanFlatMode: CleanFlatMode;
   allowedRoomStatuses?: string[];
+  allowSimultaneousCleaning?: boolean;
   maxSimultaneousFlats: number;
   maxFlatsPerDay: number;
   requirePhotos: boolean;
@@ -240,6 +241,7 @@ export interface ServiceOrderProgressResponse {
   status: OrderStatus;
   notificationRecipients?: ServiceNotificationRecipient[];
   allowedRoomStatuses?: string[];
+  allowSimultaneousCleaning?: boolean;
   cleanFlatMode?: CleanFlatMode;
   stats: {
     total: number;
@@ -413,6 +415,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
   const [formWorkerCollaborators, setFormWorkerCollaborators] = useState<Array<{ name: string; cpf: string }>>([]);
   const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("always");
   const [formAllowedStatuses, setFormAllowedStatuses] = useState<OperationalScenarioId[]>(DEFAULT_ALLOWED_ROOM_STATUSES);
+  const [formAllowSimultaneousCleaning, setFormAllowSimultaneousCleaning] = useState<boolean>(false);
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
   const [formMaxPerDay, setFormMaxPerDay] = useState<number>(4);
   const [formRequirePhotos, setFormRequirePhotos] = useState<boolean>(true);
@@ -535,6 +538,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
     setFormWorkerCollaborators([]);
     setFormCleanFlatMode("always");
     setFormAllowedStatuses(["vago_limpo", "vago_sujo"]);
+    setFormAllowSimultaneousCleaning(false);
     setFormMaxSimultaneous(2);
     setFormMaxPerDay(4);
     setFormRequirePhotos(true);
@@ -565,6 +569,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
       }))
     );
     setFormCleanFlatMode("always");
+    setFormAllowSimultaneousCleaning(Boolean(order.allowSimultaneousCleaning));
 
     if (Array.isArray(order.allowedRoomStatuses)) {
       setFormAllowedStatuses(order.allowedRoomStatuses as OperationalScenarioId[]);
@@ -751,6 +756,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
         serviceTypeName: selectedCatalogItem?.name || undefined,
         cleanFlatMode: "always" as CleanFlatMode,
         allowedRoomStatuses: formAllowedStatuses,
+        allowSimultaneousCleaning: Boolean(formAllowSimultaneousCleaning),
         maxSimultaneousFlats: Number(formMaxSimultaneous) || 2,
         maxFlatsPerDay: Number(formMaxPerDay) || 4,
         requirePhotos: Boolean(formRequirePhotos),
@@ -1254,6 +1260,16 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             <Badge variant="outline" className="text-[10px] font-normal py-0.5 px-2 bg-muted/40">
                               🔓 {(order.allowedRoomStatuses || DEFAULT_ALLOWED_ROOM_STATUSES).length}/7 status liberados
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] font-normal py-0.5 px-2 ${
+                                order.allowSimultaneousCleaning
+                                  ? "border-emerald-300 text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/30"
+                                  : "bg-muted/40"
+                              }`}
+                            >
+                              {order.allowSimultaneousCleaning ? "🧽 Limpeza simultânea permitida" : "🔒 Bloqueia limpeza durante serviço"}
                             </Badge>
                             <Badge variant="outline" className="text-[10px] font-normal py-0.5 px-2 bg-muted/40">
                               ⚡ Máx {order.maxSimultaneousFlats} simult.
@@ -1832,6 +1848,75 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+
+                  {/* 2B. Regra de Limpeza Durante o Serviço (Independente) */}
+                  <div className="space-y-3 p-4 rounded-xl bg-muted/40 border">
+                    <div className="space-y-0.5">
+                      <Label className="text-sm font-bold text-foreground">
+                        Limpeza do Flat Durante o Serviço Externo <span className="text-rose-500">*</span>
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Defina se a equipe de governança pode iniciar ou concluir a limpeza de um flat enquanto o prestador estiver com o serviço em andamento naquele quarto.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <div
+                        onClick={() => setFormAllowSimultaneousCleaning(false)}
+                        data-testid="option-block-simultaneous-cleaning"
+                        className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          !formAllowSimultaneousCleaning
+                            ? "border-primary bg-primary/5 shadow-xs"
+                            : "border-border/60 hover:border-border hover:bg-muted/30 opacity-75"
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                              <span>🔒</span>
+                              <span>Bloquear limpeza durante o serviço</span>
+                            </span>
+                            <Badge
+                              variant={!formAllowSimultaneousCleaning ? "default" : "outline"}
+                              className="text-[9px] py-0 px-1.5"
+                            >
+                              Padrão
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Enquanto o prestador estiver com o serviço em andamento no flat, a limpeza fica bloqueada para camareiras (o Admin continua podendo iniciar/marcar limpo).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div
+                        onClick={() => setFormAllowSimultaneousCleaning(true)}
+                        data-testid="option-allow-simultaneous-cleaning"
+                        className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          formAllowSimultaneousCleaning
+                            ? "border-emerald-600 bg-emerald-500/10 shadow-xs"
+                            : "border-border/60 hover:border-border hover:bg-muted/30 opacity-75"
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                              <span>🧽</span>
+                              <span>Permitir limpeza simultânea</span>
+                            </span>
+                            {formAllowSimultaneousCleaning && (
+                              <Badge className="text-[9px] py-0 px-1.5 bg-emerald-600 text-white">
+                                Ativo
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Camareiras e Admin podem iniciar e concluir a limpeza do flat mesmo enquanto o serviço externo estiver em andamento no local.
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   </div>
 

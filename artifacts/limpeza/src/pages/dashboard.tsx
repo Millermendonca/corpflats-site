@@ -161,7 +161,7 @@ export default function Dashboard() {
         body: JSON.stringify({
           flatId: Number(manualFlatId),
           requestDate: targetDate,
-          isPriority: manualIsPriority,
+          isPriority: manualMarkAsClean ? false : manualIsPriority,
           twinBeds: manualTwinBeds,
           markAsClean: manualMarkAsClean,
           assignedUserId: manualMarkAsClean && manualCleanerId ? Number(manualCleanerId) : null,
@@ -223,8 +223,10 @@ export default function Dashboard() {
   const sortedFlats = useMemo(() => {
     if (!checkouts || !Array.isArray(checkouts)) return []
     return [...checkouts].sort((a: any, b: any) => {
-      const aPriority = a?.isPriority || a?.cleaningRequest?.isPriority ? 1 : 0
-      const bPriority = b?.isPriority || b?.cleaningRequest?.isPriority ? 1 : 0
+      const aStatus = a?.cleaningRequest?.status || a?.status || "dirty"
+      const bStatus = b?.cleaningRequest?.status || b?.status || "dirty"
+      const aPriority = aStatus !== "clean" && (a?.isPriority || a?.cleaningRequest?.isPriority) ? 1 : 0
+      const bPriority = bStatus !== "clean" && (b?.isPriority || b?.cleaningRequest?.isPriority) ? 1 : 0
       if (aPriority !== bPriority) return bPriority - aPriority
 
       const aPending = a?.isPendingFromPreviousDay || a?.cleaningRequest?.isPendingFromPreviousDay ? 1 : 0
