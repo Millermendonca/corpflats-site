@@ -42442,8 +42442,8 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     const isToday = dateStr === todayStr;
     const isTomorrow = dateStr === getOffsetDateStr(1);
     const isClosedTodayAfter5am = isToday && (nowBrl.hour >= 5);
-    const isClosedTomorrowAfter22h = isTomorrow && (nowBrl.hour >= 22);
-    const isOpen = !isCancelled && !isPast && (!isToday || nowBrl.hour < 5) && (!isTomorrow || nowBrl.hour < 22);
+    const isClosedTomorrowAfter22h = false;
+    const isOpen = !isCancelled && !isPast && (!isToday || nowBrl.hour < 5);
 
     const existing = reservationOrders.find(o => o.date === dateStr);
 
@@ -44051,8 +44051,7 @@ app.post("/api/breakfast/orders", (req, res) => {
 
   const targetDates = [...new Set(rawDates)].filter(Boolean);
 
-  // Validação de horário limite das 05:00 e corte rígido das 22:00
-  const tomorrowStr = getOffsetDateStr(1);
+  // Validação de horário limite das 05:00 do próprio dia (sem bloqueio às 22:00 da véspera)
   for (const tDate of targetDates) {
     if (tDate < todayStr) {
       return res.status(400).json({ error: `A data ${tDate} já passou. Não é possível realizar pedidos para datas retroativas.` });
@@ -44060,11 +44059,6 @@ app.post("/api/breakfast/orders", (req, res) => {
     if (tDate === todayStr && nowBrl.hour >= 5) {
       return res.status(400).json({
         error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.`
-      });
-    }
-    if (tDate === tomorrowStr && nowBrl.hour >= 22) {
-      return res.status(400).json({
-        error: `O horário limite (cutoff) para pedidos de café da manhã de amanhã (${tDate}) foi encerrado às 22:00. O corte diário ocorre às 22h para organização da produção da cozinha.`
       });
     }
     if (activeRes && tDate > activeRes.checkoutDate) {
