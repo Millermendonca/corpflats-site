@@ -10843,11 +10843,25 @@ export function getManagerWhatsAppPhone(db = null) {
  */
 export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId = null) {
   const rawUnits = (Array.isArray(db?.flats) && db.flats.length > 0) ? db.flats : (db?.rooms || []);
-  const activeFlats = rawUnits.filter(f => f && f.isActive !== false && f.status !== "manutencao_bloqueada" && f.maintenanceStatus !== "em_manutencao");
+  const activeFlats = rawUnits.filter(f =>
+    f &&
+    f.isActive !== false &&
+    f.status !== "manutencao_bloqueada" &&
+    f.status !== "em_manutencao" &&
+    f.status !== "bloqueado" &&
+    f.maintenanceStatus !== "em_manutencao" &&
+    f.maintenanceStatus !== "manutencao_bloqueada" &&
+    f.isBlocked !== true &&
+    f.maintenanceBlocked !== true
+  );
 
   if (!checkinDate || !checkoutDate || checkinDate >= checkoutDate || activeFlats.length === 0) {
     return {
       recommendedFlat: null,
+      bestFlat: null,
+      bestFlatId: null,
+      bestFlatNumber: null,
+      availableCount: 0,
       availableFlats: [],
       allStats: []
     };
@@ -10942,32 +10956,39 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
         (b.flatNumber != null && String(b.flatNumber) === String(flat.number)) ||
         (b.roomNumber != null && String(b.roomNumber) === String(flat.number));
       if (!sameFlat) return false;
-      return b.startDate < checkoutDate && b.endDate > checkinDate;
+      return b.startDate < checkoutDate && b.endDate >= checkinDate;
     });
 
     const hasServiceOrderConflict = (db?.serviceOrders || []).some(o => {
       if (!o) return false;
-      if (o.status === "active" && Array.isArray(o.flats)) {
+      const orderSt = String(o.status || "").toLowerCase();
+      if (["concluida", "concluido", "completed", "done", "cancelada", "cancelado", "cancelled", "resolvida", "fechada", "deleted"].includes(orderSt)) {
+        return false;
+      }
+      if (Array.isArray(o.flats) && o.flats.length > 0) {
         return o.flats.some(oflat => {
-          if (!oflat || (oflat.status !== "in_progress" && oflat.status !== "pending")) return false;
+          if (!oflat) return false;
+          const oflatSt = String(oflat.status || "").toLowerCase();
+          if (oflatSt !== "in_progress" && oflatSt !== "pending" && oflatSt !== "pendente" && oflatSt !== "em_andamento") return false;
           const sameNestedFlat =
             (oflat.flatId != null && String(oflat.flatId) === String(flat.id)) ||
             (oflat.flatNumber != null && String(oflat.flatNumber) === String(flat.number));
           if (!sameNestedFlat) return false;
-          const sDate = oflat.startedAt ? String(oflat.startedAt).slice(0, 10) : todayStr;
-          const estDate = oflat.estimatedFinishAt ? String(oflat.estimatedFinishAt).slice(0, 10) : sDate;
-          const eDate = [sDate, estDate, todayStr].filter(Boolean).sort().pop() || todayStr;
-          return sDate <= checkoutDate && eDate >= checkinDate;
+          const sDate = String(oflat.startedAt || o.blockStartDate || o.startDate || o.scheduledDate || "").slice(0, 10);
+          const estDate = String(oflat.estimatedFinishAt || o.blockEndDate || o.endDate || o.expectedCompletionDate || "2099-12-31").slice(0, 10);
+          const eDate = oflatSt === "in_progress"
+            ? ([sDate || todayStr, estDate, todayStr].filter(Boolean).sort().pop() || todayStr)
+            : estDate;
+          return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
         });
       }
       const sameFlat =
         (o.flatId != null && String(o.flatId) === String(flat.id)) ||
         (o.flatNumber != null && String(o.flatNumber) === String(flat.number));
-      const validFlatOrderStatus = o.status === "em_andamento" || o.status === "in_progress" || o.status === "pending" || o.status === "active";
-      const sDate = o.startDate || o.scheduledDate;
-      const eDate = o.endDate || o.scheduledDate || sDate;
-      if (!sameFlat || !validFlatOrderStatus || !sDate || !eDate) return false;
-      return sDate <= checkoutDate && eDate >= checkinDate;
+      if (!sameFlat) return false;
+      const sDate = String(o.startDate || o.scheduledDate || o.createdAt || "").slice(0, 10);
+      const eDate = String(o.endDate || o.expectedCompletionDate || o.scheduledDate || "2099-12-31").slice(0, 10);
+      return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
     });
 
     // Verifica se o flat possui check-out pendente previsto para o mesmo dia do check-in (2ª prioridade)
@@ -11019,8 +11040,13 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       return String(a.number).localeCompare(String(b.number), undefined, { numeric: true });
     });
 
+  const bestFlat = availableFlats.length > 0 ? availableFlats[0] : null;
   return {
-    recommendedFlat: availableFlats.length > 0 ? availableFlats[0] : null,
+    recommendedFlat: bestFlat,
+    bestFlat,
+    bestFlatId: bestFlat?.id || null,
+    bestFlatNumber: bestFlat?.number || null,
+    availableCount: availableFlats.length,
     availableFlats,
     allStats: stats
   };

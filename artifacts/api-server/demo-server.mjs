@@ -13002,10 +13002,15 @@ function createNotification(arg1, arg2, arg3) {
  */
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
+  const rawBase = typeof baseUrl === "string" && baseUrl ? baseUrl : ((typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br");
+  const hostBase = String(rawBase).replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
-  const isResign = Boolean(reservation?.needsReSignature);
+  const isResign = Boolean(
+    reservation?.needsReSignature &&
+    !isReservationStayAlreadyClosed(reservation) &&
+    !isBareB2bCredentialWithoutSignature(reservation)
+  );
   const resignParam = isResign
     ? (safeGuestIndex > 1 ? `?guest=${safeGuestIndex}&resign=1` : "?resign=1")
     : `?guest=${safeGuestIndex}`;
@@ -13124,10 +13129,15 @@ export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", d
  */
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
+  const rawBase = typeof baseUrl === "string" && baseUrl ? baseUrl : ((typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br");
+  const hostBase = String(rawBase).replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
-  const isResign = Boolean(reservation?.needsReSignature);
+  const isResign = Boolean(
+    reservation?.needsReSignature &&
+    !isReservationStayAlreadyClosed(reservation) &&
+    !isBareB2bCredentialWithoutSignature(reservation)
+  );
   const resignParam = isResign
     ? (safeGuestIndex > 1 ? `?guest=${safeGuestIndex}&resign=1` : "?resign=1")
     : `?guest=${safeGuestIndex}`;
@@ -13496,7 +13506,7 @@ function ensureReservationAuditLogs(reservation) {
   return reservation;
 }
 
-function diffReservationFields(oldRes, newBody, flatsList = []) {
+export function diffReservationFields(oldRes, newBody, flatsList = []) {
   const changes = [];
 
   const FIELD_MAP = {
@@ -13567,6 +13577,28 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     }
   }
 
+  const PAYMENT_STATUS_LABELS = {
+    pago_total: "Confirmado / Pago (100%)",
+    pago: "Confirmado / Pago (100%)",
+    sinal_pago: "Pago Parcialmente (Saldo de diária adicional em aberto)",
+    parcial: "Pago Parcialmente (Saldo de diária adicional em aberto)",
+    pendente: "Aguardando Pagamento",
+    isento: "Cortesia / Isento",
+    faturado: "Faturado Corporativo"
+  };
+
+  const oldChanLower = String(oldRes?.channel || newBody?.channel || "").toLowerCase();
+  const isOldOta = (oldChanLower.includes("booking") || oldChanLower.includes("airbnb")) &&
+    oldRes?.paymentCollect !== "Property" && !oldRes?.collectAtCheckin;
+  const hasOldPartialPending = (oldRes?.paymentStatus === "sinal_pago" || oldRes?.paymentStatus === "parcial") &&
+    Number(oldRes?.paidAmount) > 0 &&
+    Number(oldRes?.paidAmount) < Number(oldRes?.totalAmount || 0) - 0.01;
+  const wasOldEffectivelyPaidTotal =
+    (isOldOta && !hasOldPartialPending) ||
+    oldRes?.paymentStatus === "pago_total" ||
+    oldRes?.paymentStatus === "pago" ||
+    (Number(oldRes?.paidAmount || 0) >= Number(oldRes?.totalAmount || 0) - 0.01 && Number(oldRes?.totalAmount || 0) > 0);
+
   for (const [key, label] of Object.entries(FIELD_MAP)) {
     if (newBody[key] === undefined) continue;
 
@@ -13583,14 +13615,34 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
         });
       }
     } else if (key === "dailyRate" || key === "totalAmount" || key === "paidAmount") {
-      const numOld = Number(oldVal) || 0;
+      let numOld = Number(oldVal) || 0;
       const numNew = Number(newVal) || 0;
+      if (key === "paidAmount" && numOld === 0 && wasOldEffectivelyPaidTotal && Number(oldRes?.totalAmount) > 0) {
+        numOld = Number(oldRes.totalAmount);
+      }
       if (Math.abs(numOld - numNew) > 0.01) {
         changes.push({
           field: key,
           label,
-          oldValue: `R$ ${numOld.toFixed(2)}`,
-          newValue: `R$ ${numNew.toFixed(2)}`
+          oldValue: `R$ ${numOld.toFixed(2).replace(".", ",")}`,
+          newValue: `R$ ${numNew.toFixed(2).replace(".", ",")}`
+        });
+      }
+    } else if (key === "paymentStatus") {
+      const rawOldSt = String(oldVal || "").trim();
+      const rawNewSt = String(newVal || "").trim();
+      const normOldSt = wasOldEffectivelyPaidTotal
+        ? "pago_total"
+        : (rawOldSt === "pago" ? "pago_total" : (rawOldSt === "parcial" ? "sinal_pago" : (rawOldSt || "pendente")));
+      const normNewSt = rawNewSt === "pago"
+        ? "pago_total"
+        : (rawNewSt === "parcial" ? "sinal_pago" : (rawNewSt || "pendente"));
+      if (normOldSt !== normNewSt) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: PAYMENT_STATUS_LABELS[normOldSt] || rawOldSt || "(vazio)",
+          newValue: PAYMENT_STATUS_LABELS[normNewSt] || rawNewSt || "(vazio)"
         });
       }
     } else if (key === "adults" || key === "children" || key === "guestCount") {
@@ -13621,7 +13673,7 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
   // Detalhamento individual de diárias (dailyRates)
   if (Array.isArray(newBody.dailyRates)) {
     const oldRates = Array.isArray(oldRes.dailyRates) ? oldRes.dailyRates : [];
-    const summarizeRates = (rates) => rates.map(d => `${d.date}: R$ ${Number(d.rate || 0)} (${d.channel || 'whatsapp'})`).join(", ");
+    const summarizeRates = (rates) => rates.map(d => `${d.date}: R$ ${Number(d.rate || 0).toFixed(2).replace(".", ",")} (${d.channel || 'whatsapp'})`).join(", ");
     const oldSummary = summarizeRates(oldRates);
     const newSummary = summarizeRates(newBody.dailyRates);
     if (oldSummary !== newSummary && (oldRates.length > 0 || newBody.dailyRates.length > 0)) {
@@ -13637,7 +13689,7 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
   // Detalhamento de pagamentos efetuados (payments)
   if (Array.isArray(newBody.payments)) {
     const oldPayments = Array.isArray(oldRes.payments) ? oldRes.payments : [];
-    const summarizePayments = (pays) => pays.map(p => `R$ ${Number(p.amount || 0).toFixed(2)} via ${p.method || 'pix'}`).join(", ");
+    const summarizePayments = (pays) => pays.map(p => `R$ ${Number(p.amount || 0).toFixed(2).replace(".", ",")} via ${p.method || 'pix'}`).join(", ");
     const oldSumm = summarizePayments(oldPayments);
     const newSumm = summarizePayments(newBody.payments);
     if (oldSumm !== newSumm && (oldPayments.length > 0 || newBody.payments.length > 0)) {
@@ -23084,7 +23136,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 // ── PMS & CRM Endpoints ────────────────────────────────────────────────────
 
 // ── Helper de Detecção de Conflitos / Overbooking Ativo em Flat ─────────────
-function findActiveOverbookingConflicts(targetDb, { flatId, flatNumber, checkinDate, checkoutDate, excludeResId = null }) {
+export function findActiveOverbookingConflicts(targetDb, { flatId, flatNumber, checkinDate, checkoutDate, excludeResId = null }) {
   if (!targetDb || !Array.isArray(targetDb.reservations) || !checkinDate || !checkoutDate || checkinDate >= checkoutDate) {
     return [];
   }
@@ -23120,10 +23172,8 @@ function findActiveOverbookingConflicts(targetDb, { flatId, flatNumber, checkinD
 }
 
 // ── Motor Fair-Share: Quarto da Vez (Balanceamento de Uso & Ociosidade) ───────
-function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null) {
-  const flats = (db.flats || []).filter(
-    f => f && f.isActive !== false && f.status !== "manutencao_bloqueada" && f.maintenanceStatus !== "em_manutencao"
-  );
+export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null) {
+  const flats = (db.flats || []).filter(f => f && f.isActive !== false);
   if (flats.length === 0) return { bestFlat: null, availableCount: 0, allStats: [] };
 
   const [y, m] = checkinDate.split("-").map(Number);
@@ -23152,6 +23202,16 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
       r.flatId === flat.id ||
       Number(r.flatId) === Number(flat.id) ||
       String(r.flatNumber) === String(flat.number);
+
+    const isFlatBlockedStatus = Boolean(
+      flat.status === "manutencao_bloqueada" ||
+      flat.status === "em_manutencao" ||
+      flat.status === "bloqueado" ||
+      flat.maintenanceStatus === "em_manutencao" ||
+      flat.maintenanceStatus === "manutencao_bloqueada" ||
+      flat.isBlocked === true ||
+      flat.maintenanceBlocked === true
+    );
 
     // 1. Verifica conflitos de ocupação no período solicitado [checkinDate, checkoutDate)
     const conflicts = (db.reservations || []).filter(r => {
@@ -23183,31 +23243,43 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
     const blockConflicts = (db.roomBlocks || []).filter(b =>
       (b.flatId === flat.id || Number(b.flatId) === Number(flat.id) || String(b.flatNumber) === String(flat.number)) &&
       b.startDate < checkoutDate &&
-      b.endDate > checkinDate
+      b.endDate >= checkinDate
     );
 
     const hasServiceOrderConflict = (db.serviceOrders || []).some(order => {
       if (!order) return false;
-      if (order.status === "active" && Array.isArray(order.flats)) {
+      const orderSt = String(order.status || "").toLowerCase();
+      if (["concluida", "concluido", "completed", "done", "cancelada", "cancelado", "cancelled", "resolvida", "fechada", "deleted"].includes(orderSt)) {
+        return false;
+      }
+      if (Array.isArray(order.flats) && order.flats.length > 0) {
         return order.flats.some(oflat => {
-          if (!oflat || (oflat.status !== "in_progress" && oflat.status !== "pending")) return false;
+          if (!oflat) return false;
+          const oflatSt = String(oflat.status || "").toLowerCase();
+          if (oflatSt !== "in_progress" && oflatSt !== "pending" && oflatSt !== "pendente" && oflatSt !== "em_andamento") return false;
           if (Number(oflat.flatId) !== Number(flat.id) && String(oflat.flatNumber) !== String(flat.number)) return false;
-          const range = getActiveServiceFlatBlockRange(oflat, todayStr);
-          if (!range) return false;
-          return range.startDate <= checkoutDate && range.endDate >= checkinDate;
+          if (oflatSt === "in_progress") {
+            const range = getActiveServiceFlatBlockRange(oflat, todayStr);
+            if (!range) return false;
+            return range.startDate <= checkoutDate && range.endDate >= checkinDate;
+          }
+          const sDate = String(oflat.startedAt || order.blockStartDate || order.startDate || order.scheduledDate || "").slice(0, 10);
+          const eDate = String(oflat.estimatedFinishAt || order.blockEndDate || order.endDate || order.expectedCompletionDate || "2099-12-31").slice(0, 10);
+          return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
         });
       }
-      const validFlatOrderStatus = order.status === "em_andamento" || order.status === "in_progress" || order.status === "pending" || order.status === "active";
-      const sDate = order.startDate || order.scheduledDate;
-      const eDate = order.endDate || order.scheduledDate || sDate;
-      if (validFlatOrderStatus && sDate && eDate) {
-        if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== String(flat.number)) return false;
-        return sDate <= checkoutDate && eDate >= checkinDate;
-      }
-      return false;
+      if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== String(flat.number)) return false;
+      const sDate = String(order.startDate || order.scheduledDate || order.createdAt || "").slice(0, 10);
+      const eDate = String(order.endDate || order.expectedCompletionDate || order.scheduledDate || "2099-12-31").slice(0, 10);
+      return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
     });
 
-    const isAvailable = conflicts.length === 0 && !hasPendingModConflict && blockConflicts.length === 0 && !hasServiceOrderConflict;
+    const isAvailable =
+      !isFlatBlockedStatus &&
+      conflicts.length === 0 &&
+      !hasPendingModConflict &&
+      blockConflicts.length === 0 &&
+      !hasServiceOrderConflict;
 
     // 1.1 Prioridade no dia do Check-in:
     // Prioridade 1 (isCompletelyVacantOnCheckin = true): flat totalmente desocupado no dia do check-in (sem reserva saindo nesse dia, ou com check-out já concluído)
@@ -23258,9 +23330,11 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
     return {
       flat,
       isAvailable,
+      isFlatBlockedStatus,
       checkinDayPriority,
       isCompletelyVacantOnCheckin,
       hasSameDayCheckout,
+      hasCheckoutOnCheckinDay: hasSameDayCheckout,
       conflicts: conflicts.map(c => ({
         id: c.id,
         code: c.code,
@@ -23269,6 +23343,7 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
         checkoutDate: c.checkoutDate,
         channel: c.channel
       })),
+      blocks: blockConflicts,
       blockConflicts,
       monthOccupiedDays,
       daysSinceLastCheckout,
@@ -23306,6 +23381,7 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
     allStats: flatStats
   };
 }
+export const calculateFairShareRanking = calculateFairShareStats;
 
 app.get("/api/pms/fair-share-flat", (req, res) => {
   const { checkin, checkout, excludeResId } = req.query;
@@ -25611,13 +25687,43 @@ export function isReservationStayAlreadyClosed(r) {
   );
 }
 
-export function hasGuestCompletedOrHadCheckin(g) {
+export function isBareB2bCredentialWithoutSignature(r) {
+  if (!r) return false;
+  const hasB2bCred = Boolean(r.b2bCredentialCompletedAt || r.credentialStatus === "completed");
+  if (!hasB2bCred) return false;
+  const hasResSig = Boolean(
+    r.fnhrCompleted ||
+    r.checkedInAt ||
+    r.fnrhSignedAt ||
+    r.fnrhDocumentUuid ||
+    r.fnrhPdfUrl ||
+    r.fnrhSha256Hash ||
+    r.previousCheckinSignedAt ||
+    r.preCheckinSignedAt ||
+    r.preCheckinData?.signatureUrl ||
+    r.checkinData?.signatureUrl ||
+    r.checkinData?.termsSignature
+  );
+  const hasGuestSig = Array.isArray(r.guests) && r.guests.some(g => Boolean(
+    g?.fnrhSignedAt ||
+    g?.fnrhDocumentUuid ||
+    g?.fnrhPdfUrl ||
+    g?.fnrhSha256Hash ||
+    g?.previousCheckinSignedAt ||
+    (g?.checkinCompletedAt && g?.signatureUrl)
+  ));
+  return !hasResSig && !hasGuestSig;
+}
+
+export function hasGuestCompletedOrHadCheckin(g, r = null) {
   if (!g) return false;
+  if (r && isBareB2bCredentialWithoutSignature(r)) return false;
   // Não considera g.signatureUrl isoladamente para evitar falsos positivos quando a assinatura antiga foi herdada do CRM
   return Boolean(
     g.hasCompletedCheckin ||
     g.hadCompletedCheckinBefore ||
     g.checkinCompletedAt ||
+    g.previousCheckinSignedAt ||
     g.fnrhPdfUrl ||
     g.fnrhDocumentUuid ||
     g.fnrhSha256Hash ||
@@ -25628,12 +25734,18 @@ export function hasGuestCompletedOrHadCheckin(g) {
 export function hasReservationCompletedAnyCheckin(r) {
   if (!r) return false;
   if (isReservationStayAlreadyClosed(r)) return false;
+  if (isBareB2bCredentialWithoutSignature(r)) return false;
   if (
     r.fnhrCompleted ||
     r.preCheckinCompleted ||
     r.hasPreCheckin ||
     r.hadCompletedCheckinBefore ||
     r.checkedInAt ||
+    r.previousCheckinSignedAt ||
+    r.preCheckinSignedAt ||
+    r.preCheckinData?.signatureUrl ||
+    r.checkinData?.signatureUrl ||
+    r.checkinData?.termsSignature ||
     r.fnrhPdfUrl ||
     r.fnrhDocumentUuid ||
     r.fnrhSha256Hash ||
@@ -25641,16 +25753,17 @@ export function hasReservationCompletedAnyCheckin(r) {
   ) {
     return true;
   }
-  if (Array.isArray(r.guests) && r.guests.some(g => hasGuestCompletedOrHadCheckin(g))) {
+  if (Array.isArray(r.guests) && r.guests.some(g => hasGuestCompletedOrHadCheckin(g, r))) {
     return true;
   }
   return false;
 }
 
 export function invalidateReservationCheckinSignatures(r, reason = "Alteração de acomodação (flat) ou período da estadia") {
-  if (!r) return;
+  if (!r) return { invalidated: false, reason };
   const stayClosed = isReservationStayAlreadyClosed(r);
   const hadCheckinBefore = Boolean(!stayClosed && hasReservationCompletedAnyCheckin(r) && !isPreReservationBlocked(r));
+  const prevResSigAt = r.fnrhSignedAt || r.checkedInAt || r.preCheckinSignedAt || r.previousCheckinSignedAt || r.guests?.[0]?.fnrhSignedAt || r.guests?.[0]?.checkinCompletedAt || new Date().toISOString();
   r.fnhrCompleted = false;
   r.preCheckinCompleted = false;
   r.signatureUrl = null;
@@ -25659,10 +25772,12 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
     r.hadCompletedCheckinBefore = true;
     r.needsReSignature = true;
     r.reSignatureReason = reason;
+    r.previousCheckinSignedAt = prevResSigAt;
   } else {
     r.hadCompletedCheckinBefore = false;
     r.needsReSignature = false;
     delete r.reSignatureReason;
+    delete r.previousCheckinSignedAt;
   }
 
   delete r.fnrhPdfUrl;
@@ -25683,12 +25798,18 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
 
   if (Array.isArray(r.guests)) {
     r.guests.forEach(g => {
-      const gHadCheckin = Boolean(!stayClosed && (hasGuestCompletedOrHadCheckin(g) || hadCheckinBefore) && !isPreReservationBlocked(r));
+      const gHadCheckin = Boolean(!stayClosed && (hasGuestCompletedOrHadCheckin(g, r) || hadCheckinBefore) && !isPreReservationBlocked(r));
+      const prevGSigAt = g.fnrhSignedAt || g.checkinCompletedAt || g.previousCheckinSignedAt || prevResSigAt;
       g.hasCompletedCheckin = false;
       g.checkinCompletedAt = null;
       g.signatureUrl = null;
       g.hadCompletedCheckinBefore = gHadCheckin;
       g.needsReSignature = gHadCheckin;
+      if (gHadCheckin) {
+        g.previousCheckinSignedAt = prevGSigAt;
+      } else {
+        delete g.previousCheckinSignedAt;
+      }
       delete g.fnrhPdfUrl;
       delete g.fnrhDownloadUrl;
       delete g.fnrhDocumentUuid;
@@ -25702,6 +25823,8 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
       delete g.fnrhR2Url;
     });
   }
+
+  return { invalidated: hadCheckinBefore, reason };
 }
 
 /**
@@ -25741,6 +25864,8 @@ export function dispatchReservationReSignatureNotifications(reservation, changes
   } catch (auditErr) {
     console.warn("[Re-Signature Audit] Erro ao registrar auditoria de re-assinatura:", auditErr.message);
   }
+
+  if (options.auditOnly) return;
 
   // 2. Execução Assíncrona Não-Bloqueante
   setImmediate(async () => {
@@ -25800,7 +25925,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   ensureReservationAuditLogs(r);
-  const diffs = diffReservationFields(r, req.body, db.flats || []);
 
   const oldCheckin = r.checkinDate;
   const oldCheckout = r.checkoutDate;
@@ -25812,11 +25936,30 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldGuestName = r.guestName;
   const oldGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
   const oldTotalAmount = Number(r.totalAmount) || 0;
-  const oldPaidAmount = Number(r.paidAmount) || 0;
+  const oldChanLowerInit = String(r.channel || "").toLowerCase();
+  const oldIsOtaInit = oldChanLowerInit.includes("booking") || oldChanLowerInit.includes("airbnb");
+  const oldWasAlreadyPaid = Boolean(
+    r.paymentStatus === "pago_total" ||
+    r.paymentStatus === "pago" ||
+    (oldIsOtaInit && r.paymentStatus !== "sinal_pago" && r.paymentStatus !== "parcial")
+  );
+  const oldPaidAmount = (oldWasAlreadyPaid && (!r.paidAmount || Number(r.paidAmount) <= 0) && oldTotalAmount > 0)
+    ? oldTotalAmount
+    : (Number(r.paidAmount) || 0);
+  const oldPaymentStatusNormalized = oldWasAlreadyPaid ? "pago_total" : (r.paymentStatus || "pendente");
+  const oldResSnapshot = {
+    ...r,
+    totalAmount: oldTotalAmount,
+    paidAmount: oldPaidAmount,
+    paymentStatus: oldPaymentStatusNormalized,
+    vehicle: r.vehicle ? { ...r.vehicle } : null,
+    dailyRates: Array.isArray(r.dailyRates) ? r.dailyRates.map(d => ({ ...d })) : [],
+    payments: Array.isArray(r.payments) ? r.payments.map(p => ({ ...p })) : []
+  };
   const oldPendingAmount = Math.max(0, oldTotalAmount - oldPaidAmount);
   const oldDailyRate = Number(r.dailyRate) || 0;
   const hadCheckinBeforeEdit = hasReservationCompletedAnyCheckin(r);
-  const guestHadCheckinBeforeEdit = Array.isArray(r.guests) ? r.guests.map(g => hasGuestCompletedOrHadCheckin(g)) : [];
+  const guestHadCheckinBeforeEdit = Array.isArray(r.guests) ? r.guests.map(g => hasGuestCompletedOrHadCheckin(g, r)) : [];
   const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
   const oldFlatLockReason = r.flatLockReason || "";
 
@@ -26157,8 +26300,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.needsReSignature = shouldRequireReSig;
     if (shouldRequireReSig) {
       r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+      if (!r.previousCheckinSignedAt) {
+        r.previousCheckinSignedAt = new Date().toISOString();
+      }
     } else {
       delete r.reSignatureReason;
+      delete r.previousCheckinSignedAt;
     }
     r.fnhrCompleted = false;
     r.preCheckinCompleted = false;
@@ -26171,6 +26318,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.guests.forEach((g, idx) => {
         const gHad = Boolean((guestHadCheckinBeforeEdit[idx] || hadCheckinBeforeEdit) && !isPreReservationBlocked(r));
         g.needsReSignature = gHad;
+        if (gHad && !g.previousCheckinSignedAt) {
+          g.previousCheckinSignedAt = r.previousCheckinSignedAt || new Date().toISOString();
+        } else if (!gHad) {
+          delete g.previousCheckinSignedAt;
+        }
         g.hasCompletedCheckin = false;
         g.signatureUrl = null;
         g.checkinCompletedAt = null;
@@ -26182,6 +26334,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   } else if (isPreReservationBlocked(r)) {
     r.needsReSignature = false;
     delete r.reSignatureReason;
+    delete r.previousCheckinSignedAt;
   }
 
   if (req.body.docPhotoBase64) {
@@ -26380,6 +26533,34 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
+  // Identifica diárias adicionadas na edição por canal (OTA: Airbnb/Booking vs Direto: WhatsApp/Site/Balcão/Empresa)
+  const oldDatesSet = new Set();
+  if (oldDailyRatesBeforeEdit.length > 0) {
+    oldDailyRatesBeforeEdit.forEach(d => { if (d && d.date) oldDatesSet.add(String(d.date)); });
+  } else if (oldCheckin && oldCheckout) {
+    const d1 = new Date(oldCheckin + "T12:00:00Z");
+    const d2 = new Date(oldCheckout + "T12:00:00Z");
+    const nights = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)));
+    for (let i = 0; i < nights; i++) {
+      oldDatesSet.add(new Date(d1.getTime() + i * 24 * 60 * 60 * 1000).toISOString().substring(0, 10));
+    }
+  }
+  const addedDailyRatesOnPut = Array.isArray(r.dailyRates)
+    ? r.dailyRates.filter(d => d && d.date && !oldDatesSet.has(String(d.date)))
+    : [];
+  const addedOtaRatesSum = Math.round(addedDailyRatesOnPut
+    .filter(d => {
+      const dc = String(d?.channel || "").toLowerCase();
+      return dc.includes("booking") || dc.includes("airbnb");
+    })
+    .reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0) * 100) / 100;
+  const addedDirectRatesSum = Math.round(addedDailyRatesOnPut
+    .filter(d => {
+      const dc = String(d?.channel || "").toLowerCase();
+      return !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
+    })
+    .reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0) * 100) / 100;
+
   // Normalização de payments na edição
   let explicitPaymentsSumOnPut = null;
   if (Array.isArray(req.body.payments)) {
@@ -26446,21 +26627,23 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
     });
     const explicitPartialStatus = req.body.paymentStatus === "sinal_pago" || req.body.paymentStatus === "parcial";
-    const explicitPartialPaidAmt = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0 && Number(req.body.paidAmount) < currentTot - 0.01;
-    const explicitPartialPaymentsList = explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01 && (currentTot > oldTotalAmount + 0.01 || hasDirectDailyRateInOta || explicitPartialStatus);
+    const explicitPartialPaidAmt = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0 && Number(req.body.paidAmount) < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || addedOtaRatesSum === 0);
+    const explicitPartialPaymentsList = explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || (currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum === 0));
     const extendedStayWithoutFullPayment = Boolean(
       nightsChangedOnEdit &&
       newNightsCount > oldNightsCount &&
       oldPaidAmount > 0 &&
-      currentTot > oldPaidAmount + 0.01 &&
+      currentTot > oldPaidAmount + addedOtaRatesSum + 0.01 &&
+      (hasDirectDailyRateInOta || addedDirectRatesSum > 0 || (!Array.isArray(req.body.dailyRates) && explicitPartialStatus)) &&
       req.body.paymentStatus !== "pago_total" &&
-      (req.body.paidAmount === undefined || Number(req.body.paidAmount) <= oldPaidAmount + 0.01) &&
-      (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut <= oldPaidAmount + 0.01)
+      (req.body.paidAmount === undefined || Number(req.body.paidAmount) <= oldPaidAmount + addedOtaRatesSum + 0.01) &&
+      (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut <= oldPaidAmount + addedOtaRatesSum + 0.01)
     );
     const alreadyHadPartialExtension = Boolean(
       (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
       Number(r.paidAmount || 0) > 0 &&
       Number(r.paidAmount || 0) < currentTot - 0.01 &&
+      (hasDirectDailyRateInOta || addedOtaRatesSum === 0) &&
       req.body.paymentStatus !== "pago_total"
     );
 
@@ -26471,14 +26654,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 
     if (hasOtaPartialPendingExtension) {
       let preservedOtaPaid = 0;
+      const expectedOtaPaidWithAddedOta = Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100;
       if (explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01) {
-        preservedOtaPaid = explicitPaymentsSumOnPut;
+        preservedOtaPaid = Math.max(explicitPaymentsSumOnPut, expectedOtaPaidWithAddedOta < currentTot - 0.01 ? expectedOtaPaidWithAddedOta : 0);
       } else if (explicitPartialPaidAmt) {
-        preservedOtaPaid = Number(req.body.paidAmount);
-      } else if (oldPaidAmount > 0 && oldPaidAmount < currentTot - 0.01) {
-        preservedOtaPaid = oldPaidAmount;
-      } else if (oldTotalAmount > 0 && oldTotalAmount < currentTot - 0.01) {
-        preservedOtaPaid = oldTotalAmount;
+        preservedOtaPaid = Math.max(Number(req.body.paidAmount), expectedOtaPaidWithAddedOta < currentTot - 0.01 ? expectedOtaPaidWithAddedOta : 0);
+      } else if (expectedOtaPaidWithAddedOta > 0 && expectedOtaPaidWithAddedOta < currentTot - 0.01) {
+        preservedOtaPaid = expectedOtaPaidWithAddedOta;
+      } else if (oldTotalAmount > 0 && oldTotalAmount + addedOtaRatesSum < currentTot - 0.01) {
+        preservedOtaPaid = Math.round((oldTotalAmount + addedOtaRatesSum) * 100) / 100;
       } else if (hasDirectDailyRateInOta && Array.isArray(r.dailyRates)) {
         const otaRatesSum = r.dailyRates
           .filter(d => {
@@ -26515,7 +26699,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (!r.paymentMethod || r.paymentMethod === "pix") {
         r.paymentMethod = otaMethod;
       }
-      if (req.body.paymentStatus === undefined || !r.paymentStatus || r.paymentStatus === "pendente") {
+      if (req.body.paymentStatus === undefined || !r.paymentStatus || r.paymentStatus === "pendente" || r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") {
         r.paymentStatus = "pago_total";
       }
       if (currentTot > 0) {
@@ -26532,10 +26716,63 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
   } else {
-    if (r.paymentStatus === "pago_total" && Number(r.totalAmount) > 0 && (!r.paidAmount || r.paidAmount < Number(r.totalAmount))) {
-      r.paidAmount = Number(r.totalAmount);
+    const currentTot = Number(r.totalAmount) || 0;
+    const isB2bDirectCheck = putChanLower === "b2b" || putChanLower.includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (!isB2bDirectCheck && r.status !== "pre_reserva") {
+      // Se uma reserva direta recebeu diária(s) adicional(is) via Airbnb ou Booking, soma automaticamente como paga(s)
+      if (addedOtaRatesSum > 0) {
+        const expectedPaidWithOtaExt = Math.min(currentTot, Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100);
+        if ((Number(r.paidAmount) || 0) < expectedPaidWithOtaExt - 0.01) {
+          const otaExtMethod = addedDailyRatesOnPut.some(d => String(d?.channel || "").toLowerCase().includes("booking")) ? "booking" : "airbnb";
+          r.paidAmount = expectedPaidWithOtaExt;
+          if (!Array.isArray(r.payments)) r.payments = [];
+          const curPaySum = r.payments.reduce((a, p) => a + (Number(p.amount) || 0), 0);
+          if (curPaySum < expectedPaidWithOtaExt - 0.01) {
+            r.payments.push({
+              id: `pay_ota_ext_${Date.now()}`,
+              amount: Math.round((expectedPaidWithOtaExt - curPaySum) * 100) / 100,
+              method: otaExtMethod,
+              date: new Date().toISOString(),
+              notes: otaExtMethod === "booking" ? "Diária adicional Booking.com (Quitada)" : "Diária adicional Airbnb (Quitada)"
+            });
+          }
+        }
+      }
+
+      const effectivePaidAfterOtaExt = Number(r.paidAmount) || 0;
+      const hasUnpaidDirectExtension = Boolean(
+        oldPaidAmount > 0 &&
+        currentTot > Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100 + 0.01 &&
+        (addedDirectRatesSum > 0 || (nightsChangedOnEdit && newNightsCount > oldNightsCount)) &&
+        (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut < currentTot - 0.01) &&
+        (req.body.paidAmount === undefined || Number(req.body.paidAmount) < currentTot - 0.01)
+      );
+
+      if (hasUnpaidDirectExtension) {
+        r.paidAmount = Math.max(effectivePaidAfterOtaExt, Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100);
+        r.paymentStatus = "sinal_pago";
+      } else if (effectivePaidAfterOtaExt >= currentTot - 0.01 && currentTot > 0) {
+        r.paidAmount = currentTot;
+        r.paymentStatus = "pago_total";
+      } else if (r.paymentStatus === "pago_total" && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
+        r.paidAmount = currentTot;
+      }
+    } else if (r.paymentStatus === "pago_total" && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
+      r.paidAmount = currentTot;
     }
   }
+
+  // Comparação de alterações (diffReservationFields) SOMENTE após a normalização completa do pagamento
+  const normalizedDiffPayload = {
+    ...req.body,
+    totalAmount: r.totalAmount,
+    paidAmount: r.paidAmount,
+    paymentStatus: r.paymentStatus,
+    dailyRate: r.dailyRate,
+    ...(Array.isArray(req.body.dailyRates) || nightsChangedOnEdit ? { dailyRates: r.dailyRates } : {}),
+    ...(Array.isArray(req.body.payments) || addedOtaRatesSum > 0 ? { payments: r.payments } : {})
+  };
+  const diffs = diffReservationFields(oldResSnapshot, normalizedDiffPayload, db.flats || []);
 
   // Atualização imediata do PIX Copia e Cola e invalidação de preferência antiga de Cartão
   // sempre que o saldo pendente, valor total, diárias ou datas de reserva não paga forem alterados
@@ -27398,7 +27635,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
           origin: originHeader,
           source: "pms_admin_edit",
-          actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
+          actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" },
+          auditOnly: true
         });
       }
     } else if (!isPreReservationBlocked(r)) {
@@ -36997,6 +37235,21 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   const code = req.params.code;
   const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code) || findReservationByLocatorOrContact(code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  // Sanitiza needsReSignature em reservas encerradas ou que nunca concluíram assinatura de check-in
+  const stayClosedOnPreCheckin = isReservationStayAlreadyClosed(r);
+  const resEverHadCheckin = !stayClosedOnPreCheckin && hasReservationCompletedAnyCheckin(r);
+  if (r.needsReSignature && (stayClosedOnPreCheckin || !resEverHadCheckin)) {
+    r.needsReSignature = false;
+    delete r.reSignatureReason;
+  }
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      if (g && g.needsReSignature && (stayClosedOnPreCheckin || (!hasGuestCompletedOrHadCheckin(g, r) && !resEverHadCheckin))) {
+        g.needsReSignature = false;
+      }
+    });
+  }
 
   // Se o modo Gov.br (FNRH SERPRO) estiver ativo e a reserva ainda não tiver link SERPRO, registra sob demanda com fallback seguro
   if (db.settings?.checkinProvider === "gov_fnrh" && !isPreReservationBlocked(r) && r.status !== "cancelada" && !r.serproPrecheckinUrl && !r.link_precheckin) {

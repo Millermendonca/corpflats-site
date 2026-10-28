@@ -810,9 +810,22 @@ export default function GuestPreCheckin() {
     }
 
     // Avaliação estritamente individual da necessidade de re-assinatura
-    const isGuestPendingReSign = currentG?.needsReSignature !== undefined
-      ? Boolean(currentG.needsReSignature)
-      : (Boolean(res.needsReSignature) && !currentG?.hasCompletedCheckin)
+    const stLowerPre = String(res.status || "").toLowerCase()
+    const isStayClosedPre = Boolean(res.checkoutDone || res.earlyCheckout || ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLowerPre))
+    const isBareB2bCredPre = Boolean(
+      (res.b2bCredentialCompletedAt || res.credentialStatus === "completed") &&
+      !res.previousCheckinSignedAt &&
+      !res.fnrhSignedAt &&
+      !res.checkedInAt &&
+      !res.fnrhDocumentUuid &&
+      !res.fnrhPdfUrl &&
+      !(Array.isArray(guests) && guests.some((g: any) => g?.previousCheckinSignedAt || g?.fnrhSignedAt || g?.checkinCompletedAt || g?.fnrhDocumentUuid))
+    )
+    const isGuestPendingReSign = !isStayClosedPre && !isBareB2bCredPre && (
+      currentG?.needsReSignature !== undefined
+        ? Boolean(currentG.needsReSignature)
+        : (Boolean(res.needsReSignature) && !currentG?.hasCompletedCheckin)
+    )
 
     const isReSignatureNeeded = isGuestPendingReSign
     const sig = isReSignatureNeeded ? null : (currentG?.signatureUrl || (isTitular ? res.signatureUrl : null))
@@ -2623,10 +2636,25 @@ export default function GuestPreCheckin() {
         {/* Banner de Re-assinatura: Individualizado por Hóspede Selecionado */}
         {(() => {
           const currentG = guestList.find((g: any) => g.index === selectedGuestIndex) || guestList[selectedGuestIndex - 1]
-          const isCurrentPendingReSign = currentG?.needsReSignature !== undefined
-            ? Boolean(currentG.needsReSignature)
-            : (Boolean(reservation?.needsReSignature) && !currentG?.hasCompletedCheckin)
-          const otherPending = guestList.filter((g: any) => g.index !== selectedGuestIndex && Boolean(g.needsReSignature))
+          const stLowerBanner = String(reservation?.status || "").toLowerCase()
+          const isStayClosedBanner = Boolean(reservation?.checkoutDone || reservation?.earlyCheckout || ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLowerBanner))
+          const isBareB2bCredBanner = Boolean(
+            (reservation?.b2bCredentialCompletedAt || (reservation as any)?.credentialStatus === "completed") &&
+            !(reservation as any)?.previousCheckinSignedAt &&
+            !reservation?.fnrhSignedAt &&
+            !reservation?.checkedInAt &&
+            !reservation?.fnrhDocumentUuid &&
+            !reservation?.fnrhPdfUrl &&
+            !(Array.isArray(guestList) && guestList.some((g: any) => g?.previousCheckinSignedAt || g?.fnrhSignedAt || g?.checkinCompletedAt || g?.fnrhDocumentUuid))
+          )
+          const isCurrentPendingReSign = !isStayClosedBanner && !isBareB2bCredBanner && (
+            currentG?.needsReSignature !== undefined
+              ? Boolean(currentG.needsReSignature)
+              : (Boolean(reservation?.needsReSignature) && !currentG?.hasCompletedCheckin)
+          )
+          const otherPending = (!isStayClosedBanner && !isBareB2bCredBanner)
+            ? guestList.filter((g: any) => g.index !== selectedGuestIndex && Boolean(g.needsReSignature))
+            : []
 
           if (isCurrentPendingReSign) {
             return (

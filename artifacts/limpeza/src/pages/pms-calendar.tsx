@@ -832,8 +832,8 @@ export default function PmsCalendar() {
     }
     if (resModalOpen && formCheckin && formCheckout) {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
-        // Only suggest flat if no flat has been selected yet
-        if (!selectedRes && result?.bestFlatId && !formFlatId && !isFlatManuallyChangedRef.current) {
+        // Auto-select Flat da Vez on new reservation (and when dates change) unless user manually picked a flat
+        if (!selectedRes && result?.bestFlatId && !isFlatManuallyChangedRef.current) {
           setFormFlatId(String(result.bestFlatId))
         }
       })
@@ -3623,21 +3623,54 @@ export default function PmsCalendar() {
     }
 
     // Ao editar uma reserva existente (selectedRes !== null), preserva o valor efetivamente recebido
-    // para que novas diárias/alterações de valor gerem saldo pendente real (PIX e link Cartão atualizados),
-    // inclusive quando uma reserva OTA (Booking/Airbnb) recebe diária(s) adicional(is) por fora.
+    // para diárias diretas (WhatsApp/Site/Balcão/Empresa) gerando saldo pendente, mas soma automaticamente
+    // como pagas novas diárias lançadas com canal Airbnb ou Booking.com.
     const isOtaTarget = isBooking || targetChannel === "airbnb";
+    const origDates = new Set<string>();
+    if (selectedRes) {
+      if (Array.isArray(selectedRes.dailyRates) && selectedRes.dailyRates.length > 0) {
+        selectedRes.dailyRates.forEach((od: any) => { if (od?.date) origDates.add(String(od.date)); });
+      } else if (selectedRes.checkinDate && selectedRes.checkoutDate) {
+        const d1 = new Date(selectedRes.checkinDate + "T12:00:00");
+        const d2 = new Date(selectedRes.checkoutDate + "T12:00:00");
+        const n = Math.max(1, differenceInDays(d2, d1));
+        for (let i = 0; i < n; i++) {
+          origDates.add(format(addDays(d1, i), "yyyy-MM-dd"));
+        }
+      }
+    }
+    const addedRates = selectedRes ? newDailyRates.filter(d => d.date && !origDates.has(d.date)) : [];
+    const addedOtaRates = addedRates.filter(d => d.channel === "booking" || d.channel === "airbnb");
+    const addedOtaSum = Number(addedOtaRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0).toFixed(2));
+    const hasAnyDirectNight = newDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b");
+
     const hasOtaDirectExtension = isOtaTarget && Boolean(
       selectedRes && (
-        newDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b") ||
-        newDailyRates.length > (Array.isArray(selectedRes.dailyRates) ? selectedRes.dailyRates.length : 0) ||
-        selectedRes.paymentStatus === "sinal_pago" ||
-        selectedRes.paymentStatus === "parcial"
+        hasAnyDirectNight ||
+        ((selectedRes.paymentStatus === "sinal_pago" || selectedRes.paymentStatus === "parcial") && hasAnyDirectNight)
       )
     );
     if (selectedRes && ((!isOtaTarget && !isB2b) || hasOtaDirectExtension)) {
-      const currentPaidSum = Number(
-        formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2)
-      );
+      const manualPayments = formPayments.filter(p => p.id !== "pay_auto_ota_ext");
+      const manualPaidSum = manualPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const currentPaidSum = Number((manualPaidSum + addedOtaSum).toFixed(2));
+      if (addedOtaSum > 0) {
+        const otaExtMethod = addedOtaRates.some(d => d.channel === "booking") ? "booking" : "airbnb";
+        const otaExtLabel = otaExtMethod === "booking" ? "Booking.com" : "Airbnb";
+        setFormPayments([
+          ...manualPayments,
+          {
+            id: "pay_auto_ota_ext",
+            amount: addedOtaSum,
+            method: otaExtMethod,
+            category: "adicional",
+            date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+            notes: `Diária adicional ${otaExtLabel} (Quitada)`
+          }
+        ]);
+      } else if (formPayments.some(p => p.id === "pay_auto_ota_ext")) {
+        setFormPayments(manualPayments);
+      }
       setFormPaidAmount(String(currentPaidSum));
       if (currentPaidSum >= newTot && newTot > 0) {
         setFormPaymentStatus("pago_total");
@@ -4005,7 +4038,6 @@ export default function PmsCalendar() {
         sumPaidFromList > 0 && sumPaidFromList < totalAmount - 0.01 && (
           formPaymentStatus === "sinal_pago" ||
           formPaymentStatus === "parcial" ||
-          Boolean(selectedRes) ||
           formDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b")
         )
       )

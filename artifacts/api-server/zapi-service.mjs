@@ -124,10 +124,26 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
   const activeSettings = activeDb?.settings || activeDb || {};
   const currentProvider = activeSettings.checkinProvider || "proprio";
-  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br").replace(/\/$/, "");
+  const rawBase = typeof baseUrl === "string" && baseUrl ? baseUrl : ((typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br");
+  const hostBase = String(rawBase).replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
-  const isResign = Boolean(reservation?.needsReSignature);
+  const stLower = String(reservation?.status || "").toLowerCase();
+  const isStayClosed = Boolean(reservation?.checkoutDone || reservation?.earlyCheckout || ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLower));
+  const isBareB2bCred = Boolean(
+    (reservation?.b2bCredentialCompletedAt || reservation?.credentialStatus === "completed") &&
+    !reservation?.previousCheckinSignedAt &&
+    !reservation?.fnrhSignedAt &&
+    !reservation?.checkedInAt &&
+    !reservation?.preCheckinSignedAt &&
+    !reservation?.preCheckinData?.signatureUrl &&
+    !reservation?.checkinData?.signatureUrl &&
+    !reservation?.checkinData?.termsSignature &&
+    !reservation?.fnrhDocumentUuid &&
+    !reservation?.fnrhPdfUrl &&
+    !(Array.isArray(reservation?.guests) && reservation.guests.some(g => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid))
+  );
+  const isResign = Boolean(reservation?.needsReSignature && !isStayClosed && !isBareB2bCred);
   const resignParam = isResign
     ? (safeGuestIndex > 1 ? `?guest=${safeGuestIndex}&resign=1` : "?resign=1")
     : `?guest=${safeGuestIndex}`;
@@ -2537,19 +2553,19 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
       if (!isNaN(nNew)) newV = `${nNew} ${nNew === 1 ? 'pessoa' : 'pessoas'}`;
     }
 
-    // Formata valores monetários se forem números puros
+    // Formata valores monetários se forem números puros ou strings R$ com ponto decimal
     if (c.field === "totalAmount" || c.field === "paidAmount" || c.field === "dailyRate") {
       if (typeof oldV === "number" || (typeof oldV === "string" && !oldV.includes("R$"))) {
         const n = Number(oldV) || 0;
         oldV = formatCurrency(n);
       } else if (typeof oldV === "string") {
-        oldV = oldV.replace(/\u00A0/g, " ");
+        oldV = oldV.replace(/\u00A0/g, " ").replace(/R\$\s*(\d+)\.(\d{2})\b/g, "R$ $1,$2");
       }
       if (typeof newV === "number" || (typeof newV === "string" && !newV.includes("R$"))) {
         const n = Number(newV) || 0;
         newV = formatCurrency(n);
       } else if (typeof newV === "string") {
-        newV = newV.replace(/\u00A0/g, " ");
+        newV = newV.replace(/\u00A0/g, " ").replace(/R\$\s*(\d+)\.(\d{2})\b/g, "R$ $1,$2");
       }
       // Se o valor pago anterior aparecia como R$ 0,00 apenas por normalização de OTA/paga, exibir somente o valor pago confirmado
       const isOldZero = /^R\$\s*0[,.]00$/i.test(String(oldV || "").trim());
@@ -3558,6 +3574,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{wifi_senha}}": wifiPassword,
     "{{telefone_hotel}}": adminWhatsApp,
     "{{link_checkin_digital}}": linkCheckinDigital,
+    "{{link_checkin}}": linkCheckinDigital,
     "{{link_portal_hospede}}": linkPortalHospede,
     "{{link_credenciamento_agencia}}": `${appOrigin}/credenciamento/${encodeURIComponent(String(resCode))}`,
     "{{nome_agencia}}": reservation.agencyTradeName || reservation.agencyName || requester.company || requester.name || "Agência Parceira",
@@ -3617,6 +3634,38 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   if (hideFinancialForGuest) {
     rendered = rendered.replace(/^[ \t]*•[^:\n]+:[ \t]*(\*\*[ \t]*)?(\([ \t]*\))?[ \t]*\n?/gm, "");
+  }
+
+  const stayClosedForTags = Boolean(
+    reservation?.checkoutDone ||
+    reservation?.earlyCheckout ||
+    ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(resStatus)
+  );
+  const isBareB2bCredForTags = Boolean(
+    (reservation?.b2bCredentialCompletedAt || reservation?.credentialStatus === "completed") &&
+    !reservation?.previousCheckinSignedAt &&
+    !reservation?.fnrhSignedAt &&
+    !reservation?.checkedInAt &&
+    !reservation?.preCheckinSignedAt &&
+    !reservation?.preCheckinData?.signatureUrl &&
+    !reservation?.checkinData?.signatureUrl &&
+    !reservation?.checkinData?.termsSignature &&
+    !reservation?.fnrhDocumentUuid &&
+    !reservation?.fnrhPdfUrl &&
+    !(Array.isArray(reservation?.guests) && reservation.guests.some(g => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid))
+  );
+  const targetGuestForTags = companion || titularGuest;
+  const trulyNeedsReSignInTags = Boolean(
+    !stayClosedForTags &&
+    !isBareB2bCredForTags &&
+    (targetGuestForTags && typeof targetGuestForTags.needsReSignature === "boolean"
+      ? targetGuestForTags.needsReSignature
+      : reservation?.needsReSignature)
+  );
+  if (!trulyNeedsReSignInTags && (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated")) {
+    rendered = rendered
+      .replace(/⚠️[^\n]*(?:assinar|assinatura|ficha atualizada|termo atualizado)[\s\S]*?(?=\n\n|$)/gi, "")
+      .replace(/^[ \t]*[^\n]*(?:Assinar Ficha Atualizada|Assinar o Termo Atualizado|re-assinar|assinar novamente)[^\n]*\n?/gim, "");
   }
 
   // Remove excesso de quebras de linha decorrentes de tags opcionais vazias
@@ -3902,12 +3951,40 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     // nunca exibir "Assinar Ficha Atualizada" — rotular como "📝 Fazer Check-in Online".
     const titularGuestForBtn = (reservation?.guests || []).find(g => Number(g.index) === 1) || reservation?.guests?.[0];
     const targetGuestForBtn = companionTarget || titularGuestForBtn;
-    const needsReSign = Boolean(
-      targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
-        ? targetGuestForBtn.needsReSignature
-        : reservation?.needsReSignature
+    const stLowerBtn = String(reservation?.status || "").toLowerCase();
+    const stayClosedBtn = Boolean(
+      reservation?.checkoutDone ||
+      reservation?.earlyCheckout ||
+      ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLowerBtn)
     );
-    if (!needsReSign) {
+    const bareB2bCredBtn = Boolean(
+      (reservation?.b2bCredentialCompletedAt || reservation?.credentialStatus === "completed") &&
+      !reservation?.previousCheckinSignedAt &&
+      !reservation?.fnrhSignedAt &&
+      !reservation?.checkedInAt &&
+      !reservation?.preCheckinSignedAt &&
+      !reservation?.preCheckinData?.signatureUrl &&
+      !reservation?.checkinData?.signatureUrl &&
+      !reservation?.checkinData?.termsSignature &&
+      !reservation?.fnrhDocumentUuid &&
+      !reservation?.fnrhPdfUrl &&
+      !(Array.isArray(reservation?.guests) && reservation.guests.some(g => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid))
+    );
+    const needsReSign = Boolean(
+      !stayClosedBtn &&
+      !bareB2bCredBtn &&
+      (targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
+        ? targetGuestForBtn.needsReSignature
+        : reservation?.needsReSignature)
+    );
+    if (needsReSign) {
+      list = list.map(b => {
+        if (b && (b.id === "btn_checkin" || isCheckinBtn(b))) {
+          return { ...b, label: "📝 Assinar Ficha Atualizada" };
+        }
+        return b;
+      });
+    } else {
       if (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated") {
         list = list.filter(b => !(b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))));
       } else {

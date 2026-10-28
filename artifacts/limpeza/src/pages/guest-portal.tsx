@@ -794,9 +794,27 @@ export default function GuestPortal() {
     reservation?.status === "cancelled"
   )
 
-  const hasEverDoneCheckin = Boolean(
+  const isBareB2bCredWithoutSig = Boolean(
+    (reservation?.b2bCredentialCompletedAt || (reservation as any)?.credentialStatus === "completed") &&
+    !reservation?.fnhrCompleted &&
+    !reservation?.checkedInAt &&
+    !reservation?.fnrhSignedAt &&
+    !reservation?.fnrhDocumentUuid &&
+    !reservation?.fnrhPdfUrl &&
+    !(reservation as any)?.previousCheckinSignedAt &&
+    !(Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(
+      g?.checkinCompletedAt ||
+      g?.fnrhSignedAt ||
+      g?.fnrhDocumentUuid ||
+      g?.fnrhPdfUrl ||
+      g?.previousCheckinSignedAt
+    )))
+  )
+
+  const hasEverDoneCheckin = !isBareB2bCredWithoutSig && Boolean(
     reservation?.hasPreCheckin ||
     reservation?.hadCompletedCheckinBefore ||
+    (reservation as any)?.previousCheckinSignedAt ||
     reservation?.fnhrCompleted ||
     reservation?.preCheckinCompleted ||
     reservation?.checkedInAt ||
@@ -805,6 +823,7 @@ export default function GuestPortal() {
     (Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(
       g?.hasCompletedCheckin ||
       g?.hadCompletedCheckinBefore ||
+      g?.previousCheckinSignedAt ||
       g?.checkinCompletedAt ||
       g?.fnrhSignedAt ||
       g?.fnrhDocumentUuid
