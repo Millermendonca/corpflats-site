@@ -311,6 +311,7 @@ export function FlatCard({
             flatNumber: flat.flatNumber,
             flatId: flat.flatId,
             date: date,
+            markedByAdmin: isAdmin ? true : undefined,
             executedPeriodicTaskIds: pendingPeriodicTasks.map((t: any) => t.id)
           }),
           credentials: "include"
@@ -318,6 +319,13 @@ export function FlatCard({
         if (res.ok) {
           setAdminCleanModalOpen(false)
           refreshData()
+        } else {
+          const err = await res.json().catch(() => ({}))
+          toast({
+            title: "Não foi possível concluir",
+            description: err.error || "Erro ao confirmar limpeza.",
+            variant: "destructive"
+          })
         }
       }
     } catch (err) {
@@ -351,7 +359,8 @@ export function FlatCard({
           beddingChanged,
           flatNumber: flat.flatNumber,
           flatId: flat.flatId,
-          date: date
+          date: date,
+          markedByAdmin: isAdmin ? true : undefined
         }
         if (isAdmin && selectedMaidId) {
           payload.assignedUserId = parseInt(selectedMaidId)
@@ -960,12 +969,31 @@ export function FlatCard({
   // Resolve pending issue (Baixa de pendência)
   const handleResolveIssue = async () => {
     if (!request?.id) return
+    if (isCleaningBlockedByService) {
+      toast({
+        title: "🔧 Serviço em Andamento",
+        description: `Limpeza bloqueada pelo serviço: ${flat.serviceInProgress?.serviceTitle || "Manutenção"}. Aguarde a conclusão do prestador.`,
+        variant: "destructive"
+      })
+      return
+    }
     setIsProcessing(true)
     try {
-      await fetch(`/api/cleaning/assignments/${request.id}/resolve-issue`, { 
+      const res = await fetch(`/api/cleaning/assignments/${request.id}/resolve-issue`, { 
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markedByAdmin: isAdmin ? true : undefined }),
         credentials: "include"
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível dar baixa",
+          description: err.error || "Erro ao finalizar pendência.",
+          variant: "destructive"
+        })
+        return
+      }
       refreshData()
     } finally {
       setIsProcessing(false)
@@ -978,6 +1006,15 @@ export function FlatCard({
       toast({
         title: "🔕 Não Perturbe Ativo",
         description: "O hóspede ativou o modo Não Perturbe no portal. Esta limpeza não pode ser iniciada nem concluída.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (isCleaningBlockedByService && (newStatus === "will_clean" || newStatus === "cleaning_now" || newStatus === "clean")) {
+      toast({
+        title: "🔧 Serviço em Andamento",
+        description: `Limpeza bloqueada pelo serviço: ${flat.serviceInProgress?.serviceTitle || "Manutenção"}. Aguarde a conclusão do prestador.`,
         variant: "destructive"
       })
       return
@@ -1036,12 +1073,13 @@ export function FlatCard({
             status: newStatus,
             flatNumber: flat.flatNumber,
             flatId: flat.flatId,
-            date: date
+            date: date,
+            markedByAdmin: isAdmin ? true : undefined
           }),
           credentials: "include"
         })
         if (!res.ok) {
-          const err = await res.json()
+          const err = await res.json().catch(() => ({}))
           if (err.error?.includes("Tempo insuficiente")) {
             setMinTimeAlertOpen(true)
             return
@@ -1054,6 +1092,12 @@ export function FlatCard({
             setFutureCheckoutAlertOpen(true)
             return
           }
+          toast({
+            title: "Não foi possível alterar status",
+            description: err.error || "Erro ao atualizar status da limpeza.",
+            variant: "destructive"
+          })
+          return
         }
       }
       refreshData()
@@ -1102,7 +1146,7 @@ export function FlatCard({
         }
       })
 
-      await fetch(`/api/cleaning/assignments/${request.id}/status`, {
+      const res = await fetch(`/api/cleaning/assignments/${request.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1112,9 +1156,19 @@ export function FlatCard({
           flatNumber: flat.flatNumber,
           flatId: flat.flatId,
           date: date,
+          markedByAdmin: isAdmin ? true : undefined,
         }),
         credentials: "include"
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao concluir limpeza.",
+          variant: "destructive"
+        })
+        return
+      }
       setFinishModalOpen(false)
       setAttestedTaskIds([])
       refreshData()
@@ -1957,7 +2011,8 @@ export function FlatCard({
                         size="sm" 
                         className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs" 
                         onClick={() => handleStatusChange("clean")}
-                        disabled={isProcessing}
+                        disabled={isProcessing || Boolean(isCleaningBlockedByService)}
+                        title={isCleaningBlockedByService && flat.serviceInProgress ? `Serviço em andamento (${flat.serviceInProgress.serviceTitle})` : undefined}
                       >
                         <CheckCircle2 className="w-4 h-4 mr-1" /> {isInstruction ? "Concluir Tarefa" : "Concluir"}
                       </Button>
@@ -1995,7 +2050,8 @@ export function FlatCard({
                       size="sm" 
                       className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs" 
                       onClick={handleResolveIssue}
-                      disabled={isProcessing}
+                      disabled={isProcessing || Boolean(isCleaningBlockedByService)}
+                      title={isCleaningBlockedByService && flat.serviceInProgress ? `Serviço em andamento (${flat.serviceInProgress.serviceTitle})` : undefined}
                     >
                       <Check className="w-4 h-4 mr-1.5" /> Dar Baixa e Finalizar
                     </Button>

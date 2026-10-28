@@ -7029,6 +7029,8 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       const match = validReqMatch || cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
       if (match && match.status === "clean") {
         c.status = "clean";
+        c.isPriority = false;
+        delete c.priorityReason;
         c.assignedUserId = match.userId || c.assignedUserId || 2;
         c.assignedUsername = match.maidName || c.assignedUsername || "Cris";
         c.assignedUserName = match.maidName || c.assignedUserName || "Cris";
@@ -12913,7 +12915,7 @@ function parseSpreadsheetBuffer(buf) {
             status: existing ? (existing.status === "extended" ? "dirty" : existing.status) : "dirty",
             assignedUserId: existing ? existing.assignedUserId : null,
             isVacant: (existing && typeof existing.isVacant === "boolean" && dateStr <= getTodayStr()) ? existing.isVacant : false,
-            isPriority: existing && typeof existing.isPriority === "boolean" ? existing.isPriority : false,
+            isPriority: (existing && existing.status === "clean") ? false : (existing && typeof existing.isPriority === "boolean" ? existing.isPriority : false),
             leavingGuest: rawGuestYesterday,
             arrivingGuest: rawGuestToday || null,
             pendingObservation: existing ? existing.pendingObservation : null,
@@ -14992,8 +14994,22 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     existing.isPaidCleaning = isPaid;
     existing.instructionText = isInstruction ? noteText : null;
     existing.isExtended = false;
-    existing.isPriority = markAsClean ? false : Boolean(isPriority);
+    existing.isPriority = markAsClean
+      ? false
+      : (typeof isPriority === "boolean" ? isPriority : (existing.status === "clean" ? false : Boolean(existing.isPriority)));
     if (markAsClean || !existing.isPriority) delete existing.priorityReason;
+    if (markAsClean) {
+      for (const r of (db.reservations || [])) {
+        if (
+          (Number(r.flatId) === Number(flat.id) || String(r.flatNumber) === String(flat.number)) &&
+          (r.checkoutDate === requestDate || r.checkinDate === requestDate || (r.checkinDate <= requestDate && r.checkoutDate >= requestDate)) &&
+          r.isPriority
+        ) {
+          r.isPriority = false;
+          delete r.priorityReason;
+        }
+      }
+    }
     existing.status = markAsClean ? "clean" : "dirty";
     existing.isVacant = markAsClean ? true : !flat.isOccupied;
     existing.twinBeds = resolvedTwinBeds;
@@ -15021,6 +15037,19 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     existing.updatedAt = nowIso;
     saveDatabase();
     return res.json(existing);
+  }
+
+  if (markAsClean) {
+    for (const r of (db.reservations || [])) {
+      if (
+        (Number(r.flatId) === Number(flat.id) || String(r.flatNumber) === String(flat.number)) &&
+        (r.checkoutDate === requestDate || r.checkinDate === requestDate || (r.checkinDate <= requestDate && r.checkoutDate >= requestDate)) &&
+        r.isPriority
+      ) {
+        r.isPriority = false;
+        delete r.priorityReason;
+      }
+    }
   }
 
   const newReq = {
@@ -15300,6 +15329,11 @@ function getRequestsForDate(dateStr, isNested = false) {
       card.guestName = b2bRes.guestName || b2bRes.title || "Hóspede";
       card.doNotDisturb = Boolean(b2bRes.doNotDisturb);
       card.isVacant = false;
+      if (card.status === "clean" && (card.isPriority || card.priorityReason)) {
+        card.isPriority = false;
+        delete card.priorityReason;
+        shouldSaveDb = true;
+      }
     } else {
       const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
       card = {
@@ -15631,12 +15665,18 @@ function getRequestsForDate(dateStr, isNested = false) {
     if (existingCleaning) {
       if (isFutureDate && existingCleaning.status === "clean" && (!existingCleaning.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
         existingCleaning.status = "dirty";
+        existingCleaning.isPriority = false;
+        delete existingCleaning.priorityReason;
         existingCleaning.assignedUserId = null;
         existingCleaning.assignedUsername = null;
         existingCleaning.assignedUserName = null;
         existingCleaning.completedAt = null;
         existingCleaning.cleaningStartedAt = null;
         existingCleaning.durationMinutes = null;
+        shouldSaveDb = true;
+      } else if (existingCleaning.status === "clean" && (existingCleaning.isPriority || existingCleaning.priorityReason)) {
+        existingCleaning.isPriority = false;
+        delete existingCleaning.priorityReason;
         shouldSaveDb = true;
       }
       if (isExplicitlyVacantCheckout && !existingCleaning.isVacant) {
@@ -15685,6 +15725,11 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 4. Garante que qualquer solicitação existente no banco de dados para a data apareça na listagem
   for (const r of (db.cleaningRequests || [])) {
     if (r.isDeleted || r.status === "deleted") continue;
+    if (r.status === "clean" && (r.isPriority || r.priorityReason)) {
+      r.isPriority = false;
+      delete r.priorityReason;
+      shouldSaveDb = true;
+    }
     const fNumber = String(r.flatNumber || "");
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     // Instrução: concluiu, sumiu! Não exibe no painel de pendências ativas
@@ -16338,9 +16383,27 @@ app.patch("/api/cleaning/assignments/:requestId/priority", (req, res) => {
   const item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, requestDate);
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
-  item.isPriority = typeof isPriority === "boolean" ? isPriority : !item.isPriority;
-  if (!item.isPriority) {
+  if (item.status === "clean") {
+    item.isPriority = false;
     delete item.priorityReason;
+  } else {
+    item.isPriority = typeof isPriority === "boolean" ? isPriority : !item.isPriority;
+    if (!item.isPriority) {
+      delete item.priorityReason;
+    }
+  }
+  if (!item.isPriority) {
+    const targetDate = requestDate || item.requestDate || getTodayStr();
+    for (const r of (db.reservations || [])) {
+      if (
+        (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
+        (r.checkoutDate === targetDate || r.checkinDate === targetDate || (r.checkinDate <= targetDate && r.checkoutDate >= targetDate)) &&
+        r.isPriority
+      ) {
+        r.isPriority = false;
+        delete r.priorityReason;
+      }
+    }
   }
   item.updatedAt = new Date().toISOString();
   saveDatabase();
@@ -16388,6 +16451,10 @@ app.post("/api/cleaning/assignments/:requestId/release", (req, res) => {
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
   const now = new Date().toISOString();
+  if (item.status === "clean") {
+    item.isPriority = false;
+    delete item.priorityReason;
+  }
   item.status = "dirty";
   item.assignedUserId = null;
   item.assignedUsername = null;
@@ -16415,10 +16482,29 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
   const userAuth = getAuthUser(req);
+  const isCallerAdmin = Boolean((userAuth && (userAuth.role === "admin" || userAuth.role === "dev")) || req.body?.markedByAdmin);
+  const activeService = getFlatServiceInProgress(item.flatId, item.flatNumber);
+  if (activeService && !activeService.allowSimultaneousCleaning && !isCallerAdmin) {
+    return res.status(422).json({
+      error: `Limpeza bloqueada: Serviço externo em andamento (${activeService.serviceTitle || "Manutenção"}). Aguarde a conclusão do prestador.`
+    });
+  }
+
   const now = new Date().toISOString();
   item.status = "clean";
   item.isPriority = false;
   delete item.priorityReason;
+  const targetDate = item.requestDate || item.effectiveDate || getTodayStr();
+  for (const r of (db.reservations || [])) {
+    if (
+      (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
+      (r.checkoutDate === targetDate || r.checkinDate === targetDate || (r.checkinDate <= targetDate && r.checkoutDate >= targetDate)) &&
+      r.isPriority
+    ) {
+      r.isPriority = false;
+      delete r.priorityReason;
+    }
+  }
   item.assignedUserId = userAuth ? userAuth.id : (item.assignedUserId || 2);
   item.completedAt = now;
   item.pendingObservation = null;
@@ -16788,13 +16874,15 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
           stayoverActiveRes.isPriority = false;
           delete stayoverActiveRes.priorityReason;
         }
-        const relatedCheckoutRes = (db.reservations || []).find(r =>
-          (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber)) &&
-          (r.checkoutDate === targetDate || r.checkinDate === targetDate)
-        );
-        if (relatedCheckoutRes && relatedCheckoutRes.isPriority) {
-          relatedCheckoutRes.isPriority = false;
-          delete relatedCheckoutRes.priorityReason;
+        for (const r of (db.reservations || [])) {
+          if (
+            (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
+            (r.checkoutDate === targetDate || r.checkinDate === targetDate || (r.checkinDate <= targetDate && r.checkoutDate >= targetDate)) &&
+            r.isPriority
+          ) {
+            r.isPriority = false;
+            delete r.priorityReason;
+          }
         }
 
         const isAdmin = Boolean((userAuth && (userAuth.role === "admin" || userAuth.role === "dev")) || bodyMarkedByAdmin);
@@ -18012,6 +18100,8 @@ app.get("/api/service-orders", (req, res) => {
       serviceTypeId: o.serviceTypeId || catalogItem?.id || null,
       serviceTypeName: o.serviceTypeName || catalogItem?.name || o.title,
       serviceCategory: catalogItem?.categoryLabel || "Serviço Geral",
+      allowedRoomStatuses: getAllowedRoomStatuses(o),
+      allowSimultaneousCleaning: Boolean(o.allowSimultaneousCleaning),
       workerName: worker?.mainWorker?.name || o.workerName || null,
       workerCpf: worker?.mainWorker?.cpf || o.workerCpf || null,
       workerPhone: worker?.mainWorker?.phone || o.workerPhone || null,
@@ -19654,6 +19744,10 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
     );
     const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada pelo prestador. Obs: ${flat.observations || "Nenhuma"}`.trim();
     if (existingReq) {
+      if (existingReq.status === "clean") {
+        existingReq.isPriority = false;
+        delete existingReq.priorityReason;
+      }
       existingReq.isDeleted = false;
       delete existingReq.deletedAt;
       delete existingReq.deletedBy;
@@ -26273,7 +26367,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       vehicle: r.vehicle || null,
       estimatedArrivalTime: r.estimatedArrivalTime || null,
       guestArrivalResponse: r.guestArrivalResponse || null,
-      isCleaningPriority: Boolean(cleanReq?.isPriority),
+      isCleaningPriority: Boolean(cleanReq?.isPriority && cleanReq?.status !== "clean"),
       fnhrCompleted: Boolean(r.fnhrCompleted),
       preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
       hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
