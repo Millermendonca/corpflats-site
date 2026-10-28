@@ -420,8 +420,8 @@ function createPgPoolInstance() {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-    // Limite enxuto (max: 3) para proteger instâncias PostgreSQL de 256MB RAM (0.1c-256mb no Render) contra OOM
-    max: 3,
+    // Limite enxuto (max: 2) para proteger instâncias PostgreSQL de 256MB RAM (0.1c-256mb no Render) contra OOM
+    max: 2,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 15000,
     query_timeout: 30000,
@@ -430,9 +430,10 @@ function createPgPoolInstance() {
     keepAliveInitialDelayMillis: 5000,
   });
 
-  // Desativa log de parâmetros gigantes ($1 JSONB) e limita work_mem por sessão para evitar pico de RAM / OOM no PostgreSQL 18
+  // Limita work_mem por sessão para evitar pico de RAM / OOM no PostgreSQL 18 (256MB RAM).
+  // Separado de parâmetros superuser (log_min_duration_statement) para não abortar o comando.
   pool.on("connect", (client) => {
-    client.query("SET log_min_duration_statement = -1; SET log_statement = 'none'; SET work_mem = '4MB';").catch(() => {});
+    client.query("SET work_mem = '4MB'").catch(() => {});
   });
 
   // CRÍTICO: Em nuvem (Render/Supabase/Neon), conexões inativas sofrem timeout/reset da rede.
@@ -476,7 +477,7 @@ async function queryDirectPgClient(sql, params = [], timeoutMs = 45000) {
   client.on("error", () => {});
   try {
     await client.connect();
-    await client.query("SET log_min_duration_statement = -1; SET log_statement = 'none'; SET work_mem = '4MB';").catch(() => {});
+    await client.query("SET work_mem = '4MB'").catch(() => {});
     return await client.query(sql, params);
   } finally {
     try { await client.end(); } catch (_) {}
@@ -6624,13 +6625,16 @@ export async function reconcileFromAuditLogs(db, pgPool) {
     const q = await pgPool.query(
       `SELECT id, timestamp, action, details
        FROM system_audit_logs
-       WHERE action LIKE 'RESERVATION_%'
-          OR action LIKE '%STAY_EXTENDED%'
-          OR action = 'NOTIFICATION_BREAKFAST'
-          OR action LIKE 'CLEANING_%'
-          OR action LIKE 'COMPANY_%'
+       WHERE timestamp >= NOW() - INTERVAL '30 days'
+         AND (
+           action LIKE 'RESERVATION_%'
+           OR action LIKE '%STAY_EXTENDED%'
+           OR action = 'NOTIFICATION_BREAKFAST'
+           OR action LIKE 'CLEANING_%'
+           OR action LIKE 'COMPANY_%'
+         )
        ORDER BY id DESC
-       LIMIT 1000`
+       LIMIT 500`
     );
     if (!q || !q.rows || q.rows.length === 0) return false;
 
@@ -8208,6 +8212,8 @@ async function runPgDdlBootstrap() {
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
       CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
+      CREATE INDEX IF NOT EXISTS idx_audit_action ON system_audit_logs (action);
+      DELETE FROM system_audit_logs WHERE action LIKE 'SERVER_MONITOR_%' OR timestamp < NOW() - INTERVAL '60 days';
       CREATE TABLE IF NOT EXISTS reservation_communications (
         id TEXT PRIMARY KEY,
         reservation_id TEXT NOT NULL,
@@ -8316,14 +8322,14 @@ async function _loadDatabaseImpl() {
         const maxAttempts = 2;
         while (attempts < maxAttempts) {
           try {
-            // Prioriza conexão dedicada direta para leitura de db_state (imune a fila de pool cheio e sem bloqueio por DDL)
+            // Reutiliza conexão do pool primeiro para não alocar segundo processo PostgreSQL de ~50MB em instâncias de 256MB RAM
             try {
-              res = await queryDirectPgClient("SELECT value FROM system_store WHERE key = 'db_state'", [], 45000);
-            } catch (directErr) {
-              if (directErr.code === "42P01") {
+              res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+            } catch (poolErr) {
+              if (poolErr.code === "42P01") {
                 await runPgDdlBootstrap();
               }
-              res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+              res = await queryDirectPgClient("SELECT value FROM system_store WHERE key = 'db_state'", [], 45000);
             }
             querySucceeded = true;
             lastHydrationError = null;
@@ -8344,17 +8350,16 @@ async function _loadDatabaseImpl() {
 
         if (res && res.rows && res.rows[0]) {
           const pgLoaded = res.rows[0].value;
+          let didMigratePeriodicTasks = false;
           // Proteção mandatória: Se o PostgreSQL na nuvem estiver com periodicTasks vazias mas o arquivo local tiver as tarefas restauradas, preserva e sincroniza
           if ((!pgLoaded.periodicTasks || pgLoaded.periodicTasks.length === 0) && (db.periodicTasks && db.periodicTasks.length > 0)) {
             pgLoaded.periodicTasks = db.periodicTasks;
             pgLoaded.periodicExecutions = db.periodicExecutions;
+            didMigratePeriodicTasks = true;
             console.log("[PostgreSQL] Hidratando tarefas preventivas da base local para a nuvem...");
-            pgPool.query(
-              "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
-              [JSON.stringify(pgLoaded)]
-            ).catch(e => console.warn("[PostgreSQL] Erro ao sincronizar tarefas preventivas na nuvem:", e.message));
           } else if ((!pgLoaded.periodicExecutions || pgLoaded.periodicExecutions.length === 0) && (db.periodicExecutions && db.periodicExecutions.length > 0)) {
             pgLoaded.periodicExecutions = db.periodicExecutions;
+            didMigratePeriodicTasks = true;
           }
           const localReservations = [...(db.reservations || [])];
           const localCleanings = [...(db.cleaningRequests || [])];
@@ -8441,8 +8446,12 @@ async function _loadDatabaseImpl() {
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
+          try { pruneDatabase(); } catch (_) {}
           try { sanitizeAndRecoverCleanings(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeAndRecoverCleanings:", e.message); }
-          try { await reconcileFromAuditLogs(db, pgPool); } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileFromAuditLogs:", e.message); }
+          try {
+            await pgPool.query("DELETE FROM system_audit_logs WHERE action LIKE 'SERVER_MONITOR_%'").catch(() => {});
+            await reconcileFromAuditLogs(db, pgPool);
+          } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileFromAuditLogs:", e.message); }
           try { sanitizeLostAndFound(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeLostAndFound:", e.message); }
           try { sanitizeReservationFlags(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeReservationFlags:", e.message); }
           let didChange = false;
@@ -8478,17 +8487,20 @@ async function _loadDatabaseImpl() {
             hydrationRetryTimer = null;
           }
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
-          if (didChange || didMigrateEmails) {
+          if (didChange || didMigrateEmails || didMigratePeriodicTasks) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
           }
-          // Executa DDL complementar e tabelas auxiliares em background sem bloquear a hidratação
-          runPgDdlBootstrap().catch(() => {});
-          if (typeof bootstrapShoppingTables === "function") {
-            bootstrapShoppingTables().then(() => {
-              if (typeof migrateShoppingCategories === "function") migrateShoppingCategories().catch(() => {});
-            }).catch(() => {});
-          }
+          // Executa DDL complementar e tabelas auxiliares de forma escalonada (5s após hidratação) para evitar pico concorrente de RAM no PostgreSQL (256MB)
+          setTimeout(async () => {
+            try { await runPgDdlBootstrap(); } catch (_) {}
+            if (typeof bootstrapShoppingTables === "function") {
+              try {
+                await bootstrapShoppingTables();
+                if (typeof migrateShoppingCategories === "function") await migrateShoppingCategories();
+              } catch (_) {}
+            }
+          }, 5000);
           if (process.env.NODE_ENV !== "test") {
             setTimeout(() => {
               ensureZohoWebhookRegistered(db, saveDatabase, {
@@ -10686,8 +10698,8 @@ async function ensureBackupsTable() {
       console.log(`[PostgreSQL] Snapshots legados podados com sucesso (${delRes.rowCount || 0} removidos, mantidos os 3 mais recentes).`);
     }
 
-    // Prune audit logs older than 60 days to keep system_audit_logs light
-    await pgPool.query("DELETE FROM system_audit_logs WHERE timestamp < NOW() - INTERVAL '60 days'").catch(() => {});
+    // Prune audit logs older than 60 days and noisy telemetry spikes to keep system_audit_logs light
+    await pgPool.query("DELETE FROM system_audit_logs WHERE action LIKE 'SERVER_MONITOR_%' OR timestamp < NOW() - INTERVAL '60 days'").catch(() => {});
   } catch (err) {
     console.warn("[PostgreSQL] Erro ao assegurar tabela system_store_backups:", err.message);
   }
@@ -10699,7 +10711,8 @@ let pendingPgStateJson = null;
 let pendingPgDirty = false;
 let pendingPgReason = "auto_save";
 let pgSaveTimeout = null;
-let lastMediaOffloadTime = 0;
+let lastMediaOffloadTime = Date.now();
+let lastPersistedPgStateHash = null;
 
 // Cache LRU leve em RAM para mídias históricas consultadas via /api/media/blob/:id (máx 40 itens)
 const mediaBlobMemoryCache = new Map();
@@ -10735,7 +10748,7 @@ async function hydrateReservationMediaBlobsForPdf(reservation, guest) {
   if (!pgPool || !reservation) return { reservation, guest };
   const clonedRes = { ...reservation };
   const clonedGuest = guest ? { ...guest } : null;
-  const mediaFields = ["selfieUrl", "docPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
+  const mediaFields = ["selfieUrl", "photoUrl", "docPhotoUrl", "documentPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
   for (const f of mediaFields) {
     if (typeof clonedRes[f] === "string" && clonedRes[f].startsWith("/api/media/blob/")) {
       clonedRes[f] = await resolveMediaDataUrl(clonedRes[f]);
@@ -10781,13 +10794,13 @@ async function offloadSingleBase64Field(entityType, entityId, fieldName, rawVal)
 async function offloadHistoricalBase64Media() {
   if (!pgPool || !pgHydratedSuccessfully || process.env.NODE_ENV === "test") return 0;
   const nowMs = Date.now();
-  // Executa offload a cada 3 minutos (lote máximo de 15 mídias por ciclo para não sobrecarregar o pool)
+  // Executa offload a cada 3 minutos (lote enxuto de 8 mídias por ciclo para não sobrecarregar o pool de 256MB)
   if (nowMs - lastMediaOffloadTime < 3 * 60 * 1000) return 0;
   lastMediaOffloadTime = nowMs;
 
   let offloadedCount = 0;
-  const MAX_OFFLOAD_PER_CYCLE = 15;
-  const mediaFields = ["selfieUrl", "docPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
+  const MAX_OFFLOAD_PER_CYCLE = 8;
+  const mediaFields = ["selfieUrl", "photoUrl", "docPhotoUrl", "documentPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
 
   try {
     // 1. Externaliza Base64 pesado de todas as reservas para media_blobs (servido transparentemente por /api/media/blob/:id e hydrateReservationMediaBlobsForPdf)
@@ -10816,7 +10829,21 @@ async function offloadHistoricalBase64Media() {
       }
     }
 
-    // 2. Externaliza fotos de vistoria em Base64 de limpezas
+    // 2. Externaliza Base64 pesado de fichas de hóspedes (db.guests)
+    if (Array.isArray(db.guests) && offloadedCount < MAX_OFFLOAD_PER_CYCLE) {
+      for (const g of db.guests) {
+        if (!g || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
+        const gId = g.guestCode || g.id;
+        for (const f of mediaFields) {
+          if (typeof g[f] === "string" && g[f].startsWith("data:image/") && g[f].length >= 2048) {
+            g[f] = await offloadSingleBase64Field("guest", gId, f, g[f]);
+            offloadedCount++;
+          }
+        }
+      }
+    }
+
+    // 3. Externaliza fotos de vistoria em Base64 de limpezas
     if (Array.isArray(db.cleaningRequests) && offloadedCount < MAX_OFFLOAD_PER_CYCLE) {
       for (const c of db.cleaningRequests) {
         if (!c || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
@@ -10859,15 +10886,23 @@ async function flushPgState() {
     pendingPgDirty = false;
   }
   const stateToSave = pendingPgStateJson;
-  const reasonToSave = pendingPgReason;
+  const reasonToSave = pendingPgReason || "auto_save";
   pendingPgStateJson = null;
 
   let hadError = false;
   try {
+    const stateHash = crypto.createHash("sha1").update(stateToSave).digest("hex");
+    const isForcedSave = reasonToSave.startsWith("manual_") || reasonToSave.startsWith("repair_") || reasonToSave.startsWith("settings_") || reasonToSave === "shutdown";
+    if (!isForcedSave && lastPersistedPgStateHash && stateHash === lastPersistedPgStateHash) {
+      lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
+      return;
+    }
+
     await pgPool.query(
       "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
       [stateToSave]
     );
+    lastPersistedPgStateHash = stateHash;
     lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
 
     const resCount = db.reservations ? db.reservations.length : 0;
@@ -10906,8 +10941,8 @@ async function flushPgState() {
   } finally {
     isPgSaving = false;
     if (pendingPgDirty || pendingPgStateJson) {
-      // Se houve falha de conexão, aguarda 15s para não bombardear o PostgreSQL durante recovery de WAL
-      setTimeout(flushPgState, hadError ? 15000 : 3500);
+      // Se houve falha de conexão, aguarda 15s para não bombardear o PostgreSQL durante recovery de WAL; caso contrário espaça em 6s
+      setTimeout(flushPgState, hadError ? 15000 : 6000);
     }
   }
 }
@@ -11342,7 +11377,7 @@ function saveDatabase(reason = "auto_save") {
         pgSaveTimeout = setTimeout(() => {
           pgSaveTimeout = null;
           flushPgState().catch(() => {});
-        }, 800);
+        }, 3500);
       }
     }
   } catch (err) {
@@ -11439,8 +11474,8 @@ async function logAuditEvent(arg1, arg2) {
       fs.appendFile(AUDIT_LOG_FILE, JSON.stringify(logEntry) + "\n", "utf-8", () => {});
     } catch {}
 
-    // 3. Persistência em PostgreSQL dedicado
-    if (pgPool) {
+    // 3. Persistência em PostgreSQL dedicado (ignora telemetria contínua de SERVER_MONITOR_* para não inflar system_audit_logs nem sobrecarregar o pool)
+    if (pgPool && !String(logEntry.action).startsWith("SERVER_MONITOR_")) {
       pgPool.query(
         `INSERT INTO system_audit_logs (timestamp, level, category, action, actor, details, source)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
