@@ -7889,7 +7889,14 @@ export function ensureB2bSeedData(targetDb = db) {
       String(r.externalReservationNumber) === sr.b2bReservationNumber ||
       (r.b2bLocatorRloc && r.b2bLocatorRloc === sr.b2bLocatorRloc && r.checkinDate === sr.checkinDate)
     );
-    if (existingRes) continue;
+    if (existingRes) {
+      if (!existingRes.b2bCredentialEmailSentAt) {
+        existingRes.b2bCredentialEmailSentAt = "2026-10-24T13:30:00.000Z";
+        existingRes.b2bCredentialEmailRecipient = Array.isArray(sr.nfDeliveryEmails) ? sr.nfDeliveryEmails.join(", ") : (sr.agencyAgentEmail || "");
+        changed = true;
+      }
+      continue;
+    }
 
     const ag = agencyMapByName[sr.agencyKey];
     const comp = companyMapByName[sr.companyKey];
@@ -8019,6 +8026,10 @@ export function ensureB2bSeedData(targetDb = db) {
       invoiceRecipientType: sr.invoiceRecipientType,
       nfDeliveryEmails: sr.nfDeliveryEmails,
       nfHideFromGuest: sr.nfHideFromGuest,
+      b2bCredentialEmailSentAt: "2026-10-24T13:30:00.000Z",
+      b2bCredentialEmailRecipient: Array.isArray(sr.nfDeliveryEmails) ? sr.nfDeliveryEmails.join(", ") : (sr.agencyAgentEmail || ""),
+      b2bCredentialCompletedAt: "2026-10-26T20:00:00.000Z",
+      credentialStatus: "completed",
       notes: sr.notes,
       specialRequests: `Despesas Autorizadas B2B: ${sr.b2bAuthorizedExpenses}`,
       breakfastToken: `bfk_b2b_${sr.b2bReservationNumber}`,
@@ -11328,6 +11339,15 @@ function saveDatabase(reason = "auto_save") {
   try {
     invalidateGuestCache();
     invalidateFlatsCache();
+
+    // Blindagem crítica: se PostgreSQL está configurado mas ainda não concluiu a hidratação inicial,
+    // NÃO grava estado vazio/parcial nem no disco local (DB_FILE) nem na nuvem, evitando poluir retries.
+    if (pgPool && !pgHydratedSuccessfully) {
+      if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason.startsWith("settings_") || reason === "shutdown") {
+        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
+      }
+      return;
+    }
 
     if (process.env.NODE_ENV === "test" || reason.startsWith("manual_") || reason.startsWith("repair_") || reason.startsWith("settings_") || reason === "shutdown") {
       if (localSaveTimeout) {
@@ -33375,7 +33395,7 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
   const resIdStr = r ? String(r.id) : paramId;
   const resCode = r?.code || (paramId.startsWith("RES-") || paramId.startsWith("CORP-") || paramId.startsWith("B2B-") ? paramId : null);
 
-  if (r) {
+  if (r && (!pgPool || pgHydratedSuccessfully)) {
     ensureReservationScheduledEmails(db, saveDatabase, r);
     const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
     if (isB2b && (!r.guestPhone || !r.guestDocument) && !r.b2bCredentialCompletedAt && !r.b2bCredentialEmailSentAt) {
@@ -34246,6 +34266,9 @@ app.post(zohoWebhookPaths, async (req, res) => {
           new Promise(r => setTimeout(r, 2500))
         ]);
       } catch (_) {}
+      if (!pgHydratedSuccessfully) {
+        return res.status(200).json({ ok: false, skipped: true, reason: "db_not_hydrated" });
+      }
     }
     const result = await handleZohoIncomingWebhook(db, saveDatabase, req.body || {});
     res.status(200).json(result);
