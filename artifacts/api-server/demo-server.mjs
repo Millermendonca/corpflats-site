@@ -14293,14 +14293,11 @@ app.patch("/api/flats/:id", (req, res) => {
     }
 
     const authUser = getAuthUser(req);
-    const targetCandidates = !req.body.isOccupied
-      ? findCheckoutTargetReservationsForFlat(db, f.id, f.number, todayStr)
-      : (db.reservations || []).filter(r =>
-          r.status !== "cancelada" && r.status !== "cancelled" &&
-          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
-          (r.checkoutDate === todayStr || r.earlyCheckoutDate === todayStr)
-        );
-    const checkoutRes = targetCandidates[0] || null;
+    const checkoutRes = (db.reservations || []).find(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+      r.checkoutDate === todayStr
+    );
     if (checkoutRes) {
       if (!req.body.isOccupied) {
         applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
@@ -14308,7 +14305,7 @@ app.patch("/api/flats/:id", (req, res) => {
           actorName: authUser?.name || authUser?.username || "Governança / Card",
           nowIso: now,
           todayStr
-        }).catch(e => console.warn("[Flat Vacancy Early Checkout Error]:", e?.message));
+        }).catch(e => console.warn("[Flat Vacancy Checkout Error]:", e?.message));
         cancelPendingStayRemindersForCheckout(db, null, {
           reservation: checkoutRes,
           flatId: f.id,
@@ -14319,22 +14316,6 @@ app.patch("/api/flats/:id", (req, res) => {
           console.warn("[Flat Vacancy Checkout Trigger Error]:", e.message);
         });
       } else {
-        if (checkoutRes.earlyCheckout && checkoutRes.originalCheckoutDate) {
-          checkoutRes.checkoutDate = checkoutRes.originalCheckoutDate;
-          checkoutRes.earlyCheckout = false;
-          checkoutRes.originalCheckoutDate = null;
-          checkoutRes.earlyCheckoutDate = null;
-          checkoutRes.earlyCheckoutTime = null;
-          checkoutRes.earlyCheckoutAt = null;
-          checkoutRes.earlyCheckoutReportedBy = null;
-          checkoutRes.earlyCheckoutNote = null;
-          checkoutRes.earlyCheckoutAdminNotifiedAt = null;
-          if (checkoutRes.notes) {
-            checkoutRes.notes = String(checkoutRes.notes)
-              .replace(/\n?•\s*Check-out antecipado em [^\n]+/g, "")
-              .trim();
-          }
-        }
         checkoutRes.checkoutDone = false;
         if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
           checkoutRes.status = checkoutRes.previousStatus || "confirmada";
@@ -16348,14 +16329,11 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         relatedFlat.updatedAt = now;
       }
 
-      const targetCandidates = isVacant
-        ? findCheckoutTargetReservationsForFlat(db, item.flatId, item.flatNumber || relatedFlat?.number || "", targetDate)
-        : (db.reservations || []).filter(r =>
-            r.status !== "cancelada" && r.status !== "cancelled" &&
-            (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
-            (r.checkoutDate === targetDate || r.checkoutDate === (date || getTodayStr()) || r.earlyCheckoutDate === targetDate)
-          );
-      const checkoutRes = targetCandidates[0] || null;
+      const checkoutRes = (db.reservations || []).find(r =>
+        r.status !== "cancelada" && r.status !== "cancelled" &&
+        (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
+        (r.checkoutDate === targetDate || r.checkoutDate === (date || getTodayStr()))
+      );
       if (checkoutRes) {
         if (isVacant) {
           applyReservationCheckoutAndEarlyRelease(db, saveDatabase, checkoutRes, {
@@ -16363,7 +16341,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
             actorName: userAuth?.name || userAuth?.username || "Camareira / Governança",
             nowIso: now,
             todayStr: targetDate
-          }).catch(e => console.warn("[Cleaning Card Early Checkout Error]:", e?.message));
+          }).catch(e => console.warn("[Cleaning Card Checkout Error]:", e?.message));
           cancelPendingStayRemindersForCheckout(db, null, {
             reservation: checkoutRes,
             flatId: item.flatId,
@@ -16374,22 +16352,6 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
             console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
           });
         } else {
-          if (checkoutRes.earlyCheckout && checkoutRes.originalCheckoutDate) {
-            checkoutRes.checkoutDate = checkoutRes.originalCheckoutDate;
-            checkoutRes.earlyCheckout = false;
-            checkoutRes.originalCheckoutDate = null;
-            checkoutRes.earlyCheckoutDate = null;
-            checkoutRes.earlyCheckoutTime = null;
-            checkoutRes.earlyCheckoutAt = null;
-            checkoutRes.earlyCheckoutReportedBy = null;
-            checkoutRes.earlyCheckoutNote = null;
-            checkoutRes.earlyCheckoutAdminNotifiedAt = null;
-            if (checkoutRes.notes) {
-              checkoutRes.notes = String(checkoutRes.notes)
-                .replace(/\n?•\s*Check-out antecipado em [^\n]+/g, "")
-                .trim();
-            }
-          }
           checkoutRes.checkoutDone = false;
           if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
             checkoutRes.status = checkoutRes.previousStatus || "confirmada";
@@ -42609,6 +42571,7 @@ app.get("/api/breakfast/orders", (req, res) => {
   const todayStr = nowBrl.date;
 
   // Reconciliação em tempo real com o calendário PMS
+  let restoredAnyOrder = false;
   allOrders.forEach(order => {
     if (!order.status) order.status = "pending";
     if (order.manuallyReactivated) return;
@@ -42624,7 +42587,14 @@ app.get("/api/breakfast/orders", (req, res) => {
         order.cancelReason = "Reserva não consta no calendário do hotel (quarto alterado ou reserva excluída)";
       }
     } else if (order.roomNumber) {
+      // Prioriza reserva ativa (sem check-out) que cobre a data do café antes de cair em reservas com earlyCheckout
       matchingRes = (db.reservations || []).find(r =>
+        (String(r.flatNumber) === String(order.roomNumber) || r.flatId === Number(order.roomNumber)) &&
+        r.checkinDate <= order.date &&
+        r.checkoutDate >= order.date &&
+        !r.earlyCheckout &&
+        r.status !== "cancelada" && r.status !== "cancelled"
+      ) || (db.reservations || []).find(r =>
         (String(r.flatNumber) === String(order.roomNumber) || r.flatId === Number(order.roomNumber)) &&
         r.checkinDate <= order.date &&
         ((r.originalCheckoutDate && r.originalCheckoutDate >= order.date) || r.checkoutDate >= order.date) &&
@@ -42645,7 +42615,7 @@ app.get("/api/breakfast/orders", (req, res) => {
         )
       );
 
-      // Checa se houve check-out (antecipado em dia anterior ou no mesmo dia antes do horário do café, ou apartamento marcado desocupado)
+      // Checa estritamente se ESTA reserva teve check-out antecipado registrado OU check-out no próprio dia do café antes do horário de entrega
       const orderDeliveryTime = order.deliveryTime || "08:00";
       const actualCheckoutBrlDate = matchingRes.actualCheckoutAt
         ? new Date(new Date(matchingRes.actualCheckoutAt).getTime() - 3 * 3600 * 1000).toISOString().substring(0, 10)
@@ -42658,40 +42628,19 @@ app.get("/api/breakfast/orders", (req, res) => {
         matchingRes.status === "checked_out" ||
         matchingRes.actualCheckoutAt
       );
-      const isCheckedOutBeforeOrderDate = isCompletedOrCheckedOut && (
-        (actualCheckoutBrlDate && actualCheckoutBrlDate < order.date) ||
-        matchingRes.checkoutDate < order.date
-      );
-      const isCheckedOutSameDayBeforeDelivery = isCompletedOrCheckedOut && (
-        (actualCheckoutBrlDate === order.date || matchingRes.checkoutDate === order.date) &&
+
+      // Só considera saída no mesmo dia se o check-out ocorreu na data do pedido ANTES do horário de entrega;
+      // Para dias seguintes ao check-out (inclusive check-out antecipado na noite anterior), order.date > matchingRes.checkoutDate (isAfterCheckout) já é true.
+      const isCheckedOutSameDayBeforeDelivery = Boolean(
+        isCompletedOrCheckedOut &&
+        matchingRes.checkoutDate === order.date &&
+        actualCheckoutBrlDate === order.date &&
         Boolean(checkoutTimeCandidate) &&
         isTimeBefore(checkoutTimeCandidate, orderDeliveryTime)
       );
 
-      const flatCleanVacant = (db.cleaningRequests || []).find(cr =>
-        (cr.flatId === matchingRes.flatId || String(cr.flatNumber) === String(matchingRes.flatNumber)) &&
-        Boolean(cr.isVacant && cr.isVacantExplicitlySet) &&
-        cr.requestDate >= matchingRes.checkinDate &&
-        cr.requestDate <= order.date
-      );
-      let isCleanCardVacantBeforeDelivery = false;
-      if (flatCleanVacant && !isCompletedOrCheckedOut) {
-        if (flatCleanVacant.requestDate < order.date) {
-          isCleanCardVacantBeforeDelivery = true;
-        } else if (flatCleanVacant.requestDate === order.date && flatCleanVacant.vacantSetAt) {
-          const vacantBrl = new Date(new Date(flatCleanVacant.vacantSetAt).getTime() - 3 * 3600 * 1000).toISOString();
-          const vacantDate = vacantBrl.substring(0, 10);
-          const vacantTime = vacantBrl.substring(11, 16);
-          if (vacantDate < order.date || (vacantDate === order.date && isTimeBefore(vacantTime, orderDeliveryTime))) {
-            isCleanCardVacantBeforeDelivery = true;
-          }
-        }
-      }
-
       const isCheckoutTriggeredCancel = Boolean(
-        isCheckedOutBeforeOrderDate ||
         isCheckedOutSameDayBeforeDelivery ||
-        isCleanCardVacantBeforeDelivery ||
         (isAfterCheckout && (matchingRes.earlyCheckout || isCompletedOrCheckedOut))
       );
 
@@ -42699,10 +42648,9 @@ app.get("/api/breakfast/orders", (req, res) => {
         const reportedBy = matchingRes.earlyCheckoutReportedBy ||
           matchingRes.checkoutReportedBy ||
           (matchingRes.checkoutMethod ? formatCheckoutReporterLabel(matchingRes.checkoutMethod) : null) ||
-          (flatCleanVacant?.vacantSource ? formatCheckoutReporterLabel(flatCleanVacant.vacantSource) : null) ||
           order.checkoutWarningInfo?.reportedBy ||
           "Portaria / Governança / Recepção";
-        const coDate = matchingRes.earlyCheckoutDate || actualCheckoutBrlDate || flatCleanVacant?.requestDate || matchingRes.checkoutDate;
+        const coDate = matchingRes.earlyCheckoutDate || actualCheckoutBrlDate || matchingRes.checkoutDate;
         const coTime = checkoutTimeCandidate || order.checkoutWarningInfo?.checkoutTime || "";
         order.cancelledByCheckout = true;
         order.checkoutWarningInfo = {
@@ -42717,25 +42665,32 @@ app.get("/api/breakfast/orders", (req, res) => {
       if (isResCancelled || isBeforeCheckin || isAfterCheckout || !hasBf || isCheckoutTriggeredCancel) {
         order.status = "cancelled";
         order.cancelReason = computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, db);
-      } else if (order.status === "cancelled" && !order.cancelledByCheckout && (
+      } else if (order.status === "cancelled" && (
+        order.cancelledByCheckout ||
+        order.checkoutWarningInfo ||
+        order.cancelReason === "Pedido cancelado no calendário" ||
         order.cancelReason?.includes("Early check-out") ||
         order.cancelReason?.includes("early check-out") ||
         order.cancelReason?.includes("Check-in") ||
-        order.cancelReason?.includes("check-out") ||
+        order.cancelReason?.toLowerCase().includes("check-out") ||
         order.cancelReason?.includes("antecipou") ||
         order.cancelReason?.includes("anterior") ||
         order.cancelReason?.includes("desmarcado") ||
         order.cancelReason?.includes("Diária removida") ||
         order.cancelReason?.includes("Estadia reduzida")
       )) {
-        // Reativa caso a reserva esteja válida com café e sem saída antes da entrega
+        // Reativa automaticamente caso a reserva esteja ativa, com café e sem check-out registrado
         order.status = "pending";
         order.cancelReason = null;
         order.cancelledByCheckout = false;
         order.checkoutWarningInfo = null;
+        restoredAnyOrder = true;
       }
     }
   });
+  if (restoredAnyOrder) {
+    saveDatabase();
+  }
 
   const dayOrders = allOrders.filter(o => o.date === date);
   const activeDayOrders = dayOrders.filter(o => o.status !== "cancelled");

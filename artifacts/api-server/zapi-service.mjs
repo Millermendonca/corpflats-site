@@ -11714,16 +11714,16 @@ export function findCheckoutTargetReservationsForFlat(db, flatId, flatNumber, to
     return st !== "cancelada" && st !== "cancelado" && st !== "cancelled" && st !== "expirada" && st !== "no_show" && st !== "pre_reserva" && st !== "pendente";
   };
 
-  // 1. Prioriza reservas com checkoutDate === todayStr
+  // 1. Prioriza reservas com checkoutDate === todayStr (mesmo que já concluídas, evita atingir reserva que entra hoje)
   const regularToday = db.reservations.filter(r =>
     matchesFlat(r) && isActiveRes(r) && r.checkoutDate === todayStr
   );
-  const uncompletedRegular = regularToday.filter(r => !r.checkoutDone && r.status !== "completed" && r.status !== "checked_out");
-  if (uncompletedRegular.length > 0) {
-    return uncompletedRegular;
+  if (regularToday.length > 0) {
+    const uncompletedRegular = regularToday.filter(r => !r.checkoutDone && r.status !== "completed" && r.status !== "checked_out");
+    return uncompletedRegular.length > 0 ? uncompletedRegular : regularToday;
   }
 
-  // 2. Busca reservas em andamento com saída futura (Check-out Antecipado)
+  // 2. Caso não haja nenhum check-out previsto hoje neste flat, busca reserva hospedada desde dias anteriores (checkinDate < todayStr && checkoutDate > todayStr)
   const stayoverEarly = db.reservations.filter(r =>
     matchesFlat(r) &&
     isActiveRes(r) &&
@@ -11733,25 +11733,7 @@ export function findCheckoutTargetReservationsForFlat(db, flatId, flatNumber, to
     r.checkinDate < todayStr &&
     r.checkoutDate > todayStr
   );
-  if (stayoverEarly.length > 0) {
-    return stayoverEarly;
-  }
-
-  // 3. Se já havia uma reserva regular de hoje (mesmo concluída) e nenhuma stayover, retorna regularToday
-  if (regularToday.length > 0) {
-    return regularToday;
-  }
-
-  // 4. Caso hóspede tenha feito check-in hoje (in_house) e saído no mesmo dia antes das diárias seguintes
-  const sameDayInHouseEarly = db.reservations.filter(r =>
-    matchesFlat(r) &&
-    isActiveRes(r) &&
-    !r.checkoutDone &&
-    (r.status === "in_house" || Boolean(r.actualCheckinAt)) &&
-    r.checkinDate === todayStr &&
-    r.checkoutDate > todayStr
-  );
-  return sameDayInHouseEarly;
+  return stayoverEarly;
 }
 
 /**
@@ -11959,9 +11941,9 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
 
     const deliveryTime = o.deliveryTime || "08:00";
     const isFutureOrder = o.date > todayStr;
-    const isTodayBeforeDeliveryOrPending = o.date === todayStr && (isTimeBefore(timeStr, deliveryTime) || o.status === "pending");
+    const isTodayBeforeDelivery = o.date === todayStr && isTimeBefore(timeStr, deliveryTime);
 
-    if (isFutureOrder || isTodayBeforeDeliveryOrPending) {
+    if (isFutureOrder || isTodayBeforeDelivery) {
       if (o.status !== "cancelled") {
         cancelledBreakfastCount++;
       }
