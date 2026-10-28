@@ -2416,7 +2416,7 @@ function formatDateBr(isoDate) {
 
 function formatCurrency(amount) {
   const n = Number(amount) || 0;
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).replace(/\u00A0/g, " ");
 }
 
 // ── Formatação de Alterações da Reserva para o WhatsApp (De ➔ Para) ─────────
@@ -2435,9 +2435,18 @@ export function hasNonFinancialChanges(changes = []) {
 
 export function formatWhatsAppChangesSummary(changes = [], options = {}) {
   const excludeFinancial = Boolean(options?.excludeFinancial);
-  const filteredChanges = Array.isArray(changes)
-    ? (excludeFinancial ? changes.filter(c => c && !FINANCIAL_CHANGE_FIELDS.has(String(c.field || ""))) : changes)
-    : [];
+  const normalizedArray = Array.isArray(changes)
+    ? changes
+    : (changes && typeof changes === "object"
+        ? Object.entries(changes).map(([field, val]) => ({
+            field,
+            oldValue: val?.oldValue !== undefined ? val.oldValue : val?.old,
+            newValue: val?.newValue !== undefined ? val.newValue : val?.new
+          }))
+        : []);
+  const filteredChanges = excludeFinancial
+    ? normalizedArray.filter(c => c && !FINANCIAL_CHANGE_FIELDS.has(String(c.field || "")))
+    : normalizedArray;
 
   if (filteredChanges.length === 0) {
     return "• *Status da Reserva:* Atualizada no sistema.";
@@ -2533,13 +2542,19 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
       if (typeof oldV === "number" || (typeof oldV === "string" && !oldV.includes("R$"))) {
         const n = Number(oldV) || 0;
         oldV = formatCurrency(n);
+      } else if (typeof oldV === "string") {
+        oldV = oldV.replace(/\u00A0/g, " ");
       }
       if (typeof newV === "number" || (typeof newV === "string" && !newV.includes("R$"))) {
         const n = Number(newV) || 0;
         newV = formatCurrency(n);
+      } else if (typeof newV === "string") {
+        newV = newV.replace(/\u00A0/g, " ");
       }
       // Se o valor pago anterior aparecia como R$ 0,00 apenas por normalização de OTA/paga, exibir somente o valor pago confirmado
-      if (c.field === "paidAmount" && (oldV === "R$ 0,00" || oldV === "R$ 0.00") && newV !== "R$ 0,00" && newV !== "R$ 0.00") {
+      const isOldZero = /^R\$\s*0[,.]00$/i.test(String(oldV || "").trim());
+      const isNewZero = /^R\$\s*0[,.]00$/i.test(String(newV || "").trim());
+      if (c.field === "paidAmount" && isOldZero && !isNewZero) {
         lines.push(`• *${label}:* *${newV}*`);
         continue;
       }
@@ -3399,7 +3414,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Formata a lista de campos alterados (apenas o que mudou, De ➔ Para)
   let resumoAlteracoes = "";
   const changes = reservation._changesContext || [];
-  if (Array.isArray(changes) && changes.length > 0) {
+  const hasChanges = (Array.isArray(changes) && changes.length > 0) ||
+    (changes && typeof changes === "object" && !Array.isArray(changes) && Object.keys(changes).length > 0);
+  if (hasChanges) {
     resumoAlteracoes = formatWhatsAppChangesSummary(changes, { excludeFinancial: hideFinancialForGuest });
   }
   if (!resumoAlteracoes) {
@@ -3522,6 +3539,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{quanto_falta}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{quanto_falta_pix}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{quanto_falta_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
+    "{{valor_pendente}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{valor_pendente_cartao}}": hideFinancialForGuest ? "" : formatCurrency(cardPendingAmount),
     "{{saldo_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),
     "{{valor_restante}}": hideFinancialForGuest ? "" : formatCurrency(pendingAmount),

@@ -10313,7 +10313,13 @@ export async function generateSofiaRealtimeAssistance({
   const guestName = res?.guestName || conv?.name || guestContext.guestName || "Hóspede";
   const firstName = String(guestName).trim().split(/\s+/)[0] || "Hóspede";
   const flatNumber = String(res?.flatNumber || conv?.flatNumber || guestContext.flatNumber || "").trim();
-  const resCode = String(res?.code || conv?.reservationCode || "").trim();
+  const resCode = String(
+    res?.code ||
+    res?.reservationCode ||
+    (res?.id ? `RES-${res.flatNumber || flatNumber || "000"}-${String(res.id).padStart(4, "0")}` : "") ||
+    conv?.reservationCode ||
+    (flatNumber ? `RES-${flatNumber}` : "")
+  ).trim();
   const stayStage = guestContext.stayStatus || (res ? "reserva_futura" : "sem_reserva");
 
   const inboundMessages = history.filter(m => m && !m.fromMe && m.text);
@@ -10837,7 +10843,7 @@ export function getManagerWhatsAppPhone(db = null) {
  */
 export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId = null) {
   const rawUnits = (Array.isArray(db?.flats) && db.flats.length > 0) ? db.flats : (db?.rooms || []);
-  const activeFlats = rawUnits.filter(f => f && f.isActive !== false && f.status !== "manutencao_bloqueada");
+  const activeFlats = rawUnits.filter(f => f && f.isActive !== false && f.status !== "manutencao_bloqueada" && f.maintenanceStatus !== "em_manutencao");
 
   if (!checkinDate || !checkoutDate || checkinDate >= checkoutDate || activeFlats.length === 0) {
     return {
@@ -10910,9 +10916,24 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
 
     const hasResConflict = flatRes.some(r => {
       const statusNorm = String(r.status || "").toLowerCase();
-      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm)) return false;
-      if (isReservationCheckoutCompleted(r, db)) return false;
+      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm) && r.checkoutDate <= checkinDate) return false;
+      if ((r.checkoutDone || r.earlyCheckout || isReservationCheckoutCompleted(r, db)) && r.checkoutDate <= checkinDate) return false;
       return r.checkinDate < checkoutDate && r.checkoutDate > checkinDate;
+    });
+
+    const hasPendingModConflict = validReservations.some(r => {
+      const pm = r.pendingModification;
+      if (!pm || pm.status !== "awaiting_payment") return false;
+      if (pm.expiresAt && new Date(pm.expiresAt).getTime() <= nowMs) return false;
+      const targetFlatId = pm.newFlatId ?? r.flatId;
+      const targetFlatNum = pm.newFlatNumber ?? r.flatNumber;
+      const sameFlat =
+        (targetFlatId != null && String(targetFlatId) === String(flat.id)) ||
+        (targetFlatNum != null && String(targetFlatNum) === String(flat.number));
+      if (!sameFlat) return false;
+      const modIn = pm.newCheckinDate || r.checkinDate;
+      const modOut = pm.newCheckoutDate || r.checkoutDate;
+      return modIn < checkoutDate && modOut > checkinDate;
     });
 
     const hasBlockConflict = (db?.roomBlocks || []).some(b => {
@@ -10928,7 +10949,7 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       if (!o) return false;
       if (o.status === "active" && Array.isArray(o.flats)) {
         return o.flats.some(oflat => {
-          if (!oflat || oflat.status !== "in_progress") return false;
+          if (!oflat || (oflat.status !== "in_progress" && oflat.status !== "pending")) return false;
           const sameNestedFlat =
             (oflat.flatId != null && String(oflat.flatId) === String(flat.id)) ||
             (oflat.flatNumber != null && String(oflat.flatNumber) === String(flat.number));
@@ -10942,11 +10963,26 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       const sameFlat =
         (o.flatId != null && String(o.flatId) === String(flat.id)) ||
         (o.flatNumber != null && String(o.flatNumber) === String(flat.number));
-      if (!sameFlat || (o.status !== "em_andamento" && o.status !== "in_progress") || !o.startDate || !o.endDate) return false;
-      return o.startDate <= checkoutDate && o.endDate >= checkinDate;
+      const validFlatOrderStatus = o.status === "em_andamento" || o.status === "in_progress" || o.status === "pending" || o.status === "active";
+      const sDate = o.startDate || o.scheduledDate;
+      const eDate = o.endDate || o.scheduledDate || sDate;
+      if (!sameFlat || !validFlatOrderStatus || !sDate || !eDate) return false;
+      return sDate <= checkoutDate && eDate >= checkinDate;
     });
 
-    const isAvailableInPeriod = !hasResConflict && !hasBlockConflict && !hasServiceOrderConflict;
+    // Verifica se o flat possui check-out pendente previsto para o mesmo dia do check-in (2ª prioridade)
+    // ou se está totalmente desocupado no dia do check-in (1ª prioridade)
+    const hasPendingCheckoutOnCheckinDay = flatRes.some(r => {
+      if (r.checkoutDate !== checkinDate) return false;
+      const statusNorm = String(r.status || "").toLowerCase();
+      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm)) return false;
+      if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt || isReservationCheckoutCompleted(r, db)) return false;
+      return true;
+    });
+
+    const checkinDayPriority = hasPendingCheckoutOnCheckinDay ? 2 : 1;
+    const isCompletelyVacantOnCheckin = !hasPendingCheckoutOnCheckinDay;
+    const isAvailableInPeriod = !hasResConflict && !hasPendingModConflict && !hasBlockConflict && !hasServiceOrderConflict;
     const amenitiesInfo = getFlatAmenitiesInfo(flat);
 
     return {
@@ -10958,6 +10994,9 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       monthOccupiedDays,
       lastCheckoutDate: lastCheckoutStr,
       daysSinceLastCheckout,
+      checkinDayPriority,
+      isCompletelyVacantOnCheckin,
+      hasSameDayCheckout: hasPendingCheckoutOnCheckinDay,
       isAvailableInPeriod,
       airConditionerType: amenitiesInfo?.airConditionerType || "split",
       bedType: amenitiesInfo?.bedType || "casal",
@@ -10968,6 +11007,9 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
   const availableFlats = stats
     .filter(s => s.isAvailableInPeriod)
     .sort((a, b) => {
+      if (a.checkinDayPriority !== b.checkinDayPriority) {
+        return a.checkinDayPriority - b.checkinDayPriority;
+      }
       if (a.monthOccupiedDays !== b.monthOccupiedDays) {
         return a.monthOccupiedDays - b.monthOccupiedDays;
       }

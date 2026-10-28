@@ -714,8 +714,30 @@ export function allocateFairShareFlat(checkinDate, checkoutDate, options = {}) {
   }
 
   const stats = calculateFairShareStats(db);
+  const normCheckin = normalizeDateStr(checkinDate);
+  const hasPendingSameDayCheckout = (flat) => {
+    const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+    return reservations.some((r) => {
+      if (!r) return false;
+      if (options.excludeReservationId != null && String(r.id) === String(options.excludeReservationId)) return false;
+      const st = String(r.status || "").toLowerCase();
+      if (["cancelada", "cancelled", "cancelado", "expirada", "no_show", "completed", "checked_out"].includes(st)) return false;
+      if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt) return false;
+      const sameFlat =
+        (r.flatId != null && Number(r.flatId) === Number(flat.id)) ||
+        (r.flatNumber != null && String(r.flatNumber) === String(flat.number));
+      if (!sameFlat) return false;
+      return normalizeDateStr(r.checkoutDate) === normCheckin;
+    });
+  };
 
   candidateFlats.sort((a, b) => {
+    const prioA = hasPendingSameDayCheckout(a) ? 2 : 1;
+    const prioB = hasPendingSameDayCheckout(b) ? 2 : 1;
+    if (prioA !== prioB) {
+      return prioA - prioB;
+    }
+
     const sA = stats[String(a.number)] || { checkoutCount: 0, occupiedNights: 0, lastCheckoutDate: "1970-01-01" };
     const sB = stats[String(b.number)] || { checkoutCount: 0, occupiedNights: 0, lastCheckoutDate: "1970-01-01" };
 

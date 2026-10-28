@@ -148,6 +148,37 @@ export function buildReservationDailyRates(
   }
 }
 
+export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string | null): boolean {
+  const isPlaceholder = (str?: string | null) => {
+    const s = String(str || "").trim();
+    if (!s || s.length < 2) return true;
+    return /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b|\s+whatsapp)?|a\s+definir.*|visitante|cliente|sem\s+nome|null|undefined)$/i.test(s);
+  };
+  if (isPlaceholder(nameA) || isPlaceholder(nameB)) return true;
+  const norm = (str?: string | null) =>
+    String(str || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const a = norm(nameA);
+  const b = norm(nameB);
+  if (!a || !b) return true;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  const stopWords = new Set(["de", "da", "do", "das", "dos", "e"]);
+  const tokensA = a.split(" ").filter(t => t.length > 1 && !stopWords.has(t));
+  const tokensB = b.split(" ").filter(t => t.length > 1 && !stopWords.has(t));
+  if (tokensA.length === 0 || tokensB.length === 0) return true;
+  const firstA = tokensA[0];
+  const firstB = tokensB[0];
+  if (firstA === firstB || (firstA.length >= 4 && firstB.length >= 4 && (firstA.startsWith(firstB) || firstB.startsWith(firstA)))) {
+    return true;
+  }
+  return false;
+}
+
 export default function PmsCalendar() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
@@ -1935,12 +1966,29 @@ export default function PmsCalendar() {
         description: `Salvando alterações para ${res.guestName}...`
       });
 
-      const resp = await fetch(`/api/pms/reservations/${res.id}`, {
+      let resp = await fetch(`/api/pms/reservations/${res.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         credentials: "include"
       });
+
+      if (resp.status === 409) {
+        const errJson = await resp.json().catch(() => ({}));
+        const shouldForce = window.confirm(
+          `${errJson.error || "Conflito de Overbooking detectado neste flat!"}\n\nDeseja FORÇAR o encaixe (Overbooking) neste flat e notificar a gestão imediatamente?`
+        );
+        if (!shouldForce) {
+          fetchData(false);
+          return;
+        }
+        resp = await fetch(`/api/pms/reservations/${res.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, forceOverbooking: true }),
+          credentials: "include"
+        });
+      }
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -2283,6 +2331,7 @@ export default function PmsCalendar() {
     setFormIsCamposResident(false)
     setFormIsFlatLocked(false)
     setFormFlatLockReason("")
+    setFormForceReplace(false)
     setMobileRangeStart(null)
     setResModalTab("reservation")
     setResModalOpen(true)
@@ -2502,6 +2551,7 @@ export default function PmsCalendar() {
     setFormIsCamposResident(false)
     setFormIsFlatLocked(false)
     setFormFlatLockReason("")
+    setFormForceReplace(false)
     setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
@@ -2512,6 +2562,7 @@ export default function PmsCalendar() {
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
     setPhoneVerification(null)
+    setFormForceReplace(false)
     isFlatManuallyChangedRef.current = true
     setFormFlatId(String(resItem.flatId))
     setFormCheckin(resItem.checkinDate)
@@ -2566,7 +2617,6 @@ export default function PmsCalendar() {
     setShowVoucherParser(false)
     setVoucherTextToParse("")
     setNewAgencyInlineOpen(false)
-    setFormGuestId(resItem.guestId ? String(resItem.guestId) : "")
     setGuestSearchFilter("")
 
     const g1 = resItem.guests?.[0]
@@ -2575,6 +2625,10 @@ export default function PmsCalendar() {
       (resItem as any).guestPending ||
       /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(rawLoadedG1Name)
     )
+    const rawLoadedG1Id = resItem.guestId || g1?.guestId
+    const linkedG1Crm = rawLoadedG1Id ? crmGuests.find(cg => String(cg.id) === String(rawLoadedG1Id)) : null
+    const isLinkedG1Compatible = !linkedG1Crm || areGuestNamesCompatibleUI(rawLoadedG1Name, linkedG1Crm.name || linkedG1Crm.fullName)
+    setFormGuestId(rawLoadedG1Id && isLinkedG1Compatible ? String(rawLoadedG1Id) : "")
     setFormGuestName(isPendingLoadedG1 ? "" : rawLoadedG1Name)
     setFormGuest1Cpf(g1?.cpf || resItem.guestDocument || "")
     setFormGuestPhone(g1?.phone || resItem.guestPhone || "")
@@ -2612,7 +2666,12 @@ export default function PmsCalendar() {
     // Regra: Pré-Reserva (canal direto) sem comprovação real de PIX/cartão nunca é considerada paga,
     // mesmo que o banco tenha um paymentStatus inconsistente (ex.: pagamento integral pré-preenchido)
     const isUnpaidPreReserva = resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid;
-    const hasPendingBalance = !isOtaRes && Number(resItem.totalAmount) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) && resItem.paymentStatus !== "pago_total" && resItem.paymentStatus !== "pago";
+    const hasOtaPartialExtension = isOtaRes && (
+      resItem.paymentStatus === "sinal_pago" ||
+      resItem.paymentStatus === "parcial" ||
+      (Array.isArray(resItem.dailyRates) && resItem.dailyRates.some((d: any) => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b") && Number(resItem.paidAmount || 0) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) - 0.01)
+    );
+    const hasPendingBalance = hasOtaPartialExtension || (!isOtaRes && Number(resItem.totalAmount) > 0 && Number(resItem.paidAmount || 0) < Number(resItem.totalAmount) && resItem.paymentStatus !== "pago_total" && resItem.paymentStatus !== "pago");
     const isResCurrentlyPaid = !isUnpaidPreReserva && !hasPendingBalance && (
       isOtaRes || 
       isGatewayPaid || 
@@ -2773,6 +2832,8 @@ export default function PmsCalendar() {
     const resCleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "")
     const resCleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "")
     const matchedGuest = crmGuests.find(g => {
+      const gName = g.name || g.fullName || ""
+      if (!areGuestNamesCompatibleUI(gName, resItem.guestName)) return false
       const gDoc = String(g.documentNumber || g.document || "").replace(/\D/g, "")
       const gPhone = String(g.phone || "").replace(/\D/g, "")
       return (resItem.guestId && String(g.id) === String(resItem.guestId)) ||
@@ -2820,21 +2881,30 @@ export default function PmsCalendar() {
     const prevGuestId = formGuestId
     setFormGuestId(val)
     if (!val || val === "manual") {
+      if (prevGuestId && prevGuestId !== "manual") {
+        setFormGuestName("")
+        setFormGuest1Cpf("")
+        setFormGuestPhone("")
+        setFormGuestEmail("")
+        setFormDocPhotoUrl("")
+        setFormDocFileName("")
+        setFormIsCamposResident(false)
+      }
       return
     }
     const g = crmGuests.find(guest => String(guest.id) === val)
     if (g) {
       const isSameGuest =
         String(prevGuestId) === String(g.id) ||
-        (selectedRes?.guestId && String(selectedRes.guestId) === String(g.id)) ||
+        (selectedRes?.guestId && String(selectedRes.guestId) === String(g.id) && areGuestNamesCompatibleUI(selectedRes?.guestName, g.name || g.fullName)) ||
         (selectedRes?.guestName && (g.name || g.fullName || "").trim().toLowerCase() === selectedRes.guestName.trim().toLowerCase())
       const crmCpf = (g.documentNumber || g.document || "").trim()
       const crmPhone = (g.phone || "").trim()
       const crmEmail = (g.email || "").trim()
       setFormGuestName(g.name || g.fullName || "")
-      setFormGuest1Cpf(prev => isSameGuest ? (prev.trim() || crmCpf) : (crmCpf || prev))
-      setFormGuestPhone(prev => isSameGuest ? (prev.trim() || crmPhone) : (crmPhone || prev))
-      setFormGuestEmail(prev => isSameGuest ? (prev.trim() || crmEmail) : (crmEmail || prev))
+      setFormGuest1Cpf(prev => isSameGuest ? (prev.trim() || crmCpf) : crmCpf)
+      setFormGuestPhone(prev => isSameGuest ? (prev.trim() || crmPhone) : crmPhone)
+      setFormGuestEmail(prev => isSameGuest ? (prev.trim() || crmEmail) : crmEmail)
 
       if (g.floorPreference === "alto" || g.prefersHighFloor) {
         setFormPrefersHighFloor(true)
@@ -2844,18 +2914,25 @@ export default function PmsCalendar() {
       }
       if (g.isMonthlyGuest || g.clientType === "mensalista") {
         setFormIsMonthlyGuest(true)
+      } else if (!isSameGuest) {
+        setFormIsMonthlyGuest(false)
       }
       if (g.autoEmitInvoice) {
         setFormAutoInvoice(true)
+      } else if (!isSameGuest) {
+        setFormAutoInvoice(false)
       }
       if (g.companyId && !formCompanyId) {
         setFormCompanyId(String(g.companyId))
         const comp = companies.find(c => c.id === Number(g.companyId))
         if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
       }
-      if (g.docPhotoUrl && !formDocPhotoUrl) {
+      if (g.docPhotoUrl && (!formDocPhotoUrl || !isSameGuest)) {
         setFormDocPhotoUrl(g.docPhotoUrl)
         setFormDocFileName("documento_crm")
+      } else if (!isSameGuest && !g.docPhotoUrl) {
+        setFormDocPhotoUrl("")
+        setFormDocFileName("")
       }
       setFormIsCamposResident(isResCamposResident({ isCamposResident: g.isCamposResident }, g))
       toast({
@@ -3545,9 +3622,19 @@ export default function PmsCalendar() {
       return newTot;
     }
 
-    // Ao editar uma reserva existente de canal direto (selectedRes !== null), preserva o valor efetivamente recebido
-    // para que novas diárias/alterações de valor gerem saldo pendente real (PIX e link Cartão atualizados)
-    if (selectedRes && !isBooking && targetChannel !== "airbnb" && !isB2b) {
+    // Ao editar uma reserva existente (selectedRes !== null), preserva o valor efetivamente recebido
+    // para que novas diárias/alterações de valor gerem saldo pendente real (PIX e link Cartão atualizados),
+    // inclusive quando uma reserva OTA (Booking/Airbnb) recebe diária(s) adicional(is) por fora.
+    const isOtaTarget = isBooking || targetChannel === "airbnb";
+    const hasOtaDirectExtension = isOtaTarget && Boolean(
+      selectedRes && (
+        newDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b") ||
+        newDailyRates.length > (Array.isArray(selectedRes.dailyRates) ? selectedRes.dailyRates.length : 0) ||
+        selectedRes.paymentStatus === "sinal_pago" ||
+        selectedRes.paymentStatus === "parcial"
+      )
+    );
+    if (selectedRes && ((!isOtaTarget && !isB2b) || hasOtaDirectExtension)) {
       const currentPaidSum = Number(
         formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0).toFixed(2)
       );
@@ -3562,7 +3649,7 @@ export default function PmsCalendar() {
       return newTot;
     }
 
-    // Para novas reservas já marcadas como confirmadas (ou OTAs), pré-preenche o valor pago com o total composto
+    // Para novas reservas já marcadas como confirmadas (ou OTAs sem diária extra direta), pré-preenche o valor pago com o total composto
     setFormPaidAmount(String(newTot));
 
     setFormPayments(prev => {
@@ -3765,10 +3852,13 @@ export default function PmsCalendar() {
         : (formCheckout || format(new Date(), "yyyy-MM-dd"))
       const newCheckoutStr = format(addDays(parseISO(nextDateStr), 1), "yyyy-MM-dd")
       
+      const defaultExtraChannel = (selectedRes && (formChannel === "booking" || formChannel === "airbnb"))
+        ? "whatsapp"
+        : (lastNight ? lastNight.channel : formChannel)
       const newNightItem: DailyRateItem = {
         date: nextDateStr,
         rate: lastNight ? Number(lastNight.rate) : (Number(formDailyRate) || 250),
-        channel: lastNight ? lastNight.channel : formChannel,
+        channel: defaultExtraChannel,
         notes: "Diária extra"
       }
       const updatedRates = [...currentRates, newNightItem]
@@ -3911,7 +4001,16 @@ export default function PmsCalendar() {
       let normalizedPayments = formPayments
       let resolvedPaymentStatus = "pendente"
 
-      if (formChannel === "booking" || formChannel === "airbnb") {
+      const hasOtaPartialExtensionInForm = isOta && Boolean(
+        sumPaidFromList > 0 && sumPaidFromList < totalAmount - 0.01 && (
+          formPaymentStatus === "sinal_pago" ||
+          formPaymentStatus === "parcial" ||
+          Boolean(selectedRes) ||
+          formDailyRates.some(d => d.channel && d.channel !== "booking" && d.channel !== "airbnb" && d.channel !== "b2b")
+        )
+      )
+
+      if ((formChannel === "booking" || formChannel === "airbnb") && !hasOtaPartialExtensionInForm) {
         resolvedPaymentStatus = "pago_total"
         resolvedPaidAmount = totalAmount
         resolvedMethod = formChannel
@@ -3959,10 +4058,24 @@ export default function PmsCalendar() {
       }
 
       const numG = Number(formGuestCount) || 1
+      const rawCandidateGuest1Id =
+        formGuestId && formGuestId !== "manual"
+          ? Number(formGuestId)
+          : (!formGuestId && selectedRes && areGuestNamesCompatibleUI(formGuestName, selectedRes.guestName)
+              ? (selectedRes.guests?.[0]?.guestId || selectedRes.guestId || null)
+              : null)
+      const linkedCrmGuest1 = rawCandidateGuest1Id
+        ? crmGuests.find(cg => Number(cg.id) === Number(rawCandidateGuest1Id))
+        : null
+      const resolvedGuest1Id =
+        rawCandidateGuest1Id && (!linkedCrmGuest1 || areGuestNamesCompatibleUI(formGuestName, linkedCrmGuest1.name || linkedCrmGuest1.fullName))
+          ? rawCandidateGuest1Id
+          : null
+
       const guestsPayload: any[] = [
         {
           index: 1,
-          guestId: formGuestId && formGuestId !== "manual" ? Number(formGuestId) : (selectedRes?.guests?.[0]?.guestId || selectedRes?.guestId || null),
+          guestId: resolvedGuest1Id,
           name: formGuestName.trim(),
           cpf: formGuest1Cpf.trim(),
           phone: formGuestPhone.trim(),
@@ -3970,9 +4083,15 @@ export default function PmsCalendar() {
         }
       ]
       if (numG >= 2) {
+        const resolvedGuest2Id =
+          formGuest2Id && formGuest2Id !== "manual"
+            ? Number(formGuest2Id)
+            : (!formGuest2Id && selectedRes?.guests?.[1]?.guestId && areGuestNamesCompatibleUI(formGuest2Name, selectedRes?.guests?.[1]?.name)
+                ? Number(selectedRes.guests[1].guestId)
+                : null)
         guestsPayload.push({
           index: 2,
-          guestId: formGuest2Id && formGuest2Id !== "manual" ? Number(formGuest2Id) : (selectedRes?.guests?.[1]?.guestId || null),
+          guestId: resolvedGuest2Id,
           name: formGuest2Name.trim() || "Hóspede 2",
           cpf: formGuest2Cpf.trim(),
           phone: formGuest2Phone.trim(),
@@ -3980,9 +4099,15 @@ export default function PmsCalendar() {
         })
       }
       if (numG === 3) {
+        const resolvedGuest3Id =
+          formGuest3Id && formGuest3Id !== "manual"
+            ? Number(formGuest3Id)
+            : (!formGuest3Id && selectedRes?.guests?.[2]?.guestId && areGuestNamesCompatibleUI(formGuest3Name, selectedRes?.guests?.[2]?.name)
+                ? Number(selectedRes.guests[2].guestId)
+                : null)
         guestsPayload.push({
           index: 3,
-          guestId: formGuest3Id && formGuest3Id !== "manual" ? Number(formGuest3Id) : (selectedRes?.guests?.[2]?.guestId || null),
+          guestId: resolvedGuest3Id,
           name: formGuest3Name.trim() || "Hóspede 3",
           cpf: formGuest3Cpf.trim(),
           phone: formGuest3Phone.trim(),
@@ -4003,10 +4128,16 @@ export default function PmsCalendar() {
       const commPct = formB2bRatePolicy === "NET" ? 0 : (Number(formB2bCommissionPct) || 0)
       const commAmt = Number(((totalAmount * commPct) / 100).toFixed(2))
       const netAmt = Number((totalAmount - commAmt).toFixed(2))
+      const resolvedRequesterGuestId =
+        formRequesterId && formRequesterId !== "manual"
+          ? Number(formRequesterId)
+          : (!formRequesterId && selectedRes?.requesterInfo?.guestId && areGuestNamesCompatibleUI(formRequesterName, selectedRes?.requesterInfo?.name)
+              ? Number(selectedRes.requesterInfo.guestId)
+              : null)
 
       const payload: any = {
         flatId: Number(formFlatId),
-        guestId: formGuestId && formGuestId !== "manual" ? Number(formGuestId) : (selectedRes?.guestId || null),
+        guestId: resolvedGuest1Id,
         guestName: formGuestName.trim(),
         guestPhone: formGuestPhone.trim(),
         guestEmail: formGuestEmail.trim(),
@@ -4015,7 +4146,7 @@ export default function PmsCalendar() {
         guests: guestsPayload,
         requesterType: resolvedReqType,
         requesterInfo: (resolvedReqType === "other_person" || resolvedReqType === "company") ? {
-          guestId: formRequesterId && formRequesterId !== "manual" ? Number(formRequesterId) : (selectedRes?.requesterInfo?.guestId || null),
+          guestId: resolvedRequesterGuestId,
           name: formRequesterName.trim() || (resolvedReqType === "company" ? (selectedComp?.contactPerson || resolvedCompName) : ""),
           cpf: formRequesterCpf.trim(),
           phone: formRequesterPhone.trim() || (resolvedReqType === "company" ? (selectedComp?.phone || (selectedComp as any)?.telefone || "") : ""),
@@ -4095,6 +4226,7 @@ export default function PmsCalendar() {
         isFlatLocked: formIsFlatLocked,
         flatLocked: formIsFlatLocked,
         flatLockReason: formIsFlatLocked ? formFlatLockReason.trim() : "",
+        forceOverbooking: Boolean(formForceReplace),
         vehicle: formVehiclePlate.trim() ? {
           plate: formVehiclePlate.trim().toUpperCase(),
           brand: formVehicleBrand.trim(),
@@ -4103,21 +4235,40 @@ export default function PmsCalendar() {
         } : null
       }
 
-      let resp: Response
-      if (selectedRes) {
-        resp = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
-        })
-      } else {
-        resp = await fetch("/api/pms/reservations", {
+      const sendSaveRequest = async (bodyPayload: any) => {
+        if (selectedRes) {
+          return fetch(`/api/pms/reservations/${selectedRes.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(bodyPayload),
+            credentials: "include"
+          })
+        }
+        return fetch("/api/pms/reservations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(bodyPayload),
           credentials: "include"
         })
+      }
+
+      let resp: Response = await sendSaveRequest(payload)
+
+      if (resp.status === 409) {
+        const errJson = await resp.json().catch(() => ({}))
+        const shouldForce = window.confirm(
+          `${errJson.error || "Este flat já possui outra reserva ativa neste período!"}\n\nDeseja FORÇAR o encaixe (Overbooking) neste flat e notificar a gestão imediatamente?`
+        )
+        if (!shouldForce) {
+          toast({
+            title: "Operação cancelada",
+            description: "Selecione outro flat disponível (Quarto da Vez) ou ative a opção de forçar encaixe.",
+            variant: "destructive"
+          })
+          return
+        }
+        setFormForceReplace(true)
+        resp = await sendSaveRequest({ ...payload, forceOverbooking: true })
       }
 
       if (!resp.ok) {
@@ -4961,6 +5112,20 @@ export default function PmsCalendar() {
                           other.checkoutDate > resItem.checkoutDate
                         );
 
+                        const overlappingGroup = !isEarlyCheckout
+                          ? flatReservations
+                              .filter((other: any) =>
+                                !other.earlyCheckout &&
+                                other.checkinDate < resItem.checkoutDate &&
+                                other.checkoutDate > resItem.checkinDate
+                              )
+                              .sort((a: any, b: any) => Number(a.id) - Number(b.id))
+                          : [];
+                        const hasActiveOverlap = overlappingGroup.length > 1 || Boolean(resItem.isOverbooking);
+                        const overlapIndex = overlappingGroup.length > 1
+                          ? Math.max(0, overlappingGroup.findIndex((o: any) => o.id === resItem.id))
+                          : 0;
+
                         const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
                         const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
                         
@@ -5034,12 +5199,13 @@ export default function PmsCalendar() {
                                   data-reservation-id={resItem.id}
                                   data-checked-out-today={isCheckedOutToday ? "true" : undefined}
                                   data-early-checkout={isEarlyCheckout ? "true" : undefined}
+                                  data-overbooking-overlap={hasActiveOverlap ? "true" : undefined}
                                   style={{ 
                                     position: "absolute",
                                     left: `${pos.left}px`,
                                     width: `${pos.width}px`,
-                                    top: "7px",
-                                    height: "34px",
+                                    top: overlappingGroup.length > 1 ? (overlapIndex === 0 ? "2px" : "22px") : "7px",
+                                    height: overlappingGroup.length > 1 ? "23px" : "34px",
                                     touchAction: isLongPressActive ? "none" : undefined
                                   }}
                                   onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
@@ -5054,7 +5220,9 @@ export default function PmsCalendar() {
                                       ? 'border-dashed border-2 border-amber-400 ring-1 ring-amber-300/80'
                                       : ''
                                   } ${
-                                    isEarlyCheckout
+                                    hasActiveOverlap
+                                      ? 'opacity-85 backdrop-blur-[1px] ring-2 ring-rose-500 border-2 border-rose-400 z-20 hover:z-40 hover:opacity-100'
+                                      : isEarlyCheckout
                                       ? 'ring-2 ring-amber-400 border-amber-300'
                                       : isCheckedOutToday
                                       ? 'ring-2 ring-emerald-400 border-emerald-300'
@@ -5070,7 +5238,7 @@ export default function PmsCalendar() {
                                   } ${
                                     isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
                                   }`}
-                                  title={`${isEarlyCheckout ? `⚡ CHECK-OUT ANTECIPADO${resItem.earlyCheckoutTime ? ` ÀS ${resItem.earlyCheckoutTime}` : ""}${resItem.earlyCheckoutReportedBy ? ` (${resItem.earlyCheckoutReportedBy})` : ""} • ` : isCheckedOutToday ? `✓ CHECK-OUT REALIZADO${resItem.actualCheckoutTime ? ` ÀS ${resItem.actualCheckoutTime}` : ""} • ` : ""}${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime}${resItem.originalCheckoutDate ? ` (Previsto originalmente até ${resItem.originalCheckoutDate})` : ""} • Toque para ver detalhes ou segure para mover`}
+                                  title={`${hasActiveOverlap ? "🚨 CONFLITO DE OVERBOOKING NO FLAT • " : ""}${isEarlyCheckout ? `⚡ CHECK-OUT ANTECIPADO${resItem.earlyCheckoutTime ? ` ÀS ${resItem.earlyCheckoutTime}` : ""}${resItem.earlyCheckoutReportedBy ? ` (${resItem.earlyCheckoutReportedBy})` : ""} • ` : isCheckedOutToday ? `✓ CHECK-OUT REALIZADO${resItem.actualCheckoutTime ? ` ÀS ${resItem.actualCheckoutTime}` : ""} • ` : ""}${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime}${resItem.originalCheckoutDate ? ` (Previsto originalmente até ${resItem.originalCheckoutDate})` : ""} • Toque para ver detalhes ou segure para mover`}
                                 >
                                   {/* Background Segmentado por Diária para Reservas Multi-Canal */}
                                   {isMultiChannel && (
@@ -5806,6 +5974,7 @@ export default function PmsCalendar() {
                           const isBest = fairShareResult?.bestFlatId === f.id;
                           const isAvail = flatStat ? flatStat.isAvailable : true;
                           const conflictName = flatStat?.conflicts?.[0]?.guestName;
+                          const hasSameDayTurnover = Boolean(flatStat?.hasCheckoutOnCheckinDay);
 
                           return (
                             <SelectItem key={f.id} value={String(f.id)}>
@@ -5813,7 +5982,7 @@ export default function PmsCalendar() {
                                 <span className="font-bold">Apt {f.number}</span>
                                 {isBest && (
                                    <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                     ✨ Quarto da Vez (Sugerido)
+                                     ✨ Quarto da Vez {hasSameDayTurnover ? "(Saída no Dia)" : "(Vago no Check-in)"}
                                    </span>
                                 )}
                                 {!isAvail && (
@@ -5823,7 +5992,7 @@ export default function PmsCalendar() {
                                 )}
                                 {isAvail && !isBest && (
                                   <span className="text-[9px] text-muted-foreground font-medium">
-                                    Livre ({flatStat?.monthOccupiedDays || 0}d)
+                                    {hasSameDayTurnover ? "🔄 Saída no Dia" : "🟢 Vago no Check-in"} ({flatStat?.monthOccupiedDays || 0}d)
                                   </span>
                                 )}
                               </div>
@@ -6053,27 +6222,31 @@ export default function PmsCalendar() {
                 </div>
 
 
-                {/* Alerta de Quarto Ocupado & Substituição com Transferência Automática */}
+                {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
                 {(() => {
                   const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
-                  if (!selectedStat || selectedStat.isAvailable || selectedRes) return null;
-                  const conflict = selectedStat.conflicts?.[0];
+                  if (!selectedStat || selectedStat.isAvailable) return null;
+                  const conflictsList = (selectedStat.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
+                  if (conflictsList.length === 0 && selectedStat.blocks?.length === 0) return null;
+                  const conflict = conflictsList[0];
 
                   return (
-                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-2xl space-y-2 text-xs">
-                      <div className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
-                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
+                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                         <div>
-                          <span className="font-bold block">Apt {selectedStat.flat?.number} já possui reserva no período!</span>
-                          <span className="text-[11px] text-amber-700 dark:text-amber-300/90 block">
-                            Hóspede atual: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
-                          </span>
+                          <span className="font-bold block">🚨 Conflito de Ocupação: Apt {selectedStat.flat?.number} já possui reserva neste período!</span>
+                          {conflict && (
+                            <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
+                              Hóspede em conflito: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      <div className="pt-1.5 border-t border-amber-200 dark:border-amber-800/60 flex items-center justify-between">
+                      <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
                         <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
-                          Substituir e transferir <strong>{conflict?.guestName || "hóspede"}</strong> para o próximo Quarto da Vez
+                          Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão imediatamente)
                         </div>
                         <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
                       </div>
@@ -6908,6 +7081,11 @@ export default function PmsCalendar() {
                               setFormGuest1Cpf("")
                               setFormGuestPhone("")
                               setFormGuestEmail("")
+                              setFormDocPhotoUrl("")
+                              setFormDocFileName("")
+                              setFormIsCamposResident(false)
+                              setFormIsMonthlyGuest(false)
+                              setFormAutoInvoice(false)
                             }}
                             className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
                           >
@@ -6934,6 +7112,14 @@ export default function PmsCalendar() {
                             <button
                               type="button"
                               onClick={() => {
+                                if (formGuestId && formGuestId !== "manual") {
+                                  setFormGuest1Cpf("")
+                                  setFormGuestPhone("")
+                                  setFormGuestEmail("")
+                                  setFormDocPhotoUrl("")
+                                  setFormDocFileName("")
+                                  setFormIsCamposResident(false)
+                                }
                                 setFormGuestId("manual")
                                 setFormGuestName(guestSearchFilter)
                                 setGuestSearchFilter("")
@@ -7465,6 +7651,11 @@ export default function PmsCalendar() {
                               <button
                                 type="button"
                                 onClick={() => {
+                                  if (formGuestId && formGuestId !== "manual") {
+                                    setFormDocPhotoUrl("")
+                                    setFormDocFileName("")
+                                    setFormIsCamposResident(false)
+                                  }
                                   setFormGuestId("manual")
                                   setShowGuestSuggestions(false)
                                   toast({
@@ -8919,7 +9110,11 @@ export default function PmsCalendar() {
                                   <Select
                                     value={d.channel || formChannel || "whatsapp"}
                                     onValueChange={(val) => {
-                                      setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
+                                      setFormDailyRates(prev => {
+                                        const nextRates = prev.map((item, i) => i === idx ? { ...item, channel: val } : item);
+                                        syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
+                                        return nextRates;
+                                      });
                                     }}
                                   >
                                     <SelectTrigger className="h-8 sm:h-7 text-xs font-medium w-full">

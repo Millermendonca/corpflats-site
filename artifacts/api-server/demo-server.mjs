@@ -5077,9 +5077,10 @@ function reconcileUniversalIntegrity(incomingState = null) {
       });
     }
 
-    // 1.13 Ordens de Serviço (União não-destrutiva)
+    // 1.13 Ordens de Serviço (União não-destrutiva por Ordem e por Apartamento)
     if (Array.isArray(incomingState.serviceOrders) && incomingState.serviceOrders.length > 0) {
       if (!db.serviceOrders) db.serviceOrders = [];
+      const flatStatusRank = { pending: 0, in_progress: 1, done: 2 };
       incomingState.serviceOrders.forEach(incOrder => {
         if (!incOrder || !incOrder.id) return;
         const existingIdx = db.serviceOrders.findIndex(o => o.id === incOrder.id || o.token === incOrder.token);
@@ -5090,9 +5091,40 @@ function reconcileUniversalIntegrity(incomingState = null) {
           const existing = db.serviceOrders[existingIdx];
           const incDate = incOrder.updatedAt || incOrder.createdAt || "";
           const curDate = existing.updatedAt || existing.createdAt || "";
+          const mergedFlats = Array.isArray(existing.flats) ? existing.flats.map(f => ({ ...f })) : [];
+          if (Array.isArray(incOrder.flats)) {
+            for (const incF of incOrder.flats) {
+              const eIdx = mergedFlats.findIndex(
+                ef => Number(ef.flatId) === Number(incF.flatId) || String(ef.flatNumber) === String(incF.flatNumber)
+              );
+              if (eIdx === -1) {
+                mergedFlats.push({ ...incF });
+                changed = true;
+              } else {
+                const curF = mergedFlats[eIdx];
+                const curRank = flatStatusRank[curF.status] ?? 0;
+                const incRank = flatStatusRank[incF.status] ?? 0;
+                if (incRank > curRank) {
+                  mergedFlats[eIdx] = { ...curF, ...incF };
+                  changed = true;
+                } else if (incRank === curRank && incDate > curDate) {
+                  mergedFlats[eIdx] = { ...curF, ...incF };
+                  changed = true;
+                }
+                if (incF.workerNotifiedAvailable && !mergedFlats[eIdx].workerNotifiedAvailable) {
+                  mergedFlats[eIdx].workerNotifiedAvailable = true;
+                  mergedFlats[eIdx].workerNotifiedAvailableAt = incF.workerNotifiedAvailableAt || mergedFlats[eIdx].workerNotifiedAvailableAt;
+                  mergedFlats[eIdx].workerLastNotifiedPhone = incF.workerLastNotifiedPhone || mergedFlats[eIdx].workerLastNotifiedPhone;
+                  changed = true;
+                }
+              }
+            }
+          }
           if (incDate > curDate) {
-            db.serviceOrders[existingIdx] = { ...existing, ...incOrder };
+            db.serviceOrders[existingIdx] = { ...existing, ...incOrder, flats: mergedFlats };
             changed = true;
+          } else {
+            existing.flats = mergedFlats;
           }
         }
       });
@@ -6723,6 +6755,8 @@ export async function reconcileFromAuditLogs(db, pgPool) {
            OR action LIKE 'CLEANING_%'
            OR action LIKE 'COMPANY_%'
            OR action LIKE 'AGENCY_%'
+           OR action = 'NOTIFICATION_SERVICE_ORDER'
+           OR action LIKE 'SERVICE_ORDER_%'
          )
        ORDER BY id DESC
        LIMIT 600`
@@ -7459,6 +7493,187 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           changed = true;
         }
       }
+    }
+
+    // 6. RECONCILIAR ORDENS DE SERVIÇO (db.serviceOrders)
+    if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+    const serviceOrderLogs = logs.filter(
+      l => l.action === "NOTIFICATION_SERVICE_ORDER" || String(l.action || "").startsWith("SERVICE_ORDER_")
+    );
+    const affectedServiceOrders = new Set();
+
+    for (const sl of serviceOrderLogs) {
+      const d = sl.details || {};
+      const meta = d.metadata || d || {};
+      const rawAction = String(
+        meta.action ||
+        (sl.action !== "NOTIFICATION_SERVICE_ORDER" ? String(sl.action || "").replace(/^SERVICE_ORDER_/i, "").toLowerCase() : "") ||
+        ""
+      ).trim().toLowerCase();
+      if (!rawAction) continue;
+
+      const orderId = meta.serviceOrderId || d.serviceOrderId || d.orderId;
+      let order = orderId
+        ? db.serviceOrders.find(o => String(o.id) === String(orderId) || String(o.token) === String(orderId))
+        : null;
+      if (!order && typeof d.message === "string") {
+        order = db.serviceOrders.find(o => o.title && d.message.startsWith(`${o.title}:`));
+      }
+      if (!order || !Array.isArray(order.flats)) continue;
+
+      const tsStr = sl.timestamp ? new Date(sl.timestamp).toISOString() : new Date().toISOString();
+
+      let parsedWorkerName = meta.workerName || d.workerName || null;
+      if (!parsedWorkerName && typeof d.message === "string") {
+        const msgMatch = d.message.match(/:\s*(.+?)\s+no\s+Flat\s+/i);
+        if (msgMatch && msgMatch[1] && !/whatsapp enviado/i.test(msgMatch[1])) {
+          parsedWorkerName = msgMatch[1].trim();
+        }
+      }
+
+      if (rawAction === "worker_room_available") {
+        const flatNums = Array.isArray(meta.flats)
+          ? meta.flats
+          : (meta.flatNumber !== undefined && meta.flatNumber !== null ? [meta.flatNumber] : []);
+        const notifiedPhone = meta.workerPhone || order.workerPhone || null;
+        for (const fNum of flatNums) {
+          const f = order.flats.find(
+            fl => String(fl.flatNumber) === String(fNum) || Number(fl.flatId) === Number(fNum)
+          );
+          if (f && (!f.workerNotifiedAvailableAt || tsStr >= f.workerNotifiedAvailableAt)) {
+            if (!f.workerNotifiedAvailable || f.workerNotifiedAvailableAt !== tsStr || (notifiedPhone && f.workerLastNotifiedPhone !== notifiedPhone)) {
+              f.workerNotifiedAvailable = true;
+              f.workerNotifiedAvailableAt = tsStr;
+              if (notifiedPhone) f.workerLastNotifiedPhone = notifiedPhone;
+              changed = true;
+            }
+          }
+        }
+        if (notifiedPhone && order.lastRegistrationWelcomePhone !== notifiedPhone) {
+          order.lastRegistrationWelcomePhone = notifiedPhone;
+          changed = true;
+        }
+        continue;
+      }
+
+      const flat = order.flats.find(f =>
+        (meta.flatId !== undefined && meta.flatId !== null && Number(f.flatId) === Number(meta.flatId)) ||
+        (meta.flatNumber !== undefined && meta.flatNumber !== null && String(f.flatNumber) === String(meta.flatNumber))
+      );
+      if (!flat) continue;
+
+      if (rawAction === "entry_request") {
+        if (flat.status !== "done" || !flat.finishedAt || tsStr > flat.finishedAt) {
+          if (!flat.entryRequested) {
+            flat.entryRequested = true;
+            flat.entryRequestedAt = meta.entryRequestedAt || flat.entryRequestedAt || tsStr;
+            if (parsedWorkerName && !flat.workerName) flat.workerName = parsedWorkerName;
+            order.updatedAt = tsStr;
+            changed = true;
+          }
+        }
+      } else if (rawAction === "start" || rawAction === "started") {
+        if (!flat.finishedAt || tsStr > flat.finishedAt) {
+          if (flat.status !== "in_progress" || !flat.startedAt) {
+            flat.status = "in_progress";
+            flat.startedAt = meta.startedAt || flat.startedAt || tsStr;
+            flat.finishedAt = null;
+            if (meta.estimatedFinishAt) {
+              flat.estimatedFinishAt = meta.estimatedFinishAt;
+            } else if (!flat.estimatedFinishAt) {
+              const durH = Number(order.estimatedDurationHours) || 2;
+              flat.estimatedFinishAt = new Date(new Date(flat.startedAt).getTime() + durH * 3600 * 1000).toISOString();
+            }
+            flat.workerName = parsedWorkerName || flat.workerName || order.workerName || null;
+            flat.workerCpf = meta.workerCpf || flat.workerCpf || order.workerCpf || null;
+            flat.entryRequested = true;
+            if (!flat.entryRequestedAt) flat.entryRequestedAt = flat.startedAt;
+            flat.delayNotified = false;
+            order.updatedAt = tsStr;
+            changed = true;
+            affectedServiceOrders.add(order);
+          }
+        }
+      } else if (rawAction === "delay") {
+        // Somente aplica atualização de previsão se o apartamento estiver em andamento (nunca reabre um apartamento finalizado)
+        if (flat.status === "in_progress" && (!flat.finishedAt || tsStr > flat.finishedAt)) {
+          if (meta.estimatedFinishAt && flat.estimatedFinishAt !== meta.estimatedFinishAt) {
+            flat.estimatedFinishAt = meta.estimatedFinishAt;
+            changed = true;
+            affectedServiceOrders.add(order);
+          }
+          if (flat.delayNotified !== false) {
+            flat.delayNotified = false;
+            changed = true;
+          }
+        }
+      } else if (rawAction === "overdue_alert") {
+        // Alertas de atraso pós-restart nunca devem reabrir apartamentos já finalizados (done)
+        if (flat.status === "in_progress" && !flat.delayNotified) {
+          flat.delayNotified = true;
+          changed = true;
+        }
+      } else if (rawAction === "finish" || rawAction === "finished" || rawAction === "admin_complete" || rawAction === "completed") {
+        const resolvedFinishAt = meta.finishedAt || tsStr;
+        if (flat.status !== "done" || !flat.finishedAt || (meta.finishedAt && flat.finishedAt !== meta.finishedAt)) {
+          flat.status = "done";
+          flat.finishedAt = flat.finishedAt || resolvedFinishAt;
+          if (!flat.startedAt) flat.startedAt = meta.startedAt || tsStr;
+          flat.estimatedFinishAt = null;
+          flat.delayNotified = false;
+          flat.workerName = parsedWorkerName || flat.workerName || order.workerName || "Prestador";
+          flat.workerCpf = meta.workerCpf || flat.workerCpf || order.workerCpf || null;
+          if (meta.observations !== undefined && meta.observations !== null) {
+            flat.observations = meta.observations;
+          }
+          if (Array.isArray(meta.photos) && meta.photos.length > 0) {
+            flat.photos = meta.photos;
+          }
+          if (typeof meta.needsCleaning === "boolean") {
+            flat.needsCleaning = meta.needsCleaning;
+          }
+          if (typeof meta.wasCleanWhenStarted === "boolean") {
+            flat.wasCleanWhenStarted = meta.wasCleanWhenStarted;
+          }
+          order.updatedAt = resolvedFinishAt;
+          changed = true;
+          affectedServiceOrders.add(order);
+        }
+      } else if (rawAction === "reset") {
+        const lastActivityTs = flat.finishedAt || flat.startedAt || "";
+        if (!lastActivityTs || tsStr > lastActivityTs) {
+          if (flat.status !== "pending") {
+            flat.status = "pending";
+            flat.startedAt = null;
+            flat.finishedAt = null;
+            flat.workerName = null;
+            flat.workerCpf = null;
+            flat.estimatedFinishAt = null;
+            flat.observations = null;
+            flat.photos = [];
+            flat.needsCleaning = null;
+            flat.wasCleanWhenStarted = null;
+            flat.entryRequested = false;
+            flat.entryRequestedAt = null;
+            flat.delayNotified = false;
+            flat.forceReleased = false;
+            flat.workerNotifiedAvailable = false;
+            flat.workerNotifiedAvailableAt = null;
+            flat.workerLastNotifiedPhone = null;
+            order.updatedAt = tsStr;
+            changed = true;
+            affectedServiceOrders.add(order);
+          }
+        }
+      }
+    }
+
+    for (const ord of affectedServiceOrders) {
+      try {
+        if (typeof syncServiceOrderRoomBlocks === "function") {
+          syncServiceOrderRoomBlocks(ord, false, db);
+        }
+      } catch (_) {}
     }
 
     return changed;
@@ -8717,9 +8932,10 @@ async function _loadDatabaseImpl() {
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           try { pruneDatabase(); } catch (_) {}
           try { sanitizeAndRecoverCleanings(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeAndRecoverCleanings:", e.message); }
+          let didAuditReconcile = false;
           try {
             await pgPool.query("DELETE FROM system_audit_logs WHERE action LIKE 'SERVER_MONITOR_%'").catch(() => {});
-            await reconcileFromAuditLogs(db, pgPool);
+            didAuditReconcile = await reconcileFromAuditLogs(db, pgPool);
           } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileFromAuditLogs:", e.message); }
           try { sanitizeLostAndFound(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeLostAndFound:", e.message); }
           try { sanitizeReservationFlags(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeReservationFlags:", e.message); }
@@ -8756,7 +8972,7 @@ async function _loadDatabaseImpl() {
             hydrationRetryTimer = null;
           }
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
-          if (didChange || didMigrateEmails || didMigratePeriodicTasks) {
+          if (didChange || didAuditReconcile || didMigrateEmails || didMigratePeriodicTasks) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
           }
@@ -22131,9 +22347,12 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
           return range.startDate <= checkoutDate && range.endDate >= checkinDate;
         });
       }
-      if ((order.status === "em_andamento" || order.status === "in_progress") && order.startDate && order.endDate) {
+      const validFlatOrderStatus = order.status === "em_andamento" || order.status === "in_progress" || order.status === "pending" || order.status === "active";
+      const sDate = order.startDate || order.scheduledDate;
+      const eDate = order.endDate || order.scheduledDate || sDate;
+      if (validFlatOrderStatus && sDate && eDate) {
         if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== String(flat.number)) return false;
-        return order.startDate <= checkoutDate && order.endDate >= checkinDate;
+        return sDate <= checkoutDate && eDate >= checkinDate;
       }
       return false;
     });

@@ -730,7 +730,13 @@ export default function GuestPortal() {
     reservation?.status === "CANCELLED" || 
     reservation?.isCancelled
   )
-  const isPaid = !isCancelled && Boolean(
+  const hasPartialPendingBalance = Boolean(
+    !isB2b &&
+    (reservation?.paymentStatus === "sinal_pago" || reservation?.paymentStatus === "parcial") &&
+    Number(reservation?.paidAmount || 0) > 0 &&
+    Number(reservation?.paidAmount || 0) < Number(reservation?.totalAmount || 0) - 0.01
+  )
+  const isPaid = !isCancelled && !hasPartialPendingBalance && Boolean(
     isOta || 
     reservation?.isPaid ||
     reservation?.paymentStatus === "pago_total" || 
@@ -778,30 +784,39 @@ export default function GuestPortal() {
     data?.preCheckinBlocked
   )
 
-  // Avaliação estritamente individual e coletiva da re-assinatura (apenas quando não é pré-reserva não paga e houve check-in anterior)
+  // Avaliação estritamente individual e coletiva da re-assinatura (apenas quando não é pré-reserva não paga, a estadia ainda está ativa e houve assinatura nesta reserva)
+  const isStayAlreadyClosed = Boolean(
+    reservation?.checkoutDone ||
+    reservation?.earlyCheckout ||
+    reservation?.status === "completed" ||
+    reservation?.status === "checked_out" ||
+    reservation?.status === "cancelada" ||
+    reservation?.status === "cancelled"
+  )
+
   const hasEverDoneCheckin = Boolean(
     reservation?.hasPreCheckin ||
     reservation?.hadCompletedCheckinBefore ||
     reservation?.fnhrCompleted ||
     reservation?.preCheckinCompleted ||
-    reservation?.signatureUrl ||
     reservation?.checkedInAt ||
     reservation?.fnrhSignedAt ||
+    reservation?.fnrhDocumentUuid ||
     (Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(
       g?.hasCompletedCheckin ||
       g?.hadCompletedCheckinBefore ||
       g?.checkinCompletedAt ||
-      g?.signatureUrl ||
-      g?.fnrhSignedAt
+      g?.fnrhSignedAt ||
+      g?.fnrhDocumentUuid
     )))
   )
 
-  const reservationNeedsReSignature = !isPreReservaUnpaid && hasEverDoneCheckin && Boolean(
+  const reservationNeedsReSignature = !isPreReservaUnpaid && !isStayAlreadyClosed && hasEverDoneCheckin && Boolean(
     reservation?.needsReSignature ||
     (Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(g.needsReSignature)))
   )
 
-  const currentGuestNeedsReSignature = !isPreReservaUnpaid && hasEverDoneCheckin && Boolean(
+  const currentGuestNeedsReSignature = !isPreReservaUnpaid && !isStayAlreadyClosed && hasEverDoneCheckin && Boolean(
     currentGuest?.needsReSignature !== undefined
       ? currentGuest.needsReSignature
       : (reservationNeedsReSignature && !currentGuest?.hasCompletedCheckin)
@@ -809,18 +824,18 @@ export default function GuestPortal() {
 
   // Status de re-assinatura por grupo de ocupantes
   const pendingReSignGuests = useMemo(() => {
-    if (isPreReservaUnpaid || !hasEverDoneCheckin) return []
+    if (isPreReservaUnpaid || isStayAlreadyClosed || !hasEverDoneCheckin) return []
     return guestsList.filter((g: any) => Boolean(g.needsReSignature))
-  }, [guestsList, isPreReservaUnpaid, hasEverDoneCheckin])
+  }, [guestsList, isPreReservaUnpaid, isStayAlreadyClosed, hasEverDoneCheckin])
 
   const completedReSignGuests = useMemo(() => {
     return guestsList.filter((g: any) => Boolean(g.hasCompletedCheckin && !g.needsReSignature))
   }, [guestsList])
 
   const otherPendingReSignGuests = useMemo(() => {
-    if (isPreReservaUnpaid || !hasEverDoneCheckin) return []
+    if (isPreReservaUnpaid || isStayAlreadyClosed || !hasEverDoneCheckin) return []
     return guestsList.filter((g: any) => Number(g.index) !== Number(activeGuestIndex) && Boolean(g.needsReSignature))
-  }, [guestsList, activeGuestIndex, isPreReservaUnpaid, hasEverDoneCheckin])
+  }, [guestsList, activeGuestIndex, isPreReservaUnpaid, isStayAlreadyClosed, hasEverDoneCheckin])
 
   // Preserva needsReSignature apontando para a obrigação do hóspede atual
   const needsReSignature = currentGuestNeedsReSignature
@@ -832,7 +847,6 @@ export default function GuestPortal() {
     currentGuest?.hasCompletedCheckin ||
     currentGuest?.status === "CHECKED_IN" ||
     currentGuest?.fnrhSignedAt ||
-    currentGuest?.signatureUrl ||
     (guestsList.length === 1 && (
       reservation?.fnhrCompleted ||
       reservation?.preCheckinCompleted ||
@@ -2485,7 +2499,6 @@ export default function GuestPortal() {
                       g.hasCompletedCheckin || 
                       g.status === "CHECKED_IN" || 
                       g.fnrhSignedAt || 
-                      g.signatureUrl || 
                       (isTitular && guestsList.length === 1 && (reservation.fnhrCompleted || reservation.preCheckinCompleted))
                     )
 
