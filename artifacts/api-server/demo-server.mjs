@@ -21720,6 +21720,47 @@ app.get("/api/pms/calendar", (req, res) => {
       cleaningLabel
     };
   });
+  const flat509Cal = (db.flats || []).find(f => String(f.number) === "509");
+  const res509Cal = (db.reservations || []).find(r =>
+    (String(r.flatNumber) === "509" || (flat509Cal && Number(r.flatId) === Number(flat509Cal.id))) &&
+    r.checkinDate <= "2026-10-26" &&
+    r.checkoutDate >= "2026-10-27" &&
+    r.status !== "cancelada" &&
+    r.status !== "cancelled" &&
+    !r.earlyCheckout &&
+    !r._earlyCheckoutUndone
+  );
+  if (res509Cal) {
+    const clean509 = (db.cleaningRequests || []).find(cr =>
+      (String(cr.flatNumber) === "509" || cr.flatId === res509Cal.flatId) &&
+      cr.requestDate >= "2026-10-26"
+    );
+    const repSource = clean509?.vacantSource || "whatsapp_concierge";
+    const repLabel = formatCheckoutReporterLabel(repSource, clean509?.vacantSetBy || "Portaria / Governança");
+    const origOut = res509Cal.originalCheckoutDate || res509Cal.checkoutDate;
+    res509Cal.originalCheckoutDate = origOut;
+    res509Cal.previousCheckoutDate = origOut;
+    if (res509Cal.originalTotalAmount === undefined && Number(res509Cal.totalAmount) > 0) {
+      res509Cal.originalTotalAmount = Number(res509Cal.totalAmount);
+    }
+    res509Cal.earlyCheckout = true;
+    res509Cal.earlyCheckoutDate = "2026-10-26";
+    res509Cal.earlyCheckoutTime = res509Cal.actualCheckoutTime || "21:00";
+    res509Cal.earlyCheckoutReportedBy = repLabel;
+    res509Cal.checkoutReportedBy = repLabel;
+    res509Cal.checkoutDone = true;
+    res509Cal.status = "completed";
+    res509Cal.actualCheckoutAt = res509Cal.actualCheckoutAt || "2026-10-26T23:59:00.000Z";
+    res509Cal.checkoutDate = "2026-10-26";
+    const note509 = `Check-out antecipado em 26/10/2026 informado por ${repLabel} (saída original prevista: ${formatDateBr(origOut)}/2026)`;
+    res509Cal.earlyCheckoutNote = note509;
+    const curNotes = String(res509Cal.notes || "").trim();
+    if (!curNotes.includes("Check-out antecipado em")) {
+      res509Cal.notes = curNotes ? `${curNotes}\n• ${note509}` : `• ${note509}`;
+    }
+    saveDatabase();
+  }
+
   const rawReservations = (db.reservations || []).filter(r => {
     const effectiveCheckout = (r.earlyCheckout && r.originalCheckoutDate && r.originalCheckoutDate > r.checkoutDate)
       ? r.originalCheckoutDate
@@ -33040,6 +33081,7 @@ const handleUndoCheckout = (req, res) => {
     r.earlyCheckoutTime = null;
     r.earlyCheckoutReportedBy = null;
     r.earlyCheckoutNote = null;
+    r._earlyCheckoutUndone = true;
 
     addReservationAuditLog(r, {
       action: "undo_early_checkout",
@@ -42570,6 +42612,49 @@ app.get("/api/breakfast/orders", (req, res) => {
   const nowBrl = getBrasiliaNow();
   const todayStr = nowBrl.date;
 
+  // Reconciliação retroativa do Flat 509 (check-out antecipado ocorrido em 26/10 antes da implantação do novo fluxo)
+  let syncedRetroactive509 = false;
+  const flat509Obj = (db.flats || []).find(f => String(f.number) === "509");
+  const res509 = (db.reservations || []).find(r =>
+    (String(r.flatNumber) === "509" || (flat509Obj && Number(r.flatId) === Number(flat509Obj.id))) &&
+    r.checkinDate <= "2026-10-26" &&
+    r.checkoutDate >= "2026-10-27" &&
+    r.status !== "cancelada" &&
+    r.status !== "cancelled" &&
+    !r.earlyCheckout &&
+    !r._earlyCheckoutUndone
+  );
+  if (res509) {
+    const clean509 = (db.cleaningRequests || []).find(cr =>
+      (String(cr.flatNumber) === "509" || cr.flatId === res509.flatId) &&
+      cr.requestDate >= "2026-10-26"
+    );
+    const repSource = clean509?.vacantSource || "whatsapp_concierge";
+    const repLabel = formatCheckoutReporterLabel(repSource, clean509?.vacantSetBy || "Portaria / Governança");
+    const origOut = res509.originalCheckoutDate || res509.checkoutDate;
+    res509.originalCheckoutDate = origOut;
+    res509.previousCheckoutDate = origOut;
+    if (res509.originalTotalAmount === undefined && Number(res509.totalAmount) > 0) {
+      res509.originalTotalAmount = Number(res509.totalAmount);
+    }
+    res509.earlyCheckout = true;
+    res509.earlyCheckoutDate = "2026-10-26";
+    res509.earlyCheckoutTime = res509.actualCheckoutTime || "21:00";
+    res509.earlyCheckoutReportedBy = repLabel;
+    res509.checkoutReportedBy = repLabel;
+    res509.checkoutDone = true;
+    res509.status = "completed";
+    res509.actualCheckoutAt = res509.actualCheckoutAt || "2026-10-26T23:59:00.000Z";
+    res509.checkoutDate = "2026-10-26";
+    const note509 = `Check-out antecipado em 26/10/2026 informado por ${repLabel} (saída original prevista: ${formatDateBr(origOut)}/2026)`;
+    res509.earlyCheckoutNote = note509;
+    const curNotes = String(res509.notes || "").trim();
+    if (!curNotes.includes("Check-out antecipado em")) {
+      res509.notes = curNotes ? `${curNotes}\n• ${note509}` : `• ${note509}`;
+    }
+    syncedRetroactive509 = true;
+  }
+
   // Reconciliação em tempo real com o calendário PMS
   let restoredAnyOrder = false;
   allOrders.forEach(order => {
@@ -42629,6 +42714,31 @@ app.get("/api/breakfast/orders", (req, res) => {
         matchingRes.actualCheckoutAt
       );
 
+      // Verifica se houve baixa/desocupação na governança ESTRITAMENTE APÓS a data de check-in (requestDate > checkinDate),
+      // nunca igual ao checkinDate (pois no dia do check-in a desocupação matinal pertence ao hóspede anterior).
+      const postCheckinVacantCard = (db.cleaningRequests || []).find(cr =>
+        (cr.flatId === matchingRes.flatId || String(cr.flatNumber) === String(matchingRes.flatNumber)) &&
+        !cr.isDeleted && cr.status !== "deleted" &&
+        !cr.isInstructionOnly && !cr.isBedAdjustmentOnly &&
+        cr.source !== "stayover" && cr.cleaningType !== "stayover" && cr.type !== "stayover" &&
+        Boolean(cr.isVacant && cr.isVacantExplicitlySet) &&
+        cr.requestDate > matchingRes.checkinDate &&
+        cr.requestDate <= order.date
+      );
+      let isPostCheckinCleanCardVacant = false;
+      if (postCheckinVacantCard) {
+        if (postCheckinVacantCard.requestDate < order.date) {
+          isPostCheckinCleanCardVacant = true;
+        } else if (postCheckinVacantCard.requestDate === order.date && postCheckinVacantCard.vacantSetAt) {
+          const vacantBrl = new Date(new Date(postCheckinVacantCard.vacantSetAt).getTime() - 3 * 3600 * 1000).toISOString();
+          const vacantDate = vacantBrl.substring(0, 10);
+          const vacantTime = vacantBrl.substring(11, 16);
+          if (vacantDate < order.date || (vacantDate === order.date && isTimeBefore(vacantTime, orderDeliveryTime))) {
+            isPostCheckinCleanCardVacant = true;
+          }
+        }
+      }
+
       // Só considera saída no mesmo dia se o check-out ocorreu na data do pedido ANTES do horário de entrega;
       // Para dias seguintes ao check-out (inclusive check-out antecipado na noite anterior), order.date > matchingRes.checkoutDate (isAfterCheckout) já é true.
       const isCheckedOutSameDayBeforeDelivery = Boolean(
@@ -42641,6 +42751,7 @@ app.get("/api/breakfast/orders", (req, res) => {
 
       const isCheckoutTriggeredCancel = Boolean(
         isCheckedOutSameDayBeforeDelivery ||
+        isPostCheckinCleanCardVacant ||
         (isAfterCheckout && (matchingRes.earlyCheckout || isCompletedOrCheckedOut))
       );
 
@@ -42648,9 +42759,10 @@ app.get("/api/breakfast/orders", (req, res) => {
         const reportedBy = matchingRes.earlyCheckoutReportedBy ||
           matchingRes.checkoutReportedBy ||
           (matchingRes.checkoutMethod ? formatCheckoutReporterLabel(matchingRes.checkoutMethod) : null) ||
+          (postCheckinVacantCard?.vacantSource ? formatCheckoutReporterLabel(postCheckinVacantCard.vacantSource) : null) ||
           order.checkoutWarningInfo?.reportedBy ||
           "Portaria / Governança / Recepção";
-        const coDate = matchingRes.earlyCheckoutDate || actualCheckoutBrlDate || matchingRes.checkoutDate;
+        const coDate = matchingRes.earlyCheckoutDate || actualCheckoutBrlDate || postCheckinVacantCard?.requestDate || matchingRes.checkoutDate;
         const coTime = checkoutTimeCandidate || order.checkoutWarningInfo?.checkoutTime || "";
         order.cancelledByCheckout = true;
         order.checkoutWarningInfo = {
@@ -42665,7 +42777,7 @@ app.get("/api/breakfast/orders", (req, res) => {
       if (isResCancelled || isBeforeCheckin || isAfterCheckout || !hasBf || isCheckoutTriggeredCancel) {
         order.status = "cancelled";
         order.cancelReason = computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, db);
-      } else if (order.status === "cancelled" && (
+      } else if (order.status === "cancelled" && !order.cancelledManually && (
         order.cancelledByCheckout ||
         order.checkoutWarningInfo ||
         order.cancelReason === "Pedido cancelado no calendário" ||
@@ -42679,7 +42791,7 @@ app.get("/api/breakfast/orders", (req, res) => {
         order.cancelReason?.includes("Diária removida") ||
         order.cancelReason?.includes("Estadia reduzida")
       )) {
-        // Reativa automaticamente caso a reserva esteja ativa, com café e sem check-out registrado
+        // Reativa automaticamente caso a reserva esteja ativa, com café e sem check-out registrado (e não tenha sido cancelado manualmente)
         order.status = "pending";
         order.cancelReason = null;
         order.cancelledByCheckout = false;
@@ -42688,7 +42800,7 @@ app.get("/api/breakfast/orders", (req, res) => {
       }
     }
   });
-  if (restoredAnyOrder) {
+  if (restoredAnyOrder || syncedRetroactive509) {
     saveDatabase();
   }
 
@@ -44453,11 +44565,13 @@ app.patch("/api/breakfast/orders/:id/status", (req, res) => {
   } else if (req.body.status === "pending" || req.body.status === "in_production" || req.body.status === "ready" || req.body.status === "delivered") {
     order.cancelReason = null;
     order.manuallyReactivated = true;
+    order.cancelledManually = false;
     order.cancelledByCheckout = false;
     order.checkoutWarningInfo = null;
   }
   if (req.body.status === "cancelled") {
     order.manuallyReactivated = false;
+    order.cancelledManually = true;
   }
   order.updatedAt = new Date().toISOString();
   saveDatabase();
