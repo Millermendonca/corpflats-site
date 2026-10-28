@@ -624,42 +624,22 @@ app.get("/api/system/db-status", async (req, res) => {
     : null;
 
   if (pgPool) {
-    try {
-      const isPoolCongested = pgPool.waitingCount > 0 && pgPool.idleCount === 0;
-      const q = isPoolCongested
-        ? await queryDirectPgClient("SELECT key, updated_at FROM system_store WHERE key = 'db_state'", [], 8000)
-        : await pgPool.query("SELECT key, updated_at FROM system_store WHERE key = 'db_state'");
+    if (isPgSaving && lastPersistInfo?.timestamp) {
       pgStatus = "connected";
-      if (q.rows && q.rows[0]) {
-        lastSaved = q.rows[0].updated_at;
-      }
-      if (isPoolCongested) {
-        resetPgPool("db_status_detected_congested_pool");
-      }
-      if (!pgHydratedSuccessfully && !activeLoadDatabasePromise) {
-        loadDatabase().catch(() => {});
-      }
-    } catch (err) {
-      pgStatus = "error";
-      pgError = err.message;
+      lastSaved = lastPersistInfo.timestamp;
+    } else {
       try {
-        const t0 = Date.now();
-        const dq = await queryDirectPgClient("SELECT key, updated_at FROM system_store WHERE key = 'db_state'", [], 8000);
-        directProbe = { ok: true, durationMs: Date.now() - t0 };
-        pgStatus = "connected_via_direct_client";
-        if (dq.rows && dq.rows[0]) {
-          lastSaved = dq.rows[0].updated_at;
+        const q = await pgPool.query("SELECT key, updated_at FROM system_store WHERE key = 'db_state'");
+        pgStatus = "connected";
+        if (q.rows && q.rows[0]) {
+          lastSaved = q.rows[0].updated_at;
         }
-        resetPgPool("db_status_direct_ok_pool_failed");
         if (!pgHydratedSuccessfully && !activeLoadDatabasePromise) {
           loadDatabase().catch(() => {});
         }
-      } catch (dErr) {
-        directProbe = {
-          ok: false,
-          code: dErr.code || null,
-          error: dErr.message
-        };
+      } catch (err) {
+        pgStatus = "error";
+        pgError = err.message;
       }
     }
   }
@@ -10722,8 +10702,24 @@ let pendingPgStateJson = null;
 let pendingPgDirty = false;
 let pendingPgReason = "auto_save";
 let pgSaveTimeout = null;
-let lastMediaOffloadTime = Date.now();
+let lastMediaOffloadTime = 0;
+let initialMediaOffloadDone = false;
 let lastPersistedPgStateHash = null;
+let lastPgSaveCompletedAt = 0;
+const MIN_PG_SAVE_INTERVAL_MS = 25000;
+
+function scheduleNextPgFlush(delayMs = MIN_PG_SAVE_INTERVAL_MS) {
+  if (pgSaveTimeout) {
+    clearTimeout(pgSaveTimeout);
+    pgSaveTimeout = null;
+  }
+  const elapsed = Date.now() - lastPgSaveCompletedAt;
+  const effectiveDelay = Math.max(1500, delayMs, MIN_PG_SAVE_INTERVAL_MS - elapsed);
+  pgSaveTimeout = setTimeout(() => {
+    pgSaveTimeout = null;
+    flushPgState().catch(() => {});
+  }, effectiveDelay);
+}
 
 // Cache LRU leve em RAM para mídias históricas consultadas via /api/media/blob/:id (máx 40 itens)
 const mediaBlobMemoryCache = new Map();
@@ -10784,43 +10780,54 @@ async function hydrateReservationMediaBlobsForPdf(reservation, guest) {
 }
 
 async function offloadSingleBase64Field(entityType, entityId, fieldName, rawVal) {
-  if (typeof rawVal !== "string" || !rawVal.startsWith("data:image/") || rawVal.length < 2048 || !pgPool) {
+  if (typeof rawVal !== "string" || rawVal.length < 2048 || !pgPool) {
     return rawVal;
   }
-  const mimeMatch = rawVal.match(/^data:(image\/[a-zA-Z0-9+.\-]+);base64,/);
-  const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
-  const hash8 = crypto.createHash("sha1").update(rawVal.slice(0, 512) + rawVal.length).digest("hex").slice(0, 10);
-  const safeEntityId = String(entityId || "0").replace(/[^a-zA-Z0-9_\-]/g, "");
-  const safeField = String(fieldName || "img").replace(/[^a-zA-Z0-9_\-]/g, "");
+  let normalizedVal = rawVal;
+  if (!normalizedVal.startsWith("data:")) {
+    // Detecta base64 puro sem prefixo data: em campos conhecidos de mídia
+    if (normalizedVal.startsWith("http") || normalizedVal.startsWith("/")) return rawVal;
+    const sample = normalizedVal.slice(0, 256).trim();
+    if (!/^[A-Za-z0-9+/=\r\n]+$/.test(sample)) return rawVal;
+    const isPdf = sample.startsWith("JVBERi0");
+    normalizedVal = `data:${isPdf ? "application/pdf" : "image/jpeg"};base64,${normalizedVal.trim()}`;
+  }
+  const mimeMatch = normalizedVal.match(/^data:([a-zA-Z0-9+.\-\/]+);base64,/);
+  if (!mimeMatch) return rawVal;
+  const mimeType = mimeMatch[1] || "image/jpeg";
+  const hash8 = crypto.createHash("sha1").update(normalizedVal.slice(0, 512) + normalizedVal.length).digest("hex").slice(0, 10);
+  const safeEntityId = String(entityId || "0").replace(/[^a-zA-Z0-9_\-]/g, "").slice(0, 32);
+  const safeField = String(fieldName || "img").replace(/[^a-zA-Z0-9_\-]/g, "").slice(0, 24);
   const blobId = `blob_${entityType}_${safeEntityId}_${safeField}_${hash8}`;
   await pgPool.query(
     `INSERT INTO media_blobs (id, entity_type, entity_id, field_name, mime_type, data_url, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, NOW())
      ON CONFLICT (id) DO NOTHING`,
-    [blobId, entityType, String(entityId), fieldName, mimeType, rawVal]
+    [blobId, entityType, String(entityId), fieldName, mimeType, normalizedVal]
   );
+  cacheMediaBlob(blobId, { mimeType, dataUrl: normalizedVal });
   return `/api/media/blob/${blobId}`;
 }
 
 async function offloadHistoricalBase64Media() {
   if (!pgPool || !pgHydratedSuccessfully || process.env.NODE_ENV === "test") return 0;
   const nowMs = Date.now();
-  // Executa offload a cada 3 minutos (lote enxuto de 8 mídias por ciclo para não sobrecarregar o pool de 256MB)
-  if (nowMs - lastMediaOffloadTime < 3 * 60 * 1000) return 0;
+  // Na primeira execução pós-hidratação roda imediatamente (lote de até 80 mídias) para encolher db_state antes do INSERT; depois a cada 2 minutos
+  if (initialMediaOffloadDone && (nowMs - lastMediaOffloadTime < 2 * 60 * 1000)) return 0;
   lastMediaOffloadTime = nowMs;
 
   let offloadedCount = 0;
-  const MAX_OFFLOAD_PER_CYCLE = 8;
-  const mediaFields = ["selfieUrl", "photoUrl", "docPhotoUrl", "documentPhotoUrl", "signatureUrl", "minorAuthDocUrl"];
+  const MAX_OFFLOAD_PER_CYCLE = initialMediaOffloadDone ? 20 : 80;
+  const mediaFields = ["selfieUrl", "photoUrl", "docPhotoUrl", "documentPhotoUrl", "signatureUrl", "minorAuthDocUrl", "attachmentUrl", "photo"];
 
   try {
-    // 1. Externaliza Base64 pesado de todas as reservas para media_blobs (servido transparentemente por /api/media/blob/:id e hydrateReservationMediaBlobsForPdf)
+    // 1. Externaliza Base64 pesado de todas as reservas e co-hóspedes para media_blobs
     if (Array.isArray(db.reservations)) {
       for (const r of db.reservations) {
         if (!r || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
         const rId = r.code || r.id;
         for (const f of mediaFields) {
-          if (typeof r[f] === "string" && r[f].startsWith("data:image/") && r[f].length >= 2048) {
+          if (typeof r[f] === "string" && r[f].length >= 2048 && !r[f].startsWith("http") && !r[f].startsWith("/api/")) {
             r[f] = await offloadSingleBase64Field("res", rId, f, r[f]);
             offloadedCount++;
           }
@@ -10830,7 +10837,7 @@ async function offloadHistoricalBase64Media() {
             const g = r.guests[i];
             if (!g || typeof g !== "object") continue;
             for (const f of mediaFields) {
-              if (typeof g[f] === "string" && g[f].startsWith("data:image/") && g[f].length >= 2048) {
+              if (typeof g[f] === "string" && g[f].length >= 2048 && !g[f].startsWith("http") && !g[f].startsWith("/api/")) {
                 g[f] = await offloadSingleBase64Field("res_guest", `${rId}_g${i + 1}`, f, g[f]);
                 offloadedCount++;
               }
@@ -10840,15 +10847,31 @@ async function offloadHistoricalBase64Media() {
       }
     }
 
-    // 2. Externaliza Base64 pesado de fichas de hóspedes (db.guests)
-    if (Array.isArray(db.guests) && offloadedCount < MAX_OFFLOAD_PER_CYCLE) {
-      for (const g of db.guests) {
-        if (!g || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
-        const gId = g.guestCode || g.id;
-        for (const f of mediaFields) {
-          if (typeof g[f] === "string" && g[f].startsWith("data:image/") && g[f].length >= 2048) {
-            g[f] = await offloadSingleBase64Field("guest", gId, f, g[f]);
-            offloadedCount++;
+    // 2. Externaliza Base64 pesado de fichas de hóspedes (db.guests) e Portal do Hóspede (db.guestAccounts)
+    for (const [colName, prefix] of [["guests", "guest"], ["guestAccounts", "gacc"], ["lostAndFound", "laf"], ["serviceOrders", "os"], ["flatDiaryEntries", "diary"]]) {
+      if (Array.isArray(db[colName]) && offloadedCount < MAX_OFFLOAD_PER_CYCLE) {
+        for (const item of db[colName]) {
+          if (!item || typeof item !== "object" || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
+          const itemId = item.guestCode || item.code || item.id || "item";
+          for (const f of mediaFields) {
+            if (typeof item[f] === "string" && item[f].length >= 2048 && !item[f].startsWith("http") && !item[f].startsWith("/api/")) {
+              item[f] = await offloadSingleBase64Field(prefix, itemId, f, item[f]);
+              offloadedCount++;
+            }
+          }
+          for (const arrField of ["photos", "completionPhotos", "inspectionPhotos", "checkoutPhotos"]) {
+            if (Array.isArray(item[arrField])) {
+              for (let i = 0; i < item[arrField].length; i++) {
+                const p = item[arrField][i];
+                if (typeof p === "string" && p.length >= 2048 && !p.startsWith("http") && !p.startsWith("/api/")) {
+                  item[arrField][i] = await offloadSingleBase64Field(prefix, itemId, `${arrField}_${i}`, p);
+                  offloadedCount++;
+                } else if (p && typeof p.url === "string" && p.url.length >= 2048 && !p.url.startsWith("http") && !p.url.startsWith("/api/")) {
+                  p.url = await offloadSingleBase64Field(prefix, itemId, `${arrField}_${i}`, p.url);
+                  offloadedCount++;
+                }
+              }
+            }
           }
         }
       }
@@ -10862,10 +10885,10 @@ async function offloadHistoricalBase64Media() {
           if (Array.isArray(c[arrField])) {
             for (let i = 0; i < c[arrField].length; i++) {
               const item = c[arrField][i];
-              if (typeof item === "string" && item.startsWith("data:image/") && item.length >= 2048) {
+              if (typeof item === "string" && item.length >= 2048 && !item.startsWith("http") && !item.startsWith("/api/")) {
                 c[arrField][i] = await offloadSingleBase64Field("clean", c.id, `${arrField}_${i}`, item);
                 offloadedCount++;
-              } else if (item && typeof item.url === "string" && item.url.startsWith("data:image/") && item.url.length >= 2048) {
+              } else if (item && typeof item.url === "string" && item.url.length >= 2048 && !item.url.startsWith("http") && !item.url.startsWith("/api/")) {
                 item.url = await offloadSingleBase64Field("clean", c.id, `${arrField}_${i}`, item.url);
                 offloadedCount++;
               }
@@ -10875,6 +10898,38 @@ async function offloadHistoricalBase64Media() {
       }
     }
 
+    // 4. Varredura recursiva de segurança: captura qualquer data:image/ ou data:application/pdf residual >= 3KB em qualquer coleção do db
+    const walkAndOffloadResidualDataUrls = async (node, pathKey, depth = 0) => {
+      if (!node || typeof node !== "object" || depth > 6 || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) return;
+      if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i++) {
+          if (offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
+          const v = node[i];
+          if (typeof v === "string" && v.length >= 3072 && /^data:(image\/|application\/pdf)/i.test(v)) {
+            node[i] = await offloadSingleBase64Field("deep", `${pathKey}_${i}`, "arr", v);
+            offloadedCount++;
+          } else if (v && typeof v === "object") {
+            await walkAndOffloadResidualDataUrls(v, `${pathKey}_${i}`, depth + 1);
+          }
+        }
+        return;
+      }
+      for (const [k, v] of Object.entries(node)) {
+        if (offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
+        if (k === "pfxBase64" || k === "certificadoA1") continue;
+        if (typeof v === "string" && v.length >= 3072 && /^data:(image\/|application\/pdf)/i.test(v)) {
+          node[k] = await offloadSingleBase64Field("deep", pathKey, k, v);
+          offloadedCount++;
+        } else if (v && typeof v === "object") {
+          await walkAndOffloadResidualDataUrls(v, `${pathKey}_${k}`, depth + 1);
+        }
+      }
+    };
+    await walkAndOffloadResidualDataUrls(db, "root", 0);
+
+    if (offloadedCount < MAX_OFFLOAD_PER_CYCLE) {
+      initialMediaOffloadDone = true;
+    }
     if (offloadedCount > 0) {
       console.log(`[Media Offload] ${offloadedCount} mídia(s) Base64 externalizada(s) para media_blobs no PostgreSQL.`);
     }
@@ -10887,34 +10942,47 @@ async function offloadHistoricalBase64Media() {
 async function flushPgState() {
   if (!pgPool || !pgHydratedSuccessfully || isPgSaving) return;
   if (!pendingPgDirty && !pendingPgStateJson) return;
+
+  const reasonToSave = pendingPgReason || "auto_save";
+  const isShutdown = reasonToSave === "shutdown";
+  const elapsedSinceLastSave = Date.now() - lastPgSaveCompletedAt;
+  if (!isShutdown && lastPgSaveCompletedAt > 0 && elapsedSinceLastSave < MIN_PG_SAVE_INTERVAL_MS) {
+    scheduleNextPgFlush(MIN_PG_SAVE_INTERVAL_MS - elapsedSinceLastSave);
+    return;
+  }
+
+  if (pgSaveTimeout) {
+    clearTimeout(pgSaveTimeout);
+    pgSaveTimeout = null;
+  }
   isPgSaving = true;
 
-  if (pendingPgDirty || !pendingPgStateJson) {
+  let stateToSave = null;
+  let hadError = false;
+  try {
     reconcileCleaningRequests();
     pruneDatabase();
     await offloadHistoricalBase64Media();
-    pendingPgStateJson = JSON.stringify(db);
+    stateToSave = JSON.stringify(db);
     pendingPgDirty = false;
-  }
-  const stateToSave = pendingPgStateJson;
-  const reasonToSave = pendingPgReason || "auto_save";
-  pendingPgStateJson = null;
+    pendingPgStateJson = null;
 
-  let hadError = false;
-  try {
     const stateHash = crypto.createHash("sha1").update(stateToSave).digest("hex");
-    const isForcedSave = reasonToSave.startsWith("manual_") || reasonToSave.startsWith("repair_") || reasonToSave.startsWith("settings_") || reasonToSave === "shutdown";
-    if (!isForcedSave && lastPersistedPgStateHash && stateHash === lastPersistedPgStateHash) {
+    if (!isShutdown && lastPersistedPgStateHash && stateHash === lastPersistedPgStateHash) {
       lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
+      lastPgSaveCompletedAt = Date.now();
       return;
     }
 
+    const t0 = Date.now();
     await pgPool.query(
       "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
       [stateToSave]
     );
     lastPersistedPgStateHash = stateHash;
+    lastPgSaveCompletedAt = Date.now();
     lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
+    console.log(`[PostgreSQL] db_state persistido (${Math.round(stateToSave.length / 1024)} KB em ${Date.now() - t0}ms, motivo: ${reasonToSave}).`);
 
     const resCount = db.reservations ? db.reservations.length : 0;
     if (resCount > 0) {
@@ -10938,22 +11006,20 @@ async function flushPgState() {
               await pgPool.query("DELETE FROM system_store_backups WHERE id < $1", [cutoffId]);
             }
           } catch (_) {}
-        }, 10000);
+        }, 15000);
       }
     }
   } catch (e) {
     hadError = true;
+    lastPgSaveCompletedAt = Date.now();
     lastPersistInfo = { status: "error", timestamp: new Date().toISOString(), error: e.message };
     console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
-    if (!pendingPgStateJson) {
-      pendingPgStateJson = stateToSave;
-    }
     pendingPgDirty = true;
   } finally {
     isPgSaving = false;
     if (pendingPgDirty || pendingPgStateJson) {
-      // Se houve falha de conexão, aguarda 15s para não bombardear o PostgreSQL durante recovery de WAL; caso contrário espaça em 6s
-      setTimeout(flushPgState, hadError ? 15000 : 6000);
+      // Usa exclusivamente scheduleNextPgFlush para nunca multiplicar timers órfãos
+      scheduleNextPgFlush(hadError ? 30000 : MIN_PG_SAVE_INTERVAL_MS);
     }
   }
 }
@@ -10961,23 +11027,36 @@ async function flushPgState() {
 // ── Pruning Engine — Limita coleções em memória e compacta db_state para proteger PostgreSQL (256MB RAM) ──
 function pruneDatabase() {
   const LIMITS = {
-    whatsappHistory: 400,
-    whatsappConversations: 150,
+    whatsappHistory: 300,
+    whatsappConversations: 120,
     whatsappQueue: 100,
+    whatsappInboundMessages: 150,
+    whatsappDispatchHistory: 150,
+    conciergeWhatsappLogs: 100,
+    zapiConnectionLogs: 80,
     breakfastOrders: 400,
     maidPayments: 500,
     maidStatementEntries: 500,
     lostAndFound: 300,
     garageAuthorizations: 300,
-    reservationCommunications: 250,
-    zohoMessagesCache: 150,
+    reservationCommunications: 150,
+    zohoMessagesCache: 120,
+    webmailInboundMessages: 80,
+    emailQueue: 40,
     serviceOrders: 500,
-    flatDiaryEntries: 1000,
+    flatDiaryEntries: 800,
     auditLogs: 100,
     notifications: 150,
     nfseRetryQueue: 100,
     periodicExecutions: 100,
-    zapiRawWebhookLogs: 15
+    zapiRawWebhookLogs: 15,
+    channexTaskLogs: 80,
+    funnelEvents: 250,
+    cartSessions: 80,
+    abandonedCarts: 80,
+    fnrhAuditDocuments: 300,
+    wbpInbox: 200,
+    wbpQuarantine: 150
   };
 
   // 1. Blindagem Preventiva: Garante que nenhuma coleção de RH seja incluída em LIMITS
@@ -11042,6 +11121,52 @@ function pruneDatabase() {
     }
   }
 
+  // 2. Remove PDFs Base64 redundantes em r2Url / fnrhR2Url (quando R2 falhou e retornou data:application/pdf;base64,...)
+  // O PDF da FNRH já é servido via disco local ou recompilado on-the-fly por rebuildFnrhPdfOnTheFly
+  const stripBase64R2AndTempFields = (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    if (typeof obj.r2Url === "string" && obj.r2Url.startsWith("data:")) obj.r2Url = null;
+    if (typeof obj.fnrhR2Url === "string" && obj.fnrhR2Url.startsWith("data:")) obj.fnrhR2Url = null;
+    if (obj.fnrhAuditTrail && typeof obj.fnrhAuditTrail === "object") {
+      if (typeof obj.fnrhAuditTrail.r2Url === "string" && obj.fnrhAuditTrail.r2Url.startsWith("data:")) {
+        obj.fnrhAuditTrail.r2Url = null;
+      }
+    }
+    // Remove campos transitórios de upload caso a URL final já tenha sido gravada
+    if (obj.docPhotoUrl || obj.documentPhotoUrl) {
+      delete obj.docPhotoBase64;
+      delete obj.guestDocumentFile;
+    }
+    if (obj.selfieUrl || obj.photoUrl) {
+      delete obj.selfieBase64;
+      delete obj.photoBase64;
+    }
+    if (obj.signatureUrl) {
+      delete obj.signatureBase64;
+    }
+    if (obj.minorAuthDocUrl) {
+      delete obj.minorAuthDocBase64;
+    }
+  };
+
+  if (Array.isArray(db.reservations)) {
+    for (const r of db.reservations) {
+      stripBase64R2AndTempFields(r);
+      if (Array.isArray(r?.guests)) {
+        for (const g of r.guests) stripBase64R2AndTempFields(g);
+      }
+    }
+  }
+  if (Array.isArray(db.guests)) {
+    for (const g of db.guests) stripBase64R2AndTempFields(g);
+  }
+  if (Array.isArray(db.guestAccounts)) {
+    for (const acc of db.guestAccounts) stripBase64R2AndTempFields(acc);
+  }
+  if (Array.isArray(db.fnrhAuditDocuments)) {
+    for (const doc of db.fnrhAuditDocuments) stripBase64R2AndTempFields(doc);
+  }
+
   // Limpeza de histórico antigo de cleaningRequests (manter últimos 120 dias + todos abertos)
   if (Array.isArray(db.cleaningRequests) && db.cleaningRequests.length > 1500) {
     const cutoffDate = getOffsetDateStr(-120);
@@ -11080,32 +11205,70 @@ function pruneDatabase() {
     });
   }
 
-  // Truncar mensagens dentro de conversas WhatsApp (máx 50 msgs por conversa)
+  // Truncar mensagens dentro de conversas WhatsApp (máx 35 msgs por conversa e remover base64 gigante inline)
   if (Array.isArray(db.whatsappConversations)) {
     for (const conv of db.whatsappConversations) {
-      if (Array.isArray(conv.messages) && conv.messages.length > 50) {
-        conv.messages = conv.messages.slice(-50);
+      if (Array.isArray(conv?.messages)) {
+        if (conv.messages.length > 35) {
+          conv.messages = conv.messages.slice(-35);
+        }
+        for (const m of conv.messages) {
+          if (!m || typeof m !== "object") continue;
+          for (const mf of ["body", "content", "text", "mediaUrl", "imageUrl", "audioUrl", "documentUrl", "base64"]) {
+            if (typeof m[mf] === "string" && m[mf].length > 4096 && (m[mf].startsWith("data:") || !m[mf].includes(" "))) {
+              m[mf] = "[Mídia arquivada]";
+            }
+          }
+        }
       }
     }
   }
 
-  // Compacta bodyHtml pesado do zohoMessagesCache no db_state (o HTML completo é carregado sob demanda via Zoho API ao abrir o e-mail)
+  // Compacta bodyHtml pesado do zohoMessagesCache e webmailInboundMessages no db_state
   if (Array.isArray(db.zohoMessagesCache)) {
     for (const zm of db.zohoMessagesCache) {
-      if (zm && typeof zm.bodyHtml === "string" && zm.bodyHtml.length > 8000 && zm.zohoMessageId && zm.zohoFolderId) {
-        zm.bodyHtml = "";
+      if (!zm) continue;
+      if (typeof zm.bodyHtml === "string" && zm.bodyHtml.length > 4000) {
+        zm.bodyHtml = zm.zohoMessageId && zm.zohoFolderId ? "" : zm.bodyHtml.slice(0, 4000);
+      }
+    }
+  }
+  if (Array.isArray(db.webmailInboundMessages)) {
+    for (const wm of db.webmailInboundMessages) {
+      if (!wm) continue;
+      if (typeof wm.bodyHtml === "string" && wm.bodyHtml.length > 6000) {
+        wm.bodyHtml = wm.bodyHtml.slice(0, 6000);
+      }
+      if (Array.isArray(wm.attachments)) {
+        for (const att of wm.attachments) {
+          if (att && typeof att === "object") {
+            delete att.content;
+            delete att.base64;
+            delete att.data;
+          }
+        }
+      }
+    }
+  }
+  if (Array.isArray(db.emailQueue)) {
+    for (const eq of db.emailQueue) {
+      if (!eq) continue;
+      if (eq.status === "sent" || eq.status === "cancelled" || eq.status === "failed") {
+        delete eq.attachments;
+        if (typeof eq.html === "string" && eq.html.length > 1500) eq.html = eq.html.slice(0, 1500);
       }
     }
   }
 
-  // Compacta HTML muito grande (> 24KB) em comunicações de e-mail antigas (> 14 dias)
+  // Compacta HTML muito grande (> 8KB) em comunicações de e-mail
   if (Array.isArray(db.reservationCommunications)) {
-    const cutoffComm = getOffsetDateStr(-14);
+    const cutoffComm = getOffsetDateStr(-7);
     for (const rc of db.reservationCommunications) {
       if (!rc) continue;
       const rcDate = String(rc.created_at || rc.sentAt || "").split("T")[0];
-      if (rcDate && rcDate < cutoffComm && typeof rc.body === "string" && rc.body.length > 24000) {
-        rc.body = rc.body.slice(0, 24000);
+      const maxLen = (rcDate && rcDate < cutoffComm) ? 2000 : 8000;
+      if (typeof rc.body === "string" && rc.body.length > maxLen) {
+        rc.body = rc.body.slice(0, maxLen);
       }
     }
   }
@@ -11371,10 +11534,14 @@ function saveDatabase(reason = "auto_save") {
           console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
           return;
         }
-        pendingPgDirty = false;
+        pendingPgDirty = true;
         pendingPgStateJson = stateJson;
         pendingPgReason = reason;
-        flushPgState().catch(() => {});
+        if (reason === "shutdown") {
+          flushPgState().catch(() => {});
+        } else {
+          scheduleNextPgFlush(1500);
+        }
       }
       return;
     }
@@ -11394,10 +11561,7 @@ function saveDatabase(reason = "auto_save") {
       pendingPgDirty = true;
       pendingPgReason = reason;
       if (!pgSaveTimeout && !isPgSaving) {
-        pgSaveTimeout = setTimeout(() => {
-          pgSaveTimeout = null;
-          flushPgState().catch(() => {});
-        }, 3500);
+        scheduleNextPgFlush(MIN_PG_SAVE_INTERVAL_MS);
       }
     }
   } catch (err) {
@@ -52167,21 +52331,14 @@ async function upsertCatalogEntry(name) {
 
 // GET /api/shopping-list/catalog
 app.get("/api/shopping-list/catalog", async (req, res) => {
-  if (pgPool) {
+  if (Array.isArray(db.shoppingCatalog) && db.shoppingCatalog.length > 0 && !req.query.refresh) {
+    return res.json(db.shoppingCatalog);
+  }
+  if (pgPool && pgHydratedSuccessfully && !isPgSaving) {
     try {
-      let result;
-      try {
-        result = await pgPool.query(
-          `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`
-        );
-      } catch (poolErr) {
-        result = await queryDirectPgClient(
-          `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`,
-          [],
-          12000
-        );
-        resetPgPool("shopping_catalog_direct_ok_pool_failed");
-      }
+      const result = await pgPool.query(
+        `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`
+      );
       const mapped = result.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count }));
       if (mapped.length > 0) {
         db.shoppingCatalog = mapped;
@@ -52238,7 +52395,7 @@ app.patch("/api/shopping-list/reorder", async (req, res) => {
 app.get("/api/shopping-list/categories", async (req, res) => {
   const allItems = [];
   let loadedFromPg = false;
-  if (pgPool) {
+  if ((!Array.isArray(db.shoppingList) || db.shoppingList.length === 0) && pgPool && pgHydratedSuccessfully && !isPgSaving) {
     try {
       const result = await pgPool.query(`SELECT category FROM shopping_list WHERE completed = false`);
       result.rows.forEach(r => { allItems.push(...parseCategories(r.category)); });
@@ -52324,22 +52481,21 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
 });
 
 // GET /api/shopping-list
+let _lastShoppingListPgReadAt = 0;
 app.get("/api/shopping-list", async (req, res) => {
-  if (pgPool) {
+  const nowMs = Date.now();
+  const shouldSyncFromPg = pgPool && pgHydratedSuccessfully && !isPgSaving && (
+    req.query.refresh === "1" ||
+    !Array.isArray(db.shoppingList) ||
+    db.shoppingList.length === 0 ||
+    (nowMs - _lastShoppingListPgReadAt > 30000)
+  );
+  if (shouldSyncFromPg) {
     try {
-      let result;
-      try {
-        result = await pgPool.query(
-          `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
-        );
-      } catch (poolErr) {
-        result = await queryDirectPgClient(
-          `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`,
-          [],
-          15000
-        );
-        resetPgPool("shopping_list_direct_ok_pool_failed");
-      }
+      _lastShoppingListPgReadAt = nowMs;
+      const result = await pgPool.query(
+        `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
+      );
       let mapped = result.rows.map(mapShoppingRow);
       // Se o banco retornou vazio mas db.shoppingList em memória tem itens (ex: itens adicionados durante oscilação de conexão), sincroniza de volta para o PG!
       if (mapped.length === 0 && Array.isArray(db.shoppingList) && db.shoppingList.length > 0) {

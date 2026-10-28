@@ -473,11 +473,15 @@ export async function generateFnrhPdf({
   const downloadUrl = `/api/pms/fnrh/${documentUuid}/download?token=${downloadToken}`;
 
   // Upload resiliente para Cloudflare R2 (preserva arquivo após reinício do servidor Render)
+  // Nunca armazena fallback data:application/pdf;base64 em r2Url para não inflar db_state no PostgreSQL (o PDF já fica em disco e possui rebuildFnrhPdfOnTheFly)
   let r2Url = null;
   try {
     const { uploadImageToStorage } = await import("./storage-service.mjs");
     const rPrefix = `Ficha_Checkin_${(reservation.code || reservationId).toString().replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-    r2Url = await uploadImageToStorage(fileBuffer, rPrefix, null, "fnrh_documents");
+    const uploadedUrl = await uploadImageToStorage(fileBuffer, rPrefix, null, "fnrh_documents");
+    if (typeof uploadedUrl === "string" && (uploadedUrl.startsWith("http://") || uploadedUrl.startsWith("https://"))) {
+      r2Url = uploadedUrl;
+    }
   } catch (r2Err) {
     console.warn("[FNRH PDF] Falha ao fazer upload R2 (usando disco local):", r2Err.message);
   }
