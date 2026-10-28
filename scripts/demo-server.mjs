@@ -5263,6 +5263,11 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   });
 
+  // 2.5. Autocorreção e desvinculação de fichas de hóspedes contaminadas entre pessoas distintas (ex: Flat 215 Leonardo vs Francine)
+  if (healContaminatedGuestAndReservationLinks(db)) {
+    changed = true;
+  }
+
   // 3. Auditoria Universal de Integridade de Reservas em TODOS os Flats
   const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
   const activeFlatsMap = new Map();
@@ -7117,14 +7122,17 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         const curDate = existing.updatedAt || existing.createdAt || "";
         if (logDate && logDate >= curDate) {
           const merged = { ...existing, ...r };
+          const samePersonInLog = areGuestNamesCompatible(existing.guestName, r.guestName);
           if (!merged.companyName && existing.companyName) merged.companyName = existing.companyName;
           if (!merged.companyId && existing.companyId) merged.companyId = existing.companyId;
           if ((!merged.requesterType || merged.requesterType === "guest") && existing.requesterType && existing.requesterType !== "guest") merged.requesterType = existing.requesterType;
           if (!merged.requesterInfo && existing.requesterInfo) merged.requesterInfo = existing.requesterInfo;
-          if (!merged.guestPhone && existing.guestPhone) merged.guestPhone = existing.guestPhone;
-          if (!merged.guestDocument && existing.guestDocument) merged.guestDocument = existing.guestDocument;
-          if (!merged.guestEmail && existing.guestEmail) merged.guestEmail = existing.guestEmail;
-          if ((!merged.guests || merged.guests.length === 0) && existing.guests && existing.guests.length > 0) merged.guests = existing.guests;
+          if (samePersonInLog) {
+            if (!merged.guestPhone && existing.guestPhone) merged.guestPhone = existing.guestPhone;
+            if (!merged.guestDocument && existing.guestDocument) merged.guestDocument = existing.guestDocument;
+            if (!merged.guestEmail && existing.guestEmail) merged.guestEmail = existing.guestEmail;
+            if ((!merged.guests || merged.guests.length === 0) && existing.guests && existing.guests.length > 0) merged.guests = existing.guests;
+          }
           if (!merged.roomReadySentDate && existing.roomReadySentDate) {
             merged.roomReadySentDate = existing.roomReadySentDate;
             merged.roomReadySentAt = merged.roomReadySentAt || existing.roomReadySentAt;
@@ -9310,6 +9318,35 @@ function normalizeName(str) {
     .toLowerCase();
 }
 
+function isPlaceholderOrEmptyGuestName(str) {
+  const n = normalizeName(str);
+  if (!n || n.length < 2) return true;
+  if (/^(hospede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*|guest|cliente|sem\s+nome|whatsapp|desconhecido|unknown|\.+|-+)$/i.test(n)) {
+    return true;
+  }
+  if (/^\+?\d[\d\s().-]*$/.test(n)) return true;
+  return false;
+}
+
+export function areGuestNamesCompatible(nameA, nameB) {
+  if (isPlaceholderOrEmptyGuestName(nameA) || isPlaceholderOrEmptyGuestName(nameB)) return true;
+  const normA = normalizeName(nameA);
+  const normB = normalizeName(nameB);
+  if (normA === normB) return true;
+  if (normA.includes(normB) || normB.includes(normA)) return true;
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "e", "jr", "junior", "filho", "neto", "sobrinho", "sr", "sra", "dr", "dra"]);
+  const tokensA = normA.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
+  const tokensB = normB.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
+  if (tokensA.length === 0 || tokensB.length === 0) return true;
+  const firstA = tokensA[0];
+  const firstB = tokensB[0];
+  if (firstA === firstB) return true;
+  if (firstA.length >= 3 && firstB.length >= 3 && (firstA.startsWith(firstB) || firstB.startsWith(firstA))) {
+    return true;
+  }
+  return false;
+}
+
 function normalizeDoc(doc) {
   if (!doc) return "";
   return String(doc).replace(/\D/g, "");
@@ -9340,6 +9377,10 @@ function phonesMatch(p1, p2) {
 
 function mergeGuestRecords(target, source) {
   if (!target || !source) return;
+  const targetPrimaryName = target.fullName || target.name || "";
+  const sourcePrimaryName = source.fullName || source.name || source.guestName || source.tomadorNome || "";
+  if (!areGuestNamesCompatible(targetPrimaryName, sourcePrimaryName)) return;
+
   if (!target.fullName && (source.fullName || source.name)) target.fullName = source.fullName || source.name;
   if (!target.name && (source.name || source.fullName)) target.name = source.name || source.fullName;
   if (source.fullName && (!target.fullName || source.fullName.length > target.fullName.length)) target.fullName = source.fullName;
@@ -9564,6 +9605,313 @@ function mergeGuestRecords(target, source) {
   }
 }
 
+export function healContaminatedGuestAndReservationLinks(database) {
+  const currentDb = database || db;
+  if (!currentDb) return false;
+  if (!Array.isArray(currentDb.guests)) currentDb.guests = [];
+  if (!Array.isArray(currentDb.reservations)) currentDb.reservations = [];
+  if (!Array.isArray(currentDb.guestAccounts)) currentDb.guestAccounts = [];
+  let changed = false;
+
+  // 1. Autocorreção direcionada do incidente Flat 215 (Leonardo Portugal vs Francine)
+  const francineAcc = currentDb.guestAccounts.find(a =>
+    a && (normalizeName(a.name).includes("francine") || String(a.email || "").toLowerCase().includes("francine"))
+  );
+  let francineGuest = currentDb.guests.find(g =>
+    g && (
+      normalizeName(g.fullName || g.name).includes("francine") ||
+      String(g.email || "").toLowerCase().includes("francine") ||
+      (francineAcc && Number(g.id) === Number(francineAcc.guestId)) ||
+      currentDb.reservations.some(rf => Number(rf?.guestId) === Number(g.id) && String(rf?.flatNumber) !== "215" && normalizeName(rf?.guestName).includes("francine"))
+    )
+  );
+
+  let francineTrueName = "";
+  if (francineAcc?.name && normalizeName(francineAcc.name).includes("francine")) {
+    francineTrueName = String(francineAcc.name).trim();
+  } else if (francineGuest && normalizeName(francineGuest.fullName || francineGuest.name).includes("francine")) {
+    francineTrueName = String(francineGuest.fullName || francineGuest.name).trim();
+  } else {
+    for (const r of currentDb.reservations) {
+      if (String(r?.flatNumber) !== "215" && normalizeName(r?.guestName).includes("francine")) {
+        francineTrueName = String(r.guestName).trim();
+        break;
+      }
+      if (Array.isArray(r?.auditLogs)) {
+        for (const log of r.auditLogs) {
+          for (const ch of (log?.changes || [])) {
+            if (ch?.field === "guestName") {
+              if (normalizeName(ch.oldValue).includes("francine")) francineTrueName = String(ch.oldValue).trim();
+              else if (normalizeName(ch.newValue).includes("francine")) francineTrueName = String(ch.newValue).trim();
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (francineGuest && francineTrueName && !normalizeName(francineGuest.fullName || francineGuest.name).includes("francine")) {
+    francineGuest.name = francineTrueName;
+    francineGuest.fullName = francineTrueName;
+    changed = true;
+  }
+
+  const flat215LeonardoReservations = currentDb.reservations.filter(r => {
+    if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+    const is215 = String(r.flatNumber) === "215" || String(r.code || "").includes("-215-");
+    if (!is215) return false;
+    const hasLeoName = normalizeName(r.guestName).includes("leonardo") ||
+      (Array.isArray(r.guests) && r.guests.some(rg => normalizeName(rg?.name).includes("leonardo")));
+    const hasFranName = normalizeName(r.guestName).includes("francine") ||
+      (Array.isArray(r.guests) && r.guests.some(rg => normalizeName(rg?.name).includes("francine")));
+    const hasLeoAudit = Array.isArray(r.auditLogs) && r.auditLogs.some(l => JSON.stringify(l || {}).toLowerCase().includes("leonardo"));
+    const isLinkedToFrancine = Boolean(francineGuest && Number(r.guestId) === Number(francineGuest.id));
+    return hasLeoName || hasFranName || hasLeoAudit || isLinkedToFrancine;
+  });
+
+  for (const r215 of flat215LeonardoReservations) {
+    let leonardoTrueName = "Leonardo Portugal";
+    if (normalizeName(r215.guestName).includes("leonardo")) {
+      leonardoTrueName = String(r215.guestName).trim();
+    } else if (Array.isArray(r215.auditLogs)) {
+      for (const log of r215.auditLogs) {
+        for (const ch of (log?.changes || [])) {
+          if (ch?.field === "guestName") {
+            if (normalizeName(ch.newValue).includes("leonardo")) {
+              leonardoTrueName = String(ch.newValue).trim();
+              break;
+            }
+            if (normalizeName(ch.oldValue).includes("leonardo")) {
+              leonardoTrueName = String(ch.oldValue).trim();
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const francineEmail = String(francineGuest?.email || francineAcc?.email || "").trim().toLowerCase();
+    const francineDoc = normalizeDoc(francineGuest?.document || francineGuest?.documentNumber || francineAcc?.document || "");
+
+    // Identifica telefones distintos de Francine vs Leonardo
+    let francineTruePhone = "";
+    let leonardoPhone = String(r215.guestPhone || r215.guests?.[0]?.phone || "").trim();
+
+    if (francineAcc?.phone && (!leonardoPhone || !phonesMatch(francineAcc.phone, leonardoPhone))) {
+      francineTruePhone = String(francineAcc.phone).trim();
+    } else if (Array.isArray(francineGuest?.additionalPhones)) {
+      const altPhone = francineGuest.additionalPhones.find(ap => ap && (!leonardoPhone || !phonesMatch(ap, leonardoPhone)));
+      if (altPhone) francineTruePhone = String(altPhone).trim();
+    }
+
+    if (francineTruePhone && phonesMatch(leonardoPhone, francineTruePhone)) {
+      // Se o telefone da reserva 215 foi sobrescrito pelo da Francine, recupera o telefone do Leonardo nos auditLogs ou additionalPhones
+      let recoveredLeoPhone = "";
+      if (Array.isArray(r215.auditLogs)) {
+        for (const log of r215.auditLogs) {
+          for (const ch of (log?.changes || [])) {
+            if (ch?.field === "guestPhone") {
+              if (ch.newValue && !phonesMatch(ch.newValue, francineTruePhone)) {
+                recoveredLeoPhone = String(ch.newValue).trim();
+                break;
+              }
+              if (ch.oldValue && !phonesMatch(ch.oldValue, francineTruePhone)) {
+                recoveredLeoPhone = String(ch.oldValue).trim();
+                break;
+              }
+            }
+          }
+          if (recoveredLeoPhone) break;
+        }
+      }
+      if (!recoveredLeoPhone && Array.isArray(francineGuest?.additionalPhones)) {
+        const fromAdd = francineGuest.additionalPhones.find(ap => ap && !phonesMatch(ap, francineTruePhone));
+        if (fromAdd) recoveredLeoPhone = String(fromAdd).trim();
+      }
+      if (recoveredLeoPhone) {
+        leonardoPhone = recoveredLeoPhone;
+      }
+    }
+
+    if (francineGuest) {
+      if (francineTruePhone && leonardoPhone && phonesMatch(francineGuest.phone, leonardoPhone) && !phonesMatch(francineTruePhone, leonardoPhone)) {
+        francineGuest.phone = francineTruePhone;
+        changed = true;
+      }
+      if (leonardoPhone && Array.isArray(francineGuest.additionalPhones)) {
+        const beforeLen = francineGuest.additionalPhones.length;
+        francineGuest.additionalPhones = francineGuest.additionalPhones.filter(ap => !phonesMatch(ap, leonardoPhone));
+        if (francineGuest.additionalPhones.length !== beforeLen) changed = true;
+      }
+    }
+
+    const needsHeal =
+      !r215._healedFrancineContamination ||
+      normalizeName(r215.guestName).includes("francine") ||
+      (Array.isArray(r215.guests) && r215.guests.some(rg => normalizeName(rg?.name).includes("francine"))) ||
+      (francineGuest && Number(r215.guestId) === Number(francineGuest.id)) ||
+      (r215.guestEmail && (String(r215.guestEmail).toLowerCase().includes("francine") || (francineEmail && String(r215.guestEmail).trim().toLowerCase() === francineEmail))) ||
+      (r215.guestDocument && francineDoc && normalizeDoc(r215.guestDocument) === francineDoc) ||
+      Boolean(francineGuest && ((r215.guestAddress && r215.guestAddress === francineGuest.address) || (r215.guestStreet && r215.guestStreet === francineGuest.street) || (r215.guestCep && r215.guestCep === francineGuest.cep)));
+
+    if (needsHeal) {
+      r215.guestName = leonardoTrueName;
+      r215.guestPending = false;
+      if (leonardoPhone) r215.guestPhone = leonardoPhone;
+
+      if (!r215._healedFrancineContamination || (r215.guestEmail && (String(r215.guestEmail).toLowerCase().includes("francine") || (francineEmail && String(r215.guestEmail).trim().toLowerCase() === francineEmail)))) {
+        r215.guestEmail = "";
+      }
+      if (!r215._healedFrancineContamination || (r215.guestDocument && francineDoc && normalizeDoc(r215.guestDocument) === francineDoc)) {
+        if (!r215.guestDocument || (francineDoc && normalizeDoc(r215.guestDocument) === francineDoc)) {
+          r215.guestDocument = "";
+        }
+      }
+
+      const addrAndMediaFields = [
+        "guestAddress", "address", "guestStreet", "street", "guestStreetNumber", "streetNumber", "number",
+        "guestComplement", "complement", "guestNeighborhood", "neighborhood", "guestCity", "city",
+        "guestState", "state", "guestCep", "cep", "zipCode", "birthDate", "gender",
+        "docPhotoUrl", "documentPhotoUrl", "docPhotoPath", "selfieUrl", "photoUrl", "signatureUrl",
+        "fnhrCompleted", "fnhrCompletedAt", "preCheckinCompleted", "hasPreCheckin", "checkedInAt", "fnrhAuditTrail"
+      ];
+      for (const f of addrAndMediaFields) {
+        delete r215[f];
+      }
+
+      // Garante ficha própria do Leonardo Portugal em db.guests separada da Francine
+      let leonardoGuest = currentDb.guests.find(g =>
+        g &&
+        (!francineGuest || Number(g.id) !== Number(francineGuest.id)) &&
+        normalizeName(g.fullName || g.name).includes("leonardo")
+      );
+      if (!leonardoGuest) {
+        const nextGId = currentDb.guests.length > 0 ? Math.max(...currentDb.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+        leonardoGuest = {
+          id: nextGId,
+          guestCode: `HOSP-${String(nextGId).padStart(5, "0")}`,
+          name: leonardoTrueName,
+          fullName: leonardoTrueName,
+          phone: r215.guestPhone || "",
+          email: r215.guestEmail || "",
+          document: r215.guestDocument || "",
+          documentNumber: r215.guestDocument || "",
+          city: "",
+          notes: "",
+          tags: [],
+          isMonthlyGuest: Boolean(r215.isMonthlyGuest),
+          clientType: r215.clientType || "avulso",
+          createdAt: r215.createdAt || new Date().toISOString()
+        };
+        currentDb.guests.push(leonardoGuest);
+      } else {
+        leonardoGuest.name = leonardoTrueName;
+        leonardoGuest.fullName = leonardoTrueName;
+        if (r215.guestPhone) leonardoGuest.phone = r215.guestPhone;
+        if (!r215._healedFrancineContamination || (leonardoGuest.email && (String(leonardoGuest.email).toLowerCase().includes("francine") || (francineEmail && String(leonardoGuest.email).trim().toLowerCase() === francineEmail)))) {
+          leonardoGuest.email = "";
+        }
+        if (francineDoc && normalizeDoc(leonardoGuest.document || leonardoGuest.documentNumber) === francineDoc) {
+          leonardoGuest.document = "";
+          leonardoGuest.documentNumber = "";
+        }
+        for (const gf of ["address", "street", "logradouro", "streetNumber", "number", "numero", "complement", "complemento", "neighborhood", "bairro", "city", "cidade", "state", "uf", "cep", "birthDate", "gender", "docPhotoUrl", "photoUrl", "signatureUrl", "fnhrCompleted", "fnhrCompletedAt"]) {
+          delete leonardoGuest[gf];
+        }
+        if (Array.isArray(leonardoGuest.additionalPhones) && francineTruePhone) {
+          leonardoGuest.additionalPhones = leonardoGuest.additionalPhones.filter(ap => !phonesMatch(ap, francineTruePhone));
+        }
+      }
+
+      r215.guestId = leonardoGuest.id;
+      r215.guestCode = leonardoGuest.guestCode || `HOSP-${String(leonardoGuest.id).padStart(5, "0")}`;
+
+      if (!Array.isArray(r215.guests) || r215.guests.length === 0) {
+        r215.guests = [{
+          index: 1,
+          guestId: leonardoGuest.id,
+          guestCode: r215.guestCode,
+          name: leonardoTrueName,
+          cpf: r215.guestDocument || "",
+          phone: r215.guestPhone || "",
+          email: r215.guestEmail || "",
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null
+        }];
+      } else {
+        r215.guests[0] = {
+          index: 1,
+          guestId: leonardoGuest.id,
+          guestCode: r215.guestCode,
+          name: leonardoTrueName,
+          cpf: r215.guestDocument || "",
+          phone: r215.guestPhone || "",
+          email: r215.guestEmail || "",
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null
+        };
+      }
+
+      r215._healedFrancineContamination = true;
+      changed = true;
+    }
+  }
+
+  // 2. Blindagem universal: desvincula qualquer reserva cujo guestId aponte para um hóspede com nome incompatível
+  for (const r of currentDb.reservations) {
+    if (!r || !r.guestId || isPlaceholderOrEmptyGuestName(r.guestName)) continue;
+    const linkedGuest = currentDb.guests.find(g => g && Number(g.id) === Number(r.guestId));
+    if (linkedGuest && !isPlaceholderOrEmptyGuestName(linkedGuest.fullName || linkedGuest.name)) {
+      if (!areGuestNamesCompatible(r.guestName, linkedGuest.fullName || linkedGuest.name)) {
+        const gEmail = String(linkedGuest.email || "").trim().toLowerCase();
+        const gDoc = normalizeDoc(linkedGuest.document || linkedGuest.documentNumber);
+        if (gEmail && String(r.guestEmail || "").trim().toLowerCase() === gEmail) {
+          r.guestEmail = "";
+          if (r.guests?.[0]) r.guests[0].email = "";
+        }
+        if (gDoc && normalizeDoc(r.guestDocument) === gDoc) {
+          r.guestDocument = "";
+          if (r.guests?.[0]) r.guests[0].cpf = "";
+        }
+        if ((r.guestAddress && r.guestAddress === linkedGuest.address) || (r.guestStreet && r.guestStreet === linkedGuest.street) || (r.guestCep && r.guestCep === linkedGuest.cep)) {
+          for (const af of ["guestAddress", "address", "guestStreet", "street", "guestStreetNumber", "streetNumber", "number", "guestComplement", "complement", "guestNeighborhood", "neighborhood", "guestCity", "city", "guestState", "state", "guestCep", "cep", "zipCode"]) {
+            delete r[af];
+            if (r.guests?.[0]) delete r.guests[0][af];
+          }
+        }
+        if (r.guestPhone && Array.isArray(linkedGuest.additionalPhones)) {
+          linkedGuest.additionalPhones = linkedGuest.additionalPhones.filter(ap => !phonesMatch(ap, r.guestPhone));
+        }
+        r.guestId = null;
+        delete r.guestCode;
+        if (r.guests?.[0]) {
+          r.guests[0].guestId = null;
+          delete r.guests[0].guestCode;
+        }
+        changed = true;
+      }
+    }
+  }
+
+  // 3. Remove de additionalPhones qualquer telefone que seja o telefone principal de outro hóspede com nome incompatível
+  for (const g1 of currentDb.guests) {
+    if (!g1 || !Array.isArray(g1.additionalPhones) || g1.additionalPhones.length === 0) continue;
+    const origLen = g1.additionalPhones.length;
+    g1.additionalPhones = g1.additionalPhones.filter(ap => {
+      if (!ap) return false;
+      const belongsToOtherIncompatibleGuest = currentDb.guests.some(g2 =>
+        g2 && g2.id !== g1.id &&
+        phonesMatch(g2.phone, ap) &&
+        !areGuestNamesCompatible(g1.fullName || g1.name, g2.fullName || g2.name)
+      );
+      return !belongsToOtherIncompatibleGuest;
+    });
+    if (g1.additionalPhones.length !== origLen) changed = true;
+  }
+
+  return changed;
+}
+
 function reconcileAndMergeGuests(database) {
   const currentDb = database || db;
   if (!currentDb.guests) currentDb.guests = [];
@@ -9571,6 +9919,8 @@ function reconcileAndMergeGuests(database) {
   if (!currentDb.invoices) currentDb.invoices = [];
   if (!currentDb.deletedGuestDocs) currentDb.deletedGuestDocs = [];
   if (!currentDb.deletedGuestIds) currentDb.deletedGuestIds = [];
+
+  healContaminatedGuestAndReservationLinks(currentDb);
 
   const isDeleted = (candidate) => {
     if (!candidate) return false;
@@ -9585,11 +9935,14 @@ function reconcileAndMergeGuests(database) {
     const cDoc = normalizeDoc(candidate.document || candidate.documentNumber || candidate.cpf || candidate.tomadorCpfCnpj);
     const cPhone = normalizePhone(candidate.phone || candidate.phoneNumber || candidate.tomadorTelefone || candidate.guestPhone);
     const cEmail = (candidate.email || candidate.tomadorEmail || candidate.guestEmail || "").trim().toLowerCase();
-    const cName = normalizeName(candidate.name || candidate.fullName || candidate.tomadorNome || candidate.guestName);
+    const cRawName = candidate.name || candidate.fullName || candidate.tomadorNome || candidate.guestName || "";
+    const cName = normalizeName(cRawName);
+    const isNameCompatibleWith = (g) => areGuestNamesCompatible(cRawName, g.fullName || g.name);
 
-    // Prioridade 1: ID ou CPF/Documento
+    // Prioridade 1: ID ou CPF/Documento (somente se não houver conflito de identidade nominal entre duas pessoas distintas)
     if (candidate.id || candidate.guestId || (cDoc && cDoc.length >= 8)) {
       const byIdOrDoc = list.find(g => {
+        if (!isNameCompatibleWith(g)) return false;
         if (candidate.id && g.id && Number(candidate.id) === Number(g.id)) return true;
         if (candidate.guestId && g.id && Number(candidate.guestId) === Number(g.id)) return true;
         const gDoc = normalizeDoc(g.document || g.documentNumber);
@@ -9599,17 +9952,19 @@ function reconcileAndMergeGuests(database) {
       if (byIdOrDoc) return byIdOrDoc;
     }
 
-    // Prioridade 2: E-mail
+    // Prioridade 2: E-mail (com validação de compatibilidade nominal)
     if (cEmail && cEmail.includes("@")) {
-      const byEmail = list.find(g => (g.email || "").trim().toLowerCase() === cEmail);
+      const byEmail = list.find(g => (g.email || "").trim().toLowerCase() === cEmail && isNameCompatibleWith(g));
       if (byEmail) return byEmail;
     }
 
-    // Prioridade 3: Telefone normalizado (principal ou adicional)
+    // Prioridade 3: Telefone normalizado (principal ou adicional, com validação de compatibilidade nominal)
     if (cPhone && cPhone.length >= 8) {
       const byPhone = list.find(g =>
-        phonesMatch(g.phone || g.phoneNumber, cPhone) ||
-        (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cPhone)))
+        isNameCompatibleWith(g) && (
+          phonesMatch(g.phone || g.phoneNumber, cPhone) ||
+          (Array.isArray(g.additionalPhones) && g.additionalPhones.some(ap => phonesMatch(ap, cPhone)))
+        )
       );
       if (byPhone) return byPhone;
     }
@@ -23426,12 +23781,17 @@ app.post("/api/pms/reservations", async (req, res) => {
   if (!db.guests) db.guests = [];
   let guest = null;
   if (req.body.guestId || !isGuestPending) {
-    guest = db.guests.find(g =>
-      (req.body.guestId && g.id === Number(req.body.guestId)) ||
-      (primaryPhone && g.phone === primaryPhone) ||
-      (primaryDoc && g.document === primaryDoc) ||
-      (!isGuestPending && g.name && g.name.toLowerCase() === primaryName.toLowerCase())
-    );
+    guest = db.guests.find(g => {
+      if (!isGuestPending && !areGuestNamesCompatible(g.fullName || g.name, primaryName)) {
+        return false;
+      }
+      return (
+        (req.body.guestId && req.body.guestId !== "manual" && Number(g.id) === Number(req.body.guestId)) ||
+        (primaryPhone && phonesMatch(g.phone, primaryPhone)) ||
+        (primaryDoc && normalizeDoc(g.document || g.documentNumber) === normalizeDoc(primaryDoc)) ||
+        (!isGuestPending && g.name && normalizeName(g.fullName || g.name) === normalizeName(primaryName))
+      );
+    });
 
     if (!guest && !isGuestPending) {
       const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
@@ -24952,6 +25312,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldFlatId = r.flatId;
   const oldFlatNumber = r.flatNumber;
   const oldStatus = r.status;
+  const oldGuestId = r.guestId;
+  const oldGuestObj = oldGuestId ? (db.guests || []).find(g => g && Number(g.id) === Number(oldGuestId)) : null;
   const oldGuestName = r.guestName;
   const oldGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
   const oldTotalAmount = Number(r.totalAmount) || 0;
@@ -25088,6 +25450,53 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldRatesSumBeforeEdit = oldDailyRatesBeforeEdit.reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0);
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+
+  const incomingRawName = req.body.guestName !== undefined ? String(req.body.guestName || "").trim() : r.guestName;
+  const explicitGuestId = req.body.guestId !== undefined
+    ? (req.body.guestId && req.body.guestId !== "manual" ? Number(req.body.guestId) : null)
+    : undefined;
+  const isGuestUnlinkedOrSwitched = Boolean(
+    explicitGuestId === null ||
+    (explicitGuestId && oldGuestId && Number(explicitGuestId) !== Number(oldGuestId)) ||
+    (incomingRawName && !isPendingGuestName(incomingRawName) && oldGuestName && !isPendingGuestName(oldGuestName) && !areGuestNamesCompatible(incomingRawName, oldGuestName)) ||
+    (incomingRawName && !isPendingGuestName(incomingRawName) && oldGuestObj && !areGuestNamesCompatible(incomingRawName, oldGuestObj.fullName || oldGuestObj.name))
+  );
+
+  if (isGuestUnlinkedOrSwitched) {
+    if (explicitGuestId && (!oldGuestObj || Number(explicitGuestId) !== Number(oldGuestId) || areGuestNamesCompatible(incomingRawName, oldGuestObj.fullName || oldGuestObj.name))) {
+      r.guestId = explicitGuestId;
+    } else {
+      r.guestId = null;
+      delete r.guestCode;
+    }
+    const staleFieldsToClear = [
+      "guestAddress", "address", "guestStreet", "street", "guestStreetNumber", "streetNumber", "number",
+      "guestComplement", "complement", "guestNeighborhood", "neighborhood", "guestCity", "city",
+      "guestState", "state", "guestCep", "cep", "zipCode", "birthDate", "gender",
+      "selfieUrl", "photoUrl", "docPhotoUrl", "documentPhotoUrl", "docPhotoPath", "signatureUrl",
+      "fnhrCompleted", "fnhrCompletedAt", "preCheckinCompleted", "hasPreCheckin", "checkedInAt",
+      "hadCompletedCheckinBefore", "needsReSignature", "reSignatureReason",
+      "fnrhPdfUrl", "fnrhDownloadUrl", "fnrhDocumentUuid", "fnrhSha256Hash", "fnrhVerifyUrl", "fnrhSignedAt", "fnrhAuditTrail"
+    ];
+    for (const sf of staleFieldsToClear) {
+      if (req.body[sf] === undefined) {
+        delete r[sf];
+      }
+    }
+    if (Array.isArray(r.guests) && r.guests[0]) {
+      for (const sf of staleFieldsToClear) {
+        delete r.guests[0][sf];
+      }
+      r.guests[0].hasCompletedCheckin = false;
+      r.guests[0].checkinCompletedAt = null;
+      if (!r.guestId) {
+        r.guests[0].guestId = null;
+        delete r.guests[0].guestCode;
+      }
+    }
+  } else if (explicitGuestId !== undefined) {
+    r.guestId = explicitGuestId;
   }
   if (r.earlyCheckout && r.originalCheckoutDate && r.checkoutDate >= r.originalCheckoutDate && req.body.earlyCheckout === undefined) {
     r.earlyCheckout = false;
@@ -25714,23 +26123,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.receptionNotes = String(req.body.receptionNotes || "");
   }
 
-  // Sincroniza com o hóspede no CRM se aplicável
-  const matchedGuest = (db.guests || []).find(g =>
-    (r.guestId && g.id === r.guestId) ||
-    (r.guestPhone && g.phone === r.guestPhone) ||
-    (r.guestDocument && g.document === r.guestDocument) ||
-    (r.guestName && (g.name?.toLowerCase().trim() === r.guestName.toLowerCase().trim() || g.fullName?.toLowerCase().trim() === r.guestName.toLowerCase().trim()))
-  );
-  if (matchedGuest) {
-    if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
-      matchedGuest.isMonthlyGuest = r.isMonthlyGuest;
-      matchedGuest.clientType = r.clientType;
-    }
-    if (req.body.autoEmitInvoice !== undefined) {
-      matchedGuest.autoEmitInvoice = r.autoEmitInvoice;
-    }
-  }
-
   if (req.body.flatId) {
     const flat = db.flats.find(f => f.id === Number(req.body.flatId));
     if (flat) r.flatNumber = flat.number;
@@ -25747,34 +26139,71 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   } else if (!isPendingGuestName(r.guestName)) {
     r.guestPending = false;
   }
-  if (req.body.guestPhone !== undefined && String(req.body.guestPhone).trim()) {
-    r.guestPhone = String(req.body.guestPhone).trim();
+
+  // Sincroniza com o hóspede no CRM somente se o nome for compatível com a pessoa da reserva
+  const matchedGuest = (db.guests || []).find(g => {
+    if (!g) return false;
+    if (!isPendingGuestName(r.guestName) && !areGuestNamesCompatible(g.fullName || g.name, r.guestName)) {
+      return false;
+    }
+    const rCleanPhone = normalizePhone(r.guestPhone);
+    const rCleanDoc = normalizeDoc(r.guestDocument);
+    const gCleanDoc = normalizeDoc(g.document || g.documentNumber);
+    return (
+      (r.guestId && Number(g.id) === Number(r.guestId)) ||
+      (rCleanPhone && rCleanPhone.length >= 8 && phonesMatch(g.phone, rCleanPhone)) ||
+      (rCleanDoc && rCleanDoc.length >= 8 && rCleanDoc === gCleanDoc) ||
+      (r.guestName && !isPendingGuestName(r.guestName) && normalizeName(g.fullName || g.name) === normalizeName(r.guestName))
+    );
+  });
+  if (matchedGuest) {
+    if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
+      matchedGuest.isMonthlyGuest = r.isMonthlyGuest;
+      matchedGuest.clientType = r.clientType;
+    }
+    if (req.body.autoEmitInvoice !== undefined) {
+      matchedGuest.autoEmitInvoice = r.autoEmitInvoice;
+    }
+  }
+
+  if (req.body.guestPhone !== undefined) {
+    r.guestPhone = String(req.body.guestPhone || "").trim();
+    if (!r.guestPhone && req.body.guests?.[0]?.phone && String(req.body.guests[0].phone).trim()) {
+      r.guestPhone = String(req.body.guests[0].phone).trim();
+    } else if (!r.guestPhone && !isGuestUnlinkedOrSwitched && matchedGuest?.phone && String(matchedGuest.phone).trim()) {
+      r.guestPhone = String(matchedGuest.phone).trim();
+    }
   } else if (!r.guestPhone && req.body.guests?.[0]?.phone && String(req.body.guests[0].phone).trim()) {
     r.guestPhone = String(req.body.guests[0].phone).trim();
-  } else if (!r.guestPhone && matchedGuest?.phone && String(matchedGuest.phone).trim()) {
+  } else if (!r.guestPhone && !isGuestUnlinkedOrSwitched && matchedGuest?.phone && String(matchedGuest.phone).trim()) {
     r.guestPhone = String(matchedGuest.phone).trim();
-  } else if (!r.guestPhone && !r.guestPending && (r.guestName?.toLowerCase().includes("miller") || r.guestDocument?.replace(/\D/g, "") === "12585736792")) {
+  }
+  if (!r.guestPhone && !r.guestPending && (r.guestName?.toLowerCase().includes("miller") || r.guestDocument?.replace(/\D/g, "") === "12585736792")) {
     r.guestPhone = "22998505276";
   }
 
-  if (req.body.guestEmail !== undefined && String(req.body.guestEmail).trim()) {
-    r.guestEmail = String(req.body.guestEmail).trim();
-  } else if (!r.guestEmail && matchedGuest?.email) {
+  if (req.body.guestEmail !== undefined) {
+    r.guestEmail = String(req.body.guestEmail || "").trim();
+  } else if (!r.guestEmail && !isGuestUnlinkedOrSwitched && matchedGuest?.email) {
     r.guestEmail = matchedGuest.email;
   }
 
-  if (req.body.guestDocument !== undefined && String(req.body.guestDocument).trim()) {
-    r.guestDocument = String(req.body.guestDocument).trim();
+  if (req.body.guestDocument !== undefined) {
+    r.guestDocument = String(req.body.guestDocument || "").trim();
+    if (!r.guestDocument && req.body.guests?.[0]?.cpf && String(req.body.guests[0].cpf).trim()) {
+      r.guestDocument = String(req.body.guests[0].cpf).trim();
+    }
   } else if (!r.guestDocument && req.body.guests?.[0]?.cpf && String(req.body.guests[0].cpf).trim()) {
     r.guestDocument = String(req.body.guests[0].cpf).trim();
-  } else if (!r.guestDocument && matchedGuest?.document && String(matchedGuest.document).trim()) {
+  } else if (!r.guestDocument && !isGuestUnlinkedOrSwitched && matchedGuest?.document && String(matchedGuest.document).trim()) {
     r.guestDocument = String(matchedGuest.document).trim();
   }
 
   if (Array.isArray(r.guests) && r.guests.length > 0) {
-    if (r.guestPhone && !r.guests[0].phone) r.guests[0].phone = r.guestPhone;
-    if (r.guestDocument && !r.guests[0].cpf) r.guests[0].cpf = r.guestDocument;
-    if (r.guestEmail && !r.guests[0].email) r.guests[0].email = r.guestEmail;
+    if (!r.guestPending && r.guestName) r.guests[0].name = r.guestName;
+    r.guests[0].phone = r.guestPhone || "";
+    r.guests[0].cpf = r.guestDocument || "";
+    r.guests[0].email = r.guestEmail || "";
   }
 
   if (matchedGuest && !isPendingGuestName(r.guestName)) {
@@ -25785,6 +26214,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (r.guestDocument) matchedGuest.document = r.guestDocument;
     if (r.companyName) matchedGuest.companyName = r.companyName;
     if (r.companyId) matchedGuest.companyId = r.companyId;
+    r.guestId = matchedGuest.id;
+    r.guestCode = matchedGuest.guestCode || `HOSP-${String(matchedGuest.id).padStart(5, "0")}`;
+    if (Array.isArray(r.guests) && r.guests[0]) {
+      r.guests[0].guestId = matchedGuest.id;
+      r.guests[0].guestCode = r.guestCode;
+    }
   } else if (r.guestName && !isPendingGuestName(r.guestName)) {
     if (!db.guests) db.guests = [];
     const nextGId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
@@ -25808,6 +26243,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     db.guests.push(newGuestObj);
     r.guestId = newGuestObj.id;
     r.guestCode = newGuestObj.guestCode;
+    if (Array.isArray(r.guests) && r.guests[0]) {
+      r.guests[0].guestId = newGuestObj.id;
+      r.guests[0].guestCode = newGuestObj.guestCode;
+    }
   }
 
   // RFC 5546: Incrementa SEQUENCE ao remarcar datas ou alterar flat/status
@@ -31124,8 +31563,11 @@ app.get("/api/pms/guests", (req, res) => {
     const cleanEmail = (g.email || "").trim().toLowerCase();
     const guestNameLower = normalizeName(g.fullName || g.name || "");
 
-    // Localiza todas as reservas deste hóspede (por ID, CPF, Telefone ou Nome)
+    // Localiza todas as reservas deste hóspede (por ID, CPF, Telefone ou Nome, respeitando compatibilidade nominal)
     const guestReservations = reservations.filter(r => {
+      if (!isPlaceholderOrEmptyGuestName(r.guestName) && !isPlaceholderOrEmptyGuestName(g.fullName || g.name) && !areGuestNamesCompatible(r.guestName, g.fullName || g.name)) {
+        return false;
+      }
       const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
       const resPhone = normalizePhone(r.guestPhone || "");
       const resEmail = (r.guestEmail || "").trim().toLowerCase();
@@ -32568,8 +33010,11 @@ app.get("/api/pms/guests/:id", async (req, res) => {
   const cleanEmail = (guest.email || "").trim().toLowerCase();
   const guestNameLower = normalizeName(guest.fullName || guest.name || "");
 
-  // Histórico de Reservas (por ID, CPF, telefone ou nome)
+  // Histórico de Reservas (por ID, CPF, telefone ou nome, respeitando compatibilidade nominal)
   const guestReservations = (db.reservations || []).filter(r => {
+    if (!isPlaceholderOrEmptyGuestName(r.guestName) && !isPlaceholderOrEmptyGuestName(guest.fullName || guest.name) && !areGuestNamesCompatible(r.guestName, guest.fullName || guest.name)) {
+      return false;
+    }
     const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
     const resPhone = normalizePhone(r.guestPhone || "");
     const resEmail = (r.guestEmail || "").trim().toLowerCase();
@@ -32889,6 +33334,7 @@ const handleUpdateGuest = async (req, res) => {
   const guest = (db.guests || []).find(g => g.id === id);
   if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
 
+  const previousName = (guest.fullName || guest.name || "").trim();
   const previousEmail = (guest.email || "").trim().toLowerCase();
   const previousDoc = normalizeDoc(guest.document || guest.documentNumber);
   const previousPhone = normalizePhone(guest.phone);
@@ -32904,6 +33350,13 @@ const handleUpdateGuest = async (req, res) => {
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) guest[f] = req.body[f];
+  }
+
+  if (req.body.phone !== undefined && Array.isArray(guest.additionalPhones)) {
+    const newCleanPhone = normalizePhone(req.body.phone);
+    guest.additionalPhones = guest.additionalPhones.filter(ap =>
+      !phonesMatch(ap, newCleanPhone) && (!previousPhone || phonesMatch(newCleanPhone, previousPhone) || !phonesMatch(ap, previousPhone))
+    );
   }
 
   if (req.body.name !== undefined || req.body.fullName !== undefined) {
@@ -33036,6 +33489,7 @@ const handleUpdateGuest = async (req, res) => {
   if (guest.docPhotoUrl) {
     const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
     (db.reservations || []).forEach(r => {
+      if (!isPlaceholderOrEmptyGuestName(r.guestName) && !areGuestNamesCompatible(r.guestName, guest.fullName || guest.name)) return;
       const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
       if ((cleanDoc && resDoc === cleanDoc) || r.guestId === guest.id) {
         if (!r.docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl) {
@@ -33066,6 +33520,7 @@ const handleUpdateGuest = async (req, res) => {
     const guestNameLower = (guest.fullName || guest.name || "").trim().toLowerCase();
 
     (db.reservations || []).forEach(r => {
+      if (!isPlaceholderOrEmptyGuestName(r.guestName) && !areGuestNamesCompatible(r.guestName, guest.fullName || guest.name)) return;
       const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
       const resPhone = (r.guestPhone || "").replace(/\D/g, "");
       const resName = (r.guestName || "").trim().toLowerCase();
@@ -33083,6 +33538,7 @@ const handleUpdateGuest = async (req, res) => {
     const guestNameLower = (guest.fullName || guest.name || "").trim().toLowerCase();
 
     (db.reservations || []).forEach(r => {
+      if (!isPlaceholderOrEmptyGuestName(r.guestName) && !areGuestNamesCompatible(r.guestName, guest.fullName || guest.name)) return;
       const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
       const resPhone = (r.guestPhone || "").replace(/\D/g, "");
       const resName = (r.guestName || "").trim().toLowerCase();
@@ -33098,6 +33554,7 @@ const handleUpdateGuest = async (req, res) => {
   syncBidirectionalGuestProfile(db, guest, {
     ...req.body,
     ...(prefVehiclePlate !== undefined && req.body.vehiclePlate === undefined ? { vehiclePlate: prefVehiclePlate } : {}),
+    previousName,
     previousEmail,
     previousDoc,
     previousPhone,
@@ -35527,22 +35984,28 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     ? updates.fullName
     : (hasExplicit("name") ? updates.name : (accountOrGuest?.fullName || accountOrGuest?.name || ""));
   const cleanName = String(rawName || "").trim();
+  const prevName = String(updates.previousName || accountOrGuest?.fullName || accountOrGuest?.name || "").trim();
   const normName = normalizeName(cleanName);
+
+  const canMatchPrevPhone = Boolean(prevPhone && prevPhone.length >= 8 && (!hasExplicit("phone") || phonesMatch(cleanPhone, prevPhone)));
+  const canMatchPrevEmail = Boolean(prevEmail && prevEmail.includes("@") && (!hasExplicit("email") || cleanEmail === prevEmail));
+  const canMatchPrevDoc = Boolean(prevDoc && prevDoc.length >= 8 && ((!hasExplicit("document") && !hasExplicit("documentNumber")) || cleanDoc === prevDoc));
 
   const targetGuestId = Number(updates.guestId || accountOrGuest?.guestId || (db.guests.includes(accountOrGuest) ? accountOrGuest?.id : 0)) || null;
   const targetAccountId = Number(updates.accountId || accountOrGuest?.accountId || (db.guestAccounts.includes(accountOrGuest) ? accountOrGuest?.id : 0)) || null;
 
-  // 1. Localiza e unifica registros correspondentes em db.guests (Prioridade: 1º CPF/ID, 2º E-mail, 3º Telefone)
+  // 1. Localiza e unifica registros correspondentes em db.guests (Prioridade: 1º CPF/ID, 2º E-mail, 3º Telefone, respeitando compatibilidade nominal)
   const matchingGuests = db.guests.filter(g => {
     if (targetGuestId && Number(g.id) === targetGuestId) return true;
+    if (!areGuestNamesCompatible(g.fullName || g.name, cleanName || prevName)) return false;
     const gDoc = normalizeDoc(g.documentNumber || g.document);
     if (cleanDoc && cleanDoc.length >= 8 && gDoc === cleanDoc) return true;
-    if (prevDoc && prevDoc.length >= 8 && gDoc === prevDoc) return true;
+    if (canMatchPrevDoc && gDoc === prevDoc) return true;
     const gEmail = (g.email || "").trim().toLowerCase();
     if (cleanEmail && cleanEmail.includes("@") && gEmail === cleanEmail) return true;
-    if (prevEmail && prevEmail.includes("@") && gEmail === prevEmail) return true;
+    if (canMatchPrevEmail && gEmail === prevEmail) return true;
     if (cleanPhone && cleanPhone.length >= 8 && phonesMatch(g.phone, cleanPhone)) return true;
-    if (prevPhone && prevPhone.length >= 8 && phonesMatch(g.phone, prevPhone)) return true;
+    if (canMatchPrevPhone && phonesMatch(g.phone, prevPhone)) return true;
     return false;
   });
 
@@ -35602,18 +36065,19 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     db.guests.push(guest);
   }
 
-  // 2. Localiza e unifica contas correspondentes em db.guestAccounts (Prioridade: 1º CPF, 2º E-mail, 3º Telefone)
+  // 2. Localiza e unifica contas correspondentes em db.guestAccounts (Prioridade: 1º CPF, 2º E-mail, 3º Telefone, respeitando compatibilidade nominal)
   const matchingAccounts = db.guestAccounts.filter(a => {
     if (targetAccountId && Number(a.id) === targetAccountId) return true;
+    if (!areGuestNamesCompatible(a.name, cleanName || prevName || guest?.fullName || guest?.name)) return false;
     if (guest && a.guestId && Number(a.guestId) === Number(guest.id)) return true;
     const aDoc = normalizeDoc(a.document);
     if (cleanDoc && cleanDoc.length >= 8 && aDoc === cleanDoc) return true;
-    if (prevDoc && prevDoc.length >= 8 && aDoc === prevDoc) return true;
+    if (canMatchPrevDoc && aDoc === prevDoc) return true;
     const aEmail = (a.email || "").trim().toLowerCase();
     if (cleanEmail && cleanEmail.includes("@") && aEmail === cleanEmail) return true;
-    if (prevEmail && prevEmail.includes("@") && aEmail === prevEmail) return true;
+    if (canMatchPrevEmail && aEmail === prevEmail) return true;
     if (cleanPhone && cleanPhone.length >= 8 && phonesMatch(a.phone, cleanPhone)) return true;
-    if (prevPhone && prevPhone.length >= 8 && phonesMatch(a.phone, prevPhone)) return true;
+    if (canMatchPrevPhone && phonesMatch(a.phone, prevPhone)) return true;
     return false;
   });
 
@@ -35913,17 +36377,32 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     guest.accountId = account.id;
   }
 
-  // 6. Atualiza reservas correspondentes em db.reservations
+  // 6. Atualiza reservas correspondentes em db.reservations (respeitando compatibilidade nominal para nunca sobrescrever reservas de outra pessoa)
   const reservations = (db.reservations || []).filter(r => {
+    if (!isPlaceholderOrEmptyGuestName(r.guestName)) {
+      const compatibleWithFinal = areGuestNamesCompatible(r.guestName, finalName);
+      const compatibleWithPrev = Boolean(prevName && areGuestNamesCompatible(r.guestName, prevName) && areGuestNamesCompatible(finalName, prevName));
+      if (!compatibleWithFinal && !compatibleWithPrev) {
+        if (guest && r.guestId && Number(r.guestId) === Number(guest.id)) {
+          r.guestId = null;
+          delete r.guestCode;
+          if (r.guests?.[0] && Number(r.guests[0].guestId) === Number(guest.id)) {
+            r.guests[0].guestId = null;
+            delete r.guests[0].guestCode;
+          }
+        }
+        return false;
+      }
+    }
     if (guest && r.guestId && Number(r.guestId) === Number(guest.id)) return true;
     const rDoc = normalizeDoc(r.guestDocument || r.document);
     if (finalDocClean && finalDocClean.length >= 8 && rDoc === finalDocClean) return true;
-    if (prevDoc && prevDoc.length >= 8 && rDoc === prevDoc) return true;
+    if (canMatchPrevDoc && rDoc === prevDoc) return true;
     const rEmail = (r.guestEmail || r.email || "").trim().toLowerCase();
     if (finalEmail && finalEmail.includes("@") && rEmail === finalEmail) return true;
-    if (prevEmail && prevEmail.includes("@") && rEmail === prevEmail) return true;
+    if (canMatchPrevEmail && rEmail === prevEmail) return true;
     if (finalPhone && finalPhone.length >= 8 && phonesMatch(r.guestPhone || r.phone, finalPhone)) return true;
-    if (prevPhone && prevPhone.length >= 8 && phonesMatch(r.guestPhone || r.phone, prevPhone)) return true;
+    if (canMatchPrevPhone && phonesMatch(r.guestPhone || r.phone, prevPhone)) return true;
     return false;
   });
 
