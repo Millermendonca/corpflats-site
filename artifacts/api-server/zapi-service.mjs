@@ -1129,16 +1129,24 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
     message: `Olá, *{{nome_destinatario}}*! 🔄✨
 Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_hotel}}* (*Flat {{quarto}}*)!
 
+📋 *Alterações Realizadas:*
+{{resumo_alteracoes}}
+
 📋 *Resumo Atualizado da Hospedagem:*
 • Código da Reserva: *{{numero_reserva}}*
 • Período: *{{data_checkin}} até {{data_checkout}}*
 • Total de Noites: *{{num_diarias}}*
+• Valor Total Atualizado: *{{valor_total}}*
+• Valor Já Pago: *{{valor_pago}}*
 
-💰 *Saldo Pendente da Alteração:*
+💰 *Saldo Pendente da Diária Adicional / Alteração:*
 • Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
 • Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
-Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX (com desconto) ou Cartão de Crédito em seu portal seguro:
+📋 *PIX Copia e Cola (5% de desconto):*
+{{pix_copia_e_cola}}
+
+Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX (com desconto) ou Cartão de Crédito em seu portal seguro para confirmar o acréscimo:
 👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Alteração Confirmada",
     buttons: [
@@ -2494,11 +2502,22 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
         pago: "Confirmado / Pago (100%)",
         pago_total: "Confirmado / Pago (100%)",
         pendente: "Aguardando Pagamento",
-        parcial: "Sinal Pago / Parcial",
+        sinal_pago: "Pago Parcialmente (Saldo de diária adicional em aberto)",
+        parcial: "Pago Parcialmente (Saldo de diária adicional em aberto)",
         estornado: "Estornado"
       };
       if (mapPay[String(oldV).toLowerCase()]) oldV = mapPay[String(oldV).toLowerCase()];
       if (mapPay[String(newV).toLowerCase()]) newV = mapPay[String(newV).toLowerCase()];
+
+      // Nunca exibir transição confusa com "Aguardando Pagamento" quando a reserva está paga ou parcialmente paga
+      if (newV === "Confirmado / Pago (100%)") {
+        lines.push(`• *${label}:* *Confirmado / Pago (100%)*`);
+        continue;
+      }
+      if (newV === "Pago Parcialmente (Saldo de diária adicional em aberto)") {
+        lines.push(`• *${label}:* *Pago Parcialmente (Saldo de diária adicional em aberto)*`);
+        continue;
+      }
     }
 
     // Formata quantidade de hóspedes
@@ -2518,6 +2537,11 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
       if (typeof newV === "number" || (typeof newV === "string" && !newV.includes("R$"))) {
         const n = Number(newV) || 0;
         newV = formatCurrency(n);
+      }
+      // Se o valor pago anterior aparecia como R$ 0,00 apenas por normalização de OTA/paga, exibir somente o valor pago confirmado
+      if (c.field === "paidAmount" && (oldV === "R$ 0,00" || oldV === "R$ 0.00") && newV !== "R$ 0,00" && newV !== "R$ 0.00") {
+        lines.push(`• *${label}:* *${newV}*`);
+        continue;
       }
     }
 
@@ -3227,13 +3251,14 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const titularPix = "CorpFlats Ltda (Banco Inter)";
 
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb") || chanLower.includes("b2b");
-  const isPaid = isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0);
+  const hasPartialPendingExtension = (reservation.paymentStatus === "sinal_pago" || reservation.paymentStatus === "parcial") && pendingAmount > 0.01;
+  const isPaid = !hasPartialPendingExtension && (isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0));
 
   let paymentStatus = "Aguardando Pagamento";
   if (isPaid) {
     paymentStatus = "Confirmado / Pago (100%)";
-  } else if (paidAmount > 0 && pendingAmount > 0) {
-    paymentStatus = `Sinal Pago (${formatCurrency(paidAmount)})`;
+  } else if (hasPartialPendingExtension || (paidAmount > 0 && pendingAmount > 0)) {
+    paymentStatus = "Pago Parcialmente (Saldo de diária adicional em aberto)";
   }
   const channel = reservation.channel || "Site CorpFlats";
 
@@ -3865,12 +3890,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
         : reservation?.needsReSignature
     );
     if (!needsReSign) {
-      list = list.map(b => {
-        if (b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))) {
-          return { ...b, label: "📝 Fazer Check-in Online" };
-        }
-        return b;
-      });
+      if (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated") {
+        list = list.filter(b => !(b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))));
+      } else {
+        list = list.map(b => {
+          if (b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))) {
+            return { ...b, label: "📝 Fazer Check-in Online" };
+          }
+          return b;
+        });
+      }
     }
 
     const isArrivalOrCheckinTemplate = [
@@ -6849,7 +6878,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_additional_daily_pending") {
           tpl.recipientTarget = "requester";
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
@@ -7531,8 +7560,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.get("/api/whatsapp/queue", (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const queue = (db?.whatsappQueue || []).slice(-150).reverse();
-    const history = (db?.whatsappHistory || []).slice(-100).reverse();
+    const sortByNewest = (a, b) => {
+      const da = String(a?.sentAt || a?.scheduledFor || a?.updatedAt || a?.createdAt || "");
+      const dbStr = String(b?.sentAt || b?.scheduledFor || b?.updatedAt || b?.createdAt || "");
+      return dbStr > da ? 1 : (dbStr < da ? -1 : 0);
+    };
+    const queue = [...(db?.whatsappQueue || [])].filter(Boolean).sort(sortByNewest).slice(0, 150);
+    const history = [...(db?.whatsappHistory || [])].filter(Boolean).sort(sortByNewest).slice(0, 100);
     res.json({ queue, history });
   });
 
@@ -9949,6 +9983,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   // Auto-sincronização de webhooks e notifySentByMe na inicialização + higienização NPS / disparo de hoje < 5 + flats já prontos hoje
   const syncTimeout = setTimeout(async () => {
     try {
+      // Aguarda a conclusão da hidratação do PostgreSQL (até 25s) antes de checar flats prontos
+      if (typeof globalThis.__corpflatsIsDbHydrated === "function") {
+        let waitAttempts = 0;
+        while (!globalThis.__corpflatsIsDbHydrated() && waitAttempts < 25) {
+          await new Promise(r => setTimeout(r, 1000));
+          waitAttempts++;
+        }
+        if (!globalThis.__corpflatsIsDbHydrated()) return;
+      }
       const db = getDb();
       if (db) {
         await checkAndScheduleReadyFlatsOnCheckinDay(db, saveDatabase, process.env.APP_BASE_URL || "https://corpflats.com.br");
@@ -9973,6 +10016,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   let cronCounter = 0;
   const runnerInterval = setInterval(async () => {
     try {
+      if (typeof globalThis.__corpflatsIsDbHydrated === "function" && !globalThis.__corpflatsIsDbHydrated()) return;
       const db = getDb();
       if (!db || !db.zapiConfig?.enabled) return;
 
@@ -10826,8 +10870,7 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
   const anySuccess = waSuccess || Boolean(emailLog);
   if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
     const { todayStr } = getBrasiliaDateParts(new Date());
-    resv.roomReadySentDate = todayStr;
-    resv.roomReadySentAt = new Date().toISOString();
+    markReservationRoomReadySent(db, resv, todayStr, new Date().toISOString(), item.triggerEvent);
   }
   item.whatsappStatus = waResult ? (waSuccess ? "sent" : "failed") : (item.guestPhone ? "skipped" : "no_phone");
   if (item.guestEmail) item.emailStatus = emailLog ? "sent" : "skipped";
@@ -10998,6 +11041,16 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
       baseUrl,
       source: "instant_trigger"
     });
+  }
+
+  if (
+    (waResult?.success || emailLog) &&
+    reservation &&
+    (ROOM_READY_GROUP_EVENTS.has(eventName) ||
+      (eventName === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(renderedMessage || ""))))
+  ) {
+    const { todayStr } = getBrasiliaDateParts(new Date());
+    markReservationRoomReadySent(db, reservation, todayStr, new Date().toISOString(), eventName);
   }
 
   return { waResult, emailLog, renderedMessage, renderedButtons };
@@ -11409,6 +11462,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "reservation_updated") {
       const defUpdated = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated" || t.triggerEvent === "reservation_updated");
       if (defUpdated) templates = [defUpdated];
+    } else if (templates.length === 0 && eventName === "additional_daily_pending") {
+      const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending" || t.triggerEvent === "additional_daily_pending");
+      if (defAdd) templates = [defAdd];
     } else if (templates.length === 0 && eventName === "sameday_reservation") {
       const defSameday = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions" || t.triggerEvent === "sameday_reservation");
       if (defSameday) templates = [defSameday];
@@ -11514,17 +11570,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       const releaseState = getSameDayFlatReleaseState(db, reservation, now);
       const nowIso = now.toISOString();
       if (releaseState.isFlatReadyNow) {
-        reservation.roomReadySentDate = todayStr;
-        reservation.roomReadySentAt = nowIso;
-        if (Array.isArray(db?.reservations)) {
-          const dbRes = db.reservations.find(r =>
-            r && ((reservation.id && r.id === reservation.id) || (reservation.code && r.code === reservation.code))
-          );
-          if (dbRes) {
-            dbRes.roomReadySentDate = todayStr;
-            dbRes.roomReadySentAt = nowIso;
-          }
-        }
+        markReservationRoomReadySent(db, reservation, todayStr, nowIso, "sameday_reservation");
       }
       if (Array.isArray(db?.whatsappQueue)) {
         for (const qItem of db.whatsappQueue) {
@@ -11591,21 +11637,40 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               : "";
             const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
 
-            const alreadySentWa = isPreResUpdate ? false : (db.whatsappHistory || []).some(h => {
-              if (h.status !== "sent" && h.status !== "delivered") return false;
-              const hCode = String(h.reservationCode || "").trim().toUpperCase();
-              const hId = h.reservationId ? String(h.reservationId) : "";
-              const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-              if (!isSameRes) return false;
-              if (!isSameEventGroup(h.triggerEvent, eventName)) return false;
-              if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
-              if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
-              if ((isUpdatedEvent || isReSignPreCheckin) && h.sentAt) {
-                const ageMs = Date.now() - new Date(h.sentAt).getTime();
-                return ageMs >= 0 && ageMs < 30000;
-              }
-              return true;
-            });
+            const isRoomReadyEvent = ROOM_READY_GROUP_EVENTS.has(eventName);
+            const alreadySentWa = isPreResUpdate ? false : (
+              (db.whatsappHistory || []).some(h => {
+                if (h.status !== "sent" && h.status !== "delivered") return false;
+                const hCode = String(h.reservationCode || "").trim().toUpperCase();
+                const hId = h.reservationId ? String(h.reservationId) : "";
+                const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+                if (!isSameRes) return false;
+                const sameGroupOrSamedayReady = isSameEventGroup(h.triggerEvent, eventName) ||
+                  (isRoomReadyEvent && h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || "")));
+                if (!sameGroupOrSamedayReady) return false;
+                if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
+                if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
+                if ((isUpdatedEvent || isReSignPreCheckin) && h.sentAt) {
+                  const ageMs = Date.now() - new Date(h.sentAt).getTime();
+                  return ageMs >= 0 && ageMs < 30000;
+                }
+                return true;
+              }) ||
+              (isRoomReadyEvent && (db.whatsappConversations || []).some(c => {
+                if (!c || normalizePhoneForDedup(c.phone) !== normTargetPhone) return false;
+                return (c.messages || []).some(m => {
+                  if (!m || !m.fromMe || m.status === "failed") return false;
+                  const mTs = String(m.timestamp || m.createdAt || "");
+                  if (todayStr && mTs && !mTs.startsWith(todayStr)) return false;
+                  if (m.reservationCode && rCode && String(m.reservationCode).trim().toUpperCase() !== rCode) return false;
+                  if (ROOM_READY_GROUP_EVENTS.has(m.triggerEvent)) return true;
+                  if (m.triggerEvent === "sameday_reservation" || !m.triggerEvent) {
+                    return /status do flat\s*:\s*limpo e liberado|seu flat\s*\d+\s*j[áa]\s*est[áa]\s*limpo e pronto|tudo pronto para sua chegada no flat/i.test(String(m.text || m.message || ""));
+                  }
+                  return false;
+                });
+              }))
+            );
 
             if (isInFlight || alreadySentWa) {
               console.log(`[Z-API Anti-Dup] Evento '${eventName}' (${eventGroup}) já enviado ou em trânsito para ${target.phone} (Reserva ${reservation.code || reservation.id}). Ignorando duplicação.`);
@@ -11797,6 +11862,70 @@ export async function sendEarlyCheckoutManagerWhatsAppAlert(db, saveDatabase, re
     return { sent: true, result: sendRes };
   } catch (err) {
     console.warn("[Early Checkout Manager WhatsApp Alert Error]:", err?.message || err);
+    return { sent: false, error: err?.message };
+  }
+}
+
+/**
+ * Envia alerta imediato para o WhatsApp da Gestão (22998505276) sempre que houver Overbooking / Encaixe Forçado.
+ */
+export async function sendOverbookingManagerWhatsAppAlert(db, saveDatabase, reservation, conflicts = [], options = {}) {
+  try {
+    if (!db || !reservation || !Array.isArray(conflicts) || conflicts.length === 0) {
+      return { sent: false, reason: "no_conflict_data" };
+    }
+
+    const managerPhone = cleanWhatsAppPhone(
+      db?.settings?.adminPhone ||
+      db?.settings?.managerPhone ||
+      db?.zapiConfig?.npsManagerAlertPhone ||
+      DEFAULT_MANAGER_NPS_ALERT_PHONE ||
+      "5522998505276"
+    ) || "5522998505276";
+
+    const flatLabel = reservation.flatNumber ? `Flat ${reservation.flatNumber}` : `Flat ID ${reservation.flatId}`;
+    const guestName = reservation.guestName || "Hóspede";
+    const resCode = reservation.code || reservation.reservationCode || `#${reservation.id}`;
+    const checkinBr = formatDateBrSimple(reservation.checkinDate);
+    const checkoutBr = formatDateBrSimple(reservation.checkoutDate);
+    const chanLabel = String(reservation.channel || "Direta").toUpperCase();
+    const isForced = Boolean(options.isForced);
+    const actorName = options.actorName || "Sistema / Recepção";
+
+    const conflictLines = conflicts.map(c => {
+      const cCode = c.code || c.reservationCode || `#${c.id}`;
+      const cGuest = c.guestName || "Hóspede";
+      const cIn = formatDateBrSimple(c.checkinDate);
+      const cOut = formatDateBrSimple(c.checkoutDate);
+      const cChan = String(c.channel || "Direta").toUpperCase();
+      return `• *${cGuest}* (${cCode}) — ${cIn} a ${cOut} [${cChan}]`;
+    }).join("\n");
+
+    let msg = `🚨 *ALERTA DE OVERBOOKING / CONFLITO DE RESERVA — ${flatLabel}*\n\n`;
+    msg += `⚠️ Foi registrado um conflito de ocupação no *${flatLabel}*${isForced ? ` (Encaixe forçado autorizado por *${actorName}*)` : ""}:\n\n`;
+    msg += `📌 *Reserva Salva:*\n`;
+    msg += `• Hóspede: *${guestName}* (${resCode})\n`;
+    msg += `• Período: *${checkinBr} a ${checkoutBr}*\n`;
+    msg += `• Canal: *${chanLabel}*\n\n`;
+    msg += `💥 *Reserva(s) Conflitante(s) no Mesmo Flat:*\n${conflictLines}\n\n`;
+    msg += `🔍 _No calendário do PMS, as reservas sobrepostas estão destacadas com transparência para visualização simultânea e remanejamento imediato._`;
+
+    reservation.overbookingAdminNotifiedAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") saveDatabase();
+
+    const sendRes = await sendZapiMessage(db.zapiConfig, {
+      phone: managerPhone,
+      message: msg,
+      channelId: "internal_alerts",
+      recipientRole: "manager",
+      triggerEvent: "overbooking_manager_alert",
+      bypassTestMode: true,
+      db
+    });
+
+    return { sent: true, result: sendRes };
+  } catch (err) {
+    console.warn("[Overbooking Manager WhatsApp Alert Error]:", err?.message || err);
     return { sent: false, error: err?.message };
   }
 }
@@ -12175,8 +12304,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       }
 
       console.log(`[Room Ready] Disparando '${eventName}' para ${resv.guestName} (Flat ${flatNumber} / Canal: ${resvChannel} / Horário: ${brHour}:${String(brMinute).padStart(2, '0')})...`);
-      resv.roomReadySentDate = todayStr;
-      resv.roomReadySentAt = now.toISOString();
+      markReservationRoomReadySent(db, resv, todayStr, now.toISOString(), eventName);
       if (typeof saveDatabase === "function") saveDatabase();
 
       await triggerImmediateWhatsApp(db, saveDatabase, eventName, resv, baseUrl);
@@ -12400,8 +12528,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
         if (isAtOrAfterCheckin && !isOtaOrB2b) {
           roomReadyEvent = "room_ready_regular";
         }
-        reservation.roomReadySentDate = todayStr;
-        reservation.roomReadySentAt = now.toISOString();
+        markReservationRoomReadySent(db, reservation, todayStr, now.toISOString(), roomReadyEvent);
         await triggerImmediateWhatsApp(
           db,
           saveDatabase,
@@ -12541,6 +12668,61 @@ export function hasGuestPhysicallyCheckedIn(db, resv) {
 }
 
 /**
+ * Marca que a reserva recebeu aviso de "Quarto Liberado / Pronto" hoje,
+ * sincronizando na reserva canônica do banco e persistindo log de auditoria no PostgreSQL.
+ */
+export function markReservationRoomReadySent(db, reservation, todayStr, nowIso = new Date().toISOString(), triggerEvent = "room_ready") {
+  if (!reservation || !todayStr) return;
+  reservation.roomReadySentDate = todayStr;
+  reservation.roomReadySentAt = nowIso;
+
+  let canonicalRes = reservation;
+  if (Array.isArray(db?.reservations)) {
+    const dbRes = db.reservations.find(r =>
+      r && ((reservation.id && String(r.id) === String(reservation.id)) || (reservation.code && r.code === reservation.code))
+    );
+    if (dbRes) {
+      dbRes.roomReadySentDate = todayStr;
+      dbRes.roomReadySentAt = nowIso;
+      canonicalRes = dbRes;
+    }
+  }
+
+  const rCode = String(canonicalRes.code || canonicalRes.reservationCode || "").trim().toUpperCase();
+  const rId = canonicalRes.id !== undefined && canonicalRes.id !== null ? String(canonicalRes.id) : "";
+  const alreadyLoggedAudit = canonicalRes._roomReadyAuditLoggedDate === todayStr || (db?.auditLogs || []).some(log => {
+    if (!log || log.action !== "WHATSAPP_ROOM_READY_SENT") return false;
+    const d = log.details || {};
+    const dCode = String(d.reservationCode || d.code || "").trim().toUpperCase();
+    const dId = d.reservationId !== undefined && d.reservationId !== null ? String(d.reservationId) : "";
+    const isSame = (rCode && dCode === rCode) || (rId && (dId === rId || dCode === rId));
+    return isSame && (d.roomReadySentDate === todayStr || String(log.timestamp || "").startsWith(todayStr));
+  });
+
+  if (!alreadyLoggedAudit && typeof globalThis.__corpflatsLogAuditEvent === "function") {
+    canonicalRes._roomReadyAuditLoggedDate = todayStr;
+    reservation._roomReadyAuditLoggedDate = todayStr;
+    globalThis.__corpflatsLogAuditEvent({
+      level: "info",
+      category: "reservation",
+      action: "WHATSAPP_ROOM_READY_SENT",
+      source: "zapi-service",
+      details: {
+        reservationId: canonicalRes.id || null,
+        reservationCode: canonicalRes.code || canonicalRes.reservationCode || null,
+        flatId: canonicalRes.flatId || null,
+        flatNumber: canonicalRes.flatNumber || null,
+        guestName: canonicalRes.guestName || null,
+        guestPhone: canonicalRes.guestPhone || null,
+        roomReadySentDate: todayStr,
+        roomReadySentAt: nowIso,
+        triggerEvent
+      }
+    });
+  }
+}
+
+/**
  * Verifica se a reserva já recebeu (ou já está agendada para receber) aviso de "Quarto Liberado / Pronto" hoje.
  */
 export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { includeScheduled = true } = {}) {
@@ -12561,9 +12743,52 @@ export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { inclu
   const sentRoomReady = (db.whatsappHistory || []).some(h =>
     matchesRes(h) &&
     (h.status === "sent" || h.status === "delivered") &&
-    ROOM_READY_GROUP_EVENTS.has(h.triggerEvent)
+    (ROOM_READY_GROUP_EVENTS.has(h.triggerEvent) ||
+      (h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || ""))))
   );
-  if (sentRoomReady) return true;
+  if (sentRoomReady) {
+    if (todayStr) resv.roomReadySentDate = todayStr;
+    return true;
+  }
+
+  const rawResPhone = resv.guestPhone || resv.guests?.[0]?.phone || "";
+  const normResPhone = normalizePhoneForDedup(rawResPhone);
+  if (normResPhone && Array.isArray(db.whatsappConversations)) {
+    const sentInConv = db.whatsappConversations.some(c => {
+      if (!c || normalizePhoneForDedup(c.phone) !== normResPhone) return false;
+      return (c.messages || []).some(m => {
+        if (!m || !m.fromMe || m.status === "failed") return false;
+        const mTs = String(m.timestamp || m.createdAt || "");
+        if (todayStr && mTs && !mTs.startsWith(todayStr)) return false;
+        if (m.reservationCode && rCode && String(m.reservationCode).trim().toUpperCase() !== rCode) return false;
+        if (ROOM_READY_GROUP_EVENTS.has(m.triggerEvent)) return true;
+        if (m.triggerEvent === "sameday_reservation" || !m.triggerEvent) {
+          return /status do flat\s*:\s*limpo e liberado|seu flat\s*\d+\s*j[áa]\s*est[áa]\s*limpo e pronto|tudo pronto para sua chegada no flat/i.test(String(m.text || m.message || ""));
+        }
+        return false;
+      });
+    });
+    if (sentInConv) {
+      if (todayStr) resv.roomReadySentDate = todayStr;
+      return true;
+    }
+  }
+
+  if (Array.isArray(db.auditLogs)) {
+    const sentInAudit = db.auditLogs.some(log => {
+      if (!log || log.action !== "WHATSAPP_ROOM_READY_SENT") return false;
+      const d = log.details || {};
+      const dCode = String(d.reservationCode || d.code || "").trim().toUpperCase();
+      const dId = d.reservationId !== undefined && d.reservationId !== null ? String(d.reservationId) : "";
+      const isSame = (rCode && dCode === rCode) || (rId && (dId === rId || dCode === rId));
+      if (!isSame) return false;
+      return !todayStr || d.roomReadySentDate === todayStr || String(log.timestamp || "").startsWith(todayStr);
+    });
+    if (sentInAudit) {
+      if (todayStr) resv.roomReadySentDate = todayStr;
+      return true;
+    }
+  }
 
   if (includeScheduled) {
     const queuedRoomReady = (db.whatsappQueue || []).some(q =>
