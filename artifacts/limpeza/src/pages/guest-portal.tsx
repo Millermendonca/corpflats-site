@@ -22,6 +22,15 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 
+function formatDate(dateStr?: string): string {
+  if (!dateStr) return "—"
+  const parts = String(dateStr).substring(0, 10).split("-")
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`
+  }
+  return String(dateStr)
+}
+
 function formatPhoneDisplay(phone: string): string {
   if (!phone) return "(22) 99712-4021"
   const digits = phone.replace(/\D/g, "")
