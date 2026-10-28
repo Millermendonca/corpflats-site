@@ -11602,6 +11602,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           }
 
           if (target.email) {
+            if (eventName === "b2b_agency_credential_request" && (reservation.b2bCredentialEmailSentAt || String(reservation.channel || "").toLowerCase().includes("b2b") || reservation.b2bReservationNumber)) {
+              target.email = "";
+            }
+          }
+
+          if (target.email) {
             const normTargetEmail = String(target.email).trim().toLowerCase();
             const alreadySentEmail = isPreResUpdate ? false : (db.reservationCommunications || []).some(c => {
               if (c.status === "failed") return false;

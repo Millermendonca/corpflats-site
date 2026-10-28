@@ -10958,8 +10958,38 @@ function pruneDatabase() {
       db[key] = db[key]
         .filter(Boolean)
         .sort((a, b) => {
-          const dateA = String(a?.createdAt || a?.executedAt || a?.sentAt || a?.date || a?.updatedAt || a?.timestamp || a?.id || "");
-          const dateB = String(b?.createdAt || b?.executedAt || b?.sentAt || b?.date || b?.updatedAt || b?.timestamp || b?.id || "");
+          const dateA = String(
+            a?.createdAt ||
+            a?.created_at ||
+            a?.executedAt ||
+            a?.sentAt ||
+            a?.metadata?.sentAt ||
+            a?.metadata?.queuedAt ||
+            a?.lastMessageAt ||
+            a?.scheduledFor ||
+            a?.date ||
+            a?.updatedAt ||
+            a?.updated_at ||
+            a?.timestamp ||
+            a?.id ||
+            ""
+          );
+          const dateB = String(
+            b?.createdAt ||
+            b?.created_at ||
+            b?.executedAt ||
+            b?.sentAt ||
+            b?.metadata?.sentAt ||
+            b?.metadata?.queuedAt ||
+            b?.lastMessageAt ||
+            b?.scheduledFor ||
+            b?.date ||
+            b?.updatedAt ||
+            b?.updated_at ||
+            b?.timestamp ||
+            b?.id ||
+            ""
+          );
           return dateB > dateA ? 1 : (dateB < dateA ? -1 : 0);
         })
         .slice(0, max);
@@ -26283,7 +26313,8 @@ app.post(["/api/pms/reservations/:id/send-b2b-credential-email", "/api/reservati
     const dispatchRes = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
       toEmail: req.body?.toEmail || req.body?.email || "",
       baseUrl,
-      trigger: "b2b_agency_credential_request_manual"
+      trigger: "b2b_agency_credential_request_manual",
+      force: true
     });
 
     if (!dispatchRes?.ok) {
@@ -33241,7 +33272,7 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
   if (r) {
     ensureReservationScheduledEmails(db, saveDatabase, r);
     const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
-    if (isB2b && (!r.guestPhone || !r.guestDocument) && !r.b2bCredentialCompletedAt) {
+    if (isB2b && (!r.guestPhone || !r.guestDocument) && !r.b2bCredentialCompletedAt && !r.b2bCredentialEmailSentAt) {
       const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
       await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, { baseUrl });
     }
@@ -57630,7 +57661,7 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
       startCardAutoPurgeScheduler(db, wbpVault);
     }
     setTimeout(() => {
-      if (!pgPool || pgHydratedSuccessfully) {
+      if (!pgPool) {
         ensureZohoWebhookRegistered(db, saveDatabase, {
           baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
         })

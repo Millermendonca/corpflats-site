@@ -1450,7 +1450,8 @@ export function sendEmailAsync({
       attempts: 1,
       queuedAt: now
     },
-    created_at: now
+    created_at: now,
+    createdAt: now
   };
 
   if (!db.reservationCommunications) {

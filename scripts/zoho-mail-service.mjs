@@ -1120,9 +1120,9 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
             (String(r.b2bReservationNumber || "") === subjResNum ||
               String(r.externalReservationNumber || "") === subjResNum) &&
             Boolean(
-              r.agencyName &&
-              r.companyName &&
-              !String(r.companyName).includes("HOTEL CORPFLATS") &&
+              r.guestName &&
+              r.checkinDate &&
+              !String(r.companyName || "").includes("HOTEL CORPFLATS") &&
               Number(r.dailyRate) > 0 &&
               Number(r.dailyRate) < 10000
             )
@@ -1157,7 +1157,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
           if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
             const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, {
               saveDatabase,
-              autoSendCredentialEmail: true
+              autoSendCredentialEmail: false
             });
             if (ingestRes?.ok) {
               addedOrUpdated++;
@@ -1765,7 +1765,7 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
       subject: target.subject || ""
     });
     if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
-      ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: true });
+      ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: false });
       if (!target.matchedReservation) {
         target.matchedReservation = matchEmailWithReservation(db, target);
       }
@@ -2025,10 +2025,14 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
 
   if (oauthCfg.isConfigured && attachments.length === 0) {
     const smtpCfg = getSmtpConfig(db);
+    const resolvedFromAddress =
+      zohoTokenCache.primaryEmailAddress ||
+      db?.settings?.zohoOAuth?.primaryEmailAddress ||
+      smtpCfg.fromEmail;
     const zohoRes = await callZohoMailApi(db, "/accounts/{accountId}/messages", {
       method: "POST",
       body: JSON.stringify({
-        fromAddress: zohoTokenCache.primaryEmailAddress || smtpCfg.fromEmail,
+        fromAddress: resolvedFromAddress,
         toAddress: recipientStr,
         ...(ccStr ? { ccAddress: ccStr } : {}),
         ...(bccStr ? { bccAddress: bccStr } : {}),
@@ -2070,7 +2074,8 @@ export async function sendWebmailMessage(db, saveDatabase, payload = {}) {
         hasAttachments: attachments.length > 0,
         attachmentsCount: attachments.length
       },
-      created_at: now
+      created_at: now,
+      createdAt: now
     };
     if (!db.reservationCommunications) db.reservationCommunications = [];
     db.reservationCommunications.unshift(commLog);
@@ -3261,7 +3266,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   if (
     autoSendCredentialEmail &&
     (!reservation.guestPhone || !reservation.guestDocument) &&
-    !reservation.b2bCredentialEmailSentAt
+    !hasB2bCredentialEmailAlreadyBeenSent(db, reservation)
   ) {
     dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
       trigger: "b2b_auto_credential_request"
@@ -3272,6 +3277,182 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
 
   if (typeof saveDatabase === "function") saveDatabase();
   return { ok: true, created, reservation, agency, company, guest };
+}
+
+// Trava em memória contra disparos concorrentes de credenciamento B2B para a mesma reserva
+const inFlightB2bCredentialLocks = new Set();
+let isRunningPendingB2bDispatches = false;
+let lastPendingB2bDispatchCheckAt = 0;
+
+function getB2bReservationLockKeys(reservation) {
+  const keys = [];
+  if (!reservation) return keys;
+  const resId = String(reservation.id || "").trim();
+  const resCode = String(reservation.code || "").trim().toUpperCase();
+  const b2bNum = String(reservation.b2bReservationNumber || reservation.externalReservationNumber || "").trim();
+  if (resId) keys.push(`ID:${resId}`);
+  if (resCode) keys.push(`CODE:${resCode}`);
+  if (b2bNum) keys.push(`B2B:${b2bNum}`);
+  return keys;
+}
+
+function isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) {
+  if (!c || c.type !== "email") return false;
+  if (c.direction && c.direction !== "outbound") return false;
+  const cRes = String(c.reservation_id || "").trim().toUpperCase();
+  const cMetaCode = String(c.metadata?.reservationCode || "").trim().toUpperCase();
+  const cMetaB2b = String(c.metadata?.b2bReservationNumber || "").trim();
+  const subj = String(c.subject || "").toLowerCase();
+  const trig = String(c.metadata?.trigger || "").toLowerCase();
+
+  const matchesRes =
+    (resCodeUpper && (cRes === resCodeUpper || cMetaCode === resCodeUpper || subj.includes(resCodeUpper.toLowerCase()))) ||
+    (resIdStr && cRes === resIdStr) ||
+    (b2bNum && (cMetaB2b === b2bNum || subj.includes(b2bNum.toLowerCase())));
+
+  if (!matchesRes) return false;
+
+  return (
+    trig.includes("b2b") ||
+    trig.includes("credenciamento") ||
+    subj.includes("credenciamento") ||
+    subj.includes("dados do hóspede") ||
+    subj.includes("dados do hospede")
+  );
+}
+
+/**
+ * Verifica de forma determinística e abrangente se o e-mail de Confirmação & Dados do Hóspede
+ * já foi enviado (ou está registrado) para esta reserva B2B, evitando qualquer reenvio duplicado.
+ */
+export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation) {
+  if (!reservation) return false;
+  if (reservation.b2bCredentialEmailSentAt) return true;
+  if (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed") return true;
+
+  const resCodeUpper = String(reservation.code || "").trim().toUpperCase();
+  const resIdStr = String(reservation.id || "").trim();
+  const b2bNum = String(reservation.b2bReservationNumber || reservation.externalReservationNumber || "").trim();
+
+  // 1. Verifica se alguma reserva irmã com o mesmo código ou número B2B já possui o carimbo de envio
+  if (Array.isArray(db?.reservations) && (b2bNum || resCodeUpper)) {
+    const siblingSent = db.reservations.find(
+      other =>
+        other &&
+        other !== reservation &&
+        other.b2bCredentialEmailSentAt &&
+        ((b2bNum &&
+          (String(other.b2bReservationNumber || "").trim() === b2bNum ||
+            String(other.externalReservationNumber || "").trim() === b2bNum)) ||
+          (resCodeUpper && String(other.code || "").trim().toUpperCase() === resCodeUpper))
+    );
+    if (siblingSent) {
+      reservation.b2bCredentialEmailSentAt = siblingSent.b2bCredentialEmailSentAt;
+      reservation.b2bCredentialEmailRecipient =
+        reservation.b2bCredentialEmailRecipient || siblingSent.b2bCredentialEmailRecipient || "";
+      return true;
+    }
+  }
+
+  // 2. Verifica em db.reservationCommunications
+  if (Array.isArray(db?.reservationCommunications)) {
+    const comm = db.reservationCommunications.find(
+      c =>
+        c &&
+        c.status !== "failed" &&
+        isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum)
+    );
+    if (comm) {
+      reservation.b2bCredentialEmailSentAt =
+        comm.created_at || comm.createdAt || comm.metadata?.sentAt || new Date().toISOString();
+      reservation.b2bCredentialEmailRecipient =
+        reservation.b2bCredentialEmailRecipient || comm.recipient || reservation.agencyAgentEmail || "";
+      return true;
+    }
+  }
+
+  // 3. Verifica em db.zohoMessagesCache (mensagens enviadas sincronizadas da pasta Sent do Zoho)
+  if (Array.isArray(db?.zohoMessagesCache)) {
+    const sentZoho = db.zohoMessagesCache.find(zm => {
+      if (!zm || (zm.direction !== "outbound" && zm.folder !== "sent")) return false;
+      const subj = String(zm.subject || "").toLowerCase();
+      const isCredSubj =
+        subj.includes("dados do hóspede") ||
+        subj.includes("dados do hospede") ||
+        subj.includes("credenciamento");
+      if (!isCredSubj) return false;
+      return (
+        (b2bNum && subj.includes(b2bNum.toLowerCase())) ||
+        (resCodeUpper && subj.includes(resCodeUpper.toLowerCase()))
+      );
+    });
+    if (sentZoho) {
+      reservation.b2bCredentialEmailSentAt = sentZoho.created_at || sentZoho.createdAt || new Date().toISOString();
+      reservation.b2bCredentialEmailRecipient =
+        reservation.b2bCredentialEmailRecipient || sentZoho.recipient || reservation.agencyAgentEmail || "";
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Remove registros duplicados de e-mails de credenciamento B2B para a mesma reserva em db.reservationCommunications,
+ * preservando apenas o envio mais recente e garantindo o carimbo b2bCredentialEmailSentAt na reserva.
+ */
+export function deduplicateB2bCredentialCommunications(db) {
+  if (!db || !Array.isArray(db.reservationCommunications)) return 0;
+  const seenKeys = new Set();
+  const filtered = [];
+  let removed = 0;
+
+  for (const c of db.reservationCommunications) {
+    if (!c || c.type !== "email") {
+      filtered.push(c);
+      continue;
+    }
+    const trig = String(c.metadata?.trigger || "").toLowerCase();
+    const subj = String(c.subject || "").toLowerCase();
+    const isB2bCred =
+      trig.includes("b2b") ||
+      trig.includes("credenciamento") ||
+      subj.includes("credenciamento") ||
+      subj.includes("dados do hóspede") ||
+      subj.includes("dados do hospede");
+
+    if (!isB2bCred) {
+      filtered.push(c);
+      continue;
+    }
+
+    const dedupKey = String(
+      c.metadata?.b2bReservationNumber ||
+      c.metadata?.reservationCode ||
+      c.reservation_id ||
+      c.subject ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+    if (!dedupKey) {
+      filtered.push(c);
+      continue;
+    }
+
+    if (seenKeys.has(dedupKey)) {
+      removed++;
+      continue;
+    }
+    seenKeys.add(dedupKey);
+    filtered.push(c);
+  }
+
+  if (removed > 0) {
+    db.reservationCommunications = filtered;
+  }
+  return removed;
 }
 
 /**
@@ -3286,11 +3467,32 @@ export async function dispatchB2bAgencyCredentialEmail(
   {
     toEmail = "",
     baseUrl = "https://corpflats.com.br",
-    trigger = "b2b_agency_credential_request"
+    trigger = "b2b_agency_credential_request",
+    force = false
   } = {}
 ) {
   if (!db || !reservation) {
     return { ok: false, error: "Reserva não informada." };
+  }
+
+  const lockKeys = getB2bReservationLockKeys(reservation);
+  if (lockKeys.some(k => inFlightB2bCredentialLocks.has(k))) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "already_in_flight",
+      sentTo: reservation.b2bCredentialEmailRecipient || ""
+    };
+  }
+
+  if (!force && hasB2bCredentialEmailAlreadyBeenSent(db, reservation)) {
+    return {
+      ok: true,
+      skipped: true,
+      alreadySent: true,
+      sentAt: reservation.b2bCredentialEmailSentAt,
+      sentTo: reservation.b2bCredentialEmailRecipient || ""
+    };
   }
 
   const linkedAgency = reservation.agencyId
@@ -3348,132 +3550,189 @@ export async function dispatchB2bAgencyCredentialEmail(
     db
   });
 
-  // Se já existia um registro com falha (status: failed) para o credenciamento desta reserva, remove antes de reenviar para evitar duplicidade
-  if (Array.isArray(db.reservationCommunications)) {
-    const resCodeUpper = String(reservation.code || "").trim().toUpperCase();
-    const resIdStr = String(reservation.id || "").trim();
-    db.reservationCommunications = db.reservationCommunications.filter(c => {
-      if (!c || c.type !== "email" || c.status !== "failed") return true;
-      const cRes = String(c.reservation_id || "").trim().toUpperCase();
-      if (cRes !== resCodeUpper && cRes !== resIdStr) return true;
-      const trig = String(c.metadata?.trigger || "").toLowerCase();
-      const subj = String(c.subject || "").toLowerCase();
-      return !(trig.includes("b2b") || trig.includes("credenciamento") || subj.includes("credenciamento"));
-    });
-  }
-
-  const sendRes = await sendWebmailMessage(db, saveDatabase, {
-    to: targetEmail,
-    cc: ccList,
-    subject: rendered.subject,
-    bodyHtml: rendered.bodyHtml,
-    bodyText: rendered.bodyText,
-    reservationId: reservation.code || reservation.id,
-    reservationCode: reservation.code,
-    useTransactionalLayout: false,
-    trigger
-  });
-
-  const nowIso = new Date().toISOString();
-  reservation.b2bCredentialEmailSentAt = nowIso;
+  // Marca lock em memória e carimbo na reserva ANTES do await de rede para impedir disparos paralelos
+  for (const k of lockKeys) inFlightB2bCredentialLocks.add(k);
+  const previousSentAt = reservation.b2bCredentialEmailSentAt || null;
+  const preSendIso = new Date().toISOString();
+  reservation.b2bCredentialEmailSentAt = preSendIso;
   reservation.b2bCredentialEmailRecipient = ccList.length > 0 ? `${targetEmail}, ${ccList.join(", ")}` : targetEmail;
 
-  if (sendRes?.communication) {
-    sendRes.communication.metadata = {
-      ...(sendRes.communication.metadata || {}),
-      trigger,
+  try {
+    // Se já existia um registro anterior para o credenciamento desta reserva (ex: falha ou reenvio manual), remove antes para evitar duplicidade
+    if (Array.isArray(db.reservationCommunications)) {
+      const resCodeUpper = String(reservation.code || "").trim().toUpperCase();
+      const resIdStr = String(reservation.id || "").trim();
+      const b2bNum = String(reservation.b2bReservationNumber || reservation.externalReservationNumber || "").trim();
+      db.reservationCommunications = db.reservationCommunications.filter(c => {
+        if (!c || c.type !== "email") return true;
+        if (!force && c.status !== "failed") return true;
+        return !isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum);
+      });
+    }
+
+    const sendRes = await sendWebmailMessage(db, saveDatabase, {
+      to: targetEmail,
+      cc: ccList,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: rendered.bodyText,
+      reservationId: reservation.code || reservation.id,
+      reservationCode: reservation.code,
+      useTransactionalLayout: false,
+      trigger
+    });
+
+    const nowIso = new Date().toISOString();
+    if (!sendRes?.ok || sendRes?.communication?.status === "failed") {
+      reservation.b2bCredentialEmailSentAt = previousSentAt;
+    } else {
+      reservation.b2bCredentialEmailSentAt = nowIso;
+    }
+
+    if (sendRes?.communication) {
+      sendRes.communication.metadata = {
+        ...(sendRes.communication.metadata || {}),
+        trigger,
+        credentialUrl: rendered.credentialUrl || credentialUrl,
+        agencyName: reservation.agencyTradeName || reservation.agencyName || linkedAgency?.tradeName || "",
+        b2bReservationNumber: reservation.b2bReservationNumber || reservation.externalReservationNumber || "",
+        lastAutoRetryAt: nowIso
+      };
+    }
+
+    if (typeof saveDatabase === "function") {
+      saveDatabase("b2b_credential_email_sent");
+    }
+
+    return {
+      ok: Boolean(sendRes?.ok),
+      success: Boolean(sendRes?.ok),
+      sentTo: reservation.b2bCredentialEmailRecipient,
+      recipient: targetEmail,
+      cc: ccList,
       credentialUrl: rendered.credentialUrl || credentialUrl,
-      agencyName: reservation.agencyTradeName || reservation.agencyName || linkedAgency?.tradeName || "",
-      b2bReservationNumber: reservation.b2bReservationNumber || reservation.externalReservationNumber || "",
-      lastAutoRetryAt: nowIso
+      sentAt: reservation.b2bCredentialEmailSentAt || nowIso,
+      method: sendRes?.method || "smtp_engine",
+      communicationId: sendRes?.communication?.id || null,
+      communication: sendRes?.communication || null
     };
+  } catch (err) {
+    reservation.b2bCredentialEmailSentAt = previousSentAt;
+    throw err;
+  } finally {
+    for (const k of lockKeys) inFlightB2bCredentialLocks.delete(k);
   }
-
-  if (typeof saveDatabase === "function") {
-    saveDatabase("b2b_credential_email_sent");
-  }
-
-  return {
-    ok: true,
-    success: true,
-    sentTo: reservation.b2bCredentialEmailRecipient,
-    recipient: targetEmail,
-    cc: ccList,
-    credentialUrl: rendered.credentialUrl || credentialUrl,
-    sentAt: nowIso,
-    method: sendRes?.method || "smtp_engine",
-    communicationId: sendRes?.communication?.id || null,
-    communication: sendRes?.communication || null
-  };
 }
 
 /**
  * Varre todas as reservas B2B ativas que ainda estão sem WhatsApp/CPF do hóspede
  * e garante que o e-mail cordial de solicitação de credenciamento (/credenciamento/:code)
- * tenha sido enviado e registrado para a agência responsável.
+ * tenha sido enviado e registrado uma única vez para a agência responsável.
  */
 export async function ensurePendingB2bAgencyCredentialDispatches(
   db,
   saveDatabase,
-  { baseUrl = "https://corpflats.com.br" } = {}
+  { baseUrl = "https://corpflats.com.br", forceCheck = false } = {}
 ) {
   if (!db || !Array.isArray(db.reservations)) return { dispatched: 0 };
   if (!Array.isArray(db.reservationCommunications)) db.reservationCommunications = [];
 
+  if (isRunningPendingB2bDispatches) {
+    return { dispatched: 0, skipped: true };
+  }
+  if (!forceCheck && Date.now() - lastPendingB2bDispatchCheckAt < 60000) {
+    return { dispatched: 0, throttled: true };
+  }
+
   const canSendReal = Boolean(getZohoOAuthConfig(db).isConfigured || getSmtpConfig(db).isConfigured);
   if (!canSendReal) return { dispatched: 0 };
+
+  isRunningPendingB2bDispatches = true;
+  lastPendingB2bDispatchCheckAt = Date.now();
   let dispatched = 0;
+  let didBackfillSentAt = false;
 
-  for (const r of db.reservations) {
-    if (!r || r.status === "cancelada" || r.status === "cancelled") continue;
-    const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
-    if (!isB2b) continue;
+  try {
+    const removedDups = deduplicateB2bCredentialCommunications(db);
+    if (removedDups > 0) didBackfillSentAt = true;
 
-    const cleanPhone = String(r.guestPhone || "").replace(/\D/g, "");
-    const cleanDoc = String(r.guestDocument || "").replace(/\D/g, "");
-    if (cleanPhone.length >= 10 && cleanDoc.length >= 5) continue;
-    if (r.b2bCredentialCompletedAt) continue;
+    const todayBrIso = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
 
-    const resCode = String(r.code || "").trim().toUpperCase();
-    const resId = String(r.id || "").trim();
-
-    const existingComm = db.reservationCommunications.find(c => {
-      if (!c || c.type !== "email") return false;
-      const cRes = String(c.reservation_id || "").trim().toUpperCase();
-      if (cRes !== resCode && cRes !== resId) return false;
-      const trig = String(c.metadata?.trigger || "").toLowerCase();
-      const subj = String(c.subject || "").toLowerCase();
-      return trig.includes("b2b") || trig.includes("credenciamento") || subj.includes("credenciamento");
-    });
-
-    if (existingComm) {
-      if (!r.b2bCredentialEmailSentAt) {
-        r.b2bCredentialEmailSentAt = existingComm.created_at || new Date().toISOString();
-        r.b2bCredentialEmailRecipient = existingComm.recipient || r.agencyAgentEmail || "";
-      }
-      if (existingComm.status === "sent" || existingComm.status === "delivered" || existingComm.status === "pending") {
+    for (const r of db.reservations) {
+      if (!r) continue;
+      const st = String(r.status || "").toLowerCase().trim();
+      if (
+        st === "cancelada" ||
+        st === "cancelled" ||
+        st === "checkout" ||
+        st === "concluida" ||
+        st === "no_show" ||
+        st === "pre_reserva" ||
+        st === "pendente"
+      ) {
         continue;
       }
-      // Se falhou anteriormente, só tenta reenviar se Zoho OAuth ou SMTP estiverem configurados e após intervalo mínimo de 5 min
-      const lastTryMs = existingComm.metadata?.lastAutoRetryAt
-        ? new Date(existingComm.metadata.lastAutoRetryAt).getTime()
-        : new Date(existingComm.created_at || 0).getTime();
-      if (!canSendReal || Date.now() - lastTryMs < 300000) {
+
+      const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
+      if (!isB2b) continue;
+
+      // Não envia solicitação de dados para reservas passadas (cujo check-out já ocorreu)
+      if (r.checkoutDate && String(r.checkoutDate).slice(0, 10) < todayBrIso) continue;
+
+      const cleanPhone = String(r.guestPhone || "").replace(/\D/g, "");
+      const cleanDoc = String(r.guestDocument || "").replace(/\D/g, "");
+      if (cleanPhone.length >= 10 && cleanDoc.length >= 5) continue;
+      if (r.b2bCredentialCompletedAt || r.credentialStatus === "completed") continue;
+
+      const hadSentAtBefore = Boolean(r.b2bCredentialEmailSentAt);
+      if (hasB2bCredentialEmailAlreadyBeenSent(db, r)) {
+        if (!hadSentAtBefore && r.b2bCredentialEmailSentAt) {
+          didBackfillSentAt = true;
+        }
         continue;
+      }
+
+      const resCode = String(r.code || "").trim().toUpperCase();
+      const resId = String(r.id || "").trim();
+      const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+
+      const existingFailedComm = db.reservationCommunications.find(
+        c => c && c.status === "failed" && isB2bCredentialCommMatch(c, resCode, resId, b2bNum)
+      );
+
+      if (existingFailedComm) {
+        const lastTryMs = existingFailedComm.metadata?.lastAutoRetryAt
+          ? new Date(existingFailedComm.metadata.lastAutoRetryAt).getTime()
+          : new Date(existingFailedComm.created_at || existingFailedComm.createdAt || 0).getTime();
+        if (!canSendReal || Date.now() - lastTryMs < 900000) {
+          continue;
+        }
+      }
+
+      try {
+        const res = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+          baseUrl,
+          trigger: "b2b_auto_credential_request",
+          force: false
+        });
+        if (res && res.ok && !res.skipped) {
+          dispatched++;
+        }
+      } catch (err) {
+        console.warn(`[B2B Credential Sync] Falha ao disparar credenciamento para reserva ${r.code}:`, err.message);
       }
     }
 
-    try {
-      const res = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
-        baseUrl,
-        trigger: "b2b_auto_credential_request"
-      });
-      if (res && res.ok) {
-        dispatched++;
-      }
-    } catch (err) {
-      console.warn(`[B2B Credential Sync] Falha ao disparar credenciamento para reserva ${r.code}:`, err.message);
+    if (didBackfillSentAt && typeof saveDatabase === "function") {
+      saveDatabase("b2b_credential_dedup_reconcile");
     }
+  } finally {
+    isRunningPendingB2bDispatches = false;
   }
 
   return { dispatched };
@@ -3511,7 +3770,7 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
       if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
         directIngest = ingestB2bVoucherIntoDb(db, parsedB2b, {
           saveDatabase,
-          autoSendCredentialEmail: true
+          autoSendCredentialEmail: false
         });
       }
     } catch (err) {
@@ -3525,7 +3784,7 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
     saveDatabase
   });
 
-  await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase);
+  await ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, { forceCheck: true });
 
   if (typeof saveDatabase === "function") {
     saveDatabase("zoho_webhook_sync");
