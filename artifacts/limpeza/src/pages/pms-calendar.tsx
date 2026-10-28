@@ -6257,8 +6257,8 @@ export default function PmsCalendar() {
                           size="sm"
                           {...bindZapiClickOrHoldWaWeb({
                             onClickZapi: async () => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
                               const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
                               const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
                               const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
@@ -6275,8 +6275,8 @@ export default function PmsCalendar() {
                               })
                             },
                             getWaUrl: () => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
                               const phone = formGuestPhone || selectedRes?.guestPhone || ""
                               const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
                               const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
@@ -6297,8 +6297,8 @@ export default function PmsCalendar() {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
                               navigator.clipboard.writeText(url)
                               toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
                             }}
@@ -6311,8 +6311,8 @@ export default function PmsCalendar() {
                             size="sm"
                             variant="ghost"
                             onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `/cafe?res=${resCode}`
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `/cafe/${encodeURIComponent(String(resCode))}`
                               window.open(url, "_blank")
                             }}
                             className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"

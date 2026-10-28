@@ -7652,16 +7652,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const baseUrl = `${req.protocol}://${req.get("host")}`;
 
     // Se vinculou uma reserva para o teste, resolve as tags reais; senão preenche com dados simulados realistas
-    if (reservationId && reservationId !== "none") {
-      const resv = (db?.reservations || []).find(r => r.id === Number(reservationId) || r.code === String(reservationId));
-      if (resv) {
-        finalMessage = resolveWhatsAppTags(finalMessage, resv, db, baseUrl);
-        finalButtons = finalButtons.map(b => ({
-          ...b,
-          url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl) : undefined,
-          phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl) : undefined
-        }));
-      }
+    const lookupKey = (reservationId && reservationId !== "none") ? reservationId : (req.body?.reservationCode || null);
+    let resv = null;
+    if (lookupKey) {
+      const keyStr = String(lookupKey).trim();
+      resv = (db?.reservations || []).find(r =>
+        r.id === Number(keyStr) ||
+        (r.code && String(r.code).toUpperCase() === keyStr.toUpperCase()) ||
+        (r.reservationCode && String(r.reservationCode).toUpperCase() === keyStr.toUpperCase()) ||
+        (r.breakfastToken && String(r.breakfastToken) === keyStr) ||
+        `RES-${r.flatNumber}-${r.id}`.toUpperCase() === keyStr.toUpperCase() ||
+        `RES-${r.flatNumber}-${String(r.id).padStart(4, "0")}`.toUpperCase() === keyStr.toUpperCase()
+      );
+    }
+    if (resv) {
+      finalMessage = resolveWhatsAppTags(finalMessage, resv, db, baseUrl);
+      finalButtons = finalButtons.map(b => ({
+        ...b,
+        url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl) : undefined,
+        phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl) : undefined
+      }));
     } else {
       const sampleResv = {
         guestName: req.body?.recipientName || "Miller Mendonça",
@@ -7674,6 +7684,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         totalAmount: 480,
         paid: true,
         paymentStatus: "paid",
+        includeBreakfast: true,
+        hasBreakfast: true,
         source: "Site Oficial"
       };
       finalMessage = resolveWhatsAppTags(finalMessage, sampleResv, db, baseUrl);

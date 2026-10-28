@@ -119,7 +119,8 @@ export default function BreakfastProduction() {
     const guestName = room.guestName || "Hóspede"
     const flatNumber = room.flatNumber || ""
     const formattedDate = labelDate(currentDate)
-    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}&v=1`
+    const resIdentifier = room.reservationCode || room.reservationId || room.breakfastToken || flatNumber
+    const link = `${window.location.origin}/cafe/${encodeURIComponent(String(resIdentifier))}`
 
     return reminderTemplate
       .replace(/\{nome\}/gi, guestName)
@@ -163,7 +164,8 @@ export default function BreakfastProduction() {
   }
 
   const handleCopyRoomLink = (room: any) => {
-    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}&v=1`
+    const resIdentifier = room.reservationCode || room.reservationId || room.breakfastToken || room.flatNumber
+    const link = `${window.location.origin}/cafe/${encodeURIComponent(String(resIdentifier))}`
     navigator.clipboard.writeText(link)
     alert(`Link exclusivo do café para o Flat ${room.flatNumber} copiado!`)
   }
@@ -956,7 +958,13 @@ export default function BreakfastProduction() {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => window.open(room.breakfastLink || `/cafe?res=${room.reservationCode || room.breakfastToken}`, "_blank")}
+                            onClick={() => {
+                              const resIdentifier = room.reservationCode || room.reservationId || room.breakfastToken || room.flatNumber
+                              const validLink = (room.breakfastLink && !String(room.breakfastLink).includes("undefined"))
+                                ? room.breakfastLink
+                                : `/cafe/${encodeURIComponent(String(resIdentifier))}`
+                              window.open(validLink, "_blank")
+                            }}
                             title="Abrir página de pedido do hóspede"
                             className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
                           >

@@ -10313,7 +10313,13 @@ export async function generateSofiaRealtimeAssistance({
   const guestName = res?.guestName || conv?.name || guestContext.guestName || "Hóspede";
   const firstName = String(guestName).trim().split(/\s+/)[0] || "Hóspede";
   const flatNumber = String(res?.flatNumber || conv?.flatNumber || guestContext.flatNumber || "").trim();
-  const resCode = String(res?.code || conv?.reservationCode || "").trim();
+  const resCode = String(
+    res?.code ||
+    res?.reservationCode ||
+    (res?.id ? `RES-${res.flatNumber || flatNumber || "000"}-${String(res.id).padStart(4, "0")}` : "") ||
+    conv?.reservationCode ||
+    (flatNumber ? `RES-${flatNumber}` : "")
+  ).trim();
   const stayStage = guestContext.stayStatus || (res ? "reserva_futura" : "sem_reserva");
 
   const inboundMessages = history.filter(m => m && !m.fromMe && m.text);

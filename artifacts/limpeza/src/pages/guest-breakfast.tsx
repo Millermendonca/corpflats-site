@@ -88,6 +88,61 @@ export default function GuestBreakfast() {
   // Controle da Aba Ativa no modo individual (1, 2 ou 3)
   const [activeGuestTab, setActiveGuestTab] = useState<1 | 2 | 3>(1)
 
+  const sanitizeResCode = (val?: string | null): string => {
+    if (!val) return ""
+    let decoded = String(val).trim()
+    try {
+      decoded = decodeURIComponent(decoded).trim()
+    } catch {}
+    if (
+      !decoded ||
+      ["undefined", "null", "none", "cafe", "cafe-da-manha", "breakfast", "room-service"].includes(decoded.toLowerCase())
+    ) {
+      return ""
+    }
+    return decoded
+  }
+
+  const resolveCurrentResCode = (): string => {
+    const fromRoutes =
+      sanitizeResCode(paramsMinhaReserva?.code) ||
+      sanitizeResCode(paramsMinhaReservaAlt?.code) ||
+      sanitizeResCode(paramsPortal?.code) ||
+      sanitizeResCode(paramsGuest?.code) ||
+      sanitizeResCode(paramsCafeCode?.code) ||
+      sanitizeResCode(paramsCafeDaManhaCode?.code) ||
+      sanitizeResCode(paramsBreakfastCode?.code)
+    if (fromRoutes) return fromRoutes
+
+    if (typeof window !== "undefined") {
+      const pathname = window.location.pathname || ""
+      const nestedMatch = pathname.match(/(?:minha-reserva|portal-hospede|guest-portal)\/([^/?#]+)\/(?:cafe|room-service)/i)
+      if (nestedMatch?.[1]) {
+        const cleanNested = sanitizeResCode(nestedMatch[1])
+        if (cleanNested) return cleanNested
+      }
+      const directMatch = pathname.match(/(?:cafe-da-manha|cafe|breakfast)\/([^/?#]+)/i)
+      if (directMatch?.[1]) {
+        const cleanDirect = sanitizeResCode(directMatch[1])
+        if (cleanDirect) return cleanDirect
+      }
+
+      const params = new URLSearchParams(window.location.search)
+      const fromQuery =
+        sanitizeResCode(params.get("res")) ||
+        sanitizeResCode(params.get("code")) ||
+        sanitizeResCode(params.get("token")) ||
+        sanitizeResCode(params.get("reserva")) ||
+        sanitizeResCode(params.get("r")) ||
+        sanitizeResCode(params.get("id")) ||
+        sanitizeResCode(params.get("reservation")) ||
+        sanitizeResCode(params.get("reservationCode"))
+      if (fromQuery) return fromQuery
+    }
+
+    return ""
+  }
+
   const [submitting, setSubmitting] = useState(false)
   const [orderSuccess, setOrderSuccess] = useState<any | null>(null)
   const [loadedFromReservation, setLoadedFromReservation] = useState(false)
@@ -96,7 +151,7 @@ export default function GuestBreakfast() {
   const [nowBrasilia, setNowBrasilia] = useState<any>(null)
   const [selectedRepeatDates, setSelectedRepeatDates] = useState<string[]>([])
   const [repeatAllDays, setRepeatAllDays] = useState(false)
-  const [loadingContext, setLoadingContext] = useState(false)
+  const [loadingContext, setLoadingContext] = useState(() => Boolean(resolveCurrentResCode()))
   const [contextError, setContextError] = useState<string | null>(null)
 
   const formatDateDisplay = (dateStr: string) => {
@@ -171,15 +226,17 @@ export default function GuestBreakfast() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const routeCode = paramsMinhaReserva?.code || paramsMinhaReservaAlt?.code || paramsPortal?.code || paramsGuest?.code || paramsCafeCode?.code || paramsCafeDaManhaCode?.code || paramsBreakfastCode?.code
-    const resCode = routeCode || params.get("res") || params.get("code") || params.get("token") || params.get("reserva")
-    const roomParam = params.get("room") || params.get("quarto")
+    const resCode = resolveCurrentResCode()
+    const roomParam = sanitizeResCode(params.get("room") || params.get("quarto"))
     const nameParam = params.get("nome") || params.get("name")
 
     if (resCode) {
       loadReservationContext(resCode)
+    } else if (roomParam) {
+      setRoomNumber(roomParam)
+      if (nameParam) setGuest1Name(nameParam)
+      loadReservationContext(roomParam)
     } else {
-      if (roomParam) setRoomNumber(roomParam)
       if (nameParam) setGuest1Name(nameParam)
     }
   }, [paramsMinhaReserva?.code, paramsMinhaReservaAlt?.code, paramsPortal?.code, paramsGuest?.code, paramsCafeCode?.code, paramsCafeDaManhaCode?.code, paramsBreakfastCode?.code])
@@ -721,7 +778,15 @@ export default function GuestBreakfast() {
       <main className="max-w-3xl w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 sm:space-y-5 pb-20">
         
         {/* Quando acessado com link de reserva: Card de Identificação da Estada / Hóspede */}
-        {loadedFromReservation && reservationData ? (
+        {loadingContext && !loadedFromReservation ? (
+          <Card className="bg-white border border-slate-100 rounded-2xl p-6 sm:p-8 shadow-md text-center space-y-3">
+            <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mx-auto animate-pulse">
+              <Coffee className="w-5 h-5" />
+            </div>
+            <p className="text-sm font-bold text-slate-800">Carregando os dados da sua reserva...</p>
+            <p className="text-xs text-slate-500">Preparando o cardápio personalizado da sua estadia.</p>
+          </Card>
+        ) : loadedFromReservation && reservationData ? (
           <>
             {/* Card de Identificação da Estada / Hóspede */}
             <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-3">
