@@ -4771,7 +4771,7 @@ export function seedInitialFaqItems(dbInstance) {
   return modified;
 }
 
-function reconcileUniversalIntegrity(incomingState = null) {
+export function reconcileUniversalIntegrity(incomingState = null) {
   if (!db.flats) db.flats = [];
   if (!db.reservations) db.reservations = [];
   if (!db.cleaningRequests) db.cleaningRequests = [];
@@ -11788,23 +11788,25 @@ async function offloadHistoricalBase64Media() {
   return offloadedCount;
 }
 
-function sanitizeSafeJsonString(str, maxLen = 0) {
+export function sanitizeSafeJsonString(str, maxLen = 0) {
   if (typeof str !== "string") return str;
   let s = str;
   if (maxLen > 0 && s.length > maxLen) {
-    s = s.slice(0, maxLen);
-  }
-  if (typeof s.toWellFormed === "function") {
-    s = s.toWellFormed();
+    let cut = maxLen;
+    const prevCode = s.charCodeAt(cut - 1);
+    if (prevCode >= 0xd800 && prevCode <= 0xdbff) {
+      cut -= 1;
+    }
+    s = s.slice(0, cut);
   }
   return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|\u0000/g, "");
 }
 
-function sanitizeJsonSerialized(jsonStr) {
+export function sanitizeJsonSerialized(jsonStr) {
   if (typeof jsonStr !== "string") return jsonStr;
   return jsonStr.replace(
-    /\\u[dD][89abAB][0-9a-fA-F]{2}(?!\\u[dD][cdefCDEF][0-9a-fA-F]{2})|(?<!\\u[dD][89abAB][0-9a-fA-F]{2})\\u[dD][cdefCDEF][0-9a-fA-F]{2}|\\u0000/g,
-    ""
+    /((?<!\\)(?:\\\\)*)(?:\\u[dD][89abAB][0-9a-fA-F]{2}(?!\\u[dD][cdefCDEF][0-9a-fA-F]{2})|(?<!\\u[dD][89abAB][0-9a-fA-F]{2})\\u[dD][cdefCDEF][0-9a-fA-F]{2}|\\u0000)/g,
+    "$1"
   );
 }
 
@@ -12344,7 +12346,7 @@ function flushLocalDiskState() {
   if (pendingLocalDirty || !pendingLocalStateJson) {
     reconcileCleaningRequests();
     pruneDatabase();
-    const content = JSON.stringify(db);
+    const content = sanitizeJsonSerialized(JSON.stringify(db));
     pendingLocalStateJson = content;
     pendingLocalDirty = false;
     if (pendingPgDirty) {
@@ -12394,7 +12396,7 @@ function saveDatabase(reason = "auto_save") {
       }
       reconcileCleaningRequests();
       pruneDatabase();
-      const stateJson = JSON.stringify(db);
+      const stateJson = sanitizeJsonSerialized(JSON.stringify(db));
       pendingLocalDirty = false;
       pendingLocalStateJson = null;
       localDiskWriteVersion++;
@@ -14852,7 +14854,23 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         title: notifTitle,
         message: `${order.title}: ${workerName} no Flat ${flat.flatNumber}`,
         severity: action === "overdue_alert" ? "warning" : "info",
-        metadata: { serviceOrderId: order.id, flatId: flat.flatId, flatNumber: flat.flatNumber, action },
+        metadata: {
+          serviceOrderId: order.id,
+          flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
+          action,
+          startedAt: flat.startedAt || null,
+          finishedAt: flat.finishedAt || null,
+          estimatedFinishAt: flat.estimatedFinishAt || null,
+          workerName: flat.workerName || workerName || null,
+          workerCpf: flat.workerCpf || workerCpf || null,
+          observations: flat.observations || null,
+          photos: Array.isArray(flat.photos) ? flat.photos : [],
+          needsCleaning: typeof flat.needsCleaning === "boolean" ? flat.needsCleaning : null,
+          wasCleanWhenStarted: typeof flat.wasCleanWhenStarted === "boolean" ? flat.wasCleanWhenStarted : null,
+          entryRequested: Boolean(flat.entryRequested),
+          entryRequestedAt: flat.entryRequestedAt || null
+        },
         targetUrl: `/servicos`
       });
     } catch (notifErr) {
@@ -15095,6 +15113,7 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
 
 function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {}) {
   try {
+    if (pgPool && !pgHydratedSuccessfully) return [];
     if (!Array.isArray(db.serviceOrders)) return [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     const todayStr = getTodayStr();
@@ -15334,6 +15353,7 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
 
 function checkOverdueServiceFlats() {
   try {
+    if (pgPool && !pgHydratedSuccessfully) return;
     if (!Array.isArray(db.serviceOrders)) return;
     const now = new Date();
     let updated = false;
@@ -19029,10 +19049,10 @@ function getActiveServiceFlatBlockRange(oflat, todayStr = getTodayStr()) {
 }
 
 // Sincroniza bloqueios de inventário (db.roomBlocks) quando uma OS interdita apartamentos
-function syncServiceOrderRoomBlocks(order, isDeleted = false) {
-  if (!order || !order.id) return;
-  if (!Array.isArray(db.roomBlocks)) db.roomBlocks = [];
-  db.roomBlocks = db.roomBlocks.filter(b => b.serviceOrderId !== order.id);
+function syncServiceOrderRoomBlocks(order, isDeleted = false, targetDb = db) {
+  if (!order || !order.id || !targetDb) return;
+  if (!Array.isArray(targetDb.roomBlocks)) targetDb.roomBlocks = [];
+  targetDb.roomBlocks = targetDb.roomBlocks.filter(b => b.serviceOrderId !== order.id);
 
   if (isDeleted || order.status !== "active" || (!order.blockFlats && !order.interdictFlats)) {
     return;
@@ -19050,8 +19070,8 @@ function syncServiceOrderRoomBlocks(order, isDeleted = false) {
     const endDate = f.status === "in_progress"
       ? [startDate, baseEndDate, estEndDate, todayStr].filter(Boolean).sort().pop()
       : (baseEndDate >= todayStr ? baseEndDate : todayStr);
-    const nextBlockId = db.roomBlocks.length > 0 ? Math.max(...db.roomBlocks.map(b => Number(b.id) || 0)) + 1 : 1;
-    db.roomBlocks.push({
+    const nextBlockId = targetDb.roomBlocks.length > 0 ? Math.max(...targetDb.roomBlocks.map(b => Number(b.id) || 0)) + 1 : 1;
+    targetDb.roomBlocks.push({
       id: nextBlockId,
       flatId: Number(f.flatId),
       flatNumber: String(f.flatNumber),
@@ -19639,6 +19659,19 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   syncServiceOrderRoomBlocks(order);
   saveDatabase("reset_service_flat");
 
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "SERVICE_ORDER_RESET",
+    actor: { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role },
+    details: {
+      serviceOrderId: order.id,
+      flatId: flat.flatId,
+      flatNumber: flat.flatNumber,
+      action: "reset"
+    }
+  });
+
   checkAndNotifyAvailableServiceFlats(order.id);
 
   try {
@@ -19752,6 +19785,29 @@ app.post("/api/service-orders/:id/flats/:flatId/admin-complete", (req, res) => {
 
   syncServiceOrderRoomBlocks(order);
   saveDatabase("admin_complete_service_flat");
+
+  try {
+    createNotification({
+      category: "service_order",
+      title: `✅ Serviço finalizado (Admin) - Flat ${flat.flatNumber}`,
+      message: `${order.title}: ${flat.workerName} no Flat ${flat.flatNumber}`,
+      severity: "info",
+      metadata: {
+        serviceOrderId: order.id,
+        flatId: flat.flatId,
+        flatNumber: flat.flatNumber,
+        action: "admin_complete",
+        startedAt: flat.startedAt || null,
+        finishedAt: flat.finishedAt || null,
+        workerName: flat.workerName || null,
+        workerCpf: flat.workerCpf || null,
+        observations: flat.observations || null,
+        needsCleaning: typeof flat.needsCleaning === "boolean" ? flat.needsCleaning : null
+      },
+      targetUrl: `/servicos`
+    });
+  } catch (_) {}
+
   checkAndNotifyAvailableServiceFlats(order.id);
 
   res.json({
