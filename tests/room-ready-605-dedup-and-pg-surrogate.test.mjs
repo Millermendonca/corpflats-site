@@ -420,3 +420,380 @@ test("4. reconcileFromAuditLogs recovers Service Order flat progress, notificati
   const blockedFlatNumbers = db.roomBlocks.map(b => b.flatNumber).sort();
   assert.deepEqual(blockedFlatNumbers, ["402", "403"]);
 });
+
+test("5. Multi-cycle protection (done -> reset -> start): older finish log or stale done snapshot never overwrites newer in_progress cycle", async () => {
+  const { reconcileFromAuditLogs, reconcileUniversalIntegrity, db } = loadServerHelpersSandbox({
+    serviceOrders: [
+      {
+        id: "so_cycle_1",
+        token: "tok_cycle_1",
+        title: "Manutenção Ar",
+        status: "active",
+        updatedAt: "2026-10-28T15:00:00.000Z",
+        flats: [
+          {
+            flatId: 18,
+            flatNumber: "907",
+            // Already in cycle 2 (started at 15:00 after reset at 14:00)
+            status: "in_progress",
+            startedAt: "2026-10-28T15:00:00.000Z",
+            resetAt: "2026-10-28T14:00:00.000Z",
+            finishedAt: null,
+            workerName: "Anderson Alvarenga"
+          }
+        ]
+      }
+    ]
+  });
+
+  // Audit logs contain Cycle 1 finish (12:00), Reset (14:00), and Cycle 2 start (15:00)
+  const mockPgPool = {
+    query: async () => ({
+      rows: [
+        {
+          id: 203,
+          timestamp: "2026-10-28T15:00:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_cycle_1",
+              flatId: 18,
+              flatNumber: "907",
+              action: "start",
+              startedAt: "2026-10-28T15:00:00.000Z",
+              workerName: "Anderson Alvarenga"
+            }
+          }
+        },
+        {
+          id: 202,
+          timestamp: "2026-10-28T14:00:00.000Z",
+          action: "SERVICE_ORDER_RESET",
+          details: {
+            serviceOrderId: "so_cycle_1",
+            flatId: 18,
+            flatNumber: "907",
+            action: "reset",
+            resetAt: "2026-10-28T14:00:00.000Z"
+          }
+        },
+        {
+          id: 201,
+          timestamp: "2026-10-28T12:00:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_cycle_1",
+              flatId: 18,
+              flatNumber: "907",
+              action: "finish",
+              startedAt: "2026-10-28T10:00:00.000Z",
+              finishedAt: "2026-10-28T12:00:00.000Z",
+              workerName: "Anderson Alvarenga"
+            }
+          }
+        }
+      ]
+    })
+  };
+
+  await reconcileFromAuditLogs(db, mockPgPool);
+  const f907 = db.serviceOrders[0].flats[0];
+  assert.equal(f907.status, "in_progress", "Older finish log (12:00) must not overwrite newer in_progress (15:00)");
+  assert.equal(f907.startedAt, "2026-10-28T15:00:00.000Z");
+  assert.equal(f907.finishedAt, null);
+
+  // Also test reconcileUniversalIntegrity against a stale snapshot that still had Cycle 1 'done' at 12:00
+  reconcileUniversalIntegrity({
+    serviceOrders: [
+      {
+        id: "so_cycle_1",
+        token: "tok_cycle_1",
+        title: "Manutenção Ar",
+        status: "active",
+        updatedAt: "2026-10-28T12:00:00.000Z",
+        flats: [
+          {
+            flatId: 18,
+            flatNumber: "907",
+            status: "done",
+            startedAt: "2026-10-28T10:00:00.000Z",
+            finishedAt: "2026-10-28T12:00:00.000Z",
+            workerName: "Anderson Alvarenga"
+          }
+        ]
+      }
+    ]
+  });
+
+  const f907AfterMerge = db.serviceOrders[0].flats[0];
+  assert.equal(f907AfterMerge.status, "in_progress", "Stale done snapshot (12:00) must not overwrite newer in_progress cycle (15:00)");
+  assert.equal(f907AfterMerge.startedAt, "2026-10-28T15:00:00.000Z");
+});
+
+test("6. Full Service Order lifecycle recovery from audit logs (CREATE, UPDATE, WORKER_REGISTERED, PHOTOS_UPLOADED, FORCE_RELEASE, DELETE)", async () => {
+  const { reconcileFromAuditLogs, reconcileUniversalIntegrity, db } = loadServerHelpersSandbox({
+    serviceOrders: [],
+    serviceWorkers: [],
+    roomBlocks: []
+  });
+
+  const mockPgPool = {
+    query: async () => ({
+      rows: [
+        {
+          id: 307,
+          timestamp: "2026-10-28T18:30:00.000Z",
+          action: "SERVICE_ORDER_DELETED",
+          details: {
+            serviceOrderId: "so_temp_del",
+            orderId: "so_temp_del",
+            action: "deleted"
+          }
+        },
+        {
+          id: 306,
+          timestamp: "2026-10-28T18:10:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_new_1",
+              flatId: 18,
+              flatNumber: "907",
+              action: "finish",
+              startedAt: "2026-10-28T17:30:00.000Z",
+              finishedAt: "2026-10-28T18:10:00.000Z",
+              workerName: "Anderson Alvarenga",
+              observations: "Higienizado com sucesso",
+              wasCleanWhenStarted: true,
+              needsCleaning: true
+              // Intentionally omit 'photos' here to verify fallback to uploadedPhotos from SERVICE_ORDER_PHOTOS_UPLOADED
+            }
+          }
+        },
+        {
+          id: 305,
+          timestamp: "2026-10-28T18:05:00.000Z",
+          action: "SERVICE_ORDER_PHOTOS_UPLOADED",
+          details: {
+            serviceOrderId: "so_new_1",
+            flatId: 18,
+            flatNumber: "907",
+            action: "photos_uploaded",
+            photos: ["https://r2.example.com/services/photo_907_1.webp"]
+          }
+        },
+        {
+          id: 304,
+          timestamp: "2026-10-28T17:20:00.000Z",
+          action: "SERVICE_ORDER_FORCE_RELEASE",
+          details: {
+            serviceOrderId: "so_new_1",
+            flatId: 21,
+            flatNumber: "1304",
+            action: "force_release",
+            forceReleased: true
+          }
+        },
+        {
+          id: 303,
+          timestamp: "2026-10-28T17:10:00.000Z",
+          action: "SERVICE_ORDER_WORKER_REGISTERED",
+          details: {
+            serviceOrderId: "so_new_1",
+            token: "tok_new_1",
+            action: "worker_registered",
+            worker: {
+              id: "sw_new_1",
+              serviceOrderId: "so_new_1",
+              token: "tok_new_1",
+              mainWorker: { name: "Anderson Alvarenga", cpf: "12345678901", phone: "5522999999999" },
+              registeredAt: "2026-10-28T17:10:00.000Z"
+            }
+          }
+        },
+        {
+          id: 302,
+          timestamp: "2026-10-28T17:05:00.000Z",
+          action: "SERVICE_ORDER_CREATED",
+          details: {
+            serviceOrderId: "so_temp_del",
+            orderId: "so_temp_del",
+            token: "tok_temp_del",
+            action: "created",
+            order: {
+              id: "so_temp_del",
+              token: "tok_temp_del",
+              title: "Ordem Excluída",
+              status: "active",
+              createdAt: "2026-10-28T17:05:00.000Z",
+              updatedAt: "2026-10-28T17:05:00.000Z",
+              flats: [{ flatId: 1, flatNumber: "113", status: "pending" }]
+            }
+          }
+        },
+        {
+          id: 301,
+          timestamp: "2026-10-28T17:00:00.000Z",
+          action: "SERVICE_ORDER_CREATED",
+          details: {
+            serviceOrderId: "so_new_1",
+            orderId: "so_new_1",
+            token: "tok_new_1",
+            action: "created",
+            order: {
+              id: "so_new_1",
+              token: "tok_new_1",
+              title: "Limpeza de Ar-condicionado",
+              status: "active",
+              requirePhotos: true,
+              createdAt: "2026-10-28T17:00:00.000Z",
+              updatedAt: "2026-10-28T17:00:00.000Z",
+              flats: [
+                { flatId: 18, flatNumber: "907", status: "pending", photos: [] },
+                { flatId: 21, flatNumber: "1304", status: "pending", photos: [] }
+              ]
+            }
+          }
+        }
+      ]
+    })
+  };
+
+  const changed = await reconcileFromAuditLogs(db, mockPgPool);
+  assert.equal(changed, true);
+
+  // Only so_new_1 must remain (so_temp_del was created then deleted)
+  assert.equal(db.serviceOrders.length, 1);
+  assert.equal(db.serviceOrders[0].id, "so_new_1");
+  assert.equal(db.serviceWorkers.length, 1);
+  assert.equal(db.serviceWorkers[0].mainWorker.name, "Anderson Alvarenga");
+
+  const f907 = db.serviceOrders[0].flats.find(f => f.flatNumber === "907");
+  const f1304 = db.serviceOrders[0].flats.find(f => f.flatNumber === "1304");
+
+  assert.equal(f907.status, "done");
+  assert.deepEqual([...f907.photos], ["https://r2.example.com/services/photo_907_1.webp"]);
+  assert.equal(f907.wasCleanWhenStarted, true);
+  assert.equal(f907.needsCleaning, true);
+  assert.equal(f1304.forceReleased, true);
+
+  // Ensure reconcileUniversalIntegrity does not resurrect deleted order so_temp_del
+  reconcileUniversalIntegrity({
+    serviceOrders: [
+      {
+        id: "so_temp_del",
+        token: "tok_temp_del",
+        title: "Ordem Excluída",
+        status: "active",
+        flats: [{ flatId: 1, flatNumber: "113", status: "pending" }]
+      }
+    ]
+  });
+  assert.equal(db.serviceOrders.some(o => o.id === "so_temp_del"), false, "Deleted service order must not be resurrected");
+});
+
+test("7. Self-healing of R2 photos & cleaning flags for so_1791912503911_wzey5 (Flats 907 & 1304) and LIMIT 600 saturation fallback query", async () => {
+  const { reconcileFromAuditLogs, db } = loadServerHelpersSandbox({
+    serviceOrders: [
+      {
+        id: "so_1791912503911_wzey5",
+        token: "9bf18bd5202fb36e61a99115",
+        title: "Higienização Ar Condicionado",
+        status: "active",
+        flats: [
+          {
+            flatId: 18,
+            flatNumber: "907",
+            status: "in_progress",
+            startedAt: "2026-10-28T13:29:33.044Z",
+            finishedAt: null,
+            photos: [],
+            needsCleaning: null,
+            wasCleanWhenStarted: null
+          },
+          {
+            flatId: 21,
+            flatNumber: "1304",
+            status: "in_progress",
+            startedAt: "2026-10-28T13:29:04.005Z",
+            finishedAt: null,
+            photos: [],
+            needsCleaning: null,
+            wasCleanWhenStarted: null
+          }
+        ]
+      }
+    ]
+  });
+
+  // Simulate 560 non-OS audit logs in the primary query so the secondary SERVICE_ORDER query triggers
+  let queriesExecuted = 0;
+  const fillerRows = Array.from({ length: 560 }, (_, idx) => ({
+    id: 90000 - idx,
+    timestamp: "2026-10-28T22:00:00.000Z",
+    action: "CLEANING_COMPLETED",
+    details: { flatNumber: "113" }
+  }));
+
+  const mockPgPool = {
+    query: async (sql) => {
+      queriesExecuted++;
+      if (queriesExecuted === 1) {
+        return { rows: fillerRows };
+      }
+      assert.ok(sql.includes("NOTIFICATION_SERVICE_ORDER"), "Secondary query must specifically fetch SERVICE_ORDER logs");
+      return {
+        rows: [
+          {
+            id: 82597,
+            timestamp: "2026-10-28T21:00:40.847Z",
+            action: "NOTIFICATION_SERVICE_ORDER",
+            details: {
+              message: "Higienização Ar Condicionado: Anderson Alvarenga no Flat 1304",
+              metadata: {
+                serviceOrderId: "so_1791912503911_wzey5",
+                flatId: 21,
+                flatNumber: "1304",
+                action: "finish"
+              }
+            }
+          },
+          {
+            id: 82593,
+            timestamp: "2026-10-28T20:59:55.032Z",
+            action: "NOTIFICATION_SERVICE_ORDER",
+            details: {
+              message: "Higienização Ar Condicionado: Anderson Alvarenga no Flat 907",
+              metadata: {
+                serviceOrderId: "so_1791912503911_wzey5",
+                flatId: 18,
+                flatNumber: "907",
+                action: "finish"
+              }
+            }
+          }
+        ]
+      };
+    }
+  };
+
+  const changed = await reconcileFromAuditLogs(db, mockPgPool);
+  assert.equal(changed, true);
+  assert.equal(queriesExecuted, 2, "Should execute secondary query when primary query returns >= 550 rows");
+
+  const acOrder = db.serviceOrders[0];
+  const f907 = acOrder.flats.find(f => f.flatNumber === "907");
+  const f1304 = acOrder.flats.find(f => f.flatNumber === "1304");
+
+  assert.equal(f907.status, "done");
+  assert.equal(f907.photos.length, 2, "Flat 907 must recover its 2 Cloudflare R2 photos");
+  assert.equal(f907.wasCleanWhenStarted, true);
+  assert.equal(f907.needsCleaning, true);
+
+  assert.equal(f1304.status, "done");
+  assert.equal(f1304.photos.length, 1, "Flat 1304 must recover its Cloudflare R2 photo");
+  assert.equal(f1304.wasCleanWhenStarted, true);
+  assert.equal(f1304.needsCleaning, true);
+});
+

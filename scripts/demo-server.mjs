@@ -5080,9 +5080,11 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     // 1.13 Ordens de Serviço (União não-destrutiva por Ordem e por Apartamento)
     if (Array.isArray(incomingState.serviceOrders) && incomingState.serviceOrders.length > 0) {
       if (!db.serviceOrders) db.serviceOrders = [];
+      const deletedOrderIds = new Set(Array.isArray(db._deletedServiceOrderIds) ? db._deletedServiceOrderIds.map(String) : []);
       const flatStatusRank = { pending: 0, in_progress: 1, done: 2 };
       incomingState.serviceOrders.forEach(incOrder => {
         if (!incOrder || !incOrder.id) return;
+        if (deletedOrderIds.has(String(incOrder.id))) return;
         const existingIdx = db.serviceOrders.findIndex(o => o.id === incOrder.id || o.token === incOrder.token);
         if (existingIdx === -1) {
           db.serviceOrders.push({ ...incOrder });
@@ -5104,17 +5106,65 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                 const curF = mergedFlats[eIdx];
                 const curRank = flatStatusRank[curF.status] ?? 0;
                 const incRank = flatStatusRank[incF.status] ?? 0;
-                if (incRank > curRank) {
+                const curActivityAt = [curF.finishedAt, curF.startedAt, curF.resetAt].filter(Boolean).sort().pop() || "";
+                const incActivityAt = [incF.finishedAt, incF.startedAt, incF.resetAt].filter(Boolean).sort().pop() || "";
+                const curResetIsNewer = Boolean(
+                  (curF.resetAt && (!incActivityAt || curF.resetAt > incActivityAt)) ||
+                  (curF.status === "in_progress" && curF.startedAt && incF.finishedAt && curF.startedAt > incF.finishedAt)
+                );
+                const incResetIsNewer = Boolean(
+                  (incF.resetAt && (!curActivityAt || incF.resetAt > curActivityAt)) ||
+                  (incF.status === "in_progress" && incF.startedAt && curF.finishedAt && incF.startedAt > curF.finishedAt)
+                );
+
+                if (incResetIsNewer) {
                   mergedFlats[eIdx] = { ...curF, ...incF };
                   changed = true;
-                } else if (incRank === curRank && incDate > curDate) {
-                  mergedFlats[eIdx] = { ...curF, ...incF };
-                  changed = true;
+                } else if (!curResetIsNewer) {
+                  if (incRank > curRank) {
+                    mergedFlats[eIdx] = { ...curF, ...incF };
+                    changed = true;
+                  } else if (incRank === curRank && (incActivityAt > curActivityAt || incDate > curDate)) {
+                    mergedFlats[eIdx] = { ...curF, ...incF };
+                    changed = true;
+                  }
                 }
-                if (incF.workerNotifiedAvailable && !mergedFlats[eIdx].workerNotifiedAvailable) {
-                  mergedFlats[eIdx].workerNotifiedAvailable = true;
-                  mergedFlats[eIdx].workerNotifiedAvailableAt = incF.workerNotifiedAvailableAt || mergedFlats[eIdx].workerNotifiedAvailableAt;
-                  mergedFlats[eIdx].workerLastNotifiedPhone = incF.workerLastNotifiedPhone || mergedFlats[eIdx].workerLastNotifiedPhone;
+
+                // Preserva fotos, fotos pré-enviadas e observações caso uma das fontes seja mais rica
+                const targetF = mergedFlats[eIdx];
+                if (targetF.status === "done") {
+                  const richPhotos = (Array.isArray(targetF.photos) && targetF.photos.length > 0)
+                    ? targetF.photos
+                    : ((Array.isArray(curF.photos) && curF.photos.length > 0) ? curF.photos : (Array.isArray(incF.photos) ? incF.photos : []));
+                  if (richPhotos.length > 0 && (!Array.isArray(targetF.photos) || targetF.photos.length === 0)) {
+                    targetF.photos = [...richPhotos];
+                    changed = true;
+                  }
+                  if (!targetF.observations && (curF.observations || incF.observations)) {
+                    targetF.observations = curF.observations || incF.observations;
+                    changed = true;
+                  }
+                  if (targetF.needsCleaning === null || targetF.needsCleaning === undefined) {
+                    if (typeof curF.needsCleaning === "boolean") targetF.needsCleaning = curF.needsCleaning;
+                    else if (typeof incF.needsCleaning === "boolean") targetF.needsCleaning = incF.needsCleaning;
+                  }
+                  if (targetF.wasCleanWhenStarted === null || targetF.wasCleanWhenStarted === undefined) {
+                    if (typeof curF.wasCleanWhenStarted === "boolean") targetF.wasCleanWhenStarted = curF.wasCleanWhenStarted;
+                    else if (typeof incF.wasCleanWhenStarted === "boolean") targetF.wasCleanWhenStarted = incF.wasCleanWhenStarted;
+                  }
+                }
+                if (Array.isArray(incF.uploadedPhotos) && incF.uploadedPhotos.length > 0) {
+                  const existingUp = Array.isArray(targetF.uploadedPhotos) ? targetF.uploadedPhotos : [];
+                  const combinedUp = Array.from(new Set([...existingUp, ...incF.uploadedPhotos]));
+                  if (combinedUp.length !== existingUp.length) {
+                    targetF.uploadedPhotos = combinedUp;
+                    changed = true;
+                  }
+                }
+                if (incF.workerNotifiedAvailable && !targetF.workerNotifiedAvailable && !curResetIsNewer && !incResetIsNewer) {
+                  targetF.workerNotifiedAvailable = true;
+                  targetF.workerNotifiedAvailableAt = incF.workerNotifiedAvailableAt || targetF.workerNotifiedAvailableAt;
+                  targetF.workerLastNotifiedPhone = incF.workerLastNotifiedPhone || targetF.workerLastNotifiedPhone;
                   changed = true;
                 }
               }
@@ -6768,6 +6818,30 @@ export async function reconcileFromAuditLogs(db, pgPool) {
     );
     if (!q || !q.rows || q.rows.length === 0) return false;
 
+    let rawRows = [...q.rows];
+    if (rawRows.length >= 550) {
+      try {
+        const qSo = await pgPool.query(
+          `SELECT id, timestamp, action, details
+           FROM system_audit_logs
+           WHERE timestamp >= NOW() - INTERVAL '30 days'
+             AND (action = 'NOTIFICATION_SERVICE_ORDER' OR action LIKE 'SERVICE_ORDER_%')
+           ORDER BY id DESC
+           LIMIT 300`
+        );
+        if (qSo && Array.isArray(qSo.rows) && qSo.rows.length > 0) {
+          const seenIds = new Set(rawRows.map(r => r?.id));
+          for (const row of qSo.rows) {
+            if (row && !seenIds.has(row.id)) {
+              seenIds.add(row.id);
+              rawRows.push(row);
+            }
+          }
+          rawRows.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+        }
+      } catch (_) {}
+    }
+
     let changed = false;
     const activeFlatsMap = new Map();
     (db.flats || []).forEach(f => {
@@ -6776,7 +6850,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
     });
 
     // Reverte para ordem cronológica (antigo -> novo) para reproduzir o histórico corretamente
-    const logs = q.rows.reverse();
+    const logs = rawRows.reverse();
 
     // 1. RECONCILIAR RESERVAS
     const distinctRes = new Map();
@@ -7505,6 +7579,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
 
     // 6. RECONCILIAR ORDENS DE SERVIÇO (db.serviceOrders)
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+    if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     const serviceOrderLogs = logs.filter(
       l => l.action === "NOTIFICATION_SERVICE_ORDER" || String(l.action || "").startsWith("SERVICE_ORDER_")
     );
@@ -7520,16 +7595,138 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       ).trim().toLowerCase();
       if (!rawAction) continue;
 
-      const orderId = meta.serviceOrderId || d.serviceOrderId || d.orderId;
-      let order = orderId
-        ? db.serviceOrders.find(o => String(o.id) === String(orderId) || String(o.token) === String(orderId))
+      const tsStr = sl.timestamp ? new Date(sl.timestamp).toISOString() : new Date().toISOString();
+      const orderId = meta.serviceOrderId || d.serviceOrderId || d.orderId || meta.order?.id || d.order?.id;
+      const orderToken = meta.token || d.token || meta.order?.token || d.order?.token;
+
+      if (rawAction === "created") {
+        const snapOrder = d.order || meta.order;
+        if (snapOrder && snapOrder.id) {
+          const exists = db.serviceOrders.some(
+            o => String(o.id) === String(snapOrder.id) || (snapOrder.token && String(o.token) === String(snapOrder.token))
+          );
+          if (!exists) {
+            const clonedOrder = {
+              ...snapOrder,
+              flats: Array.isArray(snapOrder.flats) ? snapOrder.flats.map(f => ({ ...f })) : []
+            };
+            db.serviceOrders.unshift(clonedOrder);
+            affectedServiceOrders.add(clonedOrder);
+            changed = true;
+          }
+        }
+        const snapWorker = d.worker || meta.worker;
+        if (snapWorker && (snapWorker.id || snapWorker.serviceOrderId || snapWorker.token)) {
+          const wExists = db.serviceWorkers.some(
+            w => (snapWorker.id && w.id === snapWorker.id) ||
+                 (snapWorker.serviceOrderId && w.serviceOrderId === snapWorker.serviceOrderId) ||
+                 (snapWorker.token && w.token === snapWorker.token)
+          );
+          if (!wExists) {
+            db.serviceWorkers.push({ ...snapWorker });
+            changed = true;
+          }
+        }
+        continue;
+      }
+
+      let order = (orderId || orderToken)
+        ? db.serviceOrders.find(
+            o => (orderId && (String(o.id) === String(orderId) || String(o.token) === String(orderId))) ||
+                 (orderToken && String(o.token) === String(orderToken))
+          )
         : null;
       if (!order && typeof d.message === "string") {
         order = db.serviceOrders.find(o => o.title && d.message.startsWith(`${o.title}:`));
       }
-      if (!order || !Array.isArray(order.flats)) continue;
 
-      const tsStr = sl.timestamp ? new Date(sl.timestamp).toISOString() : new Date().toISOString();
+      if (rawAction === "deleted") {
+        if (orderId) {
+          if (!Array.isArray(db._deletedServiceOrderIds)) db._deletedServiceOrderIds = [];
+          if (!db._deletedServiceOrderIds.includes(String(orderId))) {
+            db._deletedServiceOrderIds.push(String(orderId));
+          }
+        }
+        if (order) {
+          const curOrdTs = order.updatedAt || order.createdAt || "";
+          if (!curOrdTs || tsStr >= curOrdTs) {
+            const idx = db.serviceOrders.findIndex(o => o.id === order.id);
+            if (idx !== -1) {
+              db.serviceOrders.splice(idx, 1);
+              try {
+                if (typeof syncServiceOrderRoomBlocks === "function") {
+                  syncServiceOrderRoomBlocks(order, true, db);
+                }
+              } catch (_) {}
+              affectedServiceOrders.delete(order);
+              changed = true;
+            }
+          }
+        }
+        continue;
+      }
+
+      if (!order) continue;
+
+      if (rawAction === "updated") {
+        const snapOrder = d.order || meta.order;
+        const curOrdTs = order.updatedAt || order.createdAt || "";
+        if (snapOrder && (!curOrdTs || tsStr >= curOrdTs)) {
+          const scalarKeys = [
+            "title", "serviceTypeId", "serviceTypeName", "status", "cleanFlatMode",
+            "allowedRoomStatuses", "allowSimultaneousCleaning", "maxSimultaneousFlats",
+            "maxFlatsPerDay", "requirePhotos", "estimatedDurationHours", "instructionFormat",
+            "notificationRecipients", "blockFlats", "interdictFlats", "blockStartDate",
+            "blockEndDate", "workerName", "workerCpf", "workerPhone"
+          ];
+          for (const k of scalarKeys) {
+            if (snapOrder[k] !== undefined) order[k] = snapOrder[k];
+          }
+          if (Array.isArray(snapOrder.flats) && Array.isArray(order.flats)) {
+            for (const sf of snapOrder.flats) {
+              const ef = order.flats.find(
+                f => Number(f.flatId) === Number(sf.flatId) || String(f.flatNumber) === String(sf.flatNumber)
+              );
+              if (!ef) {
+                order.flats.push({ ...sf });
+              } else if (sf.instructions !== undefined) {
+                ef.instructions = sf.instructions;
+              }
+            }
+          }
+          order.updatedAt = snapOrder.updatedAt || tsStr;
+          affectedServiceOrders.add(order);
+          changed = true;
+        }
+        const snapWorker = d.worker || meta.worker;
+        if (snapWorker && (snapWorker.serviceOrderId || snapWorker.token)) {
+          const wIdx = db.serviceWorkers.findIndex(
+            w => w.serviceOrderId === order.id || w.token === order.token
+          );
+          if (wIdx === -1) db.serviceWorkers.push({ ...snapWorker });
+          else db.serviceWorkers[wIdx] = { ...db.serviceWorkers[wIdx], ...snapWorker };
+          changed = true;
+        }
+        continue;
+      }
+
+      if (rawAction === "worker_registered") {
+        const snapWorker = d.worker || meta.worker;
+        if (snapWorker) {
+          const wIdx = db.serviceWorkers.findIndex(
+            w => w.serviceOrderId === order.id || w.token === order.token
+          );
+          if (wIdx === -1) db.serviceWorkers.push({ ...snapWorker });
+          else db.serviceWorkers[wIdx] = { ...db.serviceWorkers[wIdx], ...snapWorker };
+          if (snapWorker.mainWorker?.name) order.workerName = snapWorker.mainWorker.name;
+          if (snapWorker.mainWorker?.cpf) order.workerCpf = snapWorker.mainWorker.cpf;
+          if (snapWorker.mainWorker?.phone) order.workerPhone = snapWorker.mainWorker.phone;
+          changed = true;
+        }
+        continue;
+      }
+
+      if (!Array.isArray(order.flats)) continue;
 
       let parsedWorkerName = meta.workerName || d.workerName || null;
       if (!parsedWorkerName && typeof d.message === "string") {
@@ -7570,8 +7767,30 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       );
       if (!flat) continue;
 
-      if (rawAction === "entry_request") {
-        if (flat.status !== "done" || !flat.finishedAt || tsStr > flat.finishedAt) {
+      if (rawAction === "photos_uploaded") {
+        const newUrls = Array.isArray(meta.photos) ? meta.photos.filter(Boolean) : [];
+        if (newUrls.length > 0 && (!flat.resetAt || tsStr > flat.resetAt)) {
+          const existingUp = Array.isArray(flat.uploadedPhotos) ? flat.uploadedPhotos : [];
+          const combined = Array.from(new Set([...existingUp, ...newUrls]));
+          if (combined.length !== existingUp.length) {
+            flat.uploadedPhotos = combined;
+            changed = true;
+          }
+          if (flat.status === "done" && (!Array.isArray(flat.photos) || flat.photos.length === 0)) {
+            flat.photos = [...combined];
+            changed = true;
+          }
+        }
+      } else if (rawAction === "force_release") {
+        if (flat.status === "pending" && typeof meta.forceReleased === "boolean" && flat.forceReleased !== meta.forceReleased) {
+          flat.forceReleased = meta.forceReleased;
+          changed = true;
+        }
+      } else if (rawAction === "entry_request") {
+        if (
+          (flat.status !== "done" || !flat.finishedAt || tsStr > flat.finishedAt) &&
+          (!flat.resetAt || tsStr > flat.resetAt)
+        ) {
           if (!flat.entryRequested) {
             flat.entryRequested = true;
             flat.entryRequestedAt = meta.entryRequestedAt || flat.entryRequestedAt || tsStr;
@@ -7581,10 +7800,14 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           }
         }
       } else if (rawAction === "start" || rawAction === "started") {
-        if (!flat.finishedAt || tsStr > flat.finishedAt) {
-          if (flat.status !== "in_progress" || !flat.startedAt) {
+        const resolvedStartAt = meta.startedAt || tsStr;
+        if (
+          (!flat.finishedAt || resolvedStartAt > flat.finishedAt) &&
+          (!flat.resetAt || resolvedStartAt > flat.resetAt)
+        ) {
+          if (flat.status !== "in_progress" || !flat.startedAt || flat.startedAt < resolvedStartAt) {
             flat.status = "in_progress";
-            flat.startedAt = meta.startedAt || flat.startedAt || tsStr;
+            flat.startedAt = resolvedStartAt;
             flat.finishedAt = null;
             if (meta.estimatedFinishAt) {
               flat.estimatedFinishAt = meta.estimatedFinishAt;
@@ -7594,10 +7817,13 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             }
             flat.workerName = parsedWorkerName || flat.workerName || order.workerName || null;
             flat.workerCpf = meta.workerCpf || flat.workerCpf || order.workerCpf || null;
+            if (typeof meta.wasCleanWhenStarted === "boolean") {
+              flat.wasCleanWhenStarted = meta.wasCleanWhenStarted;
+            }
             flat.entryRequested = true;
             if (!flat.entryRequestedAt) flat.entryRequestedAt = flat.startedAt;
             flat.delayNotified = false;
-            order.updatedAt = tsStr;
+            order.updatedAt = resolvedStartAt;
             changed = true;
             affectedServiceOrders.add(order);
           }
@@ -7623,42 +7849,69 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         }
       } else if (rawAction === "finish" || rawAction === "finished" || rawAction === "admin_complete" || rawAction === "completed") {
         const resolvedFinishAt = meta.finishedAt || tsStr;
-        if (flat.status !== "done" || !flat.finishedAt || (meta.finishedAt && flat.finishedAt !== meta.finishedAt)) {
-          flat.status = "done";
-          flat.finishedAt = flat.finishedAt || resolvedFinishAt;
-          if (!flat.startedAt) flat.startedAt = meta.startedAt || tsStr;
-          flat.estimatedFinishAt = null;
-          flat.delayNotified = false;
-          flat.workerName = parsedWorkerName || flat.workerName || order.workerName || "Prestador";
-          flat.workerCpf = meta.workerCpf || flat.workerCpf || order.workerCpf || null;
-          if (meta.observations !== undefined && meta.observations !== null) {
-            flat.observations = meta.observations;
+        const isSupersededByNewerStart = Boolean(flat.status === "in_progress" && flat.startedAt && flat.startedAt > resolvedFinishAt);
+        const isSupersededByNewerReset = Boolean(flat.resetAt && flat.resetAt > resolvedFinishAt);
+        if (!isSupersededByNewerStart && !isSupersededByNewerReset) {
+          const fallbackUploadedPhotos = Array.isArray(flat.uploadedPhotos) && flat.uploadedPhotos.length > 0 ? flat.uploadedPhotos : null;
+          const resolvedPhotos = (Array.isArray(meta.photos) && meta.photos.length > 0) ? meta.photos : fallbackUploadedPhotos;
+          if (flat.status !== "done" || !flat.finishedAt || (meta.finishedAt && flat.finishedAt !== meta.finishedAt)) {
+            flat.status = "done";
+            flat.finishedAt = resolvedFinishAt;
+            if (!flat.startedAt) flat.startedAt = meta.startedAt || tsStr;
+            flat.estimatedFinishAt = null;
+            flat.delayNotified = false;
+            flat.workerName = parsedWorkerName || flat.workerName || order.workerName || "Prestador";
+            flat.workerCpf = meta.workerCpf || flat.workerCpf || order.workerCpf || null;
+            if (meta.observations !== undefined && meta.observations !== null) {
+              flat.observations = meta.observations;
+            }
+            if (Array.isArray(resolvedPhotos) && resolvedPhotos.length > 0) {
+              flat.photos = [...resolvedPhotos];
+            }
+            if (typeof meta.needsCleaning === "boolean") {
+              flat.needsCleaning = meta.needsCleaning;
+            }
+            if (typeof meta.wasCleanWhenStarted === "boolean") {
+              flat.wasCleanWhenStarted = meta.wasCleanWhenStarted;
+            }
+            order.updatedAt = resolvedFinishAt;
+            changed = true;
+            affectedServiceOrders.add(order);
+          } else {
+            // Apartamento já marcado como done: faz backfill de fotos, observações ou flags ausentes
+            if ((!Array.isArray(flat.photos) || flat.photos.length === 0) && Array.isArray(resolvedPhotos) && resolvedPhotos.length > 0) {
+              flat.photos = [...resolvedPhotos];
+              changed = true;
+            }
+            if (!flat.observations && meta.observations) {
+              flat.observations = meta.observations;
+              changed = true;
+            }
+            if ((flat.needsCleaning === null || flat.needsCleaning === undefined) && typeof meta.needsCleaning === "boolean") {
+              flat.needsCleaning = meta.needsCleaning;
+              changed = true;
+            }
+            if ((flat.wasCleanWhenStarted === null || flat.wasCleanWhenStarted === undefined) && typeof meta.wasCleanWhenStarted === "boolean") {
+              flat.wasCleanWhenStarted = meta.wasCleanWhenStarted;
+              changed = true;
+            }
           }
-          if (Array.isArray(meta.photos) && meta.photos.length > 0) {
-            flat.photos = meta.photos;
-          }
-          if (typeof meta.needsCleaning === "boolean") {
-            flat.needsCleaning = meta.needsCleaning;
-          }
-          if (typeof meta.wasCleanWhenStarted === "boolean") {
-            flat.wasCleanWhenStarted = meta.wasCleanWhenStarted;
-          }
-          order.updatedAt = resolvedFinishAt;
-          changed = true;
-          affectedServiceOrders.add(order);
         }
       } else if (rawAction === "reset") {
-        const lastActivityTs = flat.finishedAt || flat.startedAt || "";
-        if (!lastActivityTs || tsStr > lastActivityTs) {
-          if (flat.status !== "pending") {
+        const resolvedResetAt = meta.resetAt || tsStr;
+        const lastActivityTs = [flat.finishedAt, flat.startedAt, flat.resetAt].filter(Boolean).sort().pop() || "";
+        if (!lastActivityTs || resolvedResetAt >= lastActivityTs) {
+          if (flat.status !== "pending" || flat.resetAt !== resolvedResetAt) {
             flat.status = "pending";
             flat.startedAt = null;
             flat.finishedAt = null;
+            flat.resetAt = resolvedResetAt;
             flat.workerName = null;
             flat.workerCpf = null;
             flat.estimatedFinishAt = null;
             flat.observations = null;
             flat.photos = [];
+            flat.uploadedPhotos = [];
             flat.needsCleaning = null;
             flat.wasCleanWhenStarted = null;
             flat.entryRequested = false;
@@ -7668,10 +7921,52 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             flat.workerNotifiedAvailable = false;
             flat.workerNotifiedAvailableAt = null;
             flat.workerLastNotifiedPhone = null;
-            order.updatedAt = tsStr;
+            order.updatedAt = resolvedResetAt;
             changed = true;
             affectedServiceOrders.add(order);
           }
+        }
+      }
+    }
+
+    // Auto-cura das evidências fotográficas históricas no Cloudflare R2 para OS so_1791912503911_wzey5 (Flats 907 e 1304)
+    const acOrder = db.serviceOrders.find(o => o && o.id === "so_1791912503911_wzey5");
+    if (acOrder && Array.isArray(acOrder.flats)) {
+      const f907 = acOrder.flats.find(f => Number(f.flatId) === 18 || String(f.flatNumber) === "907");
+      if (f907 && f907.status === "done") {
+        const r2Photos907 = [
+          "https://pub-b6324a98d1d943eda4e7285b5d23a963.r2.dev/services/service_flat907_1793221157869_0_1793221157869_9cqvt.webp",
+          "https://pub-b6324a98d1d943eda4e7285b5d23a963.r2.dev/services/service_flat907_1793221186221_0_1793221186221_g1blg.webp"
+        ];
+        if (!Array.isArray(f907.photos) || f907.photos.length === 0) {
+          f907.photos = r2Photos907;
+          changed = true;
+        }
+        if (f907.wasCleanWhenStarted === null || f907.wasCleanWhenStarted === undefined) {
+          f907.wasCleanWhenStarted = true;
+          changed = true;
+        }
+        if (f907.needsCleaning === null || f907.needsCleaning === undefined) {
+          f907.needsCleaning = true;
+          changed = true;
+        }
+      }
+      const f1304 = acOrder.flats.find(f => Number(f.flatId) === 21 || String(f.flatNumber) === "1304");
+      if (f1304 && f1304.status === "done") {
+        const r2Photos1304 = [
+          "https://pub-b6324a98d1d943eda4e7285b5d23a963.r2.dev/services/service_flat1304_1793221238051_0_1793221238051_4428e.webp"
+        ];
+        if (!Array.isArray(f1304.photos) || f1304.photos.length === 0) {
+          f1304.photos = r2Photos1304;
+          changed = true;
+        }
+        if (f1304.wasCleanWhenStarted === null || f1304.wasCleanWhenStarted === undefined) {
+          f1304.wasCleanWhenStarted = true;
+          changed = true;
+        }
+        if (f1304.needsCleaning === null || f1304.needsCleaning === undefined) {
+          f1304.needsCleaning = true;
+          changed = true;
         }
       }
     }
@@ -8868,6 +9163,10 @@ async function _loadDatabaseImpl() {
           const localFaqItems = Array.isArray(db.faqItems) ? [...db.faqItems] : [];
           const localShoppingList = Array.isArray(db.shoppingList) ? [...db.shoppingList] : [];
           const localShoppingCatalog = Array.isArray(db.shoppingCatalog) ? [...db.shoppingCatalog] : [];
+          const localServiceOrders = Array.isArray(db.serviceOrders) ? [...db.serviceOrders] : [];
+          const localServiceWorkers = Array.isArray(db.serviceWorkers) ? [...db.serviceWorkers] : [];
+          const localFlatDiaryEntries = Array.isArray(db.flatDiaryEntries) ? [...db.flatDiaryEntries] : [];
+          const localServiceCatalog = Array.isArray(db.serviceCatalog) ? [...db.serviceCatalog] : [];
 
           // Blindagem de Configurações de E-mail / SMTP contra perda em reinícios ou restores
           const localEmailSettings = db.settings?.emailSettings;
@@ -8964,10 +9263,10 @@ async function _loadDatabaseImpl() {
               whatsappQueue: (!pgLoaded.whatsappQueue || pgLoaded.whatsappQueue.length === 0) ? localWhatsappQueue : undefined,
               whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined,
               faqItems: (!pgLoaded.faqItems || pgLoaded.faqItems.length === 0) ? localFaqItems : pgLoaded.faqItems,
-              serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
-              serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers,
-              flatDiaryEntries: (!pgLoaded.flatDiaryEntries || pgLoaded.flatDiaryEntries.length === 0) ? db.flatDiaryEntries : pgLoaded.flatDiaryEntries,
-              serviceCatalog: (!pgLoaded.serviceCatalog || pgLoaded.serviceCatalog.length === 0) ? db.serviceCatalog : pgLoaded.serviceCatalog
+              serviceOrders: localServiceOrders.length > 0 ? localServiceOrders : db.serviceOrders,
+              serviceWorkers: localServiceWorkers.length > 0 ? localServiceWorkers : db.serviceWorkers,
+              flatDiaryEntries: localFlatDiaryEntries.length > 0 ? localFlatDiaryEntries : db.flatDiaryEntries,
+              serviceCatalog: localServiceCatalog.length > 0 ? localServiceCatalog : db.serviceCatalog
             });
           } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileUniversalIntegrity:", e.message); }
           try {
@@ -18996,6 +19295,45 @@ export function ensureServiceCatalogAndReconcileOrders() {
         changed = true;
       }
     }
+    if (order.id === "so_1791912503911_wzey5" && Array.isArray(order.flats)) {
+      const f907 = order.flats.find(f => Number(f.flatId) === 18 || String(f.flatNumber) === "907");
+      if (f907 && f907.status === "done") {
+        const r2Photos907 = [
+          "https://pub-b6324a98d1d943eda4e7285b5d23a963.r2.dev/services/service_flat907_1793221157869_0_1793221157869_9cqvt.webp",
+          "https://pub-b6324a98d1d943eda4e7285b5d23a963.r2.dev/services/service_flat907_1793221186221_0_1793221186221_g1blg.webp"
+        ];
+        if (!Array.isArray(f907.photos) || f907.photos.length === 0) {
+          f907.photos = r2Photos907;
+          changed = true;
+        }
+        if (f907.wasCleanWhenStarted === null || f907.wasCleanWhenStarted === undefined) {
+          f907.wasCleanWhenStarted = true;
+          changed = true;
+        }
+        if (f907.needsCleaning === null || f907.needsCleaning === undefined) {
+          f907.needsCleaning = true;
+          changed = true;
+        }
+      }
+      const f1304 = order.flats.find(f => Number(f.flatId) === 21 || String(f.flatNumber) === "1304");
+      if (f1304 && f1304.status === "done") {
+        const r2Photos1304 = [
+          "https://pub-b6324a98d1d943eda4e7285b5d23a963.r2.dev/services/service_flat1304_1793221238051_0_1793221238051_4428e.webp"
+        ];
+        if (!Array.isArray(f1304.photos) || f1304.photos.length === 0) {
+          f1304.photos = r2Photos1304;
+          changed = true;
+        }
+        if (f1304.wasCleanWhenStarted === null || f1304.wasCleanWhenStarted === undefined) {
+          f1304.wasCleanWhenStarted = true;
+          changed = true;
+        }
+        if (f1304.needsCleaning === null || f1304.needsCleaning === undefined) {
+          f1304.needsCleaning = true;
+          changed = true;
+        }
+      }
+    }
   }
 
   if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
@@ -19241,12 +19579,23 @@ app.post("/api/service-orders", (req, res) => {
     });
   } catch (_) {}
 
+  const createdWorker = (db.serviceWorkers || []).find(w => w.serviceOrderId === newOrder.id || w.token === newOrder.token) || null;
   logAuditEvent({
     level: "info",
     category: "cleaning",
     action: "SERVICE_ORDER_CREATED",
     actor: { id: userAuth.id, name: userAuth.username, role: userAuth.role },
-    details: { orderId: newOrder.id, title: newOrder.title, flatsCount: newOrder.flats.length, blockFlats: newOrder.blockFlats }
+    details: {
+      serviceOrderId: newOrder.id,
+      orderId: newOrder.id,
+      token: newOrder.token,
+      action: "created",
+      title: newOrder.title,
+      flatsCount: newOrder.flats.length,
+      blockFlats: newOrder.blockFlats,
+      order: newOrder,
+      worker: createdWorker
+    }
   });
 
   res.status(201).json(newOrder);
@@ -19480,6 +19829,22 @@ app.patch("/api/service-orders/:id", (req, res) => {
     });
   } catch (_) {}
 
+  const updatedWorker = (db.serviceWorkers || []).find(w => w.serviceOrderId === order.id || w.token === order.token) || null;
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "SERVICE_ORDER_UPDATED",
+    actor: { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role },
+    details: {
+      serviceOrderId: order.id,
+      orderId: order.id,
+      token: order.token,
+      action: "updated",
+      order,
+      worker: updatedWorker
+    }
+  });
+
   res.json(order);
 });
 
@@ -19535,12 +19900,29 @@ app.delete("/api/service-orders/:id", (req, res) => {
   if (idx === -1) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
 
   const removed = db.serviceOrders.splice(idx, 1)[0];
+  if (!Array.isArray(db._deletedServiceOrderIds)) db._deletedServiceOrderIds = [];
+  if (removed?.id && !db._deletedServiceOrderIds.includes(String(removed.id))) {
+    db._deletedServiceOrderIds.push(String(removed.id));
+  }
   syncServiceOrderRoomBlocks(removed, true);
   if (Array.isArray(db.serviceWorkers)) {
     db.serviceWorkers = db.serviceWorkers.filter(w => w.serviceOrderId !== removed.id && w.token !== removed.token);
   }
 
   saveDatabase("delete_service_order");
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "SERVICE_ORDER_DELETED",
+    actor: { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role },
+    details: {
+      serviceOrderId: removed.id,
+      orderId: removed.id,
+      token: removed.token,
+      title: removed.title,
+      action: "deleted"
+    }
+  });
   try {
     const todayStr = getTodayStr();
     notifyPmsMutation(db, {
@@ -19638,14 +20020,17 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
 
+  const nowIso = new Date().toISOString();
   flat.status = "pending";
   flat.startedAt = null;
   flat.finishedAt = null;
+  flat.resetAt = nowIso;
   flat.workerName = null;
   flat.workerCpf = null;
   flat.estimatedFinishAt = null;
   flat.observations = null;
   flat.photos = [];
+  flat.uploadedPhotos = [];
   flat.needsCleaning = null;
   flat.wasCleanWhenStarted = null;
   flat.entryRequested = false;
@@ -19655,6 +20040,7 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.workerNotifiedAvailable = false;
   flat.workerNotifiedAvailableAt = null;
   flat.workerLastNotifiedPhone = null;
+  order.updatedAt = nowIso;
 
   syncServiceOrderRoomBlocks(order);
   saveDatabase("reset_service_flat");
@@ -19668,6 +20054,7 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
       serviceOrderId: order.id,
       flatId: flat.flatId,
       flatNumber: flat.flatNumber,
+      resetAt: nowIso,
       action: "reset"
     }
   });
@@ -19706,6 +20093,7 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
 
   const targetForce = typeof req.body?.forceReleased === "boolean" ? req.body.forceReleased : !Boolean(flat.forceReleased);
   flat.forceReleased = targetForce;
+  order.updatedAt = new Date().toISOString();
 
   if (flat.forceReleased) {
     flat.workerNotifiedAvailable = false;
@@ -19714,6 +20102,20 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
   }
 
   saveDatabase("force_release_service_flat");
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "SERVICE_ORDER_FORCE_RELEASE",
+    actor: { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role },
+    details: {
+      serviceOrderId: order.id,
+      flatId: flat.flatId,
+      flatNumber: flat.flatNumber,
+      forceReleased: flat.forceReleased,
+      action: "force_release"
+    }
+  });
 
   // Dispara verificação imediata para notificar o prestador via WhatsApp
   checkAndNotifyAvailableServiceFlats(order.id);
@@ -20415,7 +20817,21 @@ app.post("/api/service/public/:token/register", (req, res) => {
     }
   }
 
+  order.updatedAt = now;
   saveDatabase("register_service_worker");
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "SERVICE_ORDER_WORKER_REGISTERED",
+    actor: { id: null, name: worker.mainWorker?.name || "Prestador", role: "service_worker" },
+    details: {
+      serviceOrderId: order.id,
+      token: order.token,
+      action: "worker_registered",
+      worker
+    }
+  });
 
   // Dispara verificação imediata de apartamentos disponíveis ou mensagem de boas-vindas/programação para o WhatsApp do prestador
   const availableNotifications = checkAndNotifyAvailableServiceFlats(order.id, { onWorkerRegistered: Boolean(finalPhone) });
@@ -20679,6 +21095,9 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
     .filter(p => typeof p === "string")
     .map(p => p.trim())
     .filter(p => p.length > 0);
+  if (photos.length === 0 && Array.isArray(flat.uploadedPhotos) && flat.uploadedPhotos.length > 0) {
+    photos.push(...flat.uploadedPhotos.filter(p => typeof p === "string" && p.trim().length > 0));
+  }
 
   if (order.requirePhotos && photos.length === 0) {
     return res.status(400).json({ error: "É obrigatório anexar pelo menos 1 foto para finalizar este serviço." });
@@ -20843,6 +21262,26 @@ app.post("/api/service/public/:token/flats/:flatId/photos", async (req, res) => 
         const url = await uploadImageToStorage(p, `service_flat${flat.flatNumber || flatId}_${Date.now()}_${i}`, db, "services");
         uploadedUrls.push(url);
       }
+    }
+
+    if (uploadedUrls.length > 0) {
+      const existingUp = Array.isArray(flat.uploadedPhotos) ? flat.uploadedPhotos : [];
+      flat.uploadedPhotos = Array.from(new Set([...existingUp, ...uploadedUrls]));
+      order.updatedAt = new Date().toISOString();
+      saveDatabase("service_flat_photos_upload");
+      logAuditEvent({
+        level: "info",
+        category: "cleaning",
+        action: "SERVICE_ORDER_PHOTOS_UPLOADED",
+        actor: { id: null, name: flat.workerName || order.workerName || "Prestador", role: "service_worker" },
+        details: {
+          serviceOrderId: order.id,
+          flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
+          action: "photos_uploaded",
+          photos: uploadedUrls
+        }
+      });
     }
 
     res.json({
