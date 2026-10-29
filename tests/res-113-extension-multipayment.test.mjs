@@ -101,6 +101,20 @@ const payBtn = buttons.find(b => b.id === "btn_pagar");
 assert.ok(payBtn, "Botão de detalhes deve estar presente");
 assert.equal(payBtn.label, "🏨 Ver Detalhes da Reserva", "Rótulo do botão deve ser '🏨 Ver Detalhes da Reserva' sem cobrar");
 
+// 4b. Teste de Borda: Reserva com saldo zero / cortesia (totalAmount=0, paidAmount=0)
+const zeroBalanceButtons = renderTemplateButtons(
+  tplDef.buttons,
+  { id: 999, code: "RES-CORTESIA", totalAmount: 0, paidAmount: 0, paymentStatus: "confirmada" },
+  mockDb,
+  "https://corpflats.com.br",
+  "guest",
+  tplDef
+);
+assert.ok(!zeroBalanceButtons.some(b => b.id === "btn_pix" || b.type === "COPY"), "Botão PIX deve ser suprimido em reserva cortesia de saldo zero");
+const zeroPayBtn = zeroBalanceButtons.find(b => b.id === "btn_pagar");
+assert.ok(zeroPayBtn, "Botão de detalhes deve estar presente para cortesia");
+assert.equal(zeroPayBtn.label, "🏨 Ver Detalhes da Reserva", "Botão não deve cobrar em reserva cortesia");
+
 // 5. Teste de regressão: Reserva com saldo verdadeiramente pendente
 const mockPendingReservation = {
   ...mockFullyPaidReservation,
@@ -200,16 +214,21 @@ function simulatePutPaymentResolution(reservation, reqBody) {
     return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
   });
   const addedDirectRatesSum = Number(reqBody.addedDirectRatesSum || 0);
+  const addedOtaRatesSum = Number(reqBody.addedOtaRatesSum || 0);
   const nightsChangedOnEdit = Boolean(reqBody.nightsChangedOnEdit);
   const newNightsCount = Number(reqBody.newNightsCount || 0);
   const oldNightsCount = Number(reqBody.oldNightsCount || 0);
+  const oldTotalAmount = Number(reservation.totalAmount !== undefined ? reservation.totalAmount : reservation.totalPrice) || 0;
+  const oldPaidAmount = Number(reservation.paidAmount !== undefined ? reservation.paidAmount : reservation.amountPaid) || 0;
 
   const isFullyPaidByPayments = currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01;
   const isFullyPaidOnPut = isFullyPaidByPayments || (
+    putIsOta &&
     (reqBody.paymentStatus === "pago_total" || reqBody.paymentStatus === "pago") &&
     !hasDirectDailyRateInOta &&
     addedDirectRatesSum <= 0 &&
-    !(nightsChangedOnEdit && newNightsCount > oldNightsCount && totalPaymentsReceived < currentTot - 0.01)
+    !(nightsChangedOnEdit && newNightsCount > oldNightsCount && totalPaymentsReceived < currentTot - 0.01) &&
+    !(currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum < currentTot - oldTotalAmount - 0.01 && totalPaymentsReceived < currentTot - 0.01)
   );
 
   if (isFullyPaidByPayments) {
@@ -255,11 +274,19 @@ function simulatePutPaymentResolution(reservation, reqBody) {
     }
   } else {
     const effectivePaidAfterOtaExt = Math.max(Number(r.paidAmount) || 0, totalPaymentsReceived);
-    const hasUnpaidDirectExtension = Boolean(!isFullyPaidOnPut && totalPaymentsReceived < currentTot - 0.01);
+    const hasUnpaidDirectExtension = Boolean(
+      !isFullyPaidOnPut &&
+      oldPaidAmount > 0 &&
+      currentTot > Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100 + 0.01 &&
+      (addedDirectRatesSum > 0 || (nightsChangedOnEdit && newNightsCount > oldNightsCount) || currentTot > oldTotalAmount + 0.01) &&
+      (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut < currentTot - 0.01) &&
+      (reqBody.paidAmount === undefined || Number(reqBody.paidAmount) < currentTot - 0.01) &&
+      totalPaymentsReceived < currentTot - 0.01
+    );
     if (hasUnpaidDirectExtension) {
       r.paidAmount = effectivePaidAfterOtaExt;
       r.paymentStatus = "sinal_pago";
-    } else if ((effectivePaidAfterOtaExt >= currentTot - 0.01 || isFullyPaidOnPut) && currentTot > 0) {
+    } else if ((effectivePaidAfterOtaExt >= currentTot - 0.01 || (isFullyPaidOnPut && totalPaymentsReceived >= currentTot - 0.01)) && currentTot > 0) {
       r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
       r.paymentStatus = "pago_total";
     }
@@ -410,5 +437,42 @@ const resB2bPaidInFull = simulatePutPaymentResolution({
 });
 assert.equal(resB2bPaidInFull.paymentStatus, "pago_total", "Reserva B2B quitada por pagamento real deve ser pago_total");
 assert.equal(resB2bPaidInFull.paidAmount, 1500.00, "paidAmount da B2B quitada deve ser 1500.00");
+
+// 6i. Teste de Borda: Reserva Direta com aumento de tarifa/taxa de limpeza sem alteração de datas
+const resDirectFeeIncrease = simulatePutPaymentResolution({
+  id: 701,
+  channel: "whatsapp",
+  totalAmount: 650.40,
+  paidAmount: 650.40,
+  paymentStatus: "pago_total",
+  checkinDate: "2026-10-26",
+  checkoutDate: "2026-10-30",
+  payments: [{ id: "pay_d1", amount: 650.40, method: "pix" }]
+}, {
+  totalAmount: 800.40, // + R$ 150 taxa de limpeza / serviço
+  paymentStatus: "pago_total", // form pre-preenchido com status anterior
+  nightsChangedOnEdit: false
+});
+
+assert.equal(resDirectFeeIncrease.paymentStatus, "sinal_pago", "Reserva direta com aumento de taxa sem pagamento não pode ser quitada");
+assert.equal(resDirectFeeIncrease.paidAmount, 650.40, "paidAmount deve preservar o valor pago e não inflar para 800.40");
+
+// 6j. Teste de Borda: Reserva OTA com taxa extra adicionada sem diária OTA adicional
+const resOtaFeeIncrease = simulatePutPaymentResolution({
+  id: 524,
+  channel: "booking",
+  totalAmount: 650.40,
+  paidAmount: 650.40,
+  paymentStatus: "pago_total",
+  payments: [{ id: "pay_1", amount: 650.40, method: "booking" }]
+}, {
+  totalAmount: 800.40,
+  paymentStatus: "pago_total",
+  nightsChangedOnEdit: false,
+  addedOtaRatesSum: 0 // nenhuma diária adicional via Booking
+});
+
+assert.equal(resOtaFeeIncrease.paymentStatus, "sinal_pago", "Acréscimo de taxa em OTA sem cobertura da Booking deve assumir sinal_pago");
+assert.equal(resOtaFeeIncrease.paidAmount, 650.40, "paidAmount em OTA com taxa não deve inflar");
 
 console.log("✔ Todos os testes pontuais de extensão, múltiplos pagamentos e casos de borda passaram com 100% de sucesso!");

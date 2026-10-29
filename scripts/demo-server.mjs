@@ -27498,10 +27498,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 
   const isFullyPaidByPayments = currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01;
   const isFullyPaidOnPut = isFullyPaidByPayments || (
+    putIsOta &&
     (req.body.paymentStatus === "pago_total" || req.body.paymentStatus === "pago") &&
     !hasDirectDailyRateInOta &&
     addedDirectRatesSum <= 0 &&
-    !(nightsChangedOnEdit && newNightsCount > oldNightsCount && totalPaymentsReceived < currentTot - 0.01)
+    !(nightsChangedOnEdit && newNightsCount > oldNightsCount && totalPaymentsReceived < currentTot - 0.01) &&
+    !(currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum < currentTot - oldTotalAmount - 0.01 && totalPaymentsReceived < currentTot - 0.01)
   );
 
   if (isFullyPaidByPayments) {
@@ -27636,7 +27638,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         !isFullyPaidOnPut &&
         oldPaidAmount > 0 &&
         currentTot > Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100 + 0.01 &&
-        (addedDirectRatesSum > 0 || (nightsChangedOnEdit && newNightsCount > oldNightsCount)) &&
+        (addedDirectRatesSum > 0 || (nightsChangedOnEdit && newNightsCount > oldNightsCount) || currentTot > oldTotalAmount + 0.01) &&
         (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut < currentTot - 0.01) &&
         (req.body.paidAmount === undefined || Number(req.body.paidAmount) < currentTot - 0.01) &&
         totalPaymentsReceived < currentTot - 0.01
@@ -27645,7 +27647,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (hasUnpaidDirectExtension) {
         r.paidAmount = Math.max(effectivePaidAfterOtaExt, Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100);
         r.paymentStatus = "sinal_pago";
-      } else if ((effectivePaidAfterOtaExt >= currentTot - 0.01 || isFullyPaidOnPut) && currentTot > 0) {
+      } else if ((effectivePaidAfterOtaExt >= currentTot - 0.01 || (isFullyPaidOnPut && totalPaymentsReceived >= currentTot - 0.01)) && currentTot > 0) {
         r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
         r.paymentStatus = "pago_total";
       } else if (r.paymentStatus === "pago_total" && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {

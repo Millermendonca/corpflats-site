@@ -3643,6 +3643,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       .replace(/💰\s*\*?Saldo Pendente da Diária Adicional[^\n]*\*?:?[\s\S]*?(?=📋|Você (?:também )?pode consultar|$)/gi, "")
       .replace(/📋\s*\*?PIX Copia e Cola[^\n]*\*?:?[\s\S]*?(?=Você (?:também )?pode consultar|$)/gi, "")
       .replace(/Você (?:também )?pode consultar o extrato detalhado[\s\S]*?para confirmar o acréscimo:?/gi, "Você pode consultar os detalhes atualizados da sua estadia em seu portal seguro:")
+      .replace(/•\s*\*?Situação do Pagamento:\*?\s*\*?Pago Parcialmente[^\n]*\*?/gi, "• Situação do Pagamento: *Pago Integralmente*")
       .replace(/\n{3,}/g, "\n\n");
   }
   if (reservation._isPreReservationUpdate) {
@@ -4148,7 +4149,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     });
   }
 
-  const totalAmountVal = Number(reservation?.totalAmount) || 0;
+  const totalAmountVal = Number(reservation?.totalAmount !== undefined ? reservation?.totalAmount : reservation?.totalPrice) || 0;
   const paymentsSumVal = Array.isArray(reservation?.payments) && reservation.payments.length > 0
     ? reservation.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
     : 0;
@@ -4158,11 +4159,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     paymentsSumVal
   ) * 100) / 100;
   const pendingAmountVal = Math.max(0, Math.round((totalAmountVal - paidAmountVal) * 100) / 100);
-  const isFullyPaidVal = pendingAmountVal <= 0.01 && (
-    (totalAmountVal > 0 || paidAmountVal > 0) ||
-    reservation?.paymentStatus === "pago_total" ||
-    reservation?.paymentStatus === "pago"
-  );
+  const isFullyPaidVal = pendingAmountVal <= 0.01;
 
   if (isFullyPaidVal) {
     list = list.filter(b => {
