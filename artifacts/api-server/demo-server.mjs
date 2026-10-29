@@ -27476,24 +27476,27 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  // Tratamento de Reservas OTA (Booking / Airbnb) com ou sem Diária Adicional Direta (Extensão com Saldo Pendente)
+  // Resolução consolidada de pagamentos recebidos e quitação na edição (OTA e Direto)
   const putChanLower = String(r.channel || "").toLowerCase();
   const putIsOta = putChanLower.includes("booking") || putChanLower.includes("airbnb");
+  const currentTot = Number(r.totalAmount) || 0;
+  const existingPaymentsSum = Array.isArray(r.payments) && r.payments.length > 0
+    ? r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    : 0;
+  const totalPaymentsReceived = Math.round(Math.max(
+    explicitPaymentsSumOnPut !== null ? explicitPaymentsSumOnPut : 0,
+    req.body.paidAmount !== undefined ? Number(req.body.paidAmount) : 0,
+    req.body.amountPaid !== undefined ? Number(req.body.amountPaid) : 0,
+    Number(r.paidAmount) || 0,
+    Number(r.amountPaid) || 0,
+    existingPaymentsSum
+  ) * 100) / 100;
+  const isFullyPaidOnPut = (req.body.paymentStatus === "pago_total" || req.body.paymentStatus === "pago") ||
+    (currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01);
+
   let hasOtaPartialPendingExtension = false;
   if (putIsOta) {
     const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
-    const currentTot = Number(r.totalAmount) || 0;
-    const existingPaymentsSum = Array.isArray(r.payments) && r.payments.length > 0
-      ? r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-      : 0;
-    const totalPaymentsReceived = Math.round(Math.max(
-      explicitPaymentsSumOnPut !== null ? explicitPaymentsSumOnPut : 0,
-      req.body.paidAmount !== undefined ? Number(req.body.paidAmount) : 0,
-      Number(r.paidAmount) || 0,
-      existingPaymentsSum
-    ) * 100) / 100;
-    const isFullyPaidOnPut = (req.body.paymentStatus === "pago_total" || req.body.paymentStatus === "pago") ||
-      (currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01);
 
     const hasDirectDailyRateInOta = Array.isArray(r.dailyRates) && r.dailyRates.some(d => {
       const dc = String(d?.channel || "").toLowerCase();
@@ -27577,7 +27580,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       if (!r.paymentMethod) {
         r.paymentMethod = otaMethod;
       }
-      if (req.body.paymentStatus === undefined || !r.paymentStatus || r.paymentStatus === "pendente" || r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") {
+      if (req.body.paymentStatus === undefined || isFullyPaidOnPut || !r.paymentStatus || r.paymentStatus === "pendente" || r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") {
         r.paymentStatus = "pago_total";
       }
       if (currentTot > 0) {
@@ -27596,7 +27599,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
   } else {
-    const currentTot = Number(r.totalAmount) || 0;
     const isB2bDirectCheck = putChanLower === "b2b" || putChanLower.includes("b2b") || Boolean(r.b2bReservationNumber);
     if (!isB2bDirectCheck && r.status !== "pre_reserva") {
       // Se uma reserva direta recebeu diária(s) adicional(is) via Airbnb ou Booking, soma automaticamente como paga(s)
@@ -27619,20 +27621,22 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
 
-      const effectivePaidAfterOtaExt = Number(r.paidAmount) || 0;
+      const effectivePaidAfterOtaExt = Math.max(Number(r.paidAmount) || 0, totalPaymentsReceived);
       const hasUnpaidDirectExtension = Boolean(
+        !isFullyPaidOnPut &&
         oldPaidAmount > 0 &&
         currentTot > Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100 + 0.01 &&
         (addedDirectRatesSum > 0 || (nightsChangedOnEdit && newNightsCount > oldNightsCount)) &&
         (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut < currentTot - 0.01) &&
-        (req.body.paidAmount === undefined || Number(req.body.paidAmount) < currentTot - 0.01)
+        (req.body.paidAmount === undefined || Number(req.body.paidAmount) < currentTot - 0.01) &&
+        totalPaymentsReceived < currentTot - 0.01
       );
 
       if (hasUnpaidDirectExtension) {
         r.paidAmount = Math.max(effectivePaidAfterOtaExt, Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100);
         r.paymentStatus = "sinal_pago";
-      } else if (effectivePaidAfterOtaExt >= currentTot - 0.01 && currentTot > 0) {
-        r.paidAmount = currentTot;
+      } else if ((effectivePaidAfterOtaExt >= currentTot - 0.01 || isFullyPaidOnPut) && currentTot > 0) {
+        r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
         r.paymentStatus = "pago_total";
       } else if (r.paymentStatus === "pago_total" && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
         r.paidAmount = currentTot;

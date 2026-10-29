@@ -3293,9 +3293,18 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const hasPartialPendingExtension = (reservation.paymentStatus === "sinal_pago" || reservation.paymentStatus === "parcial") && pendingAmount > 0.01;
   const isPaid = !hasPartialPendingExtension && (pendingAmount <= 0.01 || isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount - 0.01 && totalAmount > 0));
 
+  const isAdditionalStayTemplate = Boolean(
+    templateId === "tpl_additional_daily_pending" ||
+    triggerEvent === "additional_daily_pending" ||
+    (typeof text === "string" && (
+      text.includes("alteração/extensão") ||
+      text.includes("Saldo Pendente da Diária Adicional")
+    ))
+  );
+
   let paymentStatus = "Aguardando Pagamento";
   if (isPaid || pendingAmount <= 0.01) {
-    paymentStatus = (templateId === "tpl_additional_daily_pending" || triggerEvent === "additional_daily_pending")
+    paymentStatus = isAdditionalStayTemplate
       ? "Pago Integralmente"
       : "Confirmado / Pago (100%)";
   } else if (hasPartialPendingExtension || (paidAmount > 0 && pendingAmount > 0)) {
@@ -3621,7 +3630,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   };
 
   let rendered = text;
-  if ((templateId === "tpl_additional_daily_pending" || triggerEvent === "additional_daily_pending") && !rendered.includes("Situação do Pagamento:")) {
+  if (isAdditionalStayTemplate && !rendered.includes("Situação do Pagamento:")) {
     rendered = rendered.replace(/(•\s*\*?Valor Já Pago:\*?[^\n]*)/i, `$1\n• Situação do Pagamento: *{{status_pagamento}}*`);
   }
   if (pendingAmount <= 0.01) {
@@ -4144,7 +4153,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     paymentsSumVal
   ) * 100) / 100;
   const pendingAmountVal = Math.max(0, Math.round((totalAmountVal - paidAmountVal) * 100) / 100);
-  const isFullyPaidVal = (pendingAmountVal <= 0.01 && totalAmountVal > 0) || reservation?.paymentStatus === "pago_total" || reservation?.paymentStatus === "pago";
+  const isFullyPaidVal = (pendingAmountVal <= 0.01 && (totalAmountVal > 0 || paidAmountVal > 0)) || reservation?.paymentStatus === "pago_total" || reservation?.paymentStatus === "pago";
 
   if (isFullyPaidVal) {
     list = list.filter(b => {
