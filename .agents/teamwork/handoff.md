@@ -1,32 +1,26 @@
-# Sentinel Final Handoff Report — B2B Stayover Housekeeping Delivery
+# Handoff Report — Sentinel
 
-## 1. Observation
-- **Mission**: Implementação do Sistema Completo de Governança Diária (Stayover) Exclusivo para Reservas B2B (CorpFlats Soho Residence).
-- **Execution Architecture**: Sentinel -> General Path (`teamwork_preview_orchestrator`) -> Sucessão Autônoma Gen1 (`orchestrator_18`) / Gen2 (`orchestrator_19`) -> Victory Auditor (`teamwork_preview_victory_auditor_15`).
-- **Audit Verdict**: `VICTORY CONFIRMED` emitido de forma independente pelo `victory_auditor_15` (conversation ID: `b50a4496-c6cf-4f18-bd7e-674ed6cb5c2d`).
-- **Git Commit & Remote Status**: Commit `d7f35584a50c974440c40eccc55e1c0ae0984d97` devidamente enviado para `origin/main` (`Your branch is up to date with 'origin/main'`).
-- **Twin-Server SHA-256 Parity**: 100% idêntica byte a byte nos 3 pares de arquivos:
-  - `demo-server.mjs`: `ed64e237e30ee3785453ee69a4a2afaef9828083babc95b18b7908679536645e`
-  - `maid-automation-service.mjs`: `3305df86d045c13ef260ae17d363dc669d1c0fd534bd3465060a8363117a411f`
-  - `zapi-service.mjs`: `656c8a3bb85dafad449e5688871f4bbe9d5fb493bfd3c447471cb3f667a2ea6f`
-- **Frontend Production Build**: `npm --prefix artifacts/limpeza run build` concluído com código 0 (3400 módulos transformados, dist minificado).
-- **Dedicated Point Test**: `node tests/b2b-stayover-housekeeping.test.mjs` executado com 100% de sucesso (6 suites, 15 subtestes OK, 0 falhas).
+## Observation
+O usuário solicitou a correção do cálculo de valor já pago e saldo pendente no fluxo de alteração/extensão de reservas do sistema Guest-Flow-Manager (CorpFlats) quando há múltiplos pagamentos registrados (especificamente o caso da reserva `RES-113-0524`, com crédito inicial Booking.com de R$ 650,40 e complemento PIX de R$ 150,00, totalizando R$ 800,40), a regularização dos registros de pagamento no banco de dados e o reenvio da mensagem de confirmação de alteração ao hóspede Cassio Leonardo Bragança Freitas constando quitação integral (100% quitada sem cobrança residual nem PIX Copia e Cola).
 
-## 2. Logic Chain
-1. A solicitação do usuário exigiu a implantação do serviço diário de governança (stayover) exclusivo para reservas B2B, com diferenciação visual nos cards, tarifação diferenciada para prestadoras autônomas (Cris e Grazi) com discriminação nos extratos/relatórios/RH, controle e alerta de troca de enxoval (3 dias), e recursos de Não Perturbe (DND) e solicitação de enxoval no Portal do Hóspede B2B.
-2. A equipe de engenharia decomposta pelos orquestradores implementou todos os módulos do backend, garantindo que canais comuns (Booking, Airbnb, WhatsApp, etc.) nunca gerem cards de stayover e recebam HTTP 403 nos endpoints do portal B2B.
-3. No frontend, foram integrados os cards operacionais de limpeza com visual stayover e contador `Dia X de Y`, modal de checklist de enxoval sem bloqueio indevido, e formulários de taxas e extratos quinzenais segregados.
-4. O build de produção foi gerado e commitado junto com os arquivos do backend e testes dedicados, sendo enviado para `origin/main`.
-5. O Victory Auditor independente realizou a auditoria pós-vitória em 3 fases, executando testes pontuais e build de forma independente, confirmando a integridade absoluta de `data/database.json`, a paridade SHA-256 e emitindo `VICTORY CONFIRMED`.
+## Logic Chain
+1. **Roteamento**: A demanda trazia expressamente um pedido de correção focada e pontual ("This is a single self-contained fix; keep it small and focused"), sendo roteada para o caminho **SWE Light** (`teamwork_preview_swe`).
+2. **Execução SWE Light**: O orquestrador SWE Light gerenciou a implementação e 3 rodadas completas de revisão adversarial (`reviewer r1, r2, r3`):
+   - **R1 (Cálculo de Quitação em Múltiplos Pagamentos)**: Em `demo-server.mjs`, unificou a soma dos pagamentos recebidos (`totalPaymentsReceived`) combinando o array `payments`, `paidAmount` e `amountPaid`. Quando a soma cobre o novo valor total (`totalPaymentsReceived >= currentTot - 0.01`), a reserva é categorizada como `pago_total`, limpando `pixCopiaECola` e preferências de pagamento.
+   - **R2 (Formatação da Mensagem WhatsApp)**: Em `zapi-service.mjs`, adicionou a tag dinâmica `{{status_pagamento}}` (exibindo `• Situação do Pagamento: *Pago Integralmente*`) e removeu os blocos de saldo residual e PIX Copia e Cola quando o saldo pendente é zero, além de desativar botões de PIX.
+   - **R3 (Regularização e Reenvio da RES-113-0524)**: Atualizado `data/database.json` com `totalPrice = 800.40`, `amountPaid = 800.40`, 2 pagamentos registrados e `pago_total`. Mensagem oficial reenviada ao hóspede via WhatsApp (`manual_1793246883454_ubno`).
+   - **R4 (Regras Operacionais e Twin-Server Parity)**: Criado teste pontual isolado `tests/res-113-extension-multipayment.test.mjs` (10/10 cenários aprovados), validada a paridade SHA-256 byte a byte em 36/36 arquivos de runtime entre `scripts/` e `artifacts/api-server/`, e todos os commits enviados para `origin/main`.
+3. **Auditoria Bloqueante**: Despachado o `teamwork_preview_victory_auditor` independente (`victory_auditor_16`), que confirmou de ponta a ponta todos os requisitos com veredito bloqueante `VERDICT: VICTORY CONFIRMED`.
+4. **Cleanup**: Cancelados os crons de monitoramento e eliminados todos os subagentes.
 
-## 3. Caveats
-- Reservas de hóspedes em DND bloqueiam a execução de limpezas com HTTP 422 para camareiras até que o hóspede desative o DND no portal.
-- Solicitações de troca antecipada de enxoval feitas pelo hóspede B2B são agendadas para o dia seguinte (`tomorrow`), conforme especificação.
+## Caveats
+- O frontend em `artifacts/limpeza/src` não sofreu alterações para esta correção, dispensando novo build de UI.
+- O template de alteração continuará gerando cobrança e PIX Copia e Cola apenas quando houver saldo efetivamente pendente (`saldo > 0,01`).
 
-## 4. Conclusion
-A funcionalidade de Governança Diária (Stayover) B2B está 100% implementada, homologada com auditoria forense independente, compilada em produção e enviada para o repositório remoto `origin/main`.
+## Conclusion
+A missão foi plenamente cumprida com sucesso e homologada por auditoria independente. A reserva `RES-113-0524` está regularizada e comunicada ao hóspede, e o sistema agora lida de forma robusta e matematicamente precisa com múltiplos pagamentos no fluxo de edição e extensão de reservas.
 
-## 5. Verification Method
-- `node tests/b2b-stayover-housekeeping.test.mjs`
-- `npm --prefix artifacts/limpeza run build`
-- `git status` (branch main alinhada com origin/main)
+## Verification Method
+- Teste pontual isolado: `node tests/res-113-extension-multipayment.test.mjs` (10/10 suites aprovadas, 36/36 asserções).
+- Paridade Twin-Server: `node scripts/check-twin-parity.mjs` (36/36 arquivos idênticos).
+- Git: Commits `70ae81d`, `e144a4a`, `1d4db9c`, `51ec208` enviados ao `origin/main`.
